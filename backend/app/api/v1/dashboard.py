@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import StreamingResponse
 
 from app.api.v1.deps import get_current_user
-from app.db.session import get_db
+from app.db.session import AsyncSessionLocal, get_db
 from app.schemas.dashboard import BorrowTrendPoint, DashboardSummary, TopBorrowedItem
 from app.services import dashboard_service
 
@@ -29,10 +29,11 @@ async def top_borrowed(limit: int = 10, db: AsyncSession = Depends(get_db), _use
 
 
 @router.get("/stream")
-async def stream(db: AsyncSession = Depends(get_db), _user=Depends(get_current_user)):
+async def stream(_user=Depends(get_current_user)):
     async def event_generator():
         while True:
-            data = await dashboard_service.get_summary(db)
+            async with AsyncSessionLocal() as session:
+                data = await dashboard_service.get_summary(session)
             yield f"data: {json.dumps(data)}\n\n"
             await asyncio.sleep(15)
 

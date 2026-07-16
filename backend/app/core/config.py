@@ -3,6 +3,23 @@ from functools import lru_cache
 from pydantic import AnyUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Minimum accepted length for JWT_SECRET_KEY in production. HS256 signing
+# security depends entirely on this secret's unpredictability; this is not
+# a cryptographic entropy guarantee, just a floor that rejects trivially
+# short or placeholder values.
+JWT_SECRET_MIN_LENGTH = 32
+
+DEFAULT_JWT_SECRET_KEY = "change-me-in-production-use-a-random-64-byte-value"
+
+
+class InsecureConfigurationError(RuntimeError):
+    """Raised at startup when the running environment's configuration is unsafe.
+
+    Intentionally a plain RuntimeError subclass (not a DomainError) since this
+    fires before the ASGI app exists to route it through any HTTP exception
+    handler — it must abort process startup, not produce an HTTP response.
+    """
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -42,6 +59,37 @@ class Settings(BaseSettings):
     @property
     def allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",") if origin.strip()]
+
+
+def validate_production_secrets(settings: Settings) -> None:
+    """Refuse to run in production with a missing, default, or too-short JWT secret.
+
+    Called once at application startup (see app.main.create_app). Raises
+    InsecureConfigurationError instead of returning a status so the caller
+    cannot accidentally ignore the result and continue booting.
+    """
+    if settings.ENVIRONMENT != "production":
+        return
+
+    if not settings.JWT_SECRET_KEY:
+        raise InsecureConfigurationError(
+            "JWT_SECRET_KEY is not set. Refusing to start with ENVIRONMENT=production and no "
+            "JWT signing key configured. Set JWT_SECRET_KEY to a unique, randomly-generated value."
+        )
+
+    if settings.JWT_SECRET_KEY == DEFAULT_JWT_SECRET_KEY:
+        raise InsecureConfigurationError(
+            "JWT_SECRET_KEY is set to the publicly-documented default value shipped in source "
+            "control. Refusing to start with ENVIRONMENT=production. Generate a real secret with: "
+            'python -c "import secrets; print(secrets.token_urlsafe(64))" and set it as JWT_SECRET_KEY.'
+        )
+
+    if len(settings.JWT_SECRET_KEY) < JWT_SECRET_MIN_LENGTH:
+        raise InsecureConfigurationError(
+            f"JWT_SECRET_KEY is only {len(settings.JWT_SECRET_KEY)} characters, below the minimum "
+            f"accepted length of {JWT_SECRET_MIN_LENGTH} for ENVIRONMENT=production. Generate a "
+            'longer secret with: python -c "import secrets; print(secrets.token_urlsafe(64))"'
+        )
 
 
 @lru_cache
