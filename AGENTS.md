@@ -12,6 +12,8 @@ AppSheet-based process.
 - `frontend/` — React/TypeScript web client.
 - `docs/audits/` — the source-of-truth documents listed below.
 - `docs/prompts/` — reusable, role-specific task prompts.
+- `docs/PROJECT_PLAYBOOK.md` — compact governance entry point and minimum
+  reading sets.
 - `docs/AI_WORKFLOW.md` — the recommended AI-assisted development workflow.
 - `docs/ROADMAP_STATUS.md` — current status of every planned roadmap Pull
   Request, at a glance.
@@ -20,16 +22,19 @@ AppSheet-based process.
 
 # Source of Truth
 
-The following documents define the project. Read the relevant ones before
-any non-trivial task:
+Start with `docs/PROJECT_PLAYBOOK.md`, which defines the compact reading sets
+and conflict hierarchy. In summary:
 
-- `docs/audits/01-database-schema-audit.md`
-- `docs/audits/02-backend-architecture-audit.md`
-- `docs/audits/03-hospital-equipment-pool-workflow-audit.md`
-- `docs/audits/04-consolidated-implementation-plan.md`
+- this file owns permanent repository-wide rules and domain guardrails;
+- `docs/ARCHITECTURE_DECISIONS.md` owns active confirmed decisions;
+- `docs/audits/04-consolidated-implementation-plan.md` owns Roadmap PR scope,
+  order, dependencies, and acceptance criteria;
+- `docs/ROADMAP_STATUS.md` tracks status only; and
+- audits 01–03 are historical evidence, superseded by 04 where they disagree.
 
-If these documents conflict with each other, **04 (the consolidated
-implementation plan) is authoritative.**
+Task-specific instructions may narrow work but cannot silently override a
+confirmed guardrail, security decision, or Roadmap boundary. Such a change
+requires an explicit Governance PR.
 
 # Domain Guardrails
 
@@ -122,4 +127,5 @@ roles include:
 
 Reusable, role-specific prompts live in `docs/prompts/`. For the
 recommended end-to-end development workflow across these roles, see
-`docs/AI_WORKFLOW.md`.
+`docs/PROJECT_PLAYBOOK.md`; `docs/AI_WORKFLOW.md` remains a compatibility
+pointer for existing links.

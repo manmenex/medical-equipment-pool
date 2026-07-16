@@ -1,5 +1,10 @@
 # Folder Structure
 
+> **Status: Legacy design reference.** Some proposals and scale targets in
+> this document predate confirmed guardrails and may be superseded. Use
+> `AGENTS.md`, `PROJECT_PLAYBOOK.md`, `ARCHITECTURE_DECISIONS.md`, and the
+> consolidated implementation plan for current authority.
+
 ```
 medical-equipment-pool/
 ├── docs/                          # This documentation set

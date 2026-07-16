@@ -1,5 +1,10 @@
 # Performance Optimization
 
+> **Status: Legacy design reference.** Some proposals and scale targets in
+> this document predate confirmed guardrails and may be superseded. Use
+> `AGENTS.md`, `PROJECT_PLAYBOOK.md`, `ARCHITECTURE_DECISIONS.md`, and the
+> consolidated implementation plan for current authority.
+
 ## Frontend
 - **Code-splitting** per route (`React.lazy` + Vite dynamic import) → first paint only ships Login/Dashboard bundle
 - **Virtualized lists** (`@tanstack/react-virtual`) for Equipment List → renders only visible rows even at 500k+ records

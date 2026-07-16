@@ -1,8 +1,15 @@
 # Architecture Decisions
 
-A running log of confirmed project-level decisions. This is a status
-record, not a design document — each entry links back to the source
-document that carries the full detail rather than repeating it.
+A running log and index of confirmed project-level decisions. Short decisions
+remain here; detailed records are added only for cross-cutting, security-
+sensitive, costly-to-reverse, or migration-sensitive choices.
+
+Detailed ADRs use stable, zero-padded numbers and are never renumbered. A
+superseding ADR records the replacement instead of rewriting history.
+
+| ADR | Status | Decision |
+| --- | --- | --- |
+| [ADR-0001](adr/ADR-0001-canonical-audit-and-failed-login-identifiers.md) | Accepted | Canonical audit writes and failed-login identifier non-persistence |
 
 ---
 
@@ -252,8 +259,12 @@ remains auditable.
 roadmap PRs reuse it. Mandatory business mutations and their audit event use
 the same `AsyncSession`; the audit writer flushes without independently
 committing, so both commit or roll back together. Login failures have no
-actor, identify a known
-account only as the subject, and never persist an unknown raw identifier.
+actor; a known account may be the subject. For an unknown submitted
+identifier, actor and subject/entity ID remain null, and no raw,
+deterministic unkeyed-hash, enumerable, or correlatable representation is
+persisted. A keyed HMAC would require a separately approved secret-management
+and retention design and is not introduced by Roadmap PR3. See
+[ADR-0001](adr/ADR-0001-canonical-audit-and-failed-login-identifiers.md).
 Client-supplied IDs are allowlisted and limited to 64 characters. Migration
 evidence must cover PostgreSQL upgrade/downgrade and the fresh-database
 behavior caused by `0001_initial.py` creating from current ORM metadata.
