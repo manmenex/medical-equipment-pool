@@ -10,12 +10,19 @@ __pycache__/
 venv/
 env/
 
+# --- Node / frontend ---------------------------------------------------------
+node_modules/
+frontend/dist/
+*.local
+
 # --- Environment / secrets ---------------------------------------------------
 .env
+.env.*
+!.env.example
 *.cred.key
 credentials.enc
 
-# --- App runtime data (created next to the source tree when run from a clone) --
+# --- App runtime data ---------------------------------------------------------
 /data/
 /logs/
 /downloads/
@@ -29,7 +36,7 @@ credentials.enc
 .coverage
 htmlcov/
 
-# --- PyInstaller build output ---------------------------------------------------
+# --- Build output ---------------------------------------------------------
 /build/
 /dist/
 
