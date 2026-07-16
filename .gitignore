@@ -1,0 +1,40 @@
+# --- Python ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+
+# --- Virtual environments ---------------------------------------------------
+.venv/
+venv/
+env/
+
+# --- Environment / secrets ---------------------------------------------------
+.env
+*.cred.key
+credentials.enc
+
+# --- App runtime data (created next to the source tree when run from a clone) --
+/data/
+/logs/
+/downloads/
+/backups/
+*.db-journal
+*.db-wal
+*.db-shm
+
+# --- Testing ------------------------------------------------------------------
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- PyInstaller build output ---------------------------------------------------
+/build/
+/dist/
+
+# --- Editor / OS ------------------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
