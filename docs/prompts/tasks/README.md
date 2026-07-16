@@ -52,10 +52,14 @@ Role: Independent Reviewer
 PR: [number/URL]
 Minimum reads: AGENTS.md; docs/PROJECT_PLAYBOOK.md; docs/prompts/codex-pr-review.md;
 assigned Roadmap section; actual PR diff/tests/surrounding code
-Boundary: review only; no file, commit, PR, or merge mutations
+Boundary: review only; no file, commit, push, PR metadata, ready, merge, close,
+or fix mutations
 Evidence focus: distinguish executed tests, manual checks, inspection, reports, unknowns
-Deliverable: complete authoritative review format with actionable findings
-Stop: after review report
+GitHub write: exactly one review submission under docs/prompts/codex-pr-review.md,
+with optional focused inline comments
+Deliverable: authoritative review submitted directly to the target PR; verify the
+PR number, exact reviewed head SHA, reviewer identity, and action after posting
+Stop: after verified submission; self-review must use COMMENT and be labeled clearly
 ```
 
 ## Corrective rereview
@@ -63,10 +67,12 @@ Stop: after review report
 ```text
 Role: Independent Reviewer
 PR and prior findings: [PR]; [finding IDs]
-Minimum reads: AGENTS.md; docs/PROJECT_PLAYBOOK.md; prior review; corrective diff/tests
-Boundary: verify each finding and detect regressions in changed surface; review only
-Deliverable: resolved/unresolved/new findings, evidence, merge recommendation
-Stop: do not apply fixes, approve, mark ready, or merge unless separately authorized
+Minimum reads: AGENTS.md; docs/PROJECT_PLAYBOOK.md; docs/prompts/codex-pr-review.md;
+prior review; corrective diff/tests
+Boundary: verify each finding and detect regressions in changed surface; follow the
+authoritative review-only write restrictions and submission policy
+Deliverable: resolved/unresolved/new findings, evidence, and verified GitHub review
+Stop: after verified submission; do not apply fixes, mark ready, or merge
 ```
 
 ## Repository maintenance
