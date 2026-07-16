@@ -1,9 +1,11 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import require_roles
+from app.core.db_errors import translate_integrity_error
+from app.core.exceptions import InvalidInputError, ResourceNotFoundError
 from app.crud import user as user_crud
 from app.db.session import get_db
 from app.models.user import ROLE_ADMIN, Role
@@ -36,8 +38,9 @@ async def create_user(
 ):
     role = await user_crud.get_role_by_name(db, payload.role_name)
     if role is None:
-        raise HTTPException(status_code=400, detail=f"Unknown role '{payload.role_name}'")
-    user = await user_crud.create(db, data=payload.model_dump(), role_id=role.id)
+        raise InvalidInputError(f"Unknown role '{payload.role_name}'")
+    async with translate_integrity_error(db, resource="user"):
+        user = await user_crud.create(db, data=payload.model_dump(), role_id=role.id)
     await db.commit()
     return await _serialize(db, user)
 
@@ -51,13 +54,14 @@ async def update_user(
 ):
     user = await user_crud.get_by_id(db, user_id)
     if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise ResourceNotFoundError("User not found")
     role_id = None
     if payload.role_name:
         role = await user_crud.get_role_by_name(db, payload.role_name)
         if role is None:
-            raise HTTPException(status_code=400, detail=f"Unknown role '{payload.role_name}'")
+            raise InvalidInputError(f"Unknown role '{payload.role_name}'")
         role_id = role.id
-    user = await user_crud.update(db, user, data=payload.model_dump(exclude_unset=True), role_id=role_id)
+    async with translate_integrity_error(db, resource="user"):
+        user = await user_crud.update(db, user, data=payload.model_dump(exclude_unset=True), role_id=role_id)
     await db.commit()
     return await _serialize(db, user)

@@ -4,10 +4,12 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user
+from app.core.exceptions import TransactionNotFoundError
 from app.crud import transaction as transaction_crud
 from app.db.session import get_db
 from app.schemas.common import Page
 from app.schemas.transaction import TransactionOut
+from app.utils.parsing import parse_uuid
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 
@@ -24,8 +26,8 @@ async def list_transactions(
 ):
     rows, next_cursor, total = await transaction_crud.search(
         db,
-        ward_id=uuid.UUID(ward_id) if ward_id else None,
-        equipment_id=uuid.UUID(equipment_id) if equipment_id else None,
+        ward_id=parse_uuid(ward_id, "ward_id"),
+        equipment_id=parse_uuid(equipment_id, "equipment_id"),
         status=status,
         limit=limit,
         cursor=cursor,
@@ -37,8 +39,6 @@ async def list_transactions(
 async def get_transaction(
     transaction_id: uuid.UUID, db: AsyncSession = Depends(get_db), _user=Depends(get_current_user)
 ):
-    from app.core.exceptions import TransactionNotFoundError
-
     tx = await transaction_crud.get_by_id(db, transaction_id)
     if tx is None:
         raise TransactionNotFoundError("Transaction not found")

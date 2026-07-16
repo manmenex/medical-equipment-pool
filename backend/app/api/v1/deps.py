@@ -13,6 +13,10 @@ from app.models.user import Role, User
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
+# RFC 7235 says a 401 response SHOULD include WWW-Authenticate; every 401
+# raised for this bearer scheme carries the same challenge.
+WWW_AUTHENTICATE_HEADERS = {"WWW-Authenticate": "Bearer"}
+
 
 async def get_current_user(
     request: Request,
@@ -20,19 +24,33 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
 ) -> User:
     if credentials is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated", headers=WWW_AUTHENTICATE_HEADERS
+        )
     try:
         payload = decode_token(credentials.credentials)
         if payload.get("type") != "access":
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token type",
+                headers=WWW_AUTHENTICATE_HEADERS,
+            )
         user_id = UUID(payload["sub"])
     except (jwt.PyJWTError, KeyError, ValueError) as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token") from exc
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers=WWW_AUTHENTICATE_HEADERS,
+        ) from exc
 
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if user is None or not user.is_active:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or inactive",
+            headers=WWW_AUTHENTICATE_HEADERS,
+        )
     request.state.current_user = user
     return user
 

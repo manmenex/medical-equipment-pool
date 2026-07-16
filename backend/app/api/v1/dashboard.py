@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import StreamingResponse
 
-from app.api.v1.deps import bearer_scheme, get_current_user
+from app.api.v1.deps import WWW_AUTHENTICATE_HEADERS, bearer_scheme, get_current_user
 from app.core.security import decode_token
 from app.db.session import AsyncSessionLocal, get_db
 from app.models.user import User
@@ -46,21 +46,35 @@ async def get_current_user_for_stream(
     stays alive for the entire connection.
     """
     if credentials is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated", headers=WWW_AUTHENTICATE_HEADERS
+        )
     try:
         payload = decode_token(credentials.credentials)
         if payload.get("type") != "access":
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token type",
+                headers=WWW_AUTHENTICATE_HEADERS,
+            )
         user_id = UUID(payload["sub"])
     except (jwt.PyJWTError, KeyError, ValueError) as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token") from exc
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers=WWW_AUTHENTICATE_HEADERS,
+        ) from exc
 
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
 
     if user is None or not user.is_active:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or inactive",
+            headers=WWW_AUTHENTICATE_HEADERS,
+        )
     return user
 
 

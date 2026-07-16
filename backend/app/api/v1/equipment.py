@@ -4,12 +4,15 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, require_roles
+from app.core.db_errors import translate_integrity_error
 from app.core.exceptions import EquipmentNotFoundError
 from app.core.redis import cache_delete_prefix
+from app.core.references import ensure_referenced_row_exists
 from app.crud import audit as audit_crud
 from app.crud import equipment as equipment_crud
 from app.db.session import get_db
 from app.models.equipment import EquipmentStatus
+from app.models.master_data import Department, EquipmentCategory, Location
 from app.models.user import ROLE_ADMIN, ROLE_BIOMEDICAL_ENGINEER
 from app.schemas.common import Page
 from app.schemas.equipment import (
@@ -20,8 +23,25 @@ from app.schemas.equipment import (
     EquipmentUpdate,
 )
 from app.services.qr_service import build_qr_value, generate_qr_png
+from app.utils.parsing import parse_uuid
+
+# Equipment's foreign-key fields, mapped to the model they reference, so a
+# request can be validated against real rows before flush (see
+# app.core.references) — this is also the only way to catch a bad reference
+# in tests, since the SQLite test database does not enforce FK constraints.
+EQUIPMENT_REFERENCE_MODELS: dict[str, type] = {
+    "category_id": EquipmentCategory,
+    "department_owner_id": Department,
+    "current_location_id": Location,
+}
 
 router = APIRouter(prefix="/equipment", tags=["equipment"])
+
+
+async def _validate_equipment_references(db: AsyncSession, data: dict) -> None:
+    for field_name, model in EQUIPMENT_REFERENCE_MODELS.items():
+        if field_name in data:
+            await ensure_referenced_row_exists(db, model, data[field_name], field_name=field_name)
 
 
 def _client_meta(request: Request) -> tuple[str | None, str | None]:
@@ -45,8 +65,8 @@ async def list_equipment(
         db,
         q=q,
         status=status,
-        department_id=uuid.UUID(department_id) if department_id else None,
-        category_id=uuid.UUID(category_id) if category_id else None,
+        department_id=parse_uuid(department_id, "department_id"),
+        category_id=parse_uuid(category_id, "category_id"),
         limit=limit,
         cursor=cursor,
     )
@@ -129,7 +149,18 @@ async def create_equipment(
 ):
     data = payload.model_dump()
     data["qr_code_value"] = build_qr_value(payload.asset_number)
-    equipment = await equipment_crud.create(db, data=data)
+
+    # A separate dict for the ORM call: FK fields need real UUID objects, but
+    # `data` itself is reused below as the audit log's after_data, which is
+    # JSON-serialized and must keep plain strings (uuid.UUID isn't
+    # JSON-serializable by the default encoder).
+    create_data = dict(data)
+    for key in ("category_id", "department_owner_id", "current_location_id"):
+        create_data[key] = parse_uuid(data.get(key), key)
+    await _validate_equipment_references(db, create_data)
+
+    async with translate_integrity_error(db, resource="equipment"):
+        equipment = await equipment_crud.create(db, data=create_data)
     ip, ua = _client_meta(request)
     await audit_crud.create(
         db,
@@ -159,7 +190,15 @@ async def update_equipment(
     if equipment is None:
         raise EquipmentNotFoundError("Equipment not found")
     before = _serialize(equipment)
-    equipment = await equipment_crud.update(db, equipment, data=payload.model_dump(exclude_unset=True))
+
+    update_data = payload.model_dump(exclude_unset=True)
+    for key in ("category_id", "department_owner_id", "current_location_id"):
+        if key in update_data:
+            update_data[key] = parse_uuid(update_data[key], key)
+    await _validate_equipment_references(db, update_data)
+
+    async with translate_integrity_error(db, resource="equipment"):
+        equipment = await equipment_crud.update(db, equipment, data=update_data)
     ip, ua = _client_meta(request)
     await audit_crud.create(
         db,
