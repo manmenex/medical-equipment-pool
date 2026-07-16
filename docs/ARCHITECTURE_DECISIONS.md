@@ -224,6 +224,52 @@ target provider.
 
 ---
 
+## Reusable audit framework boundary
+
+**Decision:** Roadmap PR3 owns the reusable audit-logging framework, not
+only audit calls for User and master-data endpoints. Its boundary includes
+one canonical audit writer; current authentication, User, master-data, and
+Equipment coverage; actor-versus-subject attribution; recursive centralized
+secret redaction; validated request/correlation IDs; bounded sanitized
+User-Agent and direct-peer IP metadata; an additive audit migration;
+same-transaction audit atomicity for mandatory business mutations; a
+documented persistence strategy for failed-login events; and an
+Administrator-only, bounded, deterministically paginated audit read path.
+
+**Status:** Confirmed for Roadmap PR3; implementation is in progress in
+Draft GitHub PR #7 and is not yet approved or merged.
+
+**Rationale:** Later roadmap work (ward correction, role consolidation,
+inventory import, and future mutating endpoints) needs one trustworthy audit
+contract. Per-call-site redaction or parallel writers would make secret
+handling, attribution, atomicity, and duplicate-event prevention depend on
+each future endpoint author. Request/correlation values are part of that
+audit contract because they must be safely persisted and returned, while a
+failed login requires an explicit transaction strategy so the failure itself
+remains auditable.
+
+**Impact:** Current in-scope endpoints use the shared framework and later
+roadmap PRs reuse it. Mandatory business mutations and their audit event use
+the same `AsyncSession`; the audit writer flushes without independently
+committing, so both commit or roll back together. Login failures have no
+actor, identify a known
+account only as the subject, and never persist an unknown raw identifier.
+Client-supplied IDs are allowlisted and limited to 64 characters. Migration
+evidence must cover PostgreSQL upgrade/downgrade and the fresh-database
+behavior caused by `0001_initial.py` creating from current ORM metadata.
+
+**Scope boundary:** PR3 does not add missing Role CRUD, User DELETE, or
+master-data UPDATE/DELETE endpoints. It does not implement transaction
+numbers, ME Code, equipment-state or dispatch/receipt redesign, Shift
+Sessions, DAY/NIGHT or Standby work, inventory import, frontend/reporting,
+broad observability, mandatory CI, deployment, or unrelated refactoring.
+PR15 retains structured cross-service logging/correlation, metrics, tracing,
+alerting, centralized log aggregation, dashboards, and production
+observability CI/infrastructure; it must build on PR3's IDs rather than
+introducing a second request-context mechanism.
+
+---
+
 ## Roadmap-driven development
 
 **Decision:** All implementation work follows the sequenced Pull Request
