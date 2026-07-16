@@ -257,3 +257,24 @@ async def test_rollback_after_duplicate_leaves_no_audit_row(pg_client, pg_seeded
         ).scalars().all()
 
     assert len(after) == len(before), "a failed duplicate create must not leave an audit row behind"
+
+
+# ---------------------------------------------------------------------------
+# PR3: authentication-event audit is best-effort, verified against a real
+# SAVEPOINT/ROLLBACK TO SAVEPOINT on PostgreSQL (SQLite emulates savepoints
+# differently at the driver level, so this must be checked here too, not
+# just in the SQLite-backed suite).
+# ---------------------------------------------------------------------------
+
+
+async def test_login_succeeds_on_postgres_even_if_audit_write_fails(pg_client, pg_seeded_users, monkeypatch):
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("simulated audit persistence failure")
+
+    monkeypatch.setattr("app.core.audit.audit_crud.create", _boom)
+
+    resp = await pg_client.post(
+        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert "access_token" in resp.json()

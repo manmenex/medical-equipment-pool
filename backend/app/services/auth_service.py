@@ -4,7 +4,15 @@ from datetime import datetime
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.audit import record_audit_event
+from app.core.audit import (
+    AUDIT_ACTION_LOGIN_FAILURE,
+    AUDIT_ACTION_LOGIN_SUCCESS,
+    AUDIT_ACTION_LOGOUT,
+    AUDIT_ACTION_TOKEN_REFRESH,
+    AUDIT_ENTITY_AUTH,
+    correlation_hash,
+    record_best_effort_audit_event,
+)
 from app.core.config import settings
 from app.core.exceptions import DomainError
 from app.core.redis import is_refresh_token_valid, revoke_refresh_token, store_refresh_token
@@ -28,13 +36,17 @@ async def authenticate(
 ) -> tuple[User, Role, str, str]:
     user = await user_crud.get_by_identifier(db, identifier)
     if user is None or not user.is_active or not verify_password(password, user.password_hash):
-        await record_audit_event(
+        # The submitted identifier is never stored raw — only a
+        # non-reversible correlation hash, so repeated failed attempts
+        # against the same account are still visible without persisting
+        # the identifier itself (which may be an email address).
+        await record_best_effort_audit_event(
             db,
             actor_user_id=user.id if user is not None else None,
-            action="login_failure",
-            entity_type="auth",
+            action=AUDIT_ACTION_LOGIN_FAILURE,
+            entity_type=AUDIT_ENTITY_AUTH,
             entity_id=user.id if user is not None else None,
-            after={"identifier": identifier},
+            after={"identifier_hash": correlation_hash(identifier)},
             request=request,
         )
         await db.commit()
@@ -46,17 +58,20 @@ async def authenticate(
         raise InvalidCredentialsError("User has no assigned role")
 
     user.last_login_at = datetime.utcnow()
-    await record_audit_event(
+    # Best-effort: a transient audit-write failure must not block a
+    # legitimate login. See record_best_effort_audit_event()'s docstring.
+    # If the audit write does fail, its SAVEPOINT rollback also discards
+    # the last_login_at flush bundled into the same flush() call — an
+    # acceptable, self-contained degradation, since token issuance below
+    # never depends on this commit succeeding.
+    await record_best_effort_audit_event(
         db,
         actor_user_id=user.id,
-        action="login_success",
-        entity_type="auth",
+        action=AUDIT_ACTION_LOGIN_SUCCESS,
+        entity_type=AUDIT_ENTITY_AUTH,
         entity_id=user.id,
         request=request,
     )
-    # Audit row and last_login_at share this one commit: if the audit
-    # write's flush above failed, it would have raised before we got here
-    # and neither change would be persisted.
     await db.commit()
 
     access_token = create_access_token(str(user.id), role.name)
@@ -100,11 +115,14 @@ async def refresh_access_token(
     if role is None:
         raise InvalidRefreshTokenError("User has no assigned role")
 
-    await record_audit_event(
+    # Best-effort, same rationale as login: preserve current authentication
+    # response behavior — an audit-write hiccup must not turn a valid
+    # refresh into a failure.
+    await record_best_effort_audit_event(
         db,
         actor_user_id=user.id,
-        action="token_refresh",
-        entity_type="auth",
+        action=AUDIT_ACTION_TOKEN_REFRESH,
+        entity_type=AUDIT_ENTITY_AUTH,
         entity_id=user.id,
         request=request,
     )
@@ -124,11 +142,12 @@ async def logout(db: AsyncSession, refresh_token: str | None, *, request: Reques
     except Exception:
         pass
 
-    await record_audit_event(
+    # Best-effort, same rationale as login/refresh.
+    await record_best_effort_audit_event(
         db,
         actor_user_id=actor_user_id,
-        action="logout",
-        entity_type="auth",
+        action=AUDIT_ACTION_LOGOUT,
+        entity_type=AUDIT_ENTITY_AUTH,
         entity_id=actor_user_id,
         request=request,
     )

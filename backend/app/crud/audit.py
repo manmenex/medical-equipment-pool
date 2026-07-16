@@ -38,9 +38,14 @@ async def create(
 
 
 async def list_logs(
-    db: AsyncSession, *, entity_type: str | None = None, user_id: uuid.UUID | None = None, limit: int = 50
+    db: AsyncSession,
+    *,
+    entity_type: str | None = None,
+    user_id: uuid.UUID | None = None,
+    limit: int = 50,
+    offset: int = 0,
 ) -> list[AuditLog]:
-    stmt = select(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit)
+    stmt = select(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit).offset(offset)
     if entity_type:
         stmt = stmt.where(AuditLog.entity_type == entity_type)
     if user_id:

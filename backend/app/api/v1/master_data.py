@@ -2,7 +2,14 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, require_roles
-from app.core.audit import record_audit_event
+from app.core.audit import (
+    AUDIT_ACTION_CREATE,
+    AUDIT_ENTITY_CATEGORY,
+    AUDIT_ENTITY_DEPARTMENT,
+    AUDIT_ENTITY_LOCATION,
+    AUDIT_ENTITY_WARD,
+    record_audit_event,
+)
 from app.core.db_errors import translate_integrity_error
 from app.core.references import ensure_referenced_row_exists
 from app.crud import master_data as md_crud
@@ -41,8 +48,8 @@ async def create_department(
     await record_audit_event(
         db,
         actor_user_id=actor.id,
-        action="create",
-        entity_type="department",
+        action=AUDIT_ACTION_CREATE,
+        entity_type=AUDIT_ENTITY_DEPARTMENT,
         entity_id=obj.id,
         after=payload.model_dump(),
         request=request,
@@ -70,8 +77,8 @@ async def create_ward(
     await record_audit_event(
         db,
         actor_user_id=actor.id,
-        action="create",
-        entity_type="ward",
+        action=AUDIT_ACTION_CREATE,
+        entity_type=AUDIT_ENTITY_WARD,
         entity_id=obj.id,
         after=payload.model_dump(),
         request=request,
@@ -100,8 +107,8 @@ async def create_location(
     await record_audit_event(
         db,
         actor_user_id=actor.id,
-        action="create",
-        entity_type="location",
+        action=AUDIT_ACTION_CREATE,
+        entity_type=AUDIT_ENTITY_LOCATION,
         entity_id=obj.id,
         after=payload.model_dump(),
         request=request,
@@ -132,8 +139,8 @@ async def create_category(
     await record_audit_event(
         db,
         actor_user_id=actor.id,
-        action="create",
-        entity_type="category",
+        action=AUDIT_ACTION_CREATE,
+        entity_type=AUDIT_ENTITY_CATEGORY,
         entity_id=obj.id,
         after=payload.model_dump(),
         request=request,

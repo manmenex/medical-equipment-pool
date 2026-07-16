@@ -4,7 +4,14 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, require_roles
-from app.core.audit import record_audit_event
+from app.core.audit import (
+    AUDIT_ACTION_CREATE,
+    AUDIT_ACTION_DELETE,
+    AUDIT_ACTION_STATUS_CHANGE,
+    AUDIT_ACTION_UPDATE,
+    AUDIT_ENTITY_EQUIPMENT,
+    record_audit_event,
+)
 from app.core.db_errors import translate_integrity_error
 from app.core.exceptions import EquipmentNotFoundError
 from app.core.redis import cache_delete_prefix
@@ -158,8 +165,8 @@ async def create_equipment(
     await record_audit_event(
         db,
         actor_user_id=user.id,
-        action="create",
-        entity_type="equipment",
+        action=AUDIT_ACTION_CREATE,
+        entity_type=AUDIT_ENTITY_EQUIPMENT,
         entity_id=equipment.id,
         after=data,
         request=request,
@@ -194,8 +201,8 @@ async def update_equipment(
     await record_audit_event(
         db,
         actor_user_id=user.id,
-        action="update",
-        entity_type="equipment",
+        action=AUDIT_ACTION_UPDATE,
+        entity_type=AUDIT_ENTITY_EQUIPMENT,
         entity_id=equipment.id,
         before={k: str(v) for k, v in before.items()},
         after=payload.model_dump(exclude_unset=True, mode="json"),
@@ -223,8 +230,8 @@ async def change_equipment_status(
     await record_audit_event(
         db,
         actor_user_id=user.id,
-        action="status_change",
-        entity_type="equipment",
+        action=AUDIT_ACTION_STATUS_CHANGE,
+        entity_type=AUDIT_ENTITY_EQUIPMENT,
         entity_id=equipment.id,
         after={"status": payload.status.value, "reason": payload.reason},
         request=request,
@@ -245,13 +252,15 @@ async def delete_equipment(
     equipment = await equipment_crud.get_by_id(db, equipment_id)
     if equipment is None:
         raise EquipmentNotFoundError("Equipment not found")
+    before = _serialize(equipment)
     await equipment_crud.soft_delete(db, equipment)
     await record_audit_event(
         db,
         actor_user_id=user.id,
-        action="delete",
-        entity_type="equipment",
+        action=AUDIT_ACTION_DELETE,
+        entity_type=AUDIT_ENTITY_EQUIPMENT,
         entity_id=equipment.id,
+        before={k: str(v) for k, v in before.items()},
         request=request,
     )
     await db.commit()

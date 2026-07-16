@@ -3,7 +3,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from app.core.audit import redact_sensitive
+from app.core.audit import correlation_hash, redact_sensitive
 from app.models.audit import AuditLog
 from tests.conftest import login
 
@@ -55,16 +55,25 @@ async def test_redact_sensitive_masks_known_keys():
     data = {
         "password": "hunter2",
         "password_hash": "$2b$...",
+        "hashed_password": "$2b$...",
+        "current_password": "hunter2",
+        "new_password": "hunter3",
         "refresh_token": "abc.def.ghi",
         "access_token": "abc.def.ghi",
         "jwt": "abc.def.ghi",
+        "authorization": "Bearer abc.def.ghi",
+        "cookie": "session=abc123",
+        "secret": "s3cr3t",
         "client_secret": "s3cr3t",
         "api_key": "k-123",
+        "private_key": "-----BEGIN PRIVATE KEY-----",
         "full_name": "Jane Doe",
     }
     redacted = redact_sensitive(data)
-    for key in ("password", "password_hash", "refresh_token", "access_token", "jwt", "client_secret", "api_key"):
-        assert redacted[key] == "***REDACTED***"
+    for key in data:
+        if key == "full_name":
+            continue
+        assert redacted[key] == "***REDACTED***", f"expected {key!r} to be redacted"
     assert redacted["full_name"] == "Jane Doe"
 
 
@@ -110,7 +119,10 @@ async def test_login_failure_wrong_password_records_actor(client, seeded_users, 
     rows = await _rows(db_session, action="login_failure", entity_type="auth")
     assert len(rows) == 1
     assert rows[0].user_id == seeded_users["admin"].id
-    assert rows[0].after_data == {"identifier": "ADMIN001"}
+    # The raw identifier must never be persisted — only a non-reversible
+    # correlation hash, since it may be an email address.
+    assert rows[0].after_data == {"identifier_hash": correlation_hash("ADMIN001")}
+    assert "ADMIN001" not in str(rows[0].after_data)
 
 
 async def test_login_failure_unknown_identifier_has_no_actor(client, seeded_users, db_session):
@@ -122,7 +134,27 @@ async def test_login_failure_unknown_identifier_has_no_actor(client, seeded_user
     rows = await _rows(db_session, action="login_failure", entity_type="auth")
     assert len(rows) == 1
     assert rows[0].user_id is None
-    assert rows[0].after_data == {"identifier": "NOBODY001"}
+    assert rows[0].after_data == {"identifier_hash": correlation_hash("NOBODY001")}
+    assert "NOBODY001" not in str(rows[0].after_data)
+
+
+async def test_login_succeeds_even_if_audit_write_fails(client, seeded_users, db_session, monkeypatch):
+    """Authentication events are best-effort (see record_best_effort_audit_event) —
+    a broken audit subsystem must never lock a legitimate user out."""
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("simulated audit persistence failure")
+
+    monkeypatch.setattr("app.core.audit.audit_crud.create", _boom)
+
+    resp = await client.post(
+        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert "access_token" in resp.json()
+
+    rows = await _rows(db_session, action="login_success", entity_type="auth")
+    assert rows == [], "the failed audit write should have rolled back to its savepoint, not persisted"
 
 
 async def test_logout_creates_audit_row(client, seeded_users, db_session):
@@ -302,6 +334,31 @@ async def test_no_duplicate_audit_rows_for_single_action(client, seeded_users, d
     assert len(rows) == 1, "a single create request must produce exactly one audit row"
 
 
+async def test_equipment_delete_audit_row_has_before_snapshot_and_null_after(
+    client, seeded_users, db_session
+):
+    headers = await _auth_headers(client, "admin")
+    create_resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "AUDIT-EQ-DEL-0001", "equipment_name": "Portable Ultrasound"},
+    )
+    assert create_resp.status_code == 201
+    equipment_id = create_resp.json()["id"]
+
+    del_resp = await client.delete(f"/api/v1/equipment/{equipment_id}", headers=headers)
+    assert del_resp.status_code == 204
+
+    rows = await _rows(
+        db_session, action="delete", entity_type="equipment", entity_id=uuid.UUID(equipment_id)
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.before_data is not None
+    assert row.before_data["asset_number"] == "AUDIT-EQ-DEL-0001"
+    assert row.after_data is None
+
+
 # ---------------------------------------------------------------------------
 # Atomicity: audit write failure rolls back the business operation
 # ---------------------------------------------------------------------------
@@ -390,3 +447,34 @@ async def test_audit_log_listing_returns_request_and_correlation_ids(client, see
     assert len(body) >= 1
     assert "request_id" in body[0]
     assert "correlation_id" in body[0]
+
+
+async def test_audit_log_listing_limit_is_bounded(client, seeded_users):
+    headers = await _auth_headers(client, "admin")
+    resp = await client.get("/api/v1/audit-logs", headers=headers, params={"limit": 100000})
+    assert resp.status_code == 422, "an unbounded limit must be rejected, not silently accepted"
+
+
+async def test_audit_log_listing_supports_offset_pagination(client, seeded_users):
+    headers = await _auth_headers(client, "admin")
+    for i in range(3):
+        resp = await client.post(
+            "/api/v1/departments", headers=headers, json={"code": f"PG{i}", "name": f"Page Dept {i}"}
+        )
+        assert resp.status_code == 201
+
+    page_1 = await client.get(
+        "/api/v1/audit-logs",
+        headers=headers,
+        params={"entity_type": "department", "limit": 2, "offset": 0},
+    )
+    page_2 = await client.get(
+        "/api/v1/audit-logs",
+        headers=headers,
+        params={"entity_type": "department", "limit": 2, "offset": 2},
+    )
+    assert page_1.status_code == 200
+    assert page_2.status_code == 200
+    ids_page_1 = {row["id"] for row in page_1.json()}
+    ids_page_2 = {row["id"] for row in page_2.json()}
+    assert ids_page_1.isdisjoint(ids_page_2), "paginated pages must not overlap"

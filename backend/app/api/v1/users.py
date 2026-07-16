@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import require_roles
-from app.core.audit import record_audit_event
+from app.core.audit import AUDIT_ACTION_CREATE, AUDIT_ACTION_UPDATE, AUDIT_ENTITY_USER, record_audit_event
 from app.core.db_errors import translate_integrity_error
 from app.core.exceptions import InvalidInputError, ResourceNotFoundError
 from app.crud import user as user_crud
@@ -48,8 +48,8 @@ async def create_user(
     await record_audit_event(
         db,
         actor_user_id=actor.id,
-        action="create",
-        entity_type="user",
+        action=AUDIT_ACTION_CREATE,
+        entity_type=AUDIT_ENTITY_USER,
         entity_id=user.id,
         after=payload.model_dump(),
         request=request,
@@ -88,8 +88,8 @@ async def update_user(
     await record_audit_event(
         db,
         actor_user_id=actor.id,
-        action="update",
-        entity_type="user",
+        action=AUDIT_ACTION_UPDATE,
+        entity_type=AUDIT_ENTITY_USER,
         entity_id=user.id,
         before=before,
         after=payload.model_dump(exclude_unset=True),

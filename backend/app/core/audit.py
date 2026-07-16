@@ -6,8 +6,15 @@ audit row. It always goes through `app.crud.audit.create`, which only
 flushes (never commits) — the caller's own transaction/commit decides
 whether the audit row and the business change land together, so a
 failure anywhere in that transaction rolls both back.
+
+Authentication events (login/logout/refresh) are the one exception to
+that atomicity: they use `record_best_effort_audit_event` instead, so a
+transient audit-write failure can never turn a legitimate authentication
+attempt into a 500 — see that function's docstring for the rationale.
 """
 
+import hashlib
+import logging
 import uuid
 
 from fastapi import Request
@@ -15,6 +22,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.crud import audit as audit_crud
 from app.models.audit import AuditLog
+
+logger = logging.getLogger(__name__)
+
+# Audit action values — stable, machine-readable constants. Every call site
+# uses one of these instead of an inline string literal, so the set of
+# valid actions is discoverable and typo-proof in one place.
+AUDIT_ACTION_CREATE = "create"
+AUDIT_ACTION_UPDATE = "update"
+AUDIT_ACTION_DELETE = "delete"
+AUDIT_ACTION_STATUS_CHANGE = "status_change"
+AUDIT_ACTION_LOGIN_SUCCESS = "login_success"
+AUDIT_ACTION_LOGIN_FAILURE = "login_failure"
+AUDIT_ACTION_LOGOUT = "logout"
+AUDIT_ACTION_TOKEN_REFRESH = "token_refresh"
+
+# Audit entity-type values, same rationale as the actions above.
+AUDIT_ENTITY_EQUIPMENT = "equipment"
+AUDIT_ENTITY_USER = "user"
+AUDIT_ENTITY_DEPARTMENT = "department"
+AUDIT_ENTITY_WARD = "ward"
+AUDIT_ENTITY_LOCATION = "location"
+AUDIT_ENTITY_CATEGORY = "category"
+AUDIT_ENTITY_AUTH = "auth"
 
 # Substrings matched case-insensitively against JSON keys in before/after
 # payloads. Deliberately broad (e.g. "token" covers access_token,
@@ -28,6 +58,9 @@ _SENSITIVE_KEY_MARKERS = (
     "jwt",
     "api_key",
     "apikey",
+    "authorization",
+    "cookie",
+    "private_key",
 )
 
 _MASK = "***REDACTED***"
@@ -50,6 +83,15 @@ def redact_sensitive(data):
     return data
 
 
+def correlation_hash(value: str) -> str:
+    """Non-reversible, correlatable tag for a value that must not be stored
+    raw (e.g. a login identifier on a failed attempt) — the same input
+    always hashes to the same tag, so repeated attempts against one
+    account are still visible without ever persisting the raw value."""
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+    return f"sha256:{digest}"
+
+
 async def record_audit_event(
     db: AsyncSession,
     *,
@@ -61,6 +103,10 @@ async def record_audit_event(
     after: dict | None = None,
     request: Request | None = None,
 ) -> AuditLog:
+    # request.client.host only — never a forwarded-for header, since this
+    # deployment has no configured trusted-proxy chain to validate one
+    # against (see ARCHITECTURE_DECISIONS.md, "Managed deployment
+    # preferred": no fixed proxy topology is assumed yet).
     ip_address = request.client.host if request is not None and request.client else None
     user_agent = request.headers.get("user-agent") if request is not None else None
     request_id = getattr(request.state, "request_id", None) if request is not None else None
@@ -79,3 +125,30 @@ async def record_audit_event(
         ip_address=ip_address,
         user_agent=user_agent,
     )
+
+
+async def record_best_effort_audit_event(db: AsyncSession, **kwargs) -> None:
+    """Authentication-event audit write that must never block authentication.
+
+    Business-mutation audit writes (record_audit_event, used by master
+    data and equipment) are deliberately mandatory: a failure there rolls
+    back the business change, because the two are supposed to be one
+    atomic unit of work. Authentication events are different — there is
+    often no other business row to be atomic with, and a transient
+    audit-subsystem failure must not be able to lock a legitimate user out
+    of a working system. So this wraps the write in a SAVEPOINT: on
+    success the audit row joins the caller's pending transaction exactly
+    like record_audit_event's would; on failure it is rolled back to the
+    savepoint (leaving the rest of the caller's transaction usable) and
+    the failure is logged server-side, but never re-raised.
+    """
+    try:
+        async with db.begin_nested():
+            await record_audit_event(db, **kwargs)
+    except Exception:
+        logger.warning(
+            "Failed to record authentication audit event (action=%s); "
+            "continuing without blocking the authentication flow",
+            kwargs.get("action"),
+            exc_info=True,
+        )
