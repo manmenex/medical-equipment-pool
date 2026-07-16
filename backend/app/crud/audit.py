@@ -15,6 +15,8 @@ async def create(
     entity_id: uuid.UUID | None,
     before_data: dict | None = None,
     after_data: dict | None = None,
+    request_id: str | None = None,
+    correlation_id: str | None = None,
     ip_address: str | None = None,
     user_agent: str | None = None,
 ) -> AuditLog:
@@ -25,6 +27,8 @@ async def create(
         entity_id=entity_id,
         before_data=before_data,
         after_data=after_data,
+        request_id=request_id,
+        correlation_id=correlation_id,
         ip_address=ip_address,
         user_agent=user_agent,
     )

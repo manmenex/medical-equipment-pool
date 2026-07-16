@@ -4,11 +4,11 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, require_roles
+from app.core.audit import record_audit_event
 from app.core.db_errors import translate_integrity_error
 from app.core.exceptions import EquipmentNotFoundError
 from app.core.redis import cache_delete_prefix
 from app.core.references import ensure_referenced_row_exists
-from app.crud import audit as audit_crud
 from app.crud import equipment as equipment_crud
 from app.db.session import get_db
 from app.models.equipment import EquipmentStatus
@@ -42,12 +42,6 @@ async def _validate_equipment_references(db: AsyncSession, data: dict) -> None:
     for field_name, model in EQUIPMENT_REFERENCE_MODELS.items():
         if field_name in data:
             await ensure_referenced_row_exists(db, model, data[field_name], field_name=field_name)
-
-
-def _client_meta(request: Request) -> tuple[str | None, str | None]:
-    ip = request.client.host if request.client else None
-    ua = request.headers.get("user-agent")
-    return ip, ua
 
 
 @router.get("", response_model=Page[EquipmentOut])
@@ -161,16 +155,14 @@ async def create_equipment(
 
     async with translate_integrity_error(db, resource="equipment"):
         equipment = await equipment_crud.create(db, data=create_data)
-    ip, ua = _client_meta(request)
-    await audit_crud.create(
+    await record_audit_event(
         db,
-        user_id=user.id,
+        actor_user_id=user.id,
         action="create",
         entity_type="equipment",
         entity_id=equipment.id,
-        after_data=data,
-        ip_address=ip,
-        user_agent=ua,
+        after=data,
+        request=request,
     )
     await db.commit()
     await cache_delete_prefix("equipment:search:")
@@ -199,17 +191,15 @@ async def update_equipment(
 
     async with translate_integrity_error(db, resource="equipment"):
         equipment = await equipment_crud.update(db, equipment, data=update_data)
-    ip, ua = _client_meta(request)
-    await audit_crud.create(
+    await record_audit_event(
         db,
-        user_id=user.id,
+        actor_user_id=user.id,
         action="update",
         entity_type="equipment",
         entity_id=equipment.id,
-        before_data={k: str(v) for k, v in before.items()},
-        after_data=payload.model_dump(exclude_unset=True, mode="json"),
-        ip_address=ip,
-        user_agent=ua,
+        before={k: str(v) for k, v in before.items()},
+        after=payload.model_dump(exclude_unset=True, mode="json"),
+        request=request,
     )
     await db.commit()
     await cache_delete_prefix("equipment:search:")
@@ -230,16 +220,14 @@ async def change_equipment_status(
     await equipment_crud.change_status(
         db, equipment, new_status=payload.status, changed_by_user_id=user.id, reason=payload.reason
     )
-    ip, ua = _client_meta(request)
-    await audit_crud.create(
+    await record_audit_event(
         db,
-        user_id=user.id,
+        actor_user_id=user.id,
         action="status_change",
         entity_type="equipment",
         entity_id=equipment.id,
-        after_data={"status": payload.status.value, "reason": payload.reason},
-        ip_address=ip,
-        user_agent=ua,
+        after={"status": payload.status.value, "reason": payload.reason},
+        request=request,
     )
     await db.commit()
     await cache_delete_prefix("equipment:search:")
@@ -258,15 +246,13 @@ async def delete_equipment(
     if equipment is None:
         raise EquipmentNotFoundError("Equipment not found")
     await equipment_crud.soft_delete(db, equipment)
-    ip, ua = _client_meta(request)
-    await audit_crud.create(
+    await record_audit_event(
         db,
-        user_id=user.id,
+        actor_user_id=user.id,
         action="delete",
         entity_type="equipment",
         entity_id=equipment.id,
-        ip_address=ip,
-        user_agent=ua,
+        request=request,
     )
     await db.commit()
     await cache_delete_prefix("equipment:search:")

@@ -1,4 +1,5 @@
 import logging
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -63,6 +64,20 @@ def create_app() -> FastAPI:
     )
 
     app.add_middleware(SecurityHeadersMiddleware)
+
+    @app.middleware("http")
+    async def request_context_middleware(request: Request, call_next):
+        # Every request gets a request_id; correlation_id defaults to the
+        # same value but lets an upstream caller group several requests
+        # (e.g. a retry) under one correlation id via the header.
+        request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+        correlation_id = request.headers.get("x-correlation-id") or request_id
+        request.state.request_id = request_id
+        request.state.correlation_id = correlation_id
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        response.headers["X-Correlation-ID"] = correlation_id
+        return response
 
     @app.exception_handler(DomainError)
     async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:

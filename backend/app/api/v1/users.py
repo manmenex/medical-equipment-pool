@@ -1,9 +1,10 @@
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import require_roles
+from app.core.audit import record_audit_event
 from app.core.db_errors import translate_integrity_error
 from app.core.exceptions import InvalidInputError, ResourceNotFoundError
 from app.crud import user as user_crud
@@ -34,13 +35,25 @@ async def list_users(db: AsyncSession = Depends(get_db), _user=Depends(require_r
 
 @router.post("", response_model=UserOut, status_code=201)
 async def create_user(
-    payload: UserCreate, db: AsyncSession = Depends(get_db), _user=Depends(require_roles(ROLE_ADMIN))
+    payload: UserCreate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    actor=Depends(require_roles(ROLE_ADMIN)),
 ):
     role = await user_crud.get_role_by_name(db, payload.role_name)
     if role is None:
         raise InvalidInputError(f"Unknown role '{payload.role_name}'")
     async with translate_integrity_error(db, resource="user"):
         user = await user_crud.create(db, data=payload.model_dump(), role_id=role.id)
+    await record_audit_event(
+        db,
+        actor_user_id=actor.id,
+        action="create",
+        entity_type="user",
+        entity_id=user.id,
+        after=payload.model_dump(),
+        request=request,
+    )
     await db.commit()
     return await _serialize(db, user)
 
@@ -49,12 +62,21 @@ async def create_user(
 async def update_user(
     user_id: uuid.UUID,
     payload: UserUpdate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    _user=Depends(require_roles(ROLE_ADMIN)),
+    actor=Depends(require_roles(ROLE_ADMIN)),
 ):
     user = await user_crud.get_by_id(db, user_id)
     if user is None:
         raise ResourceNotFoundError("User not found")
+    before_role = await db.get(Role, user.role_id)
+    before = {
+        "full_name": user.full_name,
+        "phone": user.phone,
+        "is_active": user.is_active,
+        "role_name": before_role.name if before_role else None,
+        "password_hash": user.password_hash,
+    }
     role_id = None
     if payload.role_name:
         role = await user_crud.get_role_by_name(db, payload.role_name)
@@ -63,5 +85,15 @@ async def update_user(
         role_id = role.id
     async with translate_integrity_error(db, resource="user"):
         user = await user_crud.update(db, user, data=payload.model_dump(exclude_unset=True), role_id=role_id)
+    await record_audit_event(
+        db,
+        actor_user_id=actor.id,
+        action="update",
+        entity_type="user",
+        entity_id=user.id,
+        before=before,
+        after=payload.model_dump(exclude_unset=True),
+        request=request,
+    )
     await db.commit()
     return await _serialize(db, user)

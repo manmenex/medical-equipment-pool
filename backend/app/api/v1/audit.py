@@ -18,6 +18,8 @@ class AuditLogOut(BaseModel):
     action: str
     entity_type: str
     entity_id: str | None
+    request_id: str | None
+    correlation_id: str | None
     ip_address: str | None
     created_at: str
 
@@ -45,6 +47,8 @@ async def list_audit_logs(
             action=log.action,
             entity_type=log.entity_type,
             entity_id=str(log.entity_id) if log.entity_id else None,
+            request_id=log.request_id,
+            correlation_id=log.correlation_id,
             ip_address=log.ip_address,
             created_at=log.created_at.isoformat(),
         )

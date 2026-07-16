@@ -1,8 +1,10 @@
 import uuid
 from datetime import datetime
 
+from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.audit import record_audit_event
 from app.core.config import settings
 from app.core.exceptions import DomainError
 from app.core.redis import is_refresh_token_valid, revoke_refresh_token, store_refresh_token
@@ -21,9 +23,21 @@ class InvalidRefreshTokenError(DomainError):
     status_code = 401
 
 
-async def authenticate(db: AsyncSession, identifier: str, password: str) -> tuple[User, Role, str, str]:
+async def authenticate(
+    db: AsyncSession, identifier: str, password: str, *, request: Request | None = None
+) -> tuple[User, Role, str, str]:
     user = await user_crud.get_by_identifier(db, identifier)
     if user is None or not user.is_active or not verify_password(password, user.password_hash):
+        await record_audit_event(
+            db,
+            actor_user_id=user.id if user is not None else None,
+            action="login_failure",
+            entity_type="auth",
+            entity_id=user.id if user is not None else None,
+            after={"identifier": identifier},
+            request=request,
+        )
+        await db.commit()
         raise InvalidCredentialsError("Invalid employee code/email or password")
 
     role_result = await db.get(Role, user.role_id)
@@ -32,6 +46,17 @@ async def authenticate(db: AsyncSession, identifier: str, password: str) -> tupl
         raise InvalidCredentialsError("User has no assigned role")
 
     user.last_login_at = datetime.utcnow()
+    await record_audit_event(
+        db,
+        actor_user_id=user.id,
+        action="login_success",
+        entity_type="auth",
+        entity_id=user.id,
+        request=request,
+    )
+    # Audit row and last_login_at share this one commit: if the audit
+    # write's flush above failed, it would have raised before we got here
+    # and neither change would be persisted.
     await db.commit()
 
     access_token = create_access_token(str(user.id), role.name)
@@ -43,7 +68,9 @@ async def authenticate(db: AsyncSession, identifier: str, password: str) -> tupl
     return user, role, access_token, refresh_token
 
 
-async def refresh_access_token(db: AsyncSession, refresh_token: str | None) -> str:
+async def refresh_access_token(
+    db: AsyncSession, refresh_token: str | None, *, request: Request | None = None
+) -> str:
     if not refresh_token:
         raise InvalidRefreshTokenError("Missing refresh token")
     try:
@@ -73,14 +100,36 @@ async def refresh_access_token(db: AsyncSession, refresh_token: str | None) -> s
     if role is None:
         raise InvalidRefreshTokenError("User has no assigned role")
 
+    await record_audit_event(
+        db,
+        actor_user_id=user.id,
+        action="token_refresh",
+        entity_type="auth",
+        entity_id=user.id,
+        request=request,
+    )
+    await db.commit()
+
     return create_access_token(user_id, role.name)
 
 
-async def logout(refresh_token: str | None) -> None:
+async def logout(db: AsyncSession, refresh_token: str | None, *, request: Request | None = None) -> None:
     if not refresh_token:
         return
+    actor_user_id: uuid.UUID | None = None
     try:
         payload = decode_token(refresh_token)
         await revoke_refresh_token(payload["jti"])
+        actor_user_id = uuid.UUID(payload["sub"])
     except Exception:
         pass
+
+    await record_audit_event(
+        db,
+        actor_user_id=actor_user_id,
+        action="logout",
+        entity_type="auth",
+        entity_id=actor_user_id,
+        request=request,
+    )
+    await db.commit()
