@@ -14,6 +14,9 @@ env/
 node_modules/
 frontend/dist/
 *.local
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
 
 # --- Environment / secrets ---------------------------------------------------
 .env
