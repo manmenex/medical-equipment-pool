@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import (
     EquipmentNotAvailableError,
     EquipmentNotFoundError,
+    InvalidInputError,
     TransactionAlreadyReturnedError,
     TransactionNotFoundError,
 )
@@ -15,6 +16,7 @@ from app.crud import equipment as equipment_crud
 from app.crud import transaction as transaction_crud
 from app.models.equipment import EquipmentStatus
 from app.models.transaction import TX_STATUS_BORROWED, TX_STATUS_RETURNED, BorrowTransaction
+from app.utils.parsing import parse_uuid
 
 RETURN_CONDITION_TO_STATUS = {
     "available": EquipmentStatus.AVAILABLE,
@@ -47,7 +49,7 @@ async def borrow(
     if equipment_qr:
         equipment = await equipment_crud.get_by_qr(db, equipment_qr)
     elif equipment_id:
-        equipment = await equipment_crud.get_by_id(db, uuid.UUID(equipment_id))
+        equipment = await equipment_crud.get_by_id(db, parse_uuid(equipment_id, "equipment_id"))
 
     if equipment is None:
         raise EquipmentNotFoundError("Equipment not found")
@@ -66,11 +68,11 @@ async def borrow(
                 "quantity": quantity,
                 "borrower_user_id": borrower_user_id,
                 "borrower_name": borrower_name,
-                "ward_id": uuid.UUID(ward_id) if ward_id else None,
-                "department_id": uuid.UUID(department_id) if department_id else None,
+                "ward_id": parse_uuid(ward_id, "ward_id"),
+                "department_id": parse_uuid(department_id, "department_id"),
                 "phone_number": phone_number,
-                "pickup_location_id": uuid.UUID(pickup_location_id) if pickup_location_id else None,
-                "dropoff_location_id": uuid.UUID(dropoff_location_id) if dropoff_location_id else None,
+                "pickup_location_id": parse_uuid(pickup_location_id, "pickup_location_id"),
+                "dropoff_location_id": parse_uuid(dropoff_location_id, "dropoff_location_id"),
                 "due_at": due_at,
                 "notes": notes,
                 "status": TX_STATUS_BORROWED,
@@ -119,7 +121,7 @@ async def return_equipment(
 
     new_status = RETURN_CONDITION_TO_STATUS.get(condition)
     if new_status is None:
-        raise ValueError(f"Unknown condition '{condition}'")
+        raise InvalidInputError(f"Unknown condition '{condition}'")
 
     tx.returned_at = datetime.utcnow()
     tx.condition_on_return = condition

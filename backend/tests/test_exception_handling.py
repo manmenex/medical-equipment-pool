@@ -1,0 +1,377 @@
+import logging
+
+import pytest
+from sqlalchemy import select
+
+from tests.conftest import login
+
+pytestmark = pytest.mark.asyncio
+
+
+async def _auth_headers(client, role="admin"):
+    identifier = f"{role.upper()}001"
+    token = await login(client, identifier)
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _assert_safe_envelope(body: dict, expected_status: int):
+    assert set(body.keys()) == {"detail", "code", "status"}
+    assert body["status"] == expected_status
+    assert isinstance(body["detail"], str)
+    assert isinstance(body["code"], str)
+    assert body["code"] == body["code"].upper()
+    forbidden_substrings = [
+        "Traceback",
+        "sqlite3",
+        "asyncpg",
+        "psycopg",
+        "UNIQUE constraint",
+        "IntegrityError",
+        "File \"",
+        "  File ",
+        ".py\", line",
+    ]
+    for needle in forbidden_substrings:
+        assert needle not in body["detail"], f"leaked internal detail: {needle!r} in {body['detail']!r}"
+
+
+# ---------------------------------------------------------------------------
+# Duplicate resources
+# ---------------------------------------------------------------------------
+
+
+async def test_duplicate_department_code_returns_409(client, seeded_users):
+    headers = await _auth_headers(client, "admin")
+    payload = {"code": "CARD", "name": "Cardiology"}
+    first = await client.post("/api/v1/departments", headers=headers, json=payload)
+    assert first.status_code == 201, first.text
+
+    second = await client.post(
+        "/api/v1/departments", headers=headers, json={"code": "CARD", "name": "Cardiology Duplicate"}
+    )
+    assert second.status_code == 409
+    body = second.json()
+    _assert_safe_envelope(body, 409)
+    assert body["code"] == "DUPLICATE"
+
+
+async def test_duplicate_ward_code_returns_409(client, seeded_users):
+    headers = await _auth_headers(client, "admin")
+    dept = await client.post("/api/v1/departments", headers=headers, json={"code": "SURG", "name": "Surgery"})
+    assert dept.status_code == 201, dept.text
+
+    payload = {"code": "W-100", "name": "Ward 100", "department_id": dept.json()["id"]}
+    first = await client.post("/api/v1/wards", headers=headers, json=payload)
+    assert first.status_code == 201, first.text
+
+    second = await client.post("/api/v1/wards", headers=headers, json=payload)
+    assert second.status_code == 409
+    _assert_safe_envelope(second.json(), 409)
+
+
+async def test_ward_with_nonexistent_department_does_not_500(client, seeded_users):
+    """The test DB is SQLite, which (unlike the production PostgreSQL target)
+    does not enforce FK constraints by default, so a bad department_id here
+    is silently accepted rather than raising IntegrityError — this test only
+    proves there's no 500; it cannot exercise the FK-violation -> 409 path
+    that translate_integrity_error protects against on Postgres. See the
+    PR2 known limitations for the untested-under-SQLite note."""
+    headers = await _auth_headers(client, "admin")
+    fake_department_id = "00000000-0000-0000-0000-000000000000"
+    resp = await client.post(
+        "/api/v1/wards",
+        headers=headers,
+        json={"code": "W-999", "name": "Ghost Ward", "department_id": fake_department_id},
+    )
+    assert resp.status_code in (201, 409)
+    if resp.status_code == 409:
+        _assert_safe_envelope(resp.json(), 409)
+
+
+async def test_duplicate_category_name_returns_409(client, seeded_users):
+    headers = await _auth_headers(client, "admin")
+    payload = {"name": "Infusion Pumps"}
+    first = await client.post("/api/v1/categories", headers=headers, json=payload)
+    assert first.status_code == 201, first.text
+
+    second = await client.post("/api/v1/categories", headers=headers, json=payload)
+    assert second.status_code == 409
+    _assert_safe_envelope(second.json(), 409)
+
+
+async def test_duplicate_user_employee_code_returns_409(client, seeded_users):
+    headers = await _auth_headers(client, "admin")
+    payload = {
+        "employee_code": "ADMIN001",  # already used by the seeded admin user
+        "full_name": "Someone Else",
+        "email": "someone-else@mep-hospital-test.dev",
+        "password": "Password@123",
+        "role_name": "viewer",
+    }
+    resp = await client.post("/api/v1/users", headers=headers, json=payload)
+    assert resp.status_code == 409
+    body = resp.json()
+    _assert_safe_envelope(body, 409)
+    assert body["code"] == "DUPLICATE"
+
+
+async def test_duplicate_equipment_asset_number_returns_409(client, seeded_users):
+    headers = await _auth_headers(client, "admin")
+    payload = {"asset_number": "DUP-0001", "equipment_name": "Syringe Pump"}
+    first = await client.post("/api/v1/equipment", headers=headers, json=payload)
+    assert first.status_code == 201, first.text
+
+    second = await client.post(
+        "/api/v1/equipment", headers=headers, json={"asset_number": "DUP-0001", "equipment_name": "Different Name"}
+    )
+    assert second.status_code == 409
+    body = second.json()
+    _assert_safe_envelope(body, 409)
+    assert body["code"] == "DUPLICATE"
+
+
+async def test_location_create_has_no_duplicate_protection_known_limitation(client, seeded_users):
+    """Location has no unique constraint in the current schema, so creating the
+    same location twice succeeds both times — documented as a known PR2
+    limitation, not a bug: enforcing uniqueness here would require a schema
+    migration, which is out of scope for this PR."""
+    headers = await _auth_headers(client, "admin")
+    payload = {"name": "Central Store", "type": "storage"}
+    first = await client.post("/api/v1/locations", headers=headers, json=payload)
+    second = await client.post("/api/v1/locations", headers=headers, json=payload)
+    assert first.status_code == 201
+    assert second.status_code == 201
+
+
+# ---------------------------------------------------------------------------
+# Invalid input
+# ---------------------------------------------------------------------------
+
+
+async def test_malformed_department_id_query_param_returns_400(client, seeded_users):
+    headers = await _auth_headers(client, "admin")
+    resp = await client.get("/api/v1/equipment", headers=headers, params={"department_id": "not-a-uuid"})
+    assert resp.status_code == 400
+    body = resp.json()
+    _assert_safe_envelope(body, 400)
+    assert body["code"] == "INVALID_INPUT"
+
+
+async def test_malformed_transaction_ward_id_query_param_returns_400(client, seeded_users):
+    headers = await _auth_headers(client, "admin")
+    resp = await client.get("/api/v1/transactions", headers=headers, params={"ward_id": "garbage"})
+    assert resp.status_code == 400
+    _assert_safe_envelope(resp.json(), 400)
+
+
+async def test_unknown_role_on_create_user_returns_400(client, seeded_users):
+    headers = await _auth_headers(client, "admin")
+    resp = await client.post(
+        "/api/v1/users",
+        headers=headers,
+        json={
+            "employee_code": "NEWUSR001",
+            "full_name": "New User",
+            "email": "new-user@mep-hospital-test.dev",
+            "password": "Password@123",
+            "role_name": "not_a_real_role",
+        },
+    )
+    assert resp.status_code == 400
+    body = resp.json()
+    _assert_safe_envelope(body, 400)
+    assert body["code"] == "INVALID_INPUT"
+
+
+async def test_update_nonexistent_user_returns_404(client, seeded_users):
+    headers = await _auth_headers(client, "admin")
+    resp = await client.patch(
+        "/api/v1/users/00000000-0000-0000-0000-000000000000", headers=headers, json={"full_name": "Nobody"}
+    )
+    assert resp.status_code == 404
+    body = resp.json()
+    _assert_safe_envelope(body, 404)
+    assert body["code"] == "RESOURCE_NOT_FOUND"
+
+
+async def test_unknown_return_condition_returns_400_not_500(client, seeded_users):
+    admin_headers = await _auth_headers(client, "admin")
+    nurse_headers = await _auth_headers(client, "ward_nurse")
+
+    eq_resp = await client.post(
+        "/api/v1/equipment", headers=admin_headers, json={"asset_number": "COND-0001", "equipment_name": "Monitor"}
+    )
+    assert eq_resp.status_code == 201
+    equipment = eq_resp.json()
+
+    borrow_resp = await client.post(
+        "/api/v1/borrow",
+        headers=nurse_headers,
+        json={"equipment_qr": equipment["qr_code_value"], "borrower_name": "Nurse Test"},
+    )
+    assert borrow_resp.status_code == 201
+    tx = borrow_resp.json()
+
+    return_resp = await client.post(
+        f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"condition": "not-a-real-condition"}
+    )
+    assert return_resp.status_code == 400
+    body = return_resp.json()
+    _assert_safe_envelope(body, 400)
+    assert body["code"] == "INVALID_INPUT"
+
+
+async def test_malformed_equipment_id_in_borrow_returns_400_not_500(client, seeded_users):
+    nurse_headers = await _auth_headers(client, "ward_nurse")
+    resp = await client.post(
+        "/api/v1/borrow",
+        headers=nurse_headers,
+        json={"equipment_id": "not-a-uuid", "borrower_name": "Nurse Test"},
+    )
+    assert resp.status_code == 400
+    _assert_safe_envelope(resp.json(), 400)
+
+
+# ---------------------------------------------------------------------------
+# Transaction / rollback safety
+# ---------------------------------------------------------------------------
+
+
+async def test_rollback_after_duplicate_department_leaves_session_usable(client, seeded_users):
+    headers = await _auth_headers(client, "admin")
+    payload = {"code": "ROLLBACK1", "name": "First"}
+    first = await client.post("/api/v1/departments", headers=headers, json=payload)
+    assert first.status_code == 201
+
+    duplicate = await client.post("/api/v1/departments", headers=headers, json=payload)
+    assert duplicate.status_code == 409
+
+    # The session used to serve the failed request must not be left broken —
+    # an unrelated, well-formed request right after it must succeed normally.
+    retry = await client.post("/api/v1/departments", headers=headers, json={"code": "ROLLBACK2", "name": "Second"})
+    assert retry.status_code == 201, retry.text
+
+    listing = await client.get("/api/v1/departments", headers=headers)
+    assert listing.status_code == 200
+    codes = {d["code"] for d in listing.json()}
+    assert {"ROLLBACK1", "ROLLBACK2"} <= codes
+
+
+async def test_no_partial_row_remains_after_duplicate_equipment_failure(client, seeded_users, db_session):
+    from app.models.equipment import Equipment
+
+    headers = await _auth_headers(client, "admin")
+    payload = {"asset_number": "NOPARTIAL-0001", "equipment_name": "Ultrasound"}
+    first = await client.post("/api/v1/equipment", headers=headers, json=payload)
+    assert first.status_code == 201
+
+    second = await client.post("/api/v1/equipment", headers=headers, json=payload)
+    assert second.status_code == 409
+
+    result = await db_session.execute(select(Equipment).where(Equipment.asset_number == "NOPARTIAL-0001"))
+    rows = result.scalars().all()
+    assert len(rows) == 1, "duplicate-create attempt must not leave a second/partial row behind"
+
+
+async def test_no_audit_log_entry_created_for_failed_duplicate_equipment(client, seeded_users, db_session):
+    from app.models.audit import AuditLog
+
+    headers = await _auth_headers(client, "admin")
+    payload = {"asset_number": "NOAUDIT-0001", "equipment_name": "X-Ray"}
+    first = await client.post("/api/v1/equipment", headers=headers, json=payload)
+    assert first.status_code == 201
+
+    before = await db_session.execute(select(AuditLog).where(AuditLog.entity_type == "equipment"))
+    count_before = len(before.scalars().all())
+
+    second = await client.post("/api/v1/equipment", headers=headers, json=payload)
+    assert second.status_code == 409
+
+    after = await db_session.execute(select(AuditLog).where(AuditLog.entity_type == "equipment"))
+    count_after = len(after.scalars().all())
+    assert count_after == count_before, "a failed create must not produce an audit entry for it"
+
+
+async def test_existing_successful_paths_still_work_after_exception_handling_changes(client, seeded_users):
+    headers = await _auth_headers(client, "admin")
+    resp = await client.post(
+        "/api/v1/equipment", headers=headers, json={"asset_number": "OK-0001", "equipment_name": "Working Pump"}
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["status"] == "available"
+    assert body["qr_code_value"] == "MEP:OK-0001"
+
+
+# ---------------------------------------------------------------------------
+# Unexpected (non-domain) errors
+# ---------------------------------------------------------------------------
+
+
+async def _raw_client():
+    """A second client for the same app, sharing whatever dependency_overrides
+    the `client` fixture already installed, but with raise_app_exceptions=False.
+
+    Starlette's ServerErrorMiddleware always re-raises after sending a 500
+    response (so real ASGI servers can log it) — httpx's ASGITransport
+    re-raises that into the caller by default, which would make these tests
+    fail on the exception itself instead of letting us inspect the response
+    it already sent. Production servers (uvicorn etc.) don't have this
+    behavior; it's a test-transport-only quirk.
+    """
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app as fastapi_app
+
+    transport = ASGITransport(app=fastapi_app, raise_app_exceptions=False)
+    return AsyncClient(transport=transport, base_url="http://test")
+
+
+async def test_unexpected_exception_returns_safe_generic_envelope_not_traceback(client, seeded_users, monkeypatch):
+    from app.api.v1 import equipment as equipment_module
+
+    async def boom(*_args, **_kwargs):
+        raise RuntimeError("super secret internal detail that must never reach the client")
+
+    monkeypatch.setattr(equipment_module.equipment_crud, "search", boom)
+
+    headers = await _auth_headers(client, "admin")
+    async with await _raw_client() as raw_client:
+        resp = await raw_client.get("/api/v1/equipment", headers=headers)
+
+    assert resp.status_code == 500
+    body = resp.json()
+    _assert_safe_envelope(body, 500)
+    assert body["code"] == "INTERNAL_ERROR"
+    assert "super secret internal detail" not in resp.text
+    assert "RuntimeError" not in resp.text
+    assert "Traceback" not in resp.text
+
+
+async def test_unexpected_exception_is_logged_server_side(client, seeded_users, monkeypatch, caplog):
+    from app.api.v1 import equipment as equipment_module
+
+    async def boom(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(equipment_module.equipment_crud, "search", boom)
+
+    headers = await _auth_headers(client, "admin")
+    with caplog.at_level(logging.ERROR, logger="app.main"):
+        async with await _raw_client() as raw_client:
+            resp = await raw_client.get("/api/v1/equipment", headers=headers)
+
+    assert resp.status_code == 500
+    assert any("Unhandled exception" in r.message for r in caplog.records)
+
+
+async def test_handled_domain_error_does_not_log_a_full_traceback(client, seeded_users, caplog):
+    headers = await _auth_headers(client, "admin")
+    with caplog.at_level(logging.INFO, logger="app.main"):
+        resp = await client.get("/api/v1/equipment", headers=headers, params={"department_id": "bad-uuid"})
+
+    assert resp.status_code == 400
+    info_records = [r for r in caplog.records if r.name == "app.main"]
+    assert info_records, "expected a handled-error log record"
+    for record in info_records:
+        assert record.exc_info is None, "handled application errors must not log a stack trace"

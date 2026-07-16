@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, require_roles
+from app.core.db_errors import translate_integrity_error
 from app.core.exceptions import EquipmentNotFoundError
 from app.core.redis import cache_delete_prefix
 from app.crud import audit as audit_crud
@@ -20,6 +21,12 @@ from app.schemas.equipment import (
     EquipmentUpdate,
 )
 from app.services.qr_service import build_qr_value, generate_qr_png
+from app.utils.parsing import parse_uuid
+
+EQUIPMENT_CONFLICT_MESSAGE = (
+    "Equipment with a conflicting asset number, serial number, or QR code already exists, "
+    "or a referenced category/department/location does not exist."
+)
 
 router = APIRouter(prefix="/equipment", tags=["equipment"])
 
@@ -45,8 +52,8 @@ async def list_equipment(
         db,
         q=q,
         status=status,
-        department_id=uuid.UUID(department_id) if department_id else None,
-        category_id=uuid.UUID(category_id) if category_id else None,
+        department_id=parse_uuid(department_id, "department_id"),
+        category_id=parse_uuid(category_id, "category_id"),
         limit=limit,
         cursor=cursor,
     )
@@ -129,7 +136,17 @@ async def create_equipment(
 ):
     data = payload.model_dump()
     data["qr_code_value"] = build_qr_value(payload.asset_number)
-    equipment = await equipment_crud.create(db, data=data)
+
+    # A separate dict for the ORM call: FK fields need real UUID objects, but
+    # `data` itself is reused below as the audit log's after_data, which is
+    # JSON-serialized and must keep plain strings (uuid.UUID isn't
+    # JSON-serializable by the default encoder).
+    create_data = dict(data)
+    for key in ("category_id", "department_owner_id", "current_location_id"):
+        create_data[key] = parse_uuid(data.get(key), key)
+
+    async with translate_integrity_error(db, EQUIPMENT_CONFLICT_MESSAGE):
+        equipment = await equipment_crud.create(db, data=create_data)
     ip, ua = _client_meta(request)
     await audit_crud.create(
         db,
@@ -159,7 +176,14 @@ async def update_equipment(
     if equipment is None:
         raise EquipmentNotFoundError("Equipment not found")
     before = _serialize(equipment)
-    equipment = await equipment_crud.update(db, equipment, data=payload.model_dump(exclude_unset=True))
+
+    update_data = payload.model_dump(exclude_unset=True)
+    for key in ("category_id", "department_owner_id", "current_location_id"):
+        if key in update_data:
+            update_data[key] = parse_uuid(update_data[key], key)
+
+    async with translate_integrity_error(db, EQUIPMENT_CONFLICT_MESSAGE):
+        equipment = await equipment_crud.update(db, equipment, data=update_data)
     ip, ua = _client_meta(request)
     await audit_crud.create(
         db,

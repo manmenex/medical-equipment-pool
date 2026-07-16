@@ -30,3 +30,13 @@ class TransactionAlreadyReturnedError(DomainError):
 class DuplicateError(DomainError):
     code = "DUPLICATE"
     status_code = 409
+
+
+class ResourceNotFoundError(DomainError):
+    code = "RESOURCE_NOT_FOUND"
+    status_code = 404
+
+
+class InvalidInputError(DomainError):
+    code = "INVALID_INPUT"
+    status_code = 400

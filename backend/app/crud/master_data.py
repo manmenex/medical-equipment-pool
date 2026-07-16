@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +21,7 @@ async def list_wards(db: AsyncSession) -> list[Ward]:
     return list((await db.execute(select(Ward).order_by(Ward.name))).scalars().all())
 
 
-async def create_ward(db: AsyncSession, *, code: str, name: str, department_id: str | None) -> Ward:
+async def create_ward(db: AsyncSession, *, code: str, name: str, department_id: uuid.UUID | None) -> Ward:
     obj = Ward(code=code, name=name, department_id=department_id)
     db.add(obj)
     await db.flush()

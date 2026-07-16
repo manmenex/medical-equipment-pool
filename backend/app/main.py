@@ -53,9 +53,31 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(DomainError)
     async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
+        # Application/domain errors are expected, handled outcomes (duplicate
+        # keys, not-found, invalid input, business-rule conflicts) — logged
+        # at INFO with just enough context to spot patterns, no traceback.
+        logger.info(
+            "Handled application error: code=%s status=%s path=%s",
+            exc.code,
+            exc.status_code,
+            request.url.path,
+        )
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": exc.message, "code": exc.code, "status": exc.status_code},
+        )
+
+    @app.exception_handler(Exception)
+    async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
+        # Genuinely unexpected errors (not a DomainError, not FastAPI's own
+        # HTTPException/RequestValidationError, which keep their own more
+        # specific handlers). The full exception is logged server-side for
+        # diagnosis; the client only ever sees a safe, generic envelope —
+        # never the exception message, type, or a stack trace.
+        logger.exception("Unhandled exception on path=%s", request.url.path)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "An unexpected error occurred.", "code": "INTERNAL_ERROR", "status": 500},
         )
 
     app.include_router(api_router, prefix=settings.API_V1_PREFIX)

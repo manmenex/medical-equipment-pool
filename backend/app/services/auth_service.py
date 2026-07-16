@@ -58,7 +58,14 @@ async def refresh_access_token(db: AsyncSession, refresh_token: str | None) -> s
     if not await is_refresh_token_valid(payload["jti"], user_id):
         raise InvalidRefreshTokenError("Refresh token has been revoked")
 
-    user = await user_crud.get_by_id(db, uuid.UUID(user_id))
+    try:
+        user = await user_crud.get_by_id(db, uuid.UUID(user_id))
+    except (ValueError, TypeError) as exc:
+        # The "sub" claim is only ever set by this app's own create_refresh_token
+        # (see app.core.security), so a malformed value here indicates token
+        # corruption rather than user input — treated the same as any other
+        # invalid refresh token, not a generic 400.
+        raise InvalidRefreshTokenError("Invalid or expired refresh token") from exc
     if user is None or not user.is_active:
         raise InvalidRefreshTokenError("User not found or inactive")
 
