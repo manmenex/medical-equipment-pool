@@ -13,6 +13,10 @@ AppSheet-based process.
 - `docs/audits/` — the source-of-truth documents listed below.
 - `docs/prompts/` — reusable, role-specific task prompts.
 - `docs/AI_WORKFLOW.md` — the recommended AI-assisted development workflow.
+- `docs/ROADMAP_STATUS.md` — current status of every planned roadmap Pull
+  Request, at a glance.
+- `docs/ARCHITECTURE_DECISIONS.md` — confirmed project-level decisions and
+  their rationale.
 
 # Source of Truth
 
@@ -40,16 +44,45 @@ implementation or review — must respect it:
 - Only the **first receiving ward** is recorded — no ward-to-ward transfer
   tracking.
 - Equipment receipt is a **single atomic operation** (outcome: usable or
-  defective).
+  defective). Receiving an item does **not** indicate cleaning is
+  complete — cleaning may happen before or after receiving, and the
+  system never records cleaning status.
 - There is **no separate cleaning workflow or cleaning status.**
 - There is **no patient tracking** (no patient name, HN/MRN, bed number,
-  named borrower, or due-date/overdue workflow).
+  named borrower, or due-date/overdue workflow). Patient transfers
+  between wards are not tracked.
+- Ward staff do not use this application — Equipment Pool staff are its
+  only users.
 - There is **no MEMS integration.**
 - There is **no PM (preventive maintenance) workflow.**
 - There is **no calibration workflow.**
 - There is **no recall workflow.**
 
 Do not introduce any of the above unless a task explicitly asks for it.
+
+# Confirmed Future Workflow Direction
+
+These are confirmed hospital decisions for **future** work — not yet
+scheduled to a specific roadmap Pull Request. Do not build them ahead of
+their planned PR (Scope Discipline, below), but do not design current
+work in a way that would contradict or block them either. See
+`docs/ROADMAP_STATUS.md` for scheduling status and
+`docs/ARCHITECTURE_DECISIONS.md` for the full rationale.
+
+- **Shift Sessions.** Routine dispatch rounds still exist operationally,
+  but future implementation will replace hard-coded transaction times
+  with flexible DAY and NIGHT Shift Sessions: opening/closing times are
+  flexible, multiple staff may create transactions within one open
+  session, and every transaction must record the authenticated operator
+  regardless of which session it falls under.
+- **Standby Snapshots.** Future reporting will support Day and Night
+  Standby Snapshots recording department-level equipment counts. A
+  snapshot is a distinct, manually-recorded event — it is not derived
+  automatically from transaction history.
+- **Deployment constraint.** Production deployment must not assume direct
+  access to hospital-managed servers. The architecture should remain
+  deployable to an approved managed platform while remaining a
+  browser/PWA-based application.
 
 # Scope Discipline
 

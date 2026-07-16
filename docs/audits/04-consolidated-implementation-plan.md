@@ -37,7 +37,7 @@ The full confirmed requirements are the input to this task and are not reproduce
 | Scope | Equipment Pool only (primarily infusion pumps + select shared equipment). No MEMS, patient tracking, HN/MRN, bed tracking, ward-to-ward transfer tracking, PM, calibration, recall, cleaning-workflow tracking, or hospital-wide asset lifecycle. |
 | Primary identifier | ME Code (= source `ID CODE`, e.g. `BCM02719`), confirmed — not an assumption. Unique, required, indexed, text, case-normalized, leading zeros preserved. Distinct from UUID PK, Item No., Asset ID, Serial Number, QR payload. |
 | Roles | Exactly 3: Administrator, Equipment Pool Staff, Read-Only/Supervisor. No ward users, no named borrowers. |
-| Dispatch types | Exactly 2: `ROUTINE_ROUND` (06:00/11:00/15:00/21:00) and `ON_DEMAND`. |
+| Dispatch types | Exactly 2: `ROUTINE_ROUND` (06:00/11:00/15:00/21:00) and `ON_DEMAND`. This fixed-round design is confirmed for MVP (PR7); flexible DAY/NIGHT Shift Sessions are a confirmed future direction, not yet scheduled to a PR — see `AGENTS.md` and `docs/ROADMAP_STATUS.md`. |
 | Ward recording | First receiving ward/department only, required, immutable except via an audited correction action. No later-transfer tracking. |
 | Return/receipt | **One atomic operation**, not two. Outcome is binary: **usable** (→ `AVAILABLE_AT_POOL`) or **defective** (→ `UNAVAILABLE_DEFECTIVE`). No `PENDING_CLEANING`, no `CLEANING`, no separate cleaning-confirmation step. |
 | Equipment states | Exactly 4: `AVAILABLE_AT_POOL`, `ISSUED_TO_WARD`, `UNAVAILABLE_DEFECTIVE`, `DECOMMISSIONED`. |
@@ -245,7 +245,7 @@ Per the confirmed requirements and this reconciliation:
 ### Group 3 — Domain Model Foundation
 
 #### PR7 — Dispatch record model: OPEN/CLOSED, dispatch type, routine round, field cleanup
-- **Objective:** Rename transaction states to `OPEN`/`CLOSED`, add `dispatch_type` and `routine_round`, make `ward_id` required, remove the `borrower_name` requirement, remove `due_at`/overdue from the active write path, remove `quantity` from the dispatch write path.
+- **Objective:** Rename transaction states to `OPEN`/`CLOSED`, add `dispatch_type` and `routine_round`, make `ward_id` required, remove the `borrower_name` requirement, remove `due_at`/overdue from the active write path, remove `quantity` from the dispatch write path. The fixed-round enum here is an intentional MVP simplification, not a permanent design choice — the confirmed future Shift Session direction (see `AGENTS.md`) builds on top of the `dispatch_type`/round concept rather than requiring this PR to be reworked; PR7's own scope does not change to accommodate it.
 - **Included findings:** Workflow Audit M1/M2/M3/M8 (Critical/High), confirmed requirements §4/§7, Backend Audit 14.2 (Critical), Backend Audit W.1 (superseded, B.2).
 - **Expected files/modules:** `app/models/transaction.py` (status rename, new `dispatch_type`/`routine_round` columns, `borrower_name` made nullable, `quantity` dropped from write path or hardcoded), `app/schemas/transaction.py` (`BorrowRequest` contract change), `app/services/borrow_service.py` (`due_at`/overdue logic removed), `app/worker/scheduler.py` (`check_overdue_returns` job disabled/removed).
 - **Database migration impact:** New `dispatch_type`/`routine_round` columns; `borrower_name` becomes nullable going forward (existing values preserved for history, per §9); existing `overdue` rows explicitly reviewed and converted to `OPEN` or `CLOSED` based on actual return data (§9); `ward_id` becomes required for *new* rows only (existing null `ward_id` rows are flagged, not auto-assigned — §9).
@@ -589,6 +589,14 @@ These require hospital/product confirmation before or during implementation; non
 9. **"Eligible for Equipment Pool operation" definition (PR5).** The corrected ME Code migration strategy scopes the `NOT NULL` constraint to records the hospital confirms are still active in Pool operation, deliberately excluding legacy/retired/test records from blocking that constraint. This definition (which records count as "eligible") has not been supplied and needs a hospital-confirmed rule before PR5's constraint step can be finalized — until then, the application-layer dispatch-block-on-null-`me_code` rule is the operative safety mechanism regardless.
 10. **Best-available reconciliation key for `me_code` backfill (PR5).** This plan proposes matching existing DB records against the authoritative spreadsheet via `serial_number` and/or `equipment_name`+`model`, since no more reliable shared key currently exists between the two datasets — this should be confirmed or improved once the actual spreadsheet is available for analysis, rather than assumed correct in advance.
 11. **Daily-reset requirement for transaction numbers (PR4).** This plan explicitly does not assume one was confirmed and proceeds with a globally monotonic sequence instead. If the hospital later confirms an actual operational need for the numeric suffix to restart daily, the fallback per-date-counter design noted in PR4 should be implemented instead — this is not currently planned.
+
+**Note — distinct from the open questions above:** Shift Sessions, Standby
+Snapshots, and the managed-deployment constraint are now **confirmed**
+hospital decisions (not open questions), but are not yet scheduled to a
+specific PR in this plan. They do not change PR1–PR15's scope or order.
+See `AGENTS.md` ("Confirmed Future Workflow Direction"),
+`docs/ROADMAP_STATUS.md` (scheduling status), and
+`docs/ARCHITECTURE_DECISIONS.md` (rationale) — not duplicated here.
 
 ---
 
