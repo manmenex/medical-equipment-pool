@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -5,12 +6,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.v1.router import api_router
-from app.core.config import settings
+from app.core.config import InsecureConfigurationError, settings, validate_production_secrets
 from app.core.exceptions import DomainError
 from app.core.logging import configure_logging
 from app.worker.scheduler import start_scheduler, stop_scheduler
 
 configure_logging(settings.DEBUG)
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -21,6 +24,15 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    try:
+        validate_production_secrets(settings)
+    except InsecureConfigurationError:
+        logger.critical(
+            "Refusing to start: insecure production configuration detected. "
+            "See the exception message below for the specific issue."
+        )
+        raise
+
     app = FastAPI(
         title=settings.PROJECT_NAME,
         docs_url="/api/docs",
