@@ -1,5 +1,10 @@
 # Security Best Practices
 
+> **Status: Legacy design reference.** Some proposals and scale targets in
+> this document predate confirmed guardrails and may be superseded. Use
+> `AGENTS.md`, `PROJECT_PLAYBOOK.md`, `ARCHITECTURE_DECISIONS.md`, and the
+> consolidated implementation plan for current authority.
+
 ## Authentication & Authorization
 - **JWT** access tokens (15 min TTL, signed HS256 with `JWT_SECRET_KEY`, rotate secret via env update) + refresh tokens (7 days, stored **httpOnly, Secure, SameSite=Strict** cookie — never in localStorage, mitigates XSS token theft)
 - Refresh tokens tracked server-side (Redis, `refresh:{jti}` → user_id) so `/auth/logout` and admin-forced logout actually revoke sessions

@@ -1,5 +1,10 @@
 # Deployment Guide
 
+> **Status: Legacy design reference.** Some proposals and scale targets in
+> this document predate confirmed guardrails and may be superseded. Use
+> `AGENTS.md`, `PROJECT_PLAYBOOK.md`, `ARCHITECTURE_DECISIONS.md`, and the
+> consolidated implementation plan for current authority.
+
 ## 1. Prerequisites
 - Docker Engine 24+ and Docker Compose v2
 - A server/VM with ≥ 4 vCPU, 8GB RAM for ~100 concurrent users (scale horizontally beyond that)

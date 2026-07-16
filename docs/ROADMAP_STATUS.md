@@ -6,7 +6,7 @@ authoritative source for scope, ordering, and acceptance criteria). This
 document tracks **status only**; it does not duplicate the plan itself.
 
 Last updated: Roadmap PR3 implementation is in progress as Draft GitHub PR
-#7; governance scope alignment is in progress separately.
+#7; its documentation-only scope alignment was merged in GitHub PR #8.
 
 ---
 
@@ -41,9 +41,9 @@ equipment coverage, safe request context, additive migration, authorized
 bounded reads, and PostgreSQL-backed evidence.
 
 Governance note:
-The documentation-only governance change that formalizes this expanded
-Roadmap PR3 scope is a separate task/PR. Its GitHub PR number is not a
-Roadmap PR number and does not create or renumber a roadmap item.
+GitHub PR #8 merged the documentation-only scope alignment. Its GitHub PR
+number is not a Roadmap PR number and did not create or renumber a roadmap
+item.
 
 ----------------------
 
@@ -164,9 +164,8 @@ Observability and Schema Hygiene.
 ## Current Milestone
 
 - **Roadmap PR3 — Audit Logging Framework.** Implementation is in progress
-  as Draft GitHub PR #7. Scope governance has been identified and is being
-  aligned in a separate documentation-only change. PR3 is not yet approved,
-  merge-ready, or merged.
+  as Draft GitHub PR #7. Its governance scope alignment was completed in
+  merged GitHub PR #8. PR3 is not yet approved, merge-ready, or merged.
 
 ## Upcoming Milestone
 
