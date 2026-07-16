@@ -386,20 +386,50 @@ async def test_audit_write_failure_after_flush_leaves_no_equipment_or_audit_row(
     client, seeded_users, db_engine, monkeypatch
 ):
     """Simulates the audit-log INSERT itself failing *after* the business row
-    (equipment) has already been flushed within the same request/session.
-    Since db.commit() is only ever called once, after both writes succeed,
-    an audit-log failure here must roll back the equipment row too — proven
-    by re-querying from a completely fresh session/connection afterward."""
+    (equipment) has already been flushed within the same request/session, via
+    the real POST /api/v1/equipment endpoint (not a standalone helper) — the
+    actual API/service transaction boundary. Since db.commit() is only ever
+    called once, after both writes succeed, an audit-log failure here must
+    roll back the equipment row too.
+
+    Verifies, in order: the client gets a safe generic envelope with no
+    trace of the injected exception; the request's own session was rolled
+    back and/or disposed (not merely inferred — the AsyncSession methods
+    that do this are tracked directly); a fresh session opened afterward
+    sees neither the equipment row nor an audit row; and a completely
+    ordinary follow-up request still succeeds through a fresh session,
+    proving the failure didn't leave the database or connection unusable."""
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.api.v1 import equipment as equipment_module
     from app.models.audit import AuditLog
     from app.models.equipment import Equipment
 
+    injected_marker = "simulated audit-log write failure — must never reach the client"
+
     async def failing_audit_create(*_args, **_kwargs):
-        raise RuntimeError("simulated audit-log write failure")
+        raise RuntimeError(injected_marker)
 
     monkeypatch.setattr(equipment_module.audit_crud, "create", failing_audit_create)
+
+    # Track every AsyncSession close()/rollback() call for the duration of
+    # this test, so "the request's session was rolled back or safely
+    # disposed" is a direct observation, not an inference from side effects.
+    closed_sessions: list[AsyncSession] = []
+    rolled_back_sessions: list[AsyncSession] = []
+    original_close = AsyncSession.close
+    original_rollback = AsyncSession.rollback
+
+    async def tracking_close(self):
+        closed_sessions.append(self)
+        await original_close(self)
+
+    async def tracking_rollback(self):
+        rolled_back_sessions.append(self)
+        await original_rollback(self)
+
+    monkeypatch.setattr(AsyncSession, "close", tracking_close)
+    monkeypatch.setattr(AsyncSession, "rollback", tracking_rollback)
 
     headers = await _auth_headers(client, "admin")
     async with await _raw_client() as raw_client:
@@ -408,8 +438,25 @@ async def test_audit_write_failure_after_flush_leaves_no_equipment_or_audit_row(
             headers=headers,
             json={"asset_number": "ATOMIC-0001", "equipment_name": "Syringe Pump"},
         )
-    assert resp.status_code == 500
 
+    # 1. Safe error envelope — no raw exception text or stack trace.
+    assert resp.status_code == 500
+    body = resp.json()
+    _assert_safe_envelope(body, 500)
+    assert body["code"] == "INTERNAL_ERROR"
+    assert injected_marker not in resp.text
+    assert "RuntimeError" not in resp.text
+    assert "Traceback" not in resp.text
+    assert "audit_crud" not in resp.text
+
+    # 2. The request's session was rolled back or safely disposed — not
+    # just assumed from the context-manager contract, but observed.
+    assert closed_sessions or rolled_back_sessions, (
+        "expected the request's session to be closed and/or rolled back after the failure"
+    )
+
+    # 3. No business row and no audit row from the failed request, seen
+    # from a completely fresh session/connection.
     session_maker = async_sessionmaker(db_engine, expire_on_commit=False, class_=AsyncSession)
     async with session_maker() as fresh_session:
         equipment_rows = (
@@ -421,3 +468,14 @@ async def test_audit_write_failure_after_flush_leaves_no_equipment_or_audit_row(
 
     assert equipment_rows == [], "equipment row must not survive an audit-write failure in the same request"
     assert audit_rows == [], "no partial/successful audit row should exist either"
+
+    # 4. A subsequent, ordinary request (audit-log creation no longer
+    # failing) succeeds through a fresh session — the earlier failure left
+    # nothing broken behind it.
+    monkeypatch.undo()
+    retry = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "ATOMIC-0002", "equipment_name": "Syringe Pump Retry"},
+    )
+    assert retry.status_code == 201, retry.text
