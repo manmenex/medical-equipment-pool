@@ -11,7 +11,8 @@ AppSheet-based process.
   pytest test suite).
 - `frontend/` — React/TypeScript web client.
 - `docs/audits/` — the source-of-truth documents listed below.
-- `docs/prompts/` — reusable task prompts (e.g. the PR review checklist).
+- `docs/prompts/` — reusable, role-specific task prompts.
+- `docs/AI_WORKFLOW.md` — the recommended AI-assisted development workflow.
 
 # Source of Truth
 
@@ -72,15 +73,20 @@ Do not introduce any of the above unless a task explicitly asks for it.
 - Every review should inspect the tests themselves, not just trust that a
   test suite exists or that the PR description says it passed.
 
-# Codex Roles
+# AI Roles
 
-Codex may be used in different modes depending on the task, for example:
+This repository is designed to be worked on by AI assistants in general,
+not any single vendor's tool. The active role for a given task is
+determined by the task prompt, not by this file. Typical repository
+roles include:
 
-- **Reviewer** — independently reviewing a Pull Request before merge.
-- **Implementation assistant** — writing or modifying application code.
-- **Test author** — adding or extending tests.
-- **Documentation assistant** — writing or updating project documentation.
+- Software Architect
+- Implementation Engineer
+- Independent Reviewer
+- Security Reviewer
+- Test Engineer
+- Documentation Assistant
 
-The task prompt determines the active role. For the reviewer role, see
-`docs/prompts/codex-pr-review.md`, which contains the detailed review
-checklist and required output format.
+Reusable, role-specific prompts live in `docs/prompts/`. For the
+recommended end-to-end development workflow across these roles, see
+`docs/AI_WORKFLOW.md`.
