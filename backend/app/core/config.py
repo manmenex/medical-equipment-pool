@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import AnyUrl
+from pydantic import AnyUrl, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Minimum accepted length for JWT_SECRET_KEY in production. HS256 signing
@@ -65,6 +65,23 @@ class Settings(BaseSettings):
     def allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",") if origin.strip()]
 
+    @field_validator("ENVIRONMENT")
+    @classmethod
+    def _canonicalize_environment(cls, value: str) -> str:
+        """Normalize ENVIRONMENT once, at construction time.
+
+        Every consumer — this module's own production checks, the
+        refresh-token cookie's `secure` flag in app.api.v1.auth, anything
+        added later — reads settings.ENVIRONMENT after this validator runs,
+        so trimming and lowercasing here is the single source of truth.
+        Membership in KNOWN_ENVIRONMENTS is checked later in
+        validate_production_secrets, not here, so that a clear
+        InsecureConfigurationError (routed through app.main's startup
+        logging) is raised at the same point as the other startup checks
+        instead of a raw pydantic ValidationError at import time.
+        """
+        return value.strip().lower()
+
 
 def validate_production_secrets(settings: Settings) -> None:
     """Refuse to run in production with a missing, default, or too-short JWT secret.
@@ -73,16 +90,17 @@ def validate_production_secrets(settings: Settings) -> None:
     InsecureConfigurationError instead of returning a status so the caller
     cannot accidentally ignore the result and continue booting.
     """
-    normalized_environment = settings.ENVIRONMENT.strip().lower()
-
-    if normalized_environment not in KNOWN_ENVIRONMENTS:
+    # settings.ENVIRONMENT is already trimmed and lowercased by
+    # Settings._canonicalize_environment, so this is an exact match against
+    # the canonical value — not a re-normalization.
+    if settings.ENVIRONMENT not in KNOWN_ENVIRONMENTS:
         raise InsecureConfigurationError(
             f"ENVIRONMENT={settings.ENVIRONMENT!r} is not a recognized value. Refusing to start "
             "with an unrecognized environment rather than silently treating it as development. "
             f"Set ENVIRONMENT to one of: {', '.join(sorted(KNOWN_ENVIRONMENTS))}."
         )
 
-    if normalized_environment != "production":
+    if settings.ENVIRONMENT != "production":
         return
 
     if not settings.JWT_SECRET_KEY:

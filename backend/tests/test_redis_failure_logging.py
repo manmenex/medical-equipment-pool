@@ -100,12 +100,45 @@ async def test_no_operation_ever_logs_full_secret_markers(caplog):
     assert "password" not in text.lower()
 
 
-def test_redact_never_returns_the_full_value_but_stays_correlatable():
-    secret = "this-is-a-very-long-sensitive-identifier-marker-value"
-    redacted = redis_module._redact(secret)
-    assert secret not in redacted
-    assert redacted.startswith(secret[:8])
-    # Same input always redacts to the same output, so repeated failures
-    # against the same key/jti can still be correlated across log lines
-    # without ever writing the full identifier.
-    assert redis_module._redact(secret) == redacted
+@pytest.mark.parametrize(
+    # Deliberately uppercase-only / digit-free: the redacted output is a
+    # fixed lowercase template ("sha256:...(len=N)") plus a lowercase hex
+    # digest, so an uppercase input value can never coincidentally collide
+    # with either part — a real substring match here can only mean the
+    # implementation leaked the value itself.
+    "value",
+    ["Z", "ZQ", "ZQXWERT", "ZQXWERTY", "this-is-a-very-long-sensitive-identifier-marker-value"],
+    ids=["one_char", "two_chars", "seven_chars", "exactly_eight_chars", "long_value"],
+)
+def test_redact_never_contains_the_complete_input_regardless_of_length(value):
+    redacted = redis_module._redact(value)
+    assert value not in redacted
+
+
+def test_redact_of_empty_value_does_not_error_and_has_the_expected_shape():
+    redacted = redis_module._redact("")
+    assert redacted.startswith("sha256:")
+    assert "len=0" in redacted
+
+
+def test_redact_is_correlatable_across_repeated_calls_with_the_same_value():
+    value = "repeat-me-please-1234567890"
+    first = redis_module._redact(value)
+    second = redis_module._redact(value)
+    assert first == second
+
+
+def test_redact_distinguishes_different_values():
+    assert redis_module._redact("value-one") != redis_module._redact("value-two")
+
+
+async def test_short_identifier_is_never_fully_present_in_captured_logs(caplog):
+    # Uppercase-only so it cannot coincidentally collide with the lowercase
+    # hex digest or the fixed "sha256:...(len=N)" template (see the
+    # test_redact_never_contains_the_complete_input_regardless_of_length
+    # comment above for the full reasoning).
+    short_jti = "ZQX"
+    with caplog.at_level(logging.WARNING, logger=redis_module.__name__):
+        await redis_module.revoke_refresh_token(short_jti)
+    text = _all_log_text(caplog)
+    assert short_jti not in text

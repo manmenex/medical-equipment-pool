@@ -11,23 +11,20 @@ logger = logging.getLogger(__name__)
 
 _redis_client: redis.Redis | None = None
 
-# How many leading characters of an identifier are safe to show in logs.
-# Cache keys and JTIs are not guaranteed to be free of sensitive content
-# (a cache key may be built from user-supplied data), so full values are
-# never logged — only this short prefix plus a hash for correlation.
-_REDACT_VISIBLE_CHARS = 8
-
 
 def _redact(value: str) -> str:
     """Log-safe representation of a potentially sensitive identifier.
 
-    Keeps a short prefix (enough to eyeball which operation family failed)
-    plus a short hash of the full value, so repeated failures against the
-    same key/jti can be correlated across log lines without ever writing
-    the full identifier.
+    Cache keys and JTIs are not guaranteed to be free of sensitive content
+    (a cache key may be built from user-supplied data), so this never
+    includes any substring of the original value, regardless of its
+    length — only a short SHA-256-derived correlation hash and the input's
+    length, so repeated failures against the same key/jti can still be
+    correlated across log lines without ever writing the identifier itself,
+    even partially.
     """
-    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
-    return f"{value[:_REDACT_VISIBLE_CHARS]}…#{digest}"
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+    return f"sha256:{digest}(len={len(value)})"
 
 
 def get_redis() -> redis.Redis:
