@@ -38,11 +38,17 @@ logger = logging.getLogger(__name__)
 # permanent audit record. Only a value that already fits the column and a
 # conservative safe charset is reused verbatim; anything else falls back to
 # a freshly generated ID exactly as if the header had been absent.
-_SAFE_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+#
+# Matched with fullmatch(), not match(): `$` (without re.MULTILINE) matches
+# either the end of the string or just before a trailing "\n" — so
+# match(r"^...$") on "valid_id\n" incorrectly succeeds and would let a
+# newline reach the database. fullmatch() requires the whole string to
+# match with no such exception.
+_SAFE_REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
 
 def _safe_inbound_id(value: str | None) -> str | None:
-    if value and _SAFE_REQUEST_ID_PATTERN.match(value):
+    if value and _SAFE_REQUEST_ID_PATTERN.fullmatch(value):
         return value
     return None
 

@@ -45,7 +45,15 @@ async def list_logs(
     limit: int = 50,
     offset: int = 0,
 ) -> list[AuditLog]:
-    stmt = select(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit).offset(offset)
+    # Deterministic ordering: created_at alone can tie (same-millisecond
+    # writes), which would make pagination across pages non-deterministic —
+    # id is a stable, always-unique tiebreaker.
+    stmt = (
+        select(AuditLog)
+        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
     if entity_type:
         stmt = stmt.where(AuditLog.entity_type == entity_type)
     if user_id:

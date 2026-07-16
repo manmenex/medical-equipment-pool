@@ -3,7 +3,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from app.core.audit import correlation_hash, redact_sensitive
+from app.core.audit import redact_sensitive
 from app.models.audit import AuditLog
 from tests.conftest import login
 
@@ -145,7 +145,60 @@ async def test_unsafe_characters_in_inbound_request_id_are_rejected(client, seed
     assert rows[0].request_id != unsafe
 
 
-async def test_login_failure_wrong_password_records_actor(client, seeded_users, db_session):
+async def test_user_agent_is_bounded_and_sanitized(client, seeded_users, db_session):
+    oversized_ua = "X" * 1000
+    resp = await client.post(
+        "/api/v1/auth/login",
+        headers={"User-Agent": oversized_ua},
+        json={"identifier": "ADMIN001", "password": "Password@123"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    rows = await _rows(db_session, action="login_success", entity_type="auth")
+    assert len(rows) == 1
+    assert rows[0].user_agent is not None
+    assert len(rows[0].user_agent) <= 255
+
+
+async def test_user_agent_control_characters_are_stripped(client, seeded_users, db_session):
+    unsafe_ua = "Mozilla/5.0\r\nX-Injected: evil\x00control"
+    resp = await client.post(
+        "/api/v1/auth/login",
+        headers={"User-Agent": unsafe_ua},
+        json={"identifier": "ADMIN001", "password": "Password@123"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    rows = await _rows(db_session, action="login_success", entity_type="auth")
+    assert len(rows) == 1
+    assert "\r" not in rows[0].user_agent
+    assert "\n" not in rows[0].user_agent
+    assert "\x00" not in rows[0].user_agent
+
+
+async def test_trailing_newline_inbound_request_id_is_rejected(client, seeded_users, db_session):
+    # Regression for match() vs fullmatch(): `$` (without re.MULTILINE)
+    # matches either end-of-string or just before a trailing "\n", so a
+    # pattern anchored with `^...$` and checked via .match() would wrongly
+    # accept "validvalue\n" and let the newline reach the database.
+    # fullmatch() must reject this.
+    trailing_newline = "a" * 30 + "\n"
+    resp = await client.post(
+        "/api/v1/auth/login",
+        headers={"X-Request-ID": trailing_newline},
+        json={"identifier": "ADMIN001", "password": "Password@123"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["x-request-id"] != trailing_newline
+    assert "\n" not in resp.headers["x-request-id"]
+
+    rows = await _rows(db_session, action="login_success", entity_type="auth")
+    assert len(rows) == 1
+    assert rows[0].request_id != trailing_newline
+    assert "\n" not in rows[0].request_id
+
+
+async def test_login_failure_wrong_password_known_account_has_null_actor(client, seeded_users, db_session):
     resp = await client.post(
         "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "wrong-password"}
     )
@@ -153,14 +206,17 @@ async def test_login_failure_wrong_password_records_actor(client, seeded_users, 
 
     rows = await _rows(db_session, action="login_failure", entity_type="auth")
     assert len(rows) == 1
-    assert rows[0].user_id == seeded_users["admin"].id
-    # The raw identifier must never be persisted — only a non-reversible
-    # correlation hash, since it may be an email address.
-    assert rows[0].after_data == {"identifier_hash": correlation_hash("ADMIN001")}
-    assert "ADMIN001" not in str(rows[0].after_data)
+    # Per ADR-0001: the actor is never the authentication target, even for
+    # a known account — only the *subject* (entity_id) may reference it.
+    assert rows[0].user_id is None
+    assert rows[0].entity_id == seeded_users["admin"].id
+    # No form of the submitted identifier is persisted — not raw, not
+    # hashed, not in any other representation.
+    assert rows[0].after_data is None
+    assert rows[0].before_data is None
 
 
-async def test_login_failure_unknown_identifier_has_no_actor(client, seeded_users, db_session):
+async def test_login_failure_unknown_identifier_has_null_actor_and_null_entity(client, seeded_users, db_session):
     resp = await client.post(
         "/api/v1/auth/login", json={"identifier": "NOBODY001", "password": "wrong-password"}
     )
@@ -169,8 +225,13 @@ async def test_login_failure_unknown_identifier_has_no_actor(client, seeded_user
     rows = await _rows(db_session, action="login_failure", entity_type="auth")
     assert len(rows) == 1
     assert rows[0].user_id is None
-    assert rows[0].after_data == {"identifier_hash": correlation_hash("NOBODY001")}
-    assert "NOBODY001" not in str(rows[0].after_data)
+    assert rows[0].entity_id is None
+    assert rows[0].after_data is None
+    assert rows[0].before_data is None
+    # The unknown identifier must not appear anywhere in the persisted row,
+    # in any representation (raw, hashed, or otherwise).
+    row_repr = f"{rows[0].after_data}{rows[0].before_data}{rows[0].user_id}{rows[0].entity_id}"
+    assert "NOBODY001" not in row_repr
 
 
 async def test_login_succeeds_even_if_audit_write_fails(client, seeded_users, db_session, monkeypatch):
@@ -354,15 +415,11 @@ async def test_equipment_create_audit_row_has_request_and_correlation_ids(client
 
 
 async def test_equipment_update_audit_row_has_before_and_after(client, seeded_users, db_session):
-    # NOTE: PATCH /api/v1/equipment/{id} currently returns a spurious 500
-    # after the update has already committed successfully — a pre-existing
-    # bug in _serialize()'s second call at the end of update_equipment
-    # (app/api/v1/equipment.py), unrelated to and unchanged by PR3 (present
-    # identically in the pre-PR3 base branch; see the PR description's
-    # Known Limitations). This test uses _raw_client() to observe that
-    # response without failing on the injected exception, and verifies the
-    # thing PR3 actually owns — that the business change and its audit row
-    # committed correctly — via a fresh session, independent of that bug.
+    # PATCH /api/v1/equipment/{id} previously returned a spurious 500 after
+    # the update had already committed (MissingGreenlet — see
+    # Equipment.__mapper_args__["eager_defaults"] in app/models/equipment.py
+    # and its dedicated fix/regression tests in test_equipment.py). Now that
+    # it's fixed, this must be a strict 200, not a tolerated 500.
     headers = await _auth_headers(client, "admin")
     create_resp = await client.post(
         "/api/v1/equipment",
@@ -372,13 +429,13 @@ async def test_equipment_update_audit_row_has_before_and_after(client, seeded_us
     assert create_resp.status_code == 201
     equipment_id = create_resp.json()["id"]
 
-    async with await _raw_client() as raw_client:
-        update_resp = await raw_client.patch(
-            f"/api/v1/equipment/{equipment_id}",
-            headers=headers,
-            json={"equipment_name": "New Name"},
-        )
-    assert update_resp.status_code in (200, 500), update_resp.text
+    update_resp = await client.patch(
+        f"/api/v1/equipment/{equipment_id}",
+        headers=headers,
+        json={"equipment_name": "New Name"},
+    )
+    assert update_resp.status_code == 200, update_resp.text
+    assert update_resp.json()["equipment_name"] == "New Name"
 
     rows = await _rows(
         db_session, action="update", entity_type="equipment", entity_id=uuid.UUID(equipment_id)
@@ -396,8 +453,8 @@ async def test_equipment_update_audit_row_has_before_and_after(client, seeded_us
 
 
 async def test_equipment_status_change_audit_row_has_correct_action_and_actor(client, seeded_users, db_session):
-    # Same pre-existing response-serialization bug as the update test above
-    # — the status change itself and its audit row still commit correctly.
+    # Same MissingGreenlet fix as the update test above — must be a strict
+    # 200 now, not a tolerated 500.
     headers = await _auth_headers(client, "admin")
     create_resp = await client.post(
         "/api/v1/equipment",
@@ -407,13 +464,13 @@ async def test_equipment_status_change_audit_row_has_correct_action_and_actor(cl
     assert create_resp.status_code == 201
     equipment_id = create_resp.json()["id"]
 
-    async with await _raw_client() as raw_client:
-        status_resp = await raw_client.post(
-            f"/api/v1/equipment/{equipment_id}/status",
-            headers=headers,
-            json={"status": "repair", "reason": "Needs a new wheel"},
-        )
-    assert status_resp.status_code in (200, 500), status_resp.text
+    status_resp = await client.post(
+        f"/api/v1/equipment/{equipment_id}/status",
+        headers=headers,
+        json={"status": "repair", "reason": "Needs a new wheel"},
+    )
+    assert status_resp.status_code == 200, status_resp.text
+    assert status_resp.json()["status"] == "repair"
 
     rows = await _rows(
         db_session, action="status_change", entity_type="equipment", entity_id=uuid.UUID(equipment_id)
@@ -559,6 +616,35 @@ async def test_audit_log_listing_limit_is_bounded(client, seeded_users):
     headers = await _auth_headers(client, "admin")
     resp = await client.get("/api/v1/audit-logs", headers=headers, params={"limit": 100000})
     assert resp.status_code == 422, "an unbounded limit must be rejected, not silently accepted"
+
+
+async def test_audit_log_listing_limit_must_be_at_least_one(client, seeded_users):
+    headers = await _auth_headers(client, "admin")
+    for bad_limit in (0, -1):
+        resp = await client.get("/api/v1/audit-logs", headers=headers, params={"limit": bad_limit})
+        assert resp.status_code == 422, f"limit={bad_limit} must be rejected, not treated as 'no results'"
+
+
+async def test_audit_log_listing_ordering_is_deterministic(client, seeded_users):
+    """Same query, called twice with no state change in between, must
+    return rows in the same order — proves the tiebreaker (id) makes
+    ordering stable even when multiple rows share a created_at value."""
+    headers = await _auth_headers(client, "admin")
+    for i in range(4):
+        resp = await client.post(
+            "/api/v1/departments", headers=headers, json={"code": f"ORD{i}", "name": f"Order Dept {i}"}
+        )
+        assert resp.status_code == 201
+
+    first = await client.get(
+        "/api/v1/audit-logs", headers=headers, params={"entity_type": "department", "limit": 50}
+    )
+    second = await client.get(
+        "/api/v1/audit-logs", headers=headers, params={"entity_type": "department", "limit": 50}
+    )
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert [row["id"] for row in first.json()] == [row["id"] for row in second.json()]
 
 
 async def test_audit_log_listing_supports_offset_pagination(client, seeded_users):

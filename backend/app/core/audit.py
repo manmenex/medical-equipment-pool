@@ -13,7 +13,6 @@ transient audit-write failure can never turn a legitimate authentication
 attempt into a 500 — see that function's docstring for the rationale.
 """
 
-import hashlib
 import logging
 import uuid
 
@@ -83,13 +82,18 @@ def redact_sensitive(data):
     return data
 
 
-def correlation_hash(value: str) -> str:
-    """Non-reversible, correlatable tag for a value that must not be stored
-    raw (e.g. a login identifier on a failed attempt) — the same input
-    always hashes to the same tag, so repeated attempts against one
-    account are still visible without ever persisting the raw value."""
-    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
-    return f"sha256:{digest}"
+# audit_logs.user_agent is String(255) and client-controlled (an arbitrary
+# request header) — never persisted unbounded or unsanitized.
+_MAX_USER_AGENT_LENGTH = 255
+
+
+def _sanitize_user_agent(value: str | None) -> str | None:
+    if not value:
+        return None
+    cleaned = "".join(ch for ch in value if ch.isprintable()).strip()
+    if not cleaned:
+        return None
+    return cleaned[:_MAX_USER_AGENT_LENGTH]
 
 
 async def record_audit_event(
@@ -108,7 +112,7 @@ async def record_audit_event(
     # against (see ARCHITECTURE_DECISIONS.md, "Managed deployment
     # preferred": no fixed proxy topology is assumed yet).
     ip_address = request.client.host if request is not None and request.client else None
-    user_agent = request.headers.get("user-agent") if request is not None else None
+    user_agent = _sanitize_user_agent(request.headers.get("user-agent")) if request is not None else None
     request_id = getattr(request.state, "request_id", None) if request is not None else None
     correlation_id = getattr(request.state, "correlation_id", None) if request is not None else None
 

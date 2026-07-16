@@ -10,7 +10,6 @@ from app.core.audit import (
     AUDIT_ACTION_LOGOUT,
     AUDIT_ACTION_TOKEN_REFRESH,
     AUDIT_ENTITY_AUTH,
-    correlation_hash,
     record_best_effort_audit_event,
 )
 from app.core.config import settings
@@ -36,17 +35,19 @@ async def authenticate(
 ) -> tuple[User, Role, str, str]:
     user = await user_crud.get_by_identifier(db, identifier)
     if user is None or not user.is_active or not verify_password(password, user.password_hash):
-        # The submitted identifier is never stored raw — only a
-        # non-reversible correlation hash, so repeated failed attempts
-        # against the same account are still visible without persisting
-        # the identifier itself (which may be an email address).
+        # Per ADR-0001: the actor is never the authentication target — a
+        # failed login has no authenticated actor, known account or not.
+        # A known account may be recorded as the *subject* (entity_id);
+        # an unknown submitted identifier is never persisted in any form
+        # (not raw, not a deterministic hash, not any other enumerable or
+        # correlatable representation) — a low-entropy identifier like an
+        # employee code or email remains dictionary-guessable even hashed.
         await record_best_effort_audit_event(
             db,
-            actor_user_id=user.id if user is not None else None,
+            actor_user_id=None,
             action=AUDIT_ACTION_LOGIN_FAILURE,
             entity_type=AUDIT_ENTITY_AUTH,
             entity_id=user.id if user is not None else None,
-            after={"identifier_hash": correlation_hash(identifier)},
             request=request,
         )
         await db.commit()
