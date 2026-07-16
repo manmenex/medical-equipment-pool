@@ -1,4 +1,5 @@
 import logging
+import re
 import uuid
 from contextlib import asynccontextmanager
 
@@ -28,6 +29,22 @@ _HTTP_EXCEPTION_CODES = {
 configure_logging(settings.DEBUG)
 
 logger = logging.getLogger(__name__)
+
+# audit_logs.request_id/correlation_id are String(64) (see
+# app/models/audit.py) — an inbound X-Request-ID/X-Correlation-ID header is
+# client-controlled and must never be trusted as-is: an oversized value
+# would fail the INSERT on PostgreSQL (VARCHAR(64)), and an unconstrained
+# charset could put control characters or other unsafe content into a
+# permanent audit record. Only a value that already fits the column and a
+# conservative safe charset is reused verbatim; anything else falls back to
+# a freshly generated ID exactly as if the header had been absent.
+_SAFE_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
+def _safe_inbound_id(value: str | None) -> str | None:
+    if value and _SAFE_REQUEST_ID_PATTERN.match(value):
+        return value
+    return None
 
 
 @asynccontextmanager
@@ -69,9 +86,10 @@ def create_app() -> FastAPI:
     async def request_context_middleware(request: Request, call_next):
         # Every request gets a request_id; correlation_id defaults to the
         # same value but lets an upstream caller group several requests
-        # (e.g. a retry) under one correlation id via the header.
-        request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
-        correlation_id = request.headers.get("x-correlation-id") or request_id
+        # (e.g. a retry) under one correlation id via the header. Inbound
+        # header values are validated (see _safe_inbound_id) before reuse.
+        request_id = _safe_inbound_id(request.headers.get("x-request-id")) or uuid.uuid4().hex
+        correlation_id = _safe_inbound_id(request.headers.get("x-correlation-id")) or request_id
         request.state.request_id = request_id
         request.state.correlation_id = correlation_id
         response = await call_next(request)

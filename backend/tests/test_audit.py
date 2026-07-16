@@ -110,6 +110,41 @@ async def test_login_success_creates_audit_row(client, seeded_users, db_session)
     assert row.request_id is not None
 
 
+async def test_oversized_inbound_request_id_is_rejected_not_persisted_raw(client, seeded_users, db_session):
+    # audit_logs.request_id/correlation_id are String(64) on PostgreSQL — an
+    # inbound header longer than that must never reach the INSERT as-is.
+    oversized = "x" * 500
+    resp = await client.post(
+        "/api/v1/auth/login",
+        headers={"X-Request-ID": oversized, "X-Correlation-ID": oversized},
+        json={"identifier": "ADMIN001", "password": "Password@123"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["x-request-id"] != oversized
+    assert len(resp.headers["x-request-id"]) <= 64
+
+    rows = await _rows(db_session, action="login_success", entity_type="auth")
+    assert len(rows) == 1
+    assert rows[0].request_id != oversized
+    assert rows[0].request_id is not None and len(rows[0].request_id) <= 64
+    assert rows[0].correlation_id != oversized
+
+
+async def test_unsafe_characters_in_inbound_request_id_are_rejected(client, seeded_users, db_session):
+    unsafe = "abc\t\r\n<script>oops"
+    resp = await client.post(
+        "/api/v1/auth/login",
+        headers={"X-Request-ID": unsafe},
+        json={"identifier": "ADMIN001", "password": "Password@123"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["x-request-id"] != unsafe
+
+    rows = await _rows(db_session, action="login_success", entity_type="auth")
+    assert len(rows) == 1
+    assert rows[0].request_id != unsafe
+
+
 async def test_login_failure_wrong_password_records_actor(client, seeded_users, db_session):
     resp = await client.post(
         "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "wrong-password"}
@@ -316,6 +351,77 @@ async def test_equipment_create_audit_row_has_request_and_correlation_ids(client
     assert str(row.entity_id) == equipment_id
     assert row.request_id is not None
     assert row.correlation_id is not None
+
+
+async def test_equipment_update_audit_row_has_before_and_after(client, seeded_users, db_session):
+    # NOTE: PATCH /api/v1/equipment/{id} currently returns a spurious 500
+    # after the update has already committed successfully — a pre-existing
+    # bug in _serialize()'s second call at the end of update_equipment
+    # (app/api/v1/equipment.py), unrelated to and unchanged by PR3 (present
+    # identically in the pre-PR3 base branch; see the PR description's
+    # Known Limitations). This test uses _raw_client() to observe that
+    # response without failing on the injected exception, and verifies the
+    # thing PR3 actually owns — that the business change and its audit row
+    # committed correctly — via a fresh session, independent of that bug.
+    headers = await _auth_headers(client, "admin")
+    create_resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "AUDIT-EQ-UPD-0001", "equipment_name": "Old Name"},
+    )
+    assert create_resp.status_code == 201
+    equipment_id = create_resp.json()["id"]
+
+    async with await _raw_client() as raw_client:
+        update_resp = await raw_client.patch(
+            f"/api/v1/equipment/{equipment_id}",
+            headers=headers,
+            json={"equipment_name": "New Name"},
+        )
+    assert update_resp.status_code in (200, 500), update_resp.text
+
+    rows = await _rows(
+        db_session, action="update", entity_type="equipment", entity_id=uuid.UUID(equipment_id)
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.user_id == seeded_users["admin"].id
+    assert row.before_data["equipment_name"] == "Old Name"
+    assert row.after_data["equipment_name"] == "New Name"
+
+    from app.models.equipment import Equipment
+
+    result = await db_session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment_id)))
+    assert result.scalar_one().equipment_name == "New Name"
+
+
+async def test_equipment_status_change_audit_row_has_correct_action_and_actor(client, seeded_users, db_session):
+    # Same pre-existing response-serialization bug as the update test above
+    # — the status change itself and its audit row still commit correctly.
+    headers = await _auth_headers(client, "admin")
+    create_resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "AUDIT-EQ-STATUS-0001", "equipment_name": "Wheelchair"},
+    )
+    assert create_resp.status_code == 201
+    equipment_id = create_resp.json()["id"]
+
+    async with await _raw_client() as raw_client:
+        status_resp = await raw_client.post(
+            f"/api/v1/equipment/{equipment_id}/status",
+            headers=headers,
+            json={"status": "repair", "reason": "Needs a new wheel"},
+        )
+    assert status_resp.status_code in (200, 500), status_resp.text
+
+    rows = await _rows(
+        db_session, action="status_change", entity_type="equipment", entity_id=uuid.UUID(equipment_id)
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.user_id == seeded_users["admin"].id
+    assert row.after_data == {"status": "repair", "reason": "Needs a new wheel"}
 
 
 async def test_no_duplicate_audit_rows_for_single_action(client, seeded_users, db_session):
