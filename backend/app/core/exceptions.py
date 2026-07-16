@@ -40,3 +40,15 @@ class ResourceNotFoundError(DomainError):
 class InvalidInputError(DomainError):
     code = "INVALID_INPUT"
     status_code = 400
+
+
+class ConflictError(DomainError):
+    """Generic safe fallback for an IntegrityError that could not be classified.
+
+    Used only when the underlying database driver gives us no reliable way
+    to tell whether a constraint violation was a duplicate key, a bad
+    reference, or something else — see app.core.db_errors.
+    """
+
+    code = "CONFLICT"
+    status_code = 409

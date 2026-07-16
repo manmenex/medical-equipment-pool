@@ -69,13 +69,12 @@ async def test_duplicate_ward_code_returns_409(client, seeded_users):
     _assert_safe_envelope(second.json(), 409)
 
 
-async def test_ward_with_nonexistent_department_does_not_500(client, seeded_users):
-    """The test DB is SQLite, which (unlike the production PostgreSQL target)
-    does not enforce FK constraints by default, so a bad department_id here
-    is silently accepted rather than raising IntegrityError — this test only
-    proves there's no 500; it cannot exercise the FK-violation -> 409 path
-    that translate_integrity_error protects against on Postgres. See the
-    PR2 known limitations for the untested-under-SQLite note."""
+async def test_ward_with_nonexistent_department_returns_400_not_500(client, seeded_users):
+    """Corrected in the PR2 review round: a bad department_id is now caught
+    by a pre-flush existence check (app.core.references), which works
+    identically regardless of whether the underlying database enforces FK
+    constraints — this is what makes the case deterministically testable
+    under the SQLite test database, which does not enforce FKs itself."""
     headers = await _auth_headers(client, "admin")
     fake_department_id = "00000000-0000-0000-0000-000000000000"
     resp = await client.post(
@@ -83,9 +82,10 @@ async def test_ward_with_nonexistent_department_does_not_500(client, seeded_user
         headers=headers,
         json={"code": "W-999", "name": "Ghost Ward", "department_id": fake_department_id},
     )
-    assert resp.status_code in (201, 409)
-    if resp.status_code == 409:
-        _assert_safe_envelope(resp.json(), 409)
+    assert resp.status_code == 400
+    body = resp.json()
+    _assert_safe_envelope(body, 400)
+    assert body["code"] == "INVALID_INPUT"
 
 
 async def test_duplicate_category_name_returns_409(client, seeded_users):
@@ -375,3 +375,49 @@ async def test_handled_domain_error_does_not_log_a_full_traceback(client, seeded
     assert info_records, "expected a handled-error log record"
     for record in info_records:
         assert record.exc_info is None, "handled application errors must not log a stack trace"
+
+
+# ---------------------------------------------------------------------------
+# Audit-write failure atomicity (PR2 review round)
+# ---------------------------------------------------------------------------
+
+
+async def test_audit_write_failure_after_flush_leaves_no_equipment_or_audit_row(
+    client, seeded_users, db_engine, monkeypatch
+):
+    """Simulates the audit-log INSERT itself failing *after* the business row
+    (equipment) has already been flushed within the same request/session.
+    Since db.commit() is only ever called once, after both writes succeed,
+    an audit-log failure here must roll back the equipment row too — proven
+    by re-querying from a completely fresh session/connection afterward."""
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from app.api.v1 import equipment as equipment_module
+    from app.models.audit import AuditLog
+    from app.models.equipment import Equipment
+
+    async def failing_audit_create(*_args, **_kwargs):
+        raise RuntimeError("simulated audit-log write failure")
+
+    monkeypatch.setattr(equipment_module.audit_crud, "create", failing_audit_create)
+
+    headers = await _auth_headers(client, "admin")
+    async with await _raw_client() as raw_client:
+        resp = await raw_client.post(
+            "/api/v1/equipment",
+            headers=headers,
+            json={"asset_number": "ATOMIC-0001", "equipment_name": "Syringe Pump"},
+        )
+    assert resp.status_code == 500
+
+    session_maker = async_sessionmaker(db_engine, expire_on_commit=False, class_=AsyncSession)
+    async with session_maker() as fresh_session:
+        equipment_rows = (
+            await fresh_session.execute(select(Equipment).where(Equipment.asset_number == "ATOMIC-0001"))
+        ).scalars().all()
+        audit_rows = (
+            await fresh_session.execute(select(AuditLog).where(AuditLog.entity_type == "equipment"))
+        ).scalars().all()
+
+    assert equipment_rows == [], "equipment row must not survive an audit-write failure in the same request"
+    assert audit_rows == [], "no partial/successful audit row should exist either"

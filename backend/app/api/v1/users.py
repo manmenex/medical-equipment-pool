@@ -39,7 +39,7 @@ async def create_user(
     role = await user_crud.get_role_by_name(db, payload.role_name)
     if role is None:
         raise InvalidInputError(f"Unknown role '{payload.role_name}'")
-    async with translate_integrity_error(db, "A user with this employee code or email already exists."):
+    async with translate_integrity_error(db, resource="user"):
         user = await user_crud.create(db, data=payload.model_dump(), role_id=role.id)
     await db.commit()
     return await _serialize(db, user)
@@ -61,7 +61,7 @@ async def update_user(
         if role is None:
             raise InvalidInputError(f"Unknown role '{payload.role_name}'")
         role_id = role.id
-    async with translate_integrity_error(db, "A user with this employee code or email already exists."):
+    async with translate_integrity_error(db, resource="user"):
         user = await user_crud.update(db, user, data=payload.model_dump(exclude_unset=True), role_id=role_id)
     await db.commit()
     return await _serialize(db, user)

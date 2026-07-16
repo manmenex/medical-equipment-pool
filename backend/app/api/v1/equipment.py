@@ -7,10 +7,12 @@ from app.api.v1.deps import get_current_user, require_roles
 from app.core.db_errors import translate_integrity_error
 from app.core.exceptions import EquipmentNotFoundError
 from app.core.redis import cache_delete_prefix
+from app.core.references import ensure_referenced_row_exists
 from app.crud import audit as audit_crud
 from app.crud import equipment as equipment_crud
 from app.db.session import get_db
 from app.models.equipment import EquipmentStatus
+from app.models.master_data import Department, EquipmentCategory, Location
 from app.models.user import ROLE_ADMIN, ROLE_BIOMEDICAL_ENGINEER
 from app.schemas.common import Page
 from app.schemas.equipment import (
@@ -23,12 +25,23 @@ from app.schemas.equipment import (
 from app.services.qr_service import build_qr_value, generate_qr_png
 from app.utils.parsing import parse_uuid
 
-EQUIPMENT_CONFLICT_MESSAGE = (
-    "Equipment with a conflicting asset number, serial number, or QR code already exists, "
-    "or a referenced category/department/location does not exist."
-)
+# Equipment's foreign-key fields, mapped to the model they reference, so a
+# request can be validated against real rows before flush (see
+# app.core.references) — this is also the only way to catch a bad reference
+# in tests, since the SQLite test database does not enforce FK constraints.
+EQUIPMENT_REFERENCE_MODELS: dict[str, type] = {
+    "category_id": EquipmentCategory,
+    "department_owner_id": Department,
+    "current_location_id": Location,
+}
 
 router = APIRouter(prefix="/equipment", tags=["equipment"])
+
+
+async def _validate_equipment_references(db: AsyncSession, data: dict) -> None:
+    for field_name, model in EQUIPMENT_REFERENCE_MODELS.items():
+        if field_name in data:
+            await ensure_referenced_row_exists(db, model, data[field_name], field_name=field_name)
 
 
 def _client_meta(request: Request) -> tuple[str | None, str | None]:
@@ -144,8 +157,9 @@ async def create_equipment(
     create_data = dict(data)
     for key in ("category_id", "department_owner_id", "current_location_id"):
         create_data[key] = parse_uuid(data.get(key), key)
+    await _validate_equipment_references(db, create_data)
 
-    async with translate_integrity_error(db, EQUIPMENT_CONFLICT_MESSAGE):
+    async with translate_integrity_error(db, resource="equipment"):
         equipment = await equipment_crud.create(db, data=create_data)
     ip, ua = _client_meta(request)
     await audit_crud.create(
@@ -181,8 +195,9 @@ async def update_equipment(
     for key in ("category_id", "department_owner_id", "current_location_id"):
         if key in update_data:
             update_data[key] = parse_uuid(update_data[key], key)
+    await _validate_equipment_references(db, update_data)
 
-    async with translate_integrity_error(db, EQUIPMENT_CONFLICT_MESSAGE):
+    async with translate_integrity_error(db, resource="equipment"):
         equipment = await equipment_crud.update(db, equipment, data=update_data)
     ip, ua = _client_meta(request)
     await audit_crud.create(
