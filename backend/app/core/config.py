@@ -11,6 +11,11 @@ JWT_SECRET_MIN_LENGTH = 32
 
 DEFAULT_JWT_SECRET_KEY = "change-me-in-production-use-a-random-64-byte-value"
 
+# The only ENVIRONMENT values this deployment recognizes (see .env.example,
+# docker-compose.yml, docker-compose.prod.yml). Anything else is treated as
+# a misconfiguration rather than silently falling back to development.
+KNOWN_ENVIRONMENTS = {"development", "production"}
+
 
 class InsecureConfigurationError(RuntimeError):
     """Raised at startup when the running environment's configuration is unsafe.
@@ -68,7 +73,16 @@ def validate_production_secrets(settings: Settings) -> None:
     InsecureConfigurationError instead of returning a status so the caller
     cannot accidentally ignore the result and continue booting.
     """
-    if settings.ENVIRONMENT != "production":
+    normalized_environment = settings.ENVIRONMENT.strip().lower()
+
+    if normalized_environment not in KNOWN_ENVIRONMENTS:
+        raise InsecureConfigurationError(
+            f"ENVIRONMENT={settings.ENVIRONMENT!r} is not a recognized value. Refusing to start "
+            "with an unrecognized environment rather than silently treating it as development. "
+            f"Set ENVIRONMENT to one of: {', '.join(sorted(KNOWN_ENVIRONMENTS))}."
+        )
+
+    if normalized_environment != "production":
         return
 
     if not settings.JWT_SECRET_KEY:
