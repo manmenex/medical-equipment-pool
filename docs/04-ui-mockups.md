@@ -1,5 +1,10 @@
 # UI Mockups (Wireframe Description)
 
+> **Status: Legacy design reference.** Some proposals and scale targets in
+> this document predate confirmed guardrails and may be superseded. Use
+> `AGENTS.md`, `PROJECT_PLAYBOOK.md`, `ARCHITECTURE_DECISIONS.md`, and the
+> consolidated implementation plan for current authority.
+
 หลักการออกแบบ: **ใช้งานด้วยมือเดียว, กดน้อยที่สุด, Scan QR เป็นทางหลัก, Bottom Navigation บนมือถือ, Sidebar บนจอใหญ่, รองรับ Dark Mode**
 
 Layout breakpoints: `mobile < 640px` (bottom nav, single column) · `tablet 640–1024px` (2 column, collapsible sidebar) · `desktop > 1024px` (persistent sidebar, multi-column, data tables)

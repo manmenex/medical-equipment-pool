@@ -1,5 +1,10 @@
 # System Architecture — Medical Equipment Pool
 
+> **Status: Legacy design reference.** Some proposals and scale targets in
+> this document predate confirmed guardrails and may be superseded. Use
+> `AGENTS.md`, `PROJECT_PLAYBOOK.md`, `ARCHITECTURE_DECISIONS.md`, and the
+> consolidated implementation plan for current authority.
+
 ## 1. ภาพรวม
 
 ระบบรับ-ส่งเครื่องมือแพทย์ (Medical Equipment Pool) ออกแบบทดแทน AppSheet เดิม โดยแก้ปัญหาหลัก 3 ข้อ:

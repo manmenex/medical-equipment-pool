@@ -1,5 +1,10 @@
 # Database Schema & ER Diagram
 
+> **Status: Legacy design reference.** Some proposals and scale targets in
+> this document predate confirmed guardrails and may be superseded. Use
+> `AGENTS.md`, `PROJECT_PLAYBOOK.md`, `ARCHITECTURE_DECISIONS.md`, and the
+> consolidated implementation plan for current authority.
+
 PostgreSQL 16, schema `public`, 3rd Normal Form. ทุกตารางมี `id UUID` เป็น Primary Key (สร้างด้วย `gen_random_uuid()` — กระจาย insert load ได้ดีกว่า serial เมื่อมีหลาย instance เขียนพร้อมกัน), `created_at`/`updated_at` timestamptz, และ soft-delete (`deleted_at`) สำหรับตารางอ้างอิงหลัก
 
 ## 1. ER Diagram

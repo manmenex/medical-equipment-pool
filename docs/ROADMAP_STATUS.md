@@ -5,7 +5,8 @@ Current status of every Pull Request in the implementation plan
 authoritative source for scope, ordering, and acceptance criteria). This
 document tracks **status only**; it does not duplicate the plan itself.
 
-Last updated: after Roadmap PR2 merged.
+Last updated: Roadmap PR3 implementation is in progress as Draft GitHub PR
+#7; its documentation-only scope alignment was merged in GitHub PR #8.
 
 ---
 
@@ -32,10 +33,17 @@ preservation.
 
 PR3
 Status:
-Next
+In progress — Draft implementation PR #7
 
 Summary:
-User, Role, and Master-Data Audit Logging.
+Audit Logging Framework — canonical audit writes, current auth/user/master/
+equipment coverage, safe request context, additive migration, authorized
+bounded reads, and PostgreSQL-backed evidence.
+
+Governance note:
+GitHub PR #8 merged the documentation-only scope alignment. Its GitHub PR
+number is not a Roadmap PR number and did not create or renumber a roadmap
+item.
 
 ----------------------
 
@@ -155,15 +163,16 @@ Observability and Schema Hygiene.
 
 ## Current Milestone
 
-- **PR3 — User, Role, and Master-Data Audit Logging.** Next up; completes
-  Group 1 (Security and Availability Foundation).
+- **Roadmap PR3 — Audit Logging Framework.** Implementation is in progress
+  as Draft GitHub PR #7. Its governance scope alignment was completed in
+  merged GitHub PR #8. PR3 is not yet approved, merge-ready, or merged.
 
 ## Upcoming Milestone
 
-- **Group 2 — Concurrency and Data Integrity** (PR4 Transaction-Number
-  Sequence, PR5 ME Code Identifier Model, PR6 Equipment State Model). These
-  three land the domain-model foundation that every later workflow PR
-  (Group 3 onward) depends on.
+- **Roadmap PR4 — Transaction-Number Generation.** This is the next
+  implementation milestone only after Roadmap PR3 is approved and merged.
+  PR4 starts Group 2 (Concurrency and Data Integrity), followed by PR5 ME
+  Code Identifier Model and PR6 Equipment State Model.
 
 ## Known Future Workflow Items
 

@@ -1,75 +1,63 @@
 # Medical Equipment Pool
 
-ระบบรับ-ส่งเครื่องมือแพทย์ (Hospital Medical Equipment Borrow/Return Pool) — ทดแทนระบบเดิมที่สร้างด้วย AppSheet ด้วยสถาปัตยกรรม **React (PWA) + FastAPI + PostgreSQL + Redis** เพื่อรองรับข้อมูลหลักแสนรายการและผู้ใช้งานพร้อมกันหลายสิบ-ร้อยคน โดยยังคงประสบการณ์ใช้งานง่าย มือถือ-เดสก์ท็อป, Scan QR เป็นหลัก, และรองรับ Offline
+Browser/PWA application for hospital Equipment Pool operators to dispatch
+pool-owned equipment to a first receiving ward and record its receipt. The
+system uses a React/TypeScript frontend, FastAPI backend, and PostgreSQL system
+of record.
 
-📄 เอกสารฉบับเต็ม (System Architecture, ER Diagram, API Spec, UI Mockup, Deployment Guide, Security, Testing Plan, Roadmap ฯลฯ) อยู่ใน [`docs/`](./docs).
+This project does **not** track patients, beds, later ward transfers, cleaning,
+PM, calibration, recalls, or the hospital-wide asset lifecycle. See
+[`AGENTS.md`](AGENTS.md) for permanent guardrails.
 
-## Stack
+## Start here
 
-| Layer | Technology |
-|---|---|
-| Frontend | React 18 + TypeScript + Vite, TailwindCSS, TanStack Query, Zustand, PWA (Workbox) |
-| Backend | FastAPI (async), SQLAlchemy 2.0, Alembic |
-| Database | PostgreSQL 16 (+ `pg_trgm` fuzzy search) |
-| Cache | Redis (cache-aside, rate-limit) |
-| Object storage | MinIO (S3-compatible) |
-| Deployment | Docker Compose, Nginx |
+- [`docs/PROJECT_PLAYBOOK.md`](docs/PROJECT_PLAYBOOK.md) — compact governance
+  entry point, authority hierarchy, roles, workflow, and task reading sets
+- [`docs/HOSPITAL_DOMAIN_MODEL.md`](docs/HOSPITAL_DOMAIN_MODEL.md) — confirmed
+  terminology and current/future workflow boundary
+- [`docs/ROADMAP_STATUS.md`](docs/ROADMAP_STATUS.md) — current Roadmap status
+- [`docs/audits/04-consolidated-implementation-plan.md`](docs/audits/04-consolidated-implementation-plan.md)
+  — authoritative Roadmap PR scope and order
 
-## Quick start (local)
+Legacy design documents under `docs/01-...` through `docs/10-...` are retained
+for reference and history. They may describe proposals superseded by current
+guardrails and are not governance authority.
+
+## Repository layout
+
+```text
+backend/    FastAPI, SQLAlchemy, Alembic, pytest
+frontend/   React, TypeScript, Vite PWA
+docs/       governance, domain, Roadmap, decisions, prompts, and historical audits
+.github/    Pull Request and issue templates
+```
+
+## Local development
+
+Use development-only values derived from `.env.example`; never commit a real
+`.env` file or credentials.
 
 ```bash
-cp .env.example .env        # edit secrets
+cp .env.example .env
 docker compose up -d --build
 docker compose exec backend alembic upgrade head
-docker compose exec backend python -m app.scripts.seed
 ```
 
-- Frontend: http://localhost
-- Backend Swagger UI: http://localhost:8000/api/docs
-- Default admin login (after seeding): `ADMIN001` / `Admin@12345`
+- Backend API documentation: `http://localhost:8000/api/docs`
+- Frontend through the local Compose stack: `http://localhost`
 
-## Running backend/frontend without Docker (dev)
+Exact environment/test commands and supported behavior should be verified
+against current code and the assigned task. Local Docker state is not CI or
+production evidence.
 
-```bash
-# Backend
-cd backend
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-export DATABASE_URL=postgresql+asyncpg://mep_user:mep_password@localhost:5432/mep_db
-alembic upgrade head
-uvicorn app.main:app --reload
+## Governance and contribution
 
-# Frontend
-cd frontend
-npm install
-npm run dev
-```
+- Follow [`docs/REPOSITORY_STRATEGY.md`](docs/REPOSITORY_STRATEGY.md) for
+  branches, Draft PRs, merge, retention, tags, releases, and rollback.
+- Follow [`docs/DEFINITION_OF_DONE.md`](docs/DEFINITION_OF_DONE.md) for
+  risk-appropriate completion evidence.
+- Use [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md)
+  and compact task prompts under [`docs/prompts/tasks/`](docs/prompts/tasks/).
 
-## Tests
-
-```bash
-cd backend && source .venv/bin/activate && pytest
-```
-
-Backend tests run against an in-memory SQLite database (fast, no external dependency) and cover auth, RBAC, equipment CRUD/search, and the borrow/return flow including the double-borrow race guard. See [`docs/09-testing-plan.md`](./docs/09-testing-plan.md) for the full test strategy including Postgres integration/load testing.
-
-## Project layout
-
-See [`docs/05-folder-structure.md`](./docs/05-folder-structure.md) for the full breakdown of `backend/` and `frontend/`.
-
-## Documentation index
-
-1. [System Architecture](./docs/01-architecture.md)
-2. [Database Schema & ER Diagram](./docs/02-database-schema.md)
-3. [API Specification](./docs/03-api-specification.md)
-4. [UI Mockups](./docs/04-ui-mockups.md)
-5. [Folder Structure](./docs/05-folder-structure.md)
-6. [Deployment Guide](./docs/06-deployment-guide.md)
-7. [Performance Optimization](./docs/07-performance-optimization.md)
-8. [Security Best Practices](./docs/08-security.md)
-9. [Testing Plan](./docs/09-testing-plan.md)
-10. [Future Roadmap](./docs/10-roadmap.md)
-
-## License
-
-Internal hospital tooling — no license file included; adapt as needed for your organization.
+No license has been granted in this repository; treat it as internal project
+material unless the Repository Owner states otherwise.
