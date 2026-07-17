@@ -173,13 +173,37 @@ async def commit_best_effort(db: AsyncSession) -> None:
     runs, the only pending changes are the audit row (and, for a successful
     login, last_login_at) — there is no other business validation left to
     protect, so making the commit itself best-effort here is safe.
+
+    The rollback used to clean up after a failed commit is *itself*
+    best-effort: whatever originally broke the commit (e.g. a dropped
+    connection) could just as easily break the rollback attempting to use
+    that same connection. If that happens, the original commit failure is
+    still logged (rollback failing doesn't erase it), a second warning is
+    logged for the rollback failure, and neither is re-raised — the
+    decided authentication outcome must survive either way. When rollback
+    itself fails, the session's underlying connection may no longer be
+    usable for this session; the caller's request still completes
+    normally, but a *subsequent* request gets a fresh session from the
+    connection pool regardless (see app/db/session.py's per-request
+    session lifecycle), so this does not leave the application stuck.
+    Neither log message includes request/credential data — only the
+    action name and exception info, matching the rest of this module's
+    logging.
     """
     try:
         await db.commit()
     except Exception:
-        await db.rollback()
         logger.warning(
             "Failed to commit authentication audit transaction; "
             "continuing without blocking the authentication flow",
             exc_info=True,
         )
+        try:
+            await db.rollback()
+        except Exception:
+            logger.warning(
+                "Failed to roll back authentication audit transaction after "
+                "a commit failure; continuing without blocking the "
+                "authentication flow",
+                exc_info=True,
+            )

@@ -283,6 +283,70 @@ async def test_login_succeeds_on_postgres_even_if_audit_write_fails(pg_client, p
     assert "access_token" in resp.json()
 
 
+async def test_equipment_create_with_due_dates_is_json_safe_on_postgres(pg_client, pg_seeded_users, pg_engine):
+    # CR7-M3 / PR7-H1: the SQLite suite already covers the JSON-mode date
+    # fix (equipment.py's create_equipment builds audit_after via
+    # payload.model_dump(mode="json") instead of reusing the ORM-write
+    # dict), but the audit column is JSONB on PostgreSQL specifically, not
+    # SQLite's generic JSON variant — this proves the fix against the real
+    # production column type/dialect, not just SQLite's emulation of it.
+    headers = await _admin_headers(pg_client)
+    resp = await pg_client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={
+            "asset_number": "PG-DATES-0001",
+            "equipment_name": "Ventilator",
+            "pm_due_date": "2026-08-01",
+            "cal_due_date": "2026-09-15",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    equipment_id = resp.json()["id"]
+    assert resp.json()["pm_due_date"] == "2026-08-01"
+    assert resp.json()["cal_due_date"] == "2026-09-15"
+
+    session_maker = async_sessionmaker(pg_engine, expire_on_commit=False, class_=AsyncSession)
+    async with session_maker() as fresh_session:
+        equipment_rows = (
+            await fresh_session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment_id)))
+        ).scalars().all()
+        assert len(equipment_rows) == 1
+
+        audit_rows = (
+            await fresh_session.execute(
+                select(AuditLog).where(
+                    AuditLog.action == "create",
+                    AuditLog.entity_type == "equipment",
+                    AuditLog.entity_id == uuid.UUID(equipment_id),
+                )
+            )
+        ).scalars().all()
+        assert len(audit_rows) == 1
+        row = audit_rows[0]
+        # JSONB round-trips as a native dict via asyncpg — a bare string
+        # here would mean the date never got JSON-encoded in the first
+        # place and the column just stored serialized text.
+        assert isinstance(row.after_data, dict)
+        assert row.after_data["pm_due_date"] == "2026-08-01"
+        assert row.after_data["cal_due_date"] == "2026-09-15"
+
+        # Confirm via the raw driver too, independent of the ORM's own
+        # JSON handling, that PostgreSQL itself accepted and stored valid
+        # JSONB (a real jsonb column, containing exactly these keys).
+        raw = await fresh_session.execute(
+            text(
+                "SELECT after_data->>'pm_due_date', after_data->>'cal_due_date', "
+                "pg_typeof(after_data)::text FROM audit_logs WHERE entity_id = :eid AND action = 'create'"
+            ),
+            {"eid": str(equipment_id)},
+        )
+        pm_due, cal_due, pg_type = raw.one()
+        assert pm_due == "2026-08-01"
+        assert cal_due == "2026-09-15"
+        assert pg_type == "jsonb"
+
+
 async def test_login_succeeds_on_postgres_even_if_commit_fails(pg_client, pg_seeded_users, monkeypatch):
     # PR7-M1: best-effort protection must cover the whole persistence
     # boundary, including the commit that follows the audit SAVEPOINT — not

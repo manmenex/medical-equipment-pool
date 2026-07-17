@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 import pytest
@@ -441,6 +442,126 @@ async def test_logout_response_survives_commit_time_failure(sp_client, sp_seeded
     assert rows == [], "a failed commit must leave no partial audit row behind"
 
 
+# ---------------------------------------------------------------------------
+# CR7-M2: the cleanup rollback inside commit_best_effort() must itself be
+# best-effort — if *both* the commit and the rollback that cleans up after it
+# fail (e.g. the connection is genuinely gone), the already-decided
+# authentication outcome must still survive, and both failures must be
+# logged as warnings (never re-raised, never silently dropped).
+# ---------------------------------------------------------------------------
+
+
+def _boom_commit_and_rollback(monkeypatch):
+    async def _boom_commit_impl(self, *args, **kwargs):
+        raise RuntimeError("simulated commit failure")
+
+    async def _boom_rollback_impl(self, *args, **kwargs):
+        raise RuntimeError("simulated rollback failure")
+
+    monkeypatch.setattr(AsyncSession, "commit", _boom_commit_impl)
+    monkeypatch.setattr(AsyncSession, "rollback", _boom_rollback_impl)
+
+
+def _assert_commit_and_rollback_warnings_logged(caplog):
+    messages = [record.message for record in caplog.records if record.levelno == logging.WARNING]
+    assert any("Failed to commit authentication audit transaction" in m for m in messages), (
+        "expected a warning log for the commit failure"
+    )
+    assert any("Failed to roll back authentication audit transaction" in m for m in messages), (
+        "expected a warning log for the rollback-cleanup failure"
+    )
+    # Never log credentials/tokens/identifiers — only the fixed message text
+    # and (via exc_info, not the formatted message) the simulated
+    # RuntimeError itself.
+    for m in messages:
+        assert "Password@123" not in m
+        assert "wrong-password" not in m
+
+
+async def test_login_failure_response_survives_commit_and_rollback_failure(
+    sp_client, sp_seeded_users, sp_engine, monkeypatch, caplog
+):
+    _boom_commit_and_rollback(monkeypatch)
+
+    with caplog.at_level(logging.WARNING, logger="app.core.audit"):
+        resp = await sp_client.post(
+            "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "wrong-password"}
+        )
+    assert resp.status_code == 401, resp.text
+    assert resp.json()["code"] == "INVALID_CREDENTIALS"
+    _assert_commit_and_rollback_warnings_logged(caplog)
+
+    monkeypatch.undo()
+    # A fresh request (its own fresh session, per sp_client's dependency
+    # override) still works normally — the failure did not wedge the app.
+    follow_up = await sp_client.post(
+        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+    )
+    assert follow_up.status_code == 200, follow_up.text
+
+
+async def test_login_success_response_survives_commit_and_rollback_failure(
+    sp_client, sp_seeded_users, sp_engine, monkeypatch, caplog
+):
+    _boom_commit_and_rollback(monkeypatch)
+
+    with caplog.at_level(logging.WARNING, logger="app.core.audit"):
+        resp = await sp_client.post(
+            "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+        )
+    assert resp.status_code == 200, resp.text
+    assert "access_token" in resp.json()
+    _assert_commit_and_rollback_warnings_logged(caplog)
+
+    monkeypatch.undo()
+    follow_up = await sp_client.post(
+        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+    )
+    assert follow_up.status_code == 200, follow_up.text
+
+
+async def test_refresh_response_survives_commit_and_rollback_failure(
+    sp_client, sp_seeded_users, sp_engine, monkeypatch, caplog
+):
+    login_resp = await sp_client.post(
+        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+    )
+    assert login_resp.status_code == 200
+
+    _boom_commit_and_rollback(monkeypatch)
+
+    with caplog.at_level(logging.WARNING, logger="app.core.audit"):
+        resp = await sp_client.post("/api/v1/auth/refresh")
+    assert resp.status_code == 200, resp.text
+    assert "access_token" in resp.json()
+    _assert_commit_and_rollback_warnings_logged(caplog)
+
+    monkeypatch.undo()
+    # Session recovery: an ordinary follow-up request through a fresh
+    # session still works.
+    follow_up = await sp_client.get("/api/v1/audit-logs", headers=await _auth_headers(sp_client, "admin"))
+    assert follow_up.status_code == 200
+
+
+async def test_logout_response_survives_commit_and_rollback_failure(
+    sp_client, sp_seeded_users, sp_engine, monkeypatch, caplog
+):
+    headers = await _auth_headers(sp_client, "admin")
+
+    _boom_commit_and_rollback(monkeypatch)
+
+    with caplog.at_level(logging.WARNING, logger="app.core.audit"):
+        resp = await sp_client.post("/api/v1/auth/logout", headers=headers)
+    assert resp.status_code == 200, resp.text
+    _assert_commit_and_rollback_warnings_logged(caplog)
+
+    monkeypatch.undo()
+    follow_up = await sp_client.post(
+        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+    )
+    assert follow_up.status_code == 200, follow_up.text
+
+
 async def test_logout_creates_audit_row(client, seeded_users, db_session):
     headers = await _auth_headers(client, "admin")
     resp = await client.post("/api/v1/auth/logout", headers=headers)
@@ -662,14 +783,11 @@ async def test_equipment_create_with_only_one_due_date_is_json_safe(client, seed
 
 
 async def test_equipment_update_audit_row_has_before_and_after(client, seeded_users, db_session):
-    # PATCH /api/v1/equipment/{id} has a pre-existing, out-of-scope response-
-    # serialization defect (MissingGreenlet, after a successful commit) that
-    # is owned and fixed by Draft PR #10 (fix/equipment-missing-greenlet-
-    # response), not this PR — PR3 does not duplicate that fix here (see PR
-    # #7's description, "Equipment MissingGreenlet fix"/PR7-M2). This test
-    # therefore uses _raw_client() to avoid failing on that still-open,
-    # separately-owned defect, and deliberately does not assert a response
-    # status code — only the audit-persistence behavior PR3 actually owns.
+    # PATCH /api/v1/equipment/{id}'s MissingGreenlet defect (see PR #7's
+    # description, "Equipment MissingGreenlet fix") is now fixed at the base
+    # (Equipment.__mapper_args__ = {"eager_defaults": True}, merged via PR
+    # #10) — the endpoint is expected to return 200 like any other endpoint,
+    # via the ordinary `client` fixture.
     headers = await _auth_headers(client, "admin")
     create_resp = await client.post(
         "/api/v1/equipment",
@@ -679,12 +797,12 @@ async def test_equipment_update_audit_row_has_before_and_after(client, seeded_us
     assert create_resp.status_code == 201
     equipment_id = create_resp.json()["id"]
 
-    async with await _raw_client() as raw_client:
-        await raw_client.patch(
-            f"/api/v1/equipment/{equipment_id}",
-            headers=headers,
-            json={"equipment_name": "New Name"},
-        )
+    update_resp = await client.patch(
+        f"/api/v1/equipment/{equipment_id}",
+        headers=headers,
+        json={"equipment_name": "New Name"},
+    )
+    assert update_resp.status_code == 200, update_resp.text
 
     rows = await _rows(
         db_session, action="update", entity_type="equipment", entity_id=uuid.UUID(equipment_id)
@@ -702,8 +820,8 @@ async def test_equipment_update_audit_row_has_before_and_after(client, seeded_us
 
 
 async def test_equipment_status_change_audit_row_has_correct_action_and_actor(client, seeded_users, db_session):
-    # Same pre-existing, PR #10-owned response defect as the update test
-    # above — see that test's comment. No status code is asserted here.
+    # Same now-fixed defect as the update test above — see that test's
+    # comment. This endpoint is expected to return 200.
     headers = await _auth_headers(client, "admin")
     create_resp = await client.post(
         "/api/v1/equipment",
@@ -713,12 +831,12 @@ async def test_equipment_status_change_audit_row_has_correct_action_and_actor(cl
     assert create_resp.status_code == 201
     equipment_id = create_resp.json()["id"]
 
-    async with await _raw_client() as raw_client:
-        await raw_client.post(
-            f"/api/v1/equipment/{equipment_id}/status",
-            headers=headers,
-            json={"status": "repair", "reason": "Needs a new wheel"},
-        )
+    status_resp = await client.post(
+        f"/api/v1/equipment/{equipment_id}/status",
+        headers=headers,
+        json={"status": "repair", "reason": "Needs a new wheel"},
+    )
+    assert status_resp.status_code == 200, status_resp.text
 
     rows = await _rows(
         db_session, action="status_change", entity_type="equipment", entity_id=uuid.UUID(equipment_id)
