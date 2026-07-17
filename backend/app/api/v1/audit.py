@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +18,8 @@ class AuditLogOut(BaseModel):
     action: str
     entity_type: str
     entity_id: str | None
+    request_id: str | None
+    correlation_id: str | None
     ip_address: str | None
     created_at: str
 
@@ -28,7 +30,8 @@ class AuditLogOut(BaseModel):
 async def list_audit_logs(
     entity_type: str | None = None,
     user_id: str | None = None,
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     _user=Depends(require_roles(ROLE_ADMIN)),
 ):
@@ -37,6 +40,7 @@ async def list_audit_logs(
         entity_type=entity_type,
         user_id=uuid.UUID(user_id) if user_id else None,
         limit=limit,
+        offset=offset,
     )
     return [
         AuditLogOut(
@@ -45,6 +49,8 @@ async def list_audit_logs(
             action=log.action,
             entity_type=log.entity_type,
             entity_id=str(log.entity_id) if log.entity_id else None,
+            request_id=log.request_id,
+            correlation_id=log.correlation_id,
             ip_address=log.ip_address,
             created_at=log.created_at.isoformat(),
         )

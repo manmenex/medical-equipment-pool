@@ -4,11 +4,18 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, require_roles
+from app.core.audit import (
+    AUDIT_ACTION_CREATE,
+    AUDIT_ACTION_DELETE,
+    AUDIT_ACTION_STATUS_CHANGE,
+    AUDIT_ACTION_UPDATE,
+    AUDIT_ENTITY_EQUIPMENT,
+    record_audit_event,
+)
 from app.core.db_errors import translate_integrity_error
 from app.core.exceptions import EquipmentNotFoundError
 from app.core.redis import cache_delete_prefix
 from app.core.references import ensure_referenced_row_exists
-from app.crud import audit as audit_crud
 from app.crud import equipment as equipment_crud
 from app.db.session import get_db
 from app.models.equipment import EquipmentStatus
@@ -42,12 +49,6 @@ async def _validate_equipment_references(db: AsyncSession, data: dict) -> None:
     for field_name, model in EQUIPMENT_REFERENCE_MODELS.items():
         if field_name in data:
             await ensure_referenced_row_exists(db, model, data[field_name], field_name=field_name)
-
-
-def _client_meta(request: Request) -> tuple[str | None, str | None]:
-    ip = request.client.host if request.client else None
-    ua = request.headers.get("user-agent")
-    return ip, ua
 
 
 @router.get("", response_model=Page[EquipmentOut])
@@ -161,16 +162,22 @@ async def create_equipment(
 
     async with translate_integrity_error(db, resource="equipment"):
         equipment = await equipment_crud.create(db, data=create_data)
-    ip, ua = _client_meta(request)
-    await audit_crud.create(
+    # `data` (used for the ORM write above) keeps native Python `date`
+    # objects for pm_due_date/cal_due_date, which the audit row's JSON/JSONB
+    # column cannot serialize directly — a create request that actually
+    # supplies either field would otherwise crash here (TypeError: Object of
+    # type date is not JSON serializable) after the equipment row already
+    # committed. mode="json" renders dates as ISO strings instead.
+    audit_after = payload.model_dump(mode="json")
+    audit_after["qr_code_value"] = data["qr_code_value"]
+    await record_audit_event(
         db,
-        user_id=user.id,
-        action="create",
-        entity_type="equipment",
+        actor_user_id=user.id,
+        action=AUDIT_ACTION_CREATE,
+        entity_type=AUDIT_ENTITY_EQUIPMENT,
         entity_id=equipment.id,
-        after_data=data,
-        ip_address=ip,
-        user_agent=ua,
+        after=audit_after,
+        request=request,
     )
     await db.commit()
     await cache_delete_prefix("equipment:search:")
@@ -199,17 +206,15 @@ async def update_equipment(
 
     async with translate_integrity_error(db, resource="equipment"):
         equipment = await equipment_crud.update(db, equipment, data=update_data)
-    ip, ua = _client_meta(request)
-    await audit_crud.create(
+    await record_audit_event(
         db,
-        user_id=user.id,
-        action="update",
-        entity_type="equipment",
+        actor_user_id=user.id,
+        action=AUDIT_ACTION_UPDATE,
+        entity_type=AUDIT_ENTITY_EQUIPMENT,
         entity_id=equipment.id,
-        before_data={k: str(v) for k, v in before.items()},
-        after_data=payload.model_dump(exclude_unset=True, mode="json"),
-        ip_address=ip,
-        user_agent=ua,
+        before={k: str(v) for k, v in before.items()},
+        after=payload.model_dump(exclude_unset=True, mode="json"),
+        request=request,
     )
     await db.commit()
     await cache_delete_prefix("equipment:search:")
@@ -230,16 +235,14 @@ async def change_equipment_status(
     await equipment_crud.change_status(
         db, equipment, new_status=payload.status, changed_by_user_id=user.id, reason=payload.reason
     )
-    ip, ua = _client_meta(request)
-    await audit_crud.create(
+    await record_audit_event(
         db,
-        user_id=user.id,
-        action="status_change",
-        entity_type="equipment",
+        actor_user_id=user.id,
+        action=AUDIT_ACTION_STATUS_CHANGE,
+        entity_type=AUDIT_ENTITY_EQUIPMENT,
         entity_id=equipment.id,
-        after_data={"status": payload.status.value, "reason": payload.reason},
-        ip_address=ip,
-        user_agent=ua,
+        after={"status": payload.status.value, "reason": payload.reason},
+        request=request,
     )
     await db.commit()
     await cache_delete_prefix("equipment:search:")
@@ -257,16 +260,16 @@ async def delete_equipment(
     equipment = await equipment_crud.get_by_id(db, equipment_id)
     if equipment is None:
         raise EquipmentNotFoundError("Equipment not found")
+    before = _serialize(equipment)
     await equipment_crud.soft_delete(db, equipment)
-    ip, ua = _client_meta(request)
-    await audit_crud.create(
+    await record_audit_event(
         db,
-        user_id=user.id,
-        action="delete",
-        entity_type="equipment",
+        actor_user_id=user.id,
+        action=AUDIT_ACTION_DELETE,
+        entity_type=AUDIT_ENTITY_EQUIPMENT,
         entity_id=equipment.id,
-        ip_address=ip,
-        user_agent=ua,
+        before={k: str(v) for k, v in before.items()},
+        request=request,
     )
     await db.commit()
     await cache_delete_prefix("equipment:search:")

@@ -21,6 +21,8 @@ class AuditLog(UUIDPKMixin, Base):
     entity_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     before_data: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     after_data: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    request_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    correlation_id: Mapped[str | None] = mapped_column(String(64), index=True)
     ip_address: Mapped[str | None] = mapped_column(String(64))
     user_agent: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, nullable=False, index=True)

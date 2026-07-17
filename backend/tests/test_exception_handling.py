@@ -401,16 +401,23 @@ async def test_audit_write_failure_after_flush_leaves_no_equipment_or_audit_row(
     proving the failure didn't leave the database or connection unusable."""
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from app.api.v1 import equipment as equipment_module
+    from app.crud import audit as audit_crud_module
     from app.models.audit import AuditLog
     from app.models.equipment import Equipment
 
     injected_marker = "simulated audit-log write failure — must never reach the client"
 
+    # Log in (itself an audited action as of PR3) before the audit write
+    # starts failing, otherwise there would be no way to obtain credentials.
+    headers = await _auth_headers(client, "admin")
+
     async def failing_audit_create(*_args, **_kwargs):
         raise RuntimeError(injected_marker)
 
-    monkeypatch.setattr(equipment_module.audit_crud, "create", failing_audit_create)
+    # record_audit_event() (app.core.audit) is now the single call site every
+    # endpoint goes through, but it still bottoms out in this one crud
+    # function — patching it here exercises the real, current code path.
+    monkeypatch.setattr(audit_crud_module, "create", failing_audit_create)
 
     # Track every AsyncSession close()/rollback() call for the duration of
     # this test, so "the request's session was rolled back or safely
@@ -431,7 +438,6 @@ async def test_audit_write_failure_after_flush_leaves_no_equipment_or_audit_row(
     monkeypatch.setattr(AsyncSession, "close", tracking_close)
     monkeypatch.setattr(AsyncSession, "rollback", tracking_rollback)
 
-    headers = await _auth_headers(client, "admin")
     async with await _raw_client() as raw_client:
         resp = await raw_client.post(
             "/api/v1/equipment",

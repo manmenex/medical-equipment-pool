@@ -21,12 +21,15 @@ Default connection target if POSTGRES_TEST_DATABASE_URL is unset:
 """
 
 import os
+import subprocess
+import sys
 import uuid
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select, text
+from sqlalchemy import inspect, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.db_errors import translate_integrity_error
@@ -257,3 +260,200 @@ async def test_rollback_after_duplicate_leaves_no_audit_row(pg_client, pg_seeded
         ).scalars().all()
 
     assert len(after) == len(before), "a failed duplicate create must not leave an audit row behind"
+
+
+# ---------------------------------------------------------------------------
+# PR3: authentication-event audit is best-effort, verified against a real
+# SAVEPOINT/ROLLBACK TO SAVEPOINT on PostgreSQL (SQLite emulates savepoints
+# differently at the driver level, so this must be checked here too, not
+# just in the SQLite-backed suite).
+# ---------------------------------------------------------------------------
+
+
+async def test_login_succeeds_on_postgres_even_if_audit_write_fails(pg_client, pg_seeded_users, monkeypatch):
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("simulated audit persistence failure")
+
+    monkeypatch.setattr("app.core.audit.audit_crud.create", _boom)
+
+    resp = await pg_client.post(
+        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert "access_token" in resp.json()
+
+
+async def test_equipment_create_with_due_dates_is_json_safe_on_postgres(pg_client, pg_seeded_users, pg_engine):
+    # CR7-M3 / PR7-H1: the SQLite suite already covers the JSON-mode date
+    # fix (equipment.py's create_equipment builds audit_after via
+    # payload.model_dump(mode="json") instead of reusing the ORM-write
+    # dict), but the audit column is JSONB on PostgreSQL specifically, not
+    # SQLite's generic JSON variant — this proves the fix against the real
+    # production column type/dialect, not just SQLite's emulation of it.
+    headers = await _admin_headers(pg_client)
+    resp = await pg_client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={
+            "asset_number": "PG-DATES-0001",
+            "equipment_name": "Ventilator",
+            "pm_due_date": "2026-08-01",
+            "cal_due_date": "2026-09-15",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    equipment_id = resp.json()["id"]
+    assert resp.json()["pm_due_date"] == "2026-08-01"
+    assert resp.json()["cal_due_date"] == "2026-09-15"
+
+    session_maker = async_sessionmaker(pg_engine, expire_on_commit=False, class_=AsyncSession)
+    async with session_maker() as fresh_session:
+        equipment_rows = (
+            await fresh_session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment_id)))
+        ).scalars().all()
+        assert len(equipment_rows) == 1
+
+        audit_rows = (
+            await fresh_session.execute(
+                select(AuditLog).where(
+                    AuditLog.action == "create",
+                    AuditLog.entity_type == "equipment",
+                    AuditLog.entity_id == uuid.UUID(equipment_id),
+                )
+            )
+        ).scalars().all()
+        assert len(audit_rows) == 1
+        row = audit_rows[0]
+        # JSONB round-trips as a native dict via asyncpg — a bare string
+        # here would mean the date never got JSON-encoded in the first
+        # place and the column just stored serialized text.
+        assert isinstance(row.after_data, dict)
+        assert row.after_data["pm_due_date"] == "2026-08-01"
+        assert row.after_data["cal_due_date"] == "2026-09-15"
+
+        # Confirm via the raw driver too, independent of the ORM's own
+        # JSON handling, that PostgreSQL itself accepted and stored valid
+        # JSONB (a real jsonb column, containing exactly these keys).
+        raw = await fresh_session.execute(
+            text(
+                "SELECT after_data->>'pm_due_date', after_data->>'cal_due_date', "
+                "pg_typeof(after_data)::text FROM audit_logs WHERE entity_id = :eid AND action = 'create'"
+            ),
+            {"eid": str(equipment_id)},
+        )
+        pm_due, cal_due, pg_type = raw.one()
+        assert pm_due == "2026-08-01"
+        assert cal_due == "2026-09-15"
+        assert pg_type == "jsonb"
+
+
+async def test_login_succeeds_on_postgres_even_if_commit_fails(pg_client, pg_seeded_users, monkeypatch):
+    # PR7-M1: best-effort protection must cover the whole persistence
+    # boundary, including the commit that follows the audit SAVEPOINT — not
+    # just the audit write itself. Verified against a real PostgreSQL
+    # transaction/commit boundary, not just SQLite's.
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    async def _boom(self, *args, **kwargs):
+        raise RuntimeError("simulated commit failure")
+
+    monkeypatch.setattr(AsyncSession, "commit", _boom)
+
+    resp = await pg_client.post(
+        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert "access_token" in resp.json()
+
+
+# ---------------------------------------------------------------------------
+# PR3: migration 0002_audit_request_ids.py, exercised for real via the
+# `alembic` CLI against a dedicated scratch database — not simulated by
+# Base.metadata.create_all() like every other test in this suite. This is
+# the only test that proves the actual migration *files* work (upgrade from
+# a fresh DB, downgrade, and re-upgrade as a pre-PR3 DB catching up would).
+# ---------------------------------------------------------------------------
+
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+_SCRATCH_DB_NAME = "mep_test_migration_scratch"
+
+
+def _admin_dsn() -> str:
+    plain = POSTGRES_TEST_DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+    return plain.rsplit("/", 1)[0] + "/postgres"
+
+
+def _scratch_dsn(dialect: str) -> str:
+    base = POSTGRES_TEST_DATABASE_URL.replace("postgresql+asyncpg://", f"{dialect}://").rsplit("/", 1)[0]
+    return f"{base}/{_SCRATCH_DB_NAME}"
+
+
+async def _recreate_scratch_database() -> None:
+    import asyncpg
+
+    conn = await asyncpg.connect(_admin_dsn())
+    try:
+        await conn.execute(f'DROP DATABASE IF EXISTS "{_SCRATCH_DB_NAME}"')
+        await conn.execute(f'CREATE DATABASE "{_SCRATCH_DB_NAME}"')
+    finally:
+        await conn.close()
+
+
+async def _drop_scratch_database() -> None:
+    import asyncpg
+
+    conn = await asyncpg.connect(_admin_dsn())
+    try:
+        await conn.execute(f'DROP DATABASE IF EXISTS "{_SCRATCH_DB_NAME}"')
+    finally:
+        await conn.close()
+
+
+def _run_alembic(*args: str) -> None:
+    env = {**os.environ, "DATABASE_URL": _scratch_dsn("postgresql+asyncpg")}
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", *args],
+        cwd=str(_BACKEND_DIR),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, f"alembic {' '.join(args)} failed:\nstdout={result.stdout}\nstderr={result.stderr}"
+
+
+async def _audit_logs_columns() -> set[str]:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            return await conn.run_sync(lambda sync_conn: {c["name"] for c in inspect(sync_conn).get_columns("audit_logs")})
+    finally:
+        await engine.dispose()
+
+
+async def test_migration_0002_upgrade_downgrade_round_trip():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        # Fresh database: 0001 then 0002 back-to-back must succeed. (0001's
+        # create_all() already reflects the current AuditLog model, so 0002
+        # must tolerate the columns already existing — see its docstring.)
+        _run_alembic("upgrade", "head")
+        columns = await _audit_logs_columns()
+        assert {"request_id", "correlation_id"} <= columns
+
+        # Downgrade removes exactly what 0002 added, cleanly.
+        _run_alembic("downgrade", "0001_initial")
+        columns = await _audit_logs_columns()
+        assert "request_id" not in columns
+        assert "correlation_id" not in columns
+
+        # Re-upgrade simulates a pre-PR3 database catching up.
+        _run_alembic("upgrade", "head")
+        columns = await _audit_logs_columns()
+        assert {"request_id", "correlation_id"} <= columns
+    finally:
+        await _drop_scratch_database()

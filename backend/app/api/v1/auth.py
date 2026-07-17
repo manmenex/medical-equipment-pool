@@ -24,8 +24,10 @@ def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(payload: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
-    _, _, access_token, refresh_token = await authenticate(db, payload.identifier, payload.password)
+async def login(payload: LoginRequest, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    _, _, access_token, refresh_token = await authenticate(
+        db, payload.identifier, payload.password, request=request
+    )
     _set_refresh_cookie(response, refresh_token)
     return TokenResponse(access_token=access_token, expires_in=settings.JWT_ACCESS_EXPIRE_MINUTES * 60)
 
@@ -33,14 +35,14 @@ async def login(payload: LoginRequest, response: Response, db: AsyncSession = De
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh(request: Request, db: AsyncSession = Depends(get_db)):
     refresh_token = request.cookies.get("refresh_token")
-    access_token = await auth_service.refresh_access_token(db, refresh_token)
+    access_token = await auth_service.refresh_access_token(db, refresh_token, request=request)
     return TokenResponse(access_token=access_token, expires_in=settings.JWT_ACCESS_EXPIRE_MINUTES * 60)
 
 
 @router.post("/logout")
-async def logout(request: Request, response: Response):
+async def logout(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     refresh_token = request.cookies.get("refresh_token")
-    await auth_service.logout(refresh_token)
+    await auth_service.logout(db, refresh_token, request=request)
     response.delete_cookie("refresh_token", path="/api/v1/auth")
     return {"detail": "logged out"}
 
