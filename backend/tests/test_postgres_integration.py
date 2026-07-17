@@ -283,6 +283,25 @@ async def test_login_succeeds_on_postgres_even_if_audit_write_fails(pg_client, p
     assert "access_token" in resp.json()
 
 
+async def test_login_succeeds_on_postgres_even_if_commit_fails(pg_client, pg_seeded_users, monkeypatch):
+    # PR7-M1: best-effort protection must cover the whole persistence
+    # boundary, including the commit that follows the audit SAVEPOINT — not
+    # just the audit write itself. Verified against a real PostgreSQL
+    # transaction/commit boundary, not just SQLite's.
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    async def _boom(self, *args, **kwargs):
+        raise RuntimeError("simulated commit failure")
+
+    monkeypatch.setattr(AsyncSession, "commit", _boom)
+
+    resp = await pg_client.post(
+        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert "access_token" in resp.json()
+
+
 # ---------------------------------------------------------------------------
 # PR3: migration 0002_audit_request_ids.py, exercised for real via the
 # `alembic` CLI against a dedicated scratch database — not simulated by

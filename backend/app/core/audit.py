@@ -156,3 +156,30 @@ async def record_best_effort_audit_event(db: AsyncSession, **kwargs) -> None:
             kwargs.get("action"),
             exc_info=True,
         )
+
+
+async def commit_best_effort(db: AsyncSession) -> None:
+    """Commits an authentication-event transaction — the other half of the
+    same best-effort boundary as record_best_effort_audit_event().
+
+    That function only protects the audit *write* (inside its own
+    SAVEPOINT); the caller's subsequent `db.commit()` sits outside that
+    boundary, so a commit-time failure (e.g. a dropped connection) could
+    still propagate and turn an already-decided authentication outcome — a
+    successful login/logout/refresh, or a login failure about to raise
+    InvalidCredentialsError — into an unrelated 500. This catches that too:
+    on failure the session is rolled back so it's left usable, and the
+    failure is logged server-side, but never re-raised. By the time this
+    runs, the only pending changes are the audit row (and, for a successful
+    login, last_login_at) — there is no other business validation left to
+    protect, so making the commit itself best-effort here is safe.
+    """
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.warning(
+            "Failed to commit authentication audit transaction; "
+            "continuing without blocking the authentication flow",
+            exc_info=True,
+        )

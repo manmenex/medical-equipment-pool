@@ -162,13 +162,21 @@ async def create_equipment(
 
     async with translate_integrity_error(db, resource="equipment"):
         equipment = await equipment_crud.create(db, data=create_data)
+    # `data` (used for the ORM write above) keeps native Python `date`
+    # objects for pm_due_date/cal_due_date, which the audit row's JSON/JSONB
+    # column cannot serialize directly — a create request that actually
+    # supplies either field would otherwise crash here (TypeError: Object of
+    # type date is not JSON serializable) after the equipment row already
+    # committed. mode="json" renders dates as ISO strings instead.
+    audit_after = payload.model_dump(mode="json")
+    audit_after["qr_code_value"] = data["qr_code_value"]
     await record_audit_event(
         db,
         actor_user_id=user.id,
         action=AUDIT_ACTION_CREATE,
         entity_type=AUDIT_ENTITY_EQUIPMENT,
         entity_id=equipment.id,
-        after=data,
+        after=audit_after,
         request=request,
     )
     await db.commit()

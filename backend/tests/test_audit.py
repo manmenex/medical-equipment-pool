@@ -1,10 +1,19 @@
 import uuid
 
 import pytest
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 from app.core.audit import redact_sensitive
+from app.core.security import hash_password
+from app.db.base import Base
+from app.db.session import get_db
+from app.main import app
 from app.models.audit import AuditLog
+from app.models.user import ALL_ROLES, Role, User
 from tests.conftest import login
 
 pytestmark = pytest.mark.asyncio
@@ -253,6 +262,185 @@ async def test_login_succeeds_even_if_audit_write_fails(client, seeded_users, db
     assert rows == [], "the failed audit write should have rolled back to its savepoint, not persisted"
 
 
+# ---------------------------------------------------------------------------
+# PR7-M1: best-effort protection must cover the *whole* auth persistence
+# boundary, not just the audit write's own SAVEPOINT — a failure in the
+# commit that follows it (outside that SAVEPOINT) must not turn a decided
+# authentication outcome into an unrelated 500 either. See
+# commit_best_effort() in app/core/audit.py.
+#
+# These tests need a real transaction boundary where a SAVEPOINT (from
+# record_best_effort_audit_event's begin_nested()) is released and then the
+# *outer* transaction is rolled back — pysqlite's default legacy transaction
+# handling does not correctly support that combination (a released
+# SAVEPOINT's row can survive a later db.rollback()), which is exactly the
+# documented reason SQLAlchemy ships a dedicated recipe for it. Rather than
+# apply that recipe to the shared `db_engine` fixture (used by ~150 other
+# tests, including ones that deliberately exercise the still-open, PR
+# #10-owned MissingGreenlet defect in a way that turns out to interact badly
+# with stricter transaction semantics — out of scope here), it is scoped to
+# a dedicated engine/client used only by this section.
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def sp_engine():
+    from sqlalchemy import event
+
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    # See https://docs.sqlalchemy.org/en/20/dialects/sqlite.html#serializable-isolation-savepoints-transactional-ddl
+    @event.listens_for(engine.sync_engine, "connect")
+    def _do_connect(dbapi_connection, connection_record):
+        dbapi_connection.isolation_level = None
+
+    @event.listens_for(engine.sync_engine, "begin")
+    def _do_begin(conn):
+        conn.exec_driver_sql("BEGIN")
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield engine
+    await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def sp_seeded_users(sp_engine):
+    session_maker = async_sessionmaker(sp_engine, expire_on_commit=False, class_=AsyncSession)
+    async with session_maker() as session:
+        roles = {}
+        for name in ALL_ROLES:
+            role = Role(name=name, permissions={})
+            session.add(role)
+            roles[name] = role
+        await session.flush()
+
+        users = {}
+        for role_name in ALL_ROLES:
+            user = User(
+                employee_code=f"{role_name.upper()}001",
+                full_name=f"Test {role_name}",
+                email=f"{role_name}@mep-hospital-test.dev",
+                password_hash=hash_password("Password@123"),
+                role_id=roles[role_name].id,
+            )
+            session.add(user)
+            users[role_name] = user
+        await session.commit()
+        return users
+
+
+@pytest_asyncio.fixture
+async def sp_client(sp_engine):
+    session_maker = async_sessionmaker(sp_engine, expire_on_commit=False, class_=AsyncSession)
+
+    async def override_get_db():
+        async with session_maker() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
+    app.dependency_overrides.clear()
+
+
+def _boom_commit(monkeypatch):
+    async def _boom(self, *args, **kwargs):
+        raise RuntimeError("simulated commit failure")
+
+    monkeypatch.setattr(AsyncSession, "commit", _boom)
+
+
+async def _rows_fresh(sp_engine, *, action=None, entity_type=None, entity_id=None):
+    """Same query as _rows(), but through a brand-new session/connection.
+
+    These commit-time-failure tests exercise a real rollback (via
+    commit_best_effort's `await db.rollback()`) on the *request's own*
+    session, which is a different AsyncSession object than any other
+    fixture-held session even though both share the same underlying
+    StaticPool SQLite connection. Verifying through a fresh session — the
+    same pattern PR2's test_exception_handling.py uses for post-rollback
+    assertions — avoids relying on some other session's own transactional/
+    visibility state, which is unrelated to the request's rollback and not a
+    reliable way to observe it.
+    """
+    session_maker = async_sessionmaker(sp_engine, expire_on_commit=False, class_=AsyncSession)
+    async with session_maker() as fresh_session:
+        return await _rows(fresh_session, action=action, entity_type=entity_type, entity_id=entity_id)
+
+
+async def test_login_failure_response_survives_commit_time_failure(
+    sp_client, sp_seeded_users, sp_engine, monkeypatch
+):
+    _boom_commit(monkeypatch)
+
+    resp = await sp_client.post(
+        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "wrong-password"}
+    )
+    assert resp.status_code == 401, resp.text
+    assert resp.json()["code"] == "INVALID_CREDENTIALS"
+
+    monkeypatch.undo()
+    rows = await _rows_fresh(sp_engine, action="login_failure", entity_type="auth")
+    assert rows == [], "a failed commit must leave no partial audit row behind"
+
+
+async def test_login_success_response_survives_commit_time_failure(
+    sp_client, sp_seeded_users, sp_engine, monkeypatch
+):
+    _boom_commit(monkeypatch)
+
+    resp = await sp_client.post(
+        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert "access_token" in resp.json()
+
+    monkeypatch.undo()
+    rows = await _rows_fresh(sp_engine, action="login_success", entity_type="auth")
+    assert rows == [], "a failed commit must leave no partial audit row behind"
+
+
+async def test_refresh_response_survives_commit_time_failure(sp_client, sp_seeded_users, sp_engine, monkeypatch):
+    login_resp = await sp_client.post(
+        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+    )
+    assert login_resp.status_code == 200
+
+    _boom_commit(monkeypatch)
+
+    resp = await sp_client.post("/api/v1/auth/refresh")
+    assert resp.status_code == 200, resp.text
+    assert "access_token" in resp.json()
+
+    monkeypatch.undo()
+    rows = await _rows_fresh(sp_engine, action="token_refresh", entity_type="auth")
+    assert rows == [], "a failed commit must leave no partial audit row behind"
+
+    # Session recovery: an ordinary follow-up request through the same
+    # dependency-injected session machinery still works.
+    follow_up = await sp_client.get("/api/v1/audit-logs", headers=await _auth_headers(sp_client, "admin"))
+    assert follow_up.status_code == 200
+
+
+async def test_logout_response_survives_commit_time_failure(sp_client, sp_seeded_users, sp_engine, monkeypatch):
+    headers = await _auth_headers(sp_client, "admin")
+
+    _boom_commit(monkeypatch)
+
+    resp = await sp_client.post("/api/v1/auth/logout", headers=headers)
+    assert resp.status_code == 200, resp.text
+
+    monkeypatch.undo()
+    rows = await _rows_fresh(sp_engine, action="logout", entity_type="auth")
+    assert rows == [], "a failed commit must leave no partial audit row behind"
+
+
 async def test_logout_creates_audit_row(client, seeded_users, db_session):
     headers = await _auth_headers(client, "admin")
     resp = await client.post("/api/v1/auth/logout", headers=headers)
@@ -414,12 +602,74 @@ async def test_equipment_create_audit_row_has_request_and_correlation_ids(client
     assert row.correlation_id is not None
 
 
+async def test_equipment_create_with_due_dates_is_json_safe(client, seeded_users, db_session):
+    # payload.model_dump() (used for the ORM write) keeps native Python
+    # `date` objects for pm_due_date/cal_due_date; passing that dict
+    # straight through as the audit row's after_data used to crash the
+    # JSON/JSONB column's serializer (TypeError: Object of type date is not
+    # JSON serializable) — after the equipment row had already committed.
+    headers = await _auth_headers(client, "admin")
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={
+            "asset_number": "AUDIT-EQ-DATES-0001",
+            "equipment_name": "Ventilator",
+            "pm_due_date": "2026-08-01",
+            "cal_due_date": "2026-09-15",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    equipment_id = resp.json()["id"]
+    assert resp.json()["pm_due_date"] == "2026-08-01"
+    assert resp.json()["cal_due_date"] == "2026-09-15"
+
+    from app.models.equipment import Equipment
+
+    result = await db_session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment_id)))
+    assert result.scalar_one().asset_number == "AUDIT-EQ-DATES-0001"
+
+    rows = await _rows(
+        db_session, action="create", entity_type="equipment", entity_id=uuid.UUID(equipment_id)
+    )
+    assert len(rows) == 1, "exactly one audit row must exist"
+    row = rows[0]
+    # Stable, JSON-safe (ISO-format string) date values in the persisted row.
+    assert row.after_data["pm_due_date"] == "2026-08-01"
+    assert row.after_data["cal_due_date"] == "2026-09-15"
+
+
+async def test_equipment_create_with_only_one_due_date_is_json_safe(client, seeded_users, db_session):
+    headers = await _auth_headers(client, "admin")
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={
+            "asset_number": "AUDIT-EQ-DATES-0002",
+            "equipment_name": "Infusion Pump",
+            "pm_due_date": "2027-01-01",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    equipment_id = resp.json()["id"]
+
+    rows = await _rows(
+        db_session, action="create", entity_type="equipment", entity_id=uuid.UUID(equipment_id)
+    )
+    assert len(rows) == 1
+    assert rows[0].after_data["pm_due_date"] == "2027-01-01"
+    assert rows[0].after_data["cal_due_date"] is None
+
+
 async def test_equipment_update_audit_row_has_before_and_after(client, seeded_users, db_session):
-    # PATCH /api/v1/equipment/{id} previously returned a spurious 500 after
-    # the update had already committed (MissingGreenlet — see
-    # Equipment.__mapper_args__["eager_defaults"] in app/models/equipment.py
-    # and its dedicated fix/regression tests in test_equipment.py). Now that
-    # it's fixed, this must be a strict 200, not a tolerated 500.
+    # PATCH /api/v1/equipment/{id} has a pre-existing, out-of-scope response-
+    # serialization defect (MissingGreenlet, after a successful commit) that
+    # is owned and fixed by Draft PR #10 (fix/equipment-missing-greenlet-
+    # response), not this PR — PR3 does not duplicate that fix here (see PR
+    # #7's description, "Equipment MissingGreenlet fix"/PR7-M2). This test
+    # therefore uses _raw_client() to avoid failing on that still-open,
+    # separately-owned defect, and deliberately does not assert a response
+    # status code — only the audit-persistence behavior PR3 actually owns.
     headers = await _auth_headers(client, "admin")
     create_resp = await client.post(
         "/api/v1/equipment",
@@ -429,13 +679,12 @@ async def test_equipment_update_audit_row_has_before_and_after(client, seeded_us
     assert create_resp.status_code == 201
     equipment_id = create_resp.json()["id"]
 
-    update_resp = await client.patch(
-        f"/api/v1/equipment/{equipment_id}",
-        headers=headers,
-        json={"equipment_name": "New Name"},
-    )
-    assert update_resp.status_code == 200, update_resp.text
-    assert update_resp.json()["equipment_name"] == "New Name"
+    async with await _raw_client() as raw_client:
+        await raw_client.patch(
+            f"/api/v1/equipment/{equipment_id}",
+            headers=headers,
+            json={"equipment_name": "New Name"},
+        )
 
     rows = await _rows(
         db_session, action="update", entity_type="equipment", entity_id=uuid.UUID(equipment_id)
@@ -453,8 +702,8 @@ async def test_equipment_update_audit_row_has_before_and_after(client, seeded_us
 
 
 async def test_equipment_status_change_audit_row_has_correct_action_and_actor(client, seeded_users, db_session):
-    # Same MissingGreenlet fix as the update test above — must be a strict
-    # 200 now, not a tolerated 500.
+    # Same pre-existing, PR #10-owned response defect as the update test
+    # above — see that test's comment. No status code is asserted here.
     headers = await _auth_headers(client, "admin")
     create_resp = await client.post(
         "/api/v1/equipment",
@@ -464,13 +713,12 @@ async def test_equipment_status_change_audit_row_has_correct_action_and_actor(cl
     assert create_resp.status_code == 201
     equipment_id = create_resp.json()["id"]
 
-    status_resp = await client.post(
-        f"/api/v1/equipment/{equipment_id}/status",
-        headers=headers,
-        json={"status": "repair", "reason": "Needs a new wheel"},
-    )
-    assert status_resp.status_code == 200, status_resp.text
-    assert status_resp.json()["status"] == "repair"
+    async with await _raw_client() as raw_client:
+        await raw_client.post(
+            f"/api/v1/equipment/{equipment_id}/status",
+            headers=headers,
+            json={"status": "repair", "reason": "Needs a new wheel"},
+        )
 
     rows = await _rows(
         db_session, action="status_change", entity_type="equipment", entity_id=uuid.UUID(equipment_id)

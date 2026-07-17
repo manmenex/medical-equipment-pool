@@ -10,6 +10,7 @@ from app.core.audit import (
     AUDIT_ACTION_LOGOUT,
     AUDIT_ACTION_TOKEN_REFRESH,
     AUDIT_ENTITY_AUTH,
+    commit_best_effort,
     record_best_effort_audit_event,
 )
 from app.core.config import settings
@@ -50,7 +51,7 @@ async def authenticate(
             entity_id=user.id if user is not None else None,
             request=request,
         )
-        await db.commit()
+        await commit_best_effort(db)
         raise InvalidCredentialsError("Invalid employee code/email or password")
 
     role_result = await db.get(Role, user.role_id)
@@ -59,12 +60,11 @@ async def authenticate(
         raise InvalidCredentialsError("User has no assigned role")
 
     user.last_login_at = datetime.utcnow()
-    # Best-effort: a transient audit-write failure must not block a
-    # legitimate login. See record_best_effort_audit_event()'s docstring.
-    # If the audit write does fail, its SAVEPOINT rollback also discards
-    # the last_login_at flush bundled into the same flush() call — an
-    # acceptable, self-contained degradation, since token issuance below
-    # never depends on this commit succeeding.
+    # Best-effort across the whole persistence boundary — both the audit
+    # write (record_best_effort_audit_event's own SAVEPOINT) and this
+    # commit (commit_best_effort) — must not block a legitimate login. If
+    # either fails, last_login_at and/or the audit row may not persist, but
+    # token issuance below never depends on this commit succeeding.
     await record_best_effort_audit_event(
         db,
         actor_user_id=user.id,
@@ -73,13 +73,20 @@ async def authenticate(
         entity_id=user.id,
         request=request,
     )
-    await db.commit()
+    # Read everything token issuance needs from the ORM objects *before*
+    # commit_best_effort() — a commit-time failure there rolls back the
+    # session, which expires every attribute on `user`/`role` and would
+    # otherwise turn a legitimate login into a MissingGreenlet 500 the
+    # instant those attributes are next touched.
+    user_id_str = str(user.id)
+    role_name = role.name
+    await commit_best_effort(db)
 
-    access_token = create_access_token(str(user.id), role.name)
-    refresh_token = create_refresh_token(str(user.id))
+    access_token = create_access_token(user_id_str, role_name)
+    refresh_token = create_refresh_token(user_id_str)
     refresh_payload = decode_token(refresh_token)
     await store_refresh_token(
-        refresh_payload["jti"], str(user.id), ttl_seconds=settings.JWT_REFRESH_EXPIRE_DAYS * 24 * 3600
+        refresh_payload["jti"], user_id_str, ttl_seconds=settings.JWT_REFRESH_EXPIRE_DAYS * 24 * 3600
     )
     return user, role, access_token, refresh_token
 
@@ -117,8 +124,8 @@ async def refresh_access_token(
         raise InvalidRefreshTokenError("User has no assigned role")
 
     # Best-effort, same rationale as login: preserve current authentication
-    # response behavior — an audit-write hiccup must not turn a valid
-    # refresh into a failure.
+    # response behavior — an audit-write or commit-time hiccup must not
+    # turn a valid refresh into a failure.
     await record_best_effort_audit_event(
         db,
         actor_user_id=user.id,
@@ -127,9 +134,12 @@ async def refresh_access_token(
         entity_id=user.id,
         request=request,
     )
-    await db.commit()
+    # See the identical comment in authenticate(): read role.name before
+    # commit_best_effort() can roll back and expire it.
+    role_name = role.name
+    await commit_best_effort(db)
 
-    return create_access_token(user_id, role.name)
+    return create_access_token(user_id, role_name)
 
 
 async def logout(db: AsyncSession, refresh_token: str | None, *, request: Request | None = None) -> None:
@@ -152,4 +162,4 @@ async def logout(db: AsyncSession, refresh_token: str | None, *, request: Reques
         entity_id=actor_user_id,
         request=request,
     )
-    await db.commit()
+    await commit_best_effort(db)
