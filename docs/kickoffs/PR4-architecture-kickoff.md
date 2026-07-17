@@ -335,8 +335,9 @@ sequence could simply be created at PostgreSQL's default start value of
 `1`, treating reseeding as a disaster-recovery-only concern. Independent
 review (PR #12, finding PR4-A1, High) correctly identified this as unsafe:
 this is not a fresh-database-only project — PR4 lands into a running
-system that has already been generating `TX-{YYYYMMDD}-{NNNN}` values via
-the legacy `COUNT`+`LIKE` generator, on every date up to and including the
+system that has already been generating `TX-{YYYYMMDD}-{seq}` values
+(variable-length numeric suffix — see step 2 below) via the legacy
+`COUNT`+`LIKE` generator, on every date up to and including the
 date of cutover itself. A sequence created at `1` would make its first
 `nextval()` call reproduce an already-existing historical suffix,
 colliding with the `UNIQUE` constraint on `transaction_no` and failing the
@@ -357,17 +358,33 @@ state** — specifically, the migration that creates the sequence must:
    (across every date, not only the deployment date — see "Same-day
    deployment behavior" below).
 2. Parse each value's trailing numeric suffix per the
-   `TX-{YYYYMMDD}-{NNNN}` shape. Any value that does not match this shape
-   (a malformed or legacy-format value) is **skipped**, not treated as an
-   error and not treated as `0` — it must not be allowed to either abort
-   the migration or silently suppress a real historical maximum. This is
-   a concrete, present-day case, not a hypothetical: this project's own
-   `tests/test_borrow.py` fixture already uses non-conforming values such
-   as `transaction_no="TX-TEST-0001"`, whose trailing token `"0001"` is
-   numeric but whose middle token is not a date — the parser must be
-   explicit about exactly which shape it accepts so such values are
-   deliberately and correctly excluded from the max computation, not
-   accidentally included or excluded.
+   `TX-{YYYYMMDD}-{seq}` shape, where `{seq}` is a **variable-length
+   numeric suffix, not a fixed four-digit field**. The legacy generator's
+   `{count + 1:04d}` formatting sets a *minimum* width of 4 via
+   zero-padding, not a maximum — once the same-day count exceeds `9999`,
+   the legacy value is 5+ digits (e.g. `10000`), and the sequence-based
+   generator's own values are permanently unbounded in width once the
+   count is high enough (see §12's padding-width discussion, and §3's
+   note that the global count never resets). An earlier version of this
+   document's parser description implied an exact four-digit `NNNN`
+   field; independent review (PR #12, finding PR4-N2, Medium) correctly
+   flagged that an implementation matching only exactly 4 digits could
+   silently skip a valid, higher-value historical suffix and compute an
+   unsafe (too-low) seed. The parser must match `TX-` + an 8-digit date +
+   `-` + **one or more digits** (any length, no upper or lower bound
+   beyond "at least the legacy minimum width of 4"), and must not reject
+   or truncate a longer suffix. Any value that does not match this shape
+   at all (a malformed or non-conforming legacy-format value) is
+   **skipped**, not treated as an error and not treated as `0` — it must
+   not be allowed to either abort the migration or silently suppress a
+   real historical maximum. This is a concrete, present-day case, not a
+   hypothetical: this project's own `tests/test_borrow.py` fixture already
+   uses non-conforming values such as `transaction_no="TX-TEST-0001"`,
+   whose trailing token `"0001"` is numeric but whose middle token is not
+   a date — the parser must be explicit about exactly which shape it
+   accepts (date portion **and** variable-length numeric portion both
+   required) so such values are deliberately and correctly excluded from
+   the max computation, not accidentally included or excluded.
 3. Compute the maximum successfully-parsed suffix across that full scan
    (or `0` if no row parses, i.e. a genuinely fresh database).
 4. Create the sequence with `START WITH` (or, if the sequence already
@@ -467,8 +484,37 @@ cutover's computed maximum (Plan Part E: "Sequence can be dropped; if ever
 recreated, must be seeded above the highest historical suffix already in
 use").
 
-**Zero-downtime:** yes — `CREATE SEQUENCE` takes no meaningful lock and
-does not block reads/writes on `borrow_transactions`.
+**Zero-downtime — conditional, not unconditional.** An earlier version of
+this document stated "Zero-downtime: yes" without qualification, reasoning
+only from `CREATE SEQUENCE` taking no meaningful table lock. Independent
+review (PR #12, finding PR4-A2, High) correctly identified this as
+contradicting "Concurrency expectations for cutover itself" above: the
+statement was true for the *migration's own lock footprint* but ignored
+the *scan-to-generator-swap window*, which is where this document's own
+safety requirement actually lives. An implementer reading only "yes" could
+reasonably conclude no special handoff is needed and let old-version
+(`COUNT`+`LIKE`) writes continue after the historical maximum has been
+computed — precisely the collision PR4-A1's fix exists to prevent. The
+corrected statement:
+
+- **The migration statement itself (`CREATE SEQUENCE ... START WITH ...`)
+  is zero-downtime** in the narrow sense that it takes no meaningful lock
+  and does not block reads/writes on `borrow_transactions`.
+- **The overall cutover is zero-downtime only if the deployment handoff
+  resolved under Open Question 4 (§12) actually prevents any old-version
+  writer from using the legacy `COUNT`+`LIKE` path after the historical
+  maximum has been scanned.** If the implementing team's deployment
+  tooling can guarantee a single atomic release with no old/new
+  mixed-version window (e.g. no rolling deploy across this specific code
+  path), the cutover as a whole is genuinely zero-downtime. If it cannot
+  make that guarantee, a **bounded dispatch-write pause** during cutover
+  is required instead, and the cutover is *not* zero-downtime — it has a
+  short, explicit, planned interruption to `POST /api/v1/borrow` only,
+  not to the rest of the application.
+- This document does not itself decide which of those two applies (that
+  is Open Question 4); it requires the implementing PR to state explicitly
+  which one was chosen and to prove the choice actually prevents a mixed
+  old/new writer window, not merely assert it.
 
 ## 10. Acceptance Criteria
 
@@ -493,9 +539,11 @@ Restated from the plan (Part D, PR4) as observable, testable conditions:
   `transaction_no` values for the current calendar date** (simulating
   deployment/cutover occurring mid-way through an active business day,
   after some dispatches have already been recorded that day by the legacy
-  `COUNT`+`LIKE` generator — including at least one row whose
-  `transaction_no` does not match the `TX-{YYYYMMDD}-{NNNN}` shape, to
-  prove malformed legacy values don't break or silently pass the seeding
+  `COUNT`+`LIKE` generator — including at least one row whose numeric
+  suffix is 5+ digits (proving the parser is not limited to exactly 4
+  digits — see §9 step 2) and at least one row whose `transaction_no`
+  does not match the `TX-{YYYYMMDD}-{seq}` shape at all, to prove
+  malformed legacy values don't break or silently pass the seeding
   computation), **when the PR4 migration runs and the new generator is
   exercised immediately afterward — including under a simulated
   concurrent routine-round burst occurring right after cutover — then no
@@ -570,11 +618,18 @@ Restated from the plan (Part D, PR4) as observable, testable conditions:
   added per independent review:** against a real PostgreSQL database,
   pre-populate `borrow_transactions` with `transaction_no` rows dated to
   the *current* date (not an earlier date — this is the specific gap the
-  review identified), including at least one row with a non-conforming
-  `transaction_no` value (e.g. matching the existing
-  `test_borrow.py`-style `"TX-TEST-0001"` fixture shape) to prove the
-  parser in §9 step 2 correctly skips it without corrupting the computed
-  maximum. Then:
+  review identified), including:
+  - at least one row with a numeric suffix of 5 or more digits (e.g.
+    `TX-{today}-10000`), to prove the parser in §9 step 2 correctly
+    handles a variable-length suffix and does not silently skip or
+    misparse a valid historical value wider than the legacy generator's
+    4-digit minimum padding (PR4-N2); and
+  - at least one row with a non-conforming `transaction_no` value (e.g.
+    matching the existing `test_borrow.py`-style `"TX-TEST-0001"`
+    fixture shape) to prove the parser correctly skips it without
+    corrupting the computed maximum.
+
+  Then:
   1. Run the `0003` migration and assert (via
      `SELECT last_value FROM transaction_no_seq`) that the seeded value
      exceeds every parsed pre-existing same-day suffix.
