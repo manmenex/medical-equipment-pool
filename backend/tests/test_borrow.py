@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 
 from tests.conftest import login
@@ -109,3 +111,67 @@ async def test_viewer_cannot_borrow(client, seeded_users):
         json={"equipment_qr": equipment["qr_code_value"], "borrower_name": "Someone"},
     )
     assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# PR4: transaction-number generation (docs/kickoffs/PR4-architecture-kickoff.md,
+# squash commit 91b23b62d864edadb430d1f4335c6b77e59222f0). These exercise the
+# API contract and audit behavior via the ordinary SQLite-backed `client`
+# fixture, which drives generate_transaction_no()'s SQLite-only compatibility
+# fallback (Owner Decision 1) — NOT the real PostgreSQL sequence. They prove
+# the response/audit *shape* is unchanged and format-compliant; they are not,
+# and must never be read as, evidence of PostgreSQL concurrency-safety — that
+# is proven only in tests/test_postgres_integration.py.
+# ---------------------------------------------------------------------------
+
+
+async def test_transaction_no_is_padded_to_at_least_eight_digits(client, seeded_users):
+    admin_headers = await _auth_headers(client, "admin")
+    equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR4-0001")
+
+    resp = await client.post(
+        "/api/v1/borrow",
+        headers=admin_headers,
+        json={"equipment_qr": equipment["qr_code_value"], "borrower_name": "Nurse Pad"},
+    )
+    assert resp.status_code == 201, resp.text
+    tx = resp.json()
+
+    # Existing response shape unchanged: transaction_no is still a plain
+    # string field at the same position, in the same TX-{date}-{suffix}
+    # textual shape existing clients already parse/display.
+    transaction_no = tx["transaction_no"]
+    prefix, date_part, suffix = transaction_no.split("-")
+    assert prefix == "TX"
+    assert len(date_part) == 8 and date_part.isdigit()
+    assert suffix.isdigit()
+    assert len(suffix) >= 8, f"suffix {suffix!r} is narrower than the 8-digit minimum (Owner Decision 2)"
+
+
+async def test_borrow_creates_exactly_one_audit_row_matching_transaction_no(client, seeded_users, db_session):
+    from sqlalchemy import select
+
+    from app.models.audit import AuditLog
+
+    admin_headers = await _auth_headers(client, "admin")
+    equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR4-0002")
+
+    resp = await client.post(
+        "/api/v1/borrow",
+        headers=admin_headers,
+        json={"equipment_qr": equipment["qr_code_value"], "borrower_name": "Nurse Audit"},
+    )
+    assert resp.status_code == 201, resp.text
+    tx = resp.json()
+
+    rows = (
+        await db_session.execute(
+            select(AuditLog).where(
+                AuditLog.action == "borrow",
+                AuditLog.entity_type == "borrow_transaction",
+                AuditLog.entity_id == uuid.UUID(tx["id"]),
+            )
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].after_data["transaction_no"] == tx["transaction_no"]
