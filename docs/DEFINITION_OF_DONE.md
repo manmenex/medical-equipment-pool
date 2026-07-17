@@ -23,7 +23,9 @@ review format remain authoritative in
 - [ ] Rollback or forward-fix plan is proportionate to risk.
 - [ ] Monitoring/verification after deployment or merge is identified, or marked not applicable.
 - [ ] PR description matches the final diff and commit set.
-- [ ] Independent review completed by someone other than the implementing agent/session.
+- [ ] Independent review completed by someone other than the implementing
+      agent/session, submitted directly to the correct Pull Request for the
+      exact reviewed head SHA, and verified after posting.
 - [ ] Critical/High findings are resolved or the Repository Owner explicitly blocks merge.
 - [ ] Repository Owner gives final approval and performs/authorizes merge.
 

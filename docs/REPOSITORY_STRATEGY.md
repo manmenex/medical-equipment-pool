@@ -45,7 +45,9 @@ GitHub PR number does not replace it.
 ## Draft PR and merge policy
 
 1. Open all normal changes as Draft PRs.
-2. The author may self-review, but independent review is still required.
+2. The author may self-review, but independent review is still required. The
+   independent reviewer submits and verifies the GitHub review directly under
+   [`prompts/codex-pr-review.md`](prompts/codex-pr-review.md).
 3. Mark ready only after applicable Definition of Done evidence and review fixes exist.
 4. Repository Owner chooses and performs the merge.
 
