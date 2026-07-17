@@ -524,6 +524,32 @@ async def test_concurrent_dispatch_burst_produces_unique_transaction_numbers_on_
         assert suffix.isdigit() and len(suffix) >= 8
 
 
+async def test_transaction_no_generation_uses_real_sequence_not_fallback_on_postgres(
+    pg_session, pg_transaction_seq
+):
+    # PR4-D1 (independent review, PR #13): direct proof that the
+    # PostgreSQL branch actually calls nextval() rather than silently
+    # falling through to the SQLite-style COUNT+LIKE fallback. No
+    # BorrowTransaction row is ever inserted/committed by this test, so
+    # if the fallback's COUNT-against-existing-rows logic ran here
+    # instead, both calls below would see zero matching rows and return
+    # the identical value ("...-00000001" both times) rather than
+    # advancing.
+    from app.crud import transaction as transaction_crud
+
+    assert pg_session.get_bind().dialect.name == "postgresql"
+
+    first = await transaction_crud.generate_transaction_no(pg_session)
+    second = await transaction_crud.generate_transaction_no(pg_session)
+    assert first != second
+
+    _, _, first_suffix = _split_transaction_no(first)
+    _, _, second_suffix = _split_transaction_no(second)
+    assert int(second_suffix) == int(first_suffix) + 1
+
+    await pg_session.rollback()
+
+
 async def test_transaction_no_sequence_gap_after_rollback_is_accepted_on_postgres(
     pg_session, pg_transaction_seq
 ):
@@ -823,6 +849,126 @@ async def test_migration_0003_seeds_sequence_above_populated_same_day_data():
             assert generated_date == today
             assert int(generated_suffix) > highest_suffix
             assert len(generated_suffix) >= 8
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0003_reseeds_a_preexisting_low_sequence_before_traffic():
+    # PR4-M1 (independent review, PR #13): CREATE SEQUENCE IF NOT EXISTS
+    # ... START WITH n is a silent no-op when the sequence already
+    # exists -- PostgreSQL neither applies START WITH nor touches the
+    # existing allocator state. An orphaned/restored/manually-created
+    # transaction_no_seq left at a low value, still coexisting with a
+    # database that thinks it's only at Alembic revision 0002, must be
+    # detected and repaired by upgrade() -- not silently preserved.
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0002_audit_request_ids")
+
+        # Manually create the sequence out-of-band, at a deliberately low
+        # value -- simulating a prior partial migration attempt, a
+        # manual `CREATE SEQUENCE`, or a restore from a backup that
+        # predates the real historical data below. Alembic itself still
+        # believes the database is at 0002; nothing about 0003 has run.
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("CREATE SEQUENCE transaction_no_seq START WITH 5"))
+        finally:
+            await engine.dispose()
+
+        today = datetime.utcnow().strftime("%Y%m%d")
+        yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y%m%d")
+        true_highest_suffix = 987654321  # 9 digits -- above the 8-digit minimum width
+        seed_rows = [
+            f"TX-{yesterday}-00000010",  # an earlier date, still above the orphaned sequence's low value
+            f"TX-{today}-00000099",  # today (the deployment/migration date)
+            f"TX-{today}-{true_highest_suffix}",  # valid, 9-digit -- the true max
+            "TX-TEST-0001",  # malformed -- must be skipped, not error, and must not affect the computation
+        ]
+        await _seed_transactions(seed_rows)
+
+        # The orphaned sequence's own low value (5) is far below every
+        # seeded row -- if upgrade() only relied on CREATE SEQUENCE IF
+        # NOT EXISTS, this next nextval() would reproduce an existing
+        # suffix immediately.
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                first_value = (await conn.execute(text("SELECT nextval('transaction_no_seq')"))).scalar_one()
+            assert first_value > true_highest_suffix, (
+                "an existing, orphaned low sequence must be repaired (RESTART WITH) before any traffic "
+                "reaches it -- it must never be silently left at its unsafe prior value"
+            )
+
+            # The malformed row must still be present and must not have
+            # affected the repaired seed value above.
+            session_maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+            async with session_maker() as session:
+                rows = (
+                    await session.execute(
+                        select(BorrowTransaction).where(BorrowTransaction.transaction_no == "TX-TEST-0001")
+                    )
+                ).scalars().all()
+                assert len(rows) == 1
+
+            # The real runtime generator must also be safe immediately
+            # after this repair, not just raw nextval().
+            from app.crud import transaction as transaction_crud
+
+            async with session_maker() as session:
+                generated = await transaction_crud.generate_transaction_no(session)
+            _, generated_date, generated_suffix = generated.split("-")
+            assert generated_date == today
+            assert int(generated_suffix) > true_highest_suffix
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0003_leaves_an_already_safe_existing_sequence_untouched():
+    # The repair in upgrade() must be conditional, not an unconditional
+    # reset -- an existing sequence that is already safely ahead of the
+    # historical maximum (e.g. from a normal prior run of this same
+    # migration) must be left alone.
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0002_audit_request_ids")
+
+        today = datetime.utcnow().strftime("%Y%m%d")
+        await _seed_transactions([f"TX-{today}-00000010"])
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                # Already far above the true historical maximum (10).
+                await conn.execute(text("CREATE SEQUENCE transaction_no_seq START WITH 999999"))
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                first_value = (await conn.execute(text("SELECT nextval('transaction_no_seq')"))).scalar_one()
+            assert first_value == 999999, (
+                "an existing sequence already safely ahead of the historical maximum must be left "
+                "untouched, not unconditionally reset"
+            )
         finally:
             await engine.dispose()
     finally:

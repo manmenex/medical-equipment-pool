@@ -175,3 +175,41 @@ async def test_borrow_creates_exactly_one_audit_row_matching_transaction_no(clie
     ).scalars().all()
     assert len(rows) == 1
     assert rows[0].after_data["transaction_no"] == tx["transaction_no"]
+
+
+# ---------------------------------------------------------------------------
+# PR4-D1 (independent review, PR #13): generate_transaction_no() must select
+# its implementation only among the two explicitly supported dialects —
+# PostgreSQL (real sequence) and SQLite (the isolated, non-concurrency-safe
+# compatibility fallback below) — and fail closed, not silently reuse the
+# SQLite fallback, for anything else.
+# ---------------------------------------------------------------------------
+
+
+async def test_generate_transaction_no_uses_sqlite_fallback_for_sqlite_dialect(db_session):
+    from app.crud import transaction as transaction_crud
+
+    assert db_session.get_bind().dialect.name == "sqlite"
+
+    value = await transaction_crud.generate_transaction_no(db_session)
+    prefix, date_part, suffix = value.split("-")
+    assert prefix == "TX"
+    assert len(date_part) == 8 and date_part.isdigit()
+    assert suffix.isdigit() and len(suffix) >= 8
+
+
+async def test_generate_transaction_no_fails_closed_for_unsupported_dialect(db_session, monkeypatch):
+    from app.crud import transaction as transaction_crud
+
+    class _FakeDialect:
+        name = "mysql"
+
+    class _FakeBind:
+        dialect = _FakeDialect()
+
+    # Any dialect other than postgresql/sqlite must never reach either
+    # generator implementation -- it must raise before either branch runs.
+    monkeypatch.setattr(db_session, "get_bind", lambda *args, **kwargs: _FakeBind())
+
+    with pytest.raises(transaction_crud.UnsupportedDatabaseDialectError):
+        await transaction_crud.generate_transaction_no(db_session)
