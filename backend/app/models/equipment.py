@@ -29,16 +29,6 @@ EquipmentStatusType = Enum(EquipmentStatus, name="equipment_status", native_enum
 
 class Equipment(UUIDPKMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "equipment"
-    # updated_at (TimestampMixin) is onupdate=func.now() — server-computed,
-    # not known client-side. Without eager_defaults, SQLAlchemy marks it
-    # expired after an UPDATE flush instead of fetching it via RETURNING
-    # (unlike INSERT, which already fetches it eagerly by default). A plain
-    # synchronous attribute access after that — e.g. building a response body
-    # once the endpoint has already returned control past its last `await`
-    # — has no async context to satisfy the resulting lazy refresh and
-    # raises MissingGreenlet. eager_defaults=True makes UPDATE use
-    # `RETURNING updated_at` too, so the value is always already loaded.
-    __mapper_args__ = {"eager_defaults": True}
 
     asset_number: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
     serial_number: Mapped[str | None] = mapped_column(String(100), unique=True)
