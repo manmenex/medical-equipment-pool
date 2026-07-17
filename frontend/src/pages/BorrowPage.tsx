@@ -2,14 +2,15 @@ import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
+import { BcmSearchInput } from "@/components/BcmSearchInput";
 import { QRScanner } from "@/components/QRScanner";
 import { StatusBadge } from "@/components/StatusBadge";
 import { apiErrorMessage } from "@/services/api";
 import { createBorrow } from "@/services/borrow";
-import { getEquipment, getEquipmentByQr } from "@/services/equipment";
+import { getEquipment, resolveEquipmentByQr } from "@/services/equipment";
 import { listWards } from "@/services/masterData";
 import { useUiStore } from "@/store/uiStore";
-import type { Equipment } from "@/types";
+import type { BcmSuggestion, Equipment } from "@/types";
 
 export function BorrowPage() {
   const [searchParams] = useSearchParams();
@@ -17,7 +18,6 @@ export function BorrowPage() {
 
   const [scanning, setScanning] = useState(!presetEquipmentId);
   const [equipment, setEquipment] = useState<Equipment | null>(null);
-  const [manualQuery, setManualQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -41,14 +41,29 @@ export function BorrowPage() {
     }
   }, [presetEquipmentId]);
 
-  const resolveEquipment = useCallback(async (value: string) => {
+  // Roadmap PR5 primary workflow: scan existing QR -> extract Item No
+  // (server-side) -> Equipment Master lookup.
+  const resolveEquipmentFromQr = useCallback(async (rawValue: string) => {
     setError(null);
     try {
-      const eq = value.startsWith("MEP:") ? await getEquipmentByQr(value) : await getEquipmentByQr(`MEP:${value}`);
+      const eq = await resolveEquipmentByQr(rawValue);
       setEquipment(eq);
       setScanning(false);
     } catch (err) {
-      setError(apiErrorMessage(err, "ไม่พบเครื่องมือจาก QR/รหัสที่ระบุ"));
+      setError(apiErrorMessage(err, "ไม่พบเครื่องมือจาก QR ที่สแกน"));
+    }
+  }, []);
+
+  // Roadmap PR5 fallback workflow: BCM Code search -> select a suggestion
+  // -> Equipment Master lookup by id.
+  const handleBcmSelect = useCallback(async (suggestion: BcmSuggestion) => {
+    setError(null);
+    try {
+      const eq = await getEquipment(suggestion.id);
+      setEquipment(eq);
+      setScanning(false);
+    } catch (err) {
+      setError(apiErrorMessage(err, "ไม่พบเครื่องมือ"));
     }
   }, []);
 
@@ -98,21 +113,9 @@ export function BorrowPage() {
     return (
       <div className="mx-auto flex max-w-sm flex-col gap-4">
         <h1 className="text-lg font-semibold">ยืมเครื่องมือ</h1>
-        <QRScanner active={scanning} onScan={resolveEquipment} />
-        <div className="flex gap-2">
-          <input
-            value={manualQuery}
-            onChange={(e) => setManualQuery(e.target.value)}
-            placeholder="หรือกรอกเลขครุภัณฑ์"
-            className="flex-1 rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
-          />
-          <button
-            onClick={() => manualQuery && resolveEquipment(manualQuery)}
-            className="rounded-lg bg-status-borrowed px-4 py-2 text-sm font-medium text-white"
-          >
-            ค้นหา
-          </button>
-        </div>
+        <QRScanner active={scanning} onScan={resolveEquipmentFromQr} />
+        <p className="text-center text-sm text-[var(--text-muted)]">หรือค้นหาด้วยรหัส BCM</p>
+        <BcmSearchInput onSelect={handleBcmSelect} />
         {error && <p className="text-sm text-status-repair">{error}</p>}
       </div>
     );

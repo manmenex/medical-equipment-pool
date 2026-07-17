@@ -1067,3 +1067,189 @@ async def test_migration_0003_upgrade_downgrade_round_trip():
         assert await _transaction_no_seq_exists()
     finally:
         await _drop_scratch_database()
+
+
+# ---------------------------------------------------------------------------
+# PR5: migration 0004_equipment_item_no_bcm_code.py. Exercised for real via
+# the same scratch-database + `alembic` CLI pattern as 0002/0003 above —
+# this migration's whole point is to be non-destructive against a database
+# that already has equipment/transaction rows, which
+# Base.metadata.create_all() (used everywhere else in this suite) cannot
+# simulate.
+# ---------------------------------------------------------------------------
+
+
+async def _equipment_columns() -> set[str]:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            return await conn.run_sync(
+                lambda sync_conn: {c["name"] for c in inspect(sync_conn).get_columns("equipment")}
+            )
+    finally:
+        await engine.dispose()
+
+
+async def _equipment_indexes() -> list[dict]:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            return await conn.run_sync(lambda sync_conn: inspect(sync_conn).get_indexes("equipment"))
+    finally:
+        await engine.dispose()
+
+
+async def test_migration_0004_preserves_existing_equipment_and_transaction_data():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        # Pre-PR5 database: equipment and a completed transaction already
+        # exist, seeded before item_no/bcm_code existed at all. Seeded via
+        # the ORM (like _seed_transactions above) rather than raw SQL text,
+        # so the status Enum column round-trips correctly.
+        _run_alembic("upgrade", "0003_transaction_no_seq")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        equipment_id = None
+        try:
+            session_maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+            async with session_maker() as session:
+                equipment = Equipment(
+                    asset_number="AST-PR5-0001", equipment_name="Pre-PR5 Pump", qr_code_value="MEP:AST-PR5-0001"
+                )
+                session.add(equipment)
+                await session.flush()
+                equipment_id = equipment.id
+                session.add(
+                    BorrowTransaction(
+                        transaction_no="TX-PR5-0001",
+                        equipment_id=equipment.id,
+                        borrower_name="Pre-PR5 Borrower",
+                        status="returned",
+                    )
+                )
+                await session.commit()
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+
+        columns = await _equipment_columns()
+        assert {"item_no", "bcm_code"} <= columns
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            session_maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+            async with session_maker() as session:
+                row = (
+                    await session.execute(select(Equipment).where(Equipment.id == equipment_id))
+                ).scalar_one()
+                assert row.asset_number == "AST-PR5-0001"
+                assert row.equipment_name == "Pre-PR5 Pump"
+                assert row.item_no is None, "pre-existing equipment must not get an invented item_no"
+                assert row.bcm_code is None, "pre-existing equipment must not get an invented bcm_code"
+
+                tx_count = (
+                    await session.execute(
+                        select(BorrowTransaction).where(BorrowTransaction.transaction_no == "TX-PR5-0001")
+                    )
+                ).scalars().all()
+                assert len(tx_count) == 1, "the pre-existing transaction row must survive the migration untouched"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0004_adds_unique_indexes_for_item_no_and_bcm_code():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        indexes = await _equipment_indexes()
+        by_name = {idx["name"]: idx for idx in indexes}
+
+        assert "ix_equipment_item_no" in by_name
+        assert by_name["ix_equipment_item_no"]["unique"] is True
+        assert by_name["ix_equipment_item_no"]["column_names"] == ["item_no"]
+
+        assert "ix_equipment_bcm_code" in by_name
+        assert by_name["ix_equipment_bcm_code"]["unique"] is True
+        assert by_name["ix_equipment_bcm_code"]["column_names"] == ["bcm_code"]
+
+        # The trigram GIN index isn't reported by SQLAlchemy's generic
+        # get_indexes() reflection (it's PostgreSQL-specific access-method
+        # metadata) -- check pg_indexes directly instead.
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                exists = (
+                    await conn.execute(
+                        text("SELECT 1 FROM pg_indexes WHERE indexname = 'idx_equipment_bcm_trgm'")
+                    )
+                ).scalar_one_or_none()
+                assert exists == 1, "the bcm_code trigram index must exist for responsive partial matching"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0004_rejects_duplicate_item_no_and_bcm_code_at_db_level():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO equipment "
+                        "(id, asset_number, equipment_name, status, qr_code_value, metadata, item_no, bcm_code) "
+                        "VALUES (:id, 'AST-PR5-0002', 'Dup Source', 'available', 'MEP:AST-PR5-0002', '{}', "
+                        "'ITEM-0001', 'BCM00001')"
+                    ),
+                    {"id": str(uuid.uuid4())},
+                )
+
+            from sqlalchemy.exc import IntegrityError
+
+            with pytest.raises(IntegrityError):
+                async with engine.begin() as conn:
+                    await conn.execute(
+                        text(
+                            "INSERT INTO equipment "
+                            "(id, asset_number, equipment_name, status, qr_code_value, metadata, item_no) "
+                            "VALUES (:id, 'AST-PR5-0003', 'Dup Item No', 'available', 'MEP:AST-PR5-0003', '{}', "
+                            "'ITEM-0001')"
+                        ),
+                        {"id": str(uuid.uuid4())},
+                    )
+
+            with pytest.raises(IntegrityError):
+                async with engine.begin() as conn:
+                    await conn.execute(
+                        text(
+                            "INSERT INTO equipment "
+                            "(id, asset_number, equipment_name, status, qr_code_value, metadata, bcm_code) "
+                            "VALUES (:id, 'AST-PR5-0004', 'Dup BCM Code', 'available', 'MEP:AST-PR5-0004', '{}', "
+                            "'BCM00001')"
+                        ),
+                        {"id": str(uuid.uuid4())},
+                    )
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()

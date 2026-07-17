@@ -1,5 +1,5 @@
 import { api } from "@/services/api";
-import type { Equipment, EquipmentStatusHistoryItem, Page } from "@/types";
+import type { BcmSuggestion, Equipment, EquipmentStatusHistoryItem, Page } from "@/types";
 
 export interface EquipmentSearchParams {
   q?: string;
@@ -25,6 +25,23 @@ export async function getEquipmentByQr(qrValue: string): Promise<Equipment> {
   return resp.data;
 }
 
+// Roadmap PR5 primary workflow: scan existing QR -> extract Item No
+// (server-side) -> internal Equipment Master lookup. A POST with the raw
+// scanned text in the body, not a GET path segment, so an arbitrary QR
+// payload never lands in a URL/access log.
+export async function resolveEquipmentByQr(rawValue: string): Promise<Equipment> {
+  const resp = await api.post<Equipment>("/equipment/resolve-qr", { raw_value: rawValue });
+  return resp.data;
+}
+
+// Roadmap PR5 fallback workflow: BCM-Code-only manual search suggestions.
+// Response is intentionally minimal -- id + bcm_code only.
+export async function searchBcmSuggestions(q: string, limit = 10): Promise<BcmSuggestion[]> {
+  if (!q.trim()) return [];
+  const resp = await api.get<BcmSuggestion[]>("/equipment/search/bcm", { params: { q, limit } });
+  return resp.data;
+}
+
 export async function getEquipmentHistory(id: string): Promise<EquipmentStatusHistoryItem[]> {
   const resp = await api.get<EquipmentStatusHistoryItem[]>(`/equipment/${id}/history`);
   return resp.data;
@@ -39,6 +56,10 @@ export interface EquipmentCreatePayload {
   model?: string;
   department_owner_id?: string;
   current_location_id?: string;
+  // Roadmap PR5. item_no is deliberately omitted here -- no admin UI in
+  // this PR manually assigns it; its intended source is a future
+  // controlled Excel import (PR8).
+  bcm_code?: string;
 }
 
 export async function createEquipment(payload: EquipmentCreatePayload): Promise<Equipment> {

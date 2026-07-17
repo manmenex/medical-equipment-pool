@@ -242,3 +242,224 @@ async def test_ordinary_request_still_succeeds_after_update_and_status_change(cl
         json={"asset_number": "FIX-FOLLOWUP-0002", "equipment_name": "Another Item"},
     )
     assert follow_up.status_code == 201, follow_up.text
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR5 (docs/kickoffs/PR5-equipment-master-bcm-search.md): Equipment
+# Master identifiers (item_no, bcm_code), manual BCM-Code-only search, and
+# internal QR Item No resolution.
+# ---------------------------------------------------------------------------
+
+
+async def _create_equipment_with_bcm(
+    client, headers, asset_number, bcm_code=None, item_no=None, name="PR5 Device"
+):
+    payload = {"asset_number": asset_number, "equipment_name": name}
+    if bcm_code is not None:
+        payload["bcm_code"] = bcm_code
+    if item_no is not None:
+        payload["item_no"] = item_no
+    resp = await client.post("/api/v1/equipment", headers=headers, json=payload)
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+async def test_duplicate_bcm_code_is_rejected(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    await _create_equipment_with_bcm(client, headers, "AST-PR5-0001", bcm_code="BCM00001")
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "AST-PR5-0002", "equipment_name": "Other", "bcm_code": "BCM00001"},
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["code"] == "DUPLICATE"
+
+
+async def test_duplicate_item_no_is_rejected(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    await _create_equipment_with_bcm(client, headers, "AST-PR5-0003", item_no="ITEM-0001")
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "AST-PR5-0004", "equipment_name": "Second", "item_no": "ITEM-0001"},
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["code"] == "DUPLICATE"
+
+
+async def test_bcm_search_matches_only_bcm_code_not_other_fields(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    await _create_equipment_with_bcm(
+        client, headers, "AST-PR5-0005", bcm_code="BCM00342", name="Very Special Pump Name"
+    )
+    for q in ["Very Special", "AST-PR5-0005", "Pump"]:
+        resp = await client.get("/api/v1/equipment/search/bcm", headers=headers, params={"q": q})
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == [], f"query {q!r} must not match anything but bcm_code"
+
+
+async def test_bcm_search_case_insensitive_and_trimmed(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    await _create_equipment_with_bcm(client, headers, "AST-PR5-0006", bcm_code="BCM00342")
+    for q in ["342", "  342  ", "bcm00342", "BCM00342", "  bcm342  ", "Bcm342"]:
+        resp = await client.get("/api/v1/equipment/search/bcm", headers=headers, params={"q": q})
+        assert resp.status_code == 200, resp.text
+        codes = [item["bcm_code"] for item in resp.json()]
+        assert "BCM00342" in codes, f"query {q!r} should match BCM00342, got {codes}"
+
+
+async def test_bcm_search_supports_without_prefix_and_partial_matching(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    for asset, bcm in [
+        ("AST-PR5-0007", "BCM00342"),
+        ("AST-PR5-0008", "BCM01342"),
+        ("AST-PR5-0009", "BCM03427"),
+        ("AST-PR5-0010", "BCM13420"),
+        ("AST-PR5-0011", "BCM99999"),
+    ]:
+        await _create_equipment_with_bcm(client, headers, asset, bcm_code=bcm)
+
+    resp = await client.get("/api/v1/equipment/search/bcm", headers=headers, params={"q": "342", "limit": 20})
+    assert resp.status_code == 200
+    codes = {item["bcm_code"] for item in resp.json()}
+    assert codes == {"BCM00342", "BCM01342", "BCM03427", "BCM13420"}
+    assert "BCM99999" not in codes
+
+
+async def test_bcm_search_ranks_exact_match_before_partial_matches(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    await _create_equipment_with_bcm(client, headers, "AST-PR5-0012", bcm_code="BCM00342")
+    await _create_equipment_with_bcm(client, headers, "AST-PR5-0013", bcm_code="BCM13420")
+    await _create_equipment_with_bcm(client, headers, "AST-PR5-0014", bcm_code="BCM342")
+
+    resp = await client.get("/api/v1/equipment/search/bcm", headers=headers, params={"q": "342", "limit": 20})
+    assert resp.status_code == 200
+    codes = [item["bcm_code"] for item in resp.json()]
+    assert codes[0] == "BCM342", f"exact match (BCM342) must rank first, got order {codes}"
+    assert set(codes) == {"BCM00342", "BCM13420", "BCM342"}
+
+
+async def test_bcm_search_limits_result_count(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    for i in range(15):
+        await _create_equipment_with_bcm(client, headers, f"AST-PR5-LIMIT-{i:03d}", bcm_code=f"BCM9{i:04d}")
+    resp = await client.get("/api/v1/equipment/search/bcm", headers=headers, params={"q": "9", "limit": 5})
+    assert resp.status_code == 200
+    assert len(resp.json()) == 5
+
+
+async def test_bcm_suggestion_contains_only_minimum_selection_data(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    await _create_equipment_with_bcm(
+        client, headers, "AST-PR5-0015", bcm_code="BCM00500", item_no="ITEM-0500", name="Must Not Appear"
+    )
+    resp = await client.get("/api/v1/equipment/search/bcm", headers=headers, params={"q": "500"})
+    assert resp.status_code == 200
+    items = resp.json()
+    assert len(items) == 1
+    assert set(items[0].keys()) == {"id", "bcm_code"}
+
+
+async def test_bcm_search_item_no_does_not_act_as_manual_search_and_is_not_leaked(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    await _create_equipment_with_bcm(
+        client, headers, "AST-PR5-0016", bcm_code="BCM00600", item_no="UNIQUE-ITEM-777"
+    )
+    resp = await client.get("/api/v1/equipment/search/bcm", headers=headers, params={"q": "UNIQUE-ITEM-777"})
+    assert resp.status_code == 200
+    assert resp.json() == [], "item_no must not act as a manual-search field"
+
+    resp2 = await client.get("/api/v1/equipment/search/bcm", headers=headers, params={"q": "600"})
+    assert resp2.status_code == 200
+    for item in resp2.json():
+        assert "item_no" not in item, "item_no must never appear in a BCM suggestion"
+
+
+async def test_bcm_search_empty_or_insufficient_query_returns_empty_not_full_list(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    await _create_equipment_with_bcm(client, headers, "AST-PR5-0017", bcm_code="BCM00700")
+
+    resp = await client.get("/api/v1/equipment/search/bcm", headers=headers, params={"q": ""})
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+    resp2 = await client.get("/api/v1/equipment/search/bcm", headers=headers)
+    assert resp2.status_code == 200
+    assert resp2.json() == []
+
+    # Prefix-only query: nothing left to search once "BCM" is stripped.
+    resp3 = await client.get("/api/v1/equipment/search/bcm", headers=headers, params={"q": "BCM"})
+    assert resp3.status_code == 200
+    assert resp3.json() == []
+
+
+async def test_resolve_qr_by_item_no_finds_equipment(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    created = await _create_equipment_with_bcm(
+        client, headers, "AST-PR5-0018", item_no="PHY-ITEM-001", name="Scanner Target"
+    )
+
+    resp = await client.post("/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "PHY-ITEM-001"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["id"] == created["id"]
+    assert resp.json()["asset_number"] == "AST-PR5-0018"
+
+    resp2 = await client.post(
+        "/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "  PHY-ITEM-001  "}
+    )
+    assert resp2.status_code == 200
+    assert resp2.json()["id"] == created["id"]
+
+
+async def test_resolve_qr_unknown_item_no_returns_not_found(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    resp = await client.post("/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "NOPE-NOT-REAL"})
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "EQUIPMENT_NOT_FOUND"
+
+
+async def test_resolve_qr_malformed_payload_returns_controlled_error(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+
+    resp = await client.post("/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "   "})
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["code"] == "MALFORMED_QR_CODE"
+
+    resp2 = await client.post(
+        "/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "https://example.com/asset/123"}
+    )
+    assert resp2.status_code == 400
+    assert resp2.json()["code"] == "MALFORMED_QR_CODE"
+
+    resp3 = await client.post("/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "X" * 65})
+    assert resp3.status_code == 400
+    assert resp3.json()["code"] == "MALFORMED_QR_CODE"
+
+
+async def test_resolve_qr_uses_exact_item_no_not_partial_matching(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    await _create_equipment_with_bcm(client, headers, "AST-PR5-0019", item_no="ITEM-EXACT-100")
+
+    resp = await client.post("/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "ITEM-EXACT-1"})
+    assert resp.status_code == 404, "a partial Item No must not resolve to an equipment record"
+
+
+async def test_resolve_qr_and_bcm_search_use_separate_fields(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    await _create_equipment_with_bcm(
+        client, headers, "AST-PR5-0020", item_no="ITEM-BOTH-001", bcm_code="BCM00800", name="Both Fields"
+    )
+
+    resp = await client.post("/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "ITEM-BOTH-001"})
+    assert resp.status_code == 200
+
+    resp2 = await client.get("/api/v1/equipment/search/bcm", headers=headers, params={"q": "800"})
+    assert resp2.status_code == 200
+    assert resp2.json()[0]["bcm_code"] == "BCM00800"
+
+    resp3 = await client.get("/api/v1/equipment/search/bcm", headers=headers, params={"q": "ITEM-BOTH-001"})
+    assert resp3.json() == [], "BCM search must not match on item_no"
+
+    resp4 = await client.post("/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "BCM00800"})
+    assert resp4.status_code == 404, "QR resolution must not match on bcm_code"

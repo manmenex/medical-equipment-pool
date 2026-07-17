@@ -13,7 +13,7 @@ from app.core.audit import (
     record_audit_event,
 )
 from app.core.db_errors import translate_integrity_error
-from app.core.exceptions import EquipmentNotFoundError
+from app.core.exceptions import EquipmentNotFoundError, MalformedQrCodeError
 from app.core.redis import cache_delete_prefix
 from app.core.references import ensure_referenced_row_exists
 from app.crud import equipment as equipment_crud
@@ -23,13 +23,15 @@ from app.models.master_data import Department, EquipmentCategory, Location
 from app.models.user import ROLE_ADMIN, ROLE_BIOMEDICAL_ENGINEER
 from app.schemas.common import Page
 from app.schemas.equipment import (
+    BcmSuggestion,
     EquipmentCreate,
     EquipmentOut,
     EquipmentStatusChange,
     EquipmentStatusHistoryOut,
     EquipmentUpdate,
+    QrResolveRequest,
 )
-from app.services.qr_service import build_qr_value, generate_qr_png
+from app.services.qr_service import build_qr_value, extract_item_no_from_qr, generate_qr_png
 from app.utils.parsing import parse_uuid
 
 # Equipment's foreign-key fields, mapped to the model they reference, so a
@@ -90,6 +92,8 @@ def _serialize(equipment) -> dict:
         "cal_due_date": equipment.cal_due_date,
         "status": equipment.status,
         "qr_code_value": equipment.qr_code_value,
+        "item_no": equipment.item_no,
+        "bcm_code": equipment.bcm_code,
         "created_at": equipment.created_at,
         "updated_at": equipment.updated_at,
     }
@@ -101,6 +105,47 @@ async def get_by_qr(qr_value: str, db: AsyncSession = Depends(get_db), _user=Dep
     if equipment is None:
         raise EquipmentNotFoundError("Equipment not found for this QR code")
     return EquipmentOut.model_validate(_serialize(equipment))
+
+
+@router.post("/resolve-qr", response_model=EquipmentOut)
+async def resolve_equipment_by_qr(
+    payload: QrResolveRequest, db: AsyncSession = Depends(get_db), _user=Depends(get_current_user)
+):
+    """Roadmap PR5 primary workflow: scan existing QR -> extract Item No ->
+    internal Equipment Master lookup -> matching equipment. A POST with a
+    body (rather than the raw text embedded in a GET path, as /by-qr/{...}
+    above does) so an arbitrary scanned payload -- which may contain
+    characters unsafe in a URL path, or, if the scanner picked up an
+    unrelated QR code, a full external URL -- never lands in a server
+    access log line via the request path/query string.
+    """
+    try:
+        item_no = extract_item_no_from_qr(payload.raw_value)
+    except ValueError as exc:
+        raise MalformedQrCodeError(
+            "The scanned QR code could not be read as a valid equipment identifier."
+        ) from exc
+    equipment = await equipment_crud.get_by_item_no(db, item_no)
+    if equipment is None:
+        raise EquipmentNotFoundError("No equipment matches the scanned QR code.")
+    return EquipmentOut.model_validate(_serialize(equipment))
+
+
+@router.get("/search/bcm", response_model=list[BcmSuggestion])
+async def search_equipment_by_bcm(
+    q: str = Query(default="", max_length=64),
+    limit: int = Query(default=10, ge=1, le=20),
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    """Roadmap PR5 fallback workflow: BCM-Code-only manual search
+    suggestions. See app.crud.equipment.search_bcm for matching/ranking
+    behavior. Response is intentionally minimal (BcmSuggestion: id +
+    bcm_code only) -- never item_no, device name, brand, model, serial
+    number, or status.
+    """
+    rows = await equipment_crud.search_bcm(db, q=q, limit=limit)
+    return [BcmSuggestion.model_validate({"id": str(row.id), "bcm_code": row.bcm_code}) for row in rows]
 
 
 @router.get("/{equipment_id}", response_model=EquipmentOut)

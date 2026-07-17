@@ -16,6 +16,12 @@ class EquipmentBase(BaseModel):
     current_location_id: str | None = None
     pm_due_date: date | None = None
     cal_due_date: date | None = None
+    # Roadmap PR5: item_no is the internal QR-resolution key (structurally
+    # ready for a future controlled Excel import, PR8); bcm_code is the
+    # operator-facing identifier the manual-search endpoint matches
+    # against. Both optional -- existing equipment predates these fields.
+    item_no: str | None = Field(default=None, max_length=64)
+    bcm_code: str | None = Field(default=None, max_length=64)
 
 
 class EquipmentCreate(EquipmentBase):
@@ -32,6 +38,8 @@ class EquipmentUpdate(BaseModel):
     current_location_id: str | None = None
     pm_due_date: date | None = None
     cal_due_date: date | None = None
+    item_no: str | None = None
+    bcm_code: str | None = None
 
 
 class EquipmentStatusChange(BaseModel):
@@ -57,3 +65,27 @@ class EquipmentStatusHistoryOut(BaseModel):
     changed_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class BcmSuggestion(BaseModel):
+    """Roadmap PR5 manual-search suggestion: the minimum data needed to
+    identify and select a result. Deliberately excludes item_no, device
+    name, brand, model, serial number, and status -- see
+    docs/kickoffs/PR5-equipment-master-bcm-search.md.
+    """
+
+    id: str
+    bcm_code: str
+
+    model_config = {"from_attributes": True}
+
+
+class QrResolveRequest(BaseModel):
+    """Roadmap PR5: the raw, as-scanned QR payload. Validation of its
+    *content* (empty, too long, URL-shaped) happens in
+    app.services.qr_service.extract_item_no_from_qr, not here, so every
+    malformed case reaches the client through the same MalformedQrCodeError
+    response shape regardless of which specific check caught it.
+    """
+
+    raw_value: str

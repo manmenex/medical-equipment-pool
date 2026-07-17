@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
+import { BcmSearchInput } from "@/components/BcmSearchInput";
 import { QRScanner } from "@/components/QRScanner";
 import { apiErrorMessage } from "@/services/api";
 import { createReturn, listActiveBorrows } from "@/services/borrow";
-import { getEquipmentByQr } from "@/services/equipment";
-import type { TransactionOut } from "@/types";
+import { resolveEquipmentByQr } from "@/services/equipment";
+import type { BcmSuggestion, TransactionOut } from "@/types";
 
 const CONDITIONS: { value: string; label: string }[] = [
   { value: "available", label: "พร้อมใช้งาน" },
@@ -21,7 +22,6 @@ export function ReturnPage() {
 
   const [scanning, setScanning] = useState(!presetEquipmentId);
   const [transaction, setTransaction] = useState<TransactionOut | null>(null);
-  const [manualQuery, setManualQuery] = useState("");
   const [condition, setCondition] = useState("available");
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -37,13 +37,30 @@ export function ReturnPage() {
     return match;
   }, []);
 
+  // Roadmap PR5 primary workflow: scan existing QR -> extract Item No
+  // (server-side) -> Equipment Master lookup -> active transaction.
   const resolveByQr = useCallback(
-    async (value: string) => {
+    async (rawValue: string) => {
       setError(null);
       try {
-        const qr = value.startsWith("MEP:") ? value : `MEP:${value}`;
-        const eq = await getEquipmentByQr(qr);
+        const eq = await resolveEquipmentByQr(rawValue);
         const tx = await findActiveTransaction(eq.id);
+        setTransaction(tx);
+        setScanning(false);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : apiErrorMessage(err, "ไม่พบรายการยืม"));
+      }
+    },
+    [findActiveTransaction]
+  );
+
+  // Roadmap PR5 fallback workflow: BCM Code search -> select a suggestion
+  // -> active transaction for that equipment.
+  const handleBcmSelect = useCallback(
+    async (suggestion: BcmSuggestion) => {
+      setError(null);
+      try {
+        const tx = await findActiveTransaction(suggestion.id);
         setTransaction(tx);
         setScanning(false);
       } catch (err) {
@@ -100,20 +117,8 @@ export function ReturnPage() {
       <div className="mx-auto flex max-w-sm flex-col gap-4">
         <h1 className="text-lg font-semibold">คืนเครื่องมือ</h1>
         <QRScanner active={scanning} onScan={resolveByQr} />
-        <div className="flex gap-2">
-          <input
-            value={manualQuery}
-            onChange={(e) => setManualQuery(e.target.value)}
-            placeholder="หรือกรอกเลขครุภัณฑ์"
-            className="flex-1 rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
-          />
-          <button
-            onClick={() => manualQuery && resolveByQr(manualQuery)}
-            className="rounded-lg bg-status-available px-4 py-2 text-sm font-medium text-white"
-          >
-            ค้นหา
-          </button>
-        </div>
+        <p className="text-center text-sm text-[var(--text-muted)]">หรือค้นหาด้วยรหัส BCM</p>
+        <BcmSearchInput onSelect={handleBcmSelect} />
         {error && <p className="text-sm text-status-repair">{error}</p>}
       </div>
     );

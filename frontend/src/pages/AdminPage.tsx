@@ -49,6 +49,7 @@ function EquipmentForm() {
   const [name, setName] = useState("");
   const [brand, setBrand] = useState("");
   const [model, setModel] = useState("");
+  const [bcmCode, setBcmCode] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const queryClient = useQueryClient();
@@ -58,12 +59,19 @@ function EquipmentForm() {
     setError(null);
     setMessage(null);
     try {
-      await createEquipment({ asset_number: assetNumber, equipment_name: name, brand, model });
+      await createEquipment({
+        asset_number: assetNumber,
+        equipment_name: name,
+        brand,
+        model,
+        bcm_code: bcmCode || undefined,
+      });
       setMessage(`เพิ่มเครื่อง ${assetNumber} สำเร็จ`);
       setAssetNumber("");
       setName("");
       setBrand("");
       setModel("");
+      setBcmCode("");
       queryClient.invalidateQueries({ queryKey: ["equipment"] });
     } catch (err) {
       setError(apiErrorMessage(err, "เพิ่มเครื่องมือไม่สำเร็จ"));
@@ -96,6 +104,12 @@ function EquipmentForm() {
         placeholder="รุ่น"
         value={model}
         onChange={(e) => setModel(e.target.value)}
+        className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
+      />
+      <input
+        placeholder="รหัส BCM (ถ้ามี)"
+        value={bcmCode}
+        onChange={(e) => setBcmCode(e.target.value)}
         className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
       />
       {message && <p className="text-sm text-status-available">{message}</p>}
