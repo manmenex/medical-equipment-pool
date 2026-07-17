@@ -37,15 +37,17 @@ not rewrite governance merely to legitimize their implementation.
 |---|---|---:|---:|
 | Architecture Owner | Bound scope and resolve architecture choices | Governance/docs | Architecture decisions |
 | Implementation Engineer | Implement one assigned change and its tests | In assigned scope | No |
-| Independent Reviewer | Review actual diff, tests, and surrounding code | No during review-only work | Review recommendation |
-| Security Reviewer | Assess auth, secrets, privacy, audit, and abuse cases | No during review-only work | Security recommendation |
+| Independent Reviewer | Review actual diff, tests, and surrounding code | One direct PR review only | Review recommendation |
+| Security Reviewer | Assess auth, secrets, privacy, audit, and abuse cases | One direct PR review only | Security recommendation |
 | Test Engineer | Design and execute proportionate verification | Tests when authorized | Evidence only |
 | Documentation/Governance Engineer | Maintain authoritative documents and templates | Documentation scope | No |
 | Repository Owner | Decide readiness, merge, release, and emergency authority | Repository state | Yes |
 
 Implementation agents may self-review, but self-review is not independent
 review. The same agent/session must not be the final independent reviewer of
-its own implementation. Review-only tasks never modify files. Fixes require
+its own implementation. Review-only tasks never modify files; their sole
+permitted GitHub write is one direct Pull Request review submission under
+[`prompts/codex-pr-review.md`](prompts/codex-pr-review.md). Fixes require
 explicit authorization. The Repository Owner makes the final merge decision.
 
 ## Standard workflow
@@ -54,7 +56,9 @@ explicit authorization. The Repository Owner makes the final merge decision.
 2. Implement on a focused branch; do not mix governance or unrelated refactors.
 3. Run risk-appropriate tests and record exact evidence.
 4. Open a Draft PR with scope, exclusions, impacts, evidence, rollback, and limitations.
-5. Obtain independent review; add security/database review when risk requires it.
+5. Obtain independent review; the reviewer submits it directly to the Pull
+   Request and verifies the target, reviewed head SHA, and action. Add security
+   or database review when risk requires it.
 6. Apply authorized fixes without broadening scope.
 7. Recheck architecture, Definition of Done, and evidence claims.
 8. Repository Owner marks ready and merges using repository policy.

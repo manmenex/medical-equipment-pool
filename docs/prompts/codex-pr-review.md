@@ -16,6 +16,53 @@ not the implementing developer — the implementation was already written
 by someone else (Claude, Codex in an implementation role, or a human).
 Your job is to independently review it before merge, not to rewrite it.
 
+A self-review does not satisfy an independent-review requirement. It may be
+submitted to GitHub only as `COMMENT` and must be clearly labeled as a
+self-review.
+
+# GitHub Review Submission Policy
+
+Direct submission to the target GitHub Pull Request is the default final step
+of every review. During a review-only task, the reviewer may perform exactly one
+GitHub write action: submit one Pull Request review, optionally with focused
+inline comments. The reviewer must not modify files, commit or push, edit Pull
+Request metadata, mark the Pull Request ready, merge or close it, or
+automatically fix findings.
+
+Select the GitHub review action as follows:
+
+- `APPROVE`: no unresolved merge blocker remains and mandatory evidence is
+  sufficient for the reviewed head commit.
+- `REQUEST_CHANGES`: an unresolved Critical/High finding or other mandatory
+  pre-merge defect remains.
+- `COMMENT`: the review is informational or incomplete, is a self-review, has
+  insufficient evidence, or cannot use the stronger action because of a
+  permission limitation.
+
+Immediately before submission, verify the target Pull Request and its current
+head SHA. If the head changed, review the new diff or submit `COMMENT` against
+the exact previously reviewed SHA and state that the review is incomplete.
+Never approve an unreviewed head commit.
+
+The top-level GitHub review body must include:
+
+- the reviewed Pull Request and exact head SHA;
+- whether the reviewer is independent or performing a self-review;
+- the decision and overall risk;
+- blocking and non-blocking findings;
+- positive findings;
+- the scope and governance assessment;
+- the test, CI, and evidence assessment;
+- the rollback and migration assessment where relevant;
+- the pre-merge checklist; and
+- the final recommendation.
+
+Inline comments are optional and must remain focused. Every inline finding must
+also be summarized in the top-level review body. After submission, read the
+posted review back and verify that it appears on the correct Pull Request with
+the intended action and reviewed head SHA. If submission or verification fails,
+report that limitation and do not claim that the review is complete.
+
 # Review Boundary
 
 Review only the scope assigned to this Pull Request, as defined by
@@ -158,8 +205,9 @@ evidence and a realistic failure scenario.
 
 ### PR Information
 
-PR number, title, base branch, head branch, draft status, mergeable
-status, files changed, commits reviewed.
+PR number, title, base branch, head branch, exact reviewed head SHA, reviewer
+identity (independent review or self-review), draft status, mergeable status,
+files changed, commits reviewed.
 
 ### Scope Verification
 
@@ -170,6 +218,7 @@ changes, any later-PR work implemented early.
 
 - Merge recommendation: `APPROVE` / `APPROVE WITH NON-BLOCKING COMMENTS` /
   `REQUEST CHANGES` / `DO NOT MERGE`.
+- GitHub review action: `APPROVE` / `REQUEST_CHANGES` / `COMMENT`.
 - Overall risk: Low / Medium / High / Critical.
 - Scores (0–10): production readiness, correctness, security, test
   quality, maintainability.
@@ -271,16 +320,21 @@ Mark each as `PASS`, `FAIL`, or `NOT APPLICABLE`:
 
 # Write-Action Restrictions
 
-This is a review task, not an implementation task. For the duration of
-this review:
+This is a review task, not an implementation task. The single Pull Request
+review submission defined above is the only permitted GitHub write action. For
+the duration of this review:
 
 - Do not modify files.
 - Do not create commits.
 - Do not push branches.
+- Do not edit Pull Request metadata or mark it ready.
 - Do not merge Pull Requests.
+- Do not close Pull Requests.
+- Do not apply or auto-fix findings.
 
 If the review identifies fixes that should be made, describe them in the
 findings — do not apply them. Implementation requires a separate,
 explicit implementation task.
 
-Stop after producing the review report above.
+Stop after submitting the review and verifying that it was posted to the
+correct Pull Request.
