@@ -58,10 +58,20 @@ Transaction-Number Generation (global PostgreSQL sequence).
 
 PR5
 Status:
-Planned
+Architecture resolved (Governance PR); implementation not yet merged
 
 Summary:
-Equipment Identifier Model (ME Code, identifier separation).
+Equipment Master identifier model, BCM manual search, and hospital
+Item-No QR identification — see `knowledge/adr/ADR-002`, `ADR-003`,
+`ADR-004`, and `docs/audits/04-consolidated-implementation-plan.md`'s
+PR5 entry for the active contract. Supersedes the earlier "ME Code"
+identifier-separation description.
+
+Governance note:
+An implementation attempt for this PR was opened before this
+architecture was resolved; it needs to be reconciled against the
+resolved architecture (see `knowledge/traceability/README.md`) before
+it can proceed toward merge.
 
 ----------------------
 

@@ -87,7 +87,9 @@ Clearly distinguish between:
 
 Also check the Medical Equipment Pool domain guardrails in `AGENTS.md`
 (no patient tracking, no cleaning workflow, no MEMS/PM/calibration/recall,
-ME Code as the primary identifier, single atomic receipt, etc.). Flag any
+BCM Code as the primary operator-facing identifier with Item No as the
+QR-only identifier — see `knowledge/adr/ADR-002-identifier-model.md`,
+not the retired "ME Code" — single atomic receipt, etc.). Flag any
 part of the implementation that contradicts them as a finding, even if
 nothing else in this checklist calls it out explicitly.
 

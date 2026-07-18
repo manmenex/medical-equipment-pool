@@ -1,7 +1,7 @@
 # Project Glossary
 
 **Purpose:** Preferred domain and audit terminology
-**Authority:** Terminology only; workflow detail remains in `HOSPITAL_DOMAIN_MODEL.md`
+**Authority:** Terminology only; workflow detail remains in `HOSPITAL_DOMAIN_MODEL.md`. Equipment-identifier terms (BCM Code, Item No, Asset Number, and the retired "ME Code") are owned by [`../knowledge/glossary.md`](../knowledge/glossary.md) — see `PROJECT_PLAYBOOK.md`'s topic-ownership table. This file remains authoritative for every other term below.
 **Update trigger:** Approved term or ambiguity change
 **Maintainer:** Documentation/Governance Engineer
 
@@ -15,10 +15,7 @@
 | Ward | First receiving destination recorded for a dispatch | Not current patient/equipment location | Current |
 | First receiving ward | Ward selected when equipment first leaves the pool | Do not update for later real-world transfers | Current |
 | Equipment | One physical device with internal UUID identity | Not a quantity/batch | Current |
-| ME Code | Primary user-facing hospital equipment identifier | Not UUID, Asset ID, Item Number, Serial Number, or QR payload | Roadmap PR5 target |
-| Asset ID | Separate source-inventory identifier | Do not assume it equals ME Code or is globally unique | Current metadata/future import |
-| Item Number | Source-file/item metadata | “Item No.”; do not treat as global identity | Future import metadata |
-| Serial Number | Manufacturer/device serial metadata | Not ME Code | Current |
+| BCM Code, Item No, Asset Number, ~~ME Code~~ | See [`../knowledge/glossary.md`](../knowledge/glossary.md) | "ME Code" is retired — do not use | See `knowledge/adr/ADR-002` |
 | Dispatch | Operator records equipment leaving pool for first receiving ward | Prefer over “borrow” in user-facing domain language | Roadmap target |
 | Receipt | One atomic operation closing an open dispatch with usable/defective outcome | Not cleaning completion | Roadmap target |
 | Issue | Physical/operational act of sending equipment to a ward | Prefer “dispatch” for system records | Contextual synonym |

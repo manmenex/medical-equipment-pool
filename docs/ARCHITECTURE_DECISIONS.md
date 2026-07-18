@@ -7,6 +7,13 @@ sensitive, costly-to-reverse, or migration-sensitive choices.
 Detailed ADRs use stable, zero-padded numbers and are never renumbered. A
 superseding ADR records the replacement instead of rewriting history.
 
+**Topic ownership:** as of the Knowledge Layer (`../knowledge/`), some
+topics are owned by a second ADR set at `../knowledge/adr/` instead of this
+file — see `PROJECT_PLAYBOOK.md`'s topic-ownership table for the definitive,
+single-source map of which document governs which topic. This file remains
+authoritative for every decision below and for any topic the Playbook's
+table does not assign elsewhere.
+
 | ADR | Status | Decision |
 | --- | --- | --- |
 | [ADR-0001](adr/ADR-0001-canonical-audit-and-failed-login-identifiers.md) | Accepted | Canonical audit writes and failed-login identifier non-persistence |
@@ -38,8 +45,8 @@ App (PWA).
 
 **Rationale:** Equipment Pool staff need a fast, installable,
 offline-tolerant experience for a floor-based, mobile-first workflow
-(scanning ME Codes during rounds) without requiring an app-store
-distribution channel.
+(scanning equipment QR labels during rounds) without requiring an
+app-store distribution channel.
 
 **Impact:** `frontend/vite.config.ts` configures `vite-plugin-pwa` with a
 web manifest. This also constrains deployment: the app must remain
@@ -98,7 +105,8 @@ the existing spreadsheet is still planned (Roadmap PR12).
 
 **Rationale:** A spreadsheet cannot enforce the concurrency guarantees
 this workflow needs (one open dispatch per equipment item, one receipt
-per open dispatch, unique ME Codes) — see
+per open dispatch, unique equipment identifiers — see
+[`../knowledge/adr/ADR-002-identifier-model.md`](../knowledge/adr/ADR-002-identifier-model.md)) — see
 `docs/audits/03-hospital-equipment-pool-workflow-audit.md` §9.
 
 **Impact:** The hospital's existing inventory spreadsheet is a one-time
@@ -113,7 +121,10 @@ ongoing system. No spreadsheet-sync or dual-write mechanism is planned.
 receipt of pool-owned equipment — not a hospital-wide asset-management
 system.
 
-**Status:** Confirmed, implemented.
+**Status:** Confirmed, implemented. Detailed record:
+[`../knowledge/adr/ADR-001-equipment-pool-scope.md`](../knowledge/adr/ADR-001-equipment-pool-scope.md)
+(also covers the confirmed exclusion of any equipment-ownership/
+assignment model).
 
 **Rationale:** Confirmed hospital scope: "Equipment Pool only (primarily
 infusion pumps and select shared equipment)." No MEMS, no hospital-wide
@@ -271,9 +282,10 @@ behavior caused by `0001_initial.py` creating from current ORM metadata.
 
 **Scope boundary:** PR3 does not add missing Role CRUD, User DELETE, or
 master-data UPDATE/DELETE endpoints. It does not implement transaction
-numbers, ME Code, equipment-state or dispatch/receipt redesign, Shift
-Sessions, DAY/NIGHT or Standby work, inventory import, frontend/reporting,
-broad observability, mandatory CI, deployment, or unrelated refactoring.
+numbers, the equipment identifier model, equipment-state or
+dispatch/receipt redesign, Shift Sessions, DAY/NIGHT or Standby work,
+inventory import, frontend/reporting, broad observability, mandatory CI,
+deployment, or unrelated refactoring.
 PR15 retains structured cross-service logging/correlation, metrics, tracing,
 alerting, centralized log aggregation, dashboards, and production
 observability CI/infrastructure; it must build on PR3's IDs rather than
