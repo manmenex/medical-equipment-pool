@@ -41,8 +41,14 @@ class EquipmentUpdate(BaseModel):
     current_location_id: str | None = None
     pm_due_date: date | None = None
     cal_due_date: date | None = None
-    item_no: str | None = None
-    bcm_code: str | None = None
+    # Matches EquipmentCreate's bounds exactly (See PR5-H3R: create and
+    # update must apply identical validation, not just identical
+    # normalization) -- the final post-normalization bound is enforced
+    # separately in app.services.identifiers, since a prefixless BCM Code
+    # only becomes overlength once "BCM" is prepended, after schema
+    # validation has already run.
+    item_no: str | None = Field(default=None, max_length=64)
+    bcm_code: str | None = Field(default=None, max_length=64)
 
 
 class EquipmentStatusChange(BaseModel):

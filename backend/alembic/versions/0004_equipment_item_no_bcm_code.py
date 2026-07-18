@@ -17,7 +17,7 @@ columns to the existing `equipment` table and their supporting indexes. No
 existing table, column, or row is touched, dropped, or altered, and no
 existing equipment or transaction data is affected. Both columns are
 nullable because existing equipment predates them -- the intended backfill
-path is a future controlled Excel import (Roadmap PR8), not a mechanical
+path is a future controlled Excel import (Roadmap PR12), not a mechanical
 default or an invented placeholder value here.
 
 A standard UNIQUE constraint (via a unique index, same as every other

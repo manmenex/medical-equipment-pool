@@ -1260,17 +1260,38 @@ async def test_migration_0004_rejects_duplicate_item_no_and_bcm_code_at_db_level
 
 
 # ---------------------------------------------------------------------------
-# PR14 reconciliation: migration 0005_identifier_hardening.py.
-# Retires qr_code_value's NOT NULL constraint (See ADR-004) and replaces
-# bcm_code's plain UNIQUE index with a case-insensitive functional unique
-# index (See ADR-002 canonical-form uniqueness). Exercised for real via the
-# same scratch-database + `alembic` CLI pattern as 0002/0003/0004 above.
+# PR14 reconciliation, PR5-H3R: migration 0005_identifier_hardening.py.
+# Retires qr_code_value's NOT NULL constraint (See ADR-004) and adopts the
+# "persist only canonical values" strategy for BCM Code / Item No (See
+# ADR-002): existing data is converted to canonical form, then a CHECK
+# constraint on each column proves every stored value is already
+# canonical, so the plain per-column UNIQUE indexes from 0004 are already
+# exactly canonical-form uniqueness -- no functional/expression index
+# needed. Exercised for real via the same scratch-database + `alembic` CLI
+# pattern as 0002/0003/0004 above.
 # ---------------------------------------------------------------------------
 
 
 async def _bcm_code_index_names() -> set[str]:
     indexes = await _equipment_indexes()
     return {idx["name"] for idx in indexes}
+
+
+async def _equipment_check_constraint_names() -> set[str]:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT conname FROM pg_constraint "
+                        "WHERE conrelid = 'equipment'::regclass AND contype = 'c'"
+                    )
+                )
+            ).fetchall()
+            return {r[0] for r in rows}
+    finally:
+        await engine.dispose()
 
 
 async def test_migration_0005_upgrade_from_0004_makes_qr_code_value_nullable():
@@ -1318,7 +1339,7 @@ async def test_migration_0005_upgrade_from_0004_makes_qr_code_value_nullable():
         await _drop_scratch_database()
 
 
-async def test_migration_0005_replaces_bcm_code_index_with_canonical_functional_index():
+async def test_migration_0005_adds_canonical_check_constraints_and_keeps_plain_unique_indexes():
     try:
         await _recreate_scratch_database()
     except Exception as exc:
@@ -1327,14 +1348,28 @@ async def test_migration_0005_replaces_bcm_code_index_with_canonical_functional_
     try:
         _run_alembic("upgrade", "head")
 
+        constraints = await _equipment_check_constraint_names()
+        assert "ck_equipment_bcm_code_canonical" in constraints
+        assert "ck_equipment_item_no_canonical" in constraints
+
+        # 0004's plain unique indexes are unchanged -- once the CHECK
+        # constraints guarantee canonical storage, a plain per-column
+        # UNIQUE index already is canonical-form uniqueness; no
+        # functional/expression index is needed.
         names = await _bcm_code_index_names()
-        assert "ix_equipment_bcm_code_canonical" in names
-        assert "ix_equipment_bcm_code" not in names, "the plain (non-canonical) index must be replaced, not just added to"
+        assert "ix_equipment_bcm_code" in names
+        assert "ix_equipment_item_no" in names
+        assert "ix_equipment_bcm_code_canonical" not in names
     finally:
         await _drop_scratch_database()
 
 
-async def test_migration_0005_enforces_case_insensitive_bcm_code_uniqueness_at_db_level():
+async def test_migration_0005_check_constraint_rejects_noncanonical_bcm_direct_write():
+    """Direct SQL (bypassing the application's normalize_bcm_code
+    entirely) attempting to store a non-canonical bcm_code -- lowercase,
+    prefixless, or with embedded whitespace -- must be rejected by the
+    CHECK constraint, not silently accepted as a technically-different
+    stored value."""
     try:
         await _recreate_scratch_database()
     except Exception as exc:
@@ -1342,29 +1377,98 @@ async def test_migration_0005_enforces_case_insensitive_bcm_code_uniqueness_at_d
 
     try:
         _run_alembic("upgrade", "head")
+
+        from sqlalchemy.exc import IntegrityError
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            for i, bad_value in enumerate(["bcm00777", "00777", "BCM 00777", "BCM"]):
+                with pytest.raises(IntegrityError):
+                    async with engine.begin() as conn:
+                        await conn.execute(
+                            text(
+                                "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code) "
+                                "VALUES (:id, :asset, 'Noncanonical', 'available', '{}', :bcm)"
+                            ),
+                            {"id": str(uuid.uuid4()), "asset": f"AST-0005-NONCANON-{i}", "bcm": bad_value},
+                        )
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0005_check_constraint_rejects_noncanonical_item_no_direct_write():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        from sqlalchemy.exc import IntegrityError
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            for i, bad_value in enumerate([" ITEM01", "ITEM01 ", "  ITEM01  ", ""]):
+                with pytest.raises(IntegrityError):
+                    async with engine.begin() as conn:
+                        await conn.execute(
+                            text(
+                                "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, item_no) "
+                                "VALUES (:id, :asset, 'Noncanonical', 'available', '{}', :item_no)"
+                            ),
+                            {"id": str(uuid.uuid4()), "asset": f"AST-0005-ITEMNC-{i}", "item_no": bad_value},
+                        )
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0005_unique_index_rejects_exact_canonical_duplicate_direct_write():
+    """Complements the CHECK-constraint tests above: two rows that are
+    ALREADY in canonical form and byte-for-byte identical are rejected by
+    the plain UNIQUE index -- proving the "persist only canonical, then
+    plain unique is enough" strategy actually holds end to end."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        from sqlalchemy.exc import IntegrityError
 
         engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
         try:
             async with engine.begin() as conn:
                 await conn.execute(
                     text(
-                        "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code) "
-                        "VALUES (:id, 'AST-0005-CI-1', 'Canon Source', 'available', '{}', 'BCM00777')"
+                        "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code, item_no) "
+                        "VALUES (:id, 'AST-0005-DUP-1', 'Dup Source', 'available', '{}', 'BCM00778', 'ITEM-DUP-01')"
                     ),
                     {"id": str(uuid.uuid4())},
                 )
 
-            from sqlalchemy.exc import IntegrityError
-
-            # Same canonical identity via case difference alone -- a bare
-            # per-column UNIQUE index on the raw string would NOT catch
-            # this; the functional UPPER(bcm_code) index must.
             with pytest.raises(IntegrityError):
                 async with engine.begin() as conn:
                     await conn.execute(
                         text(
                             "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code) "
-                            "VALUES (:id, 'AST-0005-CI-2', 'Canon Dup', 'available', '{}', 'bcm00777')"
+                            "VALUES (:id, 'AST-0005-DUP-2', 'Dup BCM', 'available', '{}', 'BCM00778')"
+                        ),
+                        {"id": str(uuid.uuid4())},
+                    )
+
+            with pytest.raises(IntegrityError):
+                async with engine.begin() as conn:
+                    await conn.execute(
+                        text(
+                            "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, item_no) "
+                            "VALUES (:id, 'AST-0005-DUP-3', 'Dup Item', 'available', '{}', 'ITEM-DUP-01')"
                         ),
                         {"id": str(uuid.uuid4())},
                     )
@@ -1374,11 +1478,11 @@ async def test_migration_0005_enforces_case_insensitive_bcm_code_uniqueness_at_d
         await _drop_scratch_database()
 
 
-async def test_migration_0005_aborts_on_pre_existing_case_collision():
-    """Collision detection: rows that already collide once canonicalized
-    (seeded at 0004, before 0005's stricter index exists) must abort the
-    upgrade with a clear error, never silently drop/merge data or leave a
-    half-created index."""
+async def _assert_migration_0005_collision_aborts(seed_sql_pairs: list[tuple[str, str]], expected_snippet: str) -> None:
+    """Seeds two colliding rows at revision 0004, then attempts to
+    upgrade to head and asserts it aborts clearly (non-zero exit,
+    mentions the colliding value) without leaving the CHECK constraints
+    behind."""
     try:
         await _recreate_scratch_database()
     except Exception as exc:
@@ -1390,22 +1494,8 @@ async def test_migration_0005_aborts_on_pre_existing_case_collision():
         engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
         try:
             async with engine.begin() as conn:
-                await conn.execute(
-                    text(
-                        "INSERT INTO equipment "
-                        "(id, asset_number, equipment_name, status, qr_code_value, metadata, bcm_code) "
-                        "VALUES (:id, 'AST-0005-COLLIDE-1', 'Collide A', 'available', 'MEP:X1', '{}', 'BCM00999')"
-                    ),
-                    {"id": str(uuid.uuid4())},
-                )
-                await conn.execute(
-                    text(
-                        "INSERT INTO equipment "
-                        "(id, asset_number, equipment_name, status, qr_code_value, metadata, bcm_code) "
-                        "VALUES (:id, 'AST-0005-COLLIDE-2', 'Collide B', 'available', 'MEP:X2', '{}', 'bcm00999')"
-                    ),
-                    {"id": str(uuid.uuid4())},
-                )
+                for asset_number, value_sql in seed_sql_pairs:
+                    await conn.execute(text(value_sql), {"asset": asset_number, "id": str(uuid.uuid4())})
         finally:
             await engine.dispose()
 
@@ -1419,15 +1509,87 @@ async def test_migration_0005_aborts_on_pre_existing_case_collision():
             timeout=60,
         )
         assert result.returncode != 0, "upgrade must abort, not silently succeed, on a pre-existing collision"
-        assert "BCM00999" in (result.stdout + result.stderr)
+        assert expected_snippet in (result.stdout + result.stderr)
 
         # The database must still be on 0004 -- the failed migration must
-        # not have left a partial/broken index behind.
-        names = await _bcm_code_index_names()
-        assert "ix_equipment_bcm_code" in names
-        assert "ix_equipment_bcm_code_canonical" not in names
+        # not have left the CHECK constraints half-applied.
+        constraints = await _equipment_check_constraint_names()
+        assert "ck_equipment_bcm_code_canonical" not in constraints
+        assert "ck_equipment_item_no_canonical" not in constraints
     finally:
         await _drop_scratch_database()
+
+
+async def test_migration_0005_aborts_on_bcm_case_collision():
+    await _assert_migration_0005_collision_aborts(
+        [
+            (
+                "AST-0005-CASE-1",
+                "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code) "
+                "VALUES (:id, :asset, 'Collide A', 'available', '{}', 'BCM00999')",
+            ),
+            (
+                "AST-0005-CASE-2",
+                "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code) "
+                "VALUES (:id, :asset, 'Collide B', 'available', '{}', 'bcm00999')",
+            ),
+        ],
+        "BCM00999",
+    )
+
+
+async def test_migration_0005_aborts_on_bcm_whitespace_collision():
+    await _assert_migration_0005_collision_aborts(
+        [
+            (
+                "AST-0005-WS-1",
+                "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code) "
+                "VALUES (:id, :asset, 'Collide A', 'available', '{}', 'BCM00998')",
+            ),
+            (
+                "AST-0005-WS-2",
+                "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code) "
+                "VALUES (:id, :asset, 'Collide B', 'available', '{}', '  BCM00998  ')",
+            ),
+        ],
+        "BCM00998",
+    )
+
+
+async def test_migration_0005_aborts_on_bcm_prefix_optional_collision():
+    await _assert_migration_0005_collision_aborts(
+        [
+            (
+                "AST-0005-PFX-1",
+                "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code) "
+                "VALUES (:id, :asset, 'Collide A', 'available', '{}', '00997')",
+            ),
+            (
+                "AST-0005-PFX-2",
+                "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code) "
+                "VALUES (:id, :asset, 'Collide B', 'available', '{}', 'BCM00997')",
+            ),
+        ],
+        "BCM00997",
+    )
+
+
+async def test_migration_0005_aborts_on_item_no_whitespace_collision():
+    await _assert_migration_0005_collision_aborts(
+        [
+            (
+                "AST-0005-ITEMWS-1",
+                "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, item_no) "
+                "VALUES (:id, :asset, 'Collide A', 'available', '{}', 'ITEM-COLLIDE-01')",
+            ),
+            (
+                "AST-0005-ITEMWS-2",
+                "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, item_no) "
+                "VALUES (:id, :asset, 'Collide B', 'available', '{}', '  ITEM-COLLIDE-01  ')",
+            ),
+        ],
+        "ITEM-COLLIDE-01",
+    )
 
 
 async def test_migration_0005_upgrade_downgrade_reupgrade_round_trip():
@@ -1437,19 +1599,87 @@ async def test_migration_0005_upgrade_downgrade_reupgrade_round_trip():
         pytest.skip(f"Cannot create scratch database for migration test: {exc}")
 
     try:
+        _run_alembic("upgrade", "0004_equipment_item_no_bcm_code")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        unrelated_id = str(uuid.uuid4())
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO equipment "
+                        "(id, asset_number, equipment_name, status, qr_code_value, metadata, bcm_code, item_no) "
+                        "VALUES (:id, 'AST-0005-ROUNDTRIP', 'Round Trip Pump', 'available', 'MEP:0005-RT', '{}', "
+                        "'bcm777', '  Item-RoundTrip-01  ')"
+                    ),
+                    {"id": unrelated_id},
+                )
+                tx_id = str(uuid.uuid4())
+                await conn.execute(
+                    text(
+                        "INSERT INTO borrow_transactions (id, transaction_no, equipment_id, quantity, "
+                        "borrowed_at, borrower_name, status) "
+                        "VALUES (:tx_id, 'TX-0005-ROUNDTRIP', :eq_id, 1, now(), 'Round Trip Borrower', 'returned')"
+                    ),
+                    {"tx_id": tx_id, "eq_id": unrelated_id},
+                )
+        finally:
+            await engine.dispose()
+
         _run_alembic("upgrade", "head")
+
+        constraints = await _equipment_check_constraint_names()
+        assert "ck_equipment_bcm_code_canonical" in constraints
+        assert "ck_equipment_item_no_canonical" in constraints
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        text("SELECT bcm_code, item_no FROM equipment WHERE id = :id"), {"id": unrelated_id}
+                    )
+                ).one()
+                # Pre-existing non-canonical data was converted deterministically.
+                assert row.bcm_code == "BCM777"
+                assert row.item_no == "Item-RoundTrip-01"
+
+                tx_count = (
+                    await conn.execute(
+                        text("SELECT count(*) FROM borrow_transactions WHERE transaction_no = 'TX-0005-ROUNDTRIP'")
+                    )
+                ).scalar_one()
+                assert tx_count == 1, "unrelated transaction row must survive the migration untouched"
+        finally:
+            await engine.dispose()
 
         # Downgrade is safe here: no row has taken a write since upgrade,
         # so no qr_code_value is NULL yet.
         _run_alembic("downgrade", "0004_equipment_item_no_bcm_code")
-        names = await _bcm_code_index_names()
-        assert "ix_equipment_bcm_code" in names
-        assert "ix_equipment_bcm_code_canonical" not in names
+        constraints = await _equipment_check_constraint_names()
+        assert "ck_equipment_bcm_code_canonical" not in constraints
+        assert "ck_equipment_item_no_canonical" not in constraints
 
         _run_alembic("upgrade", "head")
-        names = await _bcm_code_index_names()
-        assert "ix_equipment_bcm_code_canonical" in names
-        assert "ix_equipment_bcm_code" not in names
+        constraints = await _equipment_check_constraint_names()
+        assert "ck_equipment_bcm_code_canonical" in constraints
+        assert "ck_equipment_item_no_canonical" in constraints
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                tx_count = (
+                    await conn.execute(
+                        text("SELECT count(*) FROM borrow_transactions WHERE transaction_no = 'TX-0005-ROUNDTRIP'")
+                    )
+                ).scalar_one()
+                assert tx_count == 1, "unrelated transaction row must survive downgrade+re-upgrade untouched"
+                eq_count = (
+                    await conn.execute(text("SELECT count(*) FROM equipment WHERE id = :id"), {"id": unrelated_id})
+                ).scalar_one()
+                assert eq_count == 1, "unrelated equipment row must survive downgrade+re-upgrade untouched"
+        finally:
+            await engine.dispose()
     finally:
         await _drop_scratch_database()
 

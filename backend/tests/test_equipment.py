@@ -573,7 +573,8 @@ async def test_bcm_code_update_canonicalization(client, seeded_users):
 
 async def test_bcm_code_prefix_omitted_and_supplied_are_equivalent_for_uniqueness(client, seeded_users):
     headers = await _auth_headers(client, seeded_users, "admin")
-    await _create_equipment_with_bcm(client, headers, "AST-CANON-0003", bcm_code="003")
+    created = await _create_equipment_with_bcm(client, headers, "AST-CANON-0003", bcm_code="003")
+    assert created["bcm_code"] == "BCM003", "prefixless input must canonicalize to BCM003"
     resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -581,6 +582,12 @@ async def test_bcm_code_prefix_omitted_and_supplied_are_equivalent_for_uniquenes
     )
     assert resp.status_code == 409, resp.text
     assert resp.json()["code"] == "DUPLICATE"
+
+
+async def test_bcm_code_surrounding_whitespace_canonicalizes_on_create(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    created = await _create_equipment_with_bcm(client, headers, "AST-CANON-0003B", bcm_code="  BCM003B  ")
+    assert created["bcm_code"] == "BCM003B"
 
 
 async def test_bcm_code_duplicate_by_case_is_rejected(client, seeded_users):
@@ -655,6 +662,145 @@ async def test_item_no_duplicate_by_whitespace_is_rejected(client, seeded_users)
     )
     assert resp.status_code == 409, resp.text
     assert resp.json()["code"] == "DUPLICATE"
+
+
+async def test_bcm_code_update_into_equivalent_existing_value_is_rejected(client, seeded_users):
+    """PR5-H3R: a duplicate must be rejected on update, not only on create."""
+    headers = await _auth_headers(client, seeded_users, "admin")
+    await _create_equipment_with_bcm(client, headers, "AST-CANON-0014", bcm_code="BCM014")
+    other = await _create_equipment_with_bcm(client, headers, "AST-CANON-0015", bcm_code="BCM015")
+
+    resp = await client.patch(
+        f"/api/v1/equipment/{other['id']}", headers=headers, json={"bcm_code": "  bcm014  "}
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["code"] == "DUPLICATE"
+
+
+async def test_item_no_update_into_equivalent_existing_value_is_rejected(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    await _create_equipment_with_bcm(client, headers, "AST-CANON-0016", item_no="ITEM-UPD-CONFLICT")
+    other = await _create_equipment_with_bcm(client, headers, "AST-CANON-0017", item_no="ITEM-OTHER")
+
+    resp = await client.patch(
+        f"/api/v1/equipment/{other['id']}", headers=headers, json={"item_no": "  ITEM-UPD-CONFLICT  "}
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["code"] == "DUPLICATE"
+
+
+async def test_bcm_code_prefix_only_value_is_rejected(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "AST-CANON-0018", "equipment_name": "Other", "bcm_code": "BCM"},
+    )
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["code"] == "INVALID_INPUT"
+
+
+async def test_bcm_code_embedded_whitespace_after_prefix_is_rejected_not_folded(client, seeded_users):
+    """PR5-H3R: ADR-002 does not define "bcm 001" as equivalent to "bcm001"
+    -- this must be rejected outright, never silently normalized to the
+    same canonical form as the no-space input, and never silently
+    persisted as its own distinct non-canonical value."""
+    headers = await _auth_headers(client, seeded_users, "admin")
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "AST-CANON-0019", "equipment_name": "Other", "bcm_code": "bcm 019"},
+    )
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["code"] == "INVALID_INPUT"
+
+
+async def test_item_no_empty_after_trim_is_rejected(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "AST-CANON-0020", "equipment_name": "Other", "item_no": "   "},
+    )
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["code"] == "INVALID_INPUT"
+
+
+# ---------------------------------------------------------------------------
+# PR5-H3R: post-normalization length validation. The canonical value (not
+# just the raw input) must fit the database column -- a prefixless BCM
+# Code only becomes overlength once "BCM" is prepended, so this cannot be
+# caught by the raw-input schema bound alone.
+# ---------------------------------------------------------------------------
+
+
+async def test_bcm_code_prefixless_overlength_after_normalization_is_rejected(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    # 64 raw characters (passes the schema's max_length=64 on the raw
+    # field) but becomes 67 once "BCM" is prepended -- must be rejected,
+    # not truncated or 500'd.
+    body = "9" * 64
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "AST-CANON-0021", "equipment_name": "Other", "bcm_code": body},
+    )
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["code"] == "INVALID_INPUT"
+
+
+async def test_bcm_code_prefixed_overlength_is_rejected(client, seeded_users):
+    """A prefixed BCM Code is length-neutral through normalization (the
+    "BCM" prefix is stripped and reapplied, never duplicated), so the only
+    way for a *prefixed* input to be overlength is for the raw input
+    itself to already exceed the column width -- caught by the schema's
+    own max_length bound (422 VALIDATION_ERROR) before it ever reaches
+    normalize_bcm_code. Either layer catching it is a controlled response;
+    what must never happen is a database-level DataError/500."""
+    headers = await _auth_headers(client, seeded_users, "admin")
+    body = "BCM" + "9" * 65  # 68 raw chars, already over the column width
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "AST-CANON-0022", "equipment_name": "Other", "bcm_code": body},
+    )
+    assert resp.status_code in (400, 422), resp.text
+    assert resp.json()["code"] in ("INVALID_INPUT", "VALIDATION_ERROR")
+
+
+async def test_bcm_code_overlength_update_matches_create_behavior(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    created = await _create_equipment_with_bcm(client, headers, "AST-CANON-0023")
+    resp = await client.patch(
+        f"/api/v1/equipment/{created['id']}", headers=headers, json={"bcm_code": "9" * 64}
+    )
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["code"] == "INVALID_INPUT"
+
+
+async def test_item_no_overlength_is_rejected_consistently_on_create_and_update(client, seeded_users):
+    """EquipmentCreate and EquipmentUpdate now share the identical
+    max_length=64 schema bound on item_no (See PR5-H3R), so a 65-char raw
+    value is rejected identically -- same status, same error code -- on
+    both paths, at the schema layer before ever reaching normalize_item_no.
+    """
+    headers = await _auth_headers(client, seeded_users, "admin")
+    overlength = "I" * 65
+
+    create_resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "AST-CANON-0024", "equipment_name": "Other", "item_no": overlength},
+    )
+    assert create_resp.status_code == 422, create_resp.text
+    assert create_resp.json()["code"] == "VALIDATION_ERROR"
+
+    created = await _create_equipment_with_bcm(client, headers, "AST-CANON-0025")
+    update_resp = await client.patch(
+        f"/api/v1/equipment/{created['id']}", headers=headers, json={"item_no": overlength}
+    )
+    assert update_resp.status_code == 422, update_resp.text
+    assert update_resp.json()["code"] == "VALIDATION_ERROR"
 
 
 # ---------------------------------------------------------------------------

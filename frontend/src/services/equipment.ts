@@ -51,9 +51,9 @@ export interface EquipmentCreatePayload {
   model?: string;
   department_owner_id?: string;
   current_location_id?: string;
-  // Roadmap PR5. item_no is deliberately omitted here -- no admin UI in
-  // this PR manually assigns it; its intended source is a future
-  // controlled Excel import (PR8).
+  // item_no is deliberately omitted here -- no admin UI in this PR
+  // manually assigns it; its intended source is a future controlled
+  // Excel import (Roadmap PR12).
   bcm_code?: string;
 }
 
