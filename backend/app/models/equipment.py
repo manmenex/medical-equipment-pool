@@ -43,26 +43,27 @@ class Equipment(UUIDPKMixin, TimestampMixin, SoftDeleteMixin, Base):
     asset_number: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
     serial_number: Mapped[str | None] = mapped_column(String(100), unique=True)
     equipment_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    # Roadmap PR5 (docs/kickoffs/PR5-equipment-master-bcm-search.md): the two
-    # confirmed Equipment Master identifiers alongside the pre-existing
-    # asset_number/serial_number metadata.
+    # See ADR-002 (identifier model), ADR-003 (BCM manual search), ADR-004
+    # (hospital Item-No QR). Canonicalization: app.services.identifiers.
     #
     # item_no: the hospital's existing physical QR label content. Internal
     # QR-resolution key only — never offered as a manual-search field and
-    # never returned by the BCM suggestion endpoint. Nullable because
+    # never returned in an operator-facing response. Nullable because
     # existing equipment predates this field and a future controlled Excel
-    # import (Roadmap PR8) is the intended backfill path, not a mechanical
+    # import (Roadmap PR12) is the intended backfill path, not a mechanical
     # default.
     #
     # bcm_code: the primary operator-facing identifier hospital staff type
     # to manually find equipment. The only field the manual-search endpoint
     # matches against. Nullable for the same backfill reason as item_no.
     #
-    # Both are unique (a standard UNIQUE constraint permits multiple NULLs
-    # in both PostgreSQL and SQLite, so unmigrated rows don't collide with
-    # each other) and indexed for exact lookup; bcm_code additionally gets a
-    # trigram GIN index (PostgreSQL only, see migration 0004) for responsive
-    # partial matching.
+    # Both are unique on their canonical persisted form (a standard UNIQUE
+    # constraint permits multiple NULLs in both PostgreSQL and SQLite, so
+    # unmigrated rows don't collide with each other) and indexed for exact
+    # lookup; bcm_code additionally gets a case-insensitive functional
+    # unique index and a trigram GIN index (PostgreSQL only, see migrations
+    # 0004/0005) for canonical-form uniqueness and responsive partial
+    # matching.
     item_no: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
     bcm_code: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
     category_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("equipment_categories.id"))
@@ -73,7 +74,13 @@ class Equipment(UUIDPKMixin, TimestampMixin, SoftDeleteMixin, Base):
         EquipmentStatusType, default=EquipmentStatus.AVAILABLE, nullable=False, index=True
     )
     current_location_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("locations.id"))
-    qr_code_value: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    # Legacy self-generated `MEP:{asset_number}` QR value (pre-dates Roadmap
+    # PR5). Retired by ADR-004: the hospital's own Item-No QR label is the
+    # only supported QR format now, so this column is no longer written on
+    # create (see migration 0005) and is kept only as historical data for
+    # equipment created before that cutover — it is never read by any
+    # active endpoint.
+    qr_code_value: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
     rfid_tag: Mapped[str | None] = mapped_column(String(64))
     pm_due_date: Mapped[date | None] = mapped_column(Date, index=True)
     cal_due_date: Mapped[date | None] = mapped_column(Date, index=True)

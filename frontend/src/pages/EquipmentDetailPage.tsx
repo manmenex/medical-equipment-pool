@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 
 import { StatusBadge } from "@/components/StatusBadge";
-import { equipmentQrCodeUrl, getEquipment, getEquipmentHistory } from "@/services/equipment";
+import { getEquipment, getEquipmentHistory } from "@/services/equipment";
 
 export function EquipmentDetailPage() {
   const { id = "" } = useParams();
@@ -23,7 +23,7 @@ export function EquipmentDetailPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="surface flex flex-col gap-4 rounded-xl border p-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="surface flex flex-col gap-4 rounded-xl border p-4">
         <div>
           <h1 className="text-lg font-semibold">{equipment.equipment_name}</h1>
           <p className="text-sm text-[var(--text-muted)]">
@@ -62,11 +62,6 @@ export function EquipmentDetailPage() {
             )}
           </div>
         </div>
-        <img
-          src={equipmentQrCodeUrl(equipment.id)}
-          alt={`QR code ${equipment.asset_number}`}
-          className="h-32 w-32 self-center rounded-lg border border-[var(--border)] bg-white p-1"
-        />
       </div>
 
       <div className="surface rounded-xl border p-4">

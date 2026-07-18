@@ -20,12 +20,7 @@ export async function getEquipment(id: string): Promise<Equipment> {
   return resp.data;
 }
 
-export async function getEquipmentByQr(qrValue: string): Promise<Equipment> {
-  const resp = await api.get<Equipment>(`/equipment/by-qr/${encodeURIComponent(qrValue)}`);
-  return resp.data;
-}
-
-// Roadmap PR5 primary workflow: scan existing QR -> extract Item No
+// QR resolver (See ADR-004): scan existing hospital QR -> extract Item No
 // (server-side) -> internal Equipment Master lookup. A POST with the raw
 // scanned text in the body, not a GET path segment, so an arbitrary QR
 // payload never lands in a URL/access log.
@@ -75,8 +70,4 @@ export async function updateEquipment(id: string, payload: Partial<EquipmentCrea
 export async function changeEquipmentStatus(id: string, status: string, reason?: string): Promise<Equipment> {
   const resp = await api.post<Equipment>(`/equipment/${id}/status`, { status, reason });
   return resp.data;
-}
-
-export function equipmentQrCodeUrl(id: string): string {
-  return `/api/v1/equipment/${id}/qrcode`;
 }

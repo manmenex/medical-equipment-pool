@@ -24,7 +24,7 @@ async def test_create_and_get_equipment(client, seeded_users):
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["status"] == "available"
-    assert body["qr_code_value"] == "MEP:AST-0001"
+    assert "qr_code_value" not in body, "retired legacy QR value must never appear in a response (ADR-004)"
 
     resp2 = await client.get(f"/api/v1/equipment/{body['id']}", headers=headers)
     assert resp2.status_code == 200
@@ -54,23 +54,26 @@ async def test_search_equipment_by_name(client, seeded_users):
     assert any(i["asset_number"] == "AST-0003" for i in items)
 
 
-async def test_resolve_by_qr(client, seeded_users):
+async def test_legacy_by_qr_route_removed(client, seeded_users):
+    """ADR-004: the legacy exact-match-on-qr_code_value route is retired,
+    not merely redirected — it must not exist at all."""
     headers = await _auth_headers(client, seeded_users, "admin")
-    await client.post(
+    resp = await client.get("/api/v1/equipment/by-qr/MEP:AST-0004", headers=headers)
+    assert resp.status_code == 404
+
+
+async def test_legacy_qrcode_generation_route_removed(client, seeded_users):
+    """ADR-004: the app must not generate/expose its own competing QR
+    image for the retired legacy scheme."""
+    headers = await _auth_headers(client, seeded_users, "admin")
+    create_resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
         json={"asset_number": "AST-0004", "equipment_name": "Defibrillator"},
     )
-    resp = await client.get("/api/v1/equipment/by-qr/MEP:AST-0004", headers=headers)
-    assert resp.status_code == 200
-    assert resp.json()["asset_number"] == "AST-0004"
-
-
-async def test_get_by_qr_not_found(client, seeded_users):
-    headers = await _auth_headers(client, seeded_users, "admin")
-    resp = await client.get("/api/v1/equipment/by-qr/MEP:NOPE", headers=headers)
+    equipment_id = create_resp.json()["id"]
+    resp = await client.get(f"/api/v1/equipment/{equipment_id}/qrcode", headers=headers)
     assert resp.status_code == 404
-    assert resp.json()["code"] == "EQUIPMENT_NOT_FOUND"
 
 
 # ---------------------------------------------------------------------------
@@ -463,3 +466,269 @@ async def test_resolve_qr_and_bcm_search_use_separate_fields(client, seeded_user
 
     resp4 = await client.post("/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "BCM00800"})
     assert resp4.status_code == 404, "QR resolution must not match on bcm_code"
+
+
+async def test_resolve_qr_rejects_retired_mep_format_as_malformed(client, seeded_users):
+    """ADR-004: a scanned legacy MEP:{asset_number} label is rejected as
+    unsupported, distinctly from an unrecognized-but-well-formed Item No
+    (404) — never silently interpreted as an Item No candidate."""
+    headers = await _auth_headers(client, seeded_users, "admin")
+    resp = await client.post(
+        "/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "MEP:AST-0001"}
+    )
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["code"] == "MALFORMED_QR_CODE"
+
+
+async def test_borrow_by_hospital_item_no_scan(client, seeded_users):
+    """Full Borrow scanner flow: resolve-qr (Item No) -> equipment_id -> borrow."""
+    headers = await _auth_headers(client, seeded_users, "admin")
+    nurse_headers = await _auth_headers(client, seeded_users, "ward_nurse")
+    created = await _create_equipment_with_bcm(
+        client, headers, "AST-PR5-0021", item_no="ITEM-BORROW-001", name="Borrow Scan Target"
+    )
+
+    resolved = await client.post(
+        "/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "ITEM-BORROW-001"}
+    )
+    assert resolved.status_code == 200
+    assert resolved.json()["id"] == created["id"]
+
+    borrow_resp = await client.post(
+        "/api/v1/borrow",
+        headers=nurse_headers,
+        json={"equipment_id": resolved.json()["id"], "borrower_name": "Nurse Item No"},
+    )
+    assert borrow_resp.status_code == 201, borrow_resp.text
+    assert borrow_resp.json()["equipment"]["status"] == "borrowed"
+
+
+async def test_return_by_hospital_item_no_scan(client, seeded_users):
+    """Full Return scanner flow: resolve-qr (Item No) -> equipment_id -> return."""
+    headers = await _auth_headers(client, seeded_users, "admin")
+    nurse_headers = await _auth_headers(client, seeded_users, "ward_nurse")
+    created = await _create_equipment_with_bcm(
+        client, headers, "AST-PR5-0022", item_no="ITEM-RETURN-001", name="Return Scan Target"
+    )
+    borrow_resp = await client.post(
+        "/api/v1/borrow",
+        headers=nurse_headers,
+        json={"equipment_id": created["id"], "borrower_name": "Nurse Return"},
+    )
+    tx = borrow_resp.json()
+
+    resolved = await client.post(
+        "/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "ITEM-RETURN-001"}
+    )
+    assert resolved.status_code == 200
+    assert resolved.json()["id"] == created["id"]
+
+    return_resp = await client.post(
+        f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"condition": "available"}
+    )
+    assert return_resp.status_code == 200, return_resp.text
+    assert return_resp.json()["status"] == "returned"
+
+
+async def test_item_no_with_leading_zeros_preserved_through_resolution(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    await _create_equipment_with_bcm(client, headers, "AST-PR5-0023", item_no="0000123")
+
+    resp = await client.post("/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "0000123"})
+    assert resp.status_code == 200, resp.text
+
+    # A numerically-equal but differently-formatted value must NOT match --
+    # leading zeros are significant, never reinterpreted numerically.
+    resp2 = await client.post("/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "123"})
+    assert resp2.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# ADR-002 / knowledge/architecture/identifiers.md: canonicalization rules
+# for BCM Code and Item No, enforced identically at create and update.
+# ---------------------------------------------------------------------------
+
+
+async def test_bcm_code_create_canonicalization(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "AST-CANON-0001", "equipment_name": "Pump", "bcm_code": "bcm001"},
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["bcm_code"] == "BCM001"
+
+
+async def test_bcm_code_update_canonicalization(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    created = await _create_equipment_with_bcm(client, headers, "AST-CANON-0002")
+
+    resp = await client.patch(
+        f"/api/v1/equipment/{created['id']}", headers=headers, json={"bcm_code": "  bcm002  "}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["bcm_code"] == "BCM002"
+
+
+async def test_bcm_code_prefix_omitted_and_supplied_are_equivalent_for_uniqueness(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    await _create_equipment_with_bcm(client, headers, "AST-CANON-0003", bcm_code="003")
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "AST-CANON-0004", "equipment_name": "Other", "bcm_code": "BCM003"},
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["code"] == "DUPLICATE"
+
+
+async def test_bcm_code_duplicate_by_case_is_rejected(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    await _create_equipment_with_bcm(client, headers, "AST-CANON-0005", bcm_code="BCM005")
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "AST-CANON-0006", "equipment_name": "Other", "bcm_code": "bcm005"},
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["code"] == "DUPLICATE"
+
+
+async def test_bcm_code_duplicate_by_surrounding_whitespace_is_rejected(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    await _create_equipment_with_bcm(client, headers, "AST-CANON-0007", bcm_code="BCM007")
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "AST-CANON-0008", "equipment_name": "Other", "bcm_code": "  BCM007  "},
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["code"] == "DUPLICATE"
+
+
+async def test_bcm_code_leading_zeros_preserved(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    created = await _create_equipment_with_bcm(client, headers, "AST-CANON-0009", bcm_code="00042")
+    assert created["bcm_code"] == "BCM00042"
+
+
+async def test_item_no_create_normalization_trims_whitespace_preserves_case(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    await _create_equipment_with_bcm(client, headers, "AST-CANON-0010", item_no="  MiXed-Case-001  ")
+
+    resp = await client.post(
+        "/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "MiXed-Case-001"}
+    )
+    assert resp.status_code == 200, resp.text
+
+    # Case is preserved exactly -- an all-uppercase variant must not match.
+    resp2 = await client.post(
+        "/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "MIXED-CASE-001"}
+    )
+    assert resp2.status_code == 404
+
+
+async def test_item_no_update_normalization_matches_create(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    created = await _create_equipment_with_bcm(client, headers, "AST-CANON-0011")
+
+    resp = await client.patch(
+        f"/api/v1/equipment/{created['id']}", headers=headers, json={"item_no": "  ItemUpdated-001  "}
+    )
+    assert resp.status_code == 200, resp.text
+
+    resolve_resp = await client.post(
+        "/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "ItemUpdated-001"}
+    )
+    assert resolve_resp.status_code == 200
+    assert resolve_resp.json()["id"] == created["id"]
+
+
+async def test_item_no_duplicate_by_whitespace_is_rejected(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    await _create_equipment_with_bcm(client, headers, "AST-CANON-0012", item_no="ITEM-WS-001")
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "AST-CANON-0013", "equipment_name": "Other", "item_no": "  ITEM-WS-001  "},
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["code"] == "DUPLICATE"
+
+
+# ---------------------------------------------------------------------------
+# knowledge/architecture/api-information-boundaries.md (ADR-002 / ADR-003):
+# item_no must never appear in a normal operator-facing response, across
+# the complete manual and QR flows. Not enforced only by hiding the field
+# in the frontend -- asserted directly against the JSON response shapes.
+# ---------------------------------------------------------------------------
+
+
+async def test_item_no_absent_from_create_response(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    created = await _create_equipment_with_bcm(
+        client, headers, "AST-BOUND-0001", bcm_code="BCM00900", item_no="ITEM-BOUND-001"
+    )
+    assert "item_no" not in created
+
+
+async def test_item_no_absent_from_general_equipment_detail_and_list(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    created = await _create_equipment_with_bcm(
+        client, headers, "AST-BOUND-0002", bcm_code="BCM00901", item_no="ITEM-BOUND-002"
+    )
+
+    detail_resp = await client.get(f"/api/v1/equipment/{created['id']}", headers=headers)
+    assert detail_resp.status_code == 200
+    assert "item_no" not in detail_resp.json()
+
+    list_resp = await client.get("/api/v1/equipment", headers=headers, params={"q": "AST-BOUND-0002"})
+    assert list_resp.status_code == 200
+    for item in list_resp.json()["items"]:
+        assert "item_no" not in item
+
+
+async def test_item_no_absent_from_qr_resolution_response(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    await _create_equipment_with_bcm(client, headers, "AST-BOUND-0003", item_no="ITEM-BOUND-003")
+
+    resp = await client.post(
+        "/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "ITEM-BOUND-003"}
+    )
+    assert resp.status_code == 200
+    assert "item_no" not in resp.json(), "QR resolution must not echo the Item No back to the client"
+
+
+async def test_item_no_absent_from_update_response(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    created = await _create_equipment_with_bcm(client, headers, "AST-BOUND-0004")
+
+    resp = await client.patch(
+        f"/api/v1/equipment/{created['id']}", headers=headers, json={"item_no": "ITEM-BOUND-004"}
+    )
+    assert resp.status_code == 200
+    assert "item_no" not in resp.json()
+
+
+async def test_item_no_absent_from_borrow_and_return_manual_selection_responses(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    nurse_headers = await _auth_headers(client, seeded_users, "ward_nurse")
+    created = await _create_equipment_with_bcm(
+        client, headers, "AST-BOUND-0005", bcm_code="BCM00902", item_no="ITEM-BOUND-005"
+    )
+
+    borrow_resp = await client.post(
+        "/api/v1/borrow",
+        headers=nurse_headers,
+        json={"equipment_id": created["id"], "borrower_name": "Nurse Boundary"},
+    )
+    assert borrow_resp.status_code == 201, borrow_resp.text
+    tx = borrow_resp.json()
+    assert "item_no" not in tx["equipment"]
+
+    return_resp = await client.post(
+        f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"condition": "available"}
+    )
+    assert return_resp.status_code == 200, return_resp.text
+    assert "item_no" not in return_resp.json()["equipment"]

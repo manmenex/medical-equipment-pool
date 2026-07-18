@@ -30,11 +30,11 @@ export interface Equipment {
   department_owner_id: string | null;
   current_location_id: string | null;
   status: EquipmentStatus;
-  qr_code_value: string;
-  // Roadmap PR5: bcm_code is the operator-facing identifier (display only
-  // here). item_no is deliberately NOT declared on this type — it's an
-  // internal QR-resolution key the frontend never needs to read or render;
-  // see docs/kickoffs/PR5-equipment-master-bcm-search.md.
+  // bcm_code is the operator-facing identifier (display only here, See
+  // ADR-003). item_no and qr_code_value are deliberately NOT declared on
+  // this type -- item_no is an internal QR-resolution key the frontend
+  // never reads or renders (See ADR-002), and the backend no longer
+  // returns either in an operator-facing response.
   bcm_code: string | null;
   pm_due_date: string | null;
   cal_due_date: string | null;

@@ -5,24 +5,18 @@ from sqlalchemy import String, and_, case, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.equipment import Equipment, EquipmentStatus, EquipmentStatusHistory
+from app.services.identifiers import strip_bcm_prefix
 from app.utils.pagination import decode_cursor, encode_cursor
 
-# Roadmap PR5: the confirmed operator-facing identifier's prefix. Stripping
-# it from a user-typed query (case-insensitively) before matching is what
-# lets "342" and "BCM342" find the same results -- see search_bcm().
+# Roadmap PR5 / ADR-003: the confirmed operator-facing identifier's prefix,
+# reused from app.services.identifiers so search normalization and
+# persisted-form canonicalization can never diverge.
 _BCM_PREFIX = "BCM"
 
 
 async def get_by_id(db: AsyncSession, equipment_id: uuid.UUID) -> Equipment | None:
     result = await db.execute(
         select(Equipment).where(Equipment.id == equipment_id, Equipment.deleted_at.is_(None))
-    )
-    return result.scalar_one_or_none()
-
-
-async def get_by_qr(db: AsyncSession, qr_value: str) -> Equipment | None:
-    result = await db.execute(
-        select(Equipment).where(Equipment.qr_code_value == qr_value, Equipment.deleted_at.is_(None))
     )
     return result.scalar_one_or_none()
 
@@ -40,10 +34,7 @@ async def get_by_item_no(db: AsyncSession, item_no: str) -> Equipment | None:
 
 
 def _normalize_bcm_query(raw: str) -> str:
-    token = raw.strip()
-    if token[: len(_BCM_PREFIX)].upper() == _BCM_PREFIX:
-        token = token[len(_BCM_PREFIX) :].strip()
-    return token
+    return strip_bcm_prefix(raw)
 
 
 async def search_bcm(db: AsyncSession, *, q: str, limit: int = 10) -> list[Equipment]:
@@ -126,7 +117,6 @@ async def search(
                 Equipment.equipment_name.ilike(like),
                 Equipment.asset_number.ilike(like),
                 Equipment.serial_number.ilike(like),
-                Equipment.qr_code_value.ilike(like),
             )
         )
 

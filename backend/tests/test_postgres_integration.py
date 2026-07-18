@@ -491,7 +491,7 @@ async def test_concurrent_dispatch_burst_produces_unique_transaction_numbers_on_
     headers = await _admin_headers(pg_client)
 
     equipment_count = 25
-    qr_codes = []
+    equipment_ids = []
     for i in range(equipment_count):
         resp = await pg_client.post(
             "/api/v1/equipment",
@@ -499,16 +499,16 @@ async def test_concurrent_dispatch_burst_produces_unique_transaction_numbers_on_
             json={"asset_number": f"PR4-BURST-{i:03d}", "equipment_name": "Burst Test Pump"},
         )
         assert resp.status_code == 201, resp.text
-        qr_codes.append(resp.json()["qr_code_value"])
+        equipment_ids.append(resp.json()["id"])
 
-    async def _dispatch(qr: str):
+    async def _dispatch(equipment_id: str):
         return await pg_client.post(
             "/api/v1/borrow",
             headers=headers,
-            json={"equipment_qr": qr, "borrower_name": "Burst Nurse"},
+            json={"equipment_id": equipment_id, "borrower_name": "Burst Nurse"},
         )
 
-    responses = await asyncio.gather(*(_dispatch(qr) for qr in qr_codes))
+    responses = await asyncio.gather(*(_dispatch(eq_id) for eq_id in equipment_ids))
 
     for resp in responses:
         assert resp.status_code == 201, resp.text
@@ -588,7 +588,7 @@ async def test_dispatch_failure_after_transaction_no_generation_leaves_safe_gap_
         json={"asset_number": "PR4-GAP-0001", "equipment_name": "Gap Test Pump"},
     )
     assert equipment_resp.status_code == 201, equipment_resp.text
-    qr = equipment_resp.json()["qr_code_value"]
+    equipment_id = equipment_resp.json()["id"]
 
     original_create = transaction_crud.create
     call_count = {"n": 0}
@@ -612,7 +612,7 @@ async def test_dispatch_failure_after_transaction_no_generation_leaves_safe_gap_
         failed = await raw_client.post(
             "/api/v1/borrow",
             headers=headers,
-            json={"equipment_qr": qr, "borrower_name": "Gap Nurse"},
+            json={"equipment_id": equipment_id, "borrower_name": "Gap Nurse"},
         )
     assert failed.status_code == 500, failed.text
 
@@ -624,7 +624,7 @@ async def test_dispatch_failure_after_transaction_no_generation_leaves_safe_gap_
     retry = await pg_client.post(
         "/api/v1/borrow",
         headers=headers,
-        json={"equipment_qr": qr, "borrower_name": "Gap Nurse Retry"},
+        json={"equipment_id": equipment_id, "borrower_name": "Gap Nurse Retry"},
     )
     assert retry.status_code == 201, retry.text
     assert retry.json()["transaction_no"]
@@ -1171,7 +1171,11 @@ async def test_migration_0004_adds_unique_indexes_for_item_no_and_bcm_code():
         pytest.skip(f"Cannot create scratch database for migration test: {exc}")
 
     try:
-        _run_alembic("upgrade", "head")
+        # 0004's own index contract, tested at 0004 -- 0005 (a later
+        # revision) replaces ix_equipment_bcm_code with a canonical-form
+        # functional index; see test_migration_0005_replaces_bcm_code_index_
+        # with_canonical_functional_index for that revision's own contract.
+        _run_alembic("upgrade", "0004_equipment_item_no_bcm_code")
 
         indexes = await _equipment_indexes()
         by_name = {idx["name"]: idx for idx in indexes}
@@ -1251,5 +1255,240 @@ async def test_migration_0004_rejects_duplicate_item_no_and_bcm_code_at_db_level
                     )
         finally:
             await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+# ---------------------------------------------------------------------------
+# PR14 reconciliation: migration 0005_identifier_hardening.py.
+# Retires qr_code_value's NOT NULL constraint (See ADR-004) and replaces
+# bcm_code's plain UNIQUE index with a case-insensitive functional unique
+# index (See ADR-002 canonical-form uniqueness). Exercised for real via the
+# same scratch-database + `alembic` CLI pattern as 0002/0003/0004 above.
+# ---------------------------------------------------------------------------
+
+
+async def _bcm_code_index_names() -> set[str]:
+    indexes = await _equipment_indexes()
+    return {idx["name"] for idx in indexes}
+
+
+async def test_migration_0005_upgrade_from_0004_makes_qr_code_value_nullable():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        # Upgrade from the prior merged schema (0004), not a fresh head --
+        # proves this migration works as an incremental step, not only on a
+        # brand-new database.
+        #
+        # Note: this suite's 0001_initial builds its schema via
+        # Base.metadata.create_all() against the *current* ORM model (see
+        # 0002/0004's docstrings), so a fresh scratch database stopped at
+        # 0004 already has qr_code_value nullable in the ORM's present
+        # state -- this harness cannot observe the column's true pre-0005
+        # NOT NULL history for a column that predates 0005. What IS
+        # provable here is the forward behavior after upgrading to head.
+        _run_alembic("upgrade", "0004_equipment_item_no_bcm_code")
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                # No qr_code_value supplied -- must succeed now that the
+                # application no longer generates a legacy QR value.
+                await conn.execute(
+                    text(
+                        "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata) "
+                        "VALUES (:id, 'AST-0005-POST', 'Post-0005', 'available', '{}')"
+                    ),
+                    {"id": str(uuid.uuid4())},
+                )
+                row = (
+                    await conn.execute(
+                        text("SELECT qr_code_value FROM equipment WHERE asset_number = 'AST-0005-POST'")
+                    )
+                ).scalar_one()
+                assert row is None
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0005_replaces_bcm_code_index_with_canonical_functional_index():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        names = await _bcm_code_index_names()
+        assert "ix_equipment_bcm_code_canonical" in names
+        assert "ix_equipment_bcm_code" not in names, "the plain (non-canonical) index must be replaced, not just added to"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0005_enforces_case_insensitive_bcm_code_uniqueness_at_db_level():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code) "
+                        "VALUES (:id, 'AST-0005-CI-1', 'Canon Source', 'available', '{}', 'BCM00777')"
+                    ),
+                    {"id": str(uuid.uuid4())},
+                )
+
+            from sqlalchemy.exc import IntegrityError
+
+            # Same canonical identity via case difference alone -- a bare
+            # per-column UNIQUE index on the raw string would NOT catch
+            # this; the functional UPPER(bcm_code) index must.
+            with pytest.raises(IntegrityError):
+                async with engine.begin() as conn:
+                    await conn.execute(
+                        text(
+                            "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code) "
+                            "VALUES (:id, 'AST-0005-CI-2', 'Canon Dup', 'available', '{}', 'bcm00777')"
+                        ),
+                        {"id": str(uuid.uuid4())},
+                    )
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0005_aborts_on_pre_existing_case_collision():
+    """Collision detection: rows that already collide once canonicalized
+    (seeded at 0004, before 0005's stricter index exists) must abort the
+    upgrade with a clear error, never silently drop/merge data or leave a
+    half-created index."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0004_equipment_item_no_bcm_code")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO equipment "
+                        "(id, asset_number, equipment_name, status, qr_code_value, metadata, bcm_code) "
+                        "VALUES (:id, 'AST-0005-COLLIDE-1', 'Collide A', 'available', 'MEP:X1', '{}', 'BCM00999')"
+                    ),
+                    {"id": str(uuid.uuid4())},
+                )
+                await conn.execute(
+                    text(
+                        "INSERT INTO equipment "
+                        "(id, asset_number, equipment_name, status, qr_code_value, metadata, bcm_code) "
+                        "VALUES (:id, 'AST-0005-COLLIDE-2', 'Collide B', 'available', 'MEP:X2', '{}', 'bcm00999')"
+                    ),
+                    {"id": str(uuid.uuid4())},
+                )
+        finally:
+            await engine.dispose()
+
+        env = {**os.environ, "DATABASE_URL": _scratch_dsn("postgresql+asyncpg")}
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=str(_BACKEND_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode != 0, "upgrade must abort, not silently succeed, on a pre-existing collision"
+        assert "BCM00999" in (result.stdout + result.stderr)
+
+        # The database must still be on 0004 -- the failed migration must
+        # not have left a partial/broken index behind.
+        names = await _bcm_code_index_names()
+        assert "ix_equipment_bcm_code" in names
+        assert "ix_equipment_bcm_code_canonical" not in names
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0005_upgrade_downgrade_reupgrade_round_trip():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        # Downgrade is safe here: no row has taken a write since upgrade,
+        # so no qr_code_value is NULL yet.
+        _run_alembic("downgrade", "0004_equipment_item_no_bcm_code")
+        names = await _bcm_code_index_names()
+        assert "ix_equipment_bcm_code" in names
+        assert "ix_equipment_bcm_code_canonical" not in names
+
+        _run_alembic("upgrade", "head")
+        names = await _bcm_code_index_names()
+        assert "ix_equipment_bcm_code_canonical" in names
+        assert "ix_equipment_bcm_code" not in names
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0005_downgrade_aborts_if_null_qr_code_value_exists():
+    """Once the application has taken writes under 0005 (no qr_code_value
+    populated), downgrading must fail clearly rather than silently violate
+    the restored NOT NULL constraint or drop data."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata) "
+                        "VALUES (:id, 'AST-0005-NULLQR', 'No Legacy QR', 'available', '{}')"
+                    ),
+                    {"id": str(uuid.uuid4())},
+                )
+        finally:
+            await engine.dispose()
+
+        env = {**os.environ, "DATABASE_URL": _scratch_dsn("postgresql+asyncpg")}
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", "downgrade", "0004_equipment_item_no_bcm_code"],
+            cwd=str(_BACKEND_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode != 0, "downgrade must abort, not silently violate NOT NULL, when data would be lost"
+        assert "NULL" in (result.stdout + result.stderr)
     finally:
         await _drop_scratch_database()

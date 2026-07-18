@@ -30,8 +30,7 @@ RETURN_CONDITION_TO_STATUS = {
 async def borrow(
     db: AsyncSession,
     *,
-    equipment_qr: str | None,
-    equipment_id: str | None,
+    equipment_id: str,
     borrower_user_id: uuid.UUID | None,
     borrower_name: str,
     ward_id: str | None,
@@ -45,11 +44,12 @@ async def borrow(
     ip_address: str | None,
     user_agent: str | None,
 ) -> BorrowTransaction:
-    equipment = None
-    if equipment_qr:
-        equipment = await equipment_crud.get_by_qr(db, equipment_qr)
-    elif equipment_id:
-        equipment = await equipment_crud.get_by_id(db, parse_uuid(equipment_id, "equipment_id"))
+    # Equipment selection is always by internal UUID (See ADR-002): a QR
+    # scan resolves to one via POST /equipment/resolve-qr first (exact
+    # Item No match, See ADR-004), and manual selection resolves one via a
+    # BCM Code suggestion (See ADR-003) -- this endpoint itself never
+    # accepts a raw scanned/typed identifier.
+    equipment = await equipment_crud.get_by_id(db, parse_uuid(equipment_id, "equipment_id"))
 
     if equipment is None:
         raise EquipmentNotFoundError("Equipment not found")

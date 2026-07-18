@@ -2,8 +2,7 @@ import { api } from "@/services/api";
 import type { Page, TransactionOut } from "@/types";
 
 export interface BorrowPayload {
-  equipment_qr?: string;
-  equipment_id?: string;
+  equipment_id: string;
   borrower_name: string;
   ward_id?: string;
   department_id?: string;

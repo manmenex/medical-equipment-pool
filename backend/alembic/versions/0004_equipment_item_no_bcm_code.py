@@ -89,6 +89,18 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Drops item_no and bcm_code entirely, including any populated data.
+
+    Unlike upgrade(), this direction is NOT non-destructive: any BCM Code
+    or Item No value written since this migration's upgrade (through the
+    application, an import, or direct SQL) is permanently lost the moment
+    this runs -- DROP COLUMN does not preserve data for a later re-upgrade
+    the way, e.g., a `legacy_status`-style side column would. Do not run
+    this against a database that has taken real identifier writes without
+    first exporting/backing up equipment.item_no and equipment.bcm_code.
+    Once real writes exist, a forward fix (correcting the running code) is
+    almost always preferable to downgrading this revision.
+    """
     bind = op.get_bind()
 
     if bind.dialect.name == "postgresql":
