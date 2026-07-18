@@ -25,12 +25,25 @@ AppSheet-based process.
 Start with `docs/PROJECT_PLAYBOOK.md`, which defines the compact reading sets
 and conflict hierarchy. In summary:
 
-- this file owns permanent repository-wide rules and domain guardrails;
-- `docs/ARCHITECTURE_DECISIONS.md` owns active confirmed decisions;
+- this file owns permanent repository-wide rules and enforcement
+  guardrails — the boundaries a task must not cross — not the detailed
+  rationale behind any single scope decision; the Equipment Pool scope
+  decision itself, with its rationale, is owned by
+  [`knowledge/adr/ADR-001`](knowledge/adr/ADR-001-equipment-pool-scope.md)
+  per the Playbook's topic-ownership table, and this file does not
+  independently redefine or override it;
+- `docs/ARCHITECTURE_DECISIONS.md` owns active confirmed decisions, except
+  where the Playbook's topic-ownership table assigns a topic to
+  `knowledge/adr/` instead (currently: equipment scope, identifier model,
+  BCM manual search, hospital QR identification — see `knowledge/README.md`);
 - `docs/audits/04-consolidated-implementation-plan.md` owns Roadmap PR scope,
-  order, dependencies, and acceptance criteria;
+  order, dependencies, and acceptance criteria not already owned above;
 - `docs/ROADMAP_STATUS.md` tracks status only; and
 - audits 01–03 are historical evidence, superseded by 04 where they disagree.
+
+`docs/PROJECT_PLAYBOOK.md`'s topic-ownership table is the single place that
+states which document governs which topic — check it before assuming a
+document is authoritative for something it discusses.
 
 Task-specific instructions may narrow work but cannot silently override a
 confirmed guardrail, security decision, or Roadmap boundary. Such a change
@@ -42,8 +55,11 @@ The confirmed hospital workflow is intentionally narrow. Any task —
 implementation or review — must respect it:
 
 - Only Equipment Pool staff record transactions (no ward-user entry).
-- ME Code is the primary user-facing equipment identifier; the internal
-  UUID remains the database primary key.
+- BCM Code is the primary operator-facing equipment identifier and the
+  only identifier manual search matches; Item No identifies equipment
+  from a hospital QR scan only; the internal UUID remains the database
+  primary key. "ME Code" is a retired placeholder name and must not be
+  used — see `knowledge/adr/ADR-002-identifier-model.md`.
 - Routine rounds happen on a fixed schedule; on-demand dispatch is also
   supported.
 - Only the **first receiving ward** is recorded — no ward-to-ward transfer

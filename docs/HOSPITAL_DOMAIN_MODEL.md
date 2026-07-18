@@ -1,7 +1,7 @@
 # Hospital Domain Model
 
 **Purpose:** Concise reference for confirmed Equipment Pool terminology and workflow
-**Authority:** Domain summary; `AGENTS.md`, active decisions, and the Roadmap govern changes
+**Authority:** Domain summary; `AGENTS.md`, active decisions, and the Roadmap govern changes. Topics migrated into `../knowledge/` (currently: equipment identifiers, BCM search, QR identification — see `PROJECT_PLAYBOOK.md`'s topic-ownership table) are owned there instead of here.
 **Update trigger:** Hospital-approved workflow or terminology change
 **Maintainer:** Architecture Owner
 
@@ -26,11 +26,14 @@ equipment between wards after its first recorded destination.
 ## Equipment identity
 
 - **Equipment:** One physical device, stored internally with a UUID primary key.
-- **ME Code:** The required, user-facing hospital equipment identifier planned
-  by Roadmap PR5. It is distinct from the UUID, Asset ID, Item Number, Serial
-  Number, and QR payload.
-- **Asset ID / Item Number / Serial Number:** Separate inventory metadata. Do
-  not merge or infer one from another without an approved mapping.
+
+The identifier model (BCM Code, Item No, Asset Number, and internal UUID),
+manual-search behavior, and QR identification are owned by the Knowledge
+Layer, not this document — see
+[`../knowledge/adr/ADR-002-identifier-model.md`](../knowledge/adr/ADR-002-identifier-model.md)
+through `ADR-004`, `../knowledge/architecture/`, and
+`../knowledge/business-rules/`. "ME Code" is a retired placeholder name and
+must not be used.
 
 One scan/dispatch represents one physical device; quantity is not a substitute
 for equipment identity.

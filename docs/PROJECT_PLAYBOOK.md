@@ -19,17 +19,56 @@ current-versus-future workflow live in
 | Level | Authority | Governs |
 |---|---|---|
 | 1 | [`AGENTS.md`](../AGENTS.md) | Permanent repository-wide rules and non-negotiable domain guardrails |
-| 2 | [`ARCHITECTURE_DECISIONS.md`](ARCHITECTURE_DECISIONS.md) and detailed ADRs | Active confirmed architecture and security decisions |
-| 3 | [`audits/04-consolidated-implementation-plan.md`](audits/04-consolidated-implementation-plan.md) | Roadmap PR scope, order, dependencies, and acceptance criteria |
-| 4 | [`ROADMAP_STATUS.md`](ROADMAP_STATUS.md) | Current status only; it does not redefine scope |
-| 5 | Task-specific instructions | The authorized task inside the boundaries above |
-| 6 | Audits 01–03 and legacy design documents | Historical evidence and rationale, not current policy |
+| 2 | [`ARCHITECTURE_DECISIONS.md`](ARCHITECTURE_DECISIONS.md), `docs/adr/`, and [`../knowledge/adr/`](../knowledge/README.md) | Active confirmed architecture and security decisions (durable ADRs — two ADR sets, one hierarchy; see the topic-ownership table below for which set governs which topic) |
+| 3 | [`../knowledge/architecture/`](../knowledge/architecture/) and [`../knowledge/business-rules/`](../knowledge/business-rules/) | Durable architecture concepts and operational business rules that implement a Level 2 decision, for the topics assigned to the Knowledge Layer below |
+| 4 | [`audits/04-consolidated-implementation-plan.md`](audits/04-consolidated-implementation-plan.md) | Roadmap PR scope, order, dependencies, and acceptance criteria not already governed by Level 2 or 3 |
+| 5 | [`ROADMAP_STATUS.md`](ROADMAP_STATUS.md) | Current status only; it does not redefine scope |
+| 6 | Task-specific instructions | The authorized task inside the boundaries above |
+| 7 | Audits 01–03, legacy design documents, and [`../knowledge/traceability/`](../knowledge/traceability/README.md) | Historical evidence, rationale, and non-authoritative implementation traceability — never current policy |
 
 Use the narrowest interpretation that satisfies all higher authorities. A task
 cannot silently override confirmed domain guardrails, security policy, or
 Roadmap scope. A real conflict requires an explicit Governance PR and, for an
 architecture change, an Architecture Decision update. Implementation PRs may
 not rewrite governance merely to legitimize their implementation.
+
+Level 2 and Level 3 are not "the Knowledge Layer always wins" — they are topic
+ownership. A topic not yet assigned to the Knowledge Layer keeps whatever
+document already governed it (typically `ARCHITECTURE_DECISIONS.md` at Level 2
+or `HOSPITAL_DOMAIN_MODEL.md` as a Level-3-equivalent domain reference until
+migrated). The table below is the single, explicit map from topic to owning
+document; do not infer ownership from a document's own claims about itself.
+
+### Topic ownership
+
+| Topic | Owning document | Level |
+|---|---|---|
+| Repository-wide rules and domain guardrails | [`AGENTS.md`](../AGENTS.md) | 1 |
+| Governance process, roles, and workflow | This Playbook | — (governs the process itself, not a domain topic) |
+| Equipment Pool scope boundary | [`knowledge/adr/ADR-001`](../knowledge/adr/ADR-001-equipment-pool-scope.md) | 2 |
+| Equipment identifier model (UUID / BCM Code / Item No / Asset Number) | [`knowledge/adr/ADR-002`](../knowledge/adr/ADR-002-identifier-model.md) | 2 |
+| BCM manual search | [`knowledge/adr/ADR-003`](../knowledge/adr/ADR-003-bcm-manual-search.md) | 2 |
+| Hospital QR identification | [`knowledge/adr/ADR-004`](../knowledge/adr/ADR-004-hospital-item-no-qr.md) | 2 |
+| Identifier canonicalization | [`knowledge/architecture/identifiers.md`](../knowledge/architecture/identifiers.md) | 3 |
+| QR resolution flow | [`knowledge/architecture/qr-identification.md`](../knowledge/architecture/qr-identification.md) | 3 |
+| API information boundaries (what a response may/must not contain) | [`knowledge/architecture/api-information-boundaries.md`](../knowledge/architecture/api-information-boundaries.md) | 3 |
+| Equipment Pool operational rules | [`knowledge/business-rules/equipment-pool.md`](../knowledge/business-rules/equipment-pool.md) | 3 |
+| Equipment selection (search + QR) rules | [`knowledge/business-rules/equipment-selection.md`](../knowledge/business-rules/equipment-selection.md) | 3 |
+| Borrow/return equipment-selection integration | [`knowledge/business-rules/borrow-return-selection.md`](../knowledge/business-rules/borrow-return-selection.md) | 3 |
+| Shared terminology for the topics above | [`knowledge/glossary.md`](../knowledge/glossary.md) | 3 |
+| Audit-write atomicity and failed-login identifiers | `docs/adr/ADR-0001` (indexed from `ARCHITECTURE_DECISIONS.md`) | 2 |
+| All other confirmed architecture/security decisions not listed above | [`ARCHITECTURE_DECISIONS.md`](ARCHITECTURE_DECISIONS.md) | 2 |
+| Dispatch/receipt workflow, equipment states, transaction states | [`HOSPITAL_DOMAIN_MODEL.md`](HOSPITAL_DOMAIN_MODEL.md) | domain reference, until migrated |
+| Terminology not covered by `knowledge/glossary.md` above | [`GLOSSARY.md`](GLOSSARY.md) | domain reference, until migrated |
+| Roadmap PR scope, order, dependencies, acceptance criteria | [`audits/04-consolidated-implementation-plan.md`](audits/04-consolidated-implementation-plan.md) | 4 |
+| Roadmap PR current status | [`ROADMAP_STATUS.md`](ROADMAP_STATUS.md) | 5 |
+| Implementation-to-decision mapping and current implementation status | [`knowledge/traceability/`](../knowledge/traceability/README.md) (non-authoritative) | 7 |
+| Superseded/historical requirement text | Git history, or a document's own clearly marked historical appendix | 7 |
+
+When a topic is migrated into the Knowledge Layer, the document that
+previously owned it is updated in the same change to point here instead of
+continuing to state the topic independently — see "Scope and change control"
+below.
 
 ## Roles and independence
 
@@ -136,6 +175,10 @@ secret values, or sensitive screenshots/logs in evidence.
 | `HOSPITAL_DOMAIN_MODEL.md` | Confirmed domain reference | Conditional | Approved domain change | Architecture Owner |
 | `GLOSSARY.md` | Preferred terminology | Conditional | Term ambiguity/change | Governance Engineer |
 | `ARCHITECTURE_DECISIONS.md` / `adr/` | Active decisions/index and selected detail | Conditional | Architecture decision | Architecture Owner |
+| `../knowledge/adr/` | Durable ADRs for topics assigned in the topic-ownership table above | Conditional (assigned topics mandatory) | Architecture decision, focused Governance PR | Architecture Owner |
+| `../knowledge/architecture/`, `../knowledge/business-rules/` | Durable concepts/rules implementing a `knowledge/adr/` decision | Conditional (assigned topics mandatory) | Companion to the ADR it elaborates | Architecture Owner |
+| `../knowledge/glossary.md` | Terminology for topics assigned to the Knowledge Layer | Conditional | Term ambiguity/change within assigned topics | Governance Engineer |
+| `../knowledge/traceability/` | Non-authoritative implementation-to-decision mapping | Conditional | Implementation change affecting a mapped decision | Implementation Engineer |
 | `audits/04-...` | Roadmap scope/order | Assigned section mandatory | Governance-approved Roadmap change | Architecture Owner |
 | `ROADMAP_STATUS.md` | Current state | Conditional | PR/status event | Governance Engineer |
 | `PROJECT_MEMORY.md` | Major chronological decisions | Conditional | Major decision/phase | Governance Engineer |

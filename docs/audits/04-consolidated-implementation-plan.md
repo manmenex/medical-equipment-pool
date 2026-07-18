@@ -10,7 +10,7 @@
 
 This plan synthesizes findings from:
 
-- `docs/audits/01-database-schema-audit.md` — present. The schema/database review this plan draws on (normalization, foreign-key consistency, missing/composite indexes, nullable-field review, enum-usage review, naming consistency, cascade rules, constraints, and performance findings) is cited below by its real section numbers (§1 Normalization, §2 FK Consistency, §3 Missing Indexes, §4 Composite Indexes, §5 Nullable Fields, §6 Enum Usage, §7 Naming Consistency, §8 Cascade Rules, §9 Constraints, §10 Performance Issues). Every "Schema Audit" citation in this revision has been checked against that file directly. Two citation errors from the prior version of this plan are corrected here: content about ME Code/identifier separation and about search behavior was previously mis-cited as "Schema Audit §8"/"§8.4" (Cascade Rules) — that content actually lives in **Workflow Audit §8** ("Inventory Import and Identifier Review," which has its own subsection 8.4, "Search behavior") and is now cited correctly throughout.
+- `docs/audits/01-database-schema-audit.md` — present. The schema/database review this plan draws on (normalization, foreign-key consistency, missing/composite indexes, nullable-field review, enum-usage review, naming consistency, cascade rules, constraints, and performance findings) is cited below by its real section numbers (§1 Normalization, §2 FK Consistency, §3 Missing Indexes, §4 Composite Indexes, §5 Nullable Fields, §6 Enum Usage, §7 Naming Consistency, §8 Cascade Rules, §9 Constraints, §10 Performance Issues). Every "Schema Audit" citation in this revision has been checked against that file directly. Two citation errors from the prior version of this plan are corrected here: content about the equipment identifier model/identifier separation and about search behavior was previously mis-cited as "Schema Audit §8"/"§8.4" (Cascade Rules) — that content actually lives in **Workflow Audit §8** ("Inventory Import and Identifier Review," which has its own subsection 8.4, "Search behavior") and is now cited correctly throughout.
 - `docs/audits/02-backend-architecture-audit.md` — present, cited by finding number (e.g. "Backend Audit 14.1").
 - `docs/audits/03-hospital-equipment-pool-workflow-audit.md` — present, cited by section/finding (e.g. "Workflow Audit §6.1", "Workflow Audit M5", "Workflow Audit §8.4").
 
@@ -24,7 +24,7 @@ The three audits converged on a consistent picture: the underlying engineering (
 
 Five findings are Critical and gate any operational pilot, independent of the workflow clarifications: the double-receipt race, the dashboard connection leak, the insecure default JWT secret, the missing audit trail for user/role management, and (newly elevated by the confirmed four-times-daily routine-round pattern) the transaction-number race. Everything else in this plan is sequenced around landing those five safely first, then rebuilding the domain model (identifiers, states, dispatch/receipt workflow) on top of a stable foundation, then the supporting UI/import/reporting work.
 
-This plan proposes **15 pull requests** in six dependency-ordered groups (the five phases named in the task input's §8.4, plus a Post-Pilot Hardening group for the reconciled-down P2/P3 items), a migration strategy for every schema change, a full inventory-import design, a concurrency-focused test matrix, Given/When/Then acceptance criteria for every MVP workflow, and four go-live gates (Development, UAT, Pilot, Production). This revision formalizes PR3 as the reusable audit-logging framework required by later roadmap work, including current authentication and mutation coverage, safe request context, an additive audit migration, an authorized bounded read path, and PostgreSQL-backed migration/transaction evidence. It also corrects the transaction-number and ME Code migration strategies described in PR4 and PR5 below.
+This plan proposes **15 pull requests** in six dependency-ordered groups (the five phases named in the task input's §8.4, plus a Post-Pilot Hardening group for the reconciled-down P2/P3 items), a migration strategy for every schema change, a full inventory-import design, a concurrency-focused test matrix, Given/When/Then acceptance criteria for every MVP workflow, and four go-live gates (Development, UAT, Pilot, Production). This revision formalizes PR3 as the reusable audit-logging framework required by later roadmap work, including current authentication and mutation coverage, safe request context, an additive audit migration, an authorized bounded read path, and PostgreSQL-backed migration/transaction evidence. It also corrects the transaction-number migration strategy described in PR4 below; PR5's identifier migration strategy is governed by `knowledge/adr/ADR-002-identifier-model.md` and the active contract in Part D, not restated here.
 
 ---
 
@@ -35,7 +35,7 @@ The full confirmed requirements are the input to this task and are not reproduce
 | Area | Confirmed decision |
 |---|---|
 | Scope | Equipment Pool only (primarily infusion pumps + select shared equipment). No MEMS, patient tracking, HN/MRN, bed tracking, ward-to-ward transfer tracking, PM, calibration, recall, cleaning-workflow tracking, or hospital-wide asset lifecycle. |
-| Primary identifier | ME Code (= source `ID CODE`, e.g. `BCM02719`), confirmed — not an assumption. Unique, required, indexed, text, case-normalized, leading zeros preserved. Distinct from UUID PK, Item No., Asset ID, Serial Number, QR payload. |
+| Primary identifier | BCM Code (= source `ID CODE`, e.g. `BCM02719`), confirmed — not an assumption. Unique, the only manual-search identifier, canonical form defined in `knowledge/architecture/identifiers.md` (case-insensitive identity, leading zeros preserved). Distinct from the internal UUID PK, Item No (the separate hospital-QR-only identifier), Asset Number, and Serial Number — see `knowledge/adr/ADR-002-identifier-model.md`. |
 | Roles | Exactly 3: Administrator, Equipment Pool Staff, Read-Only/Supervisor. No ward users, no named borrowers. |
 | Dispatch types | Exactly 2: `ROUTINE_ROUND` (06:00/11:00/15:00/21:00) and `ON_DEMAND`. This fixed-round design is confirmed for MVP (PR7); flexible DAY/NIGHT Shift Sessions are a confirmed future direction, not yet scheduled to a PR — see `AGENTS.md` and `docs/ROADMAP_STATUS.md`. |
 | Ward recording | First receiving ward/department only, required, immutable except via an audited correction action. No later-transfer tracking. |
@@ -72,9 +72,9 @@ Every other reference to `PENDING_CLEANING`, `CLEANING`, "Cleaning Confirmed," o
 | **Cleaning workflow states/actions** | Workflow Audit §4.1/§4.2/§6.1 (recommended 2-step process) | Confirmed: no cleaning workflow; 1 atomic receipt; 4-state model | **Superseded — see B.1.** The workflow audit's recommendation is retired, not carried forward. |
 | **Single receipt operation** | (new, not previously specified this way) | Confirmed | **New confirmed requirement**, directly shapes PR7. |
 | **Receipt outcome: usable or defective** | Backend Audit 9.1 (recommended constraining `condition` to a 5-value `Literal` including `pm`/`calibration`) | Confirmed: binary outcome only | **Backend Audit 9.1's specific sub-recommendation (5-value Literal) is superseded** by a 2-value outcome enum. The *general* point of Finding 9.1 (constrain input validation, don't leave it to a bare `ValueError`) is still correct and still applies — just to a 2-value enum instead of 5. |
-| **Quantity field relevance** | Backend Audit W.1 (Medium — recommended adding `Field(gt=0)`) | Confirmed: ME Code identifies exactly one physical device | **Backend Audit W.1's fix is superseded.** Validating `quantity > 0` is the wrong fix for a field that shouldn't exist in this workflow at all — one ME Code scan is inherently one physical device. Recommend **removing `quantity` from the dispatch write path** for MVP (server-side implicit 1), not validating it. |
+| **Quantity field relevance** | Backend Audit W.1 (Medium — recommended adding `Field(gt=0)`) | Confirmed: one equipment scan/selection identifies exactly one physical device | **Backend Audit W.1's fix is superseded.** Validating `quantity > 0` is the wrong fix for a field that shouldn't exist in this workflow at all — one dispatch scan/selection is inherently one physical device. Recommend **removing `quantity` from the dispatch write path** for MVP (server-side implicit 1), not validating it. |
 | **Role model reduction** | Workflow Audit §10 (recommendation: 3 roles) | Confirmed: exactly 3 roles, with a specific permission matrix | **Confirmed**, and the confirmed permission matrix is more detailed than the workflow audit's version (e.g., it explicitly gives Equipment Pool Staff the ability to mark equipment defective, which the current code restricts to `admin`/`biomedical_engineer`). PR9 must implement the *confirmed* matrix, not the workflow audit's earlier draft, where they differ. |
-| **Inventory import priority** | Workflow Audit gap table (High, MVP) and Workflow Audit §8 (identifier separation, prerequisite); Schema Audit §9.2 (case/whitespace-sensitive business-key uniqueness, directly relevant to ME Code normalization) | Confirmed: required for MVP, with a detailed field mapping | **Confirmed as MVP-required.** Sequenced after identifier work (PR5) and the dedicated audit-logging PR (PR3, since imports must be audited) — see PR12. |
+| **Inventory import priority** | Workflow Audit gap table (High, MVP) and Workflow Audit §8 (identifier separation, prerequisite); Schema Audit §9.2 (case/whitespace-sensitive business-key uniqueness, directly relevant to equipment-identifier normalization — `knowledge/architecture/identifiers.md`) | Confirmed: required for MVP, with a detailed field mapping | **Confirmed as MVP-required.** Sequenced after identifier work (PR5) and the dedicated audit-logging PR (PR3, since imports must be audited) — see PR12. |
 | **Commit-boundary refactor timing** | Backend Audit 6.1 (Medium — no live bug today, structural risk) | Not addressed by confirmed requirements (out of scope of hospital's business input, purely an engineering-quality item) | **Timing clarified: P2, not P0/P1.** The confirmed atomic-receipt requirement (§5) is satisfiable using the *existing* per-function manual-commit pattern (the same pattern that already correctly makes dispatch atomic today, and the same pattern the new audit-logging PR uses) — it does not require the broader `get_db()` refactor first. Deferred to hardening (PR14), not a blocker for any MVP PR. |
 | **Exact `COUNT(*)` priority for realistic hospital data volume** | Backend Audit 5.2 (High, framed against 500,000+ equipment / 2,000,000+ transactions) | Confirmed scope: "selected" devices, "primarily infusion pumps and some other shared equipment" — an Equipment Pool fleet, not a hospital-wide asset register | **Severity lowered from High to Medium/P2 for this MVP.** The original framing assumed the broader, since-abandoned hospital-wide asset-management scale. At Equipment-Pool scale (order of magnitude: low hundreds of devices, thousands of transactions per year — **estimate, needs hospital confirmation**, see §14), an exact `COUNT(*)` is not a meaningful performance risk. The fix remains correct and cheap and is kept in the backlog (PR14) but is explicitly not a pilot blocker. |
 | **JWT role claim vs. database role lookup** | Backend Audit 2.1 (Medium, framed against "100+ concurrent users") | Confirmed scope: Equipment Pool staff only use the system — a small, bounded user population (estimate: single-digit to low-double-digit concurrent users at any of the four daily round times) | **Severity/priority lowered to P3.** Same reasoning as above — the optimization is still correct but immaterial at this user scale. Not a blocker at any gate. |
@@ -88,7 +88,7 @@ Every other reference to `PENDING_CLEANING`, `CLEANING`, "Cleaning Confirmed," o
 
 These remain valid, are not touched by the business-workflow confirmation, and keep their original severity and audit citation:
 
-- Schema Audit — no `ondelete` policy on any FK (High); `users` table has no soft-delete despite ~9 FK-referencing tables (High); no `CHECK` constraints anywhere (High, grouped); case/whitespace-sensitive business-key uniqueness (Medium) — **directly relevant now to ME Code**, see §9; mixed index-naming convention (High); documented partial indexes never implemented (High).
+- Schema Audit — no `ondelete` policy on any FK (High); `users` table has no soft-delete despite ~9 FK-referencing tables (High); no `CHECK` constraints anywhere (High, grouped); case/whitespace-sensitive business-key uniqueness (Medium) — **directly relevant now to BCM Code and Item No** (`knowledge/architecture/identifiers.md`), see §9; mixed index-naming convention (High); documented partial indexes never implemented (High).
 - Backend Audit — no optimistic locking anywhere (High, root enabler of 14.1); unhandled `IntegrityError` across create endpoints (High); synchronous bcrypt/openpyxl/qrcode blocking the event loop (High); N+1 in scheduler notification jobs (High); all Redis errors silently swallowed with no logging (High, with the refresh-token-revocation instance specifically Critical-adjacent per 10.3); no login rate limiting (High); inconsistent error envelope (High); PATCH cannot clear fields to null (Medium); no request-level structured logging (Medium).
 
 ### B.4 — Recommendations that must **not** be implemented
@@ -115,7 +115,7 @@ Per the confirmed requirements and this reconciliation:
 | 4 | Reusable audit logging framework and current endpoint coverage | Backend Audit 12.1 (Critical) + 12.2 (High) + 20.2 (request-correlation prerequisite) | **P0** | Establishes the canonical write/read path and safe request context on which all later required audit events depend. **Assigned to PR3.** |
 | 5 | Concurrent double-receipt protection | Backend Audit 14.1 (Critical) | **P0** | Confirmed single-atomic-receipt design still needs this; silently losing a "defective" report is a patient-safety-adjacent risk. |
 | 6 | Transaction-number race | Backend Audit 14.3 (High → raised, B.2) | **P0** | Elevated given confirmed 4×-daily concurrent-round pattern. |
-| 7 | Dedicated ME Code field + identifier separation | Workflow Audit §8 (identifier separation, confirmed as MVP-required); Schema Audit §9.2 (case/whitespace-sensitive uniqueness, directly relevant to ME Code normalization) | **P0** | Every other MVP workflow item (dispatch, receipt, search, import) depends on ME Code existing as a real, distinct field first — populated via confirmed reconciliation against the authoritative spreadsheet, not a mechanical backfill (see PR5). |
+| 7 | Dedicated BCM Code / Item No fields + identifier separation | Workflow Audit §8 (identifier separation, confirmed as MVP-required); Schema Audit §9.2 (case/whitespace-sensitive uniqueness, directly relevant to identifier normalization — `knowledge/architecture/identifiers.md`) | **P0** | Every other MVP workflow item (dispatch, receipt, search, import) depends on BCM Code and Item No existing as real, distinct fields first — populated via ordinary equipment-record maintenance and the future inventory import (Roadmap PR12), not a mechanical backfill or spreadsheet reconciliation (see PR5, `knowledge/adr/ADR-002-identifier-model.md`). |
 | 8 | Equipment state model (4 states) | Workflow Audit §4 (superseded 5-state version), confirmed §6 | **P0** | Dispatch-eligibility and defective/decommissioned blocking depend on this being correct before any workflow PR lands. |
 | 9 | Borrower-name removal / Receiving Ward requirement | Workflow Audit M1 (Critical) | **P1** | Depends on #7/#8 landing first (shared schema/service layer); blocks UAT, not the technical pilot foundation. |
 | 10 | Routine Round / On-Demand dispatch types | Confirmed requirement §4 | **P1** | Core MVP workflow, depends on #7–#9. |
@@ -123,7 +123,7 @@ Per the confirmed requirements and this reconciliation:
 | 12 | Disable `due_at` / overdue | Backend Audit 14.2 (Critical), confirmed §7 | **P1** | Must land before or alongside #11 so the receipt path is never blocked by a stale overdue transition during UAT. |
 | 13 | Role and permission changes (3-role model) | Workflow Audit §10, confirmed §3 | **P1** | Needed for UAT to reflect real operating permissions; depends on #4 (audit logging) so role changes are themselves audited from day one. |
 | 14 | Ward correction with audit | Workflow Audit §7, confirmed §4 | **P1** | Required MVP capability; depends on #9 and #4. |
-| 15 | Search and history (ME Code exact match, dispatch-type/round-aware) | Workflow Audit §8.4 ("Search behavior"), confirmed §4/§11 | **P1** | Needed for UAT; depends on #7 and #10. |
+| 15 | Search and history (BCM Code manual search per `knowledge/adr/ADR-003-bcm-manual-search.md`; dispatch-type/round-aware) | Workflow Audit §8.4 ("Search behavior"), confirmed §4/§11 | **P1** | Needed for UAT; depends on #7 and #10. |
 | 16 | Frontend terminology (Dispatch/Receiving Ward/Routine Round/On-Demand/Return to Pool) | Workflow Audit §3, confirmed | **P1** | Must land alongside #9–#11 so UAT users never see stale "Borrow"/"Borrower"/"Due Date" language. |
 | 17 | Inventory import | Confirmed requirement §2/§10 | **P1** | Required for MVP; depends on #7 (target schema must exist first). |
 | 18 | Concurrency tests (dispatch burst, receipt race) | Backend Audit 14.1/14.3, confirmed §11 | **P0/P1 split** | Tests for #5/#6 ship with those PRs (P0); the full routine-round-burst load scenario is validated at Pilot Readiness (P1/gate item, §13). |
@@ -169,7 +169,7 @@ Per the confirmed requirements and this reconciliation:
 - **Database migration impact:** None.
 - **API contract impact:** Error response shape becomes consistent (`{detail, code, status}`) across all create/duplicate-key scenarios; response *status codes* for these cases change from 500 to 409 (a behavior fix, not a breaking contract change for well-behaved clients).
 - **Frontend impact:** None required (the existing `apiErrorMessage()` helper already expects the corrected shape); optional follow-up to surface the new `code` values in UI copy.
-- **Test requirements:** Duplicate ME Code / employee code / department code registration each return 409 with the standard envelope; malformed receipt-outcome value returns 400/422, not 500.
+- **Test requirements:** Duplicate BCM Code / Item No / employee code / department code registration each return 409 with the standard envelope; malformed receipt-outcome value returns 400/422, not 500.
 - **Acceptance criteria:** No duplicate-key or malformed-input scenario produces an unhandled 500 anywhere in the API.
 - **Dependencies:** None (independent of PR1, can land in parallel).
 - **Rollback strategy:** Revert; no data impact.
@@ -189,7 +189,7 @@ Per the confirmed requirements and this reconciliation:
 - **Duplicate-event rule:** Each in-scope action writes exactly one audit event. Consolidation must remove/avoid parallel writers; client retries remain distinct requests unless a later idempotency mechanism says otherwise. Tests must distinguish legitimate retries from duplicate rows caused by two audit paths.
 - **Test requirements:** Unit and API tests cover the canonical writer, actor/subject semantics, recursive redaction, failed-login identifier non-persistence and non-enumerability, valid/invalid/oversized request IDs, bounded User-Agent/IP handling, read authorization and pagination, exactly-one-event coverage, mandatory atomic rollback, and login-failure persistence. PostgreSQL-backed tests must exercise transaction/savepoint behavior and the real Alembic upgrade → downgrade → upgrade path, including both fresh-database and pre-PR3 starting states.
 - **Acceptance criteria:** All current in-scope events are attributable without confusing actor and subject; secrets and unknown failed-login identifiers cannot reach audit storage in raw, deterministic-unkeyed-hash, enumerable, or correlatable form; mandatory mutations and audit writes are atomic; failed logins remain auditable; request metadata is bounded and validated; audit reads are Administrator-only and bounded/deterministic; migration round trips pass on PostgreSQL; and every action produces exactly one event.
-- **Explicit exclusions:** PR3 does not add missing Role CRUD, User DELETE, or master-data UPDATE/DELETE endpoints. It does not implement transaction-number generation, ME Code, equipment-state redesign, dispatch/receipt redesign, Shift Sessions, DAY/NIGHT or Standby work, inventory import, frontend/reporting, broad observability, mandatory CI, deployment, or unrelated refactoring.
+- **Explicit exclusions:** PR3 does not add missing Role CRUD, User DELETE, or master-data UPDATE/DELETE endpoints. It does not implement transaction-number generation, the equipment identifier model, equipment-state redesign, dispatch/receipt redesign, Shift Sessions, DAY/NIGHT or Standby work, inventory import, frontend/reporting, broad observability, mandatory CI, deployment, or unrelated refactoring.
 - **Dependencies:** PR2 (uses the corrected exception/error-envelope foundation).
 - **Rollback strategy:** Revert application changes and downgrade only the additive PR3 migration; no existing business table or historical audit row is rewritten.
 - **Risk level:** Medium (security-sensitive cross-cutting behavior and migration semantics; bounded by narrow endpoint scope and PostgreSQL-backed evidence).
@@ -212,25 +212,27 @@ Per the confirmed requirements and this reconciliation:
 - **Rollback strategy:** Revert application code; the sequence can remain harmlessly unused or be dropped in a follow-up migration — if ever recreated, it must be seeded above the highest already-used suffix to avoid colliding with historical values.
 - **Risk level:** Low-Medium (touches every dispatch creation path; must be load-tested before merge; the non-reset behavior must be communicated to hospital staff before pilot).
 
-#### PR5 — Equipment identifier model: ME Code and identifier separation
-- **Objective:** Introduce ME Code as a first-class, distinct identifier — required for dispatch, not necessarily for every legacy record — separate from Item No., Asset ID, and Serial Number, reconciled against the hospital's authoritative inventory spreadsheet rather than derived mechanically from any existing column. The prior version of this plan proposed inferring a `BCM#####`-style format from a single example and backfilling `me_code` from `asset_number` on that basis; that approach is rejected here per the correction to this plan.
-- **Included findings:** Workflow Audit §8 (identifier-model gap, field mapping), Schema Audit §9.2 (case/whitespace-sensitive business-key uniqueness — directly applicable to ME Code normalization), confirmed requirements §2.
-- **Expected files/modules:** `app/models/equipment.py` (new `me_code` (nullable), `item_no`, `asset_id`, `manufacturer`/rename-or-alias `brand`, `receive_date`, `register_date`, `purchase_year`, `raw_source_status` columns), `app/schemas/equipment.py`, `app/crud/equipment.py` (exact-match lookup by `me_code`; dispatch-eligibility check extended to require a non-null `me_code`), `app/services/qr_service.py` (QR payload derived from `me_code` once populated).
-- **Database migration impact — corrected strategy (see also Part E):**
-  1. Add `me_code` as **nullable**, with no mechanical backfill from `asset_number` or any assumed format pattern.
-  2. Analyze and normalize the actual `ID CODE` values from the hospital's authoritative inventory spreadsheet — trimmed, case-normalized per a confirmed rule (uppercase-on-write recommended, pending confirmation). **Do not infer a format from a single example.**
-  3. Reconcile existing equipment DB records against that spreadsheet (matched via the best available existing key — likely `serial_number` and/or `equipment_name`+`model`, to be confirmed) to determine each record's correct `me_code`.
-  4. Any record with no confident match, an ambiguous match, or no corresponding spreadsheet row is flagged for manual hospital review, not guessed.
-  5. `UNIQUE` is added only after any duplicate `me_code` values surfaced by reconciliation are resolved.
-  6. `NOT NULL` is added **only for records confirmed eligible for active Equipment Pool operation** — legacy/retired/test records outside that scope may retain a null `me_code` indefinitely without blocking the constraint for the in-scope population. "Eligible for Equipment Pool operation" needs an explicit hospital-confirmed definition (§14).
-  - **Application-layer safety net, independent of migration completeness:** any equipment record with a null `me_code` is blocked from dispatch at the service layer regardless of constraint/migration status. This is the real enforcement mechanism — the migration's job is to get real data populated and flagged, not to gate the system's ability to ship.
-- **API contract impact:** `Equipment` schema gains `me_code` (nullable in the API response until confirmed) plus the new metadata fields; search/scan endpoints re-pointed to exact-match on `me_code`; the dispatch endpoint returns a clear, specific error for equipment with no confirmed `me_code`.
-- **Frontend impact:** Equipment search/scan UI updated to search/scan by ME Code; equipment detail view shows the new metadata fields and, for flagged/unmapped records, a visible "ME Code not confirmed — cannot be dispatched" indicator.
-- **Test requirements:** Case-normalization test (trim + confirmed case rule applied consistently on write and compare); leading-zero round-trip test; exact-match scan resolution test; dispatch-block test for a record with a null `me_code` (replaces the prior version's "backfill-validation" test, which assumed a mechanical backfill this correction removes); reconciliation-report test (flagged/unmatched rows appear in a reviewable report, not silently dropped).
-- **Acceptance criteria:** Every equipment record intended for active Equipment Pool operation has a validated, unique `me_code` before it is eligible for dispatch; records without a confirmed mapping are explicitly flagged and blocked from dispatch at the application layer, not silently assigned a guessed value; **the migration itself is not blocked from shipping by the existence of such flagged records**; leading zeros and case-normalization survive round-trip.
-- **Dependencies:** None (can start immediately; independent of PR1–PR4).
-- **Rollback strategy:** New columns can be dropped without affecting existing `asset_number`-based functionality if reverted before any downstream PR depends on `me_code`.
-- **Risk level:** Medium (schema change touching the most business-critical identifier; the corrected reconciliation-based approach is lower-risk than the mechanical-backfill approach it replaces, since it never asserts an unconfirmed mapping as fact).
+#### PR5 — Equipment Master identifiers, BCM manual search, and hospital Item-No QR identification
+
+> **Governance status:** this entry's architecture was resolved by a
+> dedicated Governance PR after an earlier draft of this section (which
+> specified a distinct "ME Code" identifier) proved contradictory with a
+> later-confirmed design. That earlier text is retained only in
+> **Appendix Z (Historical — Superseded PR5 Requirements)** at the end of
+> this document; it is not an active requirement and must not be
+> implemented. The active contract below is authoritative.
+
+- **Objective:** Give equipment the identifier model, manual-search behavior, and QR identification defined by `knowledge/adr/ADR-002-identifier-model.md`, `ADR-003-bcm-manual-search.md`, and `ADR-004-hospital-item-no-qr.md`, and their elaborating documents in `knowledge/architecture/` and `knowledge/business-rules/`. This roadmap entry states scope, sequencing, and acceptance evidence; the architecture itself is defined in those documents and is not restated here — see them for identifier roles, canonicalization, search behavior, QR resolution, and API information boundaries.
+- **Included findings:** Workflow Audit §8 (identifier-model gap, field mapping — now resolved per ADR-002 rather than left open), Schema Audit §9.2 (case/whitespace-sensitive business-key uniqueness — directly applicable to the canonicalization rules in `knowledge/architecture/identifiers.md`), confirmed requirements §2.
+- **Scope:** Equipment Master identifier support for BCM Code, Item No, and Asset Number (ADR-002); BCM-Code-only manual search (ADR-003); exact hospital Item-No QR lookup (ADR-004); canonical identifier writes applied identically at create and update (`knowledge/architecture/identifiers.md`); the operator-facing API information boundary, in particular that Item No is never returned by an operator-facing response (`knowledge/architecture/api-information-boundaries.md`); required migration and regression evidence.
+- **Database migration impact:** Additive columns for BCM Code and Item No, nullable until populated (no mechanical backfill from `asset_number` or any other existing column), canonicalized and uniquely constrained on their canonical form per `knowledge/architecture/identifiers.md`. Population comes from ordinary equipment-record maintenance now and from the future inventory import (Roadmap PR12) once scoped.
+- **API contract impact:** Equipment Master endpoints gain BCM Code; a manual-search surface matching BCM Code only, returning the minimal disclosure ADR-003 defines; a QR-resolution surface matching Item No only by exact match. Item No is reachable only through an explicitly restricted administrative/import contract, never through an operator-facing one (`knowledge/architecture/api-information-boundaries.md`).
+- **Frontend impact:** Equipment selection offers QR scan (primary) and BCM manual search (fallback), per `knowledge/business-rules/equipment-selection.md` and `borrow-return-selection.md`; neither path exposes Item No to the operator.
+- **Test requirements:** canonicalization round-trip for BCM Code and Item No (case, whitespace, leading zeros), applied identically to create and update, not create-only; duplicate rejection on the canonical form, not only byte-identical input; BCM search behavior matching ADR-003 (partial match, prefix-optional, exact-first ranking, bounded, minimal disclosure); QR resolution matching ADR-004, including a real distinction between a malformed scan and a well-formed-but-unmatched Item No; a test proving Item No is absent from every operator-facing response, including after a manual-search selection; migration upgrade/downgrade evidence.
+- **Acceptance criteria:** implementation matches `knowledge/adr/ADR-002`, `ADR-003`, `ADR-004`, and their elaborating architecture/business-rules documents; no identifier is entered, searched, or exposed outside the role ADR-002 assigns it; no ME-Code-based requirement from Appendix Z is implemented.
+- **Dependencies:** None beyond PR1–PR4. Implementation depends on this architecture being resolved (this Governance PR) before it proceeds toward merge; an implementation attempt opened before that resolution must be reconciled against it first.
+- **Rollback strategy:** New columns can be dropped without affecting existing `asset_number`-based functionality if reverted before any downstream PR depends on them; after real BCM Code/Item No data has been written, a forward fix is preferred over a destructive downgrade.
+- **Risk level:** Medium — schema and API-contract change touching the primary operator-facing identifier. Resolving the architecture through a dedicated Governance PR (this entry) removes the ambiguity risk the prior, contradictory draft carried; remaining risk is ordinary implementation risk.
 
 #### PR6 — Equipment state model migration (4 states)
 - **Objective:** Collapse the current 8-value `EquipmentStatus` enum to the confirmed 4-state model, with legacy values preserved for audit/history purposes.
@@ -330,13 +332,13 @@ Per the confirmed requirements and this reconciliation:
 - **Risk level:** Medium (data-quality risk is the primary concern, mitigated by mandatory preview and per-row validation — see §10).
 
 #### PR13 — Search, history, and reporting adjustments
-- **Objective:** Finalize ME-Code-first search/scan priority, dispatch-type/round-aware history filtering, and remove MVP-irrelevant dashboard/report elements (PM/CAL widgets, overdue indicators) in favor of a read-only "days since dispatch" indicator.
+- **Objective:** Finalize BCM-Code-first search/scan priority (`knowledge/adr/ADR-003-bcm-manual-search.md`), dispatch-type/round-aware history filtering, and remove MVP-irrelevant dashboard/report elements (PM/CAL widgets, overdue indicators) in favor of a read-only "days since dispatch" indicator.
 - **Included findings:** Workflow Audit §8.4 ("Search behavior"), confirmed requirements §11/§12 (History/Search acceptance criteria).
 - **Expected files/modules:** `app/crud/equipment.py`/`app/crud/transaction.py` (search/filter additions), `app/services/dashboard_service.py` (remove PM/CAL/overdue widgets, add computed duration), frontend `DashboardPage.tsx`/`EquipmentListPage.tsx`.
 - **Database migration impact:** None.
 - **API contract impact:** New/adjusted query parameters (`dispatch_type`, `routine_round` filters on history); dashboard response shape simplified.
 - **Frontend impact:** Search/history/dashboard UI updated accordingly.
-- **Test requirements:** Search-behavior tests (exact ME Code match priority); filter-correctness tests for dispatch type/round/date range.
+- **Test requirements:** Search-behavior tests (BCM Code partial matching with exact match ranked first, per `knowledge/adr/ADR-003-bcm-manual-search.md`); filter-correctness tests for dispatch type/round/date range.
 - **Acceptance criteria:** History is filterable and searchable per confirmed requirements §12 ("History Search").
 - **Dependencies:** PR5, PR7.
 - **Rollback strategy:** Revert; read-only surface, no data risk.
@@ -379,13 +381,13 @@ Per the confirmed requirements and this reconciliation:
 
 | Migration step | Pre-migration validation | Backfill rule | Ambiguous-data handling | Constraint timing | Verification query | Rollback | Zero-downtime? |
 |---|---|---|---|---|---|---|---|
-| **Add `me_code` (nullable)** | Confirm no existing column collision; confirm the case-normalization rule (uppercase-on-write, pending §14) and trim rule before any writes. | None — added empty. **No mechanical backfill from `asset_number` or any assumed format pattern; a single example (`BCM02719`) does not establish the complete valid format set.** | N/A at this step. | Column added nullable only; `UNIQUE`/`NOT NULL` deferred to the steps below. | `SELECT count(*) FROM equipment WHERE me_code IS NULL` (expect full count immediately after this step). | Drop column (no data loss elsewhere). | Yes. |
-| **Reconcile `me_code` against the authoritative spreadsheet** | Obtain the hospital's authoritative inventory spreadsheet; confirm the normalization rule before any writes (per above). | Populate `me_code` only for records with a confident, reviewed match between the existing DB record and a spreadsheet row — matched via `serial_number` and/or `equipment_name`+`model` (best available key, to be confirmed), never by pattern-matching `asset_number`'s format. | Records with no match, multiple candidate matches, or a spreadsheet `ID CODE` failing the confirmed normalization rule are flagged in a manual-review report and left `NULL` — not guessed. | Still nullable at this step. | `SELECT count(*) FROM equipment WHERE me_code IS NULL`, reported alongside the flagged-for-review list, cross-checked against the spreadsheet's total row count. | Fully reversible — no destructive change; a mismatched reconciliation can be corrected and re-run. | Yes. |
-| **Add `UNIQUE` on `me_code`** | `SELECT me_code, count(*) FROM equipment WHERE me_code IS NOT NULL GROUP BY me_code HAVING count(*) > 1` must return zero rows. | N/A | Any duplicate surfaced above is resolved by hospital review before this step proceeds. | Added once the query above returns zero rows. | Same query, expect 0. | Drop constraint. | Yes (`CREATE UNIQUE INDEX CONCURRENTLY` in Postgres avoids a long lock). |
-| **Add `NOT NULL` on `me_code` (scoped)** | Hospital confirms which existing records are "eligible for Equipment Pool operation" going forward — this plan cannot supply that definition (§14). | N/A | Records outside the confirmed-eligible scope may remain permanently `NULL` without blocking this constraint for the in-scope population — e.g. via a scoped `CHECK`, or by deferring the DB-level constraint indefinitely in favor of the application-layer dispatch-block rule (PR5), which does not depend on this constraint existing. | Deferred until the eligible-scope definition is confirmed; the application-layer rule is the effective safety mechanism in the meantime. | `SELECT count(*) FROM equipment WHERE me_code IS NULL AND <eligible-for-dispatch-criteria>` (criteria pending confirmation). | N/A — this constraint may simply never be added at the DB level, which is an acceptable end-state under this corrected strategy. | Yes. |
-| **Separate ME Code from `asset_number`** | N/A (both columns coexist by design). | N/A | Document explicitly which field is authoritative going forward (`me_code`) vs. legacy (`asset_number`, kept dormant). | N/A | N/A | Trivial — no destructive change made. | Yes. |
+| **Add `bcm_code`, `item_no` (nullable)** | Confirm the canonical persisted form for each (case rule, prefix rule, leading-zero handling) in `knowledge/architecture/identifiers.md` before any writes. | None — both added empty. **No mechanical backfill from `asset_number` or any assumed format pattern; a single example (`BCM02719`) does not establish the complete valid format set.** | N/A at this step. | Columns added nullable only; `UNIQUE` on each deferred to the steps below. Neither column ever gets a `NOT NULL` constraint — see below. | `SELECT count(*) FROM equipment WHERE bcm_code IS NULL` and the equivalent for `item_no` (expect full count immediately after this step). | Drop columns (no data loss elsewhere). | Yes. |
+| **Add `UNIQUE` on `bcm_code` (canonical form)** | `SELECT bcm_code, count(*) FROM equipment WHERE bcm_code IS NOT NULL GROUP BY bcm_code HAVING count(*) > 1` must return zero rows. | N/A | Any duplicate surfaced above is resolved by hospital review before this step proceeds. | Added once the query above returns zero rows. | Same query, expect 0. | Drop constraint. | Yes (`CREATE UNIQUE INDEX CONCURRENTLY` in Postgres avoids a long lock). |
+| **Add `UNIQUE` on `item_no` (canonical form)** | `SELECT item_no, count(*) FROM equipment WHERE item_no IS NOT NULL GROUP BY item_no HAVING count(*) > 1` must return zero rows. | N/A | Any duplicate surfaced above is resolved by hospital review before this step proceeds. | Added once the query above returns zero rows. | Same query, expect 0. | Drop constraint. | Yes (`CREATE UNIQUE INDEX CONCURRENTLY` in Postgres avoids a long lock). |
+| **Populate `bcm_code` / `item_no`** | N/A — not a schema-migration step. | No reconciliation pass against any spreadsheet and no mechanical backfill from `asset_number`. Values are populated through ordinary equipment-record maintenance (create/edit) and, later, the future inventory import (Roadmap PR12) — see `knowledge/adr/ADR-002-identifier-model.md`. | Records without a value simply remain `NULL` until populated by one of the two paths above; there is no dispatch-blocking or eligibility-scoping tied to their absence, and no DB-level `NOT NULL` is ever added for either column. | N/A | N/A | N/A | N/A |
+| **`bcm_code` / `item_no` distinct from `asset_number`** | N/A (all columns coexist by design). | N/A | Document explicitly that `asset_number` remains a separate, retained metadata field (per `knowledge/adr/ADR-002-identifier-model.md`) — not renamed, reused, or merged into either identifier column. | N/A | N/A | Trivial — no destructive change made. | Yes. |
 | **Add `transaction_no_seq` (global sequence)** | None required — purely additive, no existing data touched. | N/A — existing `transaction_no` values are untouched and remain valid; the sequence only governs values generated going forward. | N/A | Not a constraint; created once, used by all subsequent transaction-number generation (PR4). | `SELECT last_value FROM transaction_no_seq` sanity-checked after creation; post-deployment, confirm no collision between any historical `transaction_no` and any newly-generated one. | Sequence can be dropped; if ever recreated, must be seeded above the highest historical suffix already in use. | Yes. |
-| **Add Item No., Asset ID** | None required (new, optional metadata). | Populated only via inventory import (PR12) or the `me_code` reconciliation pass above, not mechanically backfilled from existing columns (no reliable source today). | N/A — left `NULL` for pre-existing records until/unless a future import or reconciliation supplies them. | Nullable, no uniqueness constraint (per confirmed requirements — Item No. is explicitly not assumed unique; Asset ID uniqueness pending hospital confirmation, see §14). | N/A | Drop columns. | Yes. |
+| **Add Asset ID** | None required (new, optional metadata). | Populated only via inventory import (PR12), not mechanically backfilled from existing columns (no reliable source today). | N/A — left `NULL` for pre-existing records until/unless a future import supplies them. | Nullable; uniqueness pending hospital confirmation (see §14) — distinct from Item No, which is unique per `knowledge/adr/ADR-002-identifier-model.md` and already constrained above. | N/A | Drop column. | Yes. |
 | **Preserve Serial Number** | Already correctly modeled (Schema Audit, positive finding) — no change needed. | N/A | N/A | Unchanged. | N/A | N/A | N/A |
 | **Preserve raw source Asset Status** | N/A | N/A | N/A | New `raw_source_status` column, nullable, populated only by future imports for newly-imported rows; existing rows left `NULL` (they have no "source" status to preserve — they were created directly in this system, not imported). | N/A | Drop column. | Yes. |
 | **Map equipment statuses to the 4 confirmed states** | Enumerate every distinct `status` value currently in the table before writing the mapping (do not assume the full enum's 8 values are all actually in use). | Direct mapping for unambiguous cases: `available → AVAILABLE_AT_POOL`, `borrowed → ISSUED_TO_WARD`, `out_of_service → UNAVAILABLE_DEFECTIVE`, `lost → UNAVAILABLE_DEFECTIVE` (with `legacy_status` preserving the distinction). `pm`/`calibration`/`repair` map to `UNAVAILABLE_DEFECTIVE` for MVP display **with the original value preserved in `legacy_status`**, per the confirmed requirement's own guidance. | **`cleaning` requires explicit, documented, product-approved handling — it must not automatically become `AVAILABLE_AT_POOL`.** Recommend: any equipment currently `cleaning` is mapped to `UNAVAILABLE_DEFECTIVE` as a **temporary, dispatch-blocking migration classification only** — chosen because the confirmed MVP model has exactly four states and `UNAVAILABLE_DEFECTIVE` is the only one of the four that safely blocks dispatch pending review. **This classification does not itself assert or imply the equipment is physically defective** — it exists solely to prevent dispatch until Equipment Pool staff perform a one-time physical inspection and explicitly move the item to `AVAILABLE_AT_POOL` through the normal defective→available workflow, never an automatic status flip. This distinction must be visible to staff performing the review (e.g. the preserved `legacy_status='cleaning'` value surfaced in the UI/report), so they understand *why* the item is flagged, not just *that* it is. This must be a documented, sign-off-required step, not an engineering default. | Add `legacy_status` column first (nullable); populate it as part of the same migration that remaps `status`; do not enforce a `CHECK` on the new 4-value domain until the remap is verified complete. | `SELECT status, count(*) FROM equipment GROUP BY status` before and after, cross-checked against the documented mapping table for every distinct pre-migration value. | `legacy_status` allows full reconstruction of pre-migration state; the remap itself can be reversed by copying `legacy_status` back to `status`. | Requires a maintenance window or careful batching if the equipment table is large enough that a single-transaction `UPDATE` would lock for a noticeable period — **at the confirmed MVP scale (low hundreds of devices), this is expected to be sub-second and safe without a window**, but should be verified against actual row counts before the pilot's migration is run. |
@@ -400,19 +402,27 @@ Per the confirmed requirements and this reconciliation:
 
 ## Part F — Inventory Import Plan (§10)
 
+> **Scope note:** Import is Roadmap PR12, not yet scoped as an active
+> Governance PR. This section's row-validation identifiers below use the
+> accepted BCM Code / Item No model (`knowledge/adr/ADR-002-identifier-model.md`)
+> so that the plan is internally consistent; the import workflow's stage
+> sequencing and file-handling behavior are otherwise unchanged and remain
+> subject to full scoping when PR12 is taken up.
+
 ### F.1 Workflow stages
 
 1. **File upload & validation** — accept the hospital's existing spreadsheet structure; validate file type/encoding before any parsing.
 2. **Header validation** — confirm the expected source columns (Item No., ID CODE, Asset ID, Equipment Name, Manufacturer, Model, Serial Number, Location, Receive Date, Register Date, Purchase Year, Asset Status) are present; reject the file outright (with a clear message) if required headers are missing, rather than attempting a partial/guessed mapping.
 3. **Row parsing & validation** (per row, not fail-fast for the whole file):
-   - ME Code (from `ID CODE`): required; text-typed (never numeric-parsed, preserving leading zeros); missing → row flagged as failed.
-   - Duplicate ME Code **within the uploaded file itself**: flagged as failed for all but the first occurrence (or all occurrences, product decision — recommend flagging all duplicates within a file as failed, forcing the source file to be corrected, since silently picking "the first one" risks picking the wrong record).
-   - Duplicate ME Code **already present in the database**: not a failure by default — routed to "update existing" handling (see F.3) only when the operator has explicitly selected update mode; otherwise flagged as a skip with a clear reason.
+   - BCM Code (from `ID CODE`): required; text-typed (never numeric-parsed, preserving leading zeros); missing → row flagged as failed.
+   - Duplicate BCM Code **within the uploaded file itself**: flagged as failed for all but the first occurrence (or all occurrences, product decision — recommend flagging all duplicates within a file as failed, forcing the source file to be corrected, since silently picking "the first one" risks picking the wrong record).
+   - Duplicate BCM Code **already present in the database**: not a failure by default — routed to "update existing" handling (see F.3) only when the operator has explicitly selected update mode; otherwise flagged as a skip with a clear reason.
+   - Item No. (from the `Item No.` source column): text-typed, case and leading zeros preserved exactly as sourced (per `knowledge/architecture/identifiers.md`); validated for file-internal and database duplicates the same way as BCM Code above.
    - Asset ID / Serial Number duplicate checks: validated against existing database values where those fields are expected to be unique (Serial Number, confirmed unique already; Asset ID uniqueness pending hospital confirmation, §14) — flagged, not silently overwritten.
    - Asset Status: raw value preserved verbatim into `raw_source_status`; mapped into the target 4-state model only through the explicit, approved mapping table (illustrative version below, **pending confirmation of real source values**, §14); an unrecognized status value is a per-row failure, not a guess.
 4. **Preview** — the full parsed, validated result set (successes and failures, with reasons) is shown to the Administrator **before any database write occurs**. Nothing commits at parse time.
 5. **Commit** — only rows marked as valid in the preview are written, in a single import batch; failed rows are never partially written.
-6. **Per-row result report** — a downloadable/viewable summary: N succeeded, M failed (with per-row reason), K skipped (existing ME Code, no update-mode selected).
+6. **Per-row result report** — a downloadable/viewable summary: N succeeded, M failed (with per-row reason), K skipped (existing BCM Code or Item No, no update-mode selected).
 7. **Audit record** — one `audit_logs` entry for the import batch itself (who ran it, when, filename, row counts), consistent with the confirmed requirement that imports must be audited.
 
 ### F.2 Illustrative Asset Status mapping (pending confirmation — §14)
@@ -426,11 +436,11 @@ Per the confirmed requirements and this reconciliation:
 
 ### F.3 "Update existing" mode
 
-Off by default. When explicitly enabled by the Administrator for a given import run: a row whose ME Code matches an existing record updates that record's metadata fields (Item No., Asset ID, Manufacturer, Model, dates) but **never** silently changes `status`/`legacy_status` through the import path — status changes always go through the normal dispatch/receipt/defective/decommission actions, keeping the import path scoped to master-data fields only. This avoids the import feature becoming a backdoor around the state-machine's transition rules.
+Off by default. When explicitly enabled by the Administrator for a given import run: a row whose BCM Code or Item No matches an existing record updates that record's metadata fields (Asset ID, Manufacturer, Model, dates) but **never** silently changes `status`/`legacy_status` through the import path — status changes always go through the normal dispatch/receipt/defective/decommission actions, keeping the import path scoped to master-data fields only. This avoids the import feature becoming a backdoor around the state-machine's transition rules.
 
 ### F.4 Partial success behavior
 
-An import batch is never all-or-nothing. Valid rows commit; invalid/duplicate rows are reported and excluded; the operator can correct the source file and re-import only the corrected rows (re-import is idempotent for previously-successful ME Codes when update mode is off — they're simply skipped again with a clear reason, not re-validated as new).
+An import batch is never all-or-nothing. Valid rows commit; invalid/duplicate rows are reported and excluded; the operator can correct the source file and re-import only the corrected rows (re-import is idempotent for previously-successful BCM Codes / Item Nos when update mode is off — they're simply skipped again with a clear reason, not re-validated as new).
 
 ---
 
@@ -440,7 +450,7 @@ An import batch is never all-or-nothing. Valid rows commit; invalid/duplicate ro
 
 | Scenario | Expected result |
 |---|---|
-| Two simultaneous dispatch requests for the same ME Code | Exactly one succeeds; the other receives a clear "not available" rejection (existing `idx_tx_one_active_borrow`-equivalent guard, carried forward under the renamed model per PR6/PR7). |
+| Two simultaneous dispatch requests for the same equipment | Exactly one succeeds; the other receives a clear "not available" rejection (existing `idx_tx_one_active_borrow`-equivalent guard, keyed on the internal equipment identity, carried forward under the renamed model per PR6/PR7). |
 | Many simultaneous dispatches during one simulated routine round (e.g. 50–200 concurrent requests, distinct equipment) | All succeed; no two share a transaction number (PR4). |
 | Transaction-number uniqueness under concurrent load | Explicit assertion, not just an absence-of-error check. |
 | Retry after client timeout | A retried dispatch for equipment that already succeeded is naturally rejected by the same-equipment guard (no duplicate created); documented as relying on this existing mechanism rather than a dedicated idempotency key for MVP (Idempotency-Key remains P2/deferred per the workflow audit's finding). |
@@ -453,7 +463,7 @@ An import batch is never all-or-nothing. Valid rows commit; invalid/duplicate ro
 | Two simultaneous receipt requests for the same OPEN dispatch | Exactly one succeeds. |
 | The second receipt request | Rejected with a clear, non-misleading error (explicitly **not** the current code's misleading "already returned" message when the real cause is a race — verified as its own test case). |
 | Second request cannot overwrite outcome/`returned_at`/`returned_by_user_id`/equipment status/status history/audit log of the first | Each of these six is asserted independently after a simulated race, not just "the transaction ended up closed." |
-| Receipt when no OPEN dispatch exists for the given ME Code | Clear rejection, no side effects. |
+| Receipt when no OPEN dispatch exists for the given equipment | Clear rejection, no side effects. |
 | Receipt of the wrong transaction | Not reachable given the one-open-dispatch-per-equipment invariant, but tested defensively (attempt to close a transaction ID that is not the equipment's current open one). |
 | Receipt outcome `usable` | Equipment → `AVAILABLE_AT_POOL`. |
 | Receipt outcome `defective` | Equipment → `UNAVAILABLE_DEFECTIVE`. |
@@ -469,10 +479,10 @@ An import batch is never all-or-nothing. Valid rows commit; invalid/duplicate ro
 
 ### G.4 Import
 
-- Missing ME Code → row fails.
-- Duplicate ME Code within one file → flagged, not silently deduplicated.
-- ME Code already in database, update mode off → skipped with reason.
-- ME Code already in database, update mode on → metadata updated, status untouched.
+- Missing BCM Code → row fails.
+- Duplicate BCM Code within one file → flagged, not silently deduplicated.
+- BCM Code already in database, update mode off → skipped with reason.
+- BCM Code already in database, update mode on → metadata updated, status untouched.
 - Leading-zero preservation round-trip.
 - Invalid/unrecognized source status → row fails, not guessed.
 - Duplicate Serial Number → flagged.
@@ -494,11 +504,18 @@ An import batch is never all-or-nothing. Valid rows commit; invalid/duplicate ro
 
 *(Given/When/Then, one set per confirmed workflow area — kept to the essential MVP-defining criteria; the full exhaustive list lives in the corresponding PRs' own acceptance-criteria fields in Part D.)*
 
-**ME Code**
-- Given a registered ME Code, when scanned or entered, then the system resolves the equipment via exact match.
-- Given an unrecognized ME Code, when scanned/entered, then a clear "not found" response is returned and no transaction is created.
-- Given a ME Code with leading zeros, when stored and later retrieved, then the leading zeros are unchanged.
-- Given an attempt to register a duplicate ME Code, when submitted, then it is rejected with a 409, not a 500.
+**BCM Code (manual search — `knowledge/adr/ADR-003-bcm-manual-search.md`)**
+- Given equipment with a registered BCM Code, when an operator types it (in full or in part, with or without the "BCM" prefix), then the system returns a bounded suggestion list with an exact match ranked first.
+- Given no BCM Code matches the input, then the suggestion list is empty, not an error and not the full equipment set.
+- Given a BCM Code with leading zeros, when stored and later retrieved, then the leading zeros are unchanged.
+- Given an attempt to register a duplicate BCM Code (on its canonical form — `knowledge/architecture/identifiers.md`), when submitted, then it is rejected with a 409, not a 500.
+
+**Item No (QR resolution — `knowledge/adr/ADR-004-hospital-item-no-qr.md`)**
+- Given equipment with a registered Item No, when its hospital QR label is scanned, then the system resolves the equipment via exact match.
+- Given an unrecognized Item No, when scanned, then a clear "not found" response is returned and no transaction is created.
+- Given a malformed scan, then a clearly distinct "malformed" response is returned — never conflated with "not found."
+- Given an Item No, when stored and later retrieved, then its case and leading zeros are preserved exactly as scanned.
+- Given an attempt to register a duplicate Item No (on its canonical form), when submitted, then it is rejected with a 409, not a 500.
 
 **Routine Dispatch**
 - Given a dispatch is being recorded with `dispatch_type = ROUTINE_ROUND`, when a round value is selected, then only 06:00/11:00/15:00/21:00 are valid.
@@ -532,20 +549,20 @@ An import batch is never all-or-nothing. Valid rows commit; invalid/duplicate ro
 ## Part I — Final Go-Live Gates (§13)
 
 ### Development Readiness
-- Confirmed domain model in place (4 equipment states, 2 transaction states, ME Code as primary identifier) — PR5–PR8 merged.
+- Confirmed domain model in place (4 equipment states, 2 transaction states, BCM Code as primary operator-facing identifier — `knowledge/adr/ADR-002-identifier-model.md`) — PR5–PR8 merged.
 - Migration design for every schema change reviewed and approved (Part E), including explicit hospital sign-off on the `cleaning`-status manual-review rule and the `ward_id`-null handling policy.
 - PR sequence (Part D) agreed by the engineering team.
 - Test strategy (Part G) agreed.
 - No unresolved Critical business assumption remains open (cross-check against §14 below before declaring this gate passed).
 
 ### UAT Readiness
-- ME Code import available and exercised against a real (or realistic) sample of the hospital's inventory file.
+- BCM Code / Item No import available and exercised against a real (or realistic) sample of the hospital's inventory file.
 - Routine dispatch and on-demand dispatch both operational end-to-end.
 - Receipt (usable/defective) operational end-to-end.
 - Duplicate/concurrent protection verified for both dispatch and receipt (Part G.1/G.2 passing).
 - Role permissions match the confirmed matrix exactly (Part G.3 passing).
 - Audit coverage verified for every event listed in Part H's "Audit" acceptance criteria.
-- Search and history operational, ME-Code-first.
+- Search and history operational, BCM-Code-first (`knowledge/adr/ADR-003-bcm-manual-search.md`).
 - Frontend terminology reviewed and approved by hospital stakeholders (no "Borrow"/"Borrower"/"Due Date" language remaining).
 - Test data imported successfully via PR12's import workflow.
 
@@ -590,8 +607,8 @@ These require hospital/product confirmation before or during implementation; non
 6. **`cleaning`-status equipment manual-review process.** Part E flags that this must not auto-transition and that the `UNAVAILABLE_DEFECTIVE` classification used for it is a dispatch-blocking migration label, not a defect finding; the actual physical-inspection/sign-off process for any equipment caught in this state at migration time needs an owner and a documented procedure before the production migration runs.
 7. **Backup/restore procedure.** Referenced as a Pilot/Production gate requirement but not designed by any of the three audits or this plan — needs a separate, dedicated infrastructure task.
 8. **Whether internal route paths (`/borrow`, `/return`) should eventually be renamed to `/dispatch`, `/receive`** for full consistency, or intentionally left as internal implementation detail permanently. PR7/PR11 recommend leaving them unchanged for MVP to reduce blast radius — revisit as a deliberate, separate decision post-pilot if full consistency is later desired.
-9. **"Eligible for Equipment Pool operation" definition (PR5).** The corrected ME Code migration strategy scopes the `NOT NULL` constraint to records the hospital confirms are still active in Pool operation, deliberately excluding legacy/retired/test records from blocking that constraint. This definition (which records count as "eligible") has not been supplied and needs a hospital-confirmed rule before PR5's constraint step can be finalized — until then, the application-layer dispatch-block-on-null-`me_code` rule is the operative safety mechanism regardless.
-10. **Best-available reconciliation key for `me_code` backfill (PR5).** This plan proposes matching existing DB records against the authoritative spreadsheet via `serial_number` and/or `equipment_name`+`model`, since no more reliable shared key currently exists between the two datasets — this should be confirmed or improved once the actual spreadsheet is available for analysis, rather than assumed correct in advance.
+9. **Resolved, no longer open (PR5).** The prior version of this item asked for an "eligible for Equipment Pool operation" definition to scope a `NOT NULL` constraint under the reconciliation-based ME Code strategy. That strategy is superseded (see PR5's active entry in Part D and Appendix Z) — BCM Code and Item No are nullable until populated, with no eligibility-scoped `NOT NULL` constraint and no application-layer dispatch-block tied to their presence. Nothing remains open here.
+10. **Resolved, no longer open (PR5).** The prior version of this item asked for a best-available reconciliation key to backfill `me_code` against the hospital's spreadsheet. That reconciliation approach is superseded (see PR5's active entry in Part D and Appendix Z) — there is no backfill/reconciliation step; identifiers are populated through ordinary equipment-record maintenance and the future inventory import (Roadmap PR12).
 11. **Daily-reset requirement for transaction numbers (PR4).** This plan explicitly does not assume one was confirmed and proceeds with a globally monotonic sequence instead. If the hospital later confirms an actual operational need for the numeric suffix to restart daily, the fallback per-date-counter design noted in PR4 should be implemented instead — this is not currently planned.
 
 **Note — distinct from the open questions above:** Shift Sessions, Standby
@@ -607,3 +624,35 @@ See `AGENTS.md` ("Confirmed Future Workflow Direction"),
 ## Compliance with Stated Constraints
 
 No application code was written or modified. No migration files were created. No application configuration was modified. No feature was implemented. No MEMS, patient tracking, HN/MRN, bed tracking, ward-to-ward movement tracking, cleaning workflow, `PENDING_CLEANING`, "Cleaning Confirmed," "Ready for Dispatch," PM, calibration, recall, or full maintenance workflow was introduced anywhere in this plan. All findings and recommendations are traced to the three source audits or to the confirmed hospital requirements provided as input to this task; no requirement was invented beyond those two sources.
+
+---
+
+## Appendix Z — Historical: Superseded PR5 Requirements (ME Code)
+
+**This appendix is historical only. Nothing below is an active
+requirement.** It is retained for context on how PR5's scope changed, not
+as a specification to implement. The active PR5 contract is Part D's PR5
+entry, governed by `knowledge/adr/ADR-002-identifier-model.md`,
+`ADR-003-bcm-manual-search.md`, and `ADR-004-hospital-item-no-qr.md`.
+
+An earlier draft of this plan specified PR5 around a distinct "ME Code"
+identifier, reconciled against the hospital's authoritative inventory
+spreadsheet, with a dispatch-eligibility rule gated on a non-null ME
+Code. That design is superseded — not merely annotated — by the
+Governance PR that resolved `knowledge/adr/ADR-002` through `ADR-004`.
+None of the following are active:
+
+- A separate `me_code` field distinct from BCM Code and Item No.
+- Exact-match lookup keyed on ME Code.
+- Reconciliation of existing records against an authoritative spreadsheet
+  to determine each record's ME Code.
+- An "eligible for Equipment Pool operation" scoped `NOT NULL` constraint
+  on ME Code, or an application-layer dispatch-block keyed on a null ME
+  Code.
+- Any test, acceptance criterion, or API/frontend behavior described
+  under the original PR5 draft that assumed the above.
+
+The superseding design (BCM Code as the operator-facing identifier,
+Item No as the QR-only identifier, both nullable-until-populated with no
+eligibility-gated constraint or dispatch-block) is documented once, in
+the Knowledge Layer ADRs referenced above — it is not restated here.
