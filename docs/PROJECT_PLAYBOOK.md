@@ -58,7 +58,8 @@ document; do not infer ownership from a document's own claims about itself.
 | Shared terminology for the topics above | [`knowledge/glossary.md`](../knowledge/glossary.md) | 3 |
 | Audit-write atomicity and failed-login identifiers | `docs/adr/ADR-0001` (indexed from `ARCHITECTURE_DECISIONS.md`) | 2 |
 | All other confirmed architecture/security decisions not listed above | [`ARCHITECTURE_DECISIONS.md`](ARCHITECTURE_DECISIONS.md) | 2 |
-| Dispatch/receipt workflow, equipment states, transaction states, terminology not covered above | [`HOSPITAL_DOMAIN_MODEL.md`](HOSPITAL_DOMAIN_MODEL.md) and [`GLOSSARY.md`](GLOSSARY.md) | domain reference, until migrated |
+| Dispatch/receipt workflow, equipment states, transaction states | [`HOSPITAL_DOMAIN_MODEL.md`](HOSPITAL_DOMAIN_MODEL.md) | domain reference, until migrated |
+| Terminology not covered by `knowledge/glossary.md` above | [`GLOSSARY.md`](GLOSSARY.md) | domain reference, until migrated |
 | Roadmap PR scope, order, dependencies, acceptance criteria | [`audits/04-consolidated-implementation-plan.md`](audits/04-consolidated-implementation-plan.md) | 4 |
 | Roadmap PR current status | [`ROADMAP_STATUS.md`](ROADMAP_STATUS.md) | 5 |
 | Implementation-to-decision mapping and current implementation status | [`knowledge/traceability/`](../knowledge/traceability/README.md) (non-authoritative) | 7 |

@@ -25,7 +25,13 @@ AppSheet-based process.
 Start with `docs/PROJECT_PLAYBOOK.md`, which defines the compact reading sets
 and conflict hierarchy. In summary:
 
-- this file owns permanent repository-wide rules and domain guardrails;
+- this file owns permanent repository-wide rules and enforcement
+  guardrails — the boundaries a task must not cross — not the detailed
+  rationale behind any single scope decision; the Equipment Pool scope
+  decision itself, with its rationale, is owned by
+  [`knowledge/adr/ADR-001`](knowledge/adr/ADR-001-equipment-pool-scope.md)
+  per the Playbook's topic-ownership table, and this file does not
+  independently redefine or override it;
 - `docs/ARCHITECTURE_DECISIONS.md` owns active confirmed decisions, except
   where the Playbook's topic-ownership table assigns a topic to
   `knowledge/adr/` instead (currently: equipment scope, identifier model,

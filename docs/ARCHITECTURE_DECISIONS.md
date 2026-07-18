@@ -105,9 +105,9 @@ the existing spreadsheet is still planned (Roadmap PR12).
 
 **Rationale:** A spreadsheet cannot enforce the concurrency guarantees
 this workflow needs (one open dispatch per equipment item, one receipt
-per open dispatch, unique equipment identifiers — see
-[`../knowledge/adr/ADR-002-identifier-model.md`](../knowledge/adr/ADR-002-identifier-model.md)) — see
-`docs/audits/03-hospital-equipment-pool-workflow-audit.md` §9.
+per open dispatch, unique equipment identifiers per
+[`../knowledge/adr/ADR-002-identifier-model.md`](../knowledge/adr/ADR-002-identifier-model.md)) —
+see `docs/audits/03-hospital-equipment-pool-workflow-audit.md` §9.
 
 **Impact:** The hospital's existing inventory spreadsheet is a one-time
 **data source** for import (see the consolidated plan Part F), not an

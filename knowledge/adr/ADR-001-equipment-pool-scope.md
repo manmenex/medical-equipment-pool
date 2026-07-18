@@ -43,8 +43,10 @@ repository does not track or integrate with any such process.
 - A proposal to add device-safety alerting or regulatory-reporting
   functionality is out of scope for this repository regardless of how it
   is framed.
-- Scope questions for a given change are resolved by checking this ADR
-  before checking any other document.
+- Scope questions for a given change are resolved via
+  `docs/PROJECT_PLAYBOOK.md`'s topic-ownership table, which currently
+  assigns Equipment Pool scope to this ADR. This ADR does not itself
+  claim precedence over any other document.
 
 ## References
 
