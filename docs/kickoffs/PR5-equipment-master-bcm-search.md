@@ -25,7 +25,7 @@ supplied directly as this PR's business requirements:
   glossary entry did not anticipate.
 - Both are simple nullable+unique columns, populated by the equipment
   create/update API for now and by a future controlled Excel import
-  (Roadmap PR8) — no spreadsheet-reconciliation backfill script, and no
+  (Roadmap PR12) — no spreadsheet-reconciliation backfill script, and no
   deferred/scoped `NOT NULL` constraint question, because neither column is
   `NOT NULL` in this design.
 
@@ -104,7 +104,7 @@ depends on the assumption.**
 
 `item_no` and `bcm_code` are nullable, unique, indexed columns on the
 existing `Equipment` model — structurally ready for a future controlled
-Excel import (Roadmap PR8) to populate. No import UI, parser, or bulk-load
+Excel import (Roadmap PR12) to populate. No import UI, parser, or bulk-load
 service was built in this PR; the equipment create/update API (which
 already validates uniqueness via the existing `translate_integrity_error`
 path) is the only write path today.

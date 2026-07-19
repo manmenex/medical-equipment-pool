@@ -60,10 +60,13 @@ class Equipment(UUIDPKMixin, TimestampMixin, SoftDeleteMixin, Base):
     # Both are unique on their canonical persisted form (a standard UNIQUE
     # constraint permits multiple NULLs in both PostgreSQL and SQLite, so
     # unmigrated rows don't collide with each other) and indexed for exact
-    # lookup; bcm_code additionally gets a case-insensitive functional
-    # unique index and a trigram GIN index (PostgreSQL only, see migrations
-    # 0004/0005) for canonical-form uniqueness and responsive partial
-    # matching.
+    # lookup. Canonical-form uniqueness is proven at the database level
+    # (PostgreSQL only, see migration 0005) by a CHECK constraint on each
+    # column that every stored value already equals its own canonical
+    # form, so these plain UNIQUE indexes are sufficient on their own --
+    # no functional/expression index is used. bcm_code additionally gets
+    # a trigram GIN index (PostgreSQL only, see migration 0004) for
+    # responsive partial matching.
     item_no: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
     bcm_code: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
     category_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("equipment_categories.id"))

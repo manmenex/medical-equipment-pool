@@ -1592,6 +1592,125 @@ async def test_migration_0005_aborts_on_item_no_whitespace_collision():
     )
 
 
+async def _assert_migration_0005_preflight_rejects_single_row(
+    seed_asset: str, seed_sql: str, expected_snippet: str, extra_params: dict | None = None
+) -> None:
+    """Seeds one legacy row at revision 0004 whose value cannot be
+    canonicalized at all (as opposed to colliding with another row), then
+    asserts upgrading to head aborts clearly and leaves the CHECK
+    constraints unapplied."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0004_equipment_item_no_bcm_code")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                params = {"asset": seed_asset, "id": str(uuid.uuid4())}
+                if extra_params:
+                    params.update(extra_params)
+                await conn.execute(text(seed_sql), params)
+        finally:
+            await engine.dispose()
+
+        env = {**os.environ, "DATABASE_URL": _scratch_dsn("postgresql+asyncpg")}
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=str(_BACKEND_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode != 0, "upgrade must abort, not silently succeed, on an uncanonicalizable value"
+        assert expected_snippet in (result.stdout + result.stderr)
+
+        constraints = await _equipment_check_constraint_names()
+        assert "ck_equipment_bcm_code_canonical" not in constraints
+        assert "ck_equipment_item_no_canonical" not in constraints
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0005_aborts_on_invalid_legacy_bcm_embedded_whitespace():
+    """PR5-H3R-MIG: a legacy bcm_code with whitespace embedded within the
+    body (not just adjacent to the prefix) cannot be canonicalized at all
+    -- the migration's local _canonicalize_bcm_code must reject it during
+    preflight with a clear, row-identifying error, not attempt to guess a
+    canonical form or crash on the later CHECK-constraint ALTER."""
+    await _assert_migration_0005_preflight_rejects_single_row(
+        "AST-0005-INVALID-BCM",
+        "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code) "
+        "VALUES (:id, :asset, 'Invalid Legacy', 'available', '{}', 'BCM00 01')",
+        "AST-0005-INVALID-BCM",
+    )
+
+
+async def test_migration_0005_aborts_on_invalid_legacy_bcm_prefix_only():
+    await _assert_migration_0005_preflight_rejects_single_row(
+        "AST-0005-PFXONLY-BCM",
+        "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code) "
+        "VALUES (:id, :asset, 'Prefix Only Legacy', 'available', '{}', 'BCM')",
+        "AST-0005-PFXONLY-BCM",
+    )
+
+
+async def test_migration_0005_aborts_on_invalid_legacy_item_no_empty_after_trim():
+    await _assert_migration_0005_preflight_rejects_single_row(
+        "AST-0005-INVALID-ITEM",
+        "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, item_no) "
+        "VALUES (:id, :asset, 'Invalid Legacy Item', 'available', '{}', '   ')",
+        "AST-0005-INVALID-ITEM",
+    )
+
+
+async def test_migration_0005_aborts_on_overlength_legacy_bcm_after_canonicalization():
+    """A legacy prefixless bcm_code that already fits the 64-character
+    column raw can still overflow it once canonicalized (prefix added) --
+    the preflight's length check must catch this and abort with a clear
+    error before ever attempting the UPDATE, not surface a raw PostgreSQL
+    DataError from a doomed write."""
+    overlength_raw = "9" * 64  # fits raw; "BCM" + 64 chars = 67, over the column width
+    await _assert_migration_0005_preflight_rejects_single_row(
+        "AST-0005-OVERLEN-BCM",
+        "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code) "
+        "VALUES (:id, :asset, 'Overlength Legacy', 'available', '{}', :bcm)",
+        "AST-0005-OVERLEN-BCM",
+        extra_params={"bcm": overlength_raw},
+    )
+
+
+def test_migration_0005_does_not_import_runtime_application_modules():
+    """PR5-H3R-MIG static inspection: migration 0005 must remain correct
+    even if app.services.identifiers or app.core.exceptions change shape
+    in a future PR, so it must not import either -- or any other
+    app.* runtime module -- at all. Parses the file's own AST rather than
+    grepping text, so a reformatted or aliased import can't slip past
+    this check."""
+    import ast
+
+    migration_path = _BACKEND_DIR / "alembic" / "versions" / "0005_identifier_hardening.py"
+    source = migration_path.read_text()
+    tree = ast.parse(source, filename=str(migration_path))
+
+    imported_modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported_modules.add(node.module)
+            imported_modules.update(f"{node.module}.{alias.name}" for alias in node.names)
+
+    app_imports = {m for m in imported_modules if m == "app" or m.startswith("app.")}
+    assert not app_imports, (
+        f"migration 0005 must not import any app.* runtime module, found: {sorted(app_imports)}"
+    )
+
+
 async def test_migration_0005_upgrade_downgrade_reupgrade_round_trip():
     try:
         await _recreate_scratch_database()

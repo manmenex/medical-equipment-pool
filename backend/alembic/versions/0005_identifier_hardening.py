@@ -28,35 +28,53 @@ of which code path wrote it.
   - `ck_equipment_bcm_code_canonical`: bcm_code is NULL, or matches
     `^BCM\\S+$` (the literal "BCM" prefix followed by one or more
     non-whitespace characters, nothing else) AND equals its own
-    uppercase form. This is the same shape app.services.identifiers.
-    normalize_bcm_code produces and nothing else -- in particular, a
-    value with whitespace embedded after the prefix (e.g. "BCM 001")
-    is rejected, not silently folded into "BCM001": ADR-002 does not
-    define that as an equivalence, so this migration does not invent it
-    either (see normalize_bcm_code's own docstring for the same
-    decision on the application side).
+    uppercase form.
   - `ck_equipment_item_no_canonical`: item_no is NULL, or is non-empty
     and equals its own trimmed form.
 
-Existing `ix_equipment_bcm_code` / `ix_equipment_item_no` (from 0004,
-both plain unique indexes) are left exactly as they are -- once the CHECK
-constraints guarantee every stored value is already canonical, a plain
-per-column UNIQUE index already *is* canonical-form uniqueness. (An
-earlier draft of this migration instead replaced ix_equipment_bcm_code
-with a functional UPPER(bcm_code) index; that approach is superseded by
-the CHECK-constraint strategy above, which is simpler and additionally
-catches the prefix-optional and whitespace collision cases a case-folding
-functional index alone would not. `DROP INDEX IF EXISTS` on that
-now-abandoned index name is kept below purely so a scratch database that
-already ran the earlier draft can still re-run this migration cleanly.)
+`ix_equipment_bcm_code` / `ix_equipment_item_no` (plain unique indexes,
+from 0004) are left exactly as they are -- once the CHECK constraints
+guarantee every stored value is already canonical, a plain per-column
+UNIQUE index already *is* canonical-form uniqueness. No functional index
+is added or needed.
+
+PR5-H3R-MIG (immutability): this migration does NOT import
+app.services.identifiers, app.core.exceptions, or any other runtime
+application module. Every revision-specific canonicalization rule and
+error type it needs is defined locally in this file
+(_canonicalize_bcm_code, _canonicalize_item_no,
+_CanonicalizationError below). This is deliberate: a migration is a
+historical record of what ran against real databases at a point in
+time, and its result at this revision must stay identical no matter how
+app.services.identifiers is refactored, renamed, or behaviorally changed
+in a later PR. A future identifier-rule change belongs in a NEW
+migration that starts from this one's already-canonical, already
+CHECK-constrained state -- it must never rewrite this file's frozen
+logic in place.
+
+Local canonicalization rules (mirrors ADR-002 / identifiers.md as
+understood at the time this migration was written):
+
+  BCM Code: trim outer whitespace -> remove one optional
+  case-insensitive "BCM" prefix -> trim again (absorbs a single space
+  directly between a removed prefix and the body, e.g. "BCM 001") ->
+  reject an empty body -> reject any whitespace still embedded within
+  the body at this point (a value like "BCM00 01" is rejected outright,
+  never silently folded into any other form) -> uppercase the body,
+  preserving its exact width (leading zeros are never dropped or
+  reinterpreted) -> prepend "BCM" -> reject a final result longer than
+  the equipment.bcm_code column (64 characters).
+
+  Item No: trim outer whitespace -> reject an empty result -> preserve
+  case and internal formatting exactly (leading zeros included, no
+  further transformation) -> reject a final result longer than the
+  equipment.item_no column (64 characters).
 
 Collision preflight (upgrade): every existing non-null bcm_code and
-item_no value is run through the exact same
-app.services.identifiers.normalize_bcm_code / normalize_item_no functions
-the application uses for every write, so this can never silently drift
-from the application's own definition of "canonical." Three distinct
-failure modes are reported separately and abort the migration before any
-schema change is made, each naming the specific offending row(s):
+item_no value is run through the local canonicalization rules above.
+Two distinct failure modes are reported separately and abort the
+migration before any schema change is made, each naming the specific
+offending row(s):
   1. A value that cannot be normalized at all (empty after the prefix,
      embedded whitespace, or would exceed the column width once
      canonicalized).
@@ -91,6 +109,50 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+# ---------------------------------------------------------------------------
+# Revision-local, frozen canonicalization rules. See PR5-H3R-MIG in the
+# module docstring above: deliberately NOT imported from
+# app.services.identifiers or app.core.exceptions -- this migration must
+# keep producing this exact result even if that runtime code changes.
+# ---------------------------------------------------------------------------
+
+_BCM_PREFIX = "BCM"
+_MAX_IDENTIFIER_LENGTH = 64
+
+
+class _CanonicalizationError(Exception):
+    """Revision-0005-local error for a value that cannot be canonicalized.
+    Not app.core.exceptions.InvalidInputError, and never will be -- see
+    the immutability note in this module's docstring.
+    """
+
+
+def _canonicalize_bcm_code(raw: str) -> str:
+    token = raw.strip()
+    if token[: len(_BCM_PREFIX)].upper() == _BCM_PREFIX:
+        token = token[len(_BCM_PREFIX) :]
+    token = token.strip()
+    if not token:
+        raise _CanonicalizationError("BCM Code must contain at least one character after the prefix.")
+    if any(ch.isspace() for ch in token):
+        raise _CanonicalizationError("BCM Code must not contain whitespace embedded within the body.")
+    canonical = f"{_BCM_PREFIX}{token.upper()}"
+    if len(canonical) > _MAX_IDENTIFIER_LENGTH:
+        raise _CanonicalizationError(
+            f"BCM Code exceeds the maximum length of {_MAX_IDENTIFIER_LENGTH} characters once normalized."
+        )
+    return canonical
+
+
+def _canonicalize_item_no(raw: str) -> str:
+    token = raw.strip()
+    if not token:
+        raise _CanonicalizationError("Item No cannot be empty.")
+    if len(token) > _MAX_IDENTIFIER_LENGTH:
+        raise _CanonicalizationError(f"Item No exceeds the maximum length of {_MAX_IDENTIFIER_LENGTH} characters.")
+    return token
+
+
 def upgrade() -> None:
     bind = op.get_bind()
 
@@ -102,10 +164,7 @@ def upgrade() -> None:
         # column. Nothing to do for any other dialect.
         return
 
-    from app.core.exceptions import InvalidInputError
-    from app.services.identifiers import normalize_bcm_code, normalize_item_no
-
-    def _preflight(column: str, normalize) -> dict:
+    def _preflight(column: str, canonicalize) -> dict:
         rows = bind.execute(
             sa.text(f"SELECT id, asset_number, {column} FROM equipment WHERE {column} IS NOT NULL")
         ).fetchall()
@@ -114,9 +173,9 @@ def upgrade() -> None:
         problems: list[str] = []
         for row_id, asset_number, raw_value in rows:
             try:
-                canonical_by_id[row_id] = normalize(raw_value)
-            except InvalidInputError as exc:
-                problems.append(f"  id={row_id} asset_number={asset_number!r} {column}={raw_value!r}: {exc.message}")
+                canonical_by_id[row_id] = canonicalize(raw_value)
+            except _CanonicalizationError as exc:
+                problems.append(f"  id={row_id} asset_number={asset_number!r} {column}={raw_value!r}: {exc}")
 
         if problems:
             raise RuntimeError(
@@ -139,8 +198,8 @@ def upgrade() -> None:
 
         return canonical_by_id
 
-    bcm_canonical = _preflight("bcm_code", normalize_bcm_code)
-    item_canonical = _preflight("item_no", normalize_item_no)
+    bcm_canonical = _preflight("bcm_code", _canonicalize_bcm_code)
+    item_canonical = _preflight("item_no", _canonicalize_item_no)
 
     # Deterministic conversion to canonical storage -- only rows whose
     # stored value differs from its own canonical form are touched.
