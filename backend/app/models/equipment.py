@@ -81,10 +81,15 @@ DISPATCH_RECEIPT_TRANSITIONS: dict["EquipmentStatus", frozenset["EquipmentStatus
 # must never resolve/desynchronize an OPEN transaction by editing equipment
 # status directly -- receipt is exclusively app.services.borrow_service's
 # job, since only it closes the corresponding BorrowTransaction atomically.
+#
+# AVAILABLE_AT_POOL has no direct DECOMMISSIONED entry: equipment must be
+# marked UNAVAILABLE_DEFECTIVE first, and only UNAVAILABLE_DEFECTIVE may
+# move to DECOMMISSIONED -- decommissioning always passes through the same
+# defective-classification step, never a one-step skip from in-service.
+# DECOMMISSIONED itself has no outgoing entry in this table -- terminal, no
+# normal-workflow exit.
 MANUAL_LIFECYCLE_TRANSITIONS: dict["EquipmentStatus", frozenset["EquipmentStatus"]] = {
-    EquipmentStatus.AVAILABLE_AT_POOL: frozenset(
-        {EquipmentStatus.UNAVAILABLE_DEFECTIVE, EquipmentStatus.DECOMMISSIONED}
-    ),
+    EquipmentStatus.AVAILABLE_AT_POOL: frozenset({EquipmentStatus.UNAVAILABLE_DEFECTIVE}),
     EquipmentStatus.UNAVAILABLE_DEFECTIVE: frozenset(
         {EquipmentStatus.AVAILABLE_AT_POOL, EquipmentStatus.DECOMMISSIONED}
     ),

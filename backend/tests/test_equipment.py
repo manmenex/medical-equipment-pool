@@ -1013,6 +1013,15 @@ async def test_dispatch_rejected_when_equipment_decommissioned(client, seeded_us
     nurse_headers = await _auth_headers(client, seeded_users, "ward_nurse")
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR6-0002")
 
+    # Decommissioning requires passing through UNAVAILABLE_DEFECTIVE first
+    # -- AVAILABLE_AT_POOL cannot skip directly to DECOMMISSIONED.
+    defective_resp = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/status",
+        headers=headers,
+        json={"status": "unavailable_defective", "reason": "End of life review"},
+    )
+    assert defective_resp.status_code == 200, defective_resp.text
+
     status_resp = await client.post(
         f"/api/v1/equipment/{equipment['id']}/status",
         headers=headers,
@@ -1061,6 +1070,13 @@ async def test_decommissioned_has_no_normal_workflow_exit(client, seeded_users):
     headers = await _auth_headers(client, seeded_users, "admin")
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR6-0004")
 
+    defective_resp = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/status",
+        headers=headers,
+        json={"status": "unavailable_defective", "reason": "End of life review"},
+    )
+    assert defective_resp.status_code == 200, defective_resp.text
+
     decommission_resp = await client.post(
         f"/api/v1/equipment/{equipment['id']}/status",
         headers=headers,
@@ -1076,12 +1092,40 @@ async def test_decommissioned_has_no_normal_workflow_exit(client, seeded_users):
     assert exit_resp.status_code == 409
     assert exit_resp.json()["code"] == "INVALID_STATUS_TRANSITION"
 
+    exit_resp_defective = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/status",
+        headers=headers,
+        json={"status": "unavailable_defective", "reason": "Attempted revival"},
+    )
+    assert exit_resp_defective.status_code == 409
+    assert exit_resp_defective.json()["code"] == "INVALID_STATUS_TRANSITION"
+
+
+# PR16-H3: DECOMMISSIONED is no longer directly reachable from
+# AVAILABLE_AT_POOL via the manual endpoint -- reaching it as test setup
+# now requires the same two-step path (-> UNAVAILABLE_DEFECTIVE ->
+# DECOMMISSIONED) a real caller must use. Every equipment row starts
+# AVAILABLE_AT_POOL (the ORM default), so this only ever needs to walk
+# forward from there.
+_MANUAL_STATUS_PATH: dict[str, list[str]] = {
+    "available_at_pool": [],
+    "unavailable_defective": ["unavailable_defective"],
+    "decommissioned": ["unavailable_defective", "decommissioned"],
+}
+
+
+async def _reach_status_via_manual_endpoint(client, headers, equipment_id, target_status):
+    for step_status in _MANUAL_STATUS_PATH[target_status]:
+        step_resp = await client.post(
+            f"/api/v1/equipment/{equipment_id}/status", headers=headers, json={"status": step_status}
+        )
+        assert step_resp.status_code == 200, step_resp.text
+
 
 @pytest.mark.parametrize(
     "from_status,to_status",
     [
         ("available_at_pool", "unavailable_defective"),
-        ("available_at_pool", "decommissioned"),
         ("unavailable_defective", "available_at_pool"),
         ("unavailable_defective", "decommissioned"),
     ],
@@ -1091,11 +1135,7 @@ async def test_allowed_status_transitions_succeed(client, seeded_users, from_sta
     asset_number = f"AST-PR6A-{from_status[:3]}-{to_status[:3]}-{uuid.uuid4().hex[:6]}"
     equipment = await _create_equipment_with_bcm(client, headers, asset_number)
 
-    if from_status != "available_at_pool":
-        setup_resp = await client.post(
-            f"/api/v1/equipment/{equipment['id']}/status", headers=headers, json={"status": from_status}
-        )
-        assert setup_resp.status_code == 200, setup_resp.text
+    await _reach_status_via_manual_endpoint(client, headers, equipment["id"], from_status)
 
     resp = await client.post(
         f"/api/v1/equipment/{equipment['id']}/status", headers=headers, json={"status": to_status}
@@ -1108,6 +1148,7 @@ async def test_allowed_status_transitions_succeed(client, seeded_users, from_sta
     "from_status,to_status",
     [
         ("available_at_pool", "available_at_pool"),
+        ("available_at_pool", "decommissioned"),
         ("unavailable_defective", "issued_to_ward"),
         ("decommissioned", "available_at_pool"),
         ("decommissioned", "unavailable_defective"),
@@ -1118,11 +1159,7 @@ async def test_invalid_status_transitions_are_rejected(client, seeded_users, fro
     asset_number = f"AST-PR6D-{from_status[:3]}-{to_status[:3]}-{uuid.uuid4().hex[:6]}"
     equipment = await _create_equipment_with_bcm(client, headers, asset_number)
 
-    if from_status != "available_at_pool":
-        setup_resp = await client.post(
-            f"/api/v1/equipment/{equipment['id']}/status", headers=headers, json={"status": from_status}
-        )
-        assert setup_resp.status_code == 200, setup_resp.text
+    await _reach_status_via_manual_endpoint(client, headers, equipment["id"], from_status)
 
     resp = await client.post(
         f"/api/v1/equipment/{equipment['id']}/status", headers=headers, json={"status": to_status}
@@ -1395,3 +1432,48 @@ async def test_openapi_return_request_does_not_advertise_cleaning():
     import json
 
     assert "cleaning" not in json.dumps(schema).lower()
+
+
+# ---------------------------------------------------------------------------
+# PR16-H3 (review of Draft PR #16): AVAILABLE_AT_POOL must not skip directly
+# to DECOMMISSIONED -- equipment must first be classified
+# UNAVAILABLE_DEFECTIVE, and only UNAVAILABLE_DEFECTIVE may move to
+# DECOMMISSIONED. See app.models.equipment.MANUAL_LIFECYCLE_TRANSITIONS.
+# ---------------------------------------------------------------------------
+
+
+async def test_available_at_pool_cannot_skip_directly_to_decommissioned(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR16-H3-0001")
+
+    resp = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/status",
+        headers=headers,
+        json={"status": "decommissioned", "reason": "Attempted direct skip"},
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["code"] == "INVALID_STATUS_TRANSITION"
+
+    check_resp = await client.get(f"/api/v1/equipment/{equipment['id']}", headers=headers)
+    assert check_resp.json()["status"] == "available_at_pool", "status must be unchanged after the rejected attempt"
+
+
+async def test_decommission_requires_passing_through_unavailable_defective(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR16-H3-0002")
+
+    defective_resp = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/status",
+        headers=headers,
+        json={"status": "unavailable_defective", "reason": "Failed inspection"},
+    )
+    assert defective_resp.status_code == 200, defective_resp.text
+    assert defective_resp.json()["status"] == "unavailable_defective"
+
+    decommission_resp = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/status",
+        headers=headers,
+        json={"status": "decommissioned", "reason": "End of life"},
+    )
+    assert decommission_resp.status_code == 200, decommission_resp.text
+    assert decommission_resp.json()["status"] == "decommissioned"
