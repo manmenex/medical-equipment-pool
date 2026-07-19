@@ -4,7 +4,8 @@ from datetime import datetime
 from sqlalchemy import String, and_, case, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.equipment import Equipment, EquipmentStatus, EquipmentStatusHistory
+from app.core.exceptions import InvalidStatusTransitionError
+from app.models.equipment import ALLOWED_STATUS_TRANSITIONS, Equipment, EquipmentStatus, EquipmentStatusHistory
 from app.services.identifiers import strip_bcm_prefix
 from app.utils.pagination import decode_cursor, encode_cursor
 
@@ -172,6 +173,19 @@ async def change_status(
     changed_by_user_id: uuid.UUID | None,
     reason: str | None = None,
 ) -> EquipmentStatusHistory:
+    """Applies a status change through the single mutation point every
+    caller (dispatch/receipt in app.services.borrow_service, and the
+    purpose-built POST /equipment/{id}/status boundary) goes through, so
+    the confirmed transition table (See HOSPITAL_DOMAIN_MODEL.md,
+    app.models.equipment.ALLOWED_STATUS_TRANSITIONS) is enforced
+    identically regardless of caller. Never reads or writes
+    Equipment.legacy_status -- that column is historical/rollback-only
+    (Roadmap PR6) and must never gate or record an ordinary transition.
+    """
+    if new_status not in ALLOWED_STATUS_TRANSITIONS.get(equipment.status, frozenset()):
+        raise InvalidStatusTransitionError(
+            f"Equipment cannot move from '{equipment.status.value}' to '{new_status.value}'."
+        )
     history = EquipmentStatusHistory(
         equipment_id=equipment.id,
         from_status=equipment.status.value if equipment.status else None,

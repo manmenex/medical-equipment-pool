@@ -1,12 +1,11 @@
+// Roadmap PR6 (HOSPITAL_DOMAIN_MODEL.md): the confirmed 4-state model.
+// legacy_status (pre-migration 8-state value) is deliberately not declared
+// here -- historical/rollback metadata only, never read by the frontend.
 export type EquipmentStatus =
-  | "available"
-  | "borrowed"
-  | "cleaning"
-  | "pm"
-  | "calibration"
-  | "repair"
-  | "out_of_service"
-  | "lost";
+  | "available_at_pool"
+  | "issued_to_ward"
+  | "unavailable_defective"
+  | "decommissioned";
 
 export type Role = "admin" | "biomedical_engineer" | "ward_nurse" | "transport_staff" | "viewer";
 
@@ -82,14 +81,10 @@ export interface Page<T> {
 
 export interface DashboardSummary {
   total: number;
-  available: number;
-  borrowed: number;
-  cleaning: number;
-  pm: number;
-  calibration: number;
-  repair: number;
-  out_of_service: number;
-  lost: number;
+  available_at_pool: number;
+  issued_to_ward: number;
+  unavailable_defective: number;
+  decommissioned: number;
   pm_due_soon: number;
   cal_due_soon: number;
 }

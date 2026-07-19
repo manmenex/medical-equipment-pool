@@ -8,9 +8,12 @@ import { createReturn, listActiveBorrows } from "@/services/borrow";
 import { resolveEquipmentByQr } from "@/services/equipment";
 import type { BcmSuggestion, TransactionOut } from "@/types";
 
+// Roadmap PR6 / owner-confirmed cleaning retirement: no "cleaning" option
+// here. Cleaning happens as part of collecting/receiving equipment
+// (AGENTS.md) -- a usable receipt goes directly to AVAILABLE_AT_POOL, with
+// no separate cleaning confirmation step for staff to perform.
 const CONDITIONS: { value: string; label: string }[] = [
   { value: "available", label: "พร้อมใช้งาน" },
-  { value: "cleaning", label: "ต้องทำความสะอาด" },
   { value: "pm", label: "ต้อง PM" },
   { value: "calibration", label: "ต้องสอบเทียบ" },
   { value: "repair", label: "ต้องซ่อม" },

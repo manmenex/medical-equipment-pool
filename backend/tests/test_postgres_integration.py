@@ -1012,6 +1012,23 @@ async def test_migration_0003_disaster_recovery_reseed_stays_above_historical_ma
         finally:
             await engine.dispose()
 
+        # Roadmap PR6: downgrading to 0002 now also runs migration 0006's
+        # downgrade, which refuses to proceed for any equipment row with a
+        # NULL legacy_status (no 8-state value to reconstruct -- see that
+        # migration's docstring). The equipment row _seed_transactions
+        # created above was inserted directly via the ORM after 0006 had
+        # already run, so it has no such history; this test is not
+        # exercising 0006 at all, so give it a synthetic legacy_status
+        # equal to its own current status purely to satisfy that
+        # precondition -- irrelevant to this test's actual subject
+        # (transaction_no_seq disaster recovery).
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("UPDATE equipment SET legacy_status = status"))
+        finally:
+            await engine.dispose()
+
         # Disaster: the sequence object itself is lost (e.g. a restore
         # from a backup predating it, or an accidental manual DROP).
         _run_alembic("downgrade", "0002_audit_request_ids")
@@ -1222,7 +1239,7 @@ async def test_migration_0004_rejects_duplicate_item_no_and_bcm_code_at_db_level
                     text(
                         "INSERT INTO equipment "
                         "(id, asset_number, equipment_name, status, qr_code_value, metadata, item_no, bcm_code) "
-                        "VALUES (:id, 'AST-PR5-0002', 'Dup Source', 'available', 'MEP:AST-PR5-0002', '{}', "
+                        "VALUES (:id, 'AST-PR5-0002', 'Dup Source', 'available_at_pool', 'MEP:AST-PR5-0002', '{}', "
                         "'ITEM-0001', 'BCM00001')"
                     ),
                     {"id": str(uuid.uuid4())},
@@ -1236,7 +1253,7 @@ async def test_migration_0004_rejects_duplicate_item_no_and_bcm_code_at_db_level
                         text(
                             "INSERT INTO equipment "
                             "(id, asset_number, equipment_name, status, qr_code_value, metadata, item_no) "
-                            "VALUES (:id, 'AST-PR5-0003', 'Dup Item No', 'available', 'MEP:AST-PR5-0003', '{}', "
+                            "VALUES (:id, 'AST-PR5-0003', 'Dup Item No', 'available_at_pool', 'MEP:AST-PR5-0003', '{}', "
                             "'ITEM-0001')"
                         ),
                         {"id": str(uuid.uuid4())},
@@ -1248,7 +1265,7 @@ async def test_migration_0004_rejects_duplicate_item_no_and_bcm_code_at_db_level
                         text(
                             "INSERT INTO equipment "
                             "(id, asset_number, equipment_name, status, qr_code_value, metadata, bcm_code) "
-                            "VALUES (:id, 'AST-PR5-0004', 'Dup BCM Code', 'available', 'MEP:AST-PR5-0004', '{}', "
+                            "VALUES (:id, 'AST-PR5-0004', 'Dup BCM Code', 'available_at_pool', 'MEP:AST-PR5-0004', '{}', "
                             "'BCM00001')"
                         ),
                         {"id": str(uuid.uuid4())},
@@ -1323,7 +1340,7 @@ async def test_migration_0005_upgrade_from_0004_makes_qr_code_value_nullable():
                 await conn.execute(
                     text(
                         "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata) "
-                        "VALUES (:id, 'AST-0005-POST', 'Post-0005', 'available', '{}')"
+                        "VALUES (:id, 'AST-0005-POST', 'Post-0005', 'available_at_pool', '{}')"
                     ),
                     {"id": str(uuid.uuid4())},
                 )
@@ -1448,7 +1465,7 @@ async def test_migration_0005_unique_index_rejects_exact_canonical_duplicate_dir
                 await conn.execute(
                     text(
                         "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code, item_no) "
-                        "VALUES (:id, 'AST-0005-DUP-1', 'Dup Source', 'available', '{}', 'BCM00778', 'ITEM-DUP-01')"
+                        "VALUES (:id, 'AST-0005-DUP-1', 'Dup Source', 'available_at_pool', '{}', 'BCM00778', 'ITEM-DUP-01')"
                     ),
                     {"id": str(uuid.uuid4())},
                 )
@@ -1458,7 +1475,7 @@ async def test_migration_0005_unique_index_rejects_exact_canonical_duplicate_dir
                     await conn.execute(
                         text(
                             "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code) "
-                            "VALUES (:id, 'AST-0005-DUP-2', 'Dup BCM', 'available', '{}', 'BCM00778')"
+                            "VALUES (:id, 'AST-0005-DUP-2', 'Dup BCM', 'available_at_pool', '{}', 'BCM00778')"
                         ),
                         {"id": str(uuid.uuid4())},
                     )
@@ -1468,7 +1485,7 @@ async def test_migration_0005_unique_index_rejects_exact_canonical_duplicate_dir
                     await conn.execute(
                         text(
                             "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, item_no) "
-                            "VALUES (:id, 'AST-0005-DUP-3', 'Dup Item', 'available', '{}', 'ITEM-DUP-01')"
+                            "VALUES (:id, 'AST-0005-DUP-3', 'Dup Item', 'available_at_pool', '{}', 'ITEM-DUP-01')"
                         ),
                         {"id": str(uuid.uuid4())},
                     )
@@ -1982,8 +1999,14 @@ async def test_migration_0005_downgrade_aborts_if_null_qr_code_value_exists():
             async with engine.begin() as conn:
                 await conn.execute(
                     text(
-                        "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata) "
-                        "VALUES (:id, 'AST-0005-NULLQR', 'No Legacy QR', 'available', '{}')"
+                        "INSERT INTO equipment (id, asset_number, equipment_name, status, legacy_status, metadata) "
+                        # Roadmap PR6: legacy_status is set here (equal to
+                        # status) purely so migration 0006's own downgrade
+                        # guard -- which runs first, since 0006 now sits
+                        # above 0005 in the chain -- does not itself abort
+                        # before 0005's qr_code_value guard (this test's
+                        # actual subject) ever gets a chance to fire.
+                        "VALUES (:id, 'AST-0005-NULLQR', 'No Legacy QR', 'available_at_pool', 'available_at_pool', '{}')"
                     ),
                     {"id": str(uuid.uuid4())},
                 )
@@ -2001,5 +2024,405 @@ async def test_migration_0005_downgrade_aborts_if_null_qr_code_value_exists():
         )
         assert result.returncode != 0, "downgrade must abort, not silently violate NOT NULL, when data would be lost"
         assert "NULL" in (result.stdout + result.stderr)
+    finally:
+        await _drop_scratch_database()
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR6: migration 0006_equipment_state_model.py. Collapses the legacy
+# 8-value equipment.status domain to the confirmed 4-state model
+# (AVAILABLE_AT_POOL, ISSUED_TO_WARD, UNAVAILABLE_DEFECTIVE, DECOMMISSIONED),
+# preserving every original value in a new legacy_status column. Exercised
+# for real via the same scratch-database + `alembic` CLI pattern as
+# 0002-0005 above. See that migration's module docstring for the exact
+# mapping table and the owner-confirmed cleaning -> AVAILABLE_AT_POOL
+# retirement (this migration must NOT route cleaning through
+# UNAVAILABLE_DEFECTIVE).
+# ---------------------------------------------------------------------------
+
+
+async def _insert_equipment_with_status(conn, asset_number: str, status: str) -> str:
+    eq_id = str(uuid.uuid4())
+    await conn.execute(
+        text(
+            "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata) "
+            "VALUES (:id, :asset_number, :name, :status, '{}')"
+        ),
+        {"id": eq_id, "asset_number": asset_number, "name": f"PR6 {status}", "status": status},
+    )
+    return eq_id
+
+
+async def test_migration_0006_maps_every_legacy_status_and_preserves_legacy_status():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0005_identifier_hardening")
+
+        expected = {
+            "available": "available_at_pool",
+            "borrowed": "issued_to_ward",
+            "cleaning": "available_at_pool",
+            "out_of_service": "unavailable_defective",
+            "lost": "unavailable_defective",
+            "pm": "unavailable_defective",
+            "calibration": "unavailable_defective",
+            "repair": "unavailable_defective",
+        }
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        ids_by_legacy: dict[str, str] = {}
+        try:
+            async with engine.begin() as conn:
+                for legacy_value in expected:
+                    ids_by_legacy[legacy_value] = await _insert_equipment_with_status(
+                        conn, f"AST-0006-{legacy_value.upper()}", legacy_value
+                    )
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                for legacy_value, target_value in expected.items():
+                    row = (
+                        await conn.execute(
+                            text("SELECT status, legacy_status FROM equipment WHERE id = :id"),
+                            {"id": ids_by_legacy[legacy_value]},
+                        )
+                    ).one()
+                    assert row.status == target_value, f"{legacy_value!r} must map to {target_value!r}"
+                    assert row.legacy_status == legacy_value, (
+                        f"legacy_status must preserve the original {legacy_value!r} value exactly"
+                    )
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0006_cleaning_does_not_map_to_unavailable_defective():
+    """Dedicated, standalone assertion for the owner-confirmed cleaning
+    retirement -- a cleaning row must become AVAILABLE_AT_POOL, never
+    UNAVAILABLE_DEFECTIVE, and never require any migration-review flag."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0005_identifier_hardening")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        eq_id = None
+        try:
+            async with engine.begin() as conn:
+                eq_id = await _insert_equipment_with_status(conn, "AST-0006-CLEANING-ONLY", "cleaning")
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        text("SELECT status, legacy_status FROM equipment WHERE id = :id"), {"id": eq_id}
+                    )
+                ).one()
+                assert row.status == "available_at_pool"
+                assert row.status != "unavailable_defective"
+                assert row.legacy_status == "cleaning"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0006_aborts_on_unexpected_status_value():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0005_identifier_hardening")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await _insert_equipment_with_status(conn, "AST-0006-UNKNOWN", "quarantined")
+        finally:
+            await engine.dispose()
+
+        env = {**os.environ, "DATABASE_URL": _scratch_dsn("postgresql+asyncpg")}
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=str(_BACKEND_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode != 0, "upgrade must abort on an unexpected status value"
+        assert "quarantined" in (result.stdout + result.stderr)
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0006_aborts_without_partial_remap():
+    """Transaction-safety guard, mirroring 0005's equivalent test: when
+    preflight rejects one row, the whole attempt must roll back -- a
+    different, validly-mappable row must be found completely untouched
+    afterward, and the CHECK constraint must not exist."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0005_identifier_hardening")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        valid_id = None
+        try:
+            async with engine.begin() as conn:
+                valid_id = await _insert_equipment_with_status(conn, "AST-0006-ROLLBACK-VALID", "available")
+                await _insert_equipment_with_status(conn, "AST-0006-ROLLBACK-INVALID", "quarantined")
+        finally:
+            await engine.dispose()
+
+        env = {**os.environ, "DATABASE_URL": _scratch_dsn("postgresql+asyncpg")}
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=str(_BACKEND_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode != 0, "upgrade must abort on the invalid row"
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        text("SELECT status, legacy_status FROM equipment WHERE id = :id"), {"id": valid_id}
+                    )
+                ).one()
+                assert row.status == "available", "the valid row must not have been partially remapped"
+                assert row.legacy_status is None
+        finally:
+            await engine.dispose()
+
+        constraints = await _equipment_check_constraint_names()
+        assert "ck_equipment_status_four_state" not in constraints
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0006_preserves_row_count_and_unrelated_rows():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0005_identifier_hardening")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        equipment_ids = []
+        try:
+            async with engine.begin() as conn:
+                for legacy_value in ("available", "borrowed", "cleaning", "repair"):
+                    equipment_ids.append(
+                        await _insert_equipment_with_status(conn, f"AST-0006-COUNT-{legacy_value}", legacy_value)
+                    )
+                tx_id = str(uuid.uuid4())
+                await conn.execute(
+                    text(
+                        "INSERT INTO borrow_transactions (id, transaction_no, equipment_id, quantity, "
+                        "borrowed_at, borrower_name, status) "
+                        "VALUES (:tx_id, 'TX-0006-COUNT', :eq_id, 1, now(), 'PR6 Borrower', 'returned')"
+                    ),
+                    {"tx_id": tx_id, "eq_id": equipment_ids[0]},
+                )
+        finally:
+            await engine.dispose()
+
+        before_count = len(equipment_ids)
+
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                after_count = (
+                    await conn.execute(
+                        text("SELECT count(*) FROM equipment WHERE asset_number LIKE 'AST-0006-COUNT-%'")
+                    )
+                ).scalar_one()
+                assert after_count == before_count, "row count must be unchanged by the remap"
+
+                tx_count = (
+                    await conn.execute(
+                        text("SELECT count(*) FROM borrow_transactions WHERE transaction_no = 'TX-0006-COUNT'")
+                    )
+                ).scalar_one()
+                assert tx_count == 1, "unrelated transaction row must survive the migration untouched"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0006_adds_four_state_check_constraint():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        constraints = await _equipment_check_constraint_names()
+        assert "ck_equipment_status_four_state" in constraints
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            from sqlalchemy.exc import IntegrityError
+
+            with pytest.raises(IntegrityError):
+                async with engine.begin() as conn:
+                    await _insert_equipment_with_status(conn, "AST-0006-DIRECT-OLD-VALUE", "repair")
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0006_downgrade_reconstructs_original_statuses_including_cleaning():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0005_identifier_hardening")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        ids_by_legacy: dict[str, str] = {}
+        try:
+            async with engine.begin() as conn:
+                for legacy_value in ("available", "borrowed", "cleaning", "repair"):
+                    ids_by_legacy[legacy_value] = await _insert_equipment_with_status(
+                        conn, f"AST-0006-DOWNGRADE-{legacy_value}", legacy_value
+                    )
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0005_identifier_hardening")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                columns = await conn.run_sync(
+                    lambda sync_conn: {c["name"] for c in inspect(sync_conn).get_columns("equipment")}
+                )
+                assert "legacy_status" not in columns, "legacy_status must be dropped by a full downgrade"
+
+                for legacy_value, eq_id in ids_by_legacy.items():
+                    row = (
+                        await conn.execute(text("SELECT status FROM equipment WHERE id = :id"), {"id": eq_id})
+                    ).scalar_one()
+                    assert row == legacy_value, f"downgrade must restore the original {legacy_value!r} value"
+        finally:
+            await engine.dispose()
+
+        constraints = await _equipment_check_constraint_names()
+        assert "ck_equipment_status_four_state" not in constraints
+
+        # Re-upgrade round trip: the same rows must remap identically again.
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        text("SELECT status, legacy_status FROM equipment WHERE id = :id"),
+                        {"id": ids_by_legacy["cleaning"]},
+                    )
+                ).one()
+                assert row.status == "available_at_pool"
+                assert row.legacy_status == "cleaning"
+        finally:
+            await engine.dispose()
+        constraints = await _equipment_check_constraint_names()
+        assert "ck_equipment_status_four_state" in constraints
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0006_downgrade_fails_for_rows_with_null_legacy_status():
+    """A row created after this migration's upgrade (the 4-state-only
+    application never writes an 8-state legacy value) has no legacy_status
+    to reconstruct from -- downgrade must fail clearly rather than guess."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata) "
+                        "VALUES (:id, 'AST-0006-POST-CUTOVER', 'Post-Cutover Pump', 'available_at_pool', '{}')"
+                    ),
+                    {"id": str(uuid.uuid4())},
+                )
+        finally:
+            await engine.dispose()
+
+        env = {**os.environ, "DATABASE_URL": _scratch_dsn("postgresql+asyncpg")}
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", "downgrade", "0005_identifier_hardening"],
+            cwd=str(_BACKEND_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode != 0, "downgrade must abort, not guess, when legacy_status is NULL"
+
+        # No partial restoration: the CHECK constraint must still exist and
+        # the row must still read the 4-state value it had before the
+        # aborted downgrade attempt.
+        constraints = await _equipment_check_constraint_names()
+        assert "ck_equipment_status_four_state" in constraints
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        text("SELECT status FROM equipment WHERE asset_number = 'AST-0006-POST-CUTOVER'")
+                    )
+                ).scalar_one()
+                assert row == "available_at_pool"
+        finally:
+            await engine.dispose()
     finally:
         await _drop_scratch_database()

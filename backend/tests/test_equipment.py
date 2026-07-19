@@ -29,7 +29,7 @@ async def test_create_and_get_equipment(client, seeded_users):
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
-    assert body["status"] == "available"
+    assert body["status"] == "available_at_pool"
     assert "qr_code_value" not in body, "retired legacy QR value must never appear in a response (ADR-004)"
 
     resp2 = await client.get(f"/api/v1/equipment/{body['id']}", headers=headers)
@@ -129,11 +129,11 @@ async def test_status_change_returns_200_with_new_status(client, seeded_users):
     status_resp = await client.post(
         f"/api/v1/equipment/{equipment_id}/status",
         headers=headers,
-        json={"status": "repair", "reason": "Needs a new wheel"},
+        json={"status": "unavailable_defective", "reason": "Needs a new wheel"},
     )
     assert status_resp.status_code == 200, status_resp.text
     body = status_resp.json()
-    assert body["status"] == "repair"
+    assert body["status"] == "unavailable_defective"
     assert body["id"] == equipment_id
     assert body["updated_at"]
 
@@ -205,7 +205,7 @@ async def test_status_change_produces_exactly_one_audit_row(client, seeded_users
     status_resp = await client.post(
         f"/api/v1/equipment/{equipment_id}/status",
         headers=headers,
-        json={"status": "repair", "reason": "Needs a new wheel"},
+        json={"status": "unavailable_defective", "reason": "Needs a new wheel"},
     )
     assert status_resp.status_code == 200, status_resp.text
 
@@ -241,7 +241,7 @@ async def test_ordinary_request_still_succeeds_after_update_and_status_change(cl
     status_resp = await client.post(
         f"/api/v1/equipment/{equipment_id}/status",
         headers=headers,
-        json={"status": "repair"},
+        json={"status": "unavailable_defective"},
     )
     assert status_resp.status_code == 200, status_resp.text
 
@@ -506,7 +506,7 @@ async def test_borrow_by_hospital_item_no_scan(client, seeded_users):
         json={"equipment_id": resolved.json()["id"], "borrower_name": "Nurse Item No"},
     )
     assert borrow_resp.status_code == 201, borrow_resp.text
-    assert borrow_resp.json()["equipment"]["status"] == "borrowed"
+    assert borrow_resp.json()["equipment"]["status"] == "issued_to_ward"
 
 
 async def test_return_by_hospital_item_no_scan(client, seeded_users):
@@ -977,3 +977,238 @@ async def test_item_no_absent_from_borrow_and_return_manual_selection_responses(
     )
     assert return_resp.status_code == 200, return_resp.text
     assert "item_no" not in return_resp.json()["equipment"]
+
+# ---------------------------------------------------------------------------
+# Roadmap PR6 (docs/audits/04-consolidated-implementation-plan.md, Part D):
+# collapse the legacy 8-value EquipmentStatus enum to the confirmed 4-state
+# model (AVAILABLE_AT_POOL, ISSUED_TO_WARD, UNAVAILABLE_DEFECTIVE,
+# DECOMMISSIONED), transition enforcement, and the owner-confirmed
+# retirement of `cleaning` as an active/writable status.
+# ---------------------------------------------------------------------------
+
+
+async def test_dispatch_rejected_when_equipment_unavailable_defective(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    nurse_headers = await _auth_headers(client, seeded_users, "ward_nurse")
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR6-0001")
+
+    status_resp = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/status",
+        headers=headers,
+        json={"status": "unavailable_defective", "reason": "Broken wheel"},
+    )
+    assert status_resp.status_code == 200, status_resp.text
+
+    borrow_resp = await client.post(
+        "/api/v1/borrow",
+        headers=nurse_headers,
+        json={"equipment_id": equipment["id"], "borrower_name": "Nurse PR6"},
+    )
+    assert borrow_resp.status_code == 409
+    assert borrow_resp.json()["code"] == "EQUIPMENT_NOT_AVAILABLE"
+
+
+async def test_dispatch_rejected_when_equipment_decommissioned(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    nurse_headers = await _auth_headers(client, seeded_users, "ward_nurse")
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR6-0002")
+
+    status_resp = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/status",
+        headers=headers,
+        json={"status": "decommissioned", "reason": "End of life"},
+    )
+    assert status_resp.status_code == 200, status_resp.text
+
+    borrow_resp = await client.post(
+        "/api/v1/borrow",
+        headers=nurse_headers,
+        json={"equipment_id": equipment["id"], "borrower_name": "Nurse PR6"},
+    )
+    assert borrow_resp.status_code == 409
+    assert borrow_resp.json()["code"] == "EQUIPMENT_NOT_AVAILABLE"
+
+
+async def test_dispatch_succeeds_for_available_at_pool_with_legacy_status_cleaning(
+    client, seeded_users, db_session
+):
+    """A row left over from the pre-PR6 migration -- status=AVAILABLE_AT_POOL,
+    legacy_status='cleaning' -- must be dispatchable under exactly the same
+    rule as any other AVAILABLE_AT_POOL row. legacy_status must never gate
+    or influence dispatch eligibility (owner-confirmed cleaning retirement)."""
+    from app.models.equipment import Equipment
+
+    headers = await _auth_headers(client, seeded_users, "admin")
+    nurse_headers = await _auth_headers(client, seeded_users, "ward_nurse")
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR6-0003")
+
+    row = (
+        await db_session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment["id"])))
+    ).scalar_one()
+    row.legacy_status = "cleaning"
+    await db_session.commit()
+
+    borrow_resp = await client.post(
+        "/api/v1/borrow",
+        headers=nurse_headers,
+        json={"equipment_id": equipment["id"], "borrower_name": "Nurse PR6"},
+    )
+    assert borrow_resp.status_code == 201, borrow_resp.text
+    assert borrow_resp.json()["equipment"]["status"] == "issued_to_ward"
+
+
+async def test_decommissioned_has_no_normal_workflow_exit(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR6-0004")
+
+    decommission_resp = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/status",
+        headers=headers,
+        json={"status": "decommissioned", "reason": "End of life"},
+    )
+    assert decommission_resp.status_code == 200, decommission_resp.text
+
+    exit_resp = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/status",
+        headers=headers,
+        json={"status": "available_at_pool", "reason": "Attempted revival"},
+    )
+    assert exit_resp.status_code == 409
+    assert exit_resp.json()["code"] == "INVALID_STATUS_TRANSITION"
+
+
+@pytest.mark.parametrize(
+    "from_status,to_status",
+    [
+        ("available_at_pool", "unavailable_defective"),
+        ("available_at_pool", "decommissioned"),
+        ("unavailable_defective", "available_at_pool"),
+        ("unavailable_defective", "decommissioned"),
+    ],
+)
+async def test_allowed_status_transitions_succeed(client, seeded_users, from_status, to_status):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    asset_number = f"AST-PR6A-{from_status[:3]}-{to_status[:3]}-{uuid.uuid4().hex[:6]}"
+    equipment = await _create_equipment_with_bcm(client, headers, asset_number)
+
+    if from_status != "available_at_pool":
+        setup_resp = await client.post(
+            f"/api/v1/equipment/{equipment['id']}/status", headers=headers, json={"status": from_status}
+        )
+        assert setup_resp.status_code == 200, setup_resp.text
+
+    resp = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/status", headers=headers, json={"status": to_status}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == to_status
+
+
+@pytest.mark.parametrize(
+    "from_status,to_status",
+    [
+        ("available_at_pool", "available_at_pool"),
+        ("unavailable_defective", "issued_to_ward"),
+        ("decommissioned", "available_at_pool"),
+        ("decommissioned", "unavailable_defective"),
+    ],
+)
+async def test_invalid_status_transitions_are_rejected(client, seeded_users, from_status, to_status):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    asset_number = f"AST-PR6D-{from_status[:3]}-{to_status[:3]}-{uuid.uuid4().hex[:6]}"
+    equipment = await _create_equipment_with_bcm(client, headers, asset_number)
+
+    if from_status != "available_at_pool":
+        setup_resp = await client.post(
+            f"/api/v1/equipment/{equipment['id']}/status", headers=headers, json={"status": from_status}
+        )
+        assert setup_resp.status_code == 200, setup_resp.text
+
+    resp = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/status", headers=headers, json={"status": to_status}
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["code"] == "INVALID_STATUS_TRANSITION"
+
+
+async def test_status_change_rejects_old_eight_state_enum_value(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR6-0005")
+
+    resp = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/status", headers=headers, json={"status": "repair"}
+    )
+    assert resp.status_code == 422, resp.text
+
+
+async def test_status_change_rejects_cleaning_as_new_active_status(client, seeded_users):
+    """Retired: cleaning is never a writable status again -- only
+    preserved historically via legacy_status on rows migrated before PR6."""
+    headers = await _auth_headers(client, seeded_users, "admin")
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR6-0006")
+
+    resp = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/status", headers=headers, json={"status": "cleaning"}
+    )
+    assert resp.status_code == 422, resp.text
+
+
+async def test_return_condition_cleaning_is_rejected_not_silently_accepted(client, seeded_users):
+    """Roadmap PR6: cleaning is retired -- a client still sending
+    condition="cleaning" at receipt must get the same controlled 400 as
+    any other unknown condition, never a silent AVAILABLE_AT_POOL/legacy
+    CLEANING acceptance."""
+    headers = await _auth_headers(client, seeded_users, "admin")
+    nurse_headers = await _auth_headers(client, seeded_users, "ward_nurse")
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR6-0007")
+
+    borrow_resp = await client.post(
+        "/api/v1/borrow",
+        headers=nurse_headers,
+        json={"equipment_id": equipment["id"], "borrower_name": "Nurse PR6"},
+    )
+    assert borrow_resp.status_code == 201, borrow_resp.text
+    tx = borrow_resp.json()
+
+    return_resp = await client.post(
+        f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"condition": "cleaning"}
+    )
+    assert return_resp.status_code == 400
+    assert return_resp.json()["code"] == "INVALID_INPUT"
+
+
+async def test_defective_receipt_transitions_to_unavailable_defective(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    nurse_headers = await _auth_headers(client, seeded_users, "ward_nurse")
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR6-0008")
+
+    borrow_resp = await client.post(
+        "/api/v1/borrow",
+        headers=nurse_headers,
+        json={"equipment_id": equipment["id"], "borrower_name": "Nurse PR6"},
+    )
+    assert borrow_resp.status_code == 201, borrow_resp.text
+    tx = borrow_resp.json()
+
+    return_resp = await client.post(
+        f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"condition": "repair"}
+    )
+    assert return_resp.status_code == 200, return_resp.text
+    assert return_resp.json()["equipment"]["status"] == "unavailable_defective"
+
+
+async def test_dashboard_summary_uses_four_state_fields(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    await _create_equipment_with_bcm(client, headers, "AST-PR6-0009")
+
+    resp = await client.get("/api/v1/dashboard/summary", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert set(body.keys()) >= {
+        "total",
+        "available_at_pool",
+        "issued_to_ward",
+        "unavailable_defective",
+        "decommissioned",
+    }
+    assert body["available_at_pool"] >= 1

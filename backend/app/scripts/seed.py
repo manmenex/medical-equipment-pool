@@ -87,7 +87,7 @@ async def seed_sample_equipment(db, refs: dict, count: int = 50) -> None:
             model=f"Model-{random.randint(100, 999)}",
             department_owner_id=random.choice(refs["departments"]).id,
             current_location_id=random.choice(refs["locations"]).id,
-            status=EquipmentStatus.AVAILABLE,
+            status=EquipmentStatus.AVAILABLE_AT_POOL,
         )
         db.add(eq)
     await db.flush()
@@ -111,7 +111,7 @@ async def seed_bulk(db, refs: dict, equipment_count: int, transaction_count: int
                 category_id=category.id,
                 department_owner_id=random.choice(refs["departments"]).id,
                 current_location_id=random.choice(refs["locations"]).id,
-                status=EquipmentStatus.AVAILABLE,
+                status=EquipmentStatus.AVAILABLE_AT_POOL,
             )
         )
         if len(batch) >= 5000:

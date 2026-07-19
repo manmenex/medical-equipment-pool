@@ -3,14 +3,10 @@ from pydantic import BaseModel
 
 class DashboardSummary(BaseModel):
     total: int
-    available: int
-    borrowed: int
-    cleaning: int
-    pm: int
-    calibration: int
-    repair: int
-    out_of_service: int
-    lost: int
+    available_at_pool: int
+    issued_to_ward: int
+    unavailable_defective: int
+    decommissioned: int
     pm_due_soon: int
     cal_due_soon: int
 

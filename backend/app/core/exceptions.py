@@ -55,6 +55,17 @@ class MalformedQrCodeError(DomainError):
     status_code = 400
 
 
+class InvalidStatusTransitionError(DomainError):
+    """Raised when a status change would move equipment between states the
+    confirmed 4-state workflow does not allow (e.g. DECOMMISSIONED -> any,
+    or AVAILABLE_AT_POOL -> AVAILABLE_AT_POOL). See
+    app.models.equipment.ALLOWED_STATUS_TRANSITIONS.
+    """
+
+    code = "INVALID_STATUS_TRANSITION"
+    status_code = 409
+
+
 class ConflictError(DomainError):
     """Generic safe fallback for an IntegrityError that could not be classified.
 

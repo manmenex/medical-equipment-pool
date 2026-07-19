@@ -51,14 +51,10 @@ async def get_summary(db: AsyncSession) -> dict:
 
     result = {
         "total": total,
-        "available": counts.get("available", 0),
-        "borrowed": counts.get("borrowed", 0),
-        "cleaning": counts.get("cleaning", 0),
-        "pm": counts.get("pm", 0),
-        "calibration": counts.get("calibration", 0),
-        "repair": counts.get("repair", 0),
-        "out_of_service": counts.get("out_of_service", 0),
-        "lost": counts.get("lost", 0),
+        "available_at_pool": counts.get("available_at_pool", 0),
+        "issued_to_ward": counts.get("issued_to_ward", 0),
+        "unavailable_defective": counts.get("unavailable_defective", 0),
+        "decommissioned": counts.get("decommissioned", 0),
         "pm_due_soon": pm_due_soon,
         "cal_due_soon": cal_due_soon,
     }

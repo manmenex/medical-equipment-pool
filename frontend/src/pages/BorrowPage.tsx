@@ -131,7 +131,7 @@ export function BorrowPage() {
         </div>
       </div>
 
-      {equipment.status !== "available" ? (
+      {equipment.status !== "available_at_pool" ? (
         <p className="rounded-lg bg-status-repair/10 p-3 text-sm text-status-repair">
           เครื่องนี้ไม่พร้อมให้ยืม (สถานะปัจจุบัน: {equipment.status})
         </p>
