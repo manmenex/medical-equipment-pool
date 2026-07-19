@@ -56,14 +56,16 @@ Local canonicalization rules (mirrors ADR-002 / identifiers.md as
 understood at the time this migration was written):
 
   BCM Code: trim outer whitespace -> remove one optional
-  case-insensitive "BCM" prefix -> trim again (absorbs a single space
-  directly between a removed prefix and the body, e.g. "BCM 001") ->
-  reject an empty body -> reject any whitespace still embedded within
-  the body at this point (a value like "BCM00 01" is rejected outright,
-  never silently folded into any other form) -> uppercase the body,
-  preserving its exact width (leading zeros are never dropped or
-  reinterpreted) -> prepend "BCM" -> reject a final result longer than
-  the equipment.bcm_code column (64 characters).
+  case-insensitive "BCM" prefix -> reject an empty body -> reject any
+  whitespace still present in the body at this point, whether adjacent
+  to the removed prefix or embedded further in (a value like "BCM 001"
+  or "BCM00 01" is rejected outright, never silently rewritten into
+  "BCM001" or any other folded form -- ADR-002 does not define embedded
+  whitespace as equivalent to no whitespace, and this migration must not
+  invent that equivalence any more than the runtime application does) ->
+  uppercase the body, preserving its exact width (leading zeros are
+  never dropped or reinterpreted) -> prepend "BCM" -> reject a final
+  result longer than the equipment.bcm_code column (64 characters).
 
   Item No: trim outer whitespace -> reject an empty result -> preserve
   case and internal formatting exactly (leading zeros included, no
@@ -131,11 +133,14 @@ def _canonicalize_bcm_code(raw: str) -> str:
     token = raw.strip()
     if token[: len(_BCM_PREFIX)].upper() == _BCM_PREFIX:
         token = token[len(_BCM_PREFIX) :]
-    token = token.strip()
     if not token:
         raise _CanonicalizationError("BCM Code must contain at least one character after the prefix.")
     if any(ch.isspace() for ch in token):
-        raise _CanonicalizationError("BCM Code must not contain whitespace embedded within the body.")
+        raise _CanonicalizationError(
+            "BCM Code must not contain whitespace after the prefix (a value such as 'BCM 001' is "
+            "invalid legacy data, not equivalent to 'BCM001' -- ADR-002 does not define that "
+            "equivalence, so it is rejected outright, never silently rewritten)."
+        )
     canonical = f"{_BCM_PREFIX}{token.upper()}"
     if len(canonical) > _MAX_IDENTIFIER_LENGTH:
         raise _CanonicalizationError(

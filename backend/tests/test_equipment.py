@@ -4,6 +4,12 @@ import pytest
 from sqlalchemy import select
 
 from tests.conftest import login
+from tests.identifier_vectors import (
+    BCM_INVALID_VECTORS,
+    BCM_VALID_VECTORS,
+    ITEM_NO_INVALID_VECTORS,
+    ITEM_NO_VALID_VECTORS,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -801,6 +807,99 @@ async def test_item_no_overlength_is_rejected_consistently_on_create_and_update(
     )
     assert update_resp.status_code == 422, update_resp.text
     assert update_resp.json()["code"] == "VALIDATION_ERROR"
+
+
+# ---------------------------------------------------------------------------
+# Shared test vectors (tests/identifier_vectors.py): the runtime API and
+# the migration 0005 CLI (tests/test_postgres_integration.py) are checked
+# against the exact same inputs/expected outcomes without either test
+# suite importing the other's canonicalization implementation. A vector
+# both suites disagree on is a real bug, not a coverage gap -- this is
+# what actually catches a "migration accepts BCM 001, runtime rejects it"
+# class of regression. See PR5-H3R-MIG follow-up.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("raw,expected_canonical", BCM_VALID_VECTORS)
+async def test_bcm_code_vector_accepted_with_expected_canonical_value(client, seeded_users, raw, expected_canonical):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": f"AST-VEC-BCM-{uuid.uuid4().hex[:8]}", "equipment_name": "Vector", "bcm_code": raw},
+    )
+    assert resp.status_code == 201, f"vector {raw!r} must be accepted: {resp.text}"
+    assert resp.json()["bcm_code"] == expected_canonical, f"vector {raw!r} canonicalized incorrectly"
+
+
+@pytest.mark.parametrize("raw,category", BCM_INVALID_VECTORS)
+async def test_bcm_code_vector_rejected_never_500(client, seeded_users, raw, category):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": f"AST-VEC-BCMX-{uuid.uuid4().hex[:8]}", "equipment_name": "Vector", "bcm_code": raw},
+    )
+    assert resp.status_code in (400, 422), f"vector {raw!r} ({category}) must be a controlled rejection: {resp.text}"
+    assert resp.status_code < 500, f"vector {raw!r} ({category}) must never 500: {resp.text}"
+
+    # Update must reject the same vector identically -- create/update parity.
+    created = await _create_equipment_with_bcm(
+        client, headers, f"AST-VEC-BCMX-UPD-{uuid.uuid4().hex[:8]}"
+    )
+    update_resp = await client.patch(
+        f"/api/v1/equipment/{created['id']}", headers=headers, json={"bcm_code": raw}
+    )
+    assert update_resp.status_code in (400, 422), (
+        f"vector {raw!r} ({category}) must be rejected on update too: {update_resp.text}"
+    )
+    assert update_resp.status_code < 500
+
+
+async def test_bcm_001_specifically_is_rejected_never_rewritten(client, seeded_users):
+    """The exact vector named in this round's fix: 'BCM 001' must be
+    rejected by the runtime, never silently rewritten to 'BCM001'."""
+    headers = await _auth_headers(client, seeded_users, "admin")
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "AST-BCM-SPACE-001", "equipment_name": "Vector", "bcm_code": "BCM 001"},
+    )
+    assert resp.status_code in (400, 422), resp.text
+    assert resp.status_code < 500
+
+
+@pytest.mark.parametrize("raw,expected_canonical", ITEM_NO_VALID_VECTORS)
+async def test_item_no_vector_accepted_with_expected_canonical_value(
+    client, seeded_users, raw, expected_canonical
+):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": f"AST-VEC-ITEM-{uuid.uuid4().hex[:8]}", "equipment_name": "Vector", "item_no": raw},
+    )
+    assert resp.status_code == 201, f"vector {raw!r} must be accepted: {resp.text}"
+
+    resolve_resp = await client.post(
+        "/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": expected_canonical}
+    )
+    assert resolve_resp.status_code == 200, (
+        f"vector {raw!r} must have canonicalized to {expected_canonical!r}: {resolve_resp.text}"
+    )
+    assert resolve_resp.json()["id"] == resp.json()["id"]
+
+
+@pytest.mark.parametrize("raw,category", ITEM_NO_INVALID_VECTORS)
+async def test_item_no_vector_rejected_never_500(client, seeded_users, raw, category):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": f"AST-VEC-ITEMX-{uuid.uuid4().hex[:8]}", "equipment_name": "Vector", "item_no": raw},
+    )
+    assert resp.status_code in (400, 422), f"vector {raw!r} ({category}) must be a controlled rejection: {resp.text}"
+    assert resp.status_code < 500, f"vector {raw!r} ({category}) must never 500: {resp.text}"
 
 
 # ---------------------------------------------------------------------------

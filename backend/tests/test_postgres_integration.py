@@ -1684,6 +1684,168 @@ async def test_migration_0005_aborts_on_overlength_legacy_bcm_after_canonicaliza
     )
 
 
+# ---------------------------------------------------------------------------
+# Follow-up fix: migration 0005 previously re-trimmed the body immediately
+# after stripping the "BCM" prefix, which silently absorbed a space
+# directly between the prefix and the digits -- "BCM 001" was wrongly
+# accepted and rewritten to "BCM001", while the runtime application
+# (app.services.identifiers.normalize_bcm_code) correctly rejected the
+# same input. These tests exercise the exact vectors named in that fix,
+# proving the migration now agrees with the runtime: reject, never
+# rewrite. See tests/identifier_vectors.py for the shared vector data
+# these mirror (duplicated here, not imported, per PR5's "shared
+# vectors, separate implementations" requirement -- this file must not
+# import from a module that itself might import runtime code).
+# ---------------------------------------------------------------------------
+
+
+async def test_migration_0005_aborts_on_legacy_bcm_space_after_prefix_not_rewritten():
+    """The exact regression vector: 'BCM 001' must abort the migration,
+    never be silently rewritten to 'BCM001'."""
+    await _assert_migration_0005_preflight_rejects_single_row(
+        "AST-0005-BCM-SPACE-1",
+        "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code) "
+        "VALUES (:id, :asset, 'Space After Prefix', 'available', '{}', :bcm)",
+        "AST-0005-BCM-SPACE-1",
+        extra_params={"bcm": "BCM 001"},
+    )
+
+
+async def test_migration_0005_aborts_on_legacy_bcm_outer_and_prefix_space_not_rewritten():
+    """' BCM 001 ' combines ordinary outer whitespace (which alone would
+    be fine, see the whitespace-collision tests above) with a
+    prefix-adjacent space (which is not) -- must still abort."""
+    await _assert_migration_0005_preflight_rejects_single_row(
+        "AST-0005-BCM-SPACE-2",
+        "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code) "
+        "VALUES (:id, :asset, 'Outer And Prefix Space', 'available', '{}', :bcm)",
+        "AST-0005-BCM-SPACE-2",
+        extra_params={"bcm": " BCM 001 "},
+    )
+
+
+async def test_migration_0005_aborts_on_legacy_bcm_space_within_prefix_like_text():
+    """'BC M001' does not even match the "BCM" prefix (the 4th character
+    is a space, not part of a valid prefix), so the whole string is
+    treated as the body -- which contains whitespace and must be
+    rejected, not partially matched or truncated."""
+    await _assert_migration_0005_preflight_rejects_single_row(
+        "AST-0005-BCM-SPACE-3",
+        "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code) "
+        "VALUES (:id, :asset, 'Space Within Prefix Text', 'available', '{}', :bcm)",
+        "AST-0005-BCM-SPACE-3",
+        extra_params={"bcm": "BC M001"},
+    )
+
+
+async def test_migration_0005_still_canonicalizes_valid_surrounding_whitespace():
+    """Regression guard for the fix above: ordinary OUTER whitespace
+    around an otherwise-clean value (no space between the prefix and the
+    body) must still canonicalize normally -- the fix must not have
+    become overly strict."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0004_equipment_item_no_bcm_code")
+
+        equipment_id = str(uuid.uuid4())
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code) "
+                        "VALUES (:id, 'AST-0005-VALID-WS', 'Valid Outer Whitespace', 'available', '{}', :bcm)"
+                    ),
+                    {"id": equipment_id, "bcm": "  BCM555  "},
+                )
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(text("SELECT bcm_code FROM equipment WHERE id = :id"), {"id": equipment_id})
+                ).scalar_one()
+                assert row == "BCM555"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0005_aborts_without_partial_rewrites_or_constraints():
+    """Transaction-safety guard: when preflight rejects one row, alembic's
+    transactional DDL must roll back the WHOLE attempt -- a different,
+    valid-but-non-canonical row that would have been rewritten earlier in
+    the same run must be found completely untouched afterward, and
+    neither CHECK constraint may exist."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0004_equipment_item_no_bcm_code")
+
+        valid_id = str(uuid.uuid4())
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                # A valid-but-non-canonical row (would normally be
+                # rewritten to "BCM777" during this same upgrade).
+                await conn.execute(
+                    text(
+                        "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code) "
+                        "VALUES (:id, 'AST-0005-ROLLBACK-VALID', 'Rollback Valid', 'available', '{}', 'bcm777')"
+                    ),
+                    {"id": valid_id},
+                )
+                # An uncanonicalizable row that must abort the whole run.
+                await conn.execute(
+                    text(
+                        "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata, bcm_code) "
+                        "VALUES (:id, 'AST-0005-ROLLBACK-INVALID', 'Rollback Invalid', 'available', '{}', :bcm)"
+                    ),
+                    {"id": str(uuid.uuid4()), "bcm": "BCM 999"},
+                )
+        finally:
+            await engine.dispose()
+
+        env = {**os.environ, "DATABASE_URL": _scratch_dsn("postgresql+asyncpg")}
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=str(_BACKEND_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode != 0, "upgrade must abort on the invalid row"
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(text("SELECT bcm_code FROM equipment WHERE id = :id"), {"id": valid_id})
+                ).scalar_one()
+                assert row == "bcm777", "the valid row must not have been partially rewritten by the aborted run"
+        finally:
+            await engine.dispose()
+
+        constraints = await _equipment_check_constraint_names()
+        assert "ck_equipment_bcm_code_canonical" not in constraints
+        assert "ck_equipment_item_no_canonical" not in constraints
+    finally:
+        await _drop_scratch_database()
+
+
 def test_migration_0005_does_not_import_runtime_application_modules():
     """PR5-H3R-MIG static inspection: migration 0005 must remain correct
     even if app.services.identifiers or app.core.exceptions change shape
