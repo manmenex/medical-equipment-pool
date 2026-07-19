@@ -44,7 +44,7 @@ export function EquipmentDetailPage() {
             <dd>{equipment.cal_due_date ?? "-"}</dd>
           </dl>
           <div className="mt-4 flex gap-2">
-            {equipment.status === "available" && (
+            {equipment.status === "available_at_pool" && (
               <Link
                 to={`/borrow?equipment_id=${equipment.id}`}
                 className="rounded-lg bg-status-borrowed px-4 py-2 text-sm font-medium text-white"
@@ -52,7 +52,7 @@ export function EquipmentDetailPage() {
                 ยืมเครื่องนี้
               </Link>
             )}
-            {equipment.status === "borrowed" && (
+            {equipment.status === "issued_to_ward" && (
               <Link
                 to={`/return?equipment_id=${equipment.id}`}
                 className="rounded-lg bg-status-available px-4 py-2 text-sm font-medium text-white"

@@ -9,14 +9,10 @@ import type { EquipmentStatus } from "@/types";
 
 const STATUS_OPTIONS: { value: EquipmentStatus | ""; label: string }[] = [
   { value: "", label: "ทุกสถานะ" },
-  { value: "available", label: "พร้อมใช้งาน" },
-  { value: "borrowed", label: "ถูกยืม" },
-  { value: "cleaning", label: "ทำความสะอาด" },
-  { value: "pm", label: "PM" },
-  { value: "calibration", label: "สอบเทียบ" },
-  { value: "repair", label: "ซ่อม" },
-  { value: "out_of_service", label: "ปลดระวาง" },
-  { value: "lost", label: "สูญหาย" },
+  { value: "available_at_pool", label: "พร้อมใช้งาน" },
+  { value: "issued_to_ward", label: "จ่ายให้หอผู้ป่วยแล้ว" },
+  { value: "unavailable_defective", label: "ไม่พร้อมใช้งาน" },
+  { value: "decommissioned", label: "ปลดระวางถาวร" },
 ];
 
 export function EquipmentListPage() {

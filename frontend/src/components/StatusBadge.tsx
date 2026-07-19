@@ -1,25 +1,21 @@
 import type { EquipmentStatus } from "@/types";
 
+// Roadmap PR6: 4-state model. A `legacy_status: "cleaning"` row is plain
+// AVAILABLE_AT_POOL equipment -- it renders with this same label/color,
+// never a distinct or defect-styled badge (owner-confirmed cleaning
+// retirement: see docs/audits/04-consolidated-implementation-plan.md PR6).
 const LABELS: Record<EquipmentStatus, string> = {
-  available: "พร้อมใช้งาน",
-  borrowed: "ถูกยืม",
-  cleaning: "ทำความสะอาด",
-  pm: "PM",
-  calibration: "สอบเทียบ",
-  repair: "ซ่อม",
-  out_of_service: "ปลดระวาง",
-  lost: "สูญหาย",
+  available_at_pool: "พร้อมใช้งาน",
+  issued_to_ward: "จ่ายให้หอผู้ป่วยแล้ว",
+  unavailable_defective: "ไม่พร้อมใช้งาน",
+  decommissioned: "ปลดระวางถาวร",
 };
 
 const COLORS: Record<EquipmentStatus, string> = {
-  available: "bg-status-available/15 text-status-available",
-  borrowed: "bg-status-borrowed/15 text-status-borrowed",
-  cleaning: "bg-status-cleaning/15 text-status-cleaning",
-  pm: "bg-status-pm/15 text-status-pm",
-  calibration: "bg-status-calibration/15 text-status-calibration",
-  repair: "bg-status-repair/15 text-status-repair",
-  out_of_service: "bg-status-out_of_service/15 text-status-out_of_service",
-  lost: "bg-status-lost/15 text-status-lost",
+  available_at_pool: "bg-status-available/15 text-status-available",
+  issued_to_ward: "bg-status-borrowed/15 text-status-borrowed",
+  unavailable_defective: "bg-status-repair/15 text-status-repair",
+  decommissioned: "bg-status-out_of_service/15 text-status-out_of_service",
 };
 
 export function StatusBadge({ status }: { status: EquipmentStatus }) {

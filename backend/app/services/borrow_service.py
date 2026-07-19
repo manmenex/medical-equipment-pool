@@ -18,12 +18,22 @@ from app.models.equipment import EquipmentStatus
 from app.models.transaction import TX_STATUS_BORROWED, TX_STATUS_RETURNED, BorrowTransaction
 from app.utils.parsing import parse_uuid
 
+# Roadmap PR6 / owner-confirmed cleaning retirement: "cleaning" is
+# deliberately absent here, not remapped. Cleaning is performed as part of
+# collecting/receiving equipment (AGENTS.md), not a separately recorded
+# receipt outcome -- a usable receipt already becomes AVAILABLE_AT_POOL
+# directly. Passing condition="cleaning" now falls through to the
+# `new_status is None` branch below and is rejected as an unknown
+# condition, the same as any other unrecognized value -- never silently
+# accepted or routed to a status. pm/calibration/repair all classify as
+# UNAVAILABLE_DEFECTIVE under the 4-state model (See
+# HOSPITAL_DOMAIN_MODEL.md): each blocks dispatch pending authorized
+# review, and the 4-state model has no more granular "why" status.
 RETURN_CONDITION_TO_STATUS = {
-    "available": EquipmentStatus.AVAILABLE,
-    "cleaning": EquipmentStatus.CLEANING,
-    "pm": EquipmentStatus.PM,
-    "calibration": EquipmentStatus.CALIBRATION,
-    "repair": EquipmentStatus.REPAIR,
+    "available": EquipmentStatus.AVAILABLE_AT_POOL,
+    "pm": EquipmentStatus.UNAVAILABLE_DEFECTIVE,
+    "calibration": EquipmentStatus.UNAVAILABLE_DEFECTIVE,
+    "repair": EquipmentStatus.UNAVAILABLE_DEFECTIVE,
 }
 
 
@@ -54,7 +64,11 @@ async def borrow(
     if equipment is None:
         raise EquipmentNotFoundError("Equipment not found")
 
-    if equipment.status != EquipmentStatus.AVAILABLE:
+    # Roadmap PR6: dispatch eligibility is exactly this equality, never a
+    # negative check like `!= ISSUED_TO_WARD` -- a broad negative check
+    # would accidentally allow UNAVAILABLE_DEFECTIVE or DECOMMISSIONED
+    # equipment to dispatch.
+    if equipment.status != EquipmentStatus.AVAILABLE_AT_POOL:
         raise EquipmentNotAvailableError(f"Equipment is currently in status '{equipment.status.value}'")
 
     transaction_no = await transaction_crud.generate_transaction_no(db)
@@ -82,8 +96,8 @@ async def borrow(
         await db.rollback()
         raise EquipmentNotAvailableError("Equipment was just borrowed by someone else") from exc
 
-    await equipment_crud.change_status(
-        db, equipment, new_status=EquipmentStatus.BORROWED, changed_by_user_id=borrower_user_id, reason="Borrowed"
+    await equipment_crud.change_status_for_dispatch_receipt(
+        db, equipment, new_status=EquipmentStatus.ISSUED_TO_WARD, changed_by_user_id=borrower_user_id, reason="Dispatched"
     )
     await audit_crud.create(
         db,
@@ -134,7 +148,7 @@ async def return_equipment(
     if equipment is None:
         raise EquipmentNotFoundError("Equipment not found")
 
-    await equipment_crud.change_status(
+    await equipment_crud.change_status_for_dispatch_receipt(
         db, equipment, new_status=new_status, changed_by_user_id=received_by_user_id, reason=f"Returned as {condition}"
     )
     await audit_crud.create(

@@ -299,7 +299,7 @@ async def test_existing_successful_paths_still_work_after_exception_handling_cha
     )
     assert resp.status_code == 201
     body = resp.json()
-    assert body["status"] == "available"
+    assert body["status"] == "available_at_pool"
     assert "qr_code_value" not in body
 
 

@@ -834,7 +834,7 @@ async def test_equipment_status_change_audit_row_has_correct_action_and_actor(cl
     status_resp = await client.post(
         f"/api/v1/equipment/{equipment_id}/status",
         headers=headers,
-        json={"status": "repair", "reason": "Needs a new wheel"},
+        json={"status": "unavailable_defective", "reason": "Needs a new wheel"},
     )
     assert status_resp.status_code == 200, status_resp.text
 
@@ -844,7 +844,7 @@ async def test_equipment_status_change_audit_row_has_correct_action_and_actor(cl
     assert len(rows) == 1
     row = rows[0]
     assert row.user_id == seeded_users["admin"].id
-    assert row.after_data == {"status": "repair", "reason": "Needs a new wheel"}
+    assert row.after_data == {"status": "unavailable_defective", "reason": "Needs a new wheel"}
 
 
 async def test_no_duplicate_audit_rows_for_single_action(client, seeded_users, db_session):

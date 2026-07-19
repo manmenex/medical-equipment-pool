@@ -4,7 +4,14 @@ from datetime import datetime
 from sqlalchemy import String, and_, case, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.equipment import Equipment, EquipmentStatus, EquipmentStatusHistory
+from app.core.exceptions import InvalidStatusTransitionError
+from app.models.equipment import (
+    DISPATCH_RECEIPT_TRANSITIONS,
+    MANUAL_LIFECYCLE_TRANSITIONS,
+    Equipment,
+    EquipmentStatus,
+    EquipmentStatusHistory,
+)
 from app.services.identifiers import strip_bcm_prefix
 from app.utils.pagination import decode_cursor, encode_cursor
 
@@ -171,7 +178,24 @@ async def change_status(
     new_status: EquipmentStatus,
     changed_by_user_id: uuid.UUID | None,
     reason: str | None = None,
+    allowed_transitions: dict[EquipmentStatus, frozenset[EquipmentStatus]],
 ) -> EquipmentStatusHistory:
+    """Single mutation point for every equipment status change (writes
+    EquipmentStatusHistory, updates Equipment.status). `allowed_transitions`
+    is required, not defaulted, so every caller must be explicit about
+    which transition authority it is exercising -- see
+    change_status_for_dispatch_receipt and change_status_for_manual_
+    lifecycle below, the only two call sites this function has (Roadmap
+    PR6-H2: a single shared table let the generic maintenance endpoint
+    perform dispatch/receipt-only transitions without the atomic
+    transaction bookkeeping those flows require). Never reads or writes
+    Equipment.legacy_status -- that column is historical/rollback-only
+    (Roadmap PR6) and must never gate or record an ordinary transition.
+    """
+    if new_status not in allowed_transitions.get(equipment.status, frozenset()):
+        raise InvalidStatusTransitionError(
+            f"Equipment cannot move from '{equipment.status.value}' to '{new_status.value}'."
+        )
     history = EquipmentStatusHistory(
         equipment_id=equipment.id,
         from_status=equipment.status.value if equipment.status else None,
@@ -183,6 +207,55 @@ async def change_status(
     db.add(history)
     await db.flush()
     return history
+
+
+async def change_status_for_dispatch_receipt(
+    db: AsyncSession,
+    equipment: Equipment,
+    *,
+    new_status: EquipmentStatus,
+    changed_by_user_id: uuid.UUID | None,
+    reason: str | None = None,
+) -> EquipmentStatusHistory:
+    """The only status-change entry point app.services.borrow_service may
+    use -- dispatch (AVAILABLE_AT_POOL -> ISSUED_TO_WARD) and receipt
+    (ISSUED_TO_WARD -> AVAILABLE_AT_POOL / UNAVAILABLE_DEFECTIVE), always
+    called alongside the BorrowTransaction create/close it must stay
+    atomic with. See app.models.equipment.DISPATCH_RECEIPT_TRANSITIONS.
+    """
+    return await change_status(
+        db,
+        equipment,
+        new_status=new_status,
+        changed_by_user_id=changed_by_user_id,
+        reason=reason,
+        allowed_transitions=DISPATCH_RECEIPT_TRANSITIONS,
+    )
+
+
+async def change_status_for_manual_lifecycle(
+    db: AsyncSession,
+    equipment: Equipment,
+    *,
+    new_status: EquipmentStatus,
+    changed_by_user_id: uuid.UUID | None,
+    reason: str | None = None,
+) -> EquipmentStatusHistory:
+    """The only status-change entry point the generic admin/BME
+    POST /equipment/{id}/status endpoint may use -- authorized maintenance
+    lifecycle changes only (defective marking, return-to-service,
+    decommission). Never ISSUED_TO_WARD as source or target: dispatch and
+    receipt are exclusively change_status_for_dispatch_receipt's job. See
+    app.models.equipment.MANUAL_LIFECYCLE_TRANSITIONS.
+    """
+    return await change_status(
+        db,
+        equipment,
+        new_status=new_status,
+        changed_by_user_id=changed_by_user_id,
+        reason=reason,
+        allowed_transitions=MANUAL_LIFECYCLE_TRANSITIONS,
+    )
 
 
 async def get_history(db: AsyncSession, equipment_id: uuid.UUID) -> list[EquipmentStatusHistory]:

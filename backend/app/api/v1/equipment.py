@@ -287,7 +287,12 @@ async def change_equipment_status(
     equipment = await equipment_crud.get_by_id(db, equipment_id)
     if equipment is None:
         raise EquipmentNotFoundError("Equipment not found")
-    await equipment_crud.change_status(
+    # Roadmap PR6-H2: this generic admin/BME endpoint may only perform
+    # authorized maintenance-lifecycle changes -- never a dispatch or
+    # receipt transition, which must stay atomic with the corresponding
+    # BorrowTransaction and belongs exclusively to app.services.
+    # borrow_service (See app.models.equipment.MANUAL_LIFECYCLE_TRANSITIONS).
+    await equipment_crud.change_status_for_manual_lifecycle(
         db, equipment, new_status=payload.status, changed_by_user_id=user.id, reason=payload.reason
     )
     await record_audit_event(

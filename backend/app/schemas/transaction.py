@@ -23,7 +23,15 @@ class BorrowRequest(BaseModel):
 
 
 class ReturnRequest(BaseModel):
-    condition: str = Field(description="available|cleaning|pm|calibration|repair")
+    # Roadmap PR6 / owner-confirmed cleaning retirement: "cleaning" is
+    # deliberately absent from this contract -- cleaning happens as part
+    # of collecting/receiving equipment (AGENTS.md), not a distinct return
+    # outcome. Passing it is rejected the same as any other unrecognized
+    # condition (see app.services.borrow_service.RETURN_CONDITION_TO_STATUS
+    # / return_equipment), never silently accepted. This field is pre-PR8:
+    # the atomic single-operation, binary usable/defective receipt contract
+    # is not implemented here.
+    condition: str = Field(description="available|pm|calibration|repair")
     notes: str | None = None
 
 

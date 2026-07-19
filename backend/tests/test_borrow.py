@@ -34,10 +34,10 @@ async def test_borrow_then_return_flow(client, seeded_users):
     )
     assert borrow_resp.status_code == 201, borrow_resp.text
     tx = borrow_resp.json()
-    assert tx["equipment"]["status"] == "borrowed"
+    assert tx["equipment"]["status"] == "issued_to_ward"
 
     check_resp = await client.get(f"/api/v1/equipment/{equipment['id']}", headers=admin_headers)
-    assert check_resp.json()["status"] == "borrowed"
+    assert check_resp.json()["status"] == "issued_to_ward"
 
     return_resp = await client.post(
         f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"condition": "available"}
@@ -46,7 +46,7 @@ async def test_borrow_then_return_flow(client, seeded_users):
     assert return_resp.json()["status"] == "returned"
 
     check_resp2 = await client.get(f"/api/v1/equipment/{equipment['id']}", headers=admin_headers)
-    assert check_resp2.json()["status"] == "available"
+    assert check_resp2.json()["status"] == "available_at_pool"
 
 
 async def test_cannot_borrow_unavailable_equipment(client, seeded_users):

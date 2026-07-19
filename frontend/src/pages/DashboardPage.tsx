@@ -27,40 +27,27 @@ export function DashboardPage() {
         <StatCard label="ทั้งหมด" value={summary?.total ?? 0} to="/equipment" />
         <StatCard
           label="พร้อมใช้งาน"
-          value={summary?.available ?? 0}
-          to="/equipment?status=available"
+          value={summary?.available_at_pool ?? 0}
+          to="/equipment?status=available_at_pool"
           accentClassName="text-status-available"
         />
         <StatCard
-          label="ถูกยืม"
-          value={summary?.borrowed ?? 0}
-          to="/equipment?status=borrowed"
+          label="จ่ายให้หอผู้ป่วยแล้ว"
+          value={summary?.issued_to_ward ?? 0}
+          to="/equipment?status=issued_to_ward"
           accentClassName="text-status-borrowed"
         />
         <StatCard
-          label="ทำความสะอาด"
-          value={summary?.cleaning ?? 0}
-          to="/equipment?status=cleaning"
-          accentClassName="text-status-cleaning"
-        />
-        <StatCard label="PM" value={summary?.pm ?? 0} to="/equipment?status=pm" accentClassName="text-status-pm" />
-        <StatCard
-          label="สอบเทียบ"
-          value={summary?.calibration ?? 0}
-          to="/equipment?status=calibration"
-          accentClassName="text-status-calibration"
-        />
-        <StatCard
-          label="ซ่อม"
-          value={summary?.repair ?? 0}
-          to="/equipment?status=repair"
+          label="ไม่พร้อมใช้งาน"
+          value={summary?.unavailable_defective ?? 0}
+          to="/equipment?status=unavailable_defective"
           accentClassName="text-status-repair"
         />
         <StatCard
-          label="สูญหาย"
-          value={summary?.lost ?? 0}
-          to="/equipment?status=lost"
-          accentClassName="text-status-lost"
+          label="ปลดระวางถาวร"
+          value={summary?.decommissioned ?? 0}
+          to="/equipment?status=decommissioned"
+          accentClassName="text-status-out_of_service"
         />
       </div>
 
