@@ -1,11 +1,17 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, and_, cast, func, or_, select
+from sqlalchemy import String, and_, case, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.equipment import Equipment, EquipmentStatus, EquipmentStatusHistory
+from app.services.identifiers import strip_bcm_prefix
 from app.utils.pagination import decode_cursor, encode_cursor
+
+# Roadmap PR5 / ADR-003: the confirmed operator-facing identifier's prefix,
+# reused from app.services.identifiers so search normalization and
+# persisted-form canonicalization can never diverge.
+_BCM_PREFIX = "BCM"
 
 
 async def get_by_id(db: AsyncSession, equipment_id: uuid.UUID) -> Equipment | None:
@@ -15,11 +21,69 @@ async def get_by_id(db: AsyncSession, equipment_id: uuid.UUID) -> Equipment | No
     return result.scalar_one_or_none()
 
 
-async def get_by_qr(db: AsyncSession, qr_value: str) -> Equipment | None:
+async def get_by_item_no(db: AsyncSession, item_no: str) -> Equipment | None:
+    """Exact Item No lookup -- the only supported QR-resolution match.
+
+    No partial/fuzzy matching: this is the internal QR-resolution path, not
+    the operator-facing BCM search below.
+    """
     result = await db.execute(
-        select(Equipment).where(Equipment.qr_code_value == qr_value, Equipment.deleted_at.is_(None))
+        select(Equipment).where(Equipment.item_no == item_no, Equipment.deleted_at.is_(None))
     )
     return result.scalar_one_or_none()
+
+
+def _normalize_bcm_query(raw: str) -> str:
+    return strip_bcm_prefix(raw)
+
+
+async def search_bcm(db: AsyncSession, *, q: str, limit: int = 10) -> list[Equipment]:
+    """BCM-Code-only manual-search suggestions (Roadmap PR5).
+
+    Searches `bcm_code` exclusively -- never item_no, equipment_name,
+    brand, model, or serial_number (those remain reachable only through the
+    separate, pre-existing general equipment list search). Case-insensitive,
+    trimmed, and tolerant of an optional leading "BCM" prefix on the query,
+    on both the query and target sides implicitly (partial ILIKE matching
+    against the full stored bcm_code, which always retains its own "BCM"
+    prefix, already finds it once the query's own optional prefix is
+    stripped).
+
+    An empty or prefix-only query (nothing left to search once "BCM" -- if
+    present -- is stripped) returns an empty list immediately without
+    touching the database, rather than falling through to an unbounded
+    `LIKE '%%'` scan of every equipment row.
+
+    Ranking: an exact match (case-insensitive, with or without the "BCM"
+    prefix on either side) sorts first; ties broken by shorter bcm_code
+    (a closer match) then alphabetically. `limit` bounds the result count
+    for both the suggestion-list use case and to keep the query cheap
+    against a multi-thousand-row table.
+    """
+    token = _normalize_bcm_query(q)
+    if not token:
+        return []
+
+    # Escape LIKE wildcards in the user-typed token itself so a BCM code
+    # containing a literal "%" or "_" (unlikely, but not guaranteed absent
+    # from future imported data) can't be searched for as a wildcard.
+    escaped_token = token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    like = f"%{escaped_token}%"
+    exact_candidates = {token.upper(), f"{_BCM_PREFIX}{token}".upper()}
+    exact_rank = case((func.upper(Equipment.bcm_code).in_(exact_candidates), 0), else_=1)
+
+    stmt = (
+        select(Equipment)
+        .where(
+            Equipment.deleted_at.is_(None),
+            Equipment.bcm_code.isnot(None),
+            Equipment.bcm_code.ilike(like, escape="\\"),
+        )
+        .order_by(exact_rank, func.length(Equipment.bcm_code), Equipment.bcm_code)
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
 
 
 async def get_by_asset_number(db: AsyncSession, asset_number: str) -> Equipment | None:
@@ -53,7 +117,6 @@ async def search(
                 Equipment.equipment_name.ilike(like),
                 Equipment.asset_number.ilike(like),
                 Equipment.serial_number.ilike(like),
-                Equipment.qr_code_value.ilike(like),
             )
         )
 

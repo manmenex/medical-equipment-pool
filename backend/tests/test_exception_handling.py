@@ -207,7 +207,7 @@ async def test_unknown_return_condition_returns_400_not_500(client, seeded_users
     borrow_resp = await client.post(
         "/api/v1/borrow",
         headers=nurse_headers,
-        json={"equipment_qr": equipment["qr_code_value"], "borrower_name": "Nurse Test"},
+        json={"equipment_id": equipment["id"], "borrower_name": "Nurse Test"},
     )
     assert borrow_resp.status_code == 201
     tx = borrow_resp.json()
@@ -300,7 +300,7 @@ async def test_existing_successful_paths_still_work_after_exception_handling_cha
     assert resp.status_code == 201
     body = resp.json()
     assert body["status"] == "available"
-    assert body["qr_code_value"] == "MEP:OK-0001"
+    assert "qr_code_value" not in body
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, require_roles
@@ -13,7 +13,7 @@ from app.core.audit import (
     record_audit_event,
 )
 from app.core.db_errors import translate_integrity_error
-from app.core.exceptions import EquipmentNotFoundError
+from app.core.exceptions import EquipmentNotFoundError, MalformedQrCodeError
 from app.core.redis import cache_delete_prefix
 from app.core.references import ensure_referenced_row_exists
 from app.crud import equipment as equipment_crud
@@ -23,13 +23,16 @@ from app.models.master_data import Department, EquipmentCategory, Location
 from app.models.user import ROLE_ADMIN, ROLE_BIOMEDICAL_ENGINEER
 from app.schemas.common import Page
 from app.schemas.equipment import (
+    BcmSuggestion,
     EquipmentCreate,
     EquipmentOut,
     EquipmentStatusChange,
     EquipmentStatusHistoryOut,
     EquipmentUpdate,
+    QrResolveRequest,
 )
-from app.services.qr_service import build_qr_value, generate_qr_png
+from app.services.identifiers import normalize_bcm_code, normalize_item_no
+from app.services.qr_service import extract_item_no_from_qr
 from app.utils.parsing import parse_uuid
 
 # Equipment's foreign-key fields, mapped to the model they reference, so a
@@ -76,6 +79,16 @@ async def list_equipment(
 
 
 def _serialize(equipment) -> dict:
+    """Full internal equipment state, for both audit before/after records
+    and as the source dict for EquipmentOut.model_validate(...). Includes
+    item_no so the audit trail stays complete — the operator-facing
+    boundary (See ADR-002 / ADR-003 — knowledge/architecture/
+    api-information-boundaries.md: Item No must never appear in a normal
+    operator-facing response) is enforced by EquipmentOut itself not
+    declaring an item_no field, not by omitting it here. Excludes
+    qr_code_value (retired legacy QR value, See ADR-004 — never read by
+    any active endpoint).
+    """
     return {
         "id": str(equipment.id),
         "asset_number": equipment.asset_number,
@@ -88,19 +101,52 @@ def _serialize(equipment) -> dict:
         "current_location_id": str(equipment.current_location_id) if equipment.current_location_id else None,
         "pm_due_date": equipment.pm_due_date,
         "cal_due_date": equipment.cal_due_date,
+        "item_no": equipment.item_no,
         "status": equipment.status,
-        "qr_code_value": equipment.qr_code_value,
+        "bcm_code": equipment.bcm_code,
         "created_at": equipment.created_at,
         "updated_at": equipment.updated_at,
     }
 
 
-@router.get("/by-qr/{qr_value}", response_model=EquipmentOut)
-async def get_by_qr(qr_value: str, db: AsyncSession = Depends(get_db), _user=Depends(get_current_user)):
-    equipment = await equipment_crud.get_by_qr(db, qr_value)
+@router.post("/resolve-qr", response_model=EquipmentOut)
+async def resolve_equipment_by_qr(
+    payload: QrResolveRequest, db: AsyncSession = Depends(get_db), _user=Depends(get_current_user)
+):
+    """QR resolver. See ADR-004: hospital Item-No QR is the only supported
+    format, resolved by exact match, never partial. A POST with a body
+    (rather than the raw text embedded in a GET path) so an arbitrary
+    scanned payload -- which may contain characters unsafe in a URL path,
+    or, if the scanner picked up an unrelated QR code, a full external URL
+    -- never lands in a server access log line via the request path/query
+    string.
+    """
+    try:
+        item_no = extract_item_no_from_qr(payload.raw_value)
+    except ValueError as exc:
+        raise MalformedQrCodeError(
+            "The scanned QR code could not be read as a valid equipment identifier."
+        ) from exc
+    equipment = await equipment_crud.get_by_item_no(db, item_no)
     if equipment is None:
-        raise EquipmentNotFoundError("Equipment not found for this QR code")
+        raise EquipmentNotFoundError("No equipment matches the scanned QR code.")
     return EquipmentOut.model_validate(_serialize(equipment))
+
+
+@router.get("/search/bcm", response_model=list[BcmSuggestion])
+async def search_equipment_by_bcm(
+    q: str = Query(default="", max_length=64),
+    limit: int = Query(default=10, ge=1, le=20),
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    """BCM-Code-only manual search. See ADR-003 and
+    app.crud.equipment.search_bcm for matching/ranking behavior. Response
+    is intentionally minimal (BcmSuggestion: id + bcm_code only) -- never
+    item_no, device name, brand, model, serial number, or status.
+    """
+    rows = await equipment_crud.search_bcm(db, q=q, limit=limit)
+    return [BcmSuggestion.model_validate({"id": str(row.id), "bcm_code": row.bcm_code}) for row in rows]
 
 
 @router.get("/{equipment_id}", response_model=EquipmentOut)
@@ -130,17 +176,6 @@ async def get_equipment_history(
     ]
 
 
-@router.get("/{equipment_id}/qrcode")
-async def get_equipment_qrcode(
-    equipment_id: uuid.UUID, db: AsyncSession = Depends(get_db), _user=Depends(get_current_user)
-):
-    equipment = await equipment_crud.get_by_id(db, equipment_id)
-    if equipment is None:
-        raise EquipmentNotFoundError("Equipment not found")
-    png_bytes = generate_qr_png(equipment.qr_code_value)
-    return Response(content=png_bytes, media_type="image/png")
-
-
 @router.post("", response_model=EquipmentOut, status_code=201)
 async def create_equipment(
     payload: EquipmentCreate,
@@ -149,7 +184,13 @@ async def create_equipment(
     user=Depends(require_roles(ROLE_ADMIN, ROLE_BIOMEDICAL_ENGINEER)),
 ):
     data = payload.model_dump()
-    data["qr_code_value"] = build_qr_value(payload.asset_number)
+    # Canonicalize identifiers before write (See ADR-002;
+    # app.services.identifiers) -- identical normalization for create and
+    # update, so uniqueness and lookup always compare the same form.
+    if data.get("bcm_code") is not None:
+        data["bcm_code"] = normalize_bcm_code(data["bcm_code"])
+    if data.get("item_no") is not None:
+        data["item_no"] = normalize_item_no(data["item_no"])
 
     # A separate dict for the ORM call: FK fields need real UUID objects, but
     # `data` itself is reused below as the audit log's after_data, which is
@@ -169,7 +210,8 @@ async def create_equipment(
     # type date is not JSON serializable) after the equipment row already
     # committed. mode="json" renders dates as ISO strings instead.
     audit_after = payload.model_dump(mode="json")
-    audit_after["qr_code_value"] = data["qr_code_value"]
+    audit_after["bcm_code"] = data.get("bcm_code")
+    audit_after["item_no"] = data.get("item_no")
     await record_audit_event(
         db,
         actor_user_id=user.id,
@@ -199,6 +241,12 @@ async def update_equipment(
     before = _serialize(equipment)
 
     update_data = payload.model_dump(exclude_unset=True)
+    # Same canonicalization as create (See ADR-002) -- update uses an
+    # identical normalization rule, never a looser one.
+    if update_data.get("bcm_code") is not None:
+        update_data["bcm_code"] = normalize_bcm_code(update_data["bcm_code"])
+    if update_data.get("item_no") is not None:
+        update_data["item_no"] = normalize_item_no(update_data["item_no"])
     for key in ("category_id", "department_owner_id", "current_location_id"):
         if key in update_data:
             update_data[key] = parse_uuid(update_data[key], key)
@@ -206,6 +254,13 @@ async def update_equipment(
 
     async with translate_integrity_error(db, resource="equipment"):
         equipment = await equipment_crud.update(db, equipment, data=update_data)
+    # The canonicalized values actually written, not the raw request body,
+    # so the audit trail matches what was persisted (See ADR-002).
+    audit_after = payload.model_dump(exclude_unset=True, mode="json")
+    if "bcm_code" in audit_after:
+        audit_after["bcm_code"] = update_data.get("bcm_code")
+    if "item_no" in audit_after:
+        audit_after["item_no"] = update_data.get("item_no")
     await record_audit_event(
         db,
         actor_user_id=user.id,
@@ -213,7 +268,7 @@ async def update_equipment(
         entity_type=AUDIT_ENTITY_EQUIPMENT,
         entity_id=equipment.id,
         before={k: str(v) for k, v in before.items()},
-        after=payload.model_dump(exclude_unset=True, mode="json"),
+        after=audit_after,
         request=request,
     )
     await db.commit()

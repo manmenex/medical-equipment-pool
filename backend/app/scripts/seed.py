@@ -15,7 +15,6 @@ from app.models.equipment import Equipment, EquipmentStatus
 from app.models.master_data import Department, EquipmentCategory, Location, Ward
 from app.models.transaction import BorrowTransaction
 from app.models.user import ALL_ROLES, Role, User
-from app.services.qr_service import build_qr_value
 
 DEPARTMENTS = [("MED", "อายุรกรรม"), ("SURG", "ศัลยกรรม"), ("ICU", "ผู้ป่วยวิกฤต"), ("ER", "อุบัติเหตุฉุกเฉิน")]
 CATEGORIES = [
@@ -89,7 +88,6 @@ async def seed_sample_equipment(db, refs: dict, count: int = 50) -> None:
             department_owner_id=random.choice(refs["departments"]).id,
             current_location_id=random.choice(refs["locations"]).id,
             status=EquipmentStatus.AVAILABLE,
-            qr_code_value=build_qr_value(asset_number),
         )
         db.add(eq)
     await db.flush()
@@ -114,7 +112,6 @@ async def seed_bulk(db, refs: dict, equipment_count: int, transaction_count: int
                 department_owner_id=random.choice(refs["departments"]).id,
                 current_location_id=random.choice(refs["locations"]).id,
                 status=EquipmentStatus.AVAILABLE,
-                qr_code_value=build_qr_value(asset_number),
             )
         )
         if len(batch) >= 5000:

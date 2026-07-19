@@ -30,7 +30,6 @@ async def create_borrow(
     ip, ua = _client_meta(request)
     tx = await borrow_service.borrow(
         db,
-        equipment_qr=payload.equipment_qr,
         equipment_id=payload.equipment_id,
         borrower_user_id=user.id,
         borrower_name=payload.borrower_name,

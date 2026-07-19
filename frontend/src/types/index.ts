@@ -30,11 +30,24 @@ export interface Equipment {
   department_owner_id: string | null;
   current_location_id: string | null;
   status: EquipmentStatus;
-  qr_code_value: string;
+  // bcm_code is the operator-facing identifier (display only here, See
+  // ADR-003). item_no and qr_code_value are deliberately NOT declared on
+  // this type -- item_no is an internal QR-resolution key the frontend
+  // never reads or renders (See ADR-002), and the backend no longer
+  // returns either in an operator-facing response.
+  bcm_code: string | null;
   pm_due_date: string | null;
   cal_due_date: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// Roadmap PR5: the minimum data the BCM manual-search suggestion list
+// needs to display a result and let the operator select it. Deliberately
+// excludes item_no and every other equipment field.
+export interface BcmSuggestion {
+  id: string;
+  bcm_code: string;
 }
 
 export interface EquipmentStatusHistoryItem {

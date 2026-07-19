@@ -30,7 +30,7 @@ async def test_borrow_then_return_flow(client, seeded_users):
     borrow_resp = await client.post(
         "/api/v1/borrow",
         headers=nurse_headers,
-        json={"equipment_qr": equipment["qr_code_value"], "borrower_name": "Nurse Somying"},
+        json={"equipment_id": equipment["id"], "borrower_name": "Nurse Somying"},
     )
     assert borrow_resp.status_code == 201, borrow_resp.text
     tx = borrow_resp.json()
@@ -57,14 +57,14 @@ async def test_cannot_borrow_unavailable_equipment(client, seeded_users):
     first = await client.post(
         "/api/v1/borrow",
         headers=nurse_headers,
-        json={"equipment_qr": equipment["qr_code_value"], "borrower_name": "Nurse A"},
+        json={"equipment_id": equipment["id"], "borrower_name": "Nurse A"},
     )
     assert first.status_code == 201
 
     second = await client.post(
         "/api/v1/borrow",
         headers=nurse_headers,
-        json={"equipment_qr": equipment["qr_code_value"], "borrower_name": "Nurse B"},
+        json={"equipment_id": equipment["id"], "borrower_name": "Nurse B"},
     )
     assert second.status_code == 409
     assert second.json()["code"] == "EQUIPMENT_NOT_AVAILABLE"
@@ -80,11 +80,8 @@ async def test_unique_active_borrow_db_constraint(db_session):
 
     from app.models.equipment import Equipment
     from app.models.transaction import BorrowTransaction
-    from app.services.qr_service import build_qr_value
 
-    equipment = Equipment(
-        asset_number="AST-1003", equipment_name="Ventilator", qr_code_value=build_qr_value("AST-1003")
-    )
+    equipment = Equipment(asset_number="AST-1003", equipment_name="Ventilator")
     db_session.add(equipment)
     await db_session.flush()
 
@@ -108,7 +105,7 @@ async def test_viewer_cannot_borrow(client, seeded_users):
     resp = await client.post(
         "/api/v1/borrow",
         headers=viewer_headers,
-        json={"equipment_qr": equipment["qr_code_value"], "borrower_name": "Someone"},
+        json={"equipment_id": equipment["id"], "borrower_name": "Someone"},
     )
     assert resp.status_code == 403
 
@@ -132,7 +129,7 @@ async def test_transaction_no_is_padded_to_at_least_eight_digits(client, seeded_
     resp = await client.post(
         "/api/v1/borrow",
         headers=admin_headers,
-        json={"equipment_qr": equipment["qr_code_value"], "borrower_name": "Nurse Pad"},
+        json={"equipment_id": equipment["id"], "borrower_name": "Nurse Pad"},
     )
     assert resp.status_code == 201, resp.text
     tx = resp.json()
@@ -159,7 +156,7 @@ async def test_borrow_creates_exactly_one_audit_row_matching_transaction_no(clie
     resp = await client.post(
         "/api/v1/borrow",
         headers=admin_headers,
-        json={"equipment_qr": equipment["qr_code_value"], "borrower_name": "Nurse Audit"},
+        json={"equipment_id": equipment["id"], "borrower_name": "Nurse Audit"},
     )
     assert resp.status_code == 201, resp.text
     tx = resp.json()

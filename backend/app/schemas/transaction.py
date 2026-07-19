@@ -6,8 +6,11 @@ from app.schemas.common import UUIDStr
 
 
 class BorrowRequest(BaseModel):
-    equipment_qr: str | None = None
-    equipment_id: str | None = None
+    # Equipment is always selected by internal UUID (See ADR-002) -- a QR
+    # scan or BCM Code search resolves to one client-side, before this
+    # request is made (See ADR-003, ADR-004). This endpoint does not
+    # accept a raw QR/identifier value itself.
+    equipment_id: str
     borrower_name: str = Field(min_length=1, max_length=150)
     ward_id: str | None = None
     department_id: str | None = None

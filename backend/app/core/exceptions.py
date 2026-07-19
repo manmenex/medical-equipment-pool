@@ -42,6 +42,19 @@ class InvalidInputError(DomainError):
     status_code = 400
 
 
+class MalformedQrCodeError(DomainError):
+    """Raised when a scanned QR payload cannot be read as a valid Item No.
+
+    Deliberately a 400 DomainError (client-side/input problem — the scanner
+    picked up something that isn't one of this hospital's equipment QR
+    labels), never a 404 EquipmentNotFoundError (which means the QR *was*
+    a well-formed Item No but no equipment record matches it).
+    """
+
+    code = "MALFORMED_QR_CODE"
+    status_code = 400
+
+
 class ConflictError(DomainError):
     """Generic safe fallback for an IntegrityError that could not be classified.
 
