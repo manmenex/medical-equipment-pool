@@ -48,22 +48,46 @@ EquipmentStatusType = Enum(
     values_callable=lambda enum_cls: [member.value for member in enum_cls],
 )
 
-# Roadmap PR6: the only status transitions a normal workflow may perform,
-# regardless of whether the caller is the dispatch/receipt flow
-# (app.services.borrow_service) or the purpose-built manual status-change
-# endpoint (POST /equipment/{id}/status). DECOMMISSIONED has no outgoing
-# entry -- terminal in normal workflow, see HOSPITAL_DOMAIN_MODEL.md.
-ALLOWED_STATUS_TRANSITIONS: dict["EquipmentStatus", frozenset["EquipmentStatus"]] = {
-    EquipmentStatus.AVAILABLE_AT_POOL: frozenset(
-        {EquipmentStatus.ISSUED_TO_WARD, EquipmentStatus.UNAVAILABLE_DEFECTIVE, EquipmentStatus.DECOMMISSIONED}
-    ),
+# Roadmap PR6-H2: transition authority is split by *caller*, not just by
+# state, because dispatch and receipt are not ordinary status edits -- they
+# must create/close a BorrowTransaction atomically with the status change
+# (see app.services.borrow_service). A single shared transition table would
+# let the generic admin/BME maintenance endpoint (POST
+# /equipment/{id}/status) desynchronize equipment.status from the
+# transaction ledger, e.g. by manually flipping ISSUED_TO_WARD ->
+# AVAILABLE_AT_POOL without ever closing the OPEN transaction. Each table
+# below is consumed by exactly one call site -- see
+# app.crud.equipment.change_status_for_dispatch_receipt (used only by
+# app.services.borrow_service) and .change_status_for_manual_lifecycle
+# (used only by the POST /equipment/{id}/status endpoint). Neither table
+# grants DECOMMISSIONED an outgoing entry -- terminal in normal workflow,
+# see HOSPITAL_DOMAIN_MODEL.md.
+
+# Dispatch (borrow) and receipt (return) transitions. Never reachable from
+# the manual maintenance endpoint -- ISSUED_TO_WARD does not appear as a
+# key in MANUAL_LIFECYCLE_TRANSITIONS below, so no manual caller can ever
+# originate a transition away from it, and AVAILABLE_AT_POOL -> ISSUED_TO_
+# WARD (dispatch) exists only here.
+DISPATCH_RECEIPT_TRANSITIONS: dict["EquipmentStatus", frozenset["EquipmentStatus"]] = {
+    EquipmentStatus.AVAILABLE_AT_POOL: frozenset({EquipmentStatus.ISSUED_TO_WARD}),
     EquipmentStatus.ISSUED_TO_WARD: frozenset(
         {EquipmentStatus.AVAILABLE_AT_POOL, EquipmentStatus.UNAVAILABLE_DEFECTIVE}
+    ),
+}
+
+# Manual, authorized maintenance-lifecycle transitions for the generic
+# admin/BME status endpoint only. Deliberately excludes ISSUED_TO_WARD as a
+# source OR target: this endpoint must never synthesize a dispatch, and
+# must never resolve/desynchronize an OPEN transaction by editing equipment
+# status directly -- receipt is exclusively app.services.borrow_service's
+# job, since only it closes the corresponding BorrowTransaction atomically.
+MANUAL_LIFECYCLE_TRANSITIONS: dict["EquipmentStatus", frozenset["EquipmentStatus"]] = {
+    EquipmentStatus.AVAILABLE_AT_POOL: frozenset(
+        {EquipmentStatus.UNAVAILABLE_DEFECTIVE, EquipmentStatus.DECOMMISSIONED}
     ),
     EquipmentStatus.UNAVAILABLE_DEFECTIVE: frozenset(
         {EquipmentStatus.AVAILABLE_AT_POOL, EquipmentStatus.DECOMMISSIONED}
     ),
-    EquipmentStatus.DECOMMISSIONED: frozenset(),
 }
 
 

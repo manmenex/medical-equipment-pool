@@ -1212,3 +1212,186 @@ async def test_dashboard_summary_uses_four_state_fields(client, seeded_users):
         "decommissioned",
     }
     assert body["available_at_pool"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# PR16-H2 (review of Draft PR #16): the generic admin/BME status endpoint
+# must not be able to perform a dispatch or receipt transition -- those must
+# stay atomic with the BorrowTransaction they create/close, which only
+# app.services.borrow_service does. See app.models.equipment.
+# DISPATCH_RECEIPT_TRANSITIONS / MANUAL_LIFECYCLE_TRANSITIONS and
+# app.crud.equipment.change_status_for_dispatch_receipt /
+# .change_status_for_manual_lifecycle.
+# ---------------------------------------------------------------------------
+
+
+async def test_generic_status_endpoint_cannot_synthesize_issued_to_ward(client, seeded_users):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR16-H2-0001")
+
+    resp = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/status",
+        headers=headers,
+        json={"status": "issued_to_ward", "reason": "Attempted manual dispatch"},
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["code"] == "INVALID_STATUS_TRANSITION"
+
+    check_resp = await client.get(f"/api/v1/equipment/{equipment['id']}", headers=headers)
+    assert check_resp.json()["status"] == "available_at_pool", "status must be unchanged after the rejected attempt"
+
+
+@pytest.mark.parametrize("target_status", ["available_at_pool", "unavailable_defective"])
+async def test_generic_status_endpoint_cannot_return_issued_equipment(client, seeded_users, target_status):
+    headers = await _auth_headers(client, seeded_users, "admin")
+    nurse_headers = await _auth_headers(client, seeded_users, "ward_nurse")
+    equipment = await _create_equipment_with_bcm(
+        client, headers, f"AST-PR16-H2-RET-{target_status[:4]}-{uuid.uuid4().hex[:6]}"
+    )
+
+    borrow_resp = await client.post(
+        "/api/v1/borrow",
+        headers=nurse_headers,
+        json={"equipment_id": equipment["id"], "borrower_name": "Nurse PR16"},
+    )
+    assert borrow_resp.status_code == 201, borrow_resp.text
+
+    resp = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/status",
+        headers=headers,
+        json={"status": target_status, "reason": "Attempted manual receipt"},
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["code"] == "INVALID_STATUS_TRANSITION"
+
+
+async def test_generic_status_endpoint_cannot_desynchronize_open_transaction(client, seeded_users, db_session):
+    """A rejected manual-endpoint receipt attempt must leave both the
+    equipment status AND the open BorrowTransaction completely untouched --
+    proving the block is real, not just a response-shape difference."""
+    from app.models.transaction import BorrowTransaction
+
+    headers = await _auth_headers(client, seeded_users, "admin")
+    nurse_headers = await _auth_headers(client, seeded_users, "ward_nurse")
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR16-H2-0002")
+
+    borrow_resp = await client.post(
+        "/api/v1/borrow",
+        headers=nurse_headers,
+        json={"equipment_id": equipment["id"], "borrower_name": "Nurse PR16"},
+    )
+    assert borrow_resp.status_code == 201, borrow_resp.text
+    tx_id = borrow_resp.json()["id"]
+
+    resp = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/status",
+        headers=headers,
+        json={"status": "available_at_pool", "reason": "Attempted manual receipt"},
+    )
+    assert resp.status_code == 409, resp.text
+
+    check_resp = await client.get(f"/api/v1/equipment/{equipment['id']}", headers=headers)
+    assert check_resp.json()["status"] == "issued_to_ward", "equipment must still read ISSUED_TO_WARD"
+
+    tx_row = (
+        await db_session.execute(select(BorrowTransaction).where(BorrowTransaction.id == uuid.UUID(tx_id)))
+    ).scalar_one()
+    assert tx_row.status == "borrowed", "the OPEN transaction must remain open (not desynchronized)"
+    assert tx_row.returned_at is None
+
+
+async def test_dispatch_and_return_services_still_perform_valid_transitions(client, seeded_users):
+    """End-to-end proof that H2's split did not break the actual
+    dispatch/receipt flows it protects -- dispatch, then a usable return,
+    then (via the now-separate manual endpoint) an authorized lifecycle
+    change, all still succeed."""
+    headers = await _auth_headers(client, seeded_users, "admin")
+    nurse_headers = await _auth_headers(client, seeded_users, "ward_nurse")
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR16-H2-0003")
+
+    borrow_resp = await client.post(
+        "/api/v1/borrow",
+        headers=nurse_headers,
+        json={"equipment_id": equipment["id"], "borrower_name": "Nurse PR16"},
+    )
+    assert borrow_resp.status_code == 201, borrow_resp.text
+    assert borrow_resp.json()["equipment"]["status"] == "issued_to_ward"
+    tx = borrow_resp.json()
+
+    return_resp = await client.post(
+        f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"condition": "available"}
+    )
+    assert return_resp.status_code == 200, return_resp.text
+    assert return_resp.json()["equipment"]["status"] == "available_at_pool"
+
+    lifecycle_resp = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/status",
+        headers=headers,
+        json={"status": "unavailable_defective", "reason": "Routine inspection finding"},
+    )
+    assert lifecycle_resp.status_code == 200, lifecycle_resp.text
+    assert lifecycle_resp.json()["status"] == "unavailable_defective"
+
+
+async def test_viewer_cannot_change_equipment_status(client, seeded_users):
+    """PR16-H2: auth behavior on the generic status endpoint is unchanged
+    by the transition-authority split -- role enforcement still runs."""
+    headers = await _auth_headers(client, seeded_users, "admin")
+    viewer_headers = await _auth_headers(client, seeded_users, "viewer")
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR16-H2-0004")
+
+    resp = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/status",
+        headers=viewer_headers,
+        json={"status": "unavailable_defective", "reason": "Should be forbidden"},
+    )
+    assert resp.status_code == 403
+
+
+async def test_status_change_audit_still_records_manual_lifecycle_change(client, seeded_users, db_session):
+    """PR16-H2: audit behavior on the generic endpoint's own (now
+    lifecycle-only) transitions is unchanged."""
+    from app.models.audit import AuditLog
+
+    headers = await _auth_headers(client, seeded_users, "admin")
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR16-H2-0005")
+
+    resp = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/status",
+        headers=headers,
+        json={"status": "unavailable_defective", "reason": "Needs inspection"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    rows = (
+        await db_session.execute(
+            select(AuditLog).where(
+                AuditLog.action == "status_change",
+                AuditLog.entity_type == "equipment",
+                AuditLog.entity_id == uuid.UUID(equipment["id"]),
+            )
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].after_data == {"status": "unavailable_defective", "reason": "Needs inspection"}
+
+
+# ---------------------------------------------------------------------------
+# PR16-H1: ReturnRequest.condition no longer advertises "cleaning" in the
+# generated OpenAPI contract, while runtime rejection (See
+# test_return_condition_cleaning_is_rejected_not_silently_accepted above)
+# remains covered separately.
+# ---------------------------------------------------------------------------
+
+
+async def test_openapi_return_request_does_not_advertise_cleaning():
+    from app.main import app
+
+    schema = app.openapi()["components"]["schemas"]["ReturnRequest"]
+    condition_description = schema["properties"]["condition"].get("description", "")
+    assert "cleaning" not in condition_description.lower()
+    # Whole-schema guard too, in case "cleaning" is ever moved into a
+    # different field (e.g. an enum list) rather than the description text.
+    import json
+
+    assert "cleaning" not in json.dumps(schema).lower()

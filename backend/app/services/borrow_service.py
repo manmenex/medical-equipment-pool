@@ -96,7 +96,7 @@ async def borrow(
         await db.rollback()
         raise EquipmentNotAvailableError("Equipment was just borrowed by someone else") from exc
 
-    await equipment_crud.change_status(
+    await equipment_crud.change_status_for_dispatch_receipt(
         db, equipment, new_status=EquipmentStatus.ISSUED_TO_WARD, changed_by_user_id=borrower_user_id, reason="Dispatched"
     )
     await audit_crud.create(
@@ -148,7 +148,7 @@ async def return_equipment(
     if equipment is None:
         raise EquipmentNotFoundError("Equipment not found")
 
-    await equipment_crud.change_status(
+    await equipment_crud.change_status_for_dispatch_receipt(
         db, equipment, new_status=new_status, changed_by_user_id=received_by_user_id, reason=f"Returned as {condition}"
     )
     await audit_crud.create(

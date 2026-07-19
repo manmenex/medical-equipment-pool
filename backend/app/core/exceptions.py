@@ -56,10 +56,13 @@ class MalformedQrCodeError(DomainError):
 
 
 class InvalidStatusTransitionError(DomainError):
-    """Raised when a status change would move equipment between states the
-    confirmed 4-state workflow does not allow (e.g. DECOMMISSIONED -> any,
-    or AVAILABLE_AT_POOL -> AVAILABLE_AT_POOL). See
-    app.models.equipment.ALLOWED_STATUS_TRANSITIONS.
+    """Raised when a status change would move equipment between states its
+    caller's transition authority does not allow (e.g. DECOMMISSIONED ->
+    any; AVAILABLE_AT_POOL -> AVAILABLE_AT_POOL; or, from the generic
+    admin/BME endpoint specifically, any transition into or out of
+    ISSUED_TO_WARD, which is dispatch/receipt-only). See
+    app.models.equipment.DISPATCH_RECEIPT_TRANSITIONS and
+    .MANUAL_LIFECYCLE_TRANSITIONS.
     """
 
     code = "INVALID_STATUS_TRANSITION"
