@@ -13,7 +13,7 @@ from app.core.security import hash_password
 from app.db.session import AsyncSessionLocal
 from app.models.equipment import Equipment, EquipmentStatus
 from app.models.master_data import Department, EquipmentCategory, Location, Ward
-from app.models.transaction import BorrowTransaction
+from app.models.transaction import BorrowTransaction, TransactionStatus
 from app.models.user import ALL_ROLES, Role, User
 
 DEPARTMENTS = [("MED", "อายุรกรรม"), ("SURG", "ศัลยกรรม"), ("ICU", "ผู้ป่วยวิกฤต"), ("ER", "อุบัติเหตุฉุกเฉิน")]
@@ -133,7 +133,7 @@ async def seed_bulk(db, refs: dict, equipment_count: int, transaction_count: int
                 transaction_no=f"TXBULK-{i + 1:08d}",
                 equipment_id=eq_id,
                 borrower_name=f"Borrower {i % 500}",
-                status="returned",
+                status=TransactionStatus.CLOSED,
                 condition_on_return="available",
             )
         )

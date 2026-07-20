@@ -69,7 +69,7 @@ export interface TransactionOut {
   ward_id: string | null;
   phone_number: string | null;
   condition_on_return: string | null;
-  status: "borrowed" | "returned" | "overdue";
+  status: "open" | "closed";
   notes: string | null;
 }
 

@@ -43,7 +43,7 @@ async def test_borrow_then_return_flow(client, seeded_users):
         f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"condition": "available"}
     )
     assert return_resp.status_code == 200, return_resp.text
-    assert return_resp.json()["status"] == "returned"
+    assert return_resp.json()["status"] == "closed"
 
     check_resp2 = await client.get(f"/api/v1/equipment/{equipment['id']}", headers=admin_headers)
     assert check_resp2.json()["status"] == "available_at_pool"
@@ -210,3 +210,191 @@ async def test_generate_transaction_no_fails_closed_for_unsupported_dialect(db_s
 
     with pytest.raises(transaction_crud.UnsupportedDatabaseDialectError):
         await transaction_crud.generate_transaction_no(db_session)
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR7 (knowledge/adr/ADR-005-transaction-model.md): the transaction
+# domain model's two-state OPEN/CLOSED lifecycle -- repository (app.crud.
+# transaction), service (app.services.borrow_service), and migration
+# 0007_transaction_lifecycle.py's PostgreSQL evidence lives in
+# tests/test_postgres_integration.py. These exercise the lifecycle via the
+# SQLite-backed suite.
+# ---------------------------------------------------------------------------
+
+
+async def test_new_dispatch_opens_a_transaction_with_status_open(client, seeded_users):
+    admin_headers = await _auth_headers(client, "admin")
+    equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7-0001")
+
+    resp = await client.post(
+        "/api/v1/borrow",
+        headers=admin_headers,
+        json={"equipment_id": equipment["id"], "borrower_name": "Nurse Open"},
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["status"] == "open"
+
+
+async def test_receipt_closes_the_transaction_and_records_outcome(client, seeded_users):
+    admin_headers = await _auth_headers(client, "admin")
+    equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7-0002")
+
+    borrow_resp = await client.post(
+        "/api/v1/borrow",
+        headers=admin_headers,
+        json={"equipment_id": equipment["id"], "borrower_name": "Nurse Close"},
+    )
+    assert borrow_resp.status_code == 201, borrow_resp.text
+    tx_id = borrow_resp.json()["id"]
+
+    return_resp = await client.post(
+        f"/api/v1/return/{tx_id}", headers=admin_headers, json={"condition": "available", "notes": "all good"}
+    )
+    assert return_resp.status_code == 200, return_resp.text
+    tx = return_resp.json()
+    assert tx["status"] == "closed"
+
+
+async def test_closing_an_already_closed_transaction_is_rejected(client, seeded_users):
+    admin_headers = await _auth_headers(client, "admin")
+    equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7-0003")
+
+    borrow_resp = await client.post(
+        "/api/v1/borrow",
+        headers=admin_headers,
+        json={"equipment_id": equipment["id"], "borrower_name": "Nurse Twice"},
+    )
+    tx_id = borrow_resp.json()["id"]
+
+    first = await client.post(f"/api/v1/return/{tx_id}", headers=admin_headers, json={"condition": "available"})
+    assert first.status_code == 200, first.text
+
+    second = await client.post(f"/api/v1/return/{tx_id}", headers=admin_headers, json={"condition": "available"})
+    assert second.status_code == 409
+    assert second.json()["code"] == "TRANSACTION_ALREADY_RETURNED"
+
+
+async def test_repository_close_sets_closed_status_and_receipt_fields(db_session):
+    """Repository-level (app.crud.transaction) proof, independent of the
+    HTTP layer: close() is the only path that may set
+    TransactionStatus.CLOSED, and it records returned_at/condition_on_return/
+    received_by_user_id/notes together."""
+    from app.crud import transaction as transaction_crud
+    from app.models.equipment import Equipment
+    from app.models.transaction import BorrowTransaction, TransactionStatus
+
+    equipment = Equipment(asset_number="AST-PR7-0004", equipment_name="Pump")
+    db_session.add(equipment)
+    await db_session.flush()
+
+    tx = BorrowTransaction(transaction_no="TX-PR7-0004", equipment_id=equipment.id, borrower_name="Nurse Repo")
+    db_session.add(tx)
+    await db_session.flush()
+    assert tx.status == TransactionStatus.OPEN, "create() must rely on the OPEN column default"
+
+    receiver_id = uuid.uuid4()
+    await transaction_crud.close(
+        db_session, tx, received_by_user_id=receiver_id, condition_on_return="available", notes="checked in"
+    )
+
+    assert tx.status == TransactionStatus.CLOSED
+    assert tx.returned_at is not None
+    assert tx.condition_on_return == "available"
+    assert tx.received_by_user_id == receiver_id
+    assert "checked in" in tx.notes
+
+
+async def test_repository_get_open_transaction_for_equipment(db_session):
+    from app.crud import transaction as transaction_crud
+    from app.models.equipment import Equipment
+    from app.models.transaction import BorrowTransaction, TransactionStatus
+
+    equipment = Equipment(asset_number="AST-PR7-0005", equipment_name="Pump")
+    db_session.add(equipment)
+    await db_session.flush()
+
+    assert await transaction_crud.get_open_transaction_for_equipment(db_session, equipment.id) is None
+
+    tx = BorrowTransaction(transaction_no="TX-PR7-0005", equipment_id=equipment.id, borrower_name="Nurse Lookup")
+    db_session.add(tx)
+    await db_session.flush()
+
+    found = await transaction_crud.get_open_transaction_for_equipment(db_session, equipment.id)
+    assert found is not None
+    assert found.id == tx.id
+
+    await transaction_crud.close(db_session, tx, received_by_user_id=None, condition_on_return="available", notes=None)
+    await db_session.flush()
+
+    assert await transaction_crud.get_open_transaction_for_equipment(db_session, equipment.id) is None
+
+
+async def test_check_overdue_returns_no_longer_exists(db_session):
+    """Codex PR7a review round 1 (BLOCKER): the hourly overdue-returns job
+    re-selected the same OPEN transactions every run with no de-duplication,
+    creating a fresh notification for the same transaction every hour
+    indefinitely. The approved MVP business model has no due-date/overdue
+    *workflow* at all -- fixed by removing the job (and the function),
+    not by patching it with deduplication. This asserts there is no code
+    path left that could reintroduce it by accident."""
+    from app.worker import scheduler
+
+    assert not hasattr(scheduler, "check_overdue_returns")
+
+
+async def test_scheduler_never_registers_the_disabled_overdue_job():
+    """The active scheduler must only ever run app.worker.scheduler's
+    PM/CAL-due check -- no job with the old "overdue_check" id, and no
+    other job that could generate an overdue notification, is registered.
+    Repeated start_scheduler()/stop_scheduler() cycles (e.g. app restarts)
+    can therefore never produce a duplicate -- or any -- overdue
+    notification, because there is no longer a job that runs the disabled
+    workflow at all."""
+    from app.worker import scheduler
+
+    for _ in range(3):
+        scheduler.start_scheduler()
+        assert scheduler._scheduler is not None
+        job_ids = {job.id for job in scheduler._scheduler.get_jobs()}
+        assert job_ids == {"pm_cal_due_check"}
+        assert "overdue_check" not in job_ids
+        scheduler.stop_scheduler()
+        assert scheduler._scheduler is None
+
+
+async def test_repeated_scheduler_restarts_create_zero_overdue_notifications(db_session):
+    """End-to-end proof for the Codex BLOCKER: even with an OPEN,
+    long-overdue transaction sitting in the database, repeatedly starting
+    and stopping the scheduler (simulating repeated app restarts, the
+    trigger for the original bug) creates zero notifications of any kind,
+    because the scheduler no longer runs anything that reads
+    BorrowTransaction.due_at or writes an "overdue" notification."""
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import select
+
+    from app.models.equipment import Equipment
+    from app.models.notification import Notification
+    from app.models.transaction import BorrowTransaction
+    from app.worker import scheduler
+
+    equipment = Equipment(asset_number="AST-PR7A-0007", equipment_name="Pump")
+    db_session.add(equipment)
+    await db_session.flush()
+
+    db_session.add(
+        BorrowTransaction(
+            transaction_no="TX-PR7A-0007",
+            equipment_id=equipment.id,
+            borrower_name="Nurse Overdue",
+            due_at=datetime.utcnow() - timedelta(days=30),
+        )
+    )
+    await db_session.commit()
+
+    for _ in range(3):
+        scheduler.start_scheduler()
+        scheduler.stop_scheduler()
+
+    result = await db_session.execute(select(Notification).where(Notification.type == "overdue"))
+    assert result.scalars().all() == []

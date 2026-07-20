@@ -27,7 +27,7 @@ See `docs/BUSINESS_RULES.md` for the full list with citations. Summary:
 
 - Exactly four equipment states: `AVAILABLE_AT_POOL`, `ISSUED_TO_WARD`, `UNAVAILABLE_DEFECTIVE`, `DECOMMISSIONED`.
 - Cleaning is a physical activity that may happen before or after receipt is recorded; it is never represented as a state and never needs a separate workflow. A usable receipt ends at `AVAILABLE_AT_POOL`; a defective receipt ends at `UNAVAILABLE_DEFECTIVE`.
-- Dispatch and receipt (`backend/app/services/borrow_service.py`) are the only paths that move equipment through `ISSUED_TO_WARD`; administrative status maintenance is a separate, narrower path. The current transaction-state field (`borrowed`/`returned`/`overdue`) differs from the approved target `OPEN`/`CLOSED` model planned for Roadmap PR7 — see `docs/BUSINESS_RULES.md` for the current-vs-planned split.
+- Dispatch and receipt (`backend/app/services/borrow_service.py`) are the only paths that move equipment through `ISSUED_TO_WARD`, and the only paths that open/close a transaction (`app.crud.transaction.create()`/`close()`); administrative status maintenance is a separate, narrower path. `BorrowTransaction.status` is exactly `TransactionStatus.OPEN`/`CLOSED` (Roadmap PR7's lifecycle slice) — see `docs/BUSINESS_RULES.md`.
 - Decommissioning must pass through `UNAVAILABLE_DEFECTIVE`; `AVAILABLE_AT_POOL` cannot skip directly to `DECOMMISSIONED`.
 - No patient tracking, no ward-to-ward transfer tracking, no MEMS/PM/calibration/recall workflow.
 
@@ -58,13 +58,13 @@ Source: `docs/PROJECT_WORKFLOW.md`.
 
 ## Current baseline
 
-`3a1d30b4560f77867dfe36e925c1f3ef97d71596` (branch `claude/medical-equipment-pool-0c7fz0`) as of this snapshot. Always confirm against `knowledge/CONTEXT.md` and `docs/ROADMAP.md`, which are updated more frequently than this file.
+`f4146b380f2fe182516db386de328c2633f72a5f` (branch `claude/medical-equipment-pool-0c7fz0`) as of this snapshot. Always confirm against `knowledge/CONTEXT.md` and `docs/ROADMAP.md`, which are updated more frequently than this file.
 
 ## Completed Roadmap
 
-Roadmap PR1-PR6 merged (security/availability foundation, structured exceptions, audit logging framework, transaction-number sequence, equipment identifier model, four-state equipment model), plus the Knowledge Layer v2 governance PR and the CI/AI-review-workflow infrastructure PR. Full table with GitHub PR numbers and squash SHAs: `docs/ROADMAP.md`.
+Roadmap PR1-PR6 merged (security/availability foundation, structured exceptions, audit logging framework, transaction-number sequence, equipment identifier model, four-state equipment model), plus the Knowledge Layer v2 governance PR, the CI/AI-review-workflow infrastructure PR, and the Knowledge & Governance Foundation PR. Full table with GitHub PR numbers and squash SHAs: `docs/ROADMAP.md`.
 
-Roadmap PR7-PR15 (dispatch record model through observability/schema hygiene) are planned and not yet started — see `docs/ROADMAP.md`.
+Roadmap PR7's transaction-lifecycle-model slice (`OPEN`/`CLOSED`) is in progress — see `docs/DOMAIN_MODEL.md` and `knowledge/adr/ADR-005-transaction-model.md`. PR7's remaining scope (`dispatch_type`, `routine_round`, ward-required, field cleanup) and PR8-PR15 (atomic receipt through observability/schema hygiene) are planned and not yet started — see `docs/ROADMAP.md`.
 
 ## Current AI responsibilities
 

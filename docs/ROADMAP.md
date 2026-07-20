@@ -7,7 +7,7 @@
 
 ## Current baseline
 
-`3a1d30b4560f77867dfe36e925c1f3ef97d71596` — squash commit of the CI/AI-review-workflow infrastructure PR (GitHub PR #17), on branch `claude/medical-equipment-pool-0c7fz0`.
+`f4146b380f2fe182516db386de328c2633f72a5f` — squash commit of the Knowledge & Governance Foundation PR (GitHub PR #18), on branch `claude/medical-equipment-pool-0c7fz0`.
 
 ## Numbering note
 
@@ -25,22 +25,25 @@
 | PR5 | Equipment Master identifier model, BCM manual search, hospital Item-No QR identification | #14 | `099f0b8` |
 | PR6 | Equipment State Model Migration (4 states) | #16 | `9994c27` |
 | — (infrastructure) | GitHub Actions CI and AI review workflow | #17 | `3a1d30b` |
+| — (governance) | Knowledge & Governance Foundation | #18 | `f4146b3` |
 
-Full rationale and review-fix history for PR5 through the CI infrastructure PR: `docs/DECISION_LOG.md`.
+Full rationale and review-fix history for PR5 through the Knowledge & Governance Foundation PR: `docs/DECISION_LOG.md`.
 
 ## In progress
 
 | Roadmap PR | Title | Status |
 |---|---|---|
-| — (governance) | Knowledge & Governance Foundation (this PR) | Draft, pending review |
+| PR7 (7a slice) | Transaction lifecycle model (OPEN/CLOSED) | Draft, pending review — see below |
+
+**PR7 note:** `docs/audits/04-consolidated-implementation-plan.md` Part D's full PR7 entry recommends splitting into a 7a (lifecycle model) and 7b (`dispatch_type`/`routine_round`/ward-required/field-cleanup) slice "if the reviewing team prefers smaller units." The row above is the 7a slice only — `TransactionStatus` (`OPEN`/`CLOSED`), the `create()`/`close()` mutator split, `legacy_status` preservation, and disabling the deprecated `due_at`-driven overdue-notification scheduler job (Codex PR7a review round 1, BLOCKER — see `docs/DECISION_LOG.md`). It does **not** implement `dispatch_type`, `routine_round`, a required `ward_id`, or removal of `borrower_name`/`due_at`; those remain planned below as PR7's remaining scope. Concurrent-receipt protection (two simultaneous receipts racing on the same OPEN transaction) is explicitly **not** in this slice — it stays Roadmap PR8's responsibility. See `knowledge/adr/ADR-005-transaction-model.md` and `docs/DECISION_LOG.md`.
 
 ## Planned (not yet started)
 
-Per `docs/audits/04-consolidated-implementation-plan.md` Part D, unchanged:
+Per `docs/audits/04-consolidated-implementation-plan.md` Part D, except PR7's lifecycle slice noted above as in progress:
 
 | Roadmap PR | Title |
 |---|---|
-| PR7 | Dispatch Record Model (OPEN/CLOSED, dispatch type, routine round, field cleanup) |
+| PR7 (7b slice) | Transaction fields: dispatch type, routine round, required ward_id, borrower_name/due_at removal |
 | PR8 | Atomic Single-Operation Equipment Receipt with concurrency guard |
 | PR9 | Ward Correction Action (audited) |
 | PR10 | Role Model Consolidation (3 roles) |
@@ -69,3 +72,5 @@ Detail and rationale: `AGENTS.md` ("Confirmed Future Workflow Direction"), `docs
 | Per-decision rationale for PR1 through Governance Pack v1.0 | `docs/PROJECT_MEMORY.md` |
 | Current-state AI-memory snapshot | `knowledge/PROJECT_MEMORY.md` |
 | Right-now state (current PR, outstanding work, risks) | `knowledge/CONTEXT.md` |
+| Domain entity structural reference | `docs/DOMAIN_MODEL.md` |
+| Transaction lifecycle decision (PR7 7a slice) | `knowledge/adr/ADR-005-transaction-model.md` |

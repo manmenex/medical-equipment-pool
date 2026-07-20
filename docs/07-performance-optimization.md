@@ -25,7 +25,7 @@
 ## Database
 - Targeted indexes for every query pattern (see `02-database-schema.md §6`)
 - `pg_trgm` GIN indexes make `ILIKE '%term%'` searches index-backed instead of sequential scans
-- Partial indexes (`WHERE deleted_at IS NULL`, `WHERE status='borrowed'`) keep index size small and fast
+- Partial indexes (`WHERE deleted_at IS NULL`, `WHERE status='open'`) keep index size small and fast
 - `EXPLAIN ANALYZE` reviewed for the 5 hottest queries (search, dashboard summary, active-borrow lookup, PM/CAL due list, transaction history) before each release
 - Monthly partitioning plan for `borrow_transactions` ready to activate once volume passes ~1M rows, keeping recent-month queries fast regardless of historical size
 - `autovacuum` tuned (lower scale factor) on high-churn tables (`equipment`, `borrow_transactions`)
