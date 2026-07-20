@@ -28,7 +28,7 @@ class IntegrityViolationKind(str, Enum):
     UNKNOWN = "unknown"
 
 
-def _classify(exc: IntegrityError) -> IntegrityViolationKind:
+def classify_integrity_error(exc: IntegrityError) -> IntegrityViolationKind:
     """Classify an IntegrityError using the driver's structured error code.
 
     Preferred path: PostgreSQL SQLSTATE (asyncpg exposes this directly on
@@ -99,7 +99,7 @@ async def translate_integrity_error(db: AsyncSession, *, resource: str) -> Async
         yield
     except IntegrityError as exc:
         await db.rollback()
-        kind = _classify(exc)
+        kind = classify_integrity_error(exc)
         logger.info(
             "Integrity error on resource=%s classified as %s (driver_exc=%s)",
             resource,

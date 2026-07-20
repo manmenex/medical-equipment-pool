@@ -37,6 +37,16 @@ class BorrowRequest(BaseModel):
     dropoff_location_id: str | None = None
     notes: str | None = None
 
+    # Codex PR20 review round 1, MAJOR 1: the default Pydantic/FastAPI
+    # behavior used elsewhere in this codebase (silently ignore unrecognized
+    # fields) let a caller still send borrower_name/due_at/quantity with no
+    # error at all, which is not "removed from the contract" -- it's
+    # silently accepted and discarded. BorrowRequest (only -- not a global
+    # BaseModel change) now rejects any field it does not declare with a
+    # 422, exactly like a missing required field, so all three genuinely
+    # cannot be supplied.
+    model_config = {"extra": "forbid"}
+
     @model_validator(mode="after")
     def _validate_routine_round(self) -> "BorrowRequest":
         # Confirmed acceptance criteria (docs/audits/04-consolidated-

@@ -458,30 +458,102 @@ async def test_borrow_request_missing_dispatch_type_is_rejected():
 
 
 async def test_borrow_request_has_no_borrower_name_field():
+    from pydantic import ValidationError
+
     from app.schemas.transaction import BorrowRequest
 
     assert "borrower_name" not in BorrowRequest.model_fields
-    # Pydantic's default behavior (used throughout this codebase -- no
-    # extra="forbid" precedent anywhere) is to silently ignore unrecognized
-    # input fields rather than raise. Confirmed here so a legacy caller that
-    # still sends borrower_name does not get a hard error, while the value
-    # itself is never stored or forwarded to the write path.
-    req = BorrowRequest(
-        equipment_id=str(uuid.uuid4()), ward_id=str(uuid.uuid4()), dispatch_type="on_demand", borrower_name="Nurse"
-    )
-    assert not hasattr(req, "borrower_name")
+    # Codex PR20 review round 1, MAJOR 1: the default Pydantic/FastAPI
+    # behavior used elsewhere in this codebase (silently ignore
+    # unrecognized fields) let a caller still send borrower_name with no
+    # error at all, which is not "removed from the contract" -- it's
+    # silently accepted and discarded. BorrowRequest (only) now sets
+    # extra="forbid", so a legacy caller still sending borrower_name gets a
+    # hard 422, exactly like a missing required field.
+    with pytest.raises(ValidationError):
+        BorrowRequest(
+            equipment_id=str(uuid.uuid4()), ward_id=str(uuid.uuid4()), dispatch_type="on_demand", borrower_name="Nurse"
+        )
 
 
 async def test_borrow_request_has_no_due_at_field():
+    from pydantic import ValidationError
+
     from app.schemas.transaction import BorrowRequest
 
     assert "due_at" not in BorrowRequest.model_fields
+    with pytest.raises(ValidationError):
+        BorrowRequest(
+            equipment_id=str(uuid.uuid4()),
+            ward_id=str(uuid.uuid4()),
+            dispatch_type="on_demand",
+            due_at="2026-01-01T00:00:00",
+        )
 
 
 async def test_borrow_request_has_no_quantity_field():
+    from pydantic import ValidationError
+
     from app.schemas.transaction import BorrowRequest
 
     assert "quantity" not in BorrowRequest.model_fields
+    with pytest.raises(ValidationError):
+        BorrowRequest(equipment_id=str(uuid.uuid4()), ward_id=str(uuid.uuid4()), dispatch_type="on_demand", quantity=2)
+
+
+@pytest.mark.parametrize(
+    ("extra_field", "extra_value"),
+    [
+        ("borrower_name", "Nurse Test"),
+        ("due_at", "2026-01-01T00:00:00"),
+        ("quantity", 2),
+    ],
+)
+async def test_removed_field_in_borrow_request_is_rejected_with_no_side_effects(
+    client, seeded_users, db_session, extra_field, extra_value
+):
+    """Codex PR20 review round 1, MAJOR 1: API-level proof, not just a
+    schema-level unit test -- POSTing a removed field must fail the
+    request entirely (422, before the handler body ever runs), so it can
+    never create a transaction, change equipment status, or write an audit
+    record, exactly as if the field genuinely does not exist."""
+    from sqlalchemy import select
+
+    from app.models.audit import AuditLog
+    from app.models.transaction import BorrowTransaction
+
+    admin_headers = await _auth_headers(client, "admin")
+    equipment = await _create_equipment(client, admin_headers, asset_number=f"AST-PR20-{extra_field}")
+    ward = await _create_ward(client, admin_headers, code=f"W-PR20-{extra_field}")
+
+    resp = await client.post(
+        "/api/v1/borrow",
+        headers=admin_headers,
+        json={
+            "equipment_id": equipment["id"],
+            "ward_id": ward["id"],
+            "dispatch_type": "on_demand",
+            extra_field: extra_value,
+        },
+    )
+    assert resp.status_code == 422, resp.text
+
+    check_resp = await client.get(f"/api/v1/equipment/{equipment['id']}", headers=admin_headers)
+    assert check_resp.json()["status"] == "available_at_pool", "equipment status must be unchanged"
+
+    tx_rows = (
+        await db_session.execute(
+            select(BorrowTransaction).where(BorrowTransaction.equipment_id == uuid.UUID(equipment["id"]))
+        )
+    ).scalars().all()
+    assert tx_rows == [], "no transaction may be created when the request is rejected"
+
+    audit_rows = (
+        await db_session.execute(
+            select(AuditLog).where(AuditLog.action == "borrow", AuditLog.entity_type == "borrow_transaction")
+        )
+    ).scalars().all()
+    assert audit_rows == [], "no audit record may be created when the request is rejected"
 
 
 async def test_routine_round_dispatch_creates_exactly_one_open_transaction(client, seeded_users, db_session):

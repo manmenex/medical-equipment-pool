@@ -3,6 +3,7 @@ import uuid
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.db_errors import IntegrityViolationKind, classify_integrity_error
 from app.core.exceptions import (
     EquipmentNotAvailableError,
     EquipmentNotFoundError,
@@ -11,10 +12,12 @@ from app.core.exceptions import (
     TransactionNotFoundError,
 )
 from app.core.redis import cache_delete_prefix
+from app.core.references import ensure_referenced_row_exists
 from app.crud import audit as audit_crud
 from app.crud import equipment as equipment_crud
 from app.crud import transaction as transaction_crud
 from app.models.equipment import EquipmentStatus
+from app.models.master_data import Ward
 from app.models.transaction import BorrowTransaction, DispatchType, RoutineRound, TransactionStatus
 from app.utils.parsing import parse_uuid
 
@@ -70,6 +73,20 @@ async def borrow(
     if equipment.status != EquipmentStatus.AVAILABLE_AT_POOL:
         raise EquipmentNotAvailableError(f"Equipment is currently in status '{equipment.status.value}'")
 
+    # Codex PR20 review round 1, MAJOR 3: ward_id is required (Roadmap
+    # PR7b), so an invalid reference here is a genuine, common client input
+    # error, not the rare concurrent-dispatch race the IntegrityError
+    # handler below exists for -- it must not surface as "Equipment was
+    # just borrowed by someone else". Validated proactively, the same
+    # pattern app.api.v1.equipment/master_data already use for their own
+    # foreign-key fields (see app.core.references), so it is a 400
+    # InvalidInputError (code INVALID_INPUT) on both SQLite (which does not
+    # enforce FK constraints) and PostgreSQL alike, and the IntegrityError
+    # handler below is only ever reached for a genuine unique-index
+    # collision.
+    ward_uuid = parse_uuid(ward_id, "ward_id")
+    await ensure_referenced_row_exists(db, Ward, ward_uuid, field_name="ward_id")
+
     transaction_no = await transaction_crud.generate_transaction_no(db)
 
     # Roadmap PR7b: ward_id and dispatch_type are required for every new
@@ -87,7 +104,7 @@ async def borrow(
                 "transaction_no": transaction_no,
                 "equipment_id": equipment.id,
                 "borrower_user_id": borrower_user_id,
-                "ward_id": parse_uuid(ward_id, "ward_id"),
+                "ward_id": ward_uuid,
                 "dispatch_type": dispatch_type,
                 "routine_round": routine_round,
                 "department_id": parse_uuid(department_id, "department_id"),
@@ -99,7 +116,18 @@ async def borrow(
         )
     except IntegrityError as exc:
         await db.rollback()
-        raise EquipmentNotAvailableError("Equipment was just borrowed by someone else") from exc
+        # Codex PR20 review round 1, MAJOR 3: only a genuine unique-index
+        # collision (idx_tx_one_active_borrow -- two concurrent dispatches
+        # of the same equipment) maps to the existing concurrency response.
+        # ward_id is already validated above, so a foreign-key violation
+        # reaching here would mean the ward was deleted in the narrow
+        # window between that check and this flush -- still a bad
+        # reference, not an equipment conflict -- and any other
+        # classification is treated the same way: never silently
+        # mislabeled as "Equipment was just borrowed by someone else".
+        if classify_integrity_error(exc) is IntegrityViolationKind.UNIQUE:
+            raise EquipmentNotAvailableError("Equipment was just borrowed by someone else") from exc
+        raise InvalidInputError("This dispatch references data that is no longer valid.") from exc
 
     await equipment_crud.change_status_for_dispatch_receipt(
         db, equipment, new_status=EquipmentStatus.ISSUED_TO_WARD, changed_by_user_id=borrower_user_id, reason="Dispatched"
