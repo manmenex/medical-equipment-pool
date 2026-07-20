@@ -50,6 +50,22 @@ Clearly label local, CI, manual, inspection-only, reported, and unknown evidence
 - Known limitations:
 - Deferred follow-ups:
 
+## Merge readiness checklist
+
+See `docs/AI_REVIEW_WORKFLOW.md` for the full Claude → Codex → owner sequence
+this checklist supports.
+
+- [ ] Base SHA recorded (see Reference and purpose)
+- [ ] Scope stated (see Scope)
+- [ ] Tests listed (see Evidence)
+- [ ] Migration impact stated (see Change surface)
+- [ ] Rollback stated (see Operations)
+- [ ] Out-of-scope stated (see Scope)
+- [ ] CI passing (all required GitHub Actions checks green on the current head SHA)
+- [ ] Reviewed head SHA recorded
+- [ ] Codex review completed for the exact reviewed head SHA
+- [ ] Owner approval recorded before merge
+
 ## Author checklist
 
 - [ ] Scope matches the assigned task/Roadmap section
