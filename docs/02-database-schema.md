@@ -248,7 +248,7 @@ CREATE TABLE borrow_transactions (
     condition_on_return VARCHAR(30),
     notes TEXT,
     received_by_user_id UUID REFERENCES users(id),
-    status VARCHAR(20) NOT NULL DEFAULT 'borrowed', -- borrowed | returned | overdue
+    status VARCHAR(10) NOT NULL DEFAULT 'open', -- open | closed (Roadmap PR7; knowledge/adr/ADR-005-transaction-model.md -- "overdue" is a disabled notification concept, never a status value)
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -256,12 +256,12 @@ CREATE INDEX idx_tx_equipment ON borrow_transactions (equipment_id);
 CREATE INDEX idx_tx_status ON borrow_transactions (status);
 CREATE INDEX idx_tx_borrowed_at ON borrow_transactions (borrowed_at DESC);
 CREATE INDEX idx_tx_ward ON borrow_transactions (ward_id);
-CREATE INDEX idx_tx_due_at ON borrow_transactions (due_at) WHERE status = 'borrowed';
+CREATE INDEX idx_tx_due_at ON borrow_transactions (due_at) WHERE status = 'open';
 
--- ป้องกันยืมเครื่องเดียวกันซ้ำซ้อน (1 เครื่อง มีได้แค่ 1 รายการ "borrowed" ที่ยังไม่คืน)
+-- ป้องกันยืมเครื่องเดียวกันซ้ำซ้อน (1 เครื่อง มีได้แค่ 1 รายการ "open" ที่ยังไม่คืน)
 CREATE UNIQUE INDEX idx_tx_one_active_borrow
     ON borrow_transactions (equipment_id)
-    WHERE status = 'borrowed';
+    WHERE status = 'open';
 ```
 
 `idx_tx_one_active_borrow` คือกลไกระดับ DB ที่ป้องกัน race condition เวลามีผู้ใช้ 2 คน scan QR ยืมเครื่องเดียวกันพร้อมกัน — DB จะ reject รายการที่สองด้วย unique-violation แทนที่จะพึ่งเช็คที่ application layer อย่างเดียว

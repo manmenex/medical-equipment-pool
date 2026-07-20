@@ -8,7 +8,6 @@ from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.equipment import Equipment
 from app.models.notification import Notification
-from app.models.transaction import BorrowTransaction, TransactionStatus
 from app.models.user import ROLE_ADMIN, ROLE_BIOMEDICAL_ENGINEER, Role, User
 
 logger = logging.getLogger(__name__)
@@ -71,35 +70,20 @@ async def check_pm_cal_due() -> None:
         logger.info("PM/CAL due check complete: %d PM, %d CAL", len(pm_due), len(cal_due))
 
 
-async def check_overdue_returns() -> None:
-    async with AsyncSessionLocal() as db:
-        from datetime import datetime
-
-        now = datetime.utcnow()
-        overdue = (
-            await db.execute(
-                select(BorrowTransaction).where(
-                    BorrowTransaction.status == TransactionStatus.OPEN,
-                    BorrowTransaction.due_at.is_not(None),
-                    BorrowTransaction.due_at < now,
-                )
-            )
-        ).scalars().all()
-        for tx in overdue:
-            # Roadmap PR7 (knowledge/adr/ADR-005-transaction-model.md): the
-            # transaction lifecycle has exactly two states, OPEN and CLOSED --
-            # "overdue" is no longer a status value. An overdue transaction is
-            # still OPEN (it has not been received); this job now only
-            # notifies engineers and leaves status untouched, rather than
-            # writing a third, no-longer-valid status.
-            await _notify_engineers(
-                db,
-                title=f"เครื่องมือเกินกำหนดคืน: {tx.transaction_no}",
-                body=f"ผู้ยืม {tx.borrower_name} ควรคืนภายใน {tx.due_at}",
-                notif_type="overdue",
-            )
-        await db.commit()
-        logger.info("Overdue check complete: %d overdue", len(overdue))
+# The overdue-returns notification job (formerly `check_overdue_returns`,
+# registered hourly as "overdue_check") is disabled and removed, not merely
+# unregistered. The approved MVP business model
+# (`knowledge/adr/ADR-005-transaction-model.md`; `docs/BUSINESS_RULES.md`
+# "Dispatch/Return owns transaction lifecycle") has no due-date or overdue
+# *workflow* at all -- a transaction is only ever OPEN or CLOSED, and
+# "overdue" is not tracked in any form, notification included. The removed
+# job re-selected every OPEN transaction past its `due_at` on every hourly
+# tick with no de-duplication, so it created a fresh notification for the
+# same transaction every hour indefinitely (Codex REQUEST_CHANGES,
+# PR7a review round 1, BLOCKER). The fix is to stop running this workflow,
+# not to bolt deduplication onto a deprecated feature -- see
+# `test_scheduler_never_registers_or_runs_a_disabled_overdue_job` in
+# `tests/test_borrow.py` for the regression coverage.
 
 
 def start_scheduler() -> None:
@@ -108,7 +92,6 @@ def start_scheduler() -> None:
         return
     _scheduler = AsyncIOScheduler()
     _scheduler.add_job(check_pm_cal_due, "cron", hour=6, minute=0, id="pm_cal_due_check")
-    _scheduler.add_job(check_overdue_returns, "cron", hour="*", minute=0, id="overdue_check")
     _scheduler.start()
     logger.info("Scheduler started")
 

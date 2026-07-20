@@ -329,45 +329,72 @@ async def test_repository_get_open_transaction_for_equipment(db_session):
     assert await transaction_crud.get_open_transaction_for_equipment(db_session, equipment.id) is None
 
 
-async def test_scheduler_overdue_check_notifies_but_does_not_write_a_third_status(db_session, monkeypatch):
-    """Roadmap PR7: the lifecycle has exactly two states. An overdue
-    transaction must remain OPEN -- app.worker.scheduler.check_overdue_returns
-    must notify engineers without writing a status value outside
-    {open, closed}."""
-    from datetime import datetime, timedelta
-
-    from app.models.equipment import Equipment
-    from app.models.transaction import BorrowTransaction, TransactionStatus
+async def test_check_overdue_returns_no_longer_exists(db_session):
+    """Codex PR7a review round 1 (BLOCKER): the hourly overdue-returns job
+    re-selected the same OPEN transactions every run with no de-duplication,
+    creating a fresh notification for the same transaction every hour
+    indefinitely. The approved MVP business model has no due-date/overdue
+    *workflow* at all -- fixed by removing the job (and the function),
+    not by patching it with deduplication. This asserts there is no code
+    path left that could reintroduce it by accident."""
     from app.worker import scheduler
 
-    equipment = Equipment(asset_number="AST-PR7-0006", equipment_name="Pump")
+    assert not hasattr(scheduler, "check_overdue_returns")
+
+
+async def test_scheduler_never_registers_the_disabled_overdue_job():
+    """The active scheduler must only ever run app.worker.scheduler's
+    PM/CAL-due check -- no job with the old "overdue_check" id, and no
+    other job that could generate an overdue notification, is registered.
+    Repeated start_scheduler()/stop_scheduler() cycles (e.g. app restarts)
+    can therefore never produce a duplicate -- or any -- overdue
+    notification, because there is no longer a job that runs the disabled
+    workflow at all."""
+    from app.worker import scheduler
+
+    for _ in range(3):
+        scheduler.start_scheduler()
+        assert scheduler._scheduler is not None
+        job_ids = {job.id for job in scheduler._scheduler.get_jobs()}
+        assert job_ids == {"pm_cal_due_check"}
+        assert "overdue_check" not in job_ids
+        scheduler.stop_scheduler()
+        assert scheduler._scheduler is None
+
+
+async def test_repeated_scheduler_restarts_create_zero_overdue_notifications(db_session):
+    """End-to-end proof for the Codex BLOCKER: even with an OPEN,
+    long-overdue transaction sitting in the database, repeatedly starting
+    and stopping the scheduler (simulating repeated app restarts, the
+    trigger for the original bug) creates zero notifications of any kind,
+    because the scheduler no longer runs anything that reads
+    BorrowTransaction.due_at or writes an "overdue" notification."""
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import select
+
+    from app.models.equipment import Equipment
+    from app.models.notification import Notification
+    from app.models.transaction import BorrowTransaction
+    from app.worker import scheduler
+
+    equipment = Equipment(asset_number="AST-PR7A-0007", equipment_name="Pump")
     db_session.add(equipment)
     await db_session.flush()
 
-    tx = BorrowTransaction(
-        transaction_no="TX-PR7-0006",
-        equipment_id=equipment.id,
-        borrower_name="Nurse Overdue",
-        due_at=datetime.utcnow() - timedelta(days=1),
+    db_session.add(
+        BorrowTransaction(
+            transaction_no="TX-PR7A-0007",
+            equipment_id=equipment.id,
+            borrower_name="Nurse Overdue",
+            due_at=datetime.utcnow() - timedelta(days=30),
+        )
     )
-    db_session.add(tx)
     await db_session.commit()
 
-    class _SessionCtx:
-        async def __aenter__(self):
-            return db_session
+    for _ in range(3):
+        scheduler.start_scheduler()
+        scheduler.stop_scheduler()
 
-        async def __aexit__(self, *exc_info):
-            return False
-
-    monkeypatch.setattr(scheduler, "AsyncSessionLocal", lambda: _SessionCtx())
-
-    async def _fake_notify(db, title, body, notif_type):
-        assert notif_type == "overdue"
-
-    monkeypatch.setattr(scheduler, "_notify_engineers", _fake_notify)
-
-    await scheduler.check_overdue_returns()
-
-    await db_session.refresh(tx)
-    assert tx.status == TransactionStatus.OPEN, "overdue transactions remain OPEN -- 'overdue' is not a status"
+    result = await db_session.execute(select(Notification).where(Notification.type == "overdue"))
+    assert result.scalars().all() == []

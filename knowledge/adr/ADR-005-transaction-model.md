@@ -38,10 +38,20 @@ PR completing PR7's full plan entry.
    `change_status_for_dispatch_receipt`/`change_status_for_manual_lifecycle`
    split (Roadmap PR6-H2 precedent): a narrow, purpose-built function per
    lifecycle concern, not a generic setter.
-3. **"Overdue" is a notification concern, not a status.** A transaction
-   whose `due_at` has passed remains `OPEN`; `check_overdue_returns`
-   notifies engineers but no longer writes a status value, since a third
-   status value would violate decision 1.
+3. **"Overdue" is not tracked at all — no status, no notification.** A
+   transaction whose `due_at` has passed remains `OPEN`; the approved MVP
+   business model has no due-date/overdue *workflow* of any kind. The
+   original implementation of this ADR kept a `due_at`-driven hourly
+   notification job (`app.worker.scheduler.check_overdue_returns`) that
+   only stopped writing a status value; Codex's PR7a review (round 1,
+   BLOCKER) found that job re-selected every OPEN, overdue transaction on
+   every hourly tick with no de-duplication, generating a fresh
+   notification for the same transaction every hour indefinitely. The
+   fix is to disable the workflow, not deduplicate a deprecated feature:
+   `check_overdue_returns` has been removed and is no longer registered
+   with the scheduler (`app.worker.scheduler.start_scheduler`). `due_at`
+   itself is unaffected (see decision 4/Consequences) — it remains a
+   plain, unread-by-notification column pending PR7b's field cleanup.
 4. **`legacy_status` preserves history.** Every row remapped by migration
    `0007_transaction_lifecycle.py` keeps its exact pre-migration
    value (`borrowed`, `returned`, or `overdue`) in a new nullable
@@ -68,9 +78,11 @@ implementation-plan.md`'s PR7 entry and `docs/ROADMAP.md`.
   against "exactly `OPEN` or `CLOSED`, mutated only via `create()`/`close()`"
   — a design that reintroduces a third status value, or that mutates
   `status` outside those two functions, does not conform to this ADR.
-- `app.worker.scheduler.check_overdue_returns` notifies but does not
-  transition status; a future change reintroducing a status write there
-  would violate decision 3.
+- `app.worker.scheduler.check_overdue_returns` no longer exists and the
+  scheduler no longer registers any job that reads `due_at` or writes an
+  "overdue" notification; a future change reintroducing either a status
+  write or a due-date notification job would violate decision 3 and
+  requires a new Governance PR, not a routine implementation change.
 - The partial unique index enforcing "at most one OPEN transaction per
   equipment" (`idx_tx_one_active_borrow`) is defined against `status =
   'open'`; any future change to the status domain must update it in the

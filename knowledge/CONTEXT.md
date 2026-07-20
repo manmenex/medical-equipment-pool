@@ -11,7 +11,7 @@
 
 ## Current PR
 
-**Roadmap PR7 — Transaction lifecycle model (7a slice)** — branch `feature/pr7-transaction-model`. Introduces `TransactionStatus` (`OPEN`/`CLOSED`) replacing the three-value `borrowed`/`returned`/`overdue` field, a `close()` repository function as the sole closer (mirroring `create()` as the sole opener), a `legacy_status` preservation column, migration `0007_transaction_lifecycle.py`, and removes the scheduler's third-status write (notify-only). Does not touch `dispatch_type`, `routine_round`, `ward_id`-required, `borrower_name`/`due_at` removal, or the Equipment Status model. See `knowledge/adr/ADR-005-transaction-model.md` and `docs/DOMAIN_MODEL.md`. Status: Draft, pending review.
+**Roadmap PR7 — Transaction lifecycle model (7a slice)** — branch `feature/pr7-transaction-model`. Introduces `TransactionStatus` (`OPEN`/`CLOSED`) replacing the three-value `borrowed`/`returned`/`overdue` field, a `close()` repository function as the sole closer (mirroring `create()` as the sole opener), a `legacy_status` preservation column, and migration `0007_transaction_lifecycle.py`. The `due_at`-driven hourly overdue-notification scheduler job is fully disabled (removed, not deduplicated) — Codex PR7a review round 1 (BLOCKER) found it re-notified every OPEN overdue transaction on every tick with no de-duplication; the approved MVP business model has no due-date/overdue workflow at all. Does not touch `dispatch_type`, `routine_round`, `ward_id`-required, `borrower_name`/`due_at` removal, or the Equipment Status model. See `knowledge/adr/ADR-005-transaction-model.md`, `docs/DOMAIN_MODEL.md`, and `docs/DECISION_LOG.md`. Status: Draft, pending review, after one Codex REQUEST_CHANGES round.
 
 ## Next planned PR
 

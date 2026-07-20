@@ -74,9 +74,12 @@ against a double-dispatch race, not merely an application-level check.
 `docs/audits/04-consolidated-implementation-plan.md` Part D and
 `knowledge/adr/ADR-005-transaction-model.md`'s Context): `dispatch_type`,
 `routine_round`, a required `ward_id`, and removal of `borrower_name`/
-`due_at` from the write path. `due_at` remains present today only for a
-notification concern (`app.worker.scheduler.check_overdue_returns`), not
-as a lifecycle state — an overdue transaction stays `OPEN`.
+`due_at` from the write path. `due_at` remains present today as a plain
+column with no active workflow reading it — the approved MVP business
+model has no due-date/overdue workflow, so an overdue transaction simply
+stays `OPEN` and nothing notifies on it (`app.worker.scheduler`'s
+`due_at`-driven notification job was removed; see `knowledge/adr/
+ADR-005-transaction-model.md` decision 3).
 
 ## Relationships
 

@@ -42,22 +42,53 @@ type without `values_callable` before Roadmap PR6 fixed it), the pre-PR7
 `"returned"`, `"overdue"`. There is no equivalent uppercase-name-vs-value
 ambiguity to defend against here.
 
-Preflight (upgrade): every distinct existing `status` value is checked
-against LEGACY_STATUS_MAP's keys, with one exception -- a value that is
-already one of the two target states is left untouched and does not
-receive a `legacy_status` (this makes the migration safe to run against a
-database whose `borrow_transactions` table was created fresh via
-`Base.metadata.create_all()` at 0001, which already reflects today's
-OPEN/CLOSED default and already has a `legacy_status` column -- see
-migration 0006's docstring for why 0001 behaves this way). Any OTHER
-distinct value aborts the migration before any row is written, naming
-every unexpected value and its row count -- never a guess, never a
-partial remap.
+Preflight (upgrade), in order, before any row is written:
+
+1. Every distinct existing `status` value is checked against
+   LEGACY_STATUS_MAP's keys, with one exception -- a value that is
+   already one of the two target states is left untouched and does not
+   receive a `legacy_status` (this makes the migration safe to run
+   against a database whose `borrow_transactions` table was created
+   fresh via `Base.metadata.create_all()` at 0001, which already
+   reflects today's OPEN/CLOSED default and already has a
+   `legacy_status` column -- see migration 0006's docstring for why 0001
+   behaves this way). Any OTHER distinct value aborts the migration,
+   naming every unexpected value and its row count -- never a guess,
+   never a partial remap.
+2. Future-OPEN collision check: `borrowed` and `overdue` are both
+   OPEN-equivalent under the target mapping (both map to `open`), but
+   the pre-migration partial unique index (`idx_tx_one_active_borrow`,
+   predicate `status = 'borrowed'`) only ever guarded uniqueness among
+   `borrowed` rows -- it never constrained `overdue` at all, so a
+   database could legally hold one `borrowed` row *and* one or more
+   `overdue` rows for the same `equipment_id` simultaneously. Remapping
+   all of them to `open` would violate the new `status = 'open'` unique
+   index this migration creates, and would otherwise surface as a raw,
+   unhelpful `UniqueViolation` from the `CREATE UNIQUE INDEX` statement
+   after data has already been rewritten. This migration instead queries
+   for any `equipment_id` with more than one row in
+   `('borrowed', 'overdue')` *before* touching any row, and aborts with
+   the exact offending equipment IDs if any are found -- see
+   `_equipment_ids_with_multiple_open_equivalent_rows()` below (Codex
+   PR7a review round 1, "Future-OPEN collision preflight").
 
 Verification (upgrade): row count unchanged; no row is left with a NULL
 `status`; every `status` value belongs to the two-state target set; every
 row whose `status` changed carries its exact original value in
 `legacy_status`.
+
+Schema convergence (upgrade): the pre-PR7 ORM model declared `status` as
+a plain `String(20)` column, so a database that ran migration `0001`
+before this PR's app-code change got a physical `VARCHAR(20)` column.
+Because `0001_initial.py` builds its schema from *today's* `Base.metadata`
+(`Base.metadata.create_all()`, see `docs/TECH_DEBT.md` TD-002), a
+database whose `0001` ran *after* this PR's model change already has
+`VARCHAR(10)` (today's `TransactionStatusType(length=10)`). Without an
+explicit `ALTER COLUMN ... TYPE`, those two databases would permanently
+diverge in physical column width even though both are at migration head.
+This migration narrows `status` to `VARCHAR(10)` unconditionally (a safe
+no-op if already that width) once the remap/verification above has
+proven every value is `open` or `closed` (4/6 characters, well within 10).
 
 The partial unique index enforcing "at most one OPEN transaction per
 equipment" (`idx_tx_one_active_borrow`, the real guard against a
@@ -77,13 +108,20 @@ Downgrade: aborts cleanly, with no partial restoration, if any row has a
 NULL `legacy_status` -- such a row was created after this migration's
 upgrade (the OPEN/CLOSED-only application no longer writes a legacy
 value), so there is no original value to reconstruct and guessing one
-would corrupt data (note: a row remapped from `overdue` restores to
-`borrowed`, not `overdue` -- `overdue` was never a real status write path
-after this migration, only a legacy value being reversed). If every row
-has a `legacy_status`, the CHECK constraint and the new partial index are
-dropped, `status` is restored from `legacy_status` for every row, the old
-`status = 'borrowed'`-predicated partial index is recreated, and the
-`legacy_status` column itself is then dropped -- symmetric with 0006's
+would corrupt data. If every row has a `legacy_status`, the CHECK
+constraint and the new partial index are dropped, `status` is restored
+verbatim from `legacy_status` for every row -- a row originally `overdue`
+is restored to the literal value `overdue`, not `borrowed`; this
+migration's remap collapses both `borrowed` and `overdue` to `open`, but
+downgrade reverses each row to its own exact original value, not to a
+canonical "OPEN-equivalent" representative (an earlier revision of this
+docstring incorrectly claimed otherwise; the code has always restored the
+literal value, only the prose was wrong -- Codex PR7a review round 1,
+"Migration rollback documentation"). `status` is then widened back to
+`VARCHAR(20)`, matching the pre-PR7 `String(20)` column the ORM model
+declared before this migration existed. Finally the old
+`status = 'borrowed'`-predicated partial index is recreated and the
+`legacy_status` column itself is dropped -- symmetric with 0006's
 downgrade convention for a column this migration purely added. Prefer a
 forward fix over downgrading a database that has taken real writes since
 this migration's upgrade.
@@ -111,6 +149,28 @@ LEGACY_STATUS_MAP: dict[str, str] = {
 }
 
 TARGET_STATUSES: tuple[str, ...] = ("open", "closed")
+
+# Values that, pre-migration, both mean "still awaiting receipt" and both
+# map to the target "open" state -- see LEGACY_STATUS_MAP above and the
+# "Future-OPEN collision preflight" note in this module's docstring.
+OPEN_EQUIVALENT_LEGACY_STATUSES: tuple[str, ...] = ("borrowed", "overdue")
+
+
+def _equipment_ids_with_multiple_open_equivalent_rows(bind) -> list[str]:
+    # OPEN_EQUIVALENT_LEGACY_STATUSES is a small, frozen, revision-local
+    # tuple (not user input) -- inlined as a literal IN list, matching this
+    # module's existing style (e.g. the "NOT IN ('open', 'closed')" check
+    # below), rather than parameterized as an array bind.
+    in_list = ", ".join(f"'{value}'" for value in OPEN_EQUIVALENT_LEGACY_STATUSES)
+    rows = bind.execute(
+        sa.text(
+            f"SELECT equipment_id FROM borrow_transactions "
+            f"WHERE status IN ({in_list}) "
+            f"GROUP BY equipment_id HAVING count(*) > 1 "
+            f"ORDER BY equipment_id"
+        )
+    ).fetchall()
+    return [str(row[0]) for row in rows]
 
 
 def upgrade() -> None:
@@ -145,6 +205,23 @@ def upgrade() -> None:
             "were found and have no approved mapping to the OPEN/CLOSED model. Resolve these by "
             "hand (correct the data or extend the approved mapping in a new migration) before "
             "re-running this migration -- nothing has been remapped:\n" + details
+        )
+
+    # Future-OPEN collision preflight (Codex PR7a review round 1): 'borrowed'
+    # and 'overdue' are both OPEN-equivalent under the target mapping, but
+    # the pre-migration unique index only ever guarded 'borrowed' rows -- an
+    # 'overdue' row for the same equipment was never blocked. Remapping both
+    # to 'open' would collide on the new unique index. Detect and abort with
+    # the exact affected equipment IDs before any row is modified.
+    colliding_equipment_ids = _equipment_ids_with_multiple_open_equivalent_rows(bind)
+    if colliding_equipment_ids:
+        raise RuntimeError(
+            "Migration 0007 aborted: the following equipment_id(s) have more than one "
+            f"OPEN-equivalent ({', '.join(OPEN_EQUIVALENT_LEGACY_STATUSES)}) borrow_transactions "
+            "row. Remapping all of them to 'open' would violate the 'at most one OPEN transaction "
+            "per equipment' invariant. Resolve these by hand (close the stale row(s) or correct the "
+            "data) before re-running this migration -- nothing has been remapped:\n"
+            + "\n".join(f"  {equipment_id}" for equipment_id in colliding_equipment_ids)
         )
 
     # Deterministic, one UPDATE per legacy source value actually present.
@@ -203,6 +280,15 @@ def upgrade() -> None:
                 f"{target_value!r} with legacy_status preserved, found {actual}; no constraint has been added."
             )
 
+    # Schema convergence (Codex PR7a review round 1): narrow status to
+    # VARCHAR(10) so a database whose 0001 ran under the pre-PR7
+    # String(20) model converges to the same physical width as a database
+    # whose 0001 ran under today's TransactionStatusType(length=10) --
+    # see this module's docstring, "Schema convergence (upgrade)". Every
+    # value has just been proven to be 'open' or 'closed' (4/6 chars), so
+    # this is safe; a no-op if the column is already VARCHAR(10).
+    op.execute("ALTER TABLE borrow_transactions ALTER COLUMN status TYPE VARCHAR(10)")
+
     # Recreate the "at most one OPEN transaction per equipment" guard with
     # the new predicate. Unconditional drop+create so it ends up correct
     # regardless of the table's starting state (freshly created via 0001,
@@ -239,6 +325,12 @@ def downgrade() -> None:
 
     op.execute("ALTER TABLE borrow_transactions DROP CONSTRAINT IF EXISTS ck_borrow_transactions_status_open_closed")
     op.execute("DROP INDEX IF EXISTS idx_tx_one_active_borrow")
+    # Restore the previous physical width. Legacy values ("borrowed",
+    # "returned", "overdue") already fit in VARCHAR(10) too, so this isn't
+    # required for the data about to be restored -- it exists to converge
+    # the schema back to what the pre-PR7 String(20) ORM model declared
+    # (see this module's docstring, "Downgrade").
+    op.execute("ALTER TABLE borrow_transactions ALTER COLUMN status TYPE VARCHAR(20)")
     op.execute("UPDATE borrow_transactions SET status = legacy_status")
     op.execute(
         "CREATE UNIQUE INDEX idx_tx_one_active_borrow ON borrow_transactions (equipment_id) "
