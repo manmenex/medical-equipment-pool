@@ -55,22 +55,26 @@ Preflight (upgrade), in order, before any row is written:
    behaves this way). Any OTHER distinct value aborts the migration,
    naming every unexpected value and its row count -- never a guess,
    never a partial remap.
-2. Future-OPEN collision check: `borrowed` and `overdue` are both
-   OPEN-equivalent under the target mapping (both map to `open`), but
-   the pre-migration partial unique index (`idx_tx_one_active_borrow`,
-   predicate `status = 'borrowed'`) only ever guarded uniqueness among
-   `borrowed` rows -- it never constrained `overdue` at all, so a
-   database could legally hold one `borrowed` row *and* one or more
-   `overdue` rows for the same `equipment_id` simultaneously. Remapping
+2. Future-OPEN collision check: every status value that will read as
+   `open` after this migration -- `borrowed` and `overdue` (both remap to
+   `open`) *and* `open` itself (a row already in the target domain, left
+   untouched by the remap) -- is FUTURE_OPEN_STATUSES. The pre-migration
+   partial unique index (`idx_tx_one_active_borrow`, predicate `status =
+   'borrowed'`) only ever guarded uniqueness among `borrowed` rows -- it
+   never constrained `overdue` or a raw `open` row at all, so a database
+   could legally hold any combination of `borrowed`/`overdue`/`open` rows
+   for the same `equipment_id` simultaneously pre-migration. Collapsing
    all of them to `open` would violate the new `status = 'open'` unique
    index this migration creates, and would otherwise surface as a raw,
    unhelpful `UniqueViolation` from the `CREATE UNIQUE INDEX` statement
    after data has already been rewritten. This migration instead queries
-   for any `equipment_id` with more than one row in
-   `('borrowed', 'overdue')` *before* touching any row, and aborts with
-   the exact offending equipment IDs if any are found -- see
-   `_equipment_ids_with_multiple_open_equivalent_rows()` below (Codex
-   PR7a review round 1, "Future-OPEN collision preflight").
+   for any `equipment_id` with more than one row in FUTURE_OPEN_STATUSES
+   *before* touching any row, and aborts with the exact offending
+   equipment IDs if any are found -- see
+   `_equipment_ids_with_multiple_future_open_rows()` below (Codex PR7a
+   review round 1, "Future-OPEN collision preflight"; widened in review
+   round 2, MAJOR 1, to also count pre-existing `open` rows, which the
+   round 1 version missed).
 
 Verification (upgrade): row count unchanged; no row is left with a NULL
 `status`; every `status` value belongs to the two-state target set; every
@@ -104,27 +108,54 @@ preflight or verification is left with no new constraint and no
 partially-remapped data (the whole migration runs inside Alembic's
 transactional DDL).
 
+Target-state compatibility policy (Codex PR7a review round 2, MAJOR 2):
+a row already `open` or `closed` *before* this migration ran (see
+preflight step 1 above -- a table created fresh via `Base.metadata.
+create_all()` at 0001, or any row otherwise already in the target
+domain) never had a real pre-PR7 status: `LEGACY_STATUS_MAP` has no
+entry for it, so the remap loop never touches it. Round 1 of this
+migration left such a row's `legacy_status` NULL, which meant an upgrade
+could succeed while the documented downgrade could never run for that
+database -- the NULL-`legacy_status` abort below would always fire, even
+immediately after upgrade with zero genuinely new writes. Fixed: after
+the remap loop runs, every row whose `legacy_status` is still NULL (by
+construction, exactly the rows that started already `open`/`closed`) has
+`legacy_status` set to its own current `status` value -- a canonical
+downgrade-compatibility marker, not a claim about pre-PR7 history that
+does not exist. This is what distinguishes the two cases on read:
+`legacy_status IN ('borrowed', 'returned', 'overdue')` is always a
+genuine preserved legacy value (the row's exact original status);
+`legacy_status IN ('open', 'closed')` is always a synthetic compatibility
+marker meaning "this row had no real legacy value; it was already in the
+target domain when this migration ran" -- `LEGACY_STATUS_MAP`'s remap
+never produces `legacy_status = 'open'` or `'closed'` for a row it
+actually remapped, so the two populations can never be confused. A row
+created *after* this migration's upgrade (the OPEN/CLOSED-only
+application never writes `legacy_status` at all) still has a NULL
+`legacy_status` and is unaffected by this policy -- see Downgrade below.
+
 Downgrade: aborts cleanly, with no partial restoration, if any row has a
-NULL `legacy_status` -- such a row was created after this migration's
-upgrade (the OPEN/CLOSED-only application no longer writes a legacy
-value), so there is no original value to reconstruct and guessing one
-would corrupt data. If every row has a `legacy_status`, the CHECK
-constraint and the new partial index are dropped, `status` is restored
-verbatim from `legacy_status` for every row -- a row originally `overdue`
-is restored to the literal value `overdue`, not `borrowed`; this
-migration's remap collapses both `borrowed` and `overdue` to `open`, but
-downgrade reverses each row to its own exact original value, not to a
-canonical "OPEN-equivalent" representative (an earlier revision of this
-docstring incorrectly claimed otherwise; the code has always restored the
-literal value, only the prose was wrong -- Codex PR7a review round 1,
-"Migration rollback documentation"). `status` is then widened back to
-`VARCHAR(20)`, matching the pre-PR7 `String(20)` column the ORM model
-declared before this migration existed. Finally the old
-`status = 'borrowed'`-predicated partial index is recreated and the
-`legacy_status` column itself is dropped -- symmetric with 0006's
-downgrade convention for a column this migration purely added. Prefer a
-forward fix over downgrading a database that has taken real writes since
-this migration's upgrade.
+NULL `legacy_status` -- given the compatibility policy above, this can
+now only happen for a row created after this migration's upgrade ran
+(genuinely unreconstructable -- there is no original value to guess, and
+guessing one would corrupt data; fail closed rather than fabricate
+history). If every row has a `legacy_status`, the CHECK constraint and
+the new partial index are dropped, `status` is restored verbatim from
+`legacy_status` for every row: a row originally `overdue` is restored to
+the literal value `overdue`, not `borrowed` (this migration's remap
+collapses both `borrowed` and `overdue` to `open`, but downgrade reverses
+each row to its own exact original value, not to a canonical
+"OPEN-equivalent" representative -- Codex PR7a review round 1, "Migration
+rollback documentation"); a row that started already `open`/`closed`
+restores to that same value via its compatibility marker (a no-op that
+correctly reproduces its true pre-migration state, since it never
+changed). `status` is then widened back to `VARCHAR(20)`, matching the
+pre-PR7 `String(20)` column the ORM model declared before this migration
+existed. Finally the old `status = 'borrowed'`-predicated partial index
+is recreated and the `legacy_status` column itself is dropped --
+symmetric with 0006's downgrade convention for a column this migration
+purely added. Prefer a forward fix over downgrading a database that has
+taken real writes since this migration's upgrade.
 """
 from typing import Sequence, Union
 
@@ -150,18 +181,22 @@ LEGACY_STATUS_MAP: dict[str, str] = {
 
 TARGET_STATUSES: tuple[str, ...] = ("open", "closed")
 
-# Values that, pre-migration, both mean "still awaiting receipt" and both
-# map to the target "open" state -- see LEGACY_STATUS_MAP above and the
-# "Future-OPEN collision preflight" note in this module's docstring.
-OPEN_EQUIVALENT_LEGACY_STATUSES: tuple[str, ...] = ("borrowed", "overdue")
+# Every current status value that will read as "open" once this migration
+# completes: 'borrowed' and 'overdue' remap to 'open' (LEGACY_STATUS_MAP),
+# and 'open' itself is left untouched because it is already the target
+# value. See "Future-OPEN collision preflight" in this module's docstring.
+# (Codex PR7a review round 2, MAJOR 1: round 1's version of this tuple
+# omitted 'open', so a database holding e.g. one legacy 'borrowed' row and
+# one already-'open' row for the same equipment was not caught here.)
+FUTURE_OPEN_STATUSES: tuple[str, ...] = ("borrowed", "overdue", "open")
 
 
-def _equipment_ids_with_multiple_open_equivalent_rows(bind) -> list[str]:
-    # OPEN_EQUIVALENT_LEGACY_STATUSES is a small, frozen, revision-local
-    # tuple (not user input) -- inlined as a literal IN list, matching this
-    # module's existing style (e.g. the "NOT IN ('open', 'closed')" check
-    # below), rather than parameterized as an array bind.
-    in_list = ", ".join(f"'{value}'" for value in OPEN_EQUIVALENT_LEGACY_STATUSES)
+def _equipment_ids_with_multiple_future_open_rows(bind) -> list[str]:
+    # FUTURE_OPEN_STATUSES is a small, frozen, revision-local tuple (not
+    # user input) -- inlined as a literal IN list, matching this module's
+    # existing style (e.g. the "NOT IN ('open', 'closed')" check below),
+    # rather than parameterized as an array bind.
+    in_list = ", ".join(f"'{value}'" for value in FUTURE_OPEN_STATUSES)
     rows = bind.execute(
         sa.text(
             f"SELECT equipment_id FROM borrow_transactions "
@@ -207,27 +242,27 @@ def upgrade() -> None:
             "re-running this migration -- nothing has been remapped:\n" + details
         )
 
-    # Future-OPEN collision preflight (Codex PR7a review round 1): 'borrowed'
-    # and 'overdue' are both OPEN-equivalent under the target mapping, but
-    # the pre-migration unique index only ever guarded 'borrowed' rows -- an
-    # 'overdue' row for the same equipment was never blocked. Remapping both
-    # to 'open' would collide on the new unique index. Detect and abort with
-    # the exact affected equipment IDs before any row is modified.
-    colliding_equipment_ids = _equipment_ids_with_multiple_open_equivalent_rows(bind)
+    # Future-OPEN collision preflight (Codex PR7a review round 1; widened in
+    # review round 2, MAJOR 1): every status value that will read as 'open'
+    # after this migration -- 'borrowed', 'overdue', AND a pre-existing
+    # 'open' row itself -- is FUTURE_OPEN_STATUSES. The pre-migration unique
+    # index only ever guarded 'borrowed' rows -- an 'overdue' or already-
+    # 'open' row for the same equipment was never blocked. Collapsing more
+    # than one of them to 'open' would collide on the new unique index.
+    # Detect and abort with the exact affected equipment IDs before any row
+    # is modified.
+    colliding_equipment_ids = _equipment_ids_with_multiple_future_open_rows(bind)
     if colliding_equipment_ids:
         raise RuntimeError(
             "Migration 0007 aborted: the following equipment_id(s) have more than one "
-            f"OPEN-equivalent ({', '.join(OPEN_EQUIVALENT_LEGACY_STATUSES)}) borrow_transactions "
-            "row. Remapping all of them to 'open' would violate the 'at most one OPEN transaction "
+            f"future-OPEN ({', '.join(FUTURE_OPEN_STATUSES)}) borrow_transactions row. "
+            "Collapsing all of them to 'open' would violate the 'at most one OPEN transaction "
             "per equipment' invariant. Resolve these by hand (close the stale row(s) or correct the "
             "data) before re-running this migration -- nothing has been remapped:\n"
             + "\n".join(f"  {equipment_id}" for equipment_id in colliding_equipment_ids)
         )
 
     # Deterministic, one UPDATE per legacy source value actually present.
-    # Values already in the target set (a fresh database created via 0001's
-    # create_all(), see module docstring) are left untouched -- no
-    # legacy_status is invented for them.
     for legacy_value, target_value in LEGACY_STATUS_MAP.items():
         if legacy_value not in counts_by_status:
             continue
@@ -238,6 +273,16 @@ def upgrade() -> None:
             ),
             {"target": target_value, "legacy": legacy_value},
         )
+
+    # Target-state compatibility marker (Codex PR7a review round 2, MAJOR 2
+    # -- see this module's docstring, "Target-state compatibility policy").
+    # A row already 'open'/'closed' before this migration ran has no entry
+    # in LEGACY_STATUS_MAP, so the loop above never touches it and its
+    # legacy_status is still NULL at this point. Set it to the row's own
+    # current status -- never a value from LEGACY_STATUS_MAP's keys, which
+    # is what makes a compatibility marker distinguishable on read from a
+    # genuine preserved legacy value.
+    bind.execute(sa.text("UPDATE borrow_transactions SET legacy_status = status WHERE legacy_status IS NULL"))
 
     after_count = bind.execute(sa.text("SELECT count(*) FROM borrow_transactions")).scalar_one()
     if after_count != before_count:

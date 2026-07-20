@@ -2893,3 +2893,450 @@ async def test_migration_0007_future_open_collision_preflight_allows_a_single_bo
             await engine.dispose()
     finally:
         await _drop_scratch_database()
+
+
+async def test_migration_0007_future_open_collision_preflight_detects_borrowed_plus_open():
+    """Codex PR7a review round 2, MAJOR 1: round 1's collision preflight
+    only counted 'borrowed'/'overdue' rows, missing the case where an
+    equipment already has a genuinely 'open' row (e.g. a table created
+    fresh via 0001's create_all()) *and* a legacy 'borrowed' row for the
+    same equipment -- both would collapse to 'open' and collide on the
+    new unique index. Must be caught before any row is modified."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0006_equipment_state_model")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        equipment_id = None
+        try:
+            async with engine.begin() as conn:
+                equipment_id = await _insert_bare_equipment(conn, "AST-0007-COLLISION-BO")
+                await _insert_borrow_transaction_with_status(
+                    conn, equipment_id, "TX-0007-COLLISION-BO-1", "borrowed"
+                )
+                await _insert_borrow_transaction_with_status(
+                    conn, equipment_id, "TX-0007-COLLISION-BO-2", "open"
+                )
+        finally:
+            await engine.dispose()
+
+        env = {**os.environ, "DATABASE_URL": _scratch_dsn("postgresql+asyncpg")}
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=str(_BACKEND_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode != 0, "upgrade must abort when an equipment has a 'borrowed' + an 'open' row"
+        assert equipment_id in (result.stdout + result.stderr), "the error must name the offending equipment_id"
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                rows = (
+                    await conn.execute(
+                        text(
+                            "SELECT status FROM borrow_transactions WHERE equipment_id = :eq_id ORDER BY status"
+                        ),
+                        {"eq_id": equipment_id},
+                    )
+                ).fetchall()
+                assert sorted(r[0] for r in rows) == ["borrowed", "open"]
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0007_future_open_collision_preflight_detects_overdue_plus_open():
+    """Same as the 'borrowed' + 'open' case above, but for 'overdue' + 'open'
+    -- the pre-migration unique index never constrained either value, so
+    this combination was always legally possible pre-migration."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0006_equipment_state_model")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        equipment_id = None
+        try:
+            async with engine.begin() as conn:
+                equipment_id = await _insert_bare_equipment(conn, "AST-0007-COLLISION-OO")
+                await _insert_borrow_transaction_with_status(
+                    conn, equipment_id, "TX-0007-COLLISION-OO-1", "overdue"
+                )
+                await _insert_borrow_transaction_with_status(
+                    conn, equipment_id, "TX-0007-COLLISION-OO-2", "open"
+                )
+        finally:
+            await engine.dispose()
+
+        env = {**os.environ, "DATABASE_URL": _scratch_dsn("postgresql+asyncpg")}
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=str(_BACKEND_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode != 0, "upgrade must abort when an equipment has an 'overdue' + an 'open' row"
+        assert equipment_id in (result.stdout + result.stderr), "the error must name the offending equipment_id"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0007_future_open_collision_preflight_detects_multiple_open_rows():
+    """Two rows already 'open' for the same equipment: the *genuine*
+    pre-PR7 unique index (predicate status = 'borrowed') never constrained
+    'open' at all, so this fixture was legally constructible on a real
+    pre-PR7 production database. This test's own scratch database can't
+    reproduce that starting point via a plain "upgrade to 0006" -- because
+    0001_initial.py builds its schema from *today's* Base.metadata
+    (docs/TECH_DEBT.md TD-002), idx_tx_one_active_borrow is already
+    open-predicated even at revision 0006 here. The genuine pre-PR7 index
+    is simulated explicitly (mirroring how the schema-convergence tests
+    above simulate the pre-PR7 VARCHAR(20) column width), which is exactly
+    what lets the fixture -- two already-'open' rows for one equipment --
+    be constructed at all. Migration 0007 must still catch it: both rows
+    would otherwise coexist post-migration in violation of 'at most one
+    OPEN transaction per equipment'."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0006_equipment_state_model")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        equipment_id = None
+        try:
+            async with engine.begin() as conn:
+                # Simulate the genuine pre-PR7 index (see docstring above).
+                await conn.execute(text("DROP INDEX IF EXISTS idx_tx_one_active_borrow"))
+                await conn.execute(
+                    text(
+                        "CREATE UNIQUE INDEX idx_tx_one_active_borrow ON borrow_transactions "
+                        "(equipment_id) WHERE status = 'borrowed'"
+                    )
+                )
+                equipment_id = await _insert_bare_equipment(conn, "AST-0007-COLLISION-OPEN2")
+                await _insert_borrow_transaction_with_status(
+                    conn, equipment_id, "TX-0007-COLLISION-OPEN2-1", "open"
+                )
+                await _insert_borrow_transaction_with_status(
+                    conn, equipment_id, "TX-0007-COLLISION-OPEN2-2", "open"
+                )
+        finally:
+            await engine.dispose()
+
+        env = {**os.environ, "DATABASE_URL": _scratch_dsn("postgresql+asyncpg")}
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=str(_BACKEND_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode != 0, "upgrade must abort when an equipment has two pre-existing 'open' rows"
+        assert equipment_id in (result.stdout + result.stderr), "the error must name the offending equipment_id"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0007_future_open_collision_preflight_allows_a_single_open_row():
+    """Sanity check: an equipment with exactly one pre-existing 'open' row
+    (the common case for a table created fresh at 0001) must remap and
+    upgrade normally."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0006_equipment_state_model")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        equipment_id = None
+        try:
+            async with engine.begin() as conn:
+                equipment_id = await _insert_bare_equipment(conn, "AST-0007-NO-COLLISION-OPEN")
+                await _insert_borrow_transaction_with_status(
+                    conn, equipment_id, "TX-0007-NO-COLLISION-OPEN", "open"
+                )
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        text("SELECT status, legacy_status FROM borrow_transactions WHERE equipment_id = :eq_id"),
+                        {"eq_id": equipment_id},
+                    )
+                ).one()
+                assert row.status == "open"
+                assert row.legacy_status == "open", "compatibility marker must equal the row's own status"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0007_preexisting_open_row_survives_upgrade_and_downgrade():
+    """Codex PR7a review round 2, MAJOR 2: a row already 'open' before
+    this migration ran has no real pre-PR7 legacy value, but round 1 left
+    its legacy_status NULL, which made downgrade permanently impossible
+    for that database even with zero genuinely new writes. It must now
+    get a compatibility marker (legacy_status = its own status, never a
+    fabricated legacy value like 'borrowed') and survive a full
+    upgrade -> downgrade round trip."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0006_equipment_state_model")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        equipment_id = None
+        tx_id = None
+        try:
+            async with engine.begin() as conn:
+                equipment_id = await _insert_bare_equipment(conn, "AST-0007-PREEXIST-OPEN")
+                tx_id = await _insert_borrow_transaction_with_status(
+                    conn, equipment_id, "TX-0007-PREEXIST-OPEN", "open"
+                )
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        text("SELECT status, legacy_status FROM borrow_transactions WHERE id = :id"),
+                        {"id": tx_id},
+                    )
+                ).one()
+                assert row.status == "open"
+                # No fabrication: the compatibility marker is the row's own
+                # status, never a value from the real legacy domain.
+                assert row.legacy_status == "open"
+                assert row.legacy_status not in ("borrowed", "returned", "overdue")
+        finally:
+            await engine.dispose()
+
+        _run_alembic("downgrade", "0006_equipment_state_model")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        text("SELECT status FROM borrow_transactions WHERE id = :id"),
+                        {"id": tx_id},
+                    )
+                ).one()
+                assert row.status == "open", "downgrade must restore the row to its true pre-migration state"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0007_preexisting_closed_row_survives_upgrade_and_downgrade():
+    """Same as the 'open' case above, but for a pre-existing 'closed' row."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0006_equipment_state_model")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        equipment_id = None
+        tx_id = None
+        try:
+            async with engine.begin() as conn:
+                equipment_id = await _insert_bare_equipment(conn, "AST-0007-PREEXIST-CLOSED")
+                tx_id = await _insert_borrow_transaction_with_status(
+                    conn, equipment_id, "TX-0007-PREEXIST-CLOSED", "closed"
+                )
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        text("SELECT status, legacy_status FROM borrow_transactions WHERE id = :id"),
+                        {"id": tx_id},
+                    )
+                ).one()
+                assert row.status == "closed"
+                assert row.legacy_status == "closed"
+                assert row.legacy_status not in ("borrowed", "returned", "overdue")
+        finally:
+            await engine.dispose()
+
+        _run_alembic("downgrade", "0006_equipment_state_model")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        text("SELECT status FROM borrow_transactions WHERE id = :id"),
+                        {"id": tx_id},
+                    )
+                ).one()
+                assert row.status == "closed", "downgrade must restore the row to its true pre-migration state"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0007_mixed_legacy_and_target_domain_rows_upgrade_and_downgrade():
+    """A single migration run covering both populations at once: one row
+    with a genuine legacy value ('borrowed') and one row already in the
+    target domain ('closed') for two different equipment. Both must
+    upgrade correctly (distinct legacy_status semantics) and both must
+    independently survive a downgrade back to their own true
+    pre-migration value."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0006_equipment_state_model")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        legacy_equipment_id = None
+        legacy_tx_id = None
+        target_equipment_id = None
+        target_tx_id = None
+        try:
+            async with engine.begin() as conn:
+                legacy_equipment_id = await _insert_bare_equipment(conn, "AST-0007-MIXED-LEGACY")
+                legacy_tx_id = await _insert_borrow_transaction_with_status(
+                    conn, legacy_equipment_id, "TX-0007-MIXED-LEGACY", "borrowed"
+                )
+                target_equipment_id = await _insert_bare_equipment(conn, "AST-0007-MIXED-TARGET")
+                target_tx_id = await _insert_borrow_transaction_with_status(
+                    conn, target_equipment_id, "TX-0007-MIXED-TARGET", "closed"
+                )
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                legacy_row = (
+                    await conn.execute(
+                        text("SELECT status, legacy_status FROM borrow_transactions WHERE id = :id"),
+                        {"id": legacy_tx_id},
+                    )
+                ).one()
+                assert legacy_row.status == "open"
+                assert legacy_row.legacy_status == "borrowed", "genuine preserved legacy value"
+
+                target_row = (
+                    await conn.execute(
+                        text("SELECT status, legacy_status FROM borrow_transactions WHERE id = :id"),
+                        {"id": target_tx_id},
+                    )
+                ).one()
+                assert target_row.status == "closed"
+                assert target_row.legacy_status == "closed", "synthetic compatibility marker, not a fabricated legacy value"
+        finally:
+            await engine.dispose()
+
+        _run_alembic("downgrade", "0006_equipment_state_model")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                legacy_row = (
+                    await conn.execute(
+                        text("SELECT status FROM borrow_transactions WHERE id = :id"),
+                        {"id": legacy_tx_id},
+                    )
+                ).one()
+                assert legacy_row.status == "borrowed", "the genuine legacy row restores to its real original value"
+
+                target_row = (
+                    await conn.execute(
+                        text("SELECT status FROM borrow_transactions WHERE id = :id"),
+                        {"id": target_tx_id},
+                    )
+                ).one()
+                assert target_row.status == "closed", "the pre-existing-target row restores to its true prior state"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0007_downgrade_still_fails_for_genuinely_new_post_upgrade_row():
+    """Codex PR7a review round 2, MAJOR 2: the compatibility-marker policy
+    must not weaken the fail-closed guard for rows that did not exist when
+    migration 0007 ran at all -- a row inserted by the OPEN/CLOSED-only
+    application after upgrade never writes legacy_status, so it is
+    genuinely unreconstructable and downgrade must still abort for it,
+    exactly as it did before this round's fix."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                equipment_id = await _insert_bare_equipment(conn, "AST-0007-GENUINELY-NEW")
+                await _insert_borrow_transaction_with_status(
+                    conn, equipment_id, "TX-0007-GENUINELY-NEW", "open"
+                )
+        finally:
+            await engine.dispose()
+
+        env = {**os.environ, "DATABASE_URL": _scratch_dsn("postgresql+asyncpg")}
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", "downgrade", "0006_equipment_state_model"],
+            cwd=str(_BACKEND_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode != 0, "downgrade must still abort for a row created after upgrade, with no legacy_status"
+    finally:
+        await _drop_scratch_database()
