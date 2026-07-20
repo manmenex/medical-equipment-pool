@@ -2576,7 +2576,7 @@ async def test_migration_0007_aborts_on_unexpected_status_value():
         try:
             async with engine.begin() as conn:
                 equipment_id = await _insert_bare_equipment(conn, "AST-0007-UNKNOWN")
-                await _insert_borrow_transaction_with_status(conn, equipment_id, "TX-0007-UNKNOWN", "pending_review")
+                await _insert_borrow_transaction_with_status(conn, equipment_id, "TX-0007-UNKNOWN", "unknownx")
         finally:
             await engine.dispose()
 
@@ -2590,7 +2590,7 @@ async def test_migration_0007_aborts_on_unexpected_status_value():
             timeout=60,
         )
         assert result.returncode != 0, "upgrade must abort on an unexpected status value"
-        assert "pending_review" in (result.stdout + result.stderr)
+        assert "unknownx" in (result.stdout + result.stderr)
     finally:
         await _drop_scratch_database()
 
