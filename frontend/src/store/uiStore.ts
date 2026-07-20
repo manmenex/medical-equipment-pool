@@ -7,8 +7,9 @@ interface UiState {
   theme: Theme;
   setTheme: (theme: Theme) => void;
   lastWard: string | null;
-  lastBorrowerName: string | null;
-  setLastBorrow: (ward: string | null, name: string | null) => void;
+  // Roadmap PR7b: borrower_name is no longer accepted by the dispatch
+  // write path, so there is nothing to remember here anymore.
+  setLastWard: (ward: string | null) => void;
 }
 
 export const useUiStore = create<UiState>()(
@@ -17,8 +18,7 @@ export const useUiStore = create<UiState>()(
       theme: "system",
       setTheme: (theme) => set({ theme }),
       lastWard: null,
-      lastBorrowerName: null,
-      setLastBorrow: (ward, name) => set({ lastWard: ward, lastBorrowerName: name }),
+      setLastWard: (ward) => set({ lastWard: ward }),
     }),
     { name: "mep-ui" }
   )

@@ -84,16 +84,18 @@ Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "equipment_qr": "MEP:AST-00123",
-  "borrower_name": "พยาบาล สมหญิง",
+  "equipment_id": "…uuid…",
   "ward_id": "…uuid…",
+  "dispatch_type": "routine_round",
+  "routine_round": "11:00",
   "phone_number": "0891234567",
   "pickup_location_id": "…uuid…",
   "dropoff_location_id": "…uuid…",
-  "quantity": 1,
   "notes": ""
 }
 ```
+
+`ward_id` and `dispatch_type` are required for every dispatch (Roadmap PR7 7b slice); `routine_round` is required exactly when `dispatch_type` is `"routine_round"` (one of `"06:00"`, `"11:00"`, `"15:00"`, `"21:00"`) and must be absent for `"on_demand"`. `borrower_name`, `due_at`, and `quantity` are no longer accepted request fields — see `docs/BUSINESS_RULES.md` ("Roadmap PR7 (7b slice)").
 
 Response `201`:
 ```json
@@ -105,6 +107,10 @@ Response `201`:
     "asset_number": "AST-00123",
     "status": "issued_to_ward"
   },
+  "ward_id": "…uuid…",
+  "dispatch_type": "routine_round",
+  "routine_round": "11:00",
+  "borrower_name": null,
   "status": "open",
   "borrowed_at": "2026-07-16T09:12:00+07:00"
 }

@@ -21,17 +21,29 @@ async def _create_equipment(client, headers, asset_number="AST-1001", name="Infu
     return resp.json()
 
 
+async def _create_ward(client, headers, code="W1", name="Ward 1"):
+    resp = await client.post("/api/v1/wards", headers=headers, json={"code": code, "name": name})
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+async def _on_demand_borrow_payload(client, admin_headers, equipment_id, *, ward_code="W1", ward_name="Ward 1"):
+    """Roadmap PR7b: every dispatch now requires ward_id and dispatch_type
+    -- borrower_name is no longer accepted. This helper creates a fresh
+    ward (ward code must be unique per call site) and returns a ready-to-use
+    on-demand borrow JSON payload."""
+    ward = await _create_ward(client, admin_headers, code=ward_code, name=ward_name)
+    return {"equipment_id": equipment_id, "ward_id": ward["id"], "dispatch_type": "on_demand"}
+
+
 async def test_borrow_then_return_flow(client, seeded_users):
     admin_headers = await _auth_headers(client, "admin")
     nurse_headers = await _auth_headers(client, "ward_nurse")
 
     equipment = await _create_equipment(client, admin_headers)
+    payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-FLOW")
 
-    borrow_resp = await client.post(
-        "/api/v1/borrow",
-        headers=nurse_headers,
-        json={"equipment_id": equipment["id"], "borrower_name": "Nurse Somying"},
-    )
+    borrow_resp = await client.post("/api/v1/borrow", headers=nurse_headers, json=payload)
     assert borrow_resp.status_code == 201, borrow_resp.text
     tx = borrow_resp.json()
     assert tx["equipment"]["status"] == "issued_to_ward"
@@ -53,19 +65,12 @@ async def test_cannot_borrow_unavailable_equipment(client, seeded_users):
     admin_headers = await _auth_headers(client, "admin")
     nurse_headers = await _auth_headers(client, "ward_nurse")
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-1002")
+    payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-UNAVAIL")
 
-    first = await client.post(
-        "/api/v1/borrow",
-        headers=nurse_headers,
-        json={"equipment_id": equipment["id"], "borrower_name": "Nurse A"},
-    )
+    first = await client.post("/api/v1/borrow", headers=nurse_headers, json=payload)
     assert first.status_code == 201
 
-    second = await client.post(
-        "/api/v1/borrow",
-        headers=nurse_headers,
-        json={"equipment_id": equipment["id"], "borrower_name": "Nurse B"},
-    )
+    second = await client.post("/api/v1/borrow", headers=nurse_headers, json=payload)
     assert second.status_code == 409
     assert second.json()["code"] == "EQUIPMENT_NOT_AVAILABLE"
 
@@ -101,12 +106,9 @@ async def test_viewer_cannot_borrow(client, seeded_users):
     admin_headers = await _auth_headers(client, "admin")
     viewer_headers = await _auth_headers(client, "viewer")
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-1004")
+    payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-VIEWER")
 
-    resp = await client.post(
-        "/api/v1/borrow",
-        headers=viewer_headers,
-        json={"equipment_id": equipment["id"], "borrower_name": "Someone"},
-    )
+    resp = await client.post("/api/v1/borrow", headers=viewer_headers, json=payload)
     assert resp.status_code == 403
 
 
@@ -125,12 +127,9 @@ async def test_viewer_cannot_borrow(client, seeded_users):
 async def test_transaction_no_is_padded_to_at_least_eight_digits(client, seeded_users):
     admin_headers = await _auth_headers(client, "admin")
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR4-0001")
+    payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-PR4-0001")
 
-    resp = await client.post(
-        "/api/v1/borrow",
-        headers=admin_headers,
-        json={"equipment_id": equipment["id"], "borrower_name": "Nurse Pad"},
-    )
+    resp = await client.post("/api/v1/borrow", headers=admin_headers, json=payload)
     assert resp.status_code == 201, resp.text
     tx = resp.json()
 
@@ -152,12 +151,9 @@ async def test_borrow_creates_exactly_one_audit_row_matching_transaction_no(clie
 
     admin_headers = await _auth_headers(client, "admin")
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR4-0002")
+    payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-PR4-0002")
 
-    resp = await client.post(
-        "/api/v1/borrow",
-        headers=admin_headers,
-        json={"equipment_id": equipment["id"], "borrower_name": "Nurse Audit"},
-    )
+    resp = await client.post("/api/v1/borrow", headers=admin_headers, json=payload)
     assert resp.status_code == 201, resp.text
     tx = resp.json()
 
@@ -225,12 +221,9 @@ async def test_generate_transaction_no_fails_closed_for_unsupported_dialect(db_s
 async def test_new_dispatch_opens_a_transaction_with_status_open(client, seeded_users):
     admin_headers = await _auth_headers(client, "admin")
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7-0001")
+    payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-PR7-0001")
 
-    resp = await client.post(
-        "/api/v1/borrow",
-        headers=admin_headers,
-        json={"equipment_id": equipment["id"], "borrower_name": "Nurse Open"},
-    )
+    resp = await client.post("/api/v1/borrow", headers=admin_headers, json=payload)
     assert resp.status_code == 201, resp.text
     assert resp.json()["status"] == "open"
 
@@ -238,12 +231,9 @@ async def test_new_dispatch_opens_a_transaction_with_status_open(client, seeded_
 async def test_receipt_closes_the_transaction_and_records_outcome(client, seeded_users):
     admin_headers = await _auth_headers(client, "admin")
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7-0002")
+    payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-PR7-0002")
 
-    borrow_resp = await client.post(
-        "/api/v1/borrow",
-        headers=admin_headers,
-        json={"equipment_id": equipment["id"], "borrower_name": "Nurse Close"},
-    )
+    borrow_resp = await client.post("/api/v1/borrow", headers=admin_headers, json=payload)
     assert borrow_resp.status_code == 201, borrow_resp.text
     tx_id = borrow_resp.json()["id"]
 
@@ -258,12 +248,9 @@ async def test_receipt_closes_the_transaction_and_records_outcome(client, seeded
 async def test_closing_an_already_closed_transaction_is_rejected(client, seeded_users):
     admin_headers = await _auth_headers(client, "admin")
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7-0003")
+    payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-PR7-0003")
 
-    borrow_resp = await client.post(
-        "/api/v1/borrow",
-        headers=admin_headers,
-        json={"equipment_id": equipment["id"], "borrower_name": "Nurse Twice"},
-    )
+    borrow_resp = await client.post("/api/v1/borrow", headers=admin_headers, json=payload)
     tx_id = borrow_resp.json()["id"]
 
     first = await client.post(f"/api/v1/return/{tx_id}", headers=admin_headers, json={"condition": "available"})
@@ -398,3 +385,315 @@ async def test_repeated_scheduler_restarts_create_zero_overdue_notifications(db_
 
     result = await db_session.execute(select(Notification).where(Notification.type == "overdue"))
     assert result.scalars().all() == []
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR7b (docs/audits/04-consolidated-implementation-plan.md Part D
+# PR7 entry; docs/ROADMAP.md "PR7 (7b slice)"): dispatch_type, routine_round,
+# ward_id-required-for-new-dispatches, and removing borrower_name/due_at/
+# quantity from the active write path. Schema-level (BorrowRequest) tests
+# first, then service/API-level tests.
+# ---------------------------------------------------------------------------
+
+
+async def test_borrow_request_routine_round_dispatch_with_valid_round_succeeds():
+    from app.schemas.transaction import BorrowRequest
+
+    req = BorrowRequest(
+        equipment_id=str(uuid.uuid4()),
+        ward_id=str(uuid.uuid4()),
+        dispatch_type="routine_round",
+        routine_round="06:00",
+    )
+    assert req.dispatch_type.value == "routine_round"
+    assert req.routine_round.value == "06:00"
+
+
+async def test_borrow_request_routine_round_dispatch_without_round_is_rejected():
+    from pydantic import ValidationError
+
+    from app.schemas.transaction import BorrowRequest
+
+    with pytest.raises(ValidationError):
+        BorrowRequest(equipment_id=str(uuid.uuid4()), ward_id=str(uuid.uuid4()), dispatch_type="routine_round")
+
+
+async def test_borrow_request_on_demand_dispatch_with_no_round_succeeds():
+    from app.schemas.transaction import BorrowRequest
+
+    req = BorrowRequest(equipment_id=str(uuid.uuid4()), ward_id=str(uuid.uuid4()), dispatch_type="on_demand")
+    assert req.routine_round is None
+
+
+async def test_borrow_request_on_demand_dispatch_with_a_round_is_rejected():
+    from pydantic import ValidationError
+
+    from app.schemas.transaction import BorrowRequest
+
+    with pytest.raises(ValidationError):
+        BorrowRequest(
+            equipment_id=str(uuid.uuid4()),
+            ward_id=str(uuid.uuid4()),
+            dispatch_type="on_demand",
+            routine_round="06:00",
+        )
+
+
+async def test_borrow_request_missing_ward_id_is_rejected():
+    from pydantic import ValidationError
+
+    from app.schemas.transaction import BorrowRequest
+
+    with pytest.raises(ValidationError):
+        BorrowRequest(equipment_id=str(uuid.uuid4()), dispatch_type="on_demand")
+
+
+async def test_borrow_request_missing_dispatch_type_is_rejected():
+    from pydantic import ValidationError
+
+    from app.schemas.transaction import BorrowRequest
+
+    with pytest.raises(ValidationError):
+        BorrowRequest(equipment_id=str(uuid.uuid4()), ward_id=str(uuid.uuid4()))
+
+
+async def test_borrow_request_has_no_borrower_name_field():
+    from pydantic import ValidationError
+
+    from app.schemas.transaction import BorrowRequest
+
+    assert "borrower_name" not in BorrowRequest.model_fields
+    # Codex PR20 review round 1, MAJOR 1: the default Pydantic/FastAPI
+    # behavior used elsewhere in this codebase (silently ignore
+    # unrecognized fields) let a caller still send borrower_name with no
+    # error at all, which is not "removed from the contract" -- it's
+    # silently accepted and discarded. BorrowRequest (only) now sets
+    # extra="forbid", so a legacy caller still sending borrower_name gets a
+    # hard 422, exactly like a missing required field.
+    with pytest.raises(ValidationError):
+        BorrowRequest(
+            equipment_id=str(uuid.uuid4()), ward_id=str(uuid.uuid4()), dispatch_type="on_demand", borrower_name="Nurse"
+        )
+
+
+async def test_borrow_request_has_no_due_at_field():
+    from pydantic import ValidationError
+
+    from app.schemas.transaction import BorrowRequest
+
+    assert "due_at" not in BorrowRequest.model_fields
+    with pytest.raises(ValidationError):
+        BorrowRequest(
+            equipment_id=str(uuid.uuid4()),
+            ward_id=str(uuid.uuid4()),
+            dispatch_type="on_demand",
+            due_at="2026-01-01T00:00:00",
+        )
+
+
+async def test_borrow_request_has_no_quantity_field():
+    from pydantic import ValidationError
+
+    from app.schemas.transaction import BorrowRequest
+
+    assert "quantity" not in BorrowRequest.model_fields
+    with pytest.raises(ValidationError):
+        BorrowRequest(equipment_id=str(uuid.uuid4()), ward_id=str(uuid.uuid4()), dispatch_type="on_demand", quantity=2)
+
+
+@pytest.mark.parametrize(
+    ("extra_field", "extra_value"),
+    [
+        ("borrower_name", "Nurse Test"),
+        ("due_at", "2026-01-01T00:00:00"),
+        ("quantity", 2),
+    ],
+)
+async def test_removed_field_in_borrow_request_is_rejected_with_no_side_effects(
+    client, seeded_users, db_session, extra_field, extra_value
+):
+    """Codex PR20 review round 1, MAJOR 1: API-level proof, not just a
+    schema-level unit test -- POSTing a removed field must fail the
+    request entirely (422, before the handler body ever runs), so it can
+    never create a transaction, change equipment status, or write an audit
+    record, exactly as if the field genuinely does not exist."""
+    from sqlalchemy import select
+
+    from app.models.audit import AuditLog
+    from app.models.transaction import BorrowTransaction
+
+    admin_headers = await _auth_headers(client, "admin")
+    equipment = await _create_equipment(client, admin_headers, asset_number=f"AST-PR20-{extra_field}")
+    ward = await _create_ward(client, admin_headers, code=f"W-PR20-{extra_field}")
+
+    resp = await client.post(
+        "/api/v1/borrow",
+        headers=admin_headers,
+        json={
+            "equipment_id": equipment["id"],
+            "ward_id": ward["id"],
+            "dispatch_type": "on_demand",
+            extra_field: extra_value,
+        },
+    )
+    assert resp.status_code == 422, resp.text
+
+    check_resp = await client.get(f"/api/v1/equipment/{equipment['id']}", headers=admin_headers)
+    assert check_resp.json()["status"] == "available_at_pool", "equipment status must be unchanged"
+
+    tx_rows = (
+        await db_session.execute(
+            select(BorrowTransaction).where(BorrowTransaction.equipment_id == uuid.UUID(equipment["id"]))
+        )
+    ).scalars().all()
+    assert tx_rows == [], "no transaction may be created when the request is rejected"
+
+    audit_rows = (
+        await db_session.execute(
+            select(AuditLog).where(AuditLog.action == "borrow", AuditLog.entity_type == "borrow_transaction")
+        )
+    ).scalars().all()
+    assert audit_rows == [], "no audit record may be created when the request is rejected"
+
+
+async def test_routine_round_dispatch_creates_exactly_one_open_transaction(client, seeded_users, db_session):
+    from sqlalchemy import select
+
+    from app.models.transaction import BorrowTransaction
+
+    admin_headers = await _auth_headers(client, "admin")
+    equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7B-0001")
+    ward = await _create_ward(client, admin_headers, code="W-PR7B-0001")
+
+    resp = await client.post(
+        "/api/v1/borrow",
+        headers=admin_headers,
+        json={
+            "equipment_id": equipment["id"],
+            "ward_id": ward["id"],
+            "dispatch_type": "routine_round",
+            "routine_round": "11:00",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["status"] == "open"
+
+    rows = (
+        await db_session.execute(
+            select(BorrowTransaction).where(BorrowTransaction.equipment_id == uuid.UUID(equipment["id"]))
+        )
+    ).scalars().all()
+    assert len(rows) == 1, "one dispatch request must create exactly one equipment transaction"
+
+
+async def test_on_demand_dispatch_creates_exactly_one_open_transaction(client, seeded_users, db_session):
+    from sqlalchemy import select
+
+    from app.models.transaction import BorrowTransaction
+
+    admin_headers = await _auth_headers(client, "admin")
+    equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7B-0002")
+    payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-PR7B-0002")
+
+    resp = await client.post("/api/v1/borrow", headers=admin_headers, json=payload)
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["status"] == "open"
+
+    rows = (
+        await db_session.execute(
+            select(BorrowTransaction).where(BorrowTransaction.equipment_id == uuid.UUID(equipment["id"]))
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+
+
+async def test_routine_round_dispatch_transitions_equipment_to_issued_to_ward(client, seeded_users):
+    admin_headers = await _auth_headers(client, "admin")
+    equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7B-0003")
+    ward = await _create_ward(client, admin_headers, code="W-PR7B-0003")
+
+    resp = await client.post(
+        "/api/v1/borrow",
+        headers=admin_headers,
+        json={
+            "equipment_id": equipment["id"],
+            "ward_id": ward["id"],
+            "dispatch_type": "routine_round",
+            "routine_round": "15:00",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["equipment"]["status"] == "issued_to_ward"
+
+
+async def test_dispatch_without_ward_id_is_rejected_by_the_api(client, seeded_users):
+    admin_headers = await _auth_headers(client, "admin")
+    equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7B-0004")
+
+    resp = await client.post(
+        "/api/v1/borrow", headers=admin_headers, json={"equipment_id": equipment["id"], "dispatch_type": "on_demand"}
+    )
+    assert resp.status_code == 422, resp.text
+
+
+async def test_dispatch_without_dispatch_type_is_rejected_by_the_api(client, seeded_users):
+    admin_headers = await _auth_headers(client, "admin")
+    equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7B-0005")
+    ward = await _create_ward(client, admin_headers, code="W-PR7B-0005")
+
+    resp = await client.post(
+        "/api/v1/borrow", headers=admin_headers, json={"equipment_id": equipment["id"], "ward_id": ward["id"]}
+    )
+    assert resp.status_code == 422, resp.text
+
+
+async def test_dispatch_type_and_routine_round_are_persisted_as_approved_lowercase_values(client, seeded_users):
+    admin_headers = await _auth_headers(client, "admin")
+    equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7B-0006")
+    ward = await _create_ward(client, admin_headers, code="W-PR7B-0006")
+
+    resp = await client.post(
+        "/api/v1/borrow",
+        headers=admin_headers,
+        json={
+            "equipment_id": equipment["id"],
+            "ward_id": ward["id"],
+            "dispatch_type": "routine_round",
+            "routine_round": "21:00",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    tx = resp.json()
+    assert tx["dispatch_type"] == "routine_round"
+    assert tx["routine_round"] == "21:00"
+
+
+async def test_historical_transaction_fields_remain_readable_after_pr7b(db_session):
+    """A row created before Roadmap PR7b (no ward_id/dispatch_type/
+    routine_round, but a borrower_name) must still serialize cleanly through
+    the current TransactionOut contract -- historical data is read-only,
+    never erased just because it is no longer an active write field."""
+    from app.models.equipment import Equipment
+    from app.models.transaction import BorrowTransaction
+    from app.schemas.transaction import TransactionOut
+
+    equipment = Equipment(asset_number="AST-PR7B-0007", equipment_name="Legacy Pump")
+    db_session.add(equipment)
+    await db_session.flush()
+
+    tx = BorrowTransaction(
+        transaction_no="TX-PR7B-0007",
+        equipment_id=equipment.id,
+        borrower_name="Pre-PR7b Nurse",
+        quantity=2,
+    )
+    tx.equipment = equipment
+    db_session.add(tx)
+    await db_session.flush()
+
+    out = TransactionOut.model_validate(tx, from_attributes=True)
+    assert out.borrower_name == "Pre-PR7b Nurse"
+    assert out.quantity == 2
+    assert out.dispatch_type is None
+    assert out.routine_round is None
+    assert out.ward_id is None

@@ -6,7 +6,7 @@ classification in app.core.db_errors actually works, only that the
 pre-flush existence checks in app.core.references do (those work against
 any backend). These tests run against a real PostgreSQL database instead,
 which does enforce FK/unique/not-null/check constraints, so the
-`_classify()` SQLSTATE mapping is exercised for real.
+`classify_integrity_error()` SQLSTATE mapping is exercised for real.
 
 Run only this suite:
     POSTGRES_TEST_DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/db \
@@ -42,7 +42,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.audit import AuditLog
-from app.models.equipment import Equipment
+from app.models.equipment import Equipment, EquipmentStatus
 from app.models.transaction import BorrowTransaction, TransactionStatus
 from app.models.user import ALL_ROLES, Role, User
 
@@ -156,6 +156,14 @@ async def _admin_headers(client: AsyncClient) -> dict:
     return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
 
+async def _create_ward(client: AsyncClient, headers: dict, code: str, name: str | None = None) -> str:
+    # Roadmap PR7b: every dispatch now requires ward_id, so every HTTP-level
+    # /api/v1/borrow call in this suite needs a real ward row first.
+    resp = await client.post("/api/v1/wards", headers=headers, json={"code": code, "name": name or code})
+    assert resp.status_code == 201, resp.text
+    return resp.json()["id"]
+
+
 # ---------------------------------------------------------------------------
 # API-level: duplicate unique key -> 409 DUPLICATE
 # ---------------------------------------------------------------------------
@@ -216,6 +224,61 @@ async def test_equipment_with_missing_references_is_not_classified_as_duplicate_
     assert body["code"] != "DUPLICATE"
     assert resp.status_code == 400
     assert body["code"] == "INVALID_INPUT"
+
+
+async def test_dispatch_with_invalid_ward_is_not_classified_as_equipment_conflict_on_postgres(
+    pg_client, pg_seeded_users, pg_engine
+):
+    """Codex PR20 review round 1, MAJOR 3: before this fix, every
+    IntegrityError from transaction_crud.create() -- including a bad
+    ward_id foreign-key reference -- was blanket-mapped to 409
+    EquipmentNotAvailableError ("Equipment was just borrowed by someone
+    else"), which is wrong and misleading for a request that never
+    conflicted with anything. A missing ward must be a distinct, safe 400
+    INVALID_INPUT, exactly like every other bad-reference field in this
+    codebase (see the ward/equipment tests directly above), and must leave
+    no transaction, no equipment status change, and no audit record
+    behind."""
+    headers = await _admin_headers(pg_client)
+    equipment_resp = await pg_client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "PG-BORROW-BADWARD-0001", "equipment_name": "Infusion Pump"},
+    )
+    assert equipment_resp.status_code == 201, equipment_resp.text
+    equipment_id = equipment_resp.json()["id"]
+
+    resp = await pg_client.post(
+        "/api/v1/borrow",
+        headers=headers,
+        json={"equipment_id": equipment_id, "ward_id": str(uuid.uuid4()), "dispatch_type": "on_demand"},
+    )
+    assert resp.status_code != 409
+    body = resp.json()
+    assert body["code"] != "EQUIPMENT_NOT_AVAILABLE"
+    assert resp.status_code == 400
+    assert body["code"] == "INVALID_INPUT"
+
+    session_maker = async_sessionmaker(pg_engine, expire_on_commit=False, class_=AsyncSession)
+    async with session_maker() as fresh_session:
+        equipment_row = (
+            await fresh_session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment_id)))
+        ).scalar_one()
+        assert equipment_row.status == EquipmentStatus.AVAILABLE_AT_POOL, "equipment status must be unchanged"
+
+        tx_rows = (
+            await fresh_session.execute(
+                select(BorrowTransaction).where(BorrowTransaction.equipment_id == uuid.UUID(equipment_id))
+            )
+        ).scalars().all()
+        assert tx_rows == [], "no transaction may be created for an invalid ward reference"
+
+        audit_rows = (
+            await fresh_session.execute(
+                select(AuditLog).where(AuditLog.action == "borrow", AuditLog.entity_type == "borrow_transaction")
+            )
+        ).scalars().all()
+        assert audit_rows == [], "no audit record may be created for an invalid ward reference"
 
 
 # ---------------------------------------------------------------------------
@@ -501,11 +564,13 @@ async def test_concurrent_dispatch_burst_produces_unique_transaction_numbers_on_
         assert resp.status_code == 201, resp.text
         equipment_ids.append(resp.json()["id"])
 
+    ward_id = await _create_ward(pg_client, headers, "PR4-BURST-WARD")
+
     async def _dispatch(equipment_id: str):
         return await pg_client.post(
             "/api/v1/borrow",
             headers=headers,
-            json={"equipment_id": equipment_id, "borrower_name": "Burst Nurse"},
+            json={"equipment_id": equipment_id, "ward_id": ward_id, "dispatch_type": "on_demand"},
         )
 
     responses = await asyncio.gather(*(_dispatch(eq_id) for eq_id in equipment_ids))
@@ -589,6 +654,7 @@ async def test_dispatch_failure_after_transaction_no_generation_leaves_safe_gap_
     )
     assert equipment_resp.status_code == 201, equipment_resp.text
     equipment_id = equipment_resp.json()["id"]
+    ward_id = await _create_ward(pg_client, headers, "PR4-GAP-WARD")
 
     original_create = transaction_crud.create
     call_count = {"n": 0}
@@ -612,7 +678,7 @@ async def test_dispatch_failure_after_transaction_no_generation_leaves_safe_gap_
         failed = await raw_client.post(
             "/api/v1/borrow",
             headers=headers,
-            json={"equipment_id": equipment_id, "borrower_name": "Gap Nurse"},
+            json={"equipment_id": equipment_id, "ward_id": ward_id, "dispatch_type": "on_demand"},
         )
     assert failed.status_code == 500, failed.text
 
@@ -624,7 +690,7 @@ async def test_dispatch_failure_after_transaction_no_generation_leaves_safe_gap_
     retry = await pg_client.post(
         "/api/v1/borrow",
         headers=headers,
-        json={"equipment_id": equipment_id, "borrower_name": "Gap Nurse Retry"},
+        json={"equipment_id": equipment_id, "ward_id": ward_id, "dispatch_type": "on_demand"},
     )
     assert retry.status_code == 201, retry.text
     assert retry.json()["transaction_no"]
@@ -3338,5 +3404,467 @@ async def test_migration_0007_downgrade_still_fails_for_genuinely_new_post_upgra
             timeout=60,
         )
         assert result.returncode != 0, "downgrade must still abort for a row created after upgrade, with no legacy_status"
+    finally:
+        await _drop_scratch_database()
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR7b: migration 0008_dispatch_fields.py. Exercised for real via the
+# same scratch-database + `alembic` CLI pattern as 0002-0007 above -- this
+# migration is purely additive (no legacy-value remap), so these tests focus
+# on: the new columns/constraints landing correctly, historical data being
+# left untouched (not fabricated or auto-assigned), the CHECK constraints
+# actually rejecting invalid combinations, and the downgrade guard.
+# ---------------------------------------------------------------------------
+
+
+async def _borrow_transactions_columns() -> set[str]:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            return await conn.run_sync(
+                lambda sync_conn: {c["name"] for c in inspect(sync_conn).get_columns("borrow_transactions")}
+            )
+    finally:
+        await engine.dispose()
+
+
+async def _insert_ward(conn, code: str) -> str:
+    ward_id = str(uuid.uuid4())
+    await conn.execute(
+        text("INSERT INTO wards (id, code, name) VALUES (:id, :code, :code)"),
+        {"id": ward_id, "code": code},
+    )
+    return ward_id
+
+
+async def _insert_pre_0008_borrow_transaction(
+    conn,
+    equipment_id: str,
+    transaction_no: str,
+    *,
+    ward_id: str | None = None,
+    borrower_name: str,
+    due_at=None,
+    quantity: int = 1,
+    status: str = "closed",
+) -> str:
+    """Inserts a row using only the columns that genuinely exist at
+    revision 0007 -- no dispatch_type/routine_round, borrower_name always
+    supplied (it is still NOT NULL at this point). Used only against a
+    database whose schema has been reconstructed to the real pre-0008
+    shape (see test_migration_0008_upgrade_against_reconstructed_
+    production_schema_preserves_data_and_converges) -- inserting through
+    this helper against a schema that still has dispatch_type/routine_round
+    would silently prove nothing about the real migration path."""
+    tx_id = str(uuid.uuid4())
+    await conn.execute(
+        text(
+            "INSERT INTO borrow_transactions (id, transaction_no, equipment_id, quantity, "
+            "borrowed_at, due_at, borrower_name, ward_id, status) "
+            "VALUES (:id, :tn, :eq_id, :quantity, now(), :due_at, :borrower_name, :ward_id, :status)"
+        ),
+        {
+            "id": tx_id,
+            "tn": transaction_no,
+            "eq_id": equipment_id,
+            "quantity": quantity,
+            "due_at": due_at,
+            "borrower_name": borrower_name,
+            "ward_id": ward_id,
+            "status": status,
+        },
+    )
+    return tx_id
+
+
+async def _insert_borrow_transaction_full(
+    conn,
+    equipment_id: str,
+    transaction_no: str,
+    *,
+    ward_id: str | None = None,
+    borrower_name: str | None = "PR7b Borrower",
+    due_at=None,
+    quantity: int = 1,
+    dispatch_type: str | None = None,
+    routine_round: str | None = None,
+    status: str = "closed",
+) -> str:
+    tx_id = str(uuid.uuid4())
+    await conn.execute(
+        text(
+            "INSERT INTO borrow_transactions (id, transaction_no, equipment_id, quantity, "
+            "borrowed_at, due_at, borrower_name, ward_id, dispatch_type, routine_round, status) "
+            "VALUES (:id, :tn, :eq_id, :quantity, now(), :due_at, :borrower_name, :ward_id, "
+            ":dispatch_type, :routine_round, :status)"
+        ),
+        {
+            "id": tx_id,
+            "tn": transaction_no,
+            "eq_id": equipment_id,
+            "quantity": quantity,
+            "due_at": due_at,
+            "borrower_name": borrower_name,
+            "ward_id": ward_id,
+            "dispatch_type": dispatch_type,
+            "routine_round": routine_round,
+            "status": status,
+        },
+    )
+    return tx_id
+
+
+async def test_migration_0008_upgrade_against_reconstructed_production_schema_preserves_data_and_converges():
+    """Codex PR20 review round 1, MAJOR 2: the previous version of this
+    test inserted "historical" rows after `_run_alembic("upgrade",
+    "0007_transaction_lifecycle")`, but TD-002 (docs/TECH_DEBT.md) means
+    0001_initial.py builds its schema from *today's* live Base.metadata --
+    so that "0007" database already had dispatch_type/routine_round
+    columns and a nullable borrower_name from 0001 onward, which real
+    production history at revision 0007 never had. That is not a
+    production-like starting state.
+
+    This version reconstructs the actual pre-0008 production schema by
+    running 0008's own real downgrade() -- raw ALTER TABLE DDL, written
+    with no dependency on ORM metadata (see that migration's docstring) --
+    which is the only way to arrive at a schema shape that genuinely
+    matches "only migrations through 0007 have ever run here", independent
+    of TD-002. Full flow: upgrade to head (through 0007) -> downgrade to
+    0007 (reconstructs the real pre-0008 shape) -> insert representative
+    historical rows against that reconstructed schema -> upgrade to 0008
+    -> verify ADD COLUMN/DROP NOT NULL/CHECK enforcement/historical
+    preservation -> downgrade -> upgrade again -> compare the resulting
+    schema against the genuinely fresh-head snapshot taken at the very
+    start -> confirm every row, historical and unrelated, survived the
+    whole round trip unchanged.
+    """
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        # Baseline: a genuinely fresh `upgrade head` schema, captured before
+        # any downgrade/reconstruction happens on this database.
+        _run_alembic("upgrade", "head")
+        fresh_head_columns = await _borrow_transactions_columns()
+        fresh_head_constraints = await _borrow_transactions_check_constraint_names()
+
+        # Reconstruct the real pre-0008 production schema via 0008's own
+        # downgrade() DDL (not a hand-rolled guess in this test file).
+        _run_alembic("downgrade", "0007_transaction_lifecycle")
+        pre_0008_columns = await _borrow_transactions_columns()
+        assert "dispatch_type" not in pre_0008_columns
+        assert "routine_round" not in pre_0008_columns
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                nullable = (
+                    await conn.execute(
+                        text(
+                            "SELECT is_nullable FROM information_schema.columns "
+                            "WHERE table_name = 'borrow_transactions' AND column_name = 'borrower_name'"
+                        )
+                    )
+                ).scalar_one()
+                assert nullable == "NO", "reconstructed pre-0008 schema must have borrower_name NOT NULL"
+        finally:
+            await engine.dispose()
+
+        # Representative historical rows against the reconstructed schema:
+        # one with a NULL ward_id (pre-PR7b rows never had one), plus an
+        # unrelated row that this migration must never touch.
+        historical_due_at = datetime(2026, 1, 5, 9, 30)
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                equipment_id = await _insert_bare_equipment(conn, "AST-0008-PROD-HIST")
+                historical_id = await _insert_pre_0008_borrow_transaction(
+                    conn,
+                    equipment_id,
+                    "TX-0008-PROD-HIST",
+                    ward_id=None,
+                    borrower_name="Pre-PR7b Nurse",
+                    due_at=historical_due_at,
+                    quantity=3,
+                )
+                unrelated_equipment_id = await _insert_bare_equipment(conn, "AST-0008-PROD-UNRELATED")
+                unrelated_id = await _insert_pre_0008_borrow_transaction(
+                    conn, unrelated_equipment_id, "TX-0008-PROD-UNRELATED", borrower_name="Unrelated Nurse"
+                )
+        finally:
+            await engine.dispose()
+
+        # The real 0008 upgrade, against the real pre-0008 schema.
+        _run_alembic("upgrade", "head")
+
+        columns = await _borrow_transactions_columns()
+        assert {"dispatch_type", "routine_round"} <= columns, "0008 must ADD COLUMN dispatch_type/routine_round"
+
+        constraints = await _borrow_transactions_check_constraint_names()
+        assert {
+            "ck_borrow_transactions_dispatch_type",
+            "ck_borrow_transactions_routine_round",
+            "ck_borrow_transactions_routine_round_consistency",
+        } <= constraints
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                nullable = (
+                    await conn.execute(
+                        text(
+                            "SELECT is_nullable FROM information_schema.columns "
+                            "WHERE table_name = 'borrow_transactions' AND column_name = 'borrower_name'"
+                        )
+                    )
+                ).scalar_one()
+                assert nullable == "YES", "0008 must DROP NOT NULL on borrower_name"
+
+                row = (
+                    await conn.execute(
+                        text(
+                            "SELECT borrower_name, due_at, quantity, dispatch_type, routine_round, ward_id "
+                            "FROM borrow_transactions WHERE id = :id"
+                        ),
+                        {"id": historical_id},
+                    )
+                ).one()
+                assert row.borrower_name == "Pre-PR7b Nurse", "historical borrower_name must not be erased"
+                assert row.due_at == historical_due_at, "historical due_at must not be erased"
+                assert row.quantity == 3, "historical quantity must not be erased"
+                assert row.dispatch_type is None, "a pre-PR7b row has no reliable dispatch_type -- must stay NULL"
+                assert row.routine_round is None
+                assert row.ward_id is None, "migration 0008 must never fabricate a ward_id for a historical row"
+
+                unrelated_row = (
+                    await conn.execute(
+                        text("SELECT borrower_name, quantity FROM borrow_transactions WHERE id = :id"),
+                        {"id": unrelated_id},
+                    )
+                ).one()
+                assert unrelated_row.borrower_name == "Unrelated Nurse", "an unrelated historical row must survive"
+                assert unrelated_row.quantity == 1
+        finally:
+            await engine.dispose()
+
+        # The CHECK constraints are actually enforced against this
+        # upgraded-from-production database, not merely present.
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            with pytest.raises(Exception):
+                async with engine.begin() as conn:
+                    await _insert_borrow_transaction_full(
+                        conn,
+                        equipment_id,
+                        "TX-0008-PROD-BAD",
+                        dispatch_type="on_demand",
+                        routine_round="06:00",
+                    )
+        finally:
+            await engine.dispose()
+
+        # Downgrade, then upgrade again, and confirm the resulting schema
+        # converges on the exact same fresh-head schema captured at the
+        # start -- and that both rows survived the entire round trip.
+        _run_alembic("downgrade", "0007_transaction_lifecycle")
+        _run_alembic("upgrade", "head")
+
+        reconverged_columns = await _borrow_transactions_columns()
+        reconverged_constraints = await _borrow_transactions_check_constraint_names()
+        assert reconverged_columns == fresh_head_columns
+        assert reconverged_constraints == fresh_head_constraints
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        text("SELECT borrower_name, due_at, quantity FROM borrow_transactions WHERE id = :id"),
+                        {"id": historical_id},
+                    )
+                ).one()
+                assert row.borrower_name == "Pre-PR7b Nurse"
+                assert row.due_at == historical_due_at
+                assert row.quantity == 3
+
+                unrelated_row = (
+                    await conn.execute(
+                        text("SELECT borrower_name FROM borrow_transactions WHERE id = :id"), {"id": unrelated_id}
+                    )
+                ).one()
+                assert unrelated_row.borrower_name == "Unrelated Nurse"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0008_check_constraint_rejects_invalid_dispatch_type_and_round_combinations():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                equipment_id = await _insert_bare_equipment(conn, "AST-0008-CHK")
+                ward_id = await _insert_ward(conn, "W-0008-CHK")
+
+            # on_demand + a routine_round value: rejected by the consistency CHECK.
+            with pytest.raises(Exception):
+                async with engine.begin() as conn:
+                    await _insert_borrow_transaction_full(
+                        conn,
+                        equipment_id,
+                        "TX-0008-BAD-1",
+                        ward_id=ward_id,
+                        dispatch_type="on_demand",
+                        routine_round="06:00",
+                    )
+
+            # routine_round dispatch_type with no round value: rejected.
+            with pytest.raises(Exception):
+                async with engine.begin() as conn:
+                    await _insert_borrow_transaction_full(
+                        conn,
+                        equipment_id,
+                        "TX-0008-BAD-2",
+                        ward_id=ward_id,
+                        dispatch_type="routine_round",
+                        routine_round=None,
+                    )
+
+            # an unrecognized dispatch_type value: rejected by the domain CHECK.
+            with pytest.raises(Exception):
+                async with engine.begin() as conn:
+                    await _insert_borrow_transaction_full(
+                        conn,
+                        equipment_id,
+                        "TX-0008-BAD-3",
+                        ward_id=ward_id,
+                        dispatch_type="urgent",
+                    )
+
+            # an unrecognized routine_round value: rejected by the domain CHECK.
+            with pytest.raises(Exception):
+                async with engine.begin() as conn:
+                    await _insert_borrow_transaction_full(
+                        conn,
+                        equipment_id,
+                        "TX-0008-BAD-4",
+                        ward_id=ward_id,
+                        dispatch_type="routine_round",
+                        routine_round="09:00",
+                    )
+
+            # the two valid combinations must both succeed.
+            async with engine.begin() as conn:
+                await _insert_borrow_transaction_full(
+                    conn, equipment_id, "TX-0008-OK-1", ward_id=ward_id, dispatch_type="on_demand"
+                )
+                await _insert_borrow_transaction_full(
+                    conn,
+                    equipment_id,
+                    "TX-0008-OK-2",
+                    ward_id=ward_id,
+                    dispatch_type="routine_round",
+                    routine_round="11:00",
+                )
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0008_downgrade_round_trip_and_fresh_upgraded_schema_converge():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        # Fresh database, no pre-existing rows: upgrade adds everything...
+        _run_alembic("upgrade", "head")
+        columns = await _borrow_transactions_columns()
+        assert {"dispatch_type", "routine_round"} <= columns
+        constraints = await _borrow_transactions_check_constraint_names()
+        assert {
+            "ck_borrow_transactions_dispatch_type",
+            "ck_borrow_transactions_routine_round",
+            "ck_borrow_transactions_routine_round_consistency",
+        } <= constraints
+
+        # ...downgrade removes exactly what 0008 added, cleanly, on an empty table...
+        _run_alembic("downgrade", "0007_transaction_lifecycle")
+        columns = await _borrow_transactions_columns()
+        assert "dispatch_type" not in columns
+        assert "routine_round" not in columns
+        constraints = await _borrow_transactions_check_constraint_names()
+        assert "ck_borrow_transactions_dispatch_type" not in constraints
+        assert "ck_borrow_transactions_routine_round" not in constraints
+        assert "ck_borrow_transactions_routine_round_consistency" not in constraints
+
+        # ...and re-upgrade simulates a pre-PR7b database catching up, landing
+        # on the exact same schema a genuinely fresh `upgrade head` produces
+        # (TD-002 schema-convergence property this migration's docstring
+        # documents).
+        _run_alembic("upgrade", "head")
+        columns_after_reupgrade = await _borrow_transactions_columns()
+        assert columns_after_reupgrade == columns | {"dispatch_type", "routine_round"}
+        constraints_after_reupgrade = await _borrow_transactions_check_constraint_names()
+        assert {
+            "ck_borrow_transactions_dispatch_type",
+            "ck_borrow_transactions_routine_round",
+            "ck_borrow_transactions_routine_round_consistency",
+        } <= constraints_after_reupgrade
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0008_downgrade_fails_closed_when_a_row_has_null_borrower_name():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                equipment_id = await _insert_bare_equipment(conn, "AST-0008-NULLBN")
+                ward_id = await _insert_ward(conn, "W-0008-NULLBN")
+                # A dispatch created "after" this migration's upgrade, under
+                # the new contract that no longer supplies borrower_name.
+                await _insert_borrow_transaction_full(
+                    conn,
+                    equipment_id,
+                    "TX-0008-NULLBN",
+                    ward_id=ward_id,
+                    borrower_name=None,
+                    dispatch_type="on_demand",
+                )
+        finally:
+            await engine.dispose()
+
+        env = {**os.environ, "DATABASE_URL": _scratch_dsn("postgresql+asyncpg")}
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", "downgrade", "0007_transaction_lifecycle"],
+            cwd=str(_BACKEND_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode != 0, "downgrade must abort when a row has a NULL borrower_name"
+        assert "borrower_name" in (result.stdout + result.stderr)
     finally:
         await _drop_scratch_database()

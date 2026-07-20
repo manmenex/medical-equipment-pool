@@ -133,7 +133,8 @@ export function ReturnPage() {
         <div className="font-medium">{transaction.equipment.equipment_name}</div>
         <div className="text-sm text-[var(--text-muted)]">{transaction.equipment.asset_number}</div>
         <div className="mt-1 text-sm text-[var(--text-muted)]">
-          ผู้ยืม: {transaction.borrower_name} · ยืมเมื่อ {new Date(transaction.borrowed_at).toLocaleString("th-TH")}
+          {transaction.borrower_name ? `ผู้ยืม: ${transaction.borrower_name} · ` : ""}ยืมเมื่อ{" "}
+          {new Date(transaction.borrowed_at).toLocaleString("th-TH")}
         </div>
       </div>
 

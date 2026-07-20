@@ -10,7 +10,13 @@ import { createBorrow } from "@/services/borrow";
 import { getEquipment, resolveEquipmentByQr } from "@/services/equipment";
 import { listWards } from "@/services/masterData";
 import { useUiStore } from "@/store/uiStore";
-import type { BcmSuggestion, Equipment } from "@/types";
+import type { BcmSuggestion, DispatchType, Equipment, RoutineRound } from "@/types";
+
+// Roadmap PR7b confirmed fixed four-round MVP schedule (docs/audits/
+// 04-consolidated-implementation-plan.md's confirmed-requirements table) --
+// no named label for any round is confirmed anywhere, so none is invented
+// here; the option value/label is the literal clock time itself.
+const ROUTINE_ROUNDS: RoutineRound[] = ["06:00", "11:00", "15:00", "21:00"];
 
 export function BorrowPage() {
   const [searchParams] = useSearchParams();
@@ -23,11 +29,11 @@ export function BorrowPage() {
   const [submitting, setSubmitting] = useState(false);
 
   const lastWard = useUiStore((s) => s.lastWard);
-  const lastBorrowerName = useUiStore((s) => s.lastBorrowerName);
-  const setLastBorrow = useUiStore((s) => s.setLastBorrow);
+  const setLastWard = useUiStore((s) => s.setLastWard);
 
-  const [borrowerName, setBorrowerName] = useState(lastBorrowerName ?? "");
   const [wardId, setWardId] = useState(lastWard ?? "");
+  const [dispatchType, setDispatchType] = useState<DispatchType>("on_demand");
+  const [routineRound, setRoutineRound] = useState<RoutineRound | "">("");
   const [phone, setPhone] = useState("");
   const [notes, setNotes] = useState("");
 
@@ -69,18 +75,19 @@ export function BorrowPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!equipment) return;
+    if (!equipment || !wardId) return;
     setSubmitting(true);
     setError(null);
     try {
       const tx = await createBorrow({
         equipment_id: equipment.id,
-        borrower_name: borrowerName,
-        ward_id: wardId || undefined,
+        ward_id: wardId,
+        dispatch_type: dispatchType,
+        routine_round: dispatchType === "routine_round" ? (routineRound as RoutineRound) : undefined,
         phone_number: phone || undefined,
         notes: notes || undefined,
       });
-      setLastBorrow(wardId || null, borrowerName || null);
+      setLastWard(wardId || null);
       setSuccess(tx.transaction_no);
     } catch (err) {
       setError(apiErrorMessage(err, "ยืมเครื่องมือไม่สำเร็จ"));
@@ -138,17 +145,9 @@ export function BorrowPage() {
       ) : (
         <>
           <div>
-            <label className="mb-1 block text-sm font-medium">ชื่อผู้ยืม</label>
-            <input
-              required
-              value={borrowerName}
-              onChange={(e) => setBorrowerName(e.target.value)}
-              className="w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium">หอผู้ป่วย / Ward</label>
+            <label className="mb-1 block text-sm font-medium">หอผู้ป่วย / Ward *</label>
             <select
+              required
               value={wardId}
               onChange={(e) => setWardId(e.target.value)}
               className="w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
@@ -161,6 +160,40 @@ export function BorrowPage() {
               ))}
             </select>
           </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium">ประเภทการเบิก *</label>
+            <select
+              required
+              value={dispatchType}
+              onChange={(e) => {
+                const next = e.target.value as DispatchType;
+                setDispatchType(next);
+                if (next === "on_demand") setRoutineRound("");
+              }}
+              className="w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
+            >
+              <option value="on_demand">เบิกตามคำขอ (On-Demand)</option>
+              <option value="routine_round">รอบเวลาปกติ (Routine Round)</option>
+            </select>
+          </div>
+          {dispatchType === "routine_round" && (
+            <div>
+              <label className="mb-1 block text-sm font-medium">รอบเวลา *</label>
+              <select
+                required
+                value={routineRound}
+                onChange={(e) => setRoutineRound(e.target.value as RoutineRound)}
+                className="w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
+              >
+                <option value="">- เลือก -</option>
+                {ROUTINE_ROUNDS.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div>
             <label className="mb-1 block text-sm font-medium">เบอร์โทร</label>
             <input
@@ -183,7 +216,7 @@ export function BorrowPage() {
 
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || !wardId || (dispatchType === "routine_round" && !routineRound)}
             className="rounded-lg bg-status-borrowed py-2.5 font-medium text-white disabled:opacity-60"
           >
             {submitting ? "กำลังบันทึก..." : "ยืนยันการยืม"}
