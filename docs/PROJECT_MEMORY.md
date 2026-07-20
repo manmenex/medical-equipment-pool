@@ -5,6 +5,13 @@
 **Update trigger:** Major architecture, domain, governance, or Roadmap phase decision
 **Maintainer:** Documentation/Governance Engineer
 
+**Continued in `DECISION_LOG.md`,** which picks up from Roadmap PR5 onward
+(this file's last entry is Governance Pack v1.0, immediately before Roadmap
+PR5's implementation). For a current-state AI-memory snapshot rather than a
+chronological log, see [`../knowledge/PROJECT_MEMORY.md`](../knowledge/PROJECT_MEMORY.md)
+— same name, different purpose: that file is a point-in-time summary, this
+file is the dated history.
+
 Git history is the detailed change record. This file records only decisions
 important enough to prevent future re-litigation or context loss.
 

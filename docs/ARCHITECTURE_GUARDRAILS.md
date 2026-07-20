@@ -8,7 +8,15 @@
 ## Scope and domain
 
 - Do not implement a later Roadmap PR early. Use the assigned section of
-  [`audits/04-consolidated-implementation-plan.md`](audits/04-consolidated-implementation-plan.md).
+  [`audits/04-consolidated-implementation-plan.md`](audits/04-consolidated-implementation-plan.md)
+  and the current-state summary in [`ROADMAP.md`](ROADMAP.md).
+- Do not add an equipment identifier. The identifier model is closed at
+  exactly four (internal UUID, BCM Code, Item No, Asset Number), each with
+  one fixed role — see
+  [`../knowledge/adr/ADR-002-identifier-model.md`](../knowledge/adr/ADR-002-identifier-model.md)
+  and [`BUSINESS_RULES.md`](BUSINESS_RULES.md). A new identifier, a new
+  identifier role, or merging two existing identifiers requires an ADR
+  update, not an implementation PR.
 - Do not create missing Role CRUD, User delete, or master-data update/delete
   endpoints solely to obtain audit coverage.
 - Do not mix patient tracking into the Equipment Pool: no patient name, HN/MRN,
@@ -26,6 +34,13 @@
 
 - Do not create parallel audit, database-access, state-transition, or workflow
   mechanisms when an authoritative path exists.
+- Do not bypass the dispatch/receipt services to change equipment status.
+  Dispatch and receipt (`backend/app/services/borrow_service.py`) are the
+  only paths that open or close a transaction or move equipment through
+  `ISSUED_TO_WARD`; administrative/manual status maintenance uses a
+  separate, narrower transition set and must never be used to simulate a
+  dispatch or receipt. See [`BUSINESS_RULES.md`](BUSINESS_RULES.md)
+  ("Dispatch/Return owns transaction lifecycle").
 - Do not move transaction/commit boundaries casually. Identify all business,
   status-history, and audit writes that must succeed or fail together.
 - Mandatory audit writers use the caller's `AsyncSession`, flush without an

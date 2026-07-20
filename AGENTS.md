@@ -10,100 +10,57 @@ AppSheet-based process.
 - `backend/` — FastAPI application (async SQLAlchemy, Alembic migrations,
   pytest test suite).
 - `frontend/` — React/TypeScript web client.
-- `docs/audits/` — the source-of-truth documents listed below.
+- `docs/` — governance, workflow, and domain documentation; see "Source of
+  Truth" below.
+- `knowledge/` — durable architecture decisions (`adr/`) and their
+  business rules/concepts, plus the AI-memory snapshot
+  (`PROJECT_MEMORY.md`, `CONTEXT.md`, `CHANGE_HISTORY.md`).
 - `docs/prompts/` — reusable, role-specific task prompts.
-- `docs/PROJECT_PLAYBOOK.md` — compact governance entry point and minimum
-  reading sets.
-- `docs/AI_WORKFLOW.md` — the recommended AI-assisted development workflow.
-- `docs/ROADMAP_STATUS.md` — current status of every planned roadmap Pull
-  Request, at a glance.
-- `docs/ARCHITECTURE_DECISIONS.md` — confirmed project-level decisions and
-  their rationale.
 
 # Source of Truth
 
-Start with `docs/PROJECT_PLAYBOOK.md`, which defines the compact reading sets
-and conflict hierarchy. In summary:
+Start with `docs/PROJECT_PLAYBOOK.md`, which defines the detailed
+authority hierarchy, roles, and reading sets. For a faster single-file
+orientation, start with `knowledge/PROJECT_MEMORY.md` instead — it
+summarizes the same facts and cites its sources.
 
-- this file owns permanent repository-wide rules and enforcement
-  guardrails — the boundaries a task must not cross — not the detailed
-  rationale behind any single scope decision; the Equipment Pool scope
-  decision itself, with its rationale, is owned by
-  [`knowledge/adr/ADR-001`](knowledge/adr/ADR-001-equipment-pool-scope.md)
-  per the Playbook's topic-ownership table, and this file does not
-  independently redefine or override it;
-- `docs/ARCHITECTURE_DECISIONS.md` owns active confirmed decisions, except
-  where the Playbook's topic-ownership table assigns a topic to
-  `knowledge/adr/` instead (currently: equipment scope, identifier model,
-  BCM manual search, hospital QR identification — see `knowledge/README.md`);
-- `docs/audits/04-consolidated-implementation-plan.md` owns Roadmap PR scope,
-  order, dependencies, and acceptance criteria not already owned above;
-- `docs/ROADMAP_STATUS.md` tracks status only; and
-- audits 01–03 are historical evidence, superseded by 04 where they disagree.
+This file owns permanent repository-wide rules and enforcement
+guardrails — the boundaries a task must not cross. It states them
+compactly below and points to the document that owns the full rule,
+rationale, and update history for each. Task-specific instructions may
+narrow work but cannot silently override a guardrail, business rule, or
+Roadmap boundary; a real conflict requires an explicit Governance PR.
 
-`docs/PROJECT_PLAYBOOK.md`'s topic-ownership table is the single place that
-states which document governs which topic — check it before assuming a
-document is authoritative for something it discusses.
+| Topic | Full detail |
+|---|---|
+| Business rules (equipment states, identifiers, cleaning, dispatch/receipt ownership) | [`docs/BUSINESS_RULES.md`](docs/BUSINESS_RULES.md) |
+| Architecture invariants ("do not" list for design/implementation/review) | [`docs/ARCHITECTURE_GUARDRAILS.md`](docs/ARCHITECTURE_GUARDRAILS.md) |
+| Full requirement-to-merge workflow and AI roles | [`docs/PROJECT_WORKFLOW.md`](docs/PROJECT_WORKFLOW.md) |
+| Roadmap PR scope, order, current status | [`docs/ROADMAP.md`](docs/ROADMAP.md) |
+| Domain terminology and confirmed-vs-future workflow narrative | [`docs/HOSPITAL_DOMAIN_MODEL.md`](docs/HOSPITAL_DOMAIN_MODEL.md) |
+| Current process/tooling limitations | [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md) |
+| Full authority hierarchy and topic ownership | [`docs/PROJECT_PLAYBOOK.md`](docs/PROJECT_PLAYBOOK.md) |
 
-Task-specific instructions may narrow work but cannot silently override a
-confirmed guardrail, security decision, or Roadmap boundary. Such a change
-requires an explicit Governance PR.
+# Domain Guardrails (compact — see `docs/BUSINESS_RULES.md` and `docs/ARCHITECTURE_GUARDRAILS.md` for full rationale)
 
-# Domain Guardrails
+- Only Equipment Pool staff record transactions; ward staff are not application users.
+- Exactly four equipment identifiers (UUID, BCM Code, Item No, Asset Number), each with one fixed role. "ME Code" is retired and must not be used.
+- Exactly four equipment states; no cleaning state exists or may be added.
+- Equipment receipt is one atomic usable/defective operation; cleaning is never tracked.
+- Dispatch/receipt services own the transaction lifecycle; do not bypass them via manual status maintenance.
+- Only the first receiving ward is recorded — no ward-to-ward transfer tracking.
+- No patient tracking, no MEMS integration, no PM/calibration/recall workflow.
 
-The confirmed hospital workflow is intentionally narrow. Any task —
-implementation or review — must respect it:
-
-- Only Equipment Pool staff record transactions (no ward-user entry).
-- BCM Code is the primary operator-facing equipment identifier and the
-  only identifier manual search matches; Item No identifies equipment
-  from a hospital QR scan only; the internal UUID remains the database
-  primary key. "ME Code" is a retired placeholder name and must not be
-  used — see `knowledge/adr/ADR-002-identifier-model.md`.
-- Routine rounds happen on a fixed schedule; on-demand dispatch is also
-  supported.
-- Only the **first receiving ward** is recorded — no ward-to-ward transfer
-  tracking.
-- Equipment receipt is a **single atomic operation** (outcome: usable or
-  defective). Receiving an item does **not** indicate cleaning is
-  complete — cleaning may happen before or after receiving, and the
-  system never records cleaning status.
-- There is **no separate cleaning workflow or cleaning status.**
-- There is **no patient tracking** (no patient name, HN/MRN, bed number,
-  named borrower, or due-date/overdue workflow). Patient transfers
-  between wards are not tracked.
-- Ward staff do not use this application — Equipment Pool staff are its
-  only users.
-- There is **no MEMS integration.**
-- There is **no PM (preventive maintenance) workflow.**
-- There is **no calibration workflow.**
-- There is **no recall workflow.**
-
-Do not introduce any of the above unless a task explicitly asks for it.
+Do not introduce any of the above unless a task explicitly asks for it and cites the approving Governance PR/ADR.
 
 # Confirmed Future Workflow Direction
 
-These are confirmed hospital decisions for **future** work — not yet
-scheduled to a specific roadmap Pull Request. Do not build them ahead of
-their planned PR (Scope Discipline, below), but do not design current
-work in a way that would contradict or block them either. See
-`docs/ROADMAP_STATUS.md` for scheduling status and
-`docs/ARCHITECTURE_DECISIONS.md` for the full rationale.
-
-- **Shift Sessions.** Routine dispatch rounds still exist operationally,
-  but future implementation will replace hard-coded transaction times
-  with flexible DAY and NIGHT Shift Sessions: opening/closing times are
-  flexible, multiple staff may create transactions within one open
-  session, and every transaction must record the authenticated operator
-  regardless of which session it falls under.
-- **Standby Snapshots.** Future reporting will support Day and Night
-  Standby Snapshots recording department-level equipment counts. A
-  snapshot is a distinct, manually-recorded event — it is not derived
-  automatically from transaction history.
-- **Deployment constraint.** Production deployment must not assume direct
-  access to hospital-managed servers. The architecture should remain
-  deployable to an approved managed platform while remaining a
-  browser/PWA-based application.
+Shift Sessions, Standby Snapshots, and a managed-deployment constraint are
+confirmed hospital decisions for future work, not yet scheduled to a
+Roadmap PR. Do not build them ahead of their planned PR; do not design
+current work to contradict or block them. See
+[`docs/ROADMAP.md`](docs/ROADMAP.md) ("Confirmed future work") and
+[`docs/ARCHITECTURE_DECISIONS.md`](docs/ARCHITECTURE_DECISIONS.md) for rationale.
 
 # Scope Discipline
 
@@ -118,6 +75,7 @@ work in a way that would contradict or block them either. See
 - Keep Pull Requests small and focused on one objective.
 - Do not bundle unrelated refactoring into a feature or fix PR.
 - Follow the Pull Request ordering and dependencies defined in
+  [`docs/ROADMAP.md`](docs/ROADMAP.md) and
   `docs/audits/04-consolidated-implementation-plan.md`.
 
 # Testing Expectations
@@ -127,21 +85,12 @@ work in a way that would contradict or block them either. See
 - Every review should inspect the tests themselves, not just trust that a
   test suite exists or that the PR description says it passed.
 
-# AI Roles
+# AI Roles and Workflow
 
-This repository is designed to be worked on by AI assistants in general,
-not any single vendor's tool. The active role for a given task is
-determined by the task prompt, not by this file. Typical repository
-roles include:
-
-- Software Architect
-- Implementation Engineer
-- Independent Reviewer
-- Security Reviewer
-- Test Engineer
-- Documentation Assistant
-
-Reusable, role-specific prompts live in `docs/prompts/`. For the
-recommended end-to-end development workflow across these roles, see
-`docs/PROJECT_PLAYBOOK.md`; `docs/AI_WORKFLOW.md` remains a compatibility
-pointer for existing links.
+Claude implements. Codex independently reviews. ChatGPT governs
+architecture, roadmap, prompts, and review interpretation. The Repository
+Owner makes business and merge decisions. The full requirement-to-merge
+pipeline, non-negotiables (no automatic merge, no Claude<->Codex repair
+loop), and reusable role-specific prompts are defined in
+[`docs/PROJECT_WORKFLOW.md`](docs/PROJECT_WORKFLOW.md) and
+[`docs/prompts/`](docs/prompts/).

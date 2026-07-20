@@ -1,12 +1,19 @@
 # Roadmap Status
 
+**Superseded by [`ROADMAP.md`](ROADMAP.md),** which reflects the current
+baseline and every merged Roadmap PR through the CI/AI-review-workflow
+infrastructure PR. The per-PR entries below were not kept current past
+Roadmap PR3/PR4 and are retained here only as a historical snapshot — do
+not treat them as current status.
+
 Current status of every Pull Request in the implementation plan
 (`docs/audits/04-consolidated-implementation-plan.md`, Part D — the
 authoritative source for scope, ordering, and acceptance criteria). This
 document tracks **status only**; it does not duplicate the plan itself.
 
-Last updated: Roadmap PR3 implementation is in progress as Draft GitHub PR
-#7; its documentation-only scope alignment was merged in GitHub PR #8.
+Last updated (historical): Roadmap PR3 implementation is in progress as
+Draft GitHub PR #7; its documentation-only scope alignment was merged in
+GitHub PR #8.
 
 ---
 
