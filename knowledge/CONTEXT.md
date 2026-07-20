@@ -7,15 +7,15 @@
 
 ## Current baseline
 
-`4041cd2aec412c94f730285d7ba4635e00b095bd` — squash commit of Roadmap PR7 (7a slice, Transaction lifecycle model), GitHub PR #19, on branch `claude/medical-equipment-pool-0c7fz0`.
+`d0e888f3095c9a794928a9bd7d68b60907654522` — squash commit of Roadmap PR7 (7b slice, dispatch type/routine round/write-path cleanup), GitHub PR #20, on branch `claude/medical-equipment-pool-0c7fz0`.
 
 ## Current PR
 
-**Roadmap PR7 (7b slice) — dispatch type, routine round, and write-path cleanup** — branch `feature/pr20-transaction-fields`. Completes Roadmap PR7's remaining scope: adds `DispatchType` (`routine_round`/`on_demand`) and `RoutineRound` (the four confirmed fixed times `06:00`/`11:00`/`15:00`/`21:00`) to `BorrowTransaction`; `BorrowRequest` now requires `ward_id` and `dispatch_type` for every new dispatch, requires `routine_round` exactly for `routine_round` dispatches, and no longer accepts `borrower_name`/`due_at`/`quantity`; `TransactionOut` drops `due_at` and makes `borrower_name` nullable. Migration `0008_dispatch_fields.py` adds the two new nullable columns, three CHECK constraints, and relaxes `borrower_name` to nullable at the database level — purely additive, no legacy-value remap, every existing historical value preserved unmodified. `ward_id`-required stays application-layer-only, never a database `NOT NULL`; no existing row is auto-assigned a ward or a dispatch classification. `frontend/src/pages/BorrowPage.tsx` gained a required ward selector and dispatch-type/conditional routine-round selectors, and lost its borrower-name input (minimum functional form change, not the Roadmap PR11 terminology redesign). See `knowledge/adr/ADR-005-transaction-model.md`, `docs/DOMAIN_MODEL.md`, and `docs/DECISION_LOG.md`. Status: Draft, pending review.
+None. Roadmap PR7 (7b slice) merged as GitHub PR #20: adds `DispatchType` (`routine_round`/`on_demand`) and `RoutineRound` (the four confirmed fixed times `06:00`/`11:00`/`15:00`/`21:00`) to `BorrowTransaction`; `BorrowRequest` requires `ward_id` and `dispatch_type` for every new dispatch, requires `routine_round` exactly for `routine_round` dispatches, and rejects `borrower_name`/`due_at`/`quantity` outright (`extra="forbid"`, added during Codex round 1 review — see `docs/DECISION_LOG.md`); `TransactionOut` drops `due_at` and makes `borrower_name` nullable. Migration `0008_dispatch_fields.py` added the two new nullable columns, three CHECK constraints, and relaxed `borrower_name` to nullable at the database level — purely additive, no legacy-value remap, every existing historical value preserved unmodified. `ward_id`-required stays application-layer-only (now enforced via a proactive existence check, also from Codex round 1 review, which also separated an invalid `ward_id` from the equipment-conflict response); no existing row was auto-assigned a ward or a dispatch classification. `frontend/src/pages/BorrowPage.tsx` gained a required ward selector and dispatch-type/conditional routine-round selectors, and lost its borrower-name input (minimum functional form change, not the Roadmap PR11 terminology redesign). Roadmap PR7 (both slices) is now fully merged. See `knowledge/adr/ADR-005-transaction-model.md`, `docs/DOMAIN_MODEL.md`, and `docs/DECISION_LOG.md`.
 
 ## Next planned PR
 
-Roadmap PR8 (Atomic Single-Operation Equipment Receipt with concurrency guard), once this PR is merged — concurrent-receipt protection remains mandatory before pilot deployment and is not implemented by this PR.
+Roadmap PR8 (Atomic Single-Operation Equipment Receipt with concurrency guard) — not yet started. Concurrent-receipt protection remains mandatory before pilot deployment.
 
 ## Outstanding work
 
