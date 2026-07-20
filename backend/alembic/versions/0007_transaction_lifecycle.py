@@ -46,15 +46,19 @@ Preflight (upgrade), in order, before any row is written:
 
 1. Every distinct existing `status` value is checked against
    LEGACY_STATUS_MAP's keys, with one exception -- a value that is
-   already one of the two target states is left untouched and does not
-   receive a `legacy_status` (this makes the migration safe to run
-   against a database whose `borrow_transactions` table was created
-   fresh via `Base.metadata.create_all()` at 0001, which already
-   reflects today's OPEN/CLOSED default and already has a
-   `legacy_status` column -- see migration 0006's docstring for why 0001
-   behaves this way). Any OTHER distinct value aborts the migration,
-   naming every unexpected value and its row count -- never a guess,
-   never a partial remap.
+   already one of the two target states is left untouched by the
+   legacy-remap step below (it is not a member of `LEGACY_STATUS_MAP`,
+   so there is no legacy-to-target rewrite to apply to it), and it does
+   NOT receive a `legacy_status` at that point (this makes the migration
+   safe to run against a database whose `borrow_transactions` table was
+   created fresh via `Base.metadata.create_all()` at 0001, which already
+   reflects today's OPEN/CLOSED default -- see migration 0006's docstring
+   for why 0001 behaves this way). It is *not* left with a permanently
+   NULL `legacy_status`, though: see "Target-state compatibility policy"
+   below for the separate step, later in `upgrade()`, that gives every
+   such row a same-value compatibility marker. Any OTHER distinct value
+   aborts the migration, naming every unexpected value and its row
+   count -- never a guess, never a partial remap.
 2. Future-OPEN collision check: every status value that will read as
    `open` after this migration -- `borrowed` and `overdue` (both remap to
    `open`) *and* `open` itself (a row already in the target domain, left

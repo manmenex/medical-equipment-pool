@@ -100,7 +100,12 @@ Response `201`:
 {
   "id": "…uuid…",
   "transaction_no": "TX-20260716-0001",
-  "equipment": { "id": "…", "asset_number": "AST-00123", "status": "ISSUED_TO_WARD" },
+  "equipment": {
+    "id": "…",
+    "asset_number": "AST-00123",
+    "status": "issued_to_ward"
+  },
+  "status": "open",
   "borrowed_at": "2026-07-16T09:12:00+07:00"
 }
 ```
