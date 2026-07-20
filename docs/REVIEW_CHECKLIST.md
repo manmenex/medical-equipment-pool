@@ -13,10 +13,11 @@
 - [ ] Migration impact is stated (none, or upgrade/downgrade evidence against PostgreSQL).
 - [ ] Rollback/forward-fix plan is proportionate to risk.
 - [ ] Out-of-scope items are explicitly listed, not silently omitted.
-- [ ] All required GitHub Actions checks (`.github/workflows/ci.yml`) are green on the exact reviewed head SHA.
+- [ ] All GitHub Actions checks required by the documented process (`.github/workflows/ci.yml`) are green on the exact reviewed head SHA. Branch protection does not currently enforce this (`docs/KNOWN_LIMITATIONS.md`) — the reviewer verifies it manually.
 - [ ] No secret, credential, or sensitive value appears in the diff, logs, fixtures, or PR description.
 - [ ] PR description matches the actual final diff.
 - [ ] No domain guardrail is violated — check against `docs/BUSINESS_RULES.md` and `docs/ARCHITECTURE_GUARDRAILS.md` even if not explicitly called out by the task.
+- [ ] Knowledge Update Policy assessed (`docs/PROJECT_WORKFLOW.md`): the PR either updates the knowledge/governance files it actually affects, or no such file is affected. No empty or artificial entry was added merely to satisfy this check.
 
 ## Codex focus — implementation review
 
@@ -39,4 +40,4 @@ Full detail: `docs/prompts/codex-pr-review.md`.
 
 ## Decision and submission
 
-Both reviewers select a substantive decision — `APPROVE`, `REQUEST_CHANGES`, or `COMMENT` — per `docs/prompts/codex-pr-review.md`'s GitHub Review Submission Policy, and state it explicitly in the review body even when the GitHub review-state action itself is constrained to `COMMENT` (see `docs/KNOWN_LIMITATIONS.md`). Neither reviewer merges, marks the PR ready, or applies a fix directly.
+Both reviewers select a substantive decision — `APPROVE`, `REQUEST_CHANGES`, or `COMMENT` — per `docs/prompts/codex-pr-review.md`'s GitHub Review Submission Policy, and state it explicitly at the start of the review body. If formal Pull Request Review submission fails (see `docs/KNOWN_LIMITATIONS.md`), the reviewer uses the documented PR Conversation comment workaround instead and still states the decision explicitly. Neither reviewer merges, marks the PR ready, or applies a fix directly.

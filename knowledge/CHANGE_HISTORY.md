@@ -35,9 +35,9 @@ Roadmap PR6's review found that the equipment-status transition table did not di
 
 Roadmap PR6's review also found `AVAILABLE_AT_POOL` could skip directly to `DECOMMISSIONED`. Closed: decommissioning must now pass through `UNAVAILABLE_DEFECTIVE`. See `docs/BUSINESS_RULES.md`.
 
-## Required CI introduced
+## Process-required CI introduced
 
-Through Roadmap PR3/PR4/PR5/PR6, PostgreSQL-backed integration tests existed but no GitHub Actions workflow required them on a PR (`docs/TECH_DEBT.md` TD-003). The CI/AI-review-workflow infrastructure PR (GitHub PR #17) added a required workflow, later hardened to fail closed rather than silently pass via skipped tests when PostgreSQL infrastructure is unusable.
+Through Roadmap PR3/PR4/PR5/PR6, PostgreSQL-backed integration tests existed but no GitHub Actions workflow ran them on a PR at all (`docs/TECH_DEBT.md` TD-003). The CI/AI-review-workflow infrastructure PR (GitHub PR #17) added a workflow required by the documented project process (`docs/PROJECT_WORKFLOW.md`), later hardened to fail closed rather than silently pass via skipped tests when PostgreSQL infrastructure is unusable. GitHub branch protection does not yet enforce this workflow as a required status check (`docs/KNOWN_LIMITATIONS.md`).
 
 ## Governance layer consolidated
 

@@ -26,8 +26,8 @@ Source: `docs/ARCHITECTURE_DECISIONS.md`; `docs/PROJECT_WORKFLOW.md`.
 See `docs/BUSINESS_RULES.md` for the full list with citations. Summary:
 
 - Exactly four equipment states: `AVAILABLE_AT_POOL`, `ISSUED_TO_WARD`, `UNAVAILABLE_DEFECTIVE`, `DECOMMISSIONED`.
-- Cleaning is never tracked as a state or workflow; receipt is one atomic usable/defective outcome.
-- Dispatch and receipt (`backend/app/services/borrow_service.py`) are the only paths that open/close a transaction or move equipment through `ISSUED_TO_WARD`; administrative status maintenance is a separate, narrower path.
+- Cleaning is a physical activity that may happen before or after receipt is recorded; it is never represented as a state and never needs a separate workflow. A usable receipt ends at `AVAILABLE_AT_POOL`; a defective receipt ends at `UNAVAILABLE_DEFECTIVE`.
+- Dispatch and receipt (`backend/app/services/borrow_service.py`) are the only paths that move equipment through `ISSUED_TO_WARD`; administrative status maintenance is a separate, narrower path. The current transaction-state field (`borrowed`/`returned`/`overdue`) differs from the approved target `OPEN`/`CLOSED` model planned for Roadmap PR7 — see `docs/BUSINESS_RULES.md` for the current-vs-planned split.
 - Decommissioning must pass through `UNAVAILABLE_DEFECTIVE`; `AVAILABLE_AT_POOL` cannot skip directly to `DECOMMISSIONED`.
 - No patient tracking, no ward-to-ward transfer tracking, no MEMS/PM/calibration/recall workflow.
 

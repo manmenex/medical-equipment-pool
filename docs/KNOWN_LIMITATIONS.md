@@ -5,17 +5,19 @@
 **Update trigger:** A limitation is discovered, its workaround changes, or it is resolved
 **Maintainer:** Repository Owner
 
-## GitHub Connector: `403 Resource not accessible by integration` on Pull Request Reviews
+## GitHub Connector: Pull Request Review submission may fail with `403 Resource not accessible by integration`
 
-**Symptom:** When a reviewer (Codex or ChatGPT, acting through the GitHub connector) attempts to submit a Pull Request review with a native `APPROVE` or `REQUEST_CHANGES` state, the review-creation call can fail with `403 Resource not accessible by integration`, or silently downgrade to a `COMMENT`-state review — depending on the connector's granted permissions/installation scope for this repository, and independently of the separate, already-documented restriction that a reviewer acting as the same account that owns the PR can only submit `COMMENT` (`docs/prompts/codex-pr-review.md`, GitHub Review Submission Policy).
+**Symptom:** When a reviewer (Codex or ChatGPT, acting through the GitHub connector) attempts to submit a formal Pull Request Review (an `APPROVE`, `REQUEST_CHANGES`, or `COMMENT`-state review object, as opposed to a plain PR Conversation comment), the call can fail outright with `403 Resource not accessible by integration`. This is observed behavior, not a downgrade — the review submission does not succeed. It is independent of the separate, already-documented restriction that a reviewer acting as the same account that owns the PR can only submit a `COMMENT`-state review (`docs/prompts/codex-pr-review.md`, GitHub Review Submission Policy).
 
-**Impact:** The GitHub UI's colored review-state label (green "Approved" / red "Changes requested") cannot be relied on alone to determine a review's actual decision. A `COMMENT`-state review is not automatically a weak or incomplete review — it may be the only state the connector's current permissions allow for an otherwise complete, decisive review.
+**Impact:** The affected reviewer cannot create a formal GitHub Pull Request Review object at all in the affected session — not `APPROVE`, not `REQUEST_CHANGES`, and not even `COMMENT`-state via the review-submission endpoint. The connector limitation does **not** prevent reading the PR, its diff, existing reviews, or CI status — only the write path for creating a new formal review is affected.
 
 **Workaround:**
 
-- The reviewer always states the **substantive decision** explicitly in the first lines of the review body — e.g. `Substantive decision: APPROVE` or `Substantive decision: REQUEST_CHANGES` — regardless of which native GitHub review-state action the submission actually used.
-- Readers (the Repository Owner, `docs/PROJECT_WORKFLOW.md` step 9, and any later AI session) must read the stated decision from the review body text, not infer it from the GitHub review-state badge.
-- If submission itself fails (not just downgrades to `COMMENT`), the reviewer reports the failure and does not claim the review is complete, per `docs/prompts/codex-pr-review.md`'s existing verification-after-submission requirement.
+- The reviewer posts the review as a **top-level PR Conversation comment** instead of a formal Review object, stating the substantive decision explicitly at the start — e.g. `Substantive decision: APPROVE` or `Substantive decision: REQUEST_CHANGES` — using the same required content `docs/prompts/codex-pr-review.md` specifies for a review body.
+- This is a manual workaround: it requires deliberately choosing the comment-submission path instead of the review-submission path when the latter is unavailable.
+- A browser-based fallback (submitting the review manually through the GitHub web UI) may be available in some sessions, but is not guaranteed — it can be unavailable or fail depending on the session's environment. Do not assume it as a reliable substitute.
+- Readers (the Repository Owner, `docs/PROJECT_WORKFLOW.md` step 9, and any later AI session) must check for the stated decision in PR Conversation comments, not only in the formal GitHub Reviews list, when this limitation was in effect for a given review round.
+- If neither the formal review nor the comment workaround succeeds, the reviewer reports the failure and does not claim the review is complete, per `docs/prompts/codex-pr-review.md`'s existing verification-after-submission requirement.
 
 **Resolution path:** Not resolved by this repository's code or governance — it depends on the GitHub App/connector installation's granted permissions (`pull_requests: write` at minimum) for this repository. Re-check when the connector installation is reconfigured.
 

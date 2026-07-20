@@ -13,9 +13,9 @@ Equipment has exactly four states: `AVAILABLE_AT_POOL`, `ISSUED_TO_WARD`, `UNAVA
 
 - Source: `docs/HOSPITAL_DOMAIN_MODEL.md` ("Confirmed workflow"); `docs/audits/04-consolidated-implementation-plan.md` Part A; implemented by migration `0006_equipment_state_model.py` and `backend/app/models/equipment.py`.
 
-## Cleaning is performed during receipt and is not tracked
+## Cleaning is not tracked
 
-Equipment receipt is one atomic digital operation with a binary outcome (usable or defective). Cleaning is a physical process that may happen before or after the digital receipt entry; the system has no cleaning state, cleaning-complete action, or cleaning workflow, and never records cleaning status.
+Cleaning is a physical operational activity, not a digital one. It may occur before or after the receipt record is entered — the system does not require or assume any particular order. Cleaning is not represented as an equipment state and does not require a separate cleaning workflow: there is no cleaning state, cleaning-complete action, or cleaning-status field. Equipment receipt is one atomic digital operation with a binary outcome — a usable receipt ends at `AVAILABLE_AT_POOL`; a defective receipt ends at `UNAVAILABLE_DEFECTIVE`.
 
 - Source: `docs/ARCHITECTURE_DECISIONS.md` ("No cleaning workflow"); `AGENTS.md` (Domain Guardrails); `docs/audits/04-consolidated-implementation-plan.md` Part B.1.
 
@@ -41,9 +41,14 @@ Item No is the identifier encoded in the hospital's existing QR labels. It is us
 
 ## Dispatch/Return owns transaction lifecycle
 
-A dispatch/return transaction has exactly two states, `OPEN` and `CLOSED`. Dispatch opens a transaction and moves equipment `AVAILABLE_AT_POOL -> ISSUED_TO_WARD`; receipt closes it with a usable or defective outcome. Dispatch and receipt are the only paths that open or close a transaction — administrative/manual equipment-status maintenance is a separate, narrower transition set that never opens or closes a transaction and never originates or targets `ISSUED_TO_WARD`.
+Dispatch and receipt (`backend/app/services/borrow_service.py`) are the only paths that move equipment through `ISSUED_TO_WARD` — administrative/manual equipment-status maintenance is a separate, narrower transition set that never originates or targets `ISSUED_TO_WARD`. This ownership rule is implemented today; the exact transaction-state model it uses differs between current code and the approved target architecture — do not conflate the two:
 
-- Source: `docs/HOSPITAL_DOMAIN_MODEL.md` ("Confirmed workflow"); implemented by `backend/app/services/borrow_service.py` (dispatch/receipt) versus the administrative status-transition table in `backend/app/models/equipment.py`.
+- **Current implementation:** `BorrowTransaction.status` is one of `borrowed` / `returned` / `overdue` (`backend/app/models/transaction.py`, `TX_STATUS_*` constants). `borrower_name` is a required field; `due_at` is nullable and part of the current schema; `ward_id` is nullable.
+- **Approved target architecture (planned, Roadmap PR7 — not yet implemented):** the transaction model moves to exactly two states, `OPEN` and `CLOSED`; `borrower_name` and `due_at`/overdue are removed from the active write path; `ward_id` (recorded as the first receiving ward) becomes required. See `docs/HOSPITAL_DOMAIN_MODEL.md` ("Confirmed workflow") and `docs/audits/04-consolidated-implementation-plan.md` Part D's PR7 entry.
+
+Do not implement PR7's target model, and do not describe the target model as already in place, ahead of Roadmap PR7 actually landing.
+
+- Source: `backend/app/models/transaction.py`; `backend/app/services/borrow_service.py`; `docs/HOSPITAL_DOMAIN_MODEL.md`; `docs/audits/04-consolidated-implementation-plan.md` Part D (PR7).
 
 ## Decommission requires AVAILABLE -> UNAVAILABLE_DEFECTIVE -> DECOMMISSIONED
 
