@@ -8,7 +8,7 @@ from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.equipment import Equipment
 from app.models.notification import Notification
-from app.models.transaction import TX_STATUS_BORROWED, TX_STATUS_OVERDUE, BorrowTransaction
+from app.models.transaction import BorrowTransaction, TransactionStatus
 from app.models.user import ROLE_ADMIN, ROLE_BIOMEDICAL_ENGINEER, Role, User
 
 logger = logging.getLogger(__name__)
@@ -79,14 +79,19 @@ async def check_overdue_returns() -> None:
         overdue = (
             await db.execute(
                 select(BorrowTransaction).where(
-                    BorrowTransaction.status == TX_STATUS_BORROWED,
+                    BorrowTransaction.status == TransactionStatus.OPEN,
                     BorrowTransaction.due_at.is_not(None),
                     BorrowTransaction.due_at < now,
                 )
             )
         ).scalars().all()
         for tx in overdue:
-            tx.status = TX_STATUS_OVERDUE
+            # Roadmap PR7 (knowledge/adr/ADR-005-transaction-model.md): the
+            # transaction lifecycle has exactly two states, OPEN and CLOSED --
+            # "overdue" is no longer a status value. An overdue transaction is
+            # still OPEN (it has not been received); this job now only
+            # notifies engineers and leaves status untouched, rather than
+            # writing a third, no-longer-valid status.
             await _notify_engineers(
                 db,
                 title=f"เครื่องมือเกินกำหนดคืน: {tx.transaction_no}",

@@ -43,7 +43,7 @@ from app.db.session import get_db
 from app.main import app
 from app.models.audit import AuditLog
 from app.models.equipment import Equipment
-from app.models.transaction import BorrowTransaction
+from app.models.transaction import BorrowTransaction, TransactionStatus
 from app.models.user import ALL_ROLES, Role, User
 
 pytestmark = pytest.mark.postgres
@@ -755,11 +755,11 @@ async def _seed_transactions(transaction_nos: list[str]) -> None:
                         transaction_no=transaction_no,
                         equipment_id=equipment.id,
                         borrower_name=f"Seed {i}",
-                        # 'returned', not 'borrowed' — avoids
-                        # idx_tx_one_active_borrow's partial unique index,
-                        # which only constrains status='borrowed' rows and
-                        # is irrelevant to this seeding helper's purpose.
-                        status="returned",
+                        # CLOSED, not OPEN — avoids idx_tx_one_active_borrow's
+                        # partial unique index, which only constrains
+                        # status='open' rows and is irrelevant to this
+                        # seeding helper's purpose.
+                        status=TransactionStatus.CLOSED,
                     )
                 )
             await session.commit()
@@ -1003,7 +1003,7 @@ async def test_migration_0003_disaster_recovery_reseed_stays_above_historical_ma
                             "INSERT INTO borrow_transactions "
                             "(id, transaction_no, equipment_id, quantity, borrowed_at, "
                             "borrower_name, status) "
-                            "SELECT :id, :tn, id, 1, now(), 'post-cutover', 'returned' "
+                            "SELECT :id, :tn, id, 1, now(), 'post-cutover', 'closed' "
                             "FROM equipment LIMIT 1"
                         ),
                         {"id": str(uuid.uuid4()), "tn": f"TX-{today}-{value:08d}"},
@@ -1012,20 +1012,24 @@ async def test_migration_0003_disaster_recovery_reseed_stays_above_historical_ma
         finally:
             await engine.dispose()
 
-        # Roadmap PR6: downgrading to 0002 now also runs migration 0006's
-        # downgrade, which refuses to proceed for any equipment row with a
-        # NULL legacy_status (no 8-state value to reconstruct -- see that
-        # migration's docstring). The equipment row _seed_transactions
-        # created above was inserted directly via the ORM after 0006 had
-        # already run, so it has no such history; this test is not
-        # exercising 0006 at all, so give it a synthetic legacy_status
-        # equal to its own current status purely to satisfy that
-        # precondition -- irrelevant to this test's actual subject
+        # Roadmap PR6/PR7: downgrading to 0002 now also runs migrations
+        # 0006's and 0007's downgrades, which refuse to proceed for any
+        # equipment/borrow_transactions row with a NULL legacy_status (no
+        # pre-migration value to reconstruct -- see those migrations'
+        # docstrings). The equipment row _seed_transactions created above
+        # was inserted directly via the ORM after 0006 had already run, and
+        # every borrow_transactions row here (seeded already-CLOSED, or
+        # inserted post-cutover after upgrading to head) was never remapped
+        # by 0007 either -- neither has any such history, and this test is
+        # not exercising 0006 or 0007 at all, so give both a synthetic
+        # legacy_status equal to their own current status purely to satisfy
+        # that precondition -- irrelevant to this test's actual subject
         # (transaction_no_seq disaster recovery).
         engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
         try:
             async with engine.begin() as conn:
                 await conn.execute(text("UPDATE equipment SET legacy_status = status"))
+                await conn.execute(text("UPDATE borrow_transactions SET legacy_status = status"))
         finally:
             await engine.dispose()
 
@@ -2422,6 +2426,271 @@ async def test_migration_0006_downgrade_fails_for_rows_with_null_legacy_status()
                     )
                 ).scalar_one()
                 assert row == "available_at_pool"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR7: migration 0007_transaction_lifecycle.py. Exercised
+# for real via the same scratch-database + `alembic` CLI pattern as
+# 0002-0006 above -- mirrors 0006's equipment-status test suite structure
+# for the analogous borrow_transactions.status collapse.
+# ---------------------------------------------------------------------------
+
+
+async def _borrow_transactions_check_constraint_names() -> set[str]:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT conname FROM pg_constraint "
+                        "WHERE conrelid = 'borrow_transactions'::regclass AND contype = 'c'"
+                    )
+                )
+            ).fetchall()
+            return {r[0] for r in rows}
+    finally:
+        await engine.dispose()
+
+
+async def _insert_borrow_transaction_with_status(
+    conn, equipment_id: str, transaction_no: str, status: str, borrower_name: str = "PR7 Borrower"
+) -> str:
+    tx_id = str(uuid.uuid4())
+    await conn.execute(
+        text(
+            "INSERT INTO borrow_transactions (id, transaction_no, equipment_id, quantity, "
+            "borrowed_at, borrower_name, status) "
+            "VALUES (:id, :tn, :eq_id, 1, now(), :borrower_name, :status)"
+        ),
+        {"id": tx_id, "tn": transaction_no, "eq_id": equipment_id, "borrower_name": borrower_name, "status": status},
+    )
+    return tx_id
+
+
+async def _insert_bare_equipment(conn, asset_number: str) -> str:
+    equipment_id = str(uuid.uuid4())
+    await conn.execute(
+        text(
+            "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata) "
+            "VALUES (:id, :asset_number, 'PR7 Test Equipment', 'available_at_pool', '{}')"
+        ),
+        {"id": equipment_id, "asset_number": asset_number},
+    )
+    return equipment_id
+
+
+async def test_migration_0007_upgrade_downgrade_round_trip():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        # Fresh database, no pre-existing borrow_transactions rows: the
+        # CHECK constraint must still be added (result of scanning zero
+        # rows -- never skipped just because there was nothing to remap).
+        _run_alembic("upgrade", "head")
+        constraints = await _borrow_transactions_check_constraint_names()
+        assert "ck_borrow_transactions_status_open_closed" in constraints
+
+        # Downgrade removes exactly what 0007 added, cleanly, on an empty table.
+        _run_alembic("downgrade", "0006_equipment_state_model")
+        constraints = await _borrow_transactions_check_constraint_names()
+        assert "ck_borrow_transactions_status_open_closed" not in constraints
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                columns = await conn.run_sync(
+                    lambda sync_conn: {c["name"] for c in inspect(sync_conn).get_columns("borrow_transactions")}
+                )
+                assert "legacy_status" not in columns, "legacy_status must be dropped by a full downgrade"
+        finally:
+            await engine.dispose()
+
+        # Re-upgrade simulates a pre-PR7 database catching up.
+        _run_alembic("upgrade", "head")
+        constraints = await _borrow_transactions_check_constraint_names()
+        assert "ck_borrow_transactions_status_open_closed" in constraints
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0007_maps_every_legacy_status_and_preserves_legacy_status():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0006_equipment_state_model")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        ids_by_legacy: dict[str, str] = {}
+        try:
+            async with engine.begin() as conn:
+                for legacy_value in ("borrowed", "returned", "overdue"):
+                    equipment_id = await _insert_bare_equipment(conn, f"AST-0007-{legacy_value}")
+                    ids_by_legacy[legacy_value] = await _insert_borrow_transaction_with_status(
+                        conn, equipment_id, f"TX-0007-{legacy_value}", legacy_value
+                    )
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+
+        expected = {"borrowed": "open", "returned": "closed", "overdue": "open"}
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                for legacy_value, target_value in expected.items():
+                    row = (
+                        await conn.execute(
+                            text("SELECT status, legacy_status FROM borrow_transactions WHERE id = :id"),
+                            {"id": ids_by_legacy[legacy_value]},
+                        )
+                    ).one()
+                    assert row.status == target_value, f"{legacy_value!r} must remap to {target_value!r}"
+                    assert row.legacy_status == legacy_value, "the exact original value must be preserved"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0007_aborts_on_unexpected_status_value():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0006_equipment_state_model")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                equipment_id = await _insert_bare_equipment(conn, "AST-0007-UNKNOWN")
+                await _insert_borrow_transaction_with_status(conn, equipment_id, "TX-0007-UNKNOWN", "pending_review")
+        finally:
+            await engine.dispose()
+
+        env = {**os.environ, "DATABASE_URL": _scratch_dsn("postgresql+asyncpg")}
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=str(_BACKEND_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode != 0, "upgrade must abort on an unexpected status value"
+        assert "pending_review" in (result.stdout + result.stderr)
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0007_partial_unique_index_uses_open_predicate():
+    """The "at most one OPEN transaction per equipment" guard must follow
+    the renamed status value -- proven by inserting two OPEN rows for the
+    same equipment (rejected) and two CLOSED rows for the same equipment
+    (allowed, since only OPEN rows are constrained)."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                equipment_id = await _insert_bare_equipment(conn, "AST-0007-INDEX")
+                await _insert_borrow_transaction_with_status(conn, equipment_id, "TX-0007-INDEX-1", "closed")
+                await _insert_borrow_transaction_with_status(conn, equipment_id, "TX-0007-INDEX-2", "closed")
+        finally:
+            await engine.dispose()
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        equipment_id = None
+        try:
+            async with engine.begin() as conn:
+                equipment_id = await _insert_bare_equipment(conn, "AST-0007-INDEX-OPEN")
+                await _insert_borrow_transaction_with_status(conn, equipment_id, "TX-0007-INDEX-OPEN-1", "open")
+        finally:
+            await engine.dispose()
+
+        from sqlalchemy.exc import IntegrityError
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            with pytest.raises(IntegrityError):
+                async with engine.begin() as conn:
+                    await _insert_borrow_transaction_with_status(
+                        conn, equipment_id, "TX-0007-INDEX-OPEN-2", "open"
+                    )
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0007_downgrade_fails_for_rows_with_null_legacy_status():
+    """A row created after this migration's upgrade (the OPEN/CLOSED-only
+    application never writes a pre-PR7 legacy value) has no legacy_status
+    to reconstruct from -- downgrade must fail clearly rather than guess."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                equipment_id = await _insert_bare_equipment(conn, "AST-0007-POST-CUTOVER")
+                await _insert_borrow_transaction_with_status(
+                    conn, equipment_id, "TX-0007-POST-CUTOVER", "open"
+                )
+        finally:
+            await engine.dispose()
+
+        env = {**os.environ, "DATABASE_URL": _scratch_dsn("postgresql+asyncpg")}
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", "downgrade", "0006_equipment_state_model"],
+            cwd=str(_BACKEND_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode != 0, "downgrade must abort, not guess, when legacy_status is NULL"
+
+        # No partial restoration: the CHECK constraint must still exist and
+        # the row must still read the value it had before the aborted
+        # downgrade attempt.
+        constraints = await _borrow_transactions_check_constraint_names()
+        assert "ck_borrow_transactions_status_open_closed" in constraints
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        text(
+                            "SELECT status FROM borrow_transactions WHERE transaction_no = 'TX-0007-POST-CUTOVER'"
+                        )
+                    )
+                ).scalar_one()
+                assert row == "open"
         finally:
             await engine.dispose()
     finally:

@@ -15,7 +15,7 @@ from app.crud import audit as audit_crud
 from app.crud import equipment as equipment_crud
 from app.crud import transaction as transaction_crud
 from app.models.equipment import EquipmentStatus
-from app.models.transaction import TX_STATUS_BORROWED, TX_STATUS_RETURNED, BorrowTransaction
+from app.models.transaction import BorrowTransaction, TransactionStatus
 from app.utils.parsing import parse_uuid
 
 # Roadmap PR6 / owner-confirmed cleaning retirement: "cleaning" is
@@ -89,7 +89,6 @@ async def borrow(
                 "dropoff_location_id": parse_uuid(dropoff_location_id, "dropoff_location_id"),
                 "due_at": due_at,
                 "notes": notes,
-                "status": TX_STATUS_BORROWED,
             },
         )
     except IntegrityError as exc:
@@ -125,24 +124,19 @@ async def return_equipment(
     ip_address: str | None,
     user_agent: str | None,
 ) -> BorrowTransaction:
-    from datetime import datetime
-
     tx = await transaction_crud.get_by_id(db, transaction_id)
     if tx is None:
         raise TransactionNotFoundError("Transaction not found")
-    if tx.status != TX_STATUS_BORROWED:
+    if tx.status != TransactionStatus.OPEN:
         raise TransactionAlreadyReturnedError("This transaction has already been returned")
 
     new_status = RETURN_CONDITION_TO_STATUS.get(condition)
     if new_status is None:
         raise InvalidInputError(f"Unknown condition '{condition}'")
 
-    tx.returned_at = datetime.utcnow()
-    tx.condition_on_return = condition
-    tx.status = TX_STATUS_RETURNED
-    tx.received_by_user_id = received_by_user_id
-    if notes:
-        tx.notes = f"{tx.notes or ''}\n[Return] {notes}".strip()
+    await transaction_crud.close(
+        db, tx, received_by_user_id=received_by_user_id, condition_on_return=condition, notes=notes
+    )
 
     equipment = await equipment_crud.get_by_id(db, tx.equipment_id)
     if equipment is None:

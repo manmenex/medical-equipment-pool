@@ -533,7 +533,7 @@ async def test_return_by_hospital_item_no_scan(client, seeded_users):
         f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"condition": "available"}
     )
     assert return_resp.status_code == 200, return_resp.text
-    assert return_resp.json()["status"] == "returned"
+    assert return_resp.json()["status"] == "closed"
 
 
 async def test_item_no_with_leading_zeros_preserved_through_resolution(client, seeded_users):
@@ -1333,7 +1333,7 @@ async def test_generic_status_endpoint_cannot_desynchronize_open_transaction(cli
     tx_row = (
         await db_session.execute(select(BorrowTransaction).where(BorrowTransaction.id == uuid.UUID(tx_id)))
     ).scalar_one()
-    assert tx_row.status == "borrowed", "the OPEN transaction must remain open (not desynchronized)"
+    assert tx_row.status == "open", "the OPEN transaction must remain open (not desynchronized)"
     assert tx_row.returned_at is None
 
 

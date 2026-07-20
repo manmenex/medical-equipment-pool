@@ -41,4 +41,8 @@ Through Roadmap PR3/PR4/PR5/PR6, PostgreSQL-backed integration tests existed but
 
 ## Governance layer consolidated
 
-This PR (Knowledge & Governance Foundation) is itself a conceptual change: it introduces a compact, cross-referenced quick-reference layer (`docs/PROJECT_WORKFLOW.md` and friends, `knowledge/PROJECT_MEMORY.md` and friends) alongside the existing detailed Governance Pack v1.0 (`docs/PROJECT_PLAYBOOK.md`'s Level 1-7 hierarchy), rather than replacing it.
+The Knowledge & Governance Foundation PR (GitHub PR #18) is itself a conceptual change: it introduces a compact, cross-referenced quick-reference layer (`docs/PROJECT_WORKFLOW.md` and friends, `knowledge/PROJECT_MEMORY.md` and friends) alongside the existing detailed Governance Pack v1.0 (`docs/PROJECT_PLAYBOOK.md`'s Level 1-7 hierarchy), rather than replacing it.
+
+## OPEN/CLOSED transaction lifecycle introduced
+
+`BorrowTransaction.status` was collapsed from a three-value `borrowed`/`returned`/`overdue` field to an exactly-two-value `TransactionStatus` (`OPEN`/`CLOSED`), retiring "overdue" as a status value in favor of a notification-only concern (`app.worker.scheduler.check_overdue_returns`). The prior value is preserved for history in a `legacy_status` column, mirroring the four-state equipment model's pattern. Implemented as Roadmap PR7's lifecycle slice ("7a"), migration `0007_transaction_lifecycle.py`. `dispatch_type`, `routine_round`, ward-required, and `borrower_name`/`due_at` removal remain unimplemented ("7b"). See `knowledge/adr/ADR-005-transaction-model.md`, `docs/DOMAIN_MODEL.md`.

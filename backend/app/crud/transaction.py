@@ -5,7 +5,7 @@ from sqlalchemy import String, and_, cast, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.transaction import TX_STATUS_BORROWED, BorrowTransaction
+from app.models.transaction import BorrowTransaction, TransactionStatus
 from app.utils.pagination import decode_cursor, encode_cursor
 
 # Roadmap PR4 (docs/kickoffs/PR4-architecture-kickoff.md): the numeric
@@ -107,11 +107,11 @@ async def _generate_transaction_no_sqlite_fallback(db: AsyncSession, today: str)
     return f"{prefix}{count + 1:0{_TRANSACTION_NO_MIN_SUFFIX_WIDTH}d}"
 
 
-async def get_active_borrow_for_equipment(db: AsyncSession, equipment_id: uuid.UUID) -> BorrowTransaction | None:
+async def get_open_transaction_for_equipment(db: AsyncSession, equipment_id: uuid.UUID) -> BorrowTransaction | None:
     result = await db.execute(
         select(BorrowTransaction).where(
             BorrowTransaction.equipment_id == equipment_id,
-            BorrowTransaction.status == TX_STATUS_BORROWED,
+            BorrowTransaction.status == TransactionStatus.OPEN,
         )
     )
     return result.scalar_one_or_none()
@@ -127,6 +127,10 @@ async def get_by_id(db: AsyncSession, transaction_id: uuid.UUID) -> BorrowTransa
 
 
 async def create(db: AsyncSession, *, data: dict) -> BorrowTransaction:
+    """Opens a new transaction. ``data`` is expected to omit ``status`` and
+    rely on the model's ``TransactionStatus.OPEN`` column default -- the
+    OPEN/CLOSED lifecycle has exactly one entry point (this function) and
+    exactly one exit point (``close``, below)."""
     tx = BorrowTransaction(**data)
     db.add(tx)
     await db.flush()
@@ -134,11 +138,33 @@ async def create(db: AsyncSession, *, data: dict) -> BorrowTransaction:
     return tx
 
 
+async def close(
+    db: AsyncSession,
+    tx: BorrowTransaction,
+    *,
+    received_by_user_id: uuid.UUID | None,
+    condition_on_return: str,
+    notes: str | None,
+) -> BorrowTransaction:
+    """Closes an OPEN transaction. The only path that may set
+    ``status = TransactionStatus.CLOSED`` -- mirrors
+    ``app.crud.equipment.change_status_for_dispatch_receipt``'s role as the
+    single authorized mutator for its own lifecycle concern."""
+    tx.status = TransactionStatus.CLOSED
+    tx.returned_at = datetime.utcnow()
+    tx.condition_on_return = condition_on_return
+    tx.received_by_user_id = received_by_user_id
+    if notes:
+        tx.notes = f"{tx.notes or ''}\n[Return] {notes}".strip()
+    await db.flush()
+    return tx
+
+
 async def list_active(db: AsyncSession) -> list[BorrowTransaction]:
     result = await db.execute(
         select(BorrowTransaction)
         .options(selectinload(BorrowTransaction.equipment))
-        .where(BorrowTransaction.status == TX_STATUS_BORROWED)
+        .where(BorrowTransaction.status == TransactionStatus.OPEN)
         .order_by(BorrowTransaction.borrowed_at.desc())
     )
     return list(result.scalars().all())

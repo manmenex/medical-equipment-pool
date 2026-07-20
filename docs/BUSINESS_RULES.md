@@ -41,14 +41,13 @@ Item No is the identifier encoded in the hospital's existing QR labels. It is us
 
 ## Dispatch/Return owns transaction lifecycle
 
-Dispatch and receipt (`backend/app/services/borrow_service.py`) are the only paths that move equipment through `ISSUED_TO_WARD` — administrative/manual equipment-status maintenance is a separate, narrower transition set that never originates or targets `ISSUED_TO_WARD`. This ownership rule is implemented today; the exact transaction-state model it uses differs between current code and the approved target architecture — do not conflate the two:
+Dispatch and receipt (`backend/app/services/borrow_service.py`) are the only paths that move equipment through `ISSUED_TO_WARD`, and the only paths that open (`app.crud.transaction.create()`) or close (`app.crud.transaction.close()`) a transaction — administrative/manual equipment-status maintenance is a separate, narrower transition set that never originates or targets `ISSUED_TO_WARD` and never touches transaction status at all.
 
-- **Current implementation:** `BorrowTransaction.status` is one of `borrowed` / `returned` / `overdue` (`backend/app/models/transaction.py`, `TX_STATUS_*` constants). `borrower_name` is a required field; `due_at` is nullable and part of the current schema; `ward_id` is nullable.
-- **Approved target architecture (planned, Roadmap PR7 — not yet implemented):** the transaction model moves to exactly two states, `OPEN` and `CLOSED`; `borrower_name` and `due_at`/overdue are removed from the active write path; `ward_id` (recorded as the first receiving ward) becomes required. See `docs/HOSPITAL_DOMAIN_MODEL.md` ("Confirmed workflow") and `docs/audits/04-consolidated-implementation-plan.md` Part D's PR7 entry.
+`BorrowTransaction.status` is exactly two values, `TransactionStatus.OPEN` / `TransactionStatus.CLOSED` (`backend/app/models/transaction.py`; Roadmap PR7; `knowledge/adr/ADR-005-transaction-model.md`), matching `docs/HOSPITAL_DOMAIN_MODEL.md`'s confirmed `OPEN`/`CLOSED` workflow. An overdue (`due_at` passed) transaction remains `OPEN` — "overdue" is a notification concern (`app.worker.scheduler.check_overdue_returns`), not a third status value.
 
-Do not implement PR7's target model, and do not describe the target model as already in place, ahead of Roadmap PR7 actually landing.
+**Still open (Roadmap PR7's remaining scope, not yet implemented):** `dispatch_type`, `routine_round`, a required `ward_id`, and removal of `borrower_name`/`due_at` from the write path. Do not describe these as already in place — see `docs/audits/04-consolidated-implementation-plan.md` Part D's PR7 entry and `knowledge/adr/ADR-005-transaction-model.md`'s Context for why the lifecycle model landed as a scoped subset of PR7's full entry.
 
-- Source: `backend/app/models/transaction.py`; `backend/app/services/borrow_service.py`; `docs/HOSPITAL_DOMAIN_MODEL.md`; `docs/audits/04-consolidated-implementation-plan.md` Part D (PR7).
+- Source: `backend/app/models/transaction.py`; `backend/app/services/borrow_service.py`; `backend/app/crud/transaction.py`; `docs/HOSPITAL_DOMAIN_MODEL.md`; `knowledge/adr/ADR-005-transaction-model.md`; `docs/audits/04-consolidated-implementation-plan.md` Part D (PR7).
 
 ## Decommission requires AVAILABLE -> UNAVAILABLE_DEFECTIVE -> DECOMMISSIONED
 
@@ -64,4 +63,6 @@ Do not implement PR7's target model, and do not describe the target model as alr
 | Architecture invariants that protect these rules | `docs/ARCHITECTURE_GUARDRAILS.md` |
 | Per-decision rationale and history | `docs/DECISION_LOG.md`, `docs/ARCHITECTURE_DECISIONS.md` |
 | Identifier/QR architecture detail | `knowledge/adr/ADR-002` through `ADR-004`, `knowledge/architecture/` |
+| Transaction lifecycle decision | `knowledge/adr/ADR-005-transaction-model.md` |
+| Domain entity structural reference | `docs/DOMAIN_MODEL.md` |
 | Preferred terminology | `docs/GLOSSARY.md`, `knowledge/glossary.md` |

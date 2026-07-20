@@ -40,7 +40,13 @@ async def _fetch_rows(db: AsyncSession) -> list[list[str]]:
                 tx.borrowed_at.isoformat() if tx.borrowed_at else "",
                 tx.due_at.isoformat() if tx.due_at else "",
                 tx.returned_at.isoformat() if tx.returned_at else "",
-                tx.status,
+                # Roadmap PR7: tx.status is now a TransactionStatus(str, Enum)
+                # member. openpyxl calls str() on non-exact-str values, which
+                # for a plain (str, Enum) mixin returns "TransactionStatus.OPEN"
+                # rather than "open" -- .value avoids that (csv.writer does not
+                # have this problem, but .value is correct and unambiguous for
+                # both export paths sharing this function).
+                tx.status.value,
                 tx.condition_on_return or "",
             ]
         )
