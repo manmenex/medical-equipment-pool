@@ -70,16 +70,33 @@ against a double-dispatch race, not merely an application-level check.
 (`borrowed`, `returned`, or `overdue`) for any row remapped by migration
 `0007_transaction_lifecycle.py` — historical metadata only.
 
-**Not yet part of this model** (Roadmap PR7's remaining scope, per
-`docs/audits/04-consolidated-implementation-plan.md` Part D and
-`knowledge/adr/ADR-005-transaction-model.md`'s Context): `dispatch_type`,
-`routine_round`, a required `ward_id`, and removal of `borrower_name`/
-`due_at` from the write path. `due_at` remains present today as a plain
-column with no active workflow reading it — the approved MVP business
-model has no due-date/overdue workflow, so an overdue transaction simply
-stays `OPEN` and nothing notifies on it (`app.worker.scheduler`'s
-`due_at`-driven notification job was removed; see `knowledge/adr/
-ADR-005-transaction-model.md` decision 3).
+**Dispatch fields** (Roadmap PR7 7b slice, currently a Draft PR pending
+review — per `docs/audits/04-consolidated-implementation-plan.md` Part D):
+every new dispatch carries a `dispatch_type` (`DispatchType`: `routine_round`
+or `on_demand`) and a required `ward_id`. `routine_round` (`RoutineRound`:
+one of the four confirmed fixed times `06:00`/`11:00`/`15:00`/`21:00`, per
+`docs/HOSPITAL_DOMAIN_MODEL.md` and `docs/audits/
+03-hospital-equipment-pool-workflow-audit.md`'s §12 acceptance criteria) is
+required exactly when `dispatch_type == routine_round` and forbidden
+otherwise — enforced by `BorrowRequest`'s validator and, in PostgreSQL, by
+migration `0008_dispatch_fields.py`'s `ck_borrow_transactions_
+routine_round_consistency` CHECK constraint (defense in depth). Both
+columns are nullable at the database level: an existing row from before
+this migration has no reliable classification and is left `NULL`, never
+fabricated. `ward_id`-required is enforced at the application layer only
+(`BorrowRequest`), not a database `NOT NULL` — an existing `NULL` `ward_id`
+row is never auto-assigned a ward.
+
+`borrower_name`, `due_at`, and `quantity` are no longer accepted by
+`BorrowRequest`, and `due_at` is also removed from `TransactionOut`. All
+three columns and every existing value are unchanged in the database and
+remain readable as history — `borrower_name` stays visible in
+`TransactionOut`; `due_at`/`quantity` remain queryable/exportable via
+`app.services.report_service`, which reads both directly from the ORM row.
+The approved MVP business model still has no due-date/overdue workflow, so
+an `OPEN` transaction simply stays `OPEN` regardless of `due_at`
+(`app.worker.scheduler`'s `due_at`-driven notification job was removed; see
+`knowledge/adr/ADR-005-transaction-model.md` decision 3).
 
 ## Relationships
 

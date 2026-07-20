@@ -7,19 +7,19 @@
 
 ## Current baseline
 
-`f4146b380f2fe182516db386de328c2633f72a5f` — squash commit of the Knowledge & Governance Foundation PR (GitHub PR #18), on branch `claude/medical-equipment-pool-0c7fz0`.
+`4041cd2aec412c94f730285d7ba4635e00b095bd` — squash commit of Roadmap PR7 (7a slice, Transaction lifecycle model), GitHub PR #19, on branch `claude/medical-equipment-pool-0c7fz0`.
 
 ## Current PR
 
-**Roadmap PR7 — Transaction lifecycle model (7a slice)** — branch `feature/pr7-transaction-model`. Introduces `TransactionStatus` (`OPEN`/`CLOSED`) replacing the three-value `borrowed`/`returned`/`overdue` field, a `close()` repository function as the sole closer (mirroring `create()` as the sole opener), a `legacy_status` preservation column, and migration `0007_transaction_lifecycle.py`. The `due_at`-driven hourly overdue-notification scheduler job is fully disabled (removed, not deduplicated) — Codex PR7a review round 1 (BLOCKER) found it re-notified every OPEN overdue transaction on every tick with no de-duplication; the approved MVP business model has no due-date/overdue workflow at all. Does not touch `dispatch_type`, `routine_round`, `ward_id`-required, `borrower_name`/`due_at` removal, or the Equipment Status model. See `knowledge/adr/ADR-005-transaction-model.md`, `docs/DOMAIN_MODEL.md`, and `docs/DECISION_LOG.md`. Status: Draft, pending review, after one Codex REQUEST_CHANGES round.
+**Roadmap PR7 (7b slice) — dispatch type, routine round, and write-path cleanup** — branch `feature/pr20-transaction-fields`. Completes Roadmap PR7's remaining scope: adds `DispatchType` (`routine_round`/`on_demand`) and `RoutineRound` (the four confirmed fixed times `06:00`/`11:00`/`15:00`/`21:00`) to `BorrowTransaction`; `BorrowRequest` now requires `ward_id` and `dispatch_type` for every new dispatch, requires `routine_round` exactly for `routine_round` dispatches, and no longer accepts `borrower_name`/`due_at`/`quantity`; `TransactionOut` drops `due_at` and makes `borrower_name` nullable. Migration `0008_dispatch_fields.py` adds the two new nullable columns, three CHECK constraints, and relaxes `borrower_name` to nullable at the database level — purely additive, no legacy-value remap, every existing historical value preserved unmodified. `ward_id`-required stays application-layer-only, never a database `NOT NULL`; no existing row is auto-assigned a ward or a dispatch classification. `frontend/src/pages/BorrowPage.tsx` gained a required ward selector and dispatch-type/conditional routine-round selectors, and lost its borrower-name input (minimum functional form change, not the Roadmap PR11 terminology redesign). See `knowledge/adr/ADR-005-transaction-model.md`, `docs/DOMAIN_MODEL.md`, and `docs/DECISION_LOG.md`. Status: Draft, pending review.
 
 ## Next planned PR
 
-**Roadmap PR7's remaining scope (7b slice)** — `dispatch_type`, `routine_round`, making `ward_id` required, and removing `borrower_name`/`due_at` from the write path — per `docs/audits/04-consolidated-implementation-plan.md` Part D and `docs/ROADMAP.md`, once this PR is merged. After that, Roadmap PR8 (Atomic Single-Operation Equipment Receipt).
+Roadmap PR8 (Atomic Single-Operation Equipment Receipt with concurrency guard), once this PR is merged — concurrent-receipt protection remains mandatory before pilot deployment and is not implemented by this PR.
 
 ## Outstanding work
 
-- Roadmap PR7's remaining scope (7b slice, see above), and PR8 through PR15 (atomic receipt, ward correction, role consolidation, frontend terminology, inventory import, search/reporting, reliability/performance hardening, observability/schema hygiene) are planned and not started.
+- Roadmap PR8 through PR15 (atomic receipt, ward correction, role consolidation, frontend terminology, inventory import, search/reporting, reliability/performance hardening, observability/schema hygiene) are planned and not started.
 - Confirmed future work not yet scheduled to a Roadmap PR: Shift Sessions, Standby Snapshots, managed-deployment target selection (`docs/ROADMAP.md`).
 - `docs/TECH_DEBT.md` open items: TD-001 (equipment update/status `MissingGreenlet`), TD-002 (`0001_initial.py` uses current ORM metadata), TD-003 (CI now exists and fails closed, but branch protection requiring it is not enabled — partially resolved, needs re-assessment), TD-004 (naive `datetime.utcnow()`), TD-005 (temporary default/long-lived branch structure).
 

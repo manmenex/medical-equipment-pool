@@ -57,16 +57,29 @@ export interface EquipmentStatusHistoryItem {
   changed_at: string;
 }
 
+// Roadmap PR7b: exactly two dispatch types, and the confirmed fixed
+// four-round MVP schedule (docs/audits/04-consolidated-implementation-plan.md
+// confirmed-requirements table). Do not add a named label for a round --
+// none is confirmed; the value is the literal clock time itself.
+export type DispatchType = "routine_round" | "on_demand";
+export type RoutineRound = "06:00" | "11:00" | "15:00" | "21:00";
+
 export interface TransactionOut {
   id: string;
   transaction_no: string;
   equipment: { id: string; asset_number: string; equipment_name: string; status: EquipmentStatus };
   quantity: number;
   borrowed_at: string;
-  due_at: string | null;
+  // Roadmap PR7b: due_at is deliberately absent -- removed from the active
+  // request/response contract (ADR-005 decision 3 already retired the
+  // due-date/overdue workflow).
   returned_at: string | null;
-  borrower_name: string;
+  // Nullable going forward (Roadmap PR7b) -- no longer required or
+  // accepted on dispatch; a pre-existing transaction may still have one.
+  borrower_name: string | null;
   ward_id: string | null;
+  dispatch_type: DispatchType | null;
+  routine_round: RoutineRound | null;
   phone_number: string | null;
   condition_on_return: string | null;
   status: "open" | "closed";

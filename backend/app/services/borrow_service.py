@@ -15,7 +15,7 @@ from app.crud import audit as audit_crud
 from app.crud import equipment as equipment_crud
 from app.crud import transaction as transaction_crud
 from app.models.equipment import EquipmentStatus
-from app.models.transaction import BorrowTransaction, TransactionStatus
+from app.models.transaction import BorrowTransaction, DispatchType, RoutineRound, TransactionStatus
 from app.utils.parsing import parse_uuid
 
 # Roadmap PR6 / owner-confirmed cleaning retirement: "cleaning" is
@@ -42,14 +42,13 @@ async def borrow(
     *,
     equipment_id: str,
     borrower_user_id: uuid.UUID | None,
-    borrower_name: str,
-    ward_id: str | None,
+    ward_id: str,
+    dispatch_type: DispatchType,
+    routine_round: RoutineRound | None,
     department_id: str | None,
     phone_number: str | None,
     pickup_location_id: str | None,
     dropoff_location_id: str | None,
-    quantity: int,
-    due_at,
     notes: str | None,
     ip_address: str | None,
     user_agent: str | None,
@@ -73,21 +72,28 @@ async def borrow(
 
     transaction_no = await transaction_crud.generate_transaction_no(db)
 
+    # Roadmap PR7b: ward_id and dispatch_type are required for every new
+    # dispatch (docs/audits/04-consolidated-implementation-plan.md's
+    # confirmed acceptance criteria); routine_round/on-demand consistency
+    # is already validated by app.schemas.transaction.BorrowRequest before
+    # this service is ever called. quantity/due_at/borrower_name are no
+    # longer accepted here at all -- quantity and borrower_name rely on
+    # their column defaults (1 and NULL respectively); due_at is never set
+    # by a new dispatch (ADR-005 decision 3).
     try:
         tx = await transaction_crud.create(
             db,
             data={
                 "transaction_no": transaction_no,
                 "equipment_id": equipment.id,
-                "quantity": quantity,
                 "borrower_user_id": borrower_user_id,
-                "borrower_name": borrower_name,
                 "ward_id": parse_uuid(ward_id, "ward_id"),
+                "dispatch_type": dispatch_type,
+                "routine_round": routine_round,
                 "department_id": parse_uuid(department_id, "department_id"),
                 "phone_number": phone_number,
                 "pickup_location_id": parse_uuid(pickup_location_id, "pickup_location_id"),
                 "dropoff_location_id": parse_uuid(dropoff_location_id, "dropoff_location_id"),
-                "due_at": due_at,
                 "notes": notes,
             },
         )

@@ -14,6 +14,12 @@ async def _auth_headers(client, role="admin"):
     return {"Authorization": f"Bearer {token}"}
 
 
+async def _create_ward(client, headers, code="W1", name=None):
+    resp = await client.post("/api/v1/wards", headers=headers, json={"code": code, "name": name or code})
+    assert resp.status_code == 201, resp.text
+    return resp.json()["id"]
+
+
 def _assert_safe_envelope(body: dict, expected_status: int):
     assert set(body.keys()) == {"detail", "code", "status"}
     assert body["status"] == expected_status
@@ -204,10 +210,11 @@ async def test_unknown_return_condition_returns_400_not_500(client, seeded_users
     assert eq_resp.status_code == 201
     equipment = eq_resp.json()
 
+    ward_id = await _create_ward(client, admin_headers, code="W-COND-0001")
     borrow_resp = await client.post(
         "/api/v1/borrow",
         headers=nurse_headers,
-        json={"equipment_id": equipment["id"], "borrower_name": "Nurse Test"},
+        json={"equipment_id": equipment["id"], "ward_id": ward_id, "dispatch_type": "on_demand"},
     )
     assert borrow_resp.status_code == 201
     tx = borrow_resp.json()
@@ -222,11 +229,13 @@ async def test_unknown_return_condition_returns_400_not_500(client, seeded_users
 
 
 async def test_malformed_equipment_id_in_borrow_returns_400_not_500(client, seeded_users):
+    admin_headers = await _auth_headers(client, "admin")
     nurse_headers = await _auth_headers(client, "ward_nurse")
+    ward_id = await _create_ward(client, admin_headers, code="W-MALFORMED-0001")
     resp = await client.post(
         "/api/v1/borrow",
         headers=nurse_headers,
-        json={"equipment_id": "not-a-uuid", "borrower_name": "Nurse Test"},
+        json={"equipment_id": "not-a-uuid", "ward_id": ward_id, "dispatch_type": "on_demand"},
     )
     assert resp.status_code == 400
     _assert_safe_envelope(resp.json(), 400)

@@ -59,6 +59,8 @@ erDiagram
         uuid borrower_user_id FK
         string borrower_name
         uuid ward_id FK
+        string dispatch_type
+        string routine_round
         uuid department_id FK
         string phone_number
         uuid pickup_location_id FK
@@ -239,8 +241,18 @@ CREATE TABLE borrow_transactions (
     due_at TIMESTAMPTZ,
     returned_at TIMESTAMPTZ,
     borrower_user_id UUID REFERENCES users(id),
-    borrower_name VARCHAR(150) NOT NULL,
+    -- Roadmap PR7 (7b slice): relaxed to nullable (migration 0008_dispatch_fields.py).
+    -- No longer accepted/required by the active BorrowRequest contract; every
+    -- existing value is preserved as read-only history.
+    borrower_name VARCHAR(150),
     ward_id UUID REFERENCES wards(id),
+    -- Roadmap PR7 (7b slice): nullable at the DB level -- required for every
+    -- new dispatch, enforced at the application layer only (same as ward_id
+    -- above), never backfilled for historical rows. 'routine_round' | 'on_demand'.
+    dispatch_type VARCHAR(20),
+    -- Required exactly when dispatch_type = 'routine_round', NULL otherwise.
+    -- One of the four confirmed fixed times: '06:00' | '11:00' | '15:00' | '21:00'.
+    routine_round VARCHAR(5),
     department_id UUID REFERENCES departments(id),
     phone_number VARCHAR(20),
     pickup_location_id UUID REFERENCES locations(id),
@@ -249,7 +261,17 @@ CREATE TABLE borrow_transactions (
     notes TEXT,
     received_by_user_id UUID REFERENCES users(id),
     status VARCHAR(10) NOT NULL DEFAULT 'open', -- open | closed (Roadmap PR7; knowledge/adr/ADR-005-transaction-model.md -- "overdue" is a disabled notification concept, never a status value)
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_borrow_transactions_dispatch_type
+        CHECK (dispatch_type IS NULL OR dispatch_type IN ('routine_round', 'on_demand')),
+    CONSTRAINT ck_borrow_transactions_routine_round
+        CHECK (routine_round IS NULL OR routine_round IN ('06:00', '11:00', '15:00', '21:00')),
+    CONSTRAINT ck_borrow_transactions_routine_round_consistency
+        CHECK (
+            (dispatch_type IS NULL AND routine_round IS NULL)
+            OR (dispatch_type = 'on_demand' AND routine_round IS NULL)
+            OR (dispatch_type = 'routine_round' AND routine_round IS NOT NULL)
+        )
 );
 
 CREATE INDEX idx_tx_equipment ON borrow_transactions (equipment_id);

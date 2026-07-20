@@ -1,15 +1,19 @@
 import { api } from "@/services/api";
-import type { Page, TransactionOut } from "@/types";
+import type { DispatchType, Page, RoutineRound, TransactionOut } from "@/types";
 
+// Roadmap PR7b: borrower_name/due_at/quantity are deliberately absent --
+// no longer accepted by the active BorrowRequest contract (see
+// backend/app/schemas/transaction.py). ward_id and dispatch_type are now
+// required; routine_round is required only for a routine_round dispatch.
 export interface BorrowPayload {
   equipment_id: string;
-  borrower_name: string;
-  ward_id?: string;
+  ward_id: string;
+  dispatch_type: DispatchType;
+  routine_round?: RoutineRound;
   department_id?: string;
   phone_number?: string;
   pickup_location_id?: string;
   dropoff_location_id?: string;
-  quantity?: number;
   notes?: string;
 }
 

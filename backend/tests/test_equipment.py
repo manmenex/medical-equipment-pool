@@ -20,6 +20,19 @@ async def _auth_headers(client, seeded_users, role="admin"):
     return {"Authorization": f"Bearer {token}"}
 
 
+async def _create_ward(client, headers, code, name="Ward"):
+    resp = await client.post("/api/v1/wards", headers=headers, json={"code": code, "name": name})
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+async def _on_demand_borrow_payload(client, admin_headers, equipment_id, *, ward_code):
+    """Roadmap PR7b: every dispatch now requires ward_id and dispatch_type
+    -- borrower_name is no longer accepted."""
+    ward = await _create_ward(client, admin_headers, code=ward_code)
+    return {"equipment_id": equipment_id, "ward_id": ward["id"], "dispatch_type": "on_demand"}
+
+
 async def test_create_and_get_equipment(client, seeded_users):
     headers = await _auth_headers(client, seeded_users, "admin")
     resp = await client.post(
@@ -500,11 +513,8 @@ async def test_borrow_by_hospital_item_no_scan(client, seeded_users):
     assert resolved.status_code == 200
     assert resolved.json()["id"] == created["id"]
 
-    borrow_resp = await client.post(
-        "/api/v1/borrow",
-        headers=nurse_headers,
-        json={"equipment_id": resolved.json()["id"], "borrower_name": "Nurse Item No"},
-    )
+    payload = await _on_demand_borrow_payload(client, headers, resolved.json()["id"], ward_code="W-PR5-0021")
+    borrow_resp = await client.post("/api/v1/borrow", headers=nurse_headers, json=payload)
     assert borrow_resp.status_code == 201, borrow_resp.text
     assert borrow_resp.json()["equipment"]["status"] == "issued_to_ward"
 
@@ -516,11 +526,8 @@ async def test_return_by_hospital_item_no_scan(client, seeded_users):
     created = await _create_equipment_with_bcm(
         client, headers, "AST-PR5-0022", item_no="ITEM-RETURN-001", name="Return Scan Target"
     )
-    borrow_resp = await client.post(
-        "/api/v1/borrow",
-        headers=nurse_headers,
-        json={"equipment_id": created["id"], "borrower_name": "Nurse Return"},
-    )
+    payload = await _on_demand_borrow_payload(client, headers, created["id"], ward_code="W-PR5-0022")
+    borrow_resp = await client.post("/api/v1/borrow", headers=nurse_headers, json=payload)
     tx = borrow_resp.json()
 
     resolved = await client.post(
@@ -963,11 +970,8 @@ async def test_item_no_absent_from_borrow_and_return_manual_selection_responses(
         client, headers, "AST-BOUND-0005", bcm_code="BCM00902", item_no="ITEM-BOUND-005"
     )
 
-    borrow_resp = await client.post(
-        "/api/v1/borrow",
-        headers=nurse_headers,
-        json={"equipment_id": created["id"], "borrower_name": "Nurse Boundary"},
-    )
+    payload = await _on_demand_borrow_payload(client, headers, created["id"], ward_code="W-BOUND-0005")
+    borrow_resp = await client.post("/api/v1/borrow", headers=nurse_headers, json=payload)
     assert borrow_resp.status_code == 201, borrow_resp.text
     tx = borrow_resp.json()
     assert "item_no" not in tx["equipment"]
@@ -999,11 +1003,8 @@ async def test_dispatch_rejected_when_equipment_unavailable_defective(client, se
     )
     assert status_resp.status_code == 200, status_resp.text
 
-    borrow_resp = await client.post(
-        "/api/v1/borrow",
-        headers=nurse_headers,
-        json={"equipment_id": equipment["id"], "borrower_name": "Nurse PR6"},
-    )
+    payload = await _on_demand_borrow_payload(client, headers, equipment["id"], ward_code="W-PR6-0001")
+    borrow_resp = await client.post("/api/v1/borrow", headers=nurse_headers, json=payload)
     assert borrow_resp.status_code == 409
     assert borrow_resp.json()["code"] == "EQUIPMENT_NOT_AVAILABLE"
 
@@ -1029,11 +1030,8 @@ async def test_dispatch_rejected_when_equipment_decommissioned(client, seeded_us
     )
     assert status_resp.status_code == 200, status_resp.text
 
-    borrow_resp = await client.post(
-        "/api/v1/borrow",
-        headers=nurse_headers,
-        json={"equipment_id": equipment["id"], "borrower_name": "Nurse PR6"},
-    )
+    payload = await _on_demand_borrow_payload(client, headers, equipment["id"], ward_code="W-PR6-0002")
+    borrow_resp = await client.post("/api/v1/borrow", headers=nurse_headers, json=payload)
     assert borrow_resp.status_code == 409
     assert borrow_resp.json()["code"] == "EQUIPMENT_NOT_AVAILABLE"
 
@@ -1057,11 +1055,8 @@ async def test_dispatch_succeeds_for_available_at_pool_with_legacy_status_cleani
     row.legacy_status = "cleaning"
     await db_session.commit()
 
-    borrow_resp = await client.post(
-        "/api/v1/borrow",
-        headers=nurse_headers,
-        json={"equipment_id": equipment["id"], "borrower_name": "Nurse PR6"},
-    )
+    payload = await _on_demand_borrow_payload(client, headers, equipment["id"], ward_code="W-PR6-0003")
+    borrow_resp = await client.post("/api/v1/borrow", headers=nurse_headers, json=payload)
     assert borrow_resp.status_code == 201, borrow_resp.text
     assert borrow_resp.json()["equipment"]["status"] == "issued_to_ward"
 
@@ -1199,11 +1194,8 @@ async def test_return_condition_cleaning_is_rejected_not_silently_accepted(clien
     nurse_headers = await _auth_headers(client, seeded_users, "ward_nurse")
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR6-0007")
 
-    borrow_resp = await client.post(
-        "/api/v1/borrow",
-        headers=nurse_headers,
-        json={"equipment_id": equipment["id"], "borrower_name": "Nurse PR6"},
-    )
+    payload = await _on_demand_borrow_payload(client, headers, equipment["id"], ward_code="W-PR6-0007")
+    borrow_resp = await client.post("/api/v1/borrow", headers=nurse_headers, json=payload)
     assert borrow_resp.status_code == 201, borrow_resp.text
     tx = borrow_resp.json()
 
@@ -1219,11 +1211,8 @@ async def test_defective_receipt_transitions_to_unavailable_defective(client, se
     nurse_headers = await _auth_headers(client, seeded_users, "ward_nurse")
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR6-0008")
 
-    borrow_resp = await client.post(
-        "/api/v1/borrow",
-        headers=nurse_headers,
-        json={"equipment_id": equipment["id"], "borrower_name": "Nurse PR6"},
-    )
+    payload = await _on_demand_borrow_payload(client, headers, equipment["id"], ward_code="W-PR6-0008")
+    borrow_resp = await client.post("/api/v1/borrow", headers=nurse_headers, json=payload)
     assert borrow_resp.status_code == 201, borrow_resp.text
     tx = borrow_resp.json()
 
@@ -1286,11 +1275,10 @@ async def test_generic_status_endpoint_cannot_return_issued_equipment(client, se
         client, headers, f"AST-PR16-H2-RET-{target_status[:4]}-{uuid.uuid4().hex[:6]}"
     )
 
-    borrow_resp = await client.post(
-        "/api/v1/borrow",
-        headers=nurse_headers,
-        json={"equipment_id": equipment["id"], "borrower_name": "Nurse PR16"},
+    payload = await _on_demand_borrow_payload(
+        client, headers, equipment["id"], ward_code=f"W-PR16-RET-{uuid.uuid4().hex[:6]}"
     )
+    borrow_resp = await client.post("/api/v1/borrow", headers=nurse_headers, json=payload)
     assert borrow_resp.status_code == 201, borrow_resp.text
 
     resp = await client.post(
@@ -1312,11 +1300,8 @@ async def test_generic_status_endpoint_cannot_desynchronize_open_transaction(cli
     nurse_headers = await _auth_headers(client, seeded_users, "ward_nurse")
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR16-H2-0002")
 
-    borrow_resp = await client.post(
-        "/api/v1/borrow",
-        headers=nurse_headers,
-        json={"equipment_id": equipment["id"], "borrower_name": "Nurse PR16"},
-    )
+    payload = await _on_demand_borrow_payload(client, headers, equipment["id"], ward_code="W-PR16-H2-0002")
+    borrow_resp = await client.post("/api/v1/borrow", headers=nurse_headers, json=payload)
     assert borrow_resp.status_code == 201, borrow_resp.text
     tx_id = borrow_resp.json()["id"]
 
@@ -1346,11 +1331,8 @@ async def test_dispatch_and_return_services_still_perform_valid_transitions(clie
     nurse_headers = await _auth_headers(client, seeded_users, "ward_nurse")
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR16-H2-0003")
 
-    borrow_resp = await client.post(
-        "/api/v1/borrow",
-        headers=nurse_headers,
-        json={"equipment_id": equipment["id"], "borrower_name": "Nurse PR16"},
-    )
+    payload = await _on_demand_borrow_payload(client, headers, equipment["id"], ward_code="W-PR16-H2-0003")
+    borrow_resp = await client.post("/api/v1/borrow", headers=nurse_headers, json=payload)
     assert borrow_resp.status_code == 201, borrow_resp.text
     assert borrow_resp.json()["equipment"]["status"] == "issued_to_ward"
     tx = borrow_resp.json()
