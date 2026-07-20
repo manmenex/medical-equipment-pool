@@ -91,7 +91,7 @@ Full list with rationale: `docs/ARCHITECTURE_GUARDRAILS.md`.
 
 ## Current limitations
 
-- The GitHub connector can return `403 Resource not accessible by integration` (or downgrade to `COMMENT`) when submitting a native `APPROVE`/`REQUEST_CHANGES` review; read the stated decision from the review body instead.
+- The GitHub connector can return `403 Resource not accessible by integration` when submitting a formal Pull Request Review (not a silent downgrade). Preferred fallback: a formal `COMMENTED` review submitted through an authenticated browser session (this does satisfy review evidence). Last resort only: a PR Conversation comment, which is an incomplete status report and never counts as completed review evidence by itself.
 - No branch-protection rule yet requires CI to pass before merge; enforced by process discipline instead.
 
 Full detail and workarounds: `docs/KNOWN_LIMITATIONS.md`.

@@ -26,7 +26,7 @@
 ## Current risks
 
 - **Branch protection is not enabled.** CI failing does not technically block a merge yet; the Repository Owner must manually re-verify CI status before every merge (`docs/KNOWN_LIMITATIONS.md`).
-- **GitHub review-submission permission limitation.** Native `APPROVE`/`REQUEST_CHANGES` review states can silently downgrade to `COMMENT`; readers must check the review body's stated decision, not the GitHub UI badge (`docs/KNOWN_LIMITATIONS.md`).
+- **GitHub review-submission permission limitation.** Connector submission of a formal Pull Request Review can fail with `403 Resource not accessible by integration` (not a silent downgrade). Preferred fallback is a formal `COMMENTED` review submitted through an authenticated browser session, which does satisfy review evidence; a PR Conversation comment is only a last-resort, incomplete status report and never counts as completed review evidence by itself (`docs/KNOWN_LIMITATIONS.md`).
 - **Default branch is still a temporary `claude/*` name**, not `main` (TD-005); repository-maintenance cutover is a separate, not-yet-executed operation (`docs/REPOSITORY_STRATEGY.md`).
 
 ## Related documents
