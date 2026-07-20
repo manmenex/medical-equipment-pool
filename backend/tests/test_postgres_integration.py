@@ -3427,10 +3427,20 @@ async def test_migration_0008_upgrade_adds_dispatch_type_and_routine_round_colum
         pytest.skip(f"Cannot create scratch database for migration test: {exc}")
 
     try:
+        # Note: does NOT assert dispatch_type/routine_round are absent at
+        # 0007 -- TD-002 (docs/TECH_DEBT.md) means 0001_initial.py builds
+        # from *today's* live Base.metadata, so both columns already exist
+        # from 0001 on a genuinely fresh database regardless of which
+        # revision is requested. What 0001 can never produce is the CHECK
+        # constraints below (never part of Base.metadata in this codebase --
+        # see migration 0008's own docstring) -- those are the reliable
+        # "has 0008 actually run" signal, exactly the pattern migration
+        # 0007's tests already established for legacy_status/its own checks.
         _run_alembic("upgrade", "0007_transaction_lifecycle")
-        columns = await _borrow_transactions_columns()
-        assert "dispatch_type" not in columns
-        assert "routine_round" not in columns
+        constraints = await _borrow_transactions_check_constraint_names()
+        assert "ck_borrow_transactions_dispatch_type" not in constraints
+        assert "ck_borrow_transactions_routine_round" not in constraints
+        assert "ck_borrow_transactions_routine_round_consistency" not in constraints
 
         _run_alembic("upgrade", "head")
         columns = await _borrow_transactions_columns()
