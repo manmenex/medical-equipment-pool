@@ -3,21 +3,10 @@ import logging
 import pytest
 from sqlalchemy import select
 
-from tests.conftest import login
+from tests.conftest import auth_headers as _auth_headers
+from tests.conftest import create_ward as _create_ward
 
 pytestmark = pytest.mark.asyncio
-
-
-async def _auth_headers(client, role="admin"):
-    identifier = f"{role.upper()}001"
-    token = await login(client, identifier)
-    return {"Authorization": f"Bearer {token}"}
-
-
-async def _create_ward(client, headers, code="W1", name=None):
-    resp = await client.post("/api/v1/wards", headers=headers, json={"code": code, "name": name or code})
-    assert resp.status_code == 201, resp.text
-    return resp.json()["id"]
 
 
 def _assert_safe_envelope(body: dict, expected_status: int):

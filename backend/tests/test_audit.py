@@ -15,15 +15,9 @@ from app.db.session import get_db
 from app.main import app
 from app.models.audit import AuditLog
 from app.models.user import ALL_ROLES, Role, User
-from tests.conftest import login
+from tests.conftest import auth_headers as _auth_headers
 
 pytestmark = pytest.mark.asyncio
-
-
-async def _auth_headers(client, role="admin"):
-    identifier = f"{role.upper()}001"
-    token = await login(client, identifier)
-    return {"Authorization": f"Bearer {token}"}
 
 
 async def _raw_client():

@@ -45,6 +45,12 @@ from app.models.audit import AuditLog
 from app.models.equipment import Equipment, EquipmentStatus
 from app.models.transaction import BorrowTransaction, TransactionStatus
 from app.models.user import ALL_ROLES, Role, User
+# Roadmap PR7b: every dispatch now requires ward_id, so every HTTP-level
+# /api/v1/borrow call in this suite needs a real ward row first --
+# create_ward is the same helper test_borrow.py/test_equipment.py/
+# test_exception_handling.py use (tests/conftest.py, consolidated here to
+# remove a fourth near-duplicate definition).
+from tests.conftest import create_ward as _create_ward
 
 pytestmark = pytest.mark.postgres
 
@@ -154,14 +160,6 @@ async def _admin_headers(client: AsyncClient) -> dict:
     resp = await client.post("/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"})
     assert resp.status_code == 200, resp.text
     return {"Authorization": f"Bearer {resp.json()['access_token']}"}
-
-
-async def _create_ward(client: AsyncClient, headers: dict, code: str, name: str | None = None) -> str:
-    # Roadmap PR7b: every dispatch now requires ward_id, so every HTTP-level
-    # /api/v1/borrow call in this suite needs a real ward row first.
-    resp = await client.post("/api/v1/wards", headers=headers, json={"code": code, "name": name or code})
-    assert resp.status_code == 201, resp.text
-    return resp.json()["id"]
 
 
 # ---------------------------------------------------------------------------

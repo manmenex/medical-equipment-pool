@@ -80,3 +80,37 @@ async def login(client: AsyncClient, identifier: str, password: str = "Password@
     resp = await client.post("/api/v1/auth/login", json={"identifier": identifier, "password": password})
     assert resp.status_code == 200, resp.text
     return resp.json()["access_token"]
+
+
+# ---------------------------------------------------------------------------
+# Shared test helpers. Previously duplicated (with subtly inconsistent
+# signatures/return shapes) across test_borrow.py, test_equipment.py,
+# test_exception_handling.py, test_audit.py, and
+# test_validation_and_auth_regression.py; consolidated here so every module
+# uses the same behavior. No test behavior changes as part of this
+# consolidation -- every call site's observable HTTP requests/assertions are
+# unchanged.
+# ---------------------------------------------------------------------------
+
+
+async def auth_headers(client: AsyncClient, role: str = "admin") -> dict:
+    identifier = f"{role.upper()}001"
+    token = await login(client, identifier)
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def create_ward(client: AsyncClient, headers: dict, code: str, name: str | None = None) -> str:
+    """Creates a ward and returns its id. `code` must be unique per call site
+    (wards.code is unique) -- every existing call site already satisfies
+    this."""
+    resp = await client.post("/api/v1/wards", headers=headers, json={"code": code, "name": name or code})
+    assert resp.status_code == 201, resp.text
+    return resp.json()["id"]
+
+
+async def on_demand_borrow_payload(client: AsyncClient, admin_headers: dict, equipment_id: str, *, ward_code: str) -> dict:
+    """Roadmap PR7b: every dispatch requires ward_id and dispatch_type --
+    borrower_name is no longer accepted. Creates a fresh ward and returns a
+    ready-to-use on-demand borrow JSON payload."""
+    ward_id = await create_ward(client, admin_headers, ward_code)
+    return {"equipment_id": equipment_id, "ward_id": ward_id, "dispatch_type": "on_demand"}

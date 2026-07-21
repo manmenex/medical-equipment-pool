@@ -2,15 +2,11 @@ import uuid
 
 import pytest
 
-from tests.conftest import login
+from tests.conftest import auth_headers as _auth_headers
+from tests.conftest import create_ward as _create_ward
+from tests.conftest import on_demand_borrow_payload as _on_demand_borrow_payload
 
 pytestmark = pytest.mark.asyncio
-
-
-async def _auth_headers(client, role="admin"):
-    identifier = f"{role.upper()}001"
-    token = await login(client, identifier)
-    return {"Authorization": f"Bearer {token}"}
 
 
 async def _create_equipment(client, headers, asset_number="AST-1001", name="Infusion Pump"):
@@ -19,21 +15,6 @@ async def _create_equipment(client, headers, asset_number="AST-1001", name="Infu
     )
     assert resp.status_code == 201, resp.text
     return resp.json()
-
-
-async def _create_ward(client, headers, code="W1", name="Ward 1"):
-    resp = await client.post("/api/v1/wards", headers=headers, json={"code": code, "name": name})
-    assert resp.status_code == 201, resp.text
-    return resp.json()
-
-
-async def _on_demand_borrow_payload(client, admin_headers, equipment_id, *, ward_code="W1", ward_name="Ward 1"):
-    """Roadmap PR7b: every dispatch now requires ward_id and dispatch_type
-    -- borrower_name is no longer accepted. This helper creates a fresh
-    ward (ward code must be unique per call site) and returns a ready-to-use
-    on-demand borrow JSON payload."""
-    ward = await _create_ward(client, admin_headers, code=ward_code, name=ward_name)
-    return {"equipment_id": equipment_id, "ward_id": ward["id"], "dispatch_type": "on_demand"}
 
 
 async def test_borrow_then_return_flow(client, seeded_users):
@@ -524,14 +505,14 @@ async def test_removed_field_in_borrow_request_is_rejected_with_no_side_effects(
 
     admin_headers = await _auth_headers(client, "admin")
     equipment = await _create_equipment(client, admin_headers, asset_number=f"AST-PR20-{extra_field}")
-    ward = await _create_ward(client, admin_headers, code=f"W-PR20-{extra_field}")
+    ward_id = await _create_ward(client, admin_headers, code=f"W-PR20-{extra_field}")
 
     resp = await client.post(
         "/api/v1/borrow",
         headers=admin_headers,
         json={
             "equipment_id": equipment["id"],
-            "ward_id": ward["id"],
+            "ward_id": ward_id,
             "dispatch_type": "on_demand",
             extra_field: extra_value,
         },
@@ -563,14 +544,14 @@ async def test_routine_round_dispatch_creates_exactly_one_open_transaction(clien
 
     admin_headers = await _auth_headers(client, "admin")
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7B-0001")
-    ward = await _create_ward(client, admin_headers, code="W-PR7B-0001")
+    ward_id = await _create_ward(client, admin_headers, code="W-PR7B-0001")
 
     resp = await client.post(
         "/api/v1/borrow",
         headers=admin_headers,
         json={
             "equipment_id": equipment["id"],
-            "ward_id": ward["id"],
+            "ward_id": ward_id,
             "dispatch_type": "routine_round",
             "routine_round": "11:00",
         },
@@ -610,14 +591,14 @@ async def test_on_demand_dispatch_creates_exactly_one_open_transaction(client, s
 async def test_routine_round_dispatch_transitions_equipment_to_issued_to_ward(client, seeded_users):
     admin_headers = await _auth_headers(client, "admin")
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7B-0003")
-    ward = await _create_ward(client, admin_headers, code="W-PR7B-0003")
+    ward_id = await _create_ward(client, admin_headers, code="W-PR7B-0003")
 
     resp = await client.post(
         "/api/v1/borrow",
         headers=admin_headers,
         json={
             "equipment_id": equipment["id"],
-            "ward_id": ward["id"],
+            "ward_id": ward_id,
             "dispatch_type": "routine_round",
             "routine_round": "15:00",
         },
@@ -639,10 +620,10 @@ async def test_dispatch_without_ward_id_is_rejected_by_the_api(client, seeded_us
 async def test_dispatch_without_dispatch_type_is_rejected_by_the_api(client, seeded_users):
     admin_headers = await _auth_headers(client, "admin")
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7B-0005")
-    ward = await _create_ward(client, admin_headers, code="W-PR7B-0005")
+    ward_id = await _create_ward(client, admin_headers, code="W-PR7B-0005")
 
     resp = await client.post(
-        "/api/v1/borrow", headers=admin_headers, json={"equipment_id": equipment["id"], "ward_id": ward["id"]}
+        "/api/v1/borrow", headers=admin_headers, json={"equipment_id": equipment["id"], "ward_id": ward_id}
     )
     assert resp.status_code == 422, resp.text
 
@@ -650,14 +631,14 @@ async def test_dispatch_without_dispatch_type_is_rejected_by_the_api(client, see
 async def test_dispatch_type_and_routine_round_are_persisted_as_approved_lowercase_values(client, seeded_users):
     admin_headers = await _auth_headers(client, "admin")
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7B-0006")
-    ward = await _create_ward(client, admin_headers, code="W-PR7B-0006")
+    ward_id = await _create_ward(client, admin_headers, code="W-PR7B-0006")
 
     resp = await client.post(
         "/api/v1/borrow",
         headers=admin_headers,
         json={
             "equipment_id": equipment["id"],
-            "ward_id": ward["id"],
+            "ward_id": ward_id,
             "dispatch_type": "routine_round",
             "routine_round": "21:00",
         },

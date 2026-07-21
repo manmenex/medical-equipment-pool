@@ -1,14 +1,8 @@
 import pytest
 
-from tests.conftest import login
+from tests.conftest import auth_headers as _auth_headers
 
 pytestmark = pytest.mark.asyncio
-
-
-async def _auth_headers(client, role="admin"):
-    identifier = f"{role.upper()}001"
-    token = await login(client, identifier)
-    return {"Authorization": f"Bearer {token}"}
 
 
 def _assert_envelope_shape(body: dict, expected_status: int, *, expects_errors: bool = False):
