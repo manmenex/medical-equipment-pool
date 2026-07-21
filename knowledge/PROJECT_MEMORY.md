@@ -59,13 +59,13 @@ Source: `docs/PROJECT_WORKFLOW.md`.
 
 ## Current baseline
 
-`d0e888f3095c9a794928a9bd7d68b60907654522` (branch `claude/medical-equipment-pool-0c7fz0`, squash merge of Roadmap PR7 7b slice, GitHub PR #20) as of this snapshot. Always confirm against `knowledge/CONTEXT.md` and `docs/ROADMAP.md`, which are updated more frequently than this file.
+`f6f7c2ae0b12025dae2afd7f856bb489548c81cc` (branch `claude/medical-equipment-pool-0c7fz0`, squash merge of the API & Error Catalog documentation PR, GitHub PR #24) as of this snapshot. Always confirm against `knowledge/CONTEXT.md` and `docs/ROADMAP.md`, which are updated more frequently than this file.
 
 ## Completed Roadmap
 
-Roadmap PR1-PR6 merged (security/availability foundation, structured exceptions, audit logging framework, transaction-number sequence, equipment identifier model, four-state equipment model), plus the Knowledge Layer v2 governance PR, the CI/AI-review-workflow infrastructure PR, the Knowledge & Governance Foundation PR, and both slices of Roadmap PR7 (transaction lifecycle model `OPEN`/`CLOSED`, GitHub PR #19; dispatch type/routine round/required ward_id/field cleanup, GitHub PR #20). Roadmap PR7 is now fully merged. Full table with GitHub PR numbers and squash SHAs: `docs/ROADMAP.md`.
+Roadmap PR1-PR6 merged (security/availability foundation, structured exceptions, audit logging framework, transaction-number sequence, equipment identifier model, four-state equipment model), plus the Knowledge Layer v2 governance PR, the CI/AI-review-workflow infrastructure PR, the Knowledge & Governance Foundation PR, and both slices of Roadmap PR7 (transaction lifecycle model `OPEN`/`CLOSED`, GitHub PR #19; dispatch type/routine round/required ward_id/field cleanup, GitHub PR #20). Roadmap PR7 is now fully merged. Since then, four process/documentation-only PRs merged (no Roadmap PR number assigned, no code/business-rule/schema change): post-merge governance sync (GitHub PR #21), Test Infrastructure Cleanup (GitHub PR #22), Developer Documentation (GitHub PR #23), and the API & Error Catalog (GitHub PR #24). Full table with GitHub PR numbers and squash SHAs: `docs/ROADMAP.md`.
 
-No Roadmap PR is currently in progress. PR8-PR15 (atomic receipt through observability/schema hygiene) are planned and not yet started — see `docs/ROADMAP.md`.
+No Roadmap PR is currently in progress. PR8-PR15 (atomic receipt through observability/schema hygiene) are planned and not yet started — see `docs/ROADMAP.md`. Roadmap PR8 implementation has not been authorized or started; only its design document exists (`docs/design/PR8_IMPLEMENTATION_PLAN.md`, uncommitted, design-only).
 
 ## Current AI responsibilities
 

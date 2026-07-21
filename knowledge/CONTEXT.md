@@ -7,11 +7,18 @@
 
 ## Current baseline
 
-`d0e888f3095c9a794928a9bd7d68b60907654522` — squash commit of Roadmap PR7 (7b slice, dispatch type/routine round/write-path cleanup), GitHub PR #20, on branch `claude/medical-equipment-pool-0c7fz0`.
+`f6f7c2ae0b12025dae2afd7f856bb489548c81cc` — squash commit of the API & Error Catalog documentation PR, GitHub PR #24, on branch `claude/medical-equipment-pool-0c7fz0`.
 
 ## Current PR
 
-None. Roadmap PR7 (7b slice) merged as GitHub PR #20: adds `DispatchType` (`routine_round`/`on_demand`) and `RoutineRound` (the four confirmed fixed times `06:00`/`11:00`/`15:00`/`21:00`) to `BorrowTransaction`; `BorrowRequest` requires `ward_id` and `dispatch_type` for every new dispatch, requires `routine_round` exactly for `routine_round` dispatches, and rejects `borrower_name`/`due_at`/`quantity` outright (`extra="forbid"`, added during Codex round 1 review — see `docs/DECISION_LOG.md`); `TransactionOut` drops `due_at` and makes `borrower_name` nullable. Migration `0008_dispatch_fields.py` added the two new nullable columns, three CHECK constraints, and relaxed `borrower_name` to nullable at the database level — purely additive, no legacy-value remap, every existing historical value preserved unmodified. `ward_id`-required stays application-layer-only (now enforced via a proactive existence check, also from Codex round 1 review, which also separated an invalid `ward_id` from the equipment-conflict response); no existing row was auto-assigned a ward or a dispatch classification. `frontend/src/pages/BorrowPage.tsx` gained a required ward selector and dispatch-type/conditional routine-round selectors, and lost its borrower-name input (minimum functional form change, not the Roadmap PR11 terminology redesign). Roadmap PR7 (both slices) is now fully merged. See `knowledge/adr/ADR-005-transaction-model.md`, `docs/DOMAIN_MODEL.md`, and `docs/DECISION_LOG.md`.
+None. Since Roadmap PR7 (7b slice) merged as GitHub PR #20, four process/documentation-only PRs merged in order, none touching production code, business rules, or schema:
+
+- **GitHub PR #21** (`0ed6598`) — post-merge governance sync: brought `docs/ROADMAP.md`, `docs/DECISION_LOG.md`, `docs/BUSINESS_RULES.md`, and this knowledge layer up to date after PR #20 merged.
+- **GitHub PR #22** (`06a736c`) — Test Infrastructure Cleanup: consolidated duplicated/inconsistent test helper functions (`auth_headers`, `create_ward`, `on_demand_borrow_payload`) into `backend/tests/conftest.py` as a single shared implementation. No test behavior change — verified via full local `pytest -m "not postgres"` (273 passed) and `pytest -m postgres` (78 passed) runs before merge.
+- **GitHub PR #23** (`2e403fb`) — Developer Documentation: added `docs/development/{SETUP,TESTING,MIGRATIONS,CODE_REVIEW,CONTRIBUTING}.md`, written from direct inspection of current CI/Compose/Alembic config.
+- **GitHub PR #24** (`f6f7c2a`) — API & Error Catalog: added `docs/api/{ERROR_CODES,dispatch,receipt,equipment,transactions}.md`, documenting the current request/response contracts and the full HTTP-status/error-code taxonomy from direct inspection of the current backend code.
+
+Roadmap PR7 (both slices, GitHub PR #19/#20) remains the most recent Roadmap-numbered work merged. See `knowledge/adr/ADR-005-transaction-model.md`, `docs/DOMAIN_MODEL.md`, and `docs/DECISION_LOG.md` for PR7 itself.
 
 ## Next planned PR
 
