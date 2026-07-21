@@ -161,6 +161,14 @@ async def return_equipment(
     tx = await transaction_crud.get_by_id(db, transaction_id)
     if tx is None:
         raise TransactionNotFoundError("Transaction not found")
+
+    # Roadmap PR8A Case A -- genuine sequential repeat. The row was already
+    # CLOSED before this request even read it (e.g. a refresh/re-submit after
+    # a receipt that already completed), so reject immediately without
+    # attempting any write. This is a cheap fast-path, NOT the concurrency
+    # guard: two truly concurrent requests both read status == OPEN here and
+    # both pass this check -- the guard that separates them is the conditional
+    # UPDATE below. See docs/design/PR8_IMPLEMENTATION_PLAN.md Section 3.
     if tx.status != TransactionStatus.OPEN:
         raise TransactionAlreadyReturnedError("This transaction has already been returned")
 
@@ -168,8 +176,34 @@ async def return_equipment(
     if new_status is None:
         raise InvalidInputError(f"Unknown condition '{condition}'")
 
-    await transaction_crud.close(
+    # Roadmap PR8A -- the sole concurrency guard for the receipt race: a
+    # conditional close (UPDATE ... WHERE status = 'open') decided by affected
+    # -row count. Exactly one of N concurrent receipts for this transaction
+    # gets won == True; the rest get won == False.
+    won = await transaction_crud.close(
         db, tx, received_by_user_id=received_by_user_id, condition_on_return=condition, notes=notes
+    )
+    if not won:
+        # Roadmap PR8A Case B -- lost a concurrent race. Another request
+        # transitioned this row open -> closed between our read and our UPDATE.
+        # We return here BEFORE any equipment-status, status-history, or audit
+        # write, so a losing request produces zero side effects. Roll back the
+        # (row-count-zero) UPDATE and the read, then reject with the SAME
+        # response as Case A -- PR8A introduces no new error code; the
+        # race-vs-genuine-repeat distinction is deferred to PR8B.
+        await db.rollback()
+        raise TransactionAlreadyReturnedError("This transaction has already been returned")
+
+    # The conditional UPDATE executed as Core SQL, bypassing the ORM unit of
+    # work, so the in-memory ``tx`` still reads OPEN with no receipt fields.
+    # Refresh it so every subsequent use -- the equipment transition below and
+    # the serialized response -- reflects the committed CLOSED state and never
+    # a stale in-memory status (Roadmap PR8A requirement 3). The refresh runs
+    # inside this same transaction and therefore sees this session's own,
+    # not-yet-committed, winning UPDATE.
+    await db.refresh(
+        tx,
+        attribute_names=["status", "returned_at", "condition_on_return", "received_by_user_id", "notes"],
     )
 
     equipment = await equipment_crud.get_by_id(db, tx.equipment_id)

@@ -42,7 +42,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.audit import AuditLog
-from app.models.equipment import Equipment, EquipmentStatus
+from app.models.equipment import Equipment, EquipmentStatus, EquipmentStatusHistory
 from app.models.transaction import BorrowTransaction, TransactionStatus
 from app.models.user import ALL_ROLES, Role, User
 # Roadmap PR7b: every dispatch now requires ward_id, so every HTTP-level
@@ -3866,3 +3866,136 @@ async def test_migration_0008_downgrade_fails_closed_when_a_row_has_null_borrowe
         assert "borrower_name" in (result.stdout + result.stderr)
     finally:
         await _drop_scratch_database()
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR8A (docs/design/PR8_IMPLEMENTATION_PLAN.md; docs/audits/
+# 04-consolidated-implementation-plan.md Part C P0 / Backend Audit Finding
+# 14.1 Critical): atomic-receipt concurrency guard. Two or more concurrent
+# POST /api/v1/return/{id} requests for the SAME open transaction must resolve
+# to exactly one winner (200, status closed) and N-1 losers (409
+# TRANSACTION_ALREADY_RETURNED), with the losers producing ZERO side effects:
+# no equipment status change, no equipment_status_history row, no audit row,
+# no overwrite of the winner's receipt fields.
+#
+# Only a real PostgreSQL database with real per-request connections can prove
+# this: the guard is a conditional `UPDATE ... WHERE status = 'open'` decided
+# by affected-row count (app.crud.transaction.close), and PostgreSQL's row
+# locking under READ COMMITTED is what makes "exactly one UPDATE matches"
+# true. SQLite's single-connection test path can only prove the rowcount logic
+# sequentially (tests/test_borrow.py::
+# test_repository_close_second_call_on_closed_row_reports_loss_and_preserves_winner),
+# never the race itself -- mirroring how the dispatch-side guard's real proof
+# lives in test_concurrent_dispatch_burst_produces_unique_transaction_numbers_
+# on_postgres above, not in the SQLite suite.
+# ---------------------------------------------------------------------------
+
+
+async def _dispatch_one_open_transaction(pg_client, headers, *, asset_number: str, ward_code: str):
+    """Creates one piece of equipment, dispatches it on-demand to a fresh
+    ward, and returns (transaction_id, equipment_id) for an OPEN transaction
+    ready to be raced on by concurrent receipts."""
+    eq_resp = await pg_client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": asset_number, "equipment_name": "Receipt Race Pump"},
+    )
+    assert eq_resp.status_code == 201, eq_resp.text
+    equipment_id = eq_resp.json()["id"]
+
+    ward_id = await _create_ward(pg_client, headers, ward_code)
+
+    borrow_resp = await pg_client.post(
+        "/api/v1/borrow",
+        headers=headers,
+        json={"equipment_id": equipment_id, "ward_id": ward_id, "dispatch_type": "on_demand"},
+    )
+    assert borrow_resp.status_code == 201, borrow_resp.text
+    tx = borrow_resp.json()
+    assert tx["status"] == "open"
+    assert tx["equipment"]["status"] == "issued_to_ward"
+    return tx["id"], equipment_id
+
+
+@pytest.mark.parametrize("concurrency", [1, 2, 5, 10, 50])
+async def test_concurrent_receipt_burst_produces_exactly_one_winner_on_postgres(
+    pg_client, pg_seeded_users, pg_transaction_seq, pg_session, concurrency
+):
+    """Roadmap PR8A core safety property, across the required matrix
+    (1 / 2 / 5 / 10 / 50 concurrent receipts for one transaction): exactly one
+    request wins (200, closed), the rest get 409 TRANSACTION_ALREADY_RETURNED,
+    and persistent database state -- not just the HTTP responses -- shows the
+    receipt happened exactly once."""
+    headers = await _admin_headers(pg_client)
+    tx_id, equipment_id = await _dispatch_one_open_transaction(
+        pg_client,
+        headers,
+        asset_number=f"PR8A-RCPT-{concurrency:03d}",
+        ward_code=f"PR8A-RCPT-WARD-{concurrency:03d}",
+    )
+
+    async def _receipt():
+        return await pg_client.post(
+            f"/api/v1/return/{tx_id}", headers=headers, json={"condition": "available"}
+        )
+
+    responses = await asyncio.gather(*(_receipt() for _ in range(concurrency)))
+    statuses = [r.status_code for r in responses]
+
+    # --- HTTP-level: exactly one winner, the rest are clean 409s -----------
+    assert statuses.count(200) == 1, f"expected exactly one 200 winner, got statuses={statuses}"
+    assert statuses.count(409) == concurrency - 1, f"expected {concurrency - 1} 409 losers, got statuses={statuses}"
+    assert set(statuses) <= {200, 409}, f"no other status is acceptable, got {statuses}"
+
+    winner = next(r for r in responses if r.status_code == 200)
+    assert winner.json()["status"] == "closed", "the winning receipt response must report the transaction closed"
+
+    for loser in (r for r in responses if r.status_code == 409):
+        assert loser.json()["code"] == "TRANSACTION_ALREADY_RETURNED", (
+            "PR8A introduces no new error code: every loser -- race or sequential -- uses the existing response"
+        )
+
+    # --- Persistent database state: the receipt happened EXACTLY once ------
+    # Fresh snapshot: end any implicit transaction on this observer session so
+    # the SELECTs below see everything the winning request committed.
+    await pg_session.rollback()
+
+    tx_row = (
+        await pg_session.execute(select(BorrowTransaction).where(BorrowTransaction.id == uuid.UUID(tx_id)))
+    ).scalar_one()
+    assert tx_row.status == TransactionStatus.CLOSED, "the transaction must be closed exactly once"
+    assert tx_row.returned_at is not None
+    assert tx_row.condition_on_return == "available", "only the winner's outcome may be persisted"
+    assert tx_row.received_by_user_id is not None
+
+    audit_rows = (
+        await pg_session.execute(
+            select(AuditLog).where(
+                AuditLog.action == "return",
+                AuditLog.entity_type == "borrow_transaction",
+                AuditLog.entity_id == uuid.UUID(tx_id),
+            )
+        )
+    ).scalars().all()
+    assert len(audit_rows) == 1, f"exactly one 'return' audit row must exist, found {len(audit_rows)}"
+
+    receipt_history_rows = (
+        await pg_session.execute(
+            select(EquipmentStatusHistory).where(
+                EquipmentStatusHistory.equipment_id == uuid.UUID(equipment_id),
+                EquipmentStatusHistory.from_status == EquipmentStatus.ISSUED_TO_WARD.value,
+            )
+        )
+    ).scalars().all()
+    assert len(receipt_history_rows) == 1, (
+        f"exactly one receipt (issued_to_ward -> ...) status-history row must exist, found {len(receipt_history_rows)}"
+    )
+
+    equipment_row = (
+        await pg_session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment_id)))
+    ).scalar_one()
+    assert equipment_row.status == EquipmentStatus.AVAILABLE_AT_POOL, (
+        "the equipment must reflect exactly one receipt transition (available condition -> AVAILABLE_AT_POOL)"
+    )
+
+    await pg_session.rollback()

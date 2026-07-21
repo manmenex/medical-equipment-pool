@@ -246,7 +246,12 @@ async def test_repository_close_sets_closed_status_and_receipt_fields(db_session
     """Repository-level (app.crud.transaction) proof, independent of the
     HTTP layer: close() is the only path that may set
     TransactionStatus.CLOSED, and it records returned_at/condition_on_return/
-    received_by_user_id/notes together."""
+    received_by_user_id/notes together.
+
+    Roadmap PR8A: close() now performs a conditional
+    ``UPDATE ... WHERE status='open'`` and reports whether *this* call won
+    (rowcount == 1) rather than mutating the ORM object in place -- so the
+    persisted receipt fields are observable only after a refresh."""
     from app.crud import transaction as transaction_crud
     from app.models.equipment import Equipment
     from app.models.transaction import BorrowTransaction, TransactionStatus
@@ -261,15 +266,63 @@ async def test_repository_close_sets_closed_status_and_receipt_fields(db_session
     assert tx.status == TransactionStatus.OPEN, "create() must rely on the OPEN column default"
 
     receiver_id = uuid.uuid4()
-    await transaction_crud.close(
+    won = await transaction_crud.close(
         db_session, tx, received_by_user_id=receiver_id, condition_on_return="available", notes="checked in"
     )
+    assert won is True, "closing an OPEN transaction must report the win (rowcount == 1)"
 
+    await db_session.refresh(
+        tx, attribute_names=["status", "returned_at", "condition_on_return", "received_by_user_id", "notes"]
+    )
     assert tx.status == TransactionStatus.CLOSED
     assert tx.returned_at is not None
     assert tx.condition_on_return == "available"
     assert tx.received_by_user_id == receiver_id
     assert "checked in" in tx.notes
+
+
+async def test_repository_close_second_call_on_closed_row_reports_loss_and_preserves_winner(db_session):
+    """Roadmap PR8A: close() is the atomic receipt guard. Once a row is no
+    longer OPEN, a subsequent close() must match zero rows, report the loss
+    (return False), and leave the first receipt's fields untouched. This
+    proves the rowcount-decided winner/loser logic deterministically on
+    SQLite (a second call standing in for the losing concurrent request);
+    real concurrent-request behavior against PostgreSQL is proven in
+    tests/test_postgres_integration.py."""
+    from app.crud import transaction as transaction_crud
+    from app.models.equipment import Equipment
+    from app.models.transaction import BorrowTransaction, TransactionStatus
+
+    equipment = Equipment(asset_number="AST-PR8A-0001", equipment_name="Pump")
+    db_session.add(equipment)
+    await db_session.flush()
+
+    tx = BorrowTransaction(transaction_no="TX-PR8A-0001", equipment_id=equipment.id, borrower_name="Nurse Guard")
+    db_session.add(tx)
+    await db_session.flush()
+
+    first_receiver = uuid.uuid4()
+    won_first = await transaction_crud.close(
+        db_session, tx, received_by_user_id=first_receiver, condition_on_return="available", notes="first"
+    )
+    assert won_first is True
+
+    # Stand-in for the losing concurrent request: the row is already CLOSED,
+    # so this conditional close matches zero rows. It must report the loss and
+    # must NOT overwrite the winner's outcome / receiver / notes.
+    second_receiver = uuid.uuid4()
+    won_second = await transaction_crud.close(
+        db_session, tx, received_by_user_id=second_receiver, condition_on_return="repair", notes="second"
+    )
+    assert won_second is False, "a close() against an already-closed row must report rowcount == 0"
+
+    await db_session.refresh(
+        tx, attribute_names=["status", "condition_on_return", "received_by_user_id", "notes"]
+    )
+    assert tx.status == TransactionStatus.CLOSED
+    assert tx.condition_on_return == "available", "the loser must not overwrite the winner's outcome"
+    assert tx.received_by_user_id == first_receiver, "the loser must not overwrite the winner's receiver"
+    assert "second" not in (tx.notes or ""), "the loser's notes must not be persisted"
 
 
 async def test_repository_get_open_transaction_for_equipment(db_session):

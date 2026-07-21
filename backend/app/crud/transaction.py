@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, and_, cast, func, or_, select, text
+from sqlalchemy import String, and_, cast, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -145,19 +145,68 @@ async def close(
     received_by_user_id: uuid.UUID | None,
     condition_on_return: str,
     notes: str | None,
-) -> BorrowTransaction:
-    """Closes an OPEN transaction. The only path that may set
+) -> bool:
+    """Conditionally closes an OPEN transaction and reports whether *this*
+    call is the one that closed it. The only path that may set
     ``status = TransactionStatus.CLOSED`` -- mirrors
     ``app.crud.equipment.change_status_for_dispatch_receipt``'s role as the
-    single authorized mutator for its own lifecycle concern."""
-    tx.status = TransactionStatus.CLOSED
-    tx.returned_at = datetime.utcnow()
-    tx.condition_on_return = condition_on_return
-    tx.received_by_user_id = received_by_user_id
+    single authorized mutator for its own lifecycle concern.
+
+    Roadmap PR8A (docs/design/PR8_IMPLEMENTATION_PLAN.md, Section 5 Option A):
+    the receipt/close write is the atomic concurrency guard for the receipt
+    race. Instead of mutating the ORM object and flushing an unconditional
+    ``UPDATE ... WHERE id = :id`` (which cannot tell, at the SQL level, that a
+    concurrent request already closed the row), this emits a single
+
+        UPDATE borrow_transactions
+           SET status = 'closed', returned_at = ..., condition_on_return = ...,
+               received_by_user_id = ...[, notes = ...]
+         WHERE id = :id AND status = 'open'
+
+    and decides the winner by affected-row count. Under real concurrency (two
+    requests for the same OPEN transaction), PostgreSQL grants exactly one the
+    row and flips it ``open -> closed``; every other request's predicate
+    ``status = 'open'`` no longer matches by the time its own UPDATE evaluates,
+    so it affects **zero** rows. This function returns:
+
+      - ``True``  -- this call transitioned the row (rowcount == 1): the winner.
+      - ``False`` -- the row was not OPEN when this UPDATE ran (rowcount == 0):
+        a concurrent request already closed it. The caller MUST NOT proceed to
+        any equipment-status, status-history, or audit side effect.
+
+    It does **not** mutate or refresh ``tx``: because the statement is executed
+    as Core SQL (bypassing the ORM unit of work), ``tx``'s in-memory
+    attributes are stale after a winning call. The caller is required to
+    ``db.refresh(tx)`` after a ``True`` result before using it for the
+    equipment transition or the response (see
+    ``app.services.borrow_service.return_equipment``). The ``status = 'open'``
+    literal here matches the value the ``TransactionStatusType`` enum persists
+    (``native_enum=False`` + ``values_callable``, i.e. the lowercase ``.value``),
+    the same literal the partial unique index ``idx_tx_one_active_borrow``
+    already relies on.
+    """
+    values: dict = {
+        "status": TransactionStatus.CLOSED,
+        "returned_at": datetime.utcnow(),
+        "condition_on_return": condition_on_return,
+        "received_by_user_id": received_by_user_id,
+    }
     if notes:
-        tx.notes = f"{tx.notes or ''}\n[Return] {notes}".strip()
-    await db.flush()
-    return tx
+        # Preserves the existing "[Return] ..." append behavior. ``tx.notes``
+        # is the value read at SELECT time; only the winner uses this result,
+        # and nothing else concurrently rewrites a dispatched row's notes, so
+        # composing from the in-memory value is correct for the winner (a
+        # loser's UPDATE matches zero rows, so its computed value is never
+        # persisted).
+        values["notes"] = f"{tx.notes or ''}\n[Return] {notes}".strip()
+
+    result = await db.execute(
+        update(BorrowTransaction)
+        .where(BorrowTransaction.id == tx.id, BorrowTransaction.status == TransactionStatus.OPEN)
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount == 1
 
 
 async def list_active(db: AsyncSession) -> list[BorrowTransaction]:
