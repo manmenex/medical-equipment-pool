@@ -7,7 +7,7 @@
 
 ## Current baseline
 
-`d0e888f3095c9a794928a9bd7d68b60907654522` — squash commit of the PR7 (7b slice) Transaction Fields PR (GitHub PR #20), on branch `claude/medical-equipment-pool-0c7fz0`.
+`f6f7c2ae0b12025dae2afd7f856bb489548c81cc` — squash commit of the API & Error Catalog documentation PR (GitHub PR #24), on branch `claude/medical-equipment-pool-0c7fz0`.
 
 ## Numbering note
 
@@ -28,8 +28,12 @@
 | — (governance) | Knowledge & Governance Foundation | #18 | `f4146b3` |
 | PR7 (7a slice) | Transaction lifecycle model (OPEN/CLOSED) | #19 | `4041cd2` |
 | PR7 (7b slice) | Transaction fields: dispatch type, routine round, required ward_id, borrower_name/due_at/quantity write-path removal | #20 | `d0e888f` |
+| — (governance) | Post-merge governance sync after Roadmap PR7b (GitHub PR #20) | #21 | `0ed6598` |
+| — (infrastructure) | Test Infrastructure Cleanup — consolidated duplicated test helpers into `tests/conftest.py`, no behavior change | #22 | `06a736c` |
+| — (documentation) | Developer Documentation (`docs/development/`: SETUP, TESTING, MIGRATIONS, CODE_REVIEW, CONTRIBUTING) | #23 | `2e403fb` |
+| — (documentation) | API & Error Catalog (`docs/api/`: ERROR_CODES, dispatch, receipt, equipment, transactions) | #24 | `f6f7c2a` |
 
-Full rationale and review-fix history for PR5 through PR7 (7b slice): `docs/DECISION_LOG.md`.
+Full rationale and review-fix history for PR5 through PR7 (7b slice): `docs/DECISION_LOG.md`. PR21-PR24 (GitHub PR numbers) are process/documentation-only additions with no code, business-rule, or schema change — no `DECISION_LOG.md` entry was needed for them.
 
 **PR7 note:** `docs/audits/04-consolidated-implementation-plan.md` Part D's full PR7 entry recommended splitting into a 7a (lifecycle model) and 7b (`dispatch_type`/`routine_round`/ward-required/field-cleanup) slice "if the reviewing team prefers smaller units." PR7 (7a slice) shipped `TransactionStatus` (`OPEN`/`CLOSED`), the `create()`/`close()` mutator split, `legacy_status` preservation, and disabling the deprecated `due_at`-driven overdue-notification scheduler job (Codex PR7a review round 1, BLOCKER — see `docs/DECISION_LOG.md`). PR7 (7b slice) completed PR7's remaining scope: `dispatch_type` (`routine_round`/`on_demand`), `routine_round` (the four confirmed fixed times), a required `ward_id` for every new dispatch (application-layer enforced), and removing `borrower_name`/`due_at`/`quantity` from the active write path while preserving every existing historical value as read-only history — plus, after Codex round 1 review, `BorrowRequest` now rejects unknown request fields outright, an invalid `ward_id` is classified as a distinct 400 `INVALID_INPUT` rather than the equipment-conflict 409, and the migration 0008 test suite was rewritten to exercise a genuinely reconstructed pre-migration production schema. Roadmap PR7 (both slices) is now fully merged. Concurrent-receipt protection (two simultaneous receipts racing on the same OPEN transaction) was **not** part of either slice — it stays Roadmap PR8's responsibility and remains mandatory before pilot. See `knowledge/adr/ADR-005-transaction-model.md` and `docs/DECISION_LOG.md`.
 
