@@ -28,7 +28,7 @@ See `docs/BUSINESS_RULES.md` for the full list with citations. Summary:
 - Exactly four equipment states: `AVAILABLE_AT_POOL`, `ISSUED_TO_WARD`, `UNAVAILABLE_DEFECTIVE`, `DECOMMISSIONED`.
 - Cleaning is a physical activity that may happen before or after receipt is recorded; it is never represented as a state and never needs a separate workflow. A usable receipt ends at `AVAILABLE_AT_POOL`; a defective receipt ends at `UNAVAILABLE_DEFECTIVE`.
 - Dispatch and receipt (`backend/app/services/borrow_service.py`) are the only paths that move equipment through `ISSUED_TO_WARD`, and the only paths that open/close a transaction (`app.crud.transaction.create()`/`close()`); administrative status maintenance is a separate, narrower path. `BorrowTransaction.status` is exactly `TransactionStatus.OPEN`/`CLOSED` (Roadmap PR7's lifecycle slice) — see `docs/BUSINESS_RULES.md`.
-- Every new dispatch requires `ward_id` and `dispatch_type` (`routine_round`/`on_demand`, `DispatchType`); `routine_round` (one of the four confirmed fixed times `06:00`/`11:00`/`15:00`/`21:00`) is required exactly for `routine_round` dispatches and forbidden for `on_demand` (Roadmap PR7 7b slice, currently a Draft PR pending review). `borrower_name`/`due_at`/`quantity` are no longer accepted or required; every existing historical value is preserved — see `docs/BUSINESS_RULES.md`.
+- Every new dispatch requires `ward_id` and `dispatch_type` (`routine_round`/`on_demand`, `DispatchType`); `routine_round` (one of the four confirmed fixed times `06:00`/`11:00`/`15:00`/`21:00`) is required exactly for `routine_round` dispatches and forbidden for `on_demand` (Roadmap PR7 7b slice, merged GitHub PR #20). `borrower_name`/`due_at`/`quantity` are rejected outright by `BorrowRequest` (`extra="forbid"`); every existing historical value is preserved — see `docs/BUSINESS_RULES.md`.
 - Decommissioning must pass through `UNAVAILABLE_DEFECTIVE`; `AVAILABLE_AT_POOL` cannot skip directly to `DECOMMISSIONED`.
 - No patient tracking, no ward-to-ward transfer tracking, no MEMS/PM/calibration/recall workflow.
 
@@ -59,13 +59,13 @@ Source: `docs/PROJECT_WORKFLOW.md`.
 
 ## Current baseline
 
-`4041cd2aec412c94f730285d7ba4635e00b095bd` (branch `claude/medical-equipment-pool-0c7fz0`, squash merge of Roadmap PR7 7a slice, GitHub PR #19) as of this snapshot. Always confirm against `knowledge/CONTEXT.md` and `docs/ROADMAP.md`, which are updated more frequently than this file.
+`d0e888f3095c9a794928a9bd7d68b60907654522` (branch `claude/medical-equipment-pool-0c7fz0`, squash merge of Roadmap PR7 7b slice, GitHub PR #20) as of this snapshot. Always confirm against `knowledge/CONTEXT.md` and `docs/ROADMAP.md`, which are updated more frequently than this file.
 
 ## Completed Roadmap
 
-Roadmap PR1-PR6 merged (security/availability foundation, structured exceptions, audit logging framework, transaction-number sequence, equipment identifier model, four-state equipment model), plus the Knowledge Layer v2 governance PR, the CI/AI-review-workflow infrastructure PR, the Knowledge & Governance Foundation PR, and Roadmap PR7's transaction-lifecycle-model slice (`OPEN`/`CLOSED`, GitHub PR #19). Full table with GitHub PR numbers and squash SHAs: `docs/ROADMAP.md`.
+Roadmap PR1-PR6 merged (security/availability foundation, structured exceptions, audit logging framework, transaction-number sequence, equipment identifier model, four-state equipment model), plus the Knowledge Layer v2 governance PR, the CI/AI-review-workflow infrastructure PR, the Knowledge & Governance Foundation PR, and both slices of Roadmap PR7 (transaction lifecycle model `OPEN`/`CLOSED`, GitHub PR #19; dispatch type/routine round/required ward_id/field cleanup, GitHub PR #20). Roadmap PR7 is now fully merged. Full table with GitHub PR numbers and squash SHAs: `docs/ROADMAP.md`.
 
-Roadmap PR7's remaining scope — `dispatch_type`, `routine_round`, required `ward_id`, and `borrower_name`/`due_at`/`quantity` write-path removal (the "7b slice") — is in progress (Draft PR pending review) — see `docs/DOMAIN_MODEL.md` and `knowledge/adr/ADR-005-transaction-model.md`. PR8-PR15 (atomic receipt through observability/schema hygiene) are planned and not yet started — see `docs/ROADMAP.md`.
+No Roadmap PR is currently in progress. PR8-PR15 (atomic receipt through observability/schema hygiene) are planned and not yet started — see `docs/ROADMAP.md`.
 
 ## Current AI responsibilities
 

@@ -100,8 +100,8 @@ accepted for the 7a lifecycle-model slice — they are not rewritten here.
 `dispatch_type`, `routine_round`, `ward_id`-required, and `borrower_name`/
 `due_at`/`quantity` removal, called out above as this ADR's explicit
 non-decisions and PR7's outstanding scope, have since been implemented by
-Roadmap PR7's 7b slice (migration `0008_dispatch_fields.py`, currently a
-Draft PR pending review) exactly along the lines this ADR anticipated: as a
+Roadmap PR7's 7b slice (migration `0008_dispatch_fields.py`, merged as
+GitHub PR #20) exactly along the lines this ADR anticipated: as a
 later PR completing Roadmap PR7's full plan entry, not a new architectural
 decision requiring its own ADR. See `docs/BUSINESS_RULES.md`, `docs/
 DOMAIN_MODEL.md`, and `docs/DECISION_LOG.md` ("Roadmap PR7 (7b slice)") for
