@@ -11,7 +11,7 @@
 
 ## Current PR
 
-None. Since Roadmap PR7 (7b slice) merged as GitHub PR #20, six process/documentation-only or governance PRs merged in order, plus one production code change (PR8A) that touched no API contract, business rule, or schema:
+None. Since Roadmap PR7 (7b slice) merged as GitHub PR #20, five process/documentation-only or governance PRs merged in order, plus one production code change (PR8A) that touched no API contract, business rule, or schema:
 
 - **GitHub PR #21** (`0ed6598`) — post-merge governance sync: brought `docs/ROADMAP.md`, `docs/DECISION_LOG.md`, `docs/BUSINESS_RULES.md`, and this knowledge layer up to date after PR #20 merged.
 - **GitHub PR #22** (`06a736c`) — Test Infrastructure Cleanup: consolidated duplicated/inconsistent test helper functions (`auth_headers`, `create_ward`, `on_demand_borrow_payload`) into `backend/tests/conftest.py` as a single shared implementation. No test behavior change — verified via full local `pytest -m "not postgres"` (273 passed) and `pytest -m postgres` (78 passed) runs before merge.
