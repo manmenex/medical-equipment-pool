@@ -282,3 +282,88 @@ describe("EquipmentDetailPage transaction history (Roadmap PR9B review round 2, 
     expect(trigger).toHaveFocus();
   });
 });
+
+// Roadmap PR9B review round 2 (Codex incremental review, PR34-R2-M2): the
+// history query previously discarded next_cursor (limit:50, single page)
+// and had no distinct loading/error state -- a failed fetch rendered
+// identically to a genuinely empty history. These tests exercise the
+// useInfiniteQuery-based fix: an explicit loading message, an explicit
+// error message with a working "ลองใหม่" retry, and a "โหลดเพิ่มเติม"
+// action that follows next_cursor to reach a CLOSED transaction that only
+// exists on the second page.
+describe("EquipmentDetailPage transaction history pagination and load state (Roadmap PR9B round 3)", () => {
+  it("shows an explicit loading message while the transaction history is loading", async () => {
+    listTransactions.mockReturnValue(new Promise(() => {}));
+    renderPage();
+
+    expect(await screen.findByText("กำลังโหลดประวัติการยืม-คืน...")).toBeInTheDocument();
+  });
+
+  it("shows an explicit error and a retry action when the transaction history fails to load, distinct from an empty history", async () => {
+    listTransactions.mockRejectedValue(new Error("network down"));
+    renderPage();
+
+    expect(await screen.findByText("ไม่สามารถโหลดประวัติการยืม-คืนได้")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "ลองใหม่" })).toBeInTheDocument();
+    expect(screen.queryByText("ยังไม่มีประวัติการยืม-คืน")).not.toBeInTheDocument();
+  });
+
+  it("retry calls the transaction-history query again and recovers on success", async () => {
+    listTransactions.mockRejectedValueOnce(new Error("network down"));
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByRole("button", { name: "ลองใหม่" });
+    expect(listTransactions).toHaveBeenCalledTimes(1);
+
+    listTransactions.mockResolvedValueOnce(page([openTransaction, closedTransaction]));
+    await user.click(screen.getByRole("button", { name: "ลองใหม่" }));
+
+    await waitFor(() => expect(screen.queryByText("ไม่สามารถโหลดประวัติการยืม-คืนได้")).not.toBeInTheDocument());
+    await waitForHistoryLoaded();
+  });
+
+  it('offers a "โหลดเพิ่มเติม" action only when the backend reports a next_cursor', async () => {
+    listTransactions.mockResolvedValueOnce({ items: [openTransaction], next_cursor: null, total: 1 });
+    renderPage();
+    await waitFor(() => expect(screen.getByText("TX-OPEN-1", { exact: false })).toBeInTheDocument());
+
+    expect(screen.queryByRole("button", { name: "โหลดเพิ่มเติม" })).not.toBeInTheDocument();
+  });
+
+  it("reaches a CLOSED transaction that only exists on a later page, using its exact transaction id", async () => {
+    const laterClosedTransaction: TransactionOut = {
+      ...closedTransaction,
+      id: "tx-closed-page2",
+      transaction_no: "TX-CLOSED-PAGE2",
+    };
+    listTransactions.mockImplementation(async ({ cursor }: { cursor?: string | null }) => {
+      if (!cursor) {
+        return { items: [openTransaction], next_cursor: "cursor-2", total: 2 };
+      }
+      return { items: [laterClosedTransaction], next_cursor: null, total: 2 };
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText("TX-OPEN-1", { exact: false })).toBeInTheDocument());
+    expect(screen.queryByText("TX-CLOSED-PAGE2", { exact: false })).not.toBeInTheDocument();
+
+    const loadMore = screen.getByRole("button", { name: "โหลดเพิ่มเติม" });
+    await user.click(loadMore);
+
+    await waitFor(() => expect(screen.getByText("TX-CLOSED-PAGE2", { exact: false })).toBeInTheDocument());
+    expect(listTransactions).toHaveBeenLastCalledWith(expect.objectContaining({ cursor: "cursor-2" }));
+
+    correctTransactionWard.mockResolvedValue({ ...laterClosedTransaction, ward_id: "ward-2" });
+    const laterRow = rowFor("TX-CLOSED-PAGE2");
+    await user.click(within(laterRow).getByRole("button", { name: TRIGGER }));
+    await user.selectOptions(screen.getByLabelText(/แผนกที่ถูกต้อง/), "ward-2");
+    await user.type(screen.getByLabelText(/เหตุผลในการแก้ไข/), "Fixed on a later page");
+    await user.click(screen.getByRole("button", { name: CONFIRM_BUTTON }));
+
+    await waitFor(() => expect(correctTransactionWard).toHaveBeenCalledTimes(1));
+    const [txId] = correctTransactionWard.mock.calls[0];
+    expect(txId).toBe("tx-closed-page2");
+  });
+});

@@ -154,7 +154,11 @@ closed:
   section — every transaction for that equipment, `open` or `closed`,
   sourced from `GET /transactions?equipment_id=` (this file's `list_transactions`
   above; not the equipment status-history endpoint, whose rows carry no
-  transaction ID and cannot substitute for one).
+  transaction ID and cannot substitute for one). Pages through the
+  response's `next_cursor` via an explicit "โหลดเพิ่มเติม" action rather
+  than a single fixed-size page, so a CLOSED transaction beyond the first
+  50 rows stays reachable; a failed history fetch shows an explicit error
+  with its own "ลองใหม่" retry, distinct from a genuinely empty history.
 
 Both render the shared `frontend/src/components/WardCorrectionAction.tsx`
 (the ward-list query's loading/error/retry state and the trigger button —

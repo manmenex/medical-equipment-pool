@@ -84,7 +84,18 @@ export function WardCorrectionDialog({ transaction, wards, onClose, onUpdated, t
         // form is valid) change which elements are focusable, and a stale
         // list would let Tab escape the trap.
         const focusable = getFocusableElements(panelRef.current);
-        if (focusable.length === 0) return;
+        if (focusable.length === 0) {
+          // Roadmap PR9B review round 2 (Codex incremental review,
+          // PR34-R2-M1): while a submission is pending, every control
+          // (select/textarea/Cancel/Confirm) is disabled, so there is
+          // nothing left to cycle between -- but Tab must still be
+          // prevented from falling through to the browser's default
+          // navigation and leaving the modal. Pin focus on the panel
+          // itself until a focusable control exists again.
+          e.preventDefault();
+          panelRef.current.focus();
+          return;
+        }
         const first = focusable[0];
         const last = focusable[focusable.length - 1];
         const active = document.activeElement;

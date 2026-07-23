@@ -232,6 +232,38 @@ describe("WardCorrectionAction keyboard and focus containment (Finding 2)", () =
     expect(screen.getByLabelText(/แผนกที่ถูกต้อง/)).toHaveFocus();
   });
 
+  it("keeps focus inside the dialog on Tab while a submission is pending and every control is disabled", async () => {
+    // Roadmap PR9B review round 2 (Codex incremental review, PR34-R2-M1):
+    // once submitting=true, select/textarea/Cancel/Confirm are all
+    // disabled, so getFocusableElements() returns an empty array. Before
+    // this fix, that case returned early without calling
+    // preventDefault(), letting Tab fall through to the browser's default
+    // navigation and leave the modal mid-request.
+    let resolveRequest: (value: TransactionOut) => void = () => {};
+    correctTransactionWard.mockReturnValue(
+      new Promise<TransactionOut>((resolve) => {
+        resolveRequest = resolve;
+      })
+    );
+    const user = userEvent.setup();
+    renderAction();
+    await openDialog(user);
+    await fillValidForm(user);
+    await user.click(screen.getByRole("button", { name: CONFIRM_BUTTON }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /กำลังบันทึก/ })).toBeDisabled());
+    const dialog = screen.getByRole("dialog");
+
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    resolveRequest({ ...transaction, ward_id: "ward-2" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
   it("Escape closes the dialog safely", async () => {
     const user = userEvent.setup();
     renderAction();
