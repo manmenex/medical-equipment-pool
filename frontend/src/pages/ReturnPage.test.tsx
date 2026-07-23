@@ -128,3 +128,68 @@ describe("ReturnPage receipt outcome (Roadmap PR8B)", () => {
     expect(defectiveLabel).not.toHaveClass("border-status-available", "bg-status-available/10");
   });
 });
+
+// Roadmap PR8C (knowledge/adr/ADR-006-receipt-outcome-contract.md's "Not
+// decided here"; backend/app/core/exceptions.py): the receipt endpoint now
+// rejects a losing request with one of two distinguishable, stable `code`s.
+// These fake rejections are shaped exactly like axios's own error objects
+// (`isAxiosError: true`, `response.data.{code,detail,status}`) so that
+// `apiErrorCode`/`apiErrorMessage` (both gated on `axios.isAxiosError`)
+// recognize them the same way a real failed `createReturn` call would.
+function fakeApiError(code: string, detail: string) {
+  return {
+    isAxiosError: true,
+    response: { status: 409, data: { code, detail, status: 409 } },
+  };
+}
+
+describe("ReturnPage receipt errors (Roadmap PR8C)", () => {
+  it("shows a duplicate-receipt message for TRANSACTION_ALREADY_RETURNED, keyed by code not free text", async () => {
+    listActiveBorrows.mockResolvedValue([transaction]);
+    createReturn.mockRejectedValue(
+      fakeApiError("TRANSACTION_ALREADY_RETURNED", "This transaction has already been returned")
+    );
+    const user = userEvent.setup();
+    renderReturnPage();
+
+    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: /ยืนยันการคืน/ }));
+
+    await waitFor(() => expect(screen.getByText("รายการนี้ถูกคืนไปแล้ว")).toBeInTheDocument());
+  });
+
+  it("shows a distinct race-condition message for RECEIPT_RACE_LOST, not the duplicate-receipt message", async () => {
+    listActiveBorrows.mockResolvedValue([transaction]);
+    createReturn.mockRejectedValue(
+      fakeApiError("RECEIPT_RACE_LOST", "This equipment was just received by someone else. Refresh to see the current record.")
+    );
+    const user = userEvent.setup();
+    renderReturnPage();
+
+    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: /ยืนยันการคืน/ }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("เพิ่งมีการคืนเครื่องนี้โดยผู้อื่นในเวลาเดียวกัน กรุณารีเฟรชหน้าเพื่อดูข้อมูลล่าสุด")
+      ).toBeInTheDocument()
+    );
+    expect(screen.queryByText("รายการนี้ถูกคืนไปแล้ว")).not.toBeInTheDocument();
+  });
+
+  it("falls back to the raw detail message for an unrecognized error code, never inferring behavior from it", async () => {
+    listActiveBorrows.mockResolvedValue([transaction]);
+    createReturn.mockRejectedValue(fakeApiError("SOME_OTHER_CODE", "Something else went wrong"));
+    const user = userEvent.setup();
+    renderReturnPage();
+
+    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: /ยืนยันการคืน/ }));
+
+    await waitFor(() => expect(screen.getByText("Something else went wrong")).toBeInTheDocument());
+    expect(screen.queryByText("รายการนี้ถูกคืนไปแล้ว")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("เพิ่งมีการคืนเครื่องนี้โดยผู้อื่นในเวลาเดียวกัน กรุณารีเฟรชหน้าเพื่อดูข้อมูลล่าสุด")
+    ).not.toBeInTheDocument();
+  });
+});

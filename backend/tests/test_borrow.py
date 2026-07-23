@@ -237,9 +237,89 @@ async def test_closing_an_already_closed_transaction_is_rejected(client, seeded_
     first = await client.post(f"/api/v1/return/{tx_id}", headers=admin_headers, json={"receipt_outcome": "usable"})
     assert first.status_code == 200, first.text
 
+    # Roadmap PR8C (knowledge/adr/ADR-006-receipt-outcome-contract.md's "Not
+    # decided here"): this is the genuine sequential-repeat case (Case A --
+    # the row was already CLOSED before this second request even read it),
+    # which must keep using TRANSACTION_ALREADY_RETURNED. See
+    # test_receipt_race_loss_returns_a_distinguishable_code_with_zero_side_effects
+    # below for the sibling Case B (lost a concurrent race) test, which must
+    # use a different code.
     second = await client.post(f"/api/v1/return/{tx_id}", headers=admin_headers, json={"receipt_outcome": "usable"})
     assert second.status_code == 409
     assert second.json()["code"] == "TRANSACTION_ALREADY_RETURNED"
+    assert "already been returned" in second.json()["detail"].lower()
+
+
+async def test_receipt_race_loss_returns_a_distinguishable_code_with_zero_side_effects(
+    client, seeded_users, monkeypatch, db_session
+):
+    """Roadmap PR8C: a request whose own read observed the transaction as
+    OPEN, but whose conditional close() lost the race to a concurrent
+    winner, must be rejected with RECEIPT_RACE_LOST -- a different code
+    from the genuine-repeat TRANSACTION_ALREADY_RETURNED case above -- and
+    must produce zero side effects (transaction stays OPEN, equipment
+    status unchanged, no audit row).
+
+    This monkeypatches app.crud.transaction.close() to return False, the
+    same signal a genuinely concurrent winner leaves behind (Roadmap PR8A),
+    without performing any real write -- deterministic, no real concurrency
+    or PostgreSQL needed, since app.services.borrow_service.return_equipment
+    branches on close()'s boolean result alone, after its own read has
+    already independently confirmed the row was OPEN. Real concurrent-race
+    proof (that close() actually returns False under contention) lives in
+    tests/test_postgres_integration.py's burst test; this test proves only
+    the distinguishable-error behavior once that signal occurs.
+    """
+    from app.crud import transaction as transaction_crud
+
+    admin_headers = await _auth_headers(client, "admin")
+    equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR8C-0001")
+    payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-PR8C-0001")
+
+    borrow_resp = await client.post("/api/v1/borrow", headers=admin_headers, json=payload)
+    assert borrow_resp.status_code == 201, borrow_resp.text
+    tx_id = borrow_resp.json()["id"]
+
+    async def _lost_race_close(db, tx, **kwargs):
+        return False
+
+    monkeypatch.setattr(transaction_crud, "close", _lost_race_close)
+
+    resp = await client.post(f"/api/v1/return/{tx_id}", headers=admin_headers, json={"receipt_outcome": "usable"})
+    assert resp.status_code == 409, resp.text
+    body = resp.json()
+    assert body["code"] == "RECEIPT_RACE_LOST"
+    assert body["code"] != "TRANSACTION_ALREADY_RETURNED"
+    assert "already been returned" not in body["detail"].lower(), (
+        "the race-loss message must not reuse the genuine-repeat wording -- the requester did nothing wrong"
+    )
+
+    from sqlalchemy import select
+
+    from app.models.audit import AuditLog
+    from app.models.equipment import Equipment, EquipmentStatus
+    from app.models.transaction import BorrowTransaction, TransactionStatus
+
+    tx_row = (
+        await db_session.execute(select(BorrowTransaction).where(BorrowTransaction.id == uuid.UUID(tx_id)))
+    ).scalar_one()
+    assert tx_row.status == TransactionStatus.OPEN, "a losing request must never actually close the transaction"
+
+    equipment_row = (
+        await db_session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment["id"])))
+    ).scalar_one()
+    assert equipment_row.status == EquipmentStatus.ISSUED_TO_WARD, "a losing request must not change equipment status"
+
+    audit_rows = (
+        await db_session.execute(
+            select(AuditLog).where(
+                AuditLog.action == "return",
+                AuditLog.entity_type == "borrow_transaction",
+                AuditLog.entity_id == uuid.UUID(tx_id),
+            )
+        )
+    ).scalars().all()
+    assert audit_rows == [], "a losing request must not write an audit row"
 
 
 async def test_repository_close_sets_closed_status_and_receipt_fields(db_session):

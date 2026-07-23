@@ -3873,8 +3873,9 @@ async def test_migration_0008_downgrade_fails_closed_when_a_row_has_null_borrowe
 # 04-consolidated-implementation-plan.md Part C P0 / Backend Audit Finding
 # 14.1 Critical): atomic-receipt concurrency guard. Two or more concurrent
 # POST /api/v1/return/{id} requests for the SAME open transaction must resolve
-# to exactly one winner (200, status closed) and N-1 losers (409
-# TRANSACTION_ALREADY_RETURNED), with the losers producing ZERO side effects:
+# to exactly one winner (200, status closed) and N-1 losers (409, Roadmap
+# PR8C: RECEIPT_RACE_LOST for a genuine race loss, TRANSACTION_ALREADY_RETURNED
+# for a genuine sequential repeat), with the losers producing ZERO side effects:
 # no equipment status change, no equipment_status_history row, no audit row,
 # no overwrite of the winner's receipt fields.
 #
@@ -3936,7 +3937,9 @@ async def test_concurrent_receipt_burst_produces_exactly_one_winner_on_postgres(
 ):
     """Roadmap PR8A core safety property, across the required matrix
     (1 / 2 / 5 / 10 / 50 concurrent receipts for one transaction): exactly one
-    request wins (200, closed), the rest get 409 TRANSACTION_ALREADY_RETURNED,
+    request wins (200, closed), the rest get 409 (Roadmap PR8C:
+    RECEIPT_RACE_LOST for a genuine race loss, TRANSACTION_ALREADY_RETURNED
+    for a genuine sequential repeat -- see the loser-code assertions below),
     and persistent database state -- not just the HTTP responses -- shows the
     receipt happened exactly once, with the winner's own payload persisted.
 
@@ -4021,10 +4024,31 @@ async def test_concurrent_receipt_burst_produces_exactly_one_winner_on_postgres(
         "the winning response must reflect its own request's marker, not a stale/mixed value"
     )
 
-    for loser in (r for r in responses if r.status_code == 409):
-        assert loser.json()["code"] == "TRANSACTION_ALREADY_RETURNED", (
-            "PR8A introduces no new error code: every loser -- race or sequential -- uses the existing response"
-        )
+    # Roadmap PR8C: every loser here reached transaction_crud.close() at all
+    # (i.e. entered `entrants`), which only happens after this specific
+    # request's own read already observed the transaction as OPEN -- so
+    # every one of them is a genuine race loss (Case B), never a sequential
+    # repeat (Case A), and must get RECEIPT_RACE_LOST. This is deterministic
+    # whenever `barrier_size == concurrency` (concurrency <= the pool-bound
+    # cap below): asyncio.Barrier(barrier_size) only ever releases once
+    # exactly `barrier_size` calls reach it, so if this test passes at all
+    # (doesn't hang), every one of the `concurrency` requests necessarily
+    # called close() and raced together at the barrier. Above the cap
+    # (concurrency == 50, barrier_size fixed at 10), the connection pool
+    # (15 total) queues most of the extra requests, so some of them
+    # legitimately observe an already-CLOSED row at their own read and take
+    # the Case A path instead -- both codes are valid there.
+    if concurrency <= _RECEIPT_RACE_BARRIER_CAP:
+        for loser in (r for r in responses if r.status_code == 409):
+            assert loser.json()["code"] == "RECEIPT_RACE_LOST", (
+                "every synchronized loser at or under the barrier cap is a genuine race loss, never a "
+                "sequential repeat"
+            )
+    else:
+        for loser in (r for r in responses if r.status_code == 409):
+            assert loser.json()["code"] in {"RECEIPT_RACE_LOST", "TRANSACTION_ALREADY_RETURNED"}, (
+                f"unexpected error code for a receipt-burst loser above the barrier cap: {loser.json()['code']!r}"
+            )
 
     # --- Persistent database state: the receipt happened EXACTLY once ------
     # Fresh snapshot: end any implicit transaction on this observer session so

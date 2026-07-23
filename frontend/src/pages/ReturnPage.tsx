@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 
 import { BcmSearchInput } from "@/components/BcmSearchInput";
 import { QRScanner } from "@/components/QRScanner";
-import { apiErrorMessage } from "@/services/api";
+import { apiErrorCode, apiErrorMessage } from "@/services/api";
 import { createReturn, listActiveBorrows } from "@/services/borrow";
 import { resolveEquipmentByQr } from "@/services/equipment";
 import type { BcmSuggestion, ReceiptOutcome, TransactionOut } from "@/types";
@@ -35,6 +35,20 @@ const RECEIPT_OUTCOMES: { value: ReceiptOutcome; label: string; selectedClass: s
   { value: "usable", label: "พร้อมใช้งาน", selectedClass: "border-status-available bg-status-available/10" },
   { value: "defective", label: "ชำรุด", selectedClass: "border-status-repair bg-status-repair/10" },
 ];
+
+// Roadmap PR8C (knowledge/adr/ADR-006-receipt-outcome-contract.md's "Not
+// decided here"; backend/app/core/exceptions.py): the receipt endpoint now
+// rejects a losing request with one of two distinguishable, stable
+// `code`s -- a genuine duplicate submission and a genuine timing race with
+// another concurrent request are different situations that call for
+// different operator guidance (a duplicate needs no action; a race means
+// someone else just received the same device and the operator should
+// refresh, not retry). Keyed by `code`, never by parsing `detail` text --
+// `detail` is a free-text, human-readable message, not a stable contract.
+const RECEIPT_ERROR_MESSAGES: Record<string, string> = {
+  TRANSACTION_ALREADY_RETURNED: "รายการนี้ถูกคืนไปแล้ว",
+  RECEIPT_RACE_LOST: "เพิ่งมีการคืนเครื่องนี้โดยผู้อื่นในเวลาเดียวกัน กรุณารีเฟรชหน้าเพื่อดูข้อมูลล่าสุด",
+};
 
 export function ReturnPage() {
   const [searchParams] = useSearchParams();
@@ -107,7 +121,9 @@ export function ReturnPage() {
       await createReturn(transaction.id, { receipt_outcome: outcome, notes: notes || undefined });
       setSuccess(true);
     } catch (err) {
-      setError(apiErrorMessage(err, "คืนเครื่องมือไม่สำเร็จ"));
+      const code = apiErrorCode(err);
+      const knownMessage = code ? RECEIPT_ERROR_MESSAGES[code] : undefined;
+      setError(knownMessage ?? apiErrorMessage(err, "คืนเครื่องมือไม่สำเร็จ"));
     } finally {
       setSubmitting(false);
     }
