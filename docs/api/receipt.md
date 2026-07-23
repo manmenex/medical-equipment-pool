@@ -100,11 +100,21 @@ Example of a **pre-PR8B** transaction's response (received before this contract 
 
 Full status/code reference: `docs/api/ERROR_CODES.md`.
 
-## Known limitation: frontend not yet updated — coordinated release required
+## Current deployed state: frontend and backend both adopt `receipt_outcome`
 
-The deployed frontend (as of backend squash SHA `da4d76a640548e5a1d38ff3d7690695f950c85fe`) still submitted the pre-PR8B `condition` field (`available`/`pm`/`calibration`/`repair`) — Roadmap PR8B's backend contract narrowing was deliberately implemented on its own, with no frontend or authentication work, per its assigned task scope. This endpoint's only client is this project's own frontend (`docs/ARCHITECTURE_DECISIONS.md` "Browser-first application" — no native app, no known external/third-party integration); no compatibility layer was kept (`knowledge/adr/ADR-006-receipt-outcome-contract.md`). **The backend and frontend must therefore be deployed together, not independently:** deploying this backend ahead of a matching frontend change leaves the receipt flow non-functional (every submission gets `422 VALIDATION_ERROR`); deploying an updated frontend ahead of this backend would submit a shape the current backend rejects.
+The frontend and backend halves of Roadmap PR8B are both merged and were deployed together, per the coordinated-release requirement below — backend PR #28 (squash SHA `da4d76a640548e5a1d38ff3d7690695f950c85fe`) and frontend PR #29 (squash SHA `d3e027b5a4ee7d99b38dfd0d263dc460c74eb5c5`). `docs/TECH_DEBT.md` TD-006, which tracked this gap, is now `Closed`.
 
-A follow-up frontend change adopting `receipt_outcome` (`frontend/src/types/index.ts`'s `ReceiptOutcome` union, `services/borrow.ts`, `pages/ReturnPage.tsx`'s two-choice usable/defective selector, plus Vitest tests) is now drafted — see `docs/TECH_DEBT.md` TD-006 for status. TD-006 stays open, and this note stays accurate, until that frontend change actually merges and is deployed alongside this backend.
+The current active request contract is:
+
+```json
+{
+  "receipt_outcome": "usable"
+}
+```
+
+Allowed values: `usable`, `defective`. The retired `condition` field is no longer accepted — `ReturnRequest` uses `model_config = {"extra": "forbid"}`, so a caller still sending it gets a hard `422` (see Errors above), never a silently-ignored one. **The backend alone maps `receipt_outcome` to an equipment lifecycle state; the frontend must never send a lifecycle state** (`available_at_pool`/`unavailable_defective`) directly — see the request body section above and `knowledge/adr/ADR-006-receipt-outcome-contract.md`.
+
+This endpoint's only client is this project's own frontend (`docs/ARCHITECTURE_DECISIONS.md` "Browser-first application" — no native app, no known external/third-party integration); no compatibility layer was kept. A transaction received **before** Roadmap PR8B existed keeps its original value readable, unmodified, through the separate `legacy_condition_on_return` field described above — that legacy historical data is not translated or backfilled into `receipt_outcome`. Current (post-PR8B) transactions use `receipt_outcome`.
 
 ## See also
 

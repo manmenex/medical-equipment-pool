@@ -18,7 +18,7 @@ verification passes.
 | TD-003 | No required PostgreSQL CI workflow | Medium | Open | PR #7 evidence review | PostgreSQL tests exist; `.github/workflows` absent | Repository Owner | 2026-07-17 |
 | TD-004 | Naive `datetime.utcnow()` usage | Low | Open | Governance Pack inventory | Multiple backend models/services | Backend Engineer | 2026-07-17 |
 | TD-005 | Temporary default/long-lived branch structure | Medium | Open | Repository cleanup assessment | Recall default; `claude/*` active base | Repository Owner | 2026-07-17 |
-| TD-006 | Frontend still submits the retired receipt `condition` field | High | Open | Roadmap PR8B implementation | `frontend/src/services/borrow.ts`, `types/index.ts`, `pages/ReturnPage.tsx`; `docs/api/receipt.md` | Frontend Engineer | 2026-07-23 |
+| TD-006 | Frontend still submits the retired receipt `condition` field | High | Closed | Roadmap PR8B implementation | `frontend/src/services/borrow.ts`, `types/index.ts`, `pages/ReturnPage.tsx`; `docs/api/receipt.md` | Frontend Engineer | 2026-07-23 |
 
 ## TD-001 — Equipment update/status response `MissingGreenlet`
 
@@ -89,20 +89,26 @@ verification passes.
   based, archive tags exist, legacy branches pass retention checks, and rollback
   is documented.
 
-## TD-006 — Frontend still submits the retired receipt `condition` field
+## TD-006 — Frontend still submits the retired receipt `condition` field (Closed)
 
 - **Description:** Roadmap PR8B (`knowledge/adr/ADR-006-receipt-outcome-contract.md`)
   replaced `ReturnRequest.condition` (a four-value free-form string) with
   `receipt_outcome` (a typed `usable`/`defective` enum), with no
-  compatibility alias. `frontend/src/services/borrow.ts`,
+  compatibility alias, in its backend slice (GitHub PR #28). Before
+  frontend PR #29 merged, `frontend/src/services/borrow.ts`,
   `frontend/src/types/index.ts`, and `frontend/src/pages/ReturnPage.tsx`
-  still build and submit the old `condition` shape — the frontend change
-  was explicitly out of scope for the task that implemented PR8B.
-- **Operational impact:** Every receipt submission from the deployed
-  frontend against a backend running this contract fails with
-  `422 VALIDATION_ERROR` (unrecognized field, missing required
-  `receipt_outcome`) — the receipt flow is non-functional end-to-end until
-  this is resolved.
+  still built and submitted the old `condition` shape — the frontend
+  change was explicitly out of scope for the task that implemented
+  PR8B's backend slice. For the interval between the two PRs, the
+  repository's merged history temporarily contained a backend revision
+  and a frontend revision that could not be deployed independently of
+  each other.
+- **Operational impact:** Had the backend slice been deployed ahead of
+  the frontend slice, every receipt submission from that frontend would
+  have failed with `422 VALIDATION_ERROR` (unrecognized field, missing
+  required `receipt_outcome`). The coordinated-release requirement below
+  ensured the two slices were deployed together, so production never
+  entered that incompatible state.
 - **Why deferred:** The implementing task was explicitly scoped to the
   backend contract only ("Do not begin frontend or authentication work").
 - **Coordinated release required:** This endpoint's only known client is
@@ -124,11 +130,18 @@ verification passes.
   receipt via the frontend UI) succeeds against a backend running this
   contract, for both `usable` and `defective` outcomes; the frontend's
   `receipt_outcome` type is a `"usable" | "defective"` union.
-- **Status update:** A fix is drafted (branch `feature/pr8b-frontend-receipt-outcome`)
-  and adopts `receipt_outcome`/`ReceiptOutcome` end to end
-  (`frontend/src/types/index.ts`, `services/borrow.ts`,
-  `pages/ReturnPage.tsx`), with Vitest component/unit tests. **Not yet
-  merged** — this row's status stays `Open` until the PR merges and the
-  backend (already merged, squash SHA `da4d76a640548e5a1d38ff3d7690695f950c85fe`)
-  and this frontend change are deployed together per the coordinated-release
-  requirement above.
+- **Resolved by:**
+  - Backend PR #28, squash SHA `da4d76a640548e5a1d38ff3d7690695f950c85fe`
+  - Frontend PR #29, squash SHA `d3e027b5a4ee7d99b38dfd0d263dc460c74eb5c5`
+- **Resolution:** The frontend now submits `receipt_outcome`
+  (`frontend/src/types/index.ts`'s `ReceiptOutcome`, a `"usable" | "defective"`
+  union, not a plain `string`) end to end
+  (`frontend/src/types/index.ts`, `services/borrow.ts`, `pages/ReturnPage.tsx`),
+  with Vitest component/unit tests. The backend and this frontend change were
+  deployed together per the coordinated-release requirement above, so the
+  frontend/backend compatibility gap this row tracked no longer exists. The
+  legacy request field `condition` is retired and no longer sent.
+  This closes only the frontend/backend contract gap tracked by this row —
+  it does not imply Roadmap PR8's PR8C slice (race-loss-vs-genuine-repeat
+  distinguishable error) is complete; PR8C is separately tracked and not
+  started.

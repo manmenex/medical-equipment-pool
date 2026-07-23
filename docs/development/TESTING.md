@@ -60,7 +60,7 @@ This runs both groups in one process (postgres-marked tests still skip individua
 | `backend-tests` | `python -m pytest -q -m "not postgres"` — no external services. |
 | `backend-postgres-tests` | Starts a `postgres:16-alpine` service container, runs `scripts/postgres_ci_gate.py preflight` (proves the CI database is actually reachable/authenticatable/writable — not just that the TCP port is open), then `python -m pytest -q -m postgres --junitxml=postgres-results.xml`, then `scripts/postgres_ci_gate.py assert-no-skips postgres-results.xml` (fails the build if any postgres-marked test was skipped, since a skip there means broken infrastructure, not an intentional exclusion). |
 | `migrations` | `alembic upgrade head` against a fresh `postgres:16-alpine` database — proves every migration in `backend/alembic/versions/` applies cleanly and in order. See `MIGRATIONS.md`. |
-| `frontend` | `npm ci && npm run build` — `package.json`'s `build` script is `tsc -b && vite build`, so this is both the TypeScript check and the production build in one command. |
+| `frontend` | `npm ci && npm run test && npm run build` — `npm run test` runs the Vitest suite; `package.json`'s `build` script is `tsc -b && vite build`, so `npm run build` is both the TypeScript check and the production build in one command. |
 | `whitespace-check` | `git diff --check` against the PR's base SHA — catches trailing whitespace and conflict markers. |
 
 CI uses only hardcoded, non-secret, test-only credentials (see the comment block at the top of `ci.yml`); no repository secret or production configuration is required to run it.
@@ -71,7 +71,7 @@ CI uses only hardcoded, non-secret, test-only credentials (see the comment block
 
 ## Frontend
 
-`npm run build` (TypeScript check + Vite production build) remains the only frontend check CI runs (`.github/workflows/ci.yml`'s `frontend` job). Roadmap PR8B's frontend slice (`knowledge/adr/ADR-006-receipt-outcome-contract.md`, `docs/TECH_DEBT.md` TD-006) added a Vitest test runner (`vite.config.ts`'s `test` block, `src/test/setup.ts`), but **`npm run test` is not yet wired into CI** — run it locally before submitting a frontend change, same as `npm run lint`:
+Roadmap PR8B's frontend slice (GitHub PR #29; `knowledge/adr/ADR-006-receipt-outcome-contract.md`, `docs/TECH_DEBT.md` TD-006, now `Closed`) added a Vitest test runner (`vite.config.ts`'s `test` block, `src/test/setup.ts`) and wired it into CI: `.github/workflows/ci.yml`'s `frontend` job now runs `npm run test` (Vitest) before `npm run build` (TypeScript check + Vite production build). Run both locally before submitting a frontend change too, same as `npm run lint`:
 
 ```bash
 cd frontend

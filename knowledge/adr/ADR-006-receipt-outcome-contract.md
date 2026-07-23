@@ -47,17 +47,20 @@ decided to do about it" (a lifecycle transition).
    browser-based web application only, with no native app shell planned;
    `frontend/` (`frontend/src/services/borrow.ts`) is the receipt
    endpoint's only client, and no external or third-party integration
-   against it is documented anywhere in the repository. Because that one
-   client is not updated by this decision (see "Not decided here"), **the
-   backend and frontend must be deployed together, not independently** —
-   deploying this backend contract ahead of a matching frontend leaves the
-   receipt flow non-functional (`docs/TECH_DEBT.md` TD-006), and deploying
-   an updated frontend ahead of this backend would submit a shape the
-   current backend rejects. No compatibility layer was introduced despite
-   this (see "Alternatives considered" below): a breaking contract
-   coordinated by a single deployment step is preferred over a permanent
-   dual-field/dual-name compromise for a gap with one known, internal
-   consumer and no demonstrated external migration requirement.
+   against it is documented anywhere in the repository. That one client
+   was not updated by this decision itself (see "Not decided here"), so
+   **the backend and frontend had to be deployed together, not
+   independently** — deploying this backend contract ahead of a matching
+   frontend would have left the receipt flow non-functional
+   (`docs/TECH_DEBT.md` TD-006), and deploying an updated frontend ahead of
+   this backend would have submitted a shape the backend rejected. Both
+   halves have since merged and were deployed together (see "Not decided
+   here" update below and `docs/TECH_DEBT.md` TD-006, now `Closed`). No
+   compatibility layer was introduced despite this (see "Alternatives
+   considered" below): a breaking contract coordinated by a single
+   deployment step was preferred over a permanent dual-field/dual-name
+   compromise for a gap with one known, internal consumer and no
+   demonstrated external migration requirement.
 2. **Exactly two allowed values: `usable` and `defective`.**
    `ReceiptOutcome` (`app/models/transaction.py`) is a `(str, enum.Enum)`
    mirroring `TransactionStatus`/`DispatchType`/`RoutineRound`'s shape and
@@ -145,25 +148,24 @@ continue to share `409 TRANSACTION_ALREADY_RETURNED` (`docs/api/receipt.md`,
 `docs/api/ERROR_CODES.md`) until PR8C lands. See `docs/ROADMAP.md` and
 `docs/DECISION_LOG.md`.
 
-This decision also does not touch the frontend
+This decision itself did not touch the frontend
 (`frontend/src/services/borrow.ts`, `frontend/src/types/index.ts`,
-`frontend/src/pages/ReturnPage.tsx`), which still submits the pre-PR8B
-`condition` shape, or any authentication/authorization behavior — both
-were explicitly out of scope for the task this ADR documents. Until a
-follow-up frontend change adopts `receipt_outcome`, the deployed
-frontend's receipt flow receives `422 VALIDATION_ERROR` for every
-submission against a backend running this contract — see Decision 1's
-coordinated-deployment requirement and `docs/TECH_DEBT.md` TD-006.
+`frontend/src/pages/ReturnPage.tsx`), or any authentication/authorization
+behavior — both were explicitly out of scope for the task this ADR
+documents. A separate follow-up task implemented and merged the frontend
+change (see "Update" below), so this gap is now closed.
 
-**Update:** that follow-up frontend change is now drafted (branch
-`feature/pr8b-frontend-receipt-outcome`) — `receipt_outcome`/
-`ReceiptOutcome` end to end, a two-choice usable/defective selector
-replacing the four-option condition radio group, and Vitest tests. It
-does not implement any lifecycle-state mapping in the frontend (the
-backend remains the single source of truth, per Decision 3) and does not
-touch PR8C or authentication. **Not yet merged** — TD-006 remains open
-until this frontend change and the already-merged backend (squash SHA
-`da4d76a640548e5a1d38ff3d7690695f950c85fe`) are deployed together.
+**Update:** the follow-up frontend change is implemented and merged —
+GitHub PR #29, squash SHA `d3e027b5a4ee7d99b38dfd0d263dc460c74eb5c5` —
+adopting `receipt_outcome`/`ReceiptOutcome` end to end, a two-choice
+usable/defective selector replacing the four-option condition radio
+group, and Vitest tests. It does not implement any lifecycle-state
+mapping in the frontend (the backend remains the single source of truth,
+per Decision 3) and does not touch PR8C or authentication. This frontend
+change and the backend (GitHub PR #28, squash SHA
+`da4d76a640548e5a1d38ff3d7690695f950c85fe`) were deployed together, per
+Decision 1's coordinated-deployment requirement. `docs/TECH_DEBT.md`
+TD-006, which tracked this gap, is now `Closed`.
 
 This repository has no OpenAPI-to-TypeScript code generation pipeline
 (`frontend/` types are hand-authored, not generated) — there is no
@@ -188,11 +190,15 @@ union, not a plain `string`, matching this contract's OpenAPI enum
   current documentation of this contract; `docs/design/
   PR8_IMPLEMENTATION_PLAN.md` (uncommitted, design-only) remains a
   historical planning artifact, not a live contract reference.
-- The frontend is now contract-mismatched with the backend until a
-  follow-up change updates it (see "Not decided here" above) — this is a
-  known, deliberately accepted, temporary regression in the deployed
-  system's usability, not an oversight, and requires the backend and that
-  follow-up frontend change to be released together (Decision 1).
+- The repository's merge state and its deployment state are distinct here:
+  for the interval between the backend's merge and the follow-up
+  frontend change's merge (see "Not decided here" above), the *repository*
+  temporarily contained a backend revision and a frontend revision that
+  were contract-mismatched with each other — a known, deliberately
+  accepted condition, not an oversight. The coordinated-release
+  requirement (Decision 1) meant the two were never deployed
+  independently, so this repository-level mismatch never became a
+  *deployment*-level one: production was not exposed to it.
 - A client parsing `TransactionOut.receipt_outcome` can rely on it being
   exactly `"usable"`, `"defective"`, or absent — never one of the four
   pre-PR8B legacy strings. A client that also needs a pre-PR8B
