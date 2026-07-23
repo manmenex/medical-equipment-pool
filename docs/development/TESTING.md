@@ -71,14 +71,17 @@ CI uses only hardcoded, non-secret, test-only credentials (see the comment block
 
 ## Frontend
 
-There is currently no automated frontend test runner (no Vitest/Jest configured) — `npm run build` (TypeScript check + Vite production build) is the only frontend check CI runs. `npm run lint` (ESLint) exists as a `package.json` script but is not currently wired into CI; run it locally before submitting a frontend change:
+`npm run build` (TypeScript check + Vite production build) remains the only frontend check CI runs (`.github/workflows/ci.yml`'s `frontend` job). Roadmap PR8B's frontend slice (`knowledge/adr/ADR-006-receipt-outcome-contract.md`, `docs/TECH_DEBT.md` TD-006) added a Vitest test runner (`vite.config.ts`'s `test` block, `src/test/setup.ts`), but **`npm run test` is not yet wired into CI** — run it locally before submitting a frontend change, same as `npm run lint`:
 
 ```bash
 cd frontend
 npm ci
 npm run lint
+npm run test
 npm run build
 ```
+
+Frontend tests use Vitest + `@testing-library/react` (jsdom environment). `src/test/setup.ts` registers `@testing-library/jest-dom`'s matchers and explicit DOM cleanup after each test (this project keeps Vitest's `globals: false`, so the library's cleanup auto-registration — which depends on detecting a global `afterEach` — is done by hand instead). Test files sit next to the module they cover (`src/services/borrow.test.ts`, `src/pages/ReturnPage.test.tsx`), not in a separate `__tests__/` tree.
 
 ## Test file conventions
 
@@ -87,6 +90,7 @@ npm run build
 - `backend/tests/identifier_vectors.py` holds shared, immutable BCM Code / Item No test vectors reused by both runtime and migration regression tests, so the two never silently drift apart.
 - Every test file that exercises authenticated endpoints marks its module with `pytestmark = pytest.mark.asyncio` (pytest-asyncio, async mode).
 - No linter (flake8/isort/ruff/black) is currently wired into backend CI; import ordering and formatting are not machine-enforced, only reviewed.
+- Frontend: a component test that renders a page depending on `react-router-dom` hooks (`useSearchParams`, etc.) wraps it in `MemoryRouter` with an explicit `initialEntries`, not the real browser router. Mock sibling components/services that are unrelated to the behavior under test (e.g. `ReturnPage.test.tsx` mocks `QRScanner`/`BcmSearchInput` — camera/debounced-search concerns — rather than exercising them incidentally).
 
 ## Reporting test evidence in a PR
 

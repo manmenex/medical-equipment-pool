@@ -203,6 +203,13 @@ jobs:
       - name: Install frontend dependencies (npm ci)
         run: npm ci
 
+      # Roadmap PR8B (knowledge/adr/ADR-006-receipt-outcome-contract.md):
+      # Vitest + React Testing Library, added because none existed before
+      # (docs/development/TESTING.md). Runs before the build so a test
+      # failure is reported without waiting on the slower build step.
+      - name: Frontend tests
+        run: npm run test
+
       # package.json's "build" script is `tsc -b && vite build`, so this
       # single command covers both the TypeScript check and the production
       # build, matching how this repository's Roadmap PRs already validate

@@ -6,17 +6,34 @@ import { QRScanner } from "@/components/QRScanner";
 import { apiErrorMessage } from "@/services/api";
 import { createReturn, listActiveBorrows } from "@/services/borrow";
 import { resolveEquipmentByQr } from "@/services/equipment";
-import type { BcmSuggestion, TransactionOut } from "@/types";
+import type { BcmSuggestion, ReceiptOutcome, TransactionOut } from "@/types";
 
-// Roadmap PR6 / owner-confirmed cleaning retirement: no "cleaning" option
-// here. Cleaning happens as part of collecting/receiving equipment
-// (AGENTS.md) -- a usable receipt goes directly to AVAILABLE_AT_POOL, with
-// no separate cleaning confirmation step for staff to perform.
-const CONDITIONS: { value: string; label: string }[] = [
-  { value: "available", label: "พร้อมใช้งาน" },
-  { value: "pm", label: "ต้อง PM" },
-  { value: "calibration", label: "ต้องสอบเทียบ" },
-  { value: "repair", label: "ต้องซ่อม" },
+// Roadmap PR8B (knowledge/adr/ADR-006-receipt-outcome-contract.md): the
+// confirmed binary receipt outcome replaces the pre-PR8B four-option
+// condition radio group entirely -- a minimum functional change to the
+// option set only, per the same precedent Roadmap PR7b's dispatch-form
+// changes established (not the full terminology/workflow redesign
+// reserved for Roadmap PR11). Roadmap PR6 / owner-confirmed cleaning
+// retirement: no "cleaning" option here either, before or after this
+// change -- cleaning happens as part of collecting/receiving equipment
+// (AGENTS.md), never a distinct receipt outcome.
+//
+// Codex review round 1 (GitHub PR #29): the label and selected-state
+// styling must describe the *outcome the operator observed*, not the
+// *lifecycle state the backend will apply* -- conflating the two here
+// would misleadingly present a defective selection with the same green
+// "available" styling used elsewhere for AVAILABLE_AT_POOL, even though
+// choosing it causes UNAVAILABLE_DEFECTIVE. "ชำรุด" ("defective/damaged")
+// is the outcome-oriented term, distinct from StatusBadge.tsx's
+// lifecycle-state label ("ไม่พร้อมใช้งาน", "not available"). Each option's
+// selected-state styling below intentionally differs for the same
+// reason: usable uses the available/green treatment, defective uses the
+// repair/amber treatment (StatusBadge.tsx already colors
+// unavailable_defective with `status-repair`) -- this is presentational
+// only, no lifecycle-state value is read, stored, or submitted here.
+const RECEIPT_OUTCOMES: { value: ReceiptOutcome; label: string; selectedClass: string }[] = [
+  { value: "usable", label: "พร้อมใช้งาน", selectedClass: "border-status-available bg-status-available/10" },
+  { value: "defective", label: "ชำรุด", selectedClass: "border-status-repair bg-status-repair/10" },
 ];
 
 export function ReturnPage() {
@@ -25,7 +42,7 @@ export function ReturnPage() {
 
   const [scanning, setScanning] = useState(!presetEquipmentId);
   const [transaction, setTransaction] = useState<TransactionOut | null>(null);
-  const [condition, setCondition] = useState("available");
+  const [outcome, setOutcome] = useState<ReceiptOutcome>("usable");
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -87,7 +104,7 @@ export function ReturnPage() {
     setSubmitting(true);
     setError(null);
     try {
-      await createReturn(transaction.id, { condition, notes: notes || undefined });
+      await createReturn(transaction.id, { receipt_outcome: outcome, notes: notes || undefined });
       setSuccess(true);
     } catch (err) {
       setError(apiErrorMessage(err, "คืนเครื่องมือไม่สำเร็จ"));
@@ -141,21 +158,21 @@ export function ReturnPage() {
       <div>
         <label className="mb-1 block text-sm font-medium">สภาพเครื่องเมื่อคืน</label>
         <div className="grid grid-cols-2 gap-2">
-          {CONDITIONS.map((c) => (
+          {RECEIPT_OUTCOMES.map((o) => (
             <label
-              key={c.value}
+              key={o.value}
               className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
-                condition === c.value ? "border-status-available bg-status-available/10" : "border-[var(--border)]"
+                outcome === o.value ? o.selectedClass : "border-[var(--border)]"
               }`}
             >
               <input
                 type="radio"
-                name="condition"
-                value={c.value}
-                checked={condition === c.value}
-                onChange={() => setCondition(c.value)}
+                name="receipt_outcome"
+                value={o.value}
+                checked={outcome === o.value}
+                onChange={() => setOutcome(o.value)}
               />
-              {c.label}
+              {o.label}
             </label>
           ))}
         </div>
