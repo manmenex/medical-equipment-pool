@@ -166,3 +166,25 @@ export interface ApiError {
   code: string;
   status: number;
 }
+
+// Roadmap PR9B (backend/app/schemas/transaction.py's WardCorrectionRequest):
+// exactly the merged PR9A request contract -- ward_id and a mandatory
+// reason, nothing else. The response is the existing TransactionOut above,
+// reused as-is (see docs/api/transactions.md).
+export interface WardCorrectionPayload {
+  ward_id: string;
+  reason: string;
+}
+
+// The stable, machine-readable `code` values this action's endpoint
+// (POST /transactions/{id}/correct-ward) can return, per docs/api/
+// ERROR_CODES.md and docs/api/transactions.md. Branch on this, never on
+// the free-text `detail` (same convention Roadmap PR8C established for
+// receipt errors -- see services/api.ts's apiErrorCode).
+export type WardCorrectionErrorCode =
+  | "FORBIDDEN"
+  | "TRANSACTION_NOT_FOUND"
+  | "INVALID_INPUT"
+  | "WARD_CORRECTION_NOOP"
+  | "WARD_CORRECTION_CONFLICT"
+  | "VALIDATION_ERROR";

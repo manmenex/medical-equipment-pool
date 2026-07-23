@@ -140,6 +140,46 @@ shape Roadmap PR8A established for the receipt-close guard
 no longer current (a concurrent correction won first) gets
 `WARD_CORRECTION_CONFLICT`, never a silently-applied lost update.
 
+### Frontend consumer (Roadmap PR9B)
+
+Two entry points render a "แก้ไขแผนกรับเครื่อง" action, since this
+endpoint has no lifecycle-status precondition (see "Works identically
+whether the transaction is `open` or `closed`" above) and a
+mis-recorded ward may be discovered after the transaction has already
+closed:
+
+- `frontend/src/pages/ReturnPage.tsx` — the transaction currently being
+  received (`open`).
+- `frontend/src/pages/EquipmentDetailPage.tsx`'s transaction-history
+  section — every transaction for that equipment, `open` or `closed`,
+  sourced from `GET /transactions?equipment_id=` (this file's `list_transactions`
+  above; not the equipment status-history endpoint, whose rows carry no
+  transaction ID and cannot substitute for one). Pages through the
+  response's `next_cursor` via an explicit "โหลดเพิ่มเติม" action rather
+  than a single fixed-size page, so a CLOSED transaction beyond the first
+  50 rows stays reachable; a failed history fetch shows an explicit error
+  with its own "ลองใหม่" retry, distinct from a genuinely empty history.
+
+Both render the shared `frontend/src/components/WardCorrectionAction.tsx`
+(the ward-list query's loading/error/retry state and the trigger button —
+loading disables the trigger, a failed load shows an explicit error with a
+"ลองใหม่" retry instead of opening the dialog) and
+`frontend/src/components/WardCorrectionDialog.tsx` (the form, confirmation,
+and submission), so the mutation, error-code mapping, and validation logic
+exist exactly once. Both are gated on
+`frontend/src/hooks/useAuth.ts`'s `canCorrectTransactionWard(user)`
+returning true — a frontend-only mirror of this endpoint's `admin`-only
+gate, for usability, not security; every error path below (starting with
+`403`) is still handled explicitly because the backend remains the sole
+authority. The dialog enforces the same reason length/non-blank rules as
+this page's request-body table above before submitting, traps keyboard
+focus while open, and restores focus to the exact element that opened it
+on close. On `WARD_CORRECTION_CONFLICT` it refetches
+`GET /transactions/{transaction_id}` and displays the newly committed ward
+rather than retrying blindly. Roadmap PR10 updates
+`canCorrectTransactionWard` alongside `WARD_CORRECTION_ROLES` when the
+role mapping is consolidated.
+
 ## See also
 
 - `docs/api/dispatch.md` — create a transaction (`POST /borrow`), list only open ones (`GET /borrow/active`)

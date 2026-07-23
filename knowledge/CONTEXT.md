@@ -7,11 +7,11 @@
 
 ## Current baseline
 
-`f923f0aec8aa79fb4c33d2c1b0c05c08a057fe17` — squash commit of Roadmap PR8C, GitHub PR #31, on branch `claude/medical-equipment-pool-0c7fz0`. This sits on top of `4af6a4c623f24718f37241105c90425276e5ce7a` (post-PR8B documentation sync, GitHub PR #30), which sits on top of `d3e027b5a4ee7d99b38dfd0d263dc460c74eb5c5` (PR8B's frontend slice, GitHub PR #29) and `da4d76a640548e5a1d38ff3d7690695f950c85fe` (PR8B's backend slice, GitHub PR #28). **Roadmap PR8 (PR8A, PR8B, and PR8C) is now fully complete.**
+`9cef8411f067b14dd417d3dcd1335567cb669868` — squash commit of Roadmap PR9 (PR9A slice, backend), GitHub PR #33, on branch `claude/medical-equipment-pool-0c7fz0`. This sits on top of `94a14b8269b5e959d146caa2a3597f06fd02a3c0` (documentation-only follow-up recording Roadmap PR8's completion, GitHub PR #32), which sits on top of `f923f0aec8aa79fb4c33d2c1b0c05c08a057fe17` (Roadmap PR8C, GitHub PR #31). **Roadmap PR8 (PR8A, PR8B, and PR8C) is fully complete. Roadmap PR9 is not complete — PR9A (backend) is merged; PR9B (frontend) is in progress (not yet merged) as of this snapshot.**
 
 ## Current PR
 
-None. Since Roadmap PR7 (7b slice) merged as GitHub PR #20, six process/documentation-only or governance PRs merged in order, plus four production code changes (PR8A, PR8B backend, PR8B frontend, PR8C):
+Roadmap PR9 (PR9B slice) — frontend ward correction, consuming PR9A's merged backend contract. In progress, not yet merged. Since Roadmap PR7 (7b slice) merged as GitHub PR #20, seven process/documentation-only or governance PRs merged in order, plus five production code changes (PR8A, PR8B backend, PR8B frontend, PR8C, PR9A):
 
 - **GitHub PR #21** (`0ed6598`) — post-merge governance sync: brought `docs/ROADMAP.md`, `docs/DECISION_LOG.md`, `docs/BUSINESS_RULES.md`, and this knowledge layer up to date after PR #20 merged.
 - **GitHub PR #22** (`06a736c`) — Test Infrastructure Cleanup: consolidated duplicated/inconsistent test helper functions (`auth_headers`, `create_ward`, `on_demand_borrow_payload`) into `backend/tests/conftest.py` as a single shared implementation. No test behavior change — verified via full local `pytest -m "not postgres"` (273 passed) and `pytest -m postgres` (78 passed) runs before merge.
@@ -24,15 +24,18 @@ None. Since Roadmap PR7 (7b slice) merged as GitHub PR #20, six process/document
 - **GitHub PR #30** (`4af6a4c`) — post-merge documentation sync after Roadmap PR8B: closed TD-006, updated ADR-006/DECISION_LOG/ROADMAP to reflect PR8B's completion.
 - **GitHub PR #31** (`f923f0a`) — **Roadmap PR8C: race-loss-vs-genuine-repeat receipt rejection.** A losing receipt request now receives one of two distinguishable, machine-readable codes — `TRANSACTION_ALREADY_RETURNED` (genuine sequential repeat) or `RECEIPT_RACE_LOST` (this request's own read observed the transaction OPEN, but it lost the conditional-close race) — both still `409 Conflict`. `RECEIPT_RACE_LOST`'s wording attributes the outcome to another *request*, not another person. The frontend (`ReturnPage.tsx`) branches on the response's `code` field, never on free-text `detail`. No lifecycle, schema, migration, or request-contract change.
 
+- **GitHub PR #32** (`94a14b8`) — post-merge documentation-only follow-up recording Roadmap PR8's completion (PR8A/PR8B/PR8C) across `docs/ROADMAP.md` and the knowledge layer. No production code change.
+- **GitHub PR #33** (`9cef841`) — **Roadmap PR9, PR9A slice: audited ward correction (backend).** New `POST /api/v1/transactions/{transaction_id}/correct-ward` endpoint (`WardCorrectionRequest {ward_id: UUID, reason: str(1-500, trimmed), extra:"forbid"}`, response is the existing `TransactionOut`). Every correction writes an audit row; a same-ward request is rejected as a no-op (`409 WARD_CORRECTION_NOOP`, no audit written) and a concurrent stale-read loss is rejected distinctly (`409 WARD_CORRECTION_CONFLICT`). Authorization is temporarily Administrator-only (`app.api.v1.deps.WARD_CORRECTION_ROLES = (ROLE_ADMIN,)`) — deliberately conservative pending Roadmap PR10's role-mapping consolidation, since no Equipment Pool Staff equivalent role is confirmed in the current workflow audit. No schema or migration change; no lifecycle-state change; not a ward-transfer or dispatch/receipt contract change. `docs/DECISION_LOG.md` entry for this slice is still pending as of this snapshot.
+
 Roadmap PR7 (both slices, GitHub PR #19/#20) and Roadmap PR8 (all three slices, GitHub PR #26/#28/#29/#31) are now the most recent *fully completed* Roadmap-numbered items. See `knowledge/adr/ADR-005-transaction-model.md`, `knowledge/adr/ADR-006-receipt-outcome-contract.md`, `docs/DOMAIN_MODEL.md`, and `docs/DECISION_LOG.md` for PR7, PR8A, PR8B, and PR8C.
 
 ## Next planned PR
 
-None from Roadmap PR8. The next unstarted item is Roadmap PR9 — Ward Correction Action (audited). See `docs/ROADMAP.md`.
+Roadmap PR9's PR9A (backend) slice is merged (GitHub PR #33). Only the PR9B (frontend) slice remains before Roadmap PR9 as a whole is complete — a minimal, mobile-first admin-only ward-correction action reachable from `ReturnPage.tsx` (an OPEN transaction) and `EquipmentDetailPage.tsx`'s transaction history (OPEN or CLOSED, since PR9A's endpoint has no lifecycle-status precondition), sharing one `WardCorrectionAction`/`WardCorrectionDialog` pair so the mutation and validation logic are never duplicated per screen. Consumes PR9A's contract exactly, currently in progress (not yet merged) as of this snapshot. After PR9B merges, the next unstarted item is Roadmap PR10 — role-mapping consolidation. See `docs/ROADMAP.md`.
 
 ## Outstanding work
 
-- Roadmap PR9 through PR15 (ward correction, role consolidation, frontend terminology, inventory import, search/reporting, reliability/performance hardening, observability/schema hygiene) are planned, none merged yet.
+- Roadmap PR9's PR9A (backend) slice is merged (GitHub PR #33); its PR9B (frontend) slice is in progress, not yet merged. Roadmap PR10 through PR15 (role consolidation, frontend terminology, inventory import, search/reporting, reliability/performance hardening, observability/schema hygiene) are planned, none merged yet.
 - Confirmed future work not yet scheduled to a Roadmap PR: Shift Sessions, Standby Snapshots, managed-deployment target selection (`docs/ROADMAP.md`).
 - `docs/TECH_DEBT.md` open items: TD-001 (equipment update/status `MissingGreenlet`), TD-002 (`0001_initial.py` uses current ORM metadata), TD-003 (CI now exists and fails closed, but branch protection requiring it is not enabled — partially resolved, needs re-assessment), TD-004 (naive `datetime.utcnow()`), TD-005 (temporary default/long-lived branch structure).
 

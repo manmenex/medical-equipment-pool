@@ -1,11 +1,15 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { BcmSearchInput } from "@/components/BcmSearchInput";
 import { QRScanner } from "@/components/QRScanner";
+import { WardCorrectionAction } from "@/components/WardCorrectionAction";
+import { canCorrectTransactionWard, useAuth } from "@/hooks/useAuth";
 import { apiErrorCode, apiErrorMessage } from "@/services/api";
 import { createReturn, listActiveBorrows } from "@/services/borrow";
 import { resolveEquipmentByQr } from "@/services/equipment";
+import { listWards } from "@/services/masterData";
 import type { BcmSuggestion, ReceiptOutcome, TransactionOut } from "@/types";
 
 // Roadmap PR8B (knowledge/adr/ADR-006-receipt-outcome-contract.md): the
@@ -62,6 +66,9 @@ const RECEIPT_ERROR_MESSAGES: Record<string, string> = {
 export function ReturnPage() {
   const [searchParams] = useSearchParams();
   const presetEquipmentId = searchParams.get("equipment_id");
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const canCorrectWard = canCorrectTransactionWard(user);
 
   const [scanning, setScanning] = useState(!presetEquipmentId);
   const [transaction, setTransaction] = useState<TransactionOut | null>(null);
@@ -70,6 +77,15 @@ export function ReturnPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  // Roadmap PR9B: only fetched when the current user can even reach the
+  // correction action -- no need to load ward data for a role that will
+  // never see the button (see canCorrectTransactionWard). Read-only, for
+  // the "แผนกที่บันทึกไว้" display line below; shares the ["wards"] cache
+  // entry with WardCorrectionAction's own query (same key, deduped by
+  // React Query), so this is not a second network request.
+  const { data: wards } = useQuery({ queryKey: ["wards"], queryFn: listWards, enabled: canCorrectWard });
+  const [wardCorrectionNotice, setWardCorrectionNotice] = useState<string | null>(null);
 
   const findActiveTransaction = useCallback(async (equipmentId: string) => {
     const active = await listActiveBorrows();
@@ -170,7 +186,7 @@ export function ReturnPage() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="mx-auto flex max-w-sm flex-col gap-4">
+    <div className="mx-auto flex max-w-sm flex-col gap-4">
       <div className="surface rounded-xl border p-4">
         <div className="font-medium">{transaction.equipment.equipment_name}</div>
         <div className="text-sm text-[var(--text-muted)]">{transaction.equipment.asset_number}</div>
@@ -178,50 +194,81 @@ export function ReturnPage() {
           {transaction.borrower_name ? `ผู้ยืม: ${transaction.borrower_name} · ` : ""}ยืมเมื่อ{" "}
           {new Date(transaction.borrowed_at).toLocaleString("th-TH")}
         </div>
+        {canCorrectWard && wards && (
+          <div className="mt-1 text-sm text-[var(--text-muted)]">
+            แผนกที่บันทึกไว้: {wards.find((w) => w.id === transaction.ward_id)?.name ?? "ไม่ทราบ"}
+          </div>
+        )}
+        {canCorrectWard && (
+          <div className="mt-3">
+            <WardCorrectionAction
+              transaction={transaction}
+              onCorrected={(updated, message) => {
+                setTransaction(updated);
+                setWardCorrectionNotice(message);
+                // Roadmap PR9B: narrow, entity-scoped invalidation -- the
+                // corrected transaction's own display already updates
+                // directly from the server-confirmed response above (never
+                // optimistic). This additionally invalidates any
+                // current/future consumer of the transactions list/detail
+                // query-key namespace (e.g. GET /transactions), so a stale
+                // cached copy elsewhere in the app is never served after a
+                // correction. Equipment queries are deliberately not
+                // invalidated -- ward correction never changes equipment
+                // status or any equipment-detail field.
+                queryClient.invalidateQueries({ queryKey: ["transactions"] });
+              }}
+            />
+          </div>
+        )}
       </div>
 
-      <div>
-        <label className="mb-1 block text-sm font-medium">สภาพเครื่องเมื่อคืน</label>
-        <div className="grid grid-cols-2 gap-2">
-          {RECEIPT_OUTCOMES.map((o) => (
-            <label
-              key={o.value}
-              className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
-                outcome === o.value ? o.selectedClass : "border-[var(--border)]"
-              }`}
-            >
-              <input
-                type="radio"
-                name="receipt_outcome"
-                value={o.value}
-                checked={outcome === o.value}
-                onChange={() => setOutcome(o.value)}
-              />
-              {o.label}
-            </label>
-          ))}
+      {wardCorrectionNotice && <p className="text-sm text-status-available">{wardCorrectionNotice}</p>}
+
+      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        <div>
+          <label className="mb-1 block text-sm font-medium">สภาพเครื่องเมื่อคืน</label>
+          <div className="grid grid-cols-2 gap-2">
+            {RECEIPT_OUTCOMES.map((o) => (
+              <label
+                key={o.value}
+                className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
+                  outcome === o.value ? o.selectedClass : "border-[var(--border)]"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="receipt_outcome"
+                  value={o.value}
+                  checked={outcome === o.value}
+                  onChange={() => setOutcome(o.value)}
+                />
+                {o.label}
+              </label>
+            ))}
+          </div>
         </div>
-      </div>
 
-      <div>
-        <label className="mb-1 block text-sm font-medium">หมายเหตุ</label>
-        <textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          className="w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
-          rows={2}
-        />
-      </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium">หมายเหตุ</label>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            className="w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
+            rows={2}
+          />
+        </div>
 
-      {error && <p className="text-sm text-status-repair">{error}</p>}
+        {error && <p className="text-sm text-status-repair">{error}</p>}
 
-      <button
-        type="submit"
-        disabled={submitting}
-        className="rounded-lg bg-status-available py-2.5 font-medium text-white disabled:opacity-60"
-      >
-        {submitting ? "กำลังบันทึก..." : "ยืนยันการคืน"}
-      </button>
-    </form>
+        <button
+          type="submit"
+          disabled={submitting}
+          className="rounded-lg bg-status-available py-2.5 font-medium text-white disabled:opacity-60"
+        >
+          {submitting ? "กำลังบันทึก..." : "ยืนยันการคืน"}
+        </button>
+      </form>
+    </div>
   );
 }
