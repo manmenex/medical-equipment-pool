@@ -59,11 +59,22 @@ narrow, audited exception — it corrects an incorrect original record. **It
 does not represent the equipment moving between wards and is not
 ward-transfer tracking**; no such concept exists anywhere in this system.
 
-**Auth:** Administrator or Equipment Pool Staff only (currently
-`admin`/`ward_nurse`/`transport_staff` — see `app.api.v1.deps.
-WARD_CORRECTION_ROLES`'s docstring for the temporary mapping from the
-current 5-role model, pending Roadmap PR10's Role Model Consolidation).
-`viewer` (Read-Only/Supervisor) is denied with `403`.
+**Auth:** `admin` only, temporarily — an intentionally conservative
+restriction, not the confirmed final matrix. The confirmed 3-role
+permission matrix (`docs/audits/03-hospital-equipment-pool-workflow-audit.md`
+§10) grants this capability to Administrator **and** Equipment Pool Staff,
+but the current 5-role model has no confirmed, evidence-backed equivalent
+of Equipment Pool Staff — the workflow audit's own §10 note says
+`biomedical_engineer`/`ward_nurse`/`transport_staff` "have no clear place
+in this workflow as described." Because ward correction modifies
+historical operational data, an inferred mapping is unacceptable, so every
+role other than `admin` — `biomedical_engineer`, `ward_nurse`,
+`transport_staff`, and `viewer` alike — is denied with `403` until Roadmap
+PR10's Role Model Consolidation lands the confirmed 3-role model. This
+does not inherit permissions from, and is not derived from, which roles
+dispatch or receipt happen to trust. See `app.api.v1.deps.
+WARD_CORRECTION_ROLES`'s docstring for the single, centralized constant
+PR10 will update.
 
 Works identically whether the transaction is `open` or `closed` — this
 corrects historical data, not an in-flight workflow step, so there is no

@@ -2,6 +2,7 @@ import uuid
 
 import pytest
 
+from app.models.user import ROLE_ADMIN, ROLE_BIOMEDICAL_ENGINEER, ROLE_TRANSPORT_STAFF, ROLE_VIEWER, ROLE_WARD_NURSE
 from tests.conftest import auth_headers as _auth_headers
 from tests.conftest import create_ward as _create_ward
 from tests.conftest import on_demand_borrow_payload as _on_demand_borrow_payload
@@ -33,53 +34,60 @@ async def _correct_ward(client, headers, tx_id, *, ward_id, reason="Correcting a
 
 
 # ---------------------------------------------------------------------------
-# Authorization (required tests 1-3)
+# Authorization -- intentionally conservative temporary matrix (Roadmap
+# PR9A): the current 5-role model has no confirmed, evidence-backed
+# equivalent of the future "Equipment Pool Staff" role, so only admin is
+# granted until Roadmap PR10 lands the confirmed 3-role permission matrix.
+# See app.api.v1.deps.WARD_CORRECTION_ROLES's docstring for the full
+# rationale -- this must not be inferred from, or claimed to match, the
+# roles trusted by dispatch (app.api.v1.borrow.BORROW_ROLES) or receipt.
 # ---------------------------------------------------------------------------
 
+_WARD_CORRECTION_ROLE_MATRIX = [
+    (ROLE_ADMIN, 200),
+    (ROLE_BIOMEDICAL_ENGINEER, 403),
+    (ROLE_WARD_NURSE, 403),
+    (ROLE_TRANSPORT_STAFF, 403),
+    (ROLE_VIEWER, 403),
+]
 
-async def test_admin_can_correct_ward(client, seeded_users):
+
+@pytest.mark.parametrize("role, expected_status", _WARD_CORRECTION_ROLE_MATRIX)
+async def test_ward_correction_temporary_permission_matrix(client, seeded_users, db_session, role, expected_status):
+    """Exercises the complete temporary permission matrix: only `admin` is
+    granted (200); every other current role -- including
+    biomedical_engineer/ward_nurse/transport_staff, none of which is a
+    confirmed "Equipment Pool Staff" equivalent -- is denied (403). The
+    admin/200 case also confirms a successful correction creates exactly
+    one audit entry (the mandatory audit requirement, not just the
+    authorization outcome)."""
+    from sqlalchemy import select
+
+    from app.models.audit import AuditLog
+
     admin_headers = await _auth_headers(client, "admin")
+    actor_headers = await _auth_headers(client, role)
     tx, original_ward_id = await _dispatch_open_transaction(
-        client, admin_headers, asset_number="AST-WC-ADMIN", ward_code="W-WC-ADMIN-1"
+        client, admin_headers, asset_number=f"AST-WC-ROLE-{role}", ward_code=f"W-WC-R-{role[:8]}"
     )
-    new_ward_id = await _create_ward(client, admin_headers, "W-WC-ADMIN-2")
+    new_ward_id = await _create_ward(client, admin_headers, f"W-WC-R2-{role[:8]}")
 
-    resp = await _correct_ward(client, admin_headers, tx["id"], ward_id=new_ward_id)
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["ward_id"] == new_ward_id
-    assert resp.json()["ward_id"] != original_ward_id
+    resp = await _correct_ward(client, actor_headers, tx["id"], ward_id=new_ward_id)
+    assert resp.status_code == expected_status, resp.text
 
+    if expected_status == 200:
+        assert resp.json()["ward_id"] == new_ward_id
+        assert resp.json()["ward_id"] != original_ward_id
 
-async def test_equipment_pool_staff_equivalent_role_can_correct_ward(client, seeded_users):
-    """ward_nurse is one of the current roles temporarily mapped onto the
-    "Equipment Pool Staff" ward-correction capability -- see
-    app.api.v1.deps.WARD_CORRECTION_ROLES."""
-    admin_headers = await _auth_headers(client, "admin")
-    nurse_headers = await _auth_headers(client, "ward_nurse")
-    tx, original_ward_id = await _dispatch_open_transaction(
-        client, admin_headers, asset_number="AST-WC-NURSE", ward_code="W-WC-NURSE-1"
-    )
-    new_ward_id = await _create_ward(client, admin_headers, "W-WC-NURSE-2")
-
-    resp = await _correct_ward(client, nurse_headers, tx["id"], ward_id=new_ward_id)
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["ward_id"] == new_ward_id
-    assert resp.json()["ward_id"] != original_ward_id
-
-
-async def test_read_only_equivalent_role_is_denied_with_403(client, seeded_users):
-    """viewer is the Read-Only/Supervisor equivalent under the confirmed
-    permission matrix (docs/audits/03-hospital-equipment-pool-workflow-audit.md
-    §10) -- must never be granted the ward-correction capability."""
-    admin_headers = await _auth_headers(client, "admin")
-    viewer_headers = await _auth_headers(client, "viewer")
-    tx, _ = await _dispatch_open_transaction(
-        client, admin_headers, asset_number="AST-WC-VIEWER", ward_code="W-WC-VIEWER-1"
-    )
-    new_ward_id = await _create_ward(client, admin_headers, "W-WC-VIEWER-2")
-
-    resp = await _correct_ward(client, viewer_headers, tx["id"], ward_id=new_ward_id)
-    assert resp.status_code == 403, resp.text
+        audit_rows = (
+            await db_session.execute(
+                select(AuditLog).where(
+                    AuditLog.action == "ward_correction",
+                    AuditLog.entity_id == uuid.UUID(tx["id"]),
+                )
+            )
+        ).scalars().all()
+        assert len(audit_rows) == 1, "a successful admin correction must create exactly one audit entry"
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +166,98 @@ async def test_unknown_transaction_is_rejected(client, seeded_users):
     resp = await _correct_ward(client, admin_headers, str(uuid.uuid4()), ward_id=new_ward_id)
     assert resp.status_code == 404, resp.text
     assert resp.json()["code"] == "TRANSACTION_NOT_FOUND"
+
+
+# ---------------------------------------------------------------------------
+# Reason boundary and whitespace (declared contract:
+# app.schemas.transaction.WARD_CORRECTION_REASON_MAX_LENGTH == 500)
+# ---------------------------------------------------------------------------
+
+
+async def test_reason_at_exactly_the_max_length_is_accepted_and_audited(client, seeded_users, db_session):
+    from sqlalchemy import select
+
+    from app.models.audit import AuditLog
+    from app.schemas.transaction import WARD_CORRECTION_REASON_MAX_LENGTH
+
+    admin_headers = await _auth_headers(client, "admin")
+    tx, _ = await _dispatch_open_transaction(
+        client, admin_headers, asset_number="AST-WC-MAXLEN", ward_code="W-WC-MAXLEN-1"
+    )
+    new_ward_id = await _create_ward(client, admin_headers, "W-WC-MAXLEN-2")
+
+    reason = "x" * WARD_CORRECTION_REASON_MAX_LENGTH
+    resp = await _correct_ward(client, admin_headers, tx["id"], ward_id=new_ward_id, reason=reason)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["ward_id"] == new_ward_id
+
+    audit_row = (
+        await db_session.execute(
+            select(AuditLog).where(
+                AuditLog.action == "ward_correction",
+                AuditLog.entity_id == uuid.UUID(tx["id"]),
+            )
+        )
+    ).scalar_one()
+    assert audit_row.after_data["reason"] == reason
+    assert len(audit_row.after_data["reason"]) == WARD_CORRECTION_REASON_MAX_LENGTH
+
+
+async def test_reason_one_character_over_the_max_length_is_rejected(client, seeded_users, db_session):
+    from sqlalchemy import select
+
+    from app.models.audit import AuditLog
+    from app.schemas.transaction import WARD_CORRECTION_REASON_MAX_LENGTH
+
+    admin_headers = await _auth_headers(client, "admin")
+    tx, original_ward_id = await _dispatch_open_transaction(
+        client, admin_headers, asset_number="AST-WC-OVERLEN", ward_code="W-WC-OVERLEN-1"
+    )
+    new_ward_id = await _create_ward(client, admin_headers, "W-WC-OVERLEN-2")
+
+    reason = "x" * (WARD_CORRECTION_REASON_MAX_LENGTH + 1)
+    resp = await _correct_ward(client, admin_headers, tx["id"], ward_id=new_ward_id, reason=reason)
+    assert resp.status_code == 422, resp.text
+
+    get_resp = await client.get(f"/api/v1/transactions/{tx['id']}", headers=admin_headers)
+    assert get_resp.status_code == 200, get_resp.text
+    assert get_resp.json()["ward_id"] == original_ward_id, "an over-length reason must never change the ward"
+
+    audit_rows = (
+        await db_session.execute(
+            select(AuditLog).where(
+                AuditLog.action == "ward_correction",
+                AuditLog.entity_id == uuid.UUID(tx["id"]),
+            )
+        )
+    ).scalars().all()
+    assert audit_rows == [], "a rejected over-length request must not write an audit row"
+
+
+async def test_reason_surrounding_whitespace_is_trimmed_before_storage(client, seeded_users, db_session):
+    from sqlalchemy import select
+
+    from app.models.audit import AuditLog
+
+    admin_headers = await _auth_headers(client, "admin")
+    tx, _ = await _dispatch_open_transaction(
+        client, admin_headers, asset_number="AST-WC-TRIM", ward_code="W-WC-TRIM-1"
+    )
+    new_ward_id = await _create_ward(client, admin_headers, "W-WC-TRIM-2")
+
+    resp = await _correct_ward(client, admin_headers, tx["id"], ward_id=new_ward_id, reason="  valid reason  ")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["ward_id"] == new_ward_id
+
+    audit_row = (
+        await db_session.execute(
+            select(AuditLog).where(
+                AuditLog.action == "ward_correction",
+                AuditLog.entity_id == uuid.UUID(tx["id"]),
+            )
+        )
+    ).scalar_one()
+    assert audit_row.after_data["reason"] == "valid reason", "the audited reason must be trimmed before storage"
 
 
 # ---------------------------------------------------------------------------
