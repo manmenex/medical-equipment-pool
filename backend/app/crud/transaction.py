@@ -143,7 +143,7 @@ async def close(
     tx: BorrowTransaction,
     *,
     received_by_user_id: uuid.UUID | None,
-    condition_on_return: str,
+    receipt_outcome: str,
     notes: str | None,
 ) -> bool:
     """Conditionally closes an OPEN transaction and reports whether *this*
@@ -184,11 +184,19 @@ async def close(
     (``native_enum=False`` + ``values_callable``, i.e. the lowercase ``.value``),
     the same literal the partial unique index ``idx_tx_one_active_borrow``
     already relies on.
+
+    Roadmap PR8B (knowledge/adr/ADR-006-receipt-outcome-contract.md):
+    ``receipt_outcome`` is the caller-facing business term (already a
+    validated ``ReceiptOutcome.value`` -- ``"usable"``/``"defective"`` --
+    by the time it reaches here); it is still persisted into the unchanged
+    ``condition_on_return`` column (Option A -- no schema migration), which
+    also holds genuine pre-PR8B historical values from before this contract
+    narrowed.
     """
     values: dict = {
         "status": TransactionStatus.CLOSED,
         "returned_at": datetime.utcnow(),
-        "condition_on_return": condition_on_return,
+        "condition_on_return": receipt_outcome,
         "received_by_user_id": received_by_user_id,
     }
     if notes:

@@ -67,7 +67,8 @@ Creates a new borrow transaction and moves the selected equipment from `availabl
   "dispatch_type": "on_demand",
   "routine_round": null,
   "phone_number": null,
-  "condition_on_return": null,
+  "receipt_outcome": null,
+  "legacy_condition_on_return": null,
   "status": "open",
   "notes": null
 }

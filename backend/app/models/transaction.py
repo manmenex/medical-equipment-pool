@@ -93,6 +93,30 @@ RoutineRoundType = Enum(
 )
 
 
+class ReceiptOutcome(str, enum.Enum):
+    """Roadmap PR8B (knowledge/adr/ADR-006-receipt-outcome-contract.md)
+    confirmed binary receipt outcome -- the exact domain vocabulary
+    `docs/HOSPITAL_DOMAIN_MODEL.md`'s "Confirmed workflow" already used
+    ("receipt outcome: usable" / "receipt outcome: defective"), now
+    expressed as the request/response contract's own field name and value
+    domain instead of only an internal dict lookup
+    (RETURN_CONDITION_TO_STATUS's pre-PR8B four-value `condition` string).
+
+    This is a request/response-contract type only -- it does not back a
+    database column (no ``ReceiptOutcomeType`` ``Enum(...)`` is defined
+    here, unlike TransactionStatusType/DispatchTypeType/RoutineRoundType
+    above). ``BorrowTransaction.condition_on_return`` remains the
+    unconstrained ``String(30)`` column it already was (see below) --
+    Option A from docs/design/PR8_IMPLEMENTATION_PLAN.md's Section 5
+    explicitly needs no schema migration, and the column still holds
+    genuine pre-PR8B historical values (`available`/`pm`/`calibration`/
+    `repair`) that predate this domain and are never remapped.
+    """
+
+    USABLE = "usable"
+    DEFECTIVE = "defective"
+
+
 class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "borrow_transactions"
     __table_args__ = (
@@ -137,6 +161,13 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     phone_number: Mapped[str | None] = mapped_column(String(20))
     pickup_location_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("locations.id"))
     dropoff_location_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("locations.id"))
+    # Roadmap PR8B: the column itself, its name, and every existing value
+    # are unchanged (Option A -- no schema migration). ``receipt_outcome``
+    # below is the wire-level business term exposed in the API response
+    # (app.schemas.transaction.TransactionOut); the column continues to
+    # hold pre-PR8B historical values too (`available`/`pm`/`calibration`/
+    # `repair`), which are preserved and remain readable exactly as
+    # PR7b preserved borrower_name/due_at/quantity -- never remapped.
     condition_on_return: Mapped[str | None] = mapped_column(String(30))
     notes: Mapped[str | None] = mapped_column(Text)
     received_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
@@ -168,6 +199,50 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     legacy_status: Mapped[str | None] = mapped_column(String(20))
 
     equipment: Mapped["Equipment"] = relationship()
+
+    @property
+    def receipt_outcome(self) -> "ReceiptOutcome | None":
+        """Roadmap PR8B wire-level business term for the persisted
+        ``condition_on_return`` column -- read by
+        ``app.schemas.transaction.TransactionOut`` (``from_attributes``).
+
+        Codex review round 1, finding 2: the request contract is strictly
+        binary (`ReceiptOutcome`), so the response field of the same name
+        must also be strictly binary -- never one of the pre-PR8B legacy
+        strings (`available`/`pm`/`calibration`/`repair`). Returns `None`
+        for any column value that is not exactly `"usable"` or
+        `"defective"` (including a genuine pre-PR8B legacy value, or a
+        transaction that has not been received at all); it never
+        translates/backfills a legacy value into the new domain, which
+        would fabricate a fact the original receipt never recorded. A
+        legacy value remains readable, unchanged, via
+        `legacy_condition_on_return` below -- mutually exclusive with this
+        property, mirroring `Equipment.legacy_status`'s "marker vs. real
+        history, never both" precedent.
+        """
+        try:
+            return ReceiptOutcome(self.condition_on_return)
+        except ValueError:
+            return None
+
+    @property
+    def legacy_condition_on_return(self) -> str | None:
+        """Roadmap PR8B: the raw, unmodified pre-PR8B receipt value
+        (`available`/`pm`/`calibration`/`repair`) for a transaction
+        received before the binary `receipt_outcome` contract existed.
+        `None` for a transaction received under the current contract, and
+        `None` for a transaction not yet received at all -- mutually
+        exclusive with `receipt_outcome` above. Never remapped or
+        interpreted; preserved verbatim, mirroring
+        `Equipment.legacy_status`'s and `BorrowTransaction.legacy_status`'s
+        existing "preserve the exact original value, never fabricate"
+        precedent.
+        """
+        if self.condition_on_return is None:
+            return None
+        if self.receipt_outcome is not None:
+            return None
+        return self.condition_on_return
 
 
 class TransactionAttachment(UUIDPKMixin, Base):

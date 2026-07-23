@@ -189,7 +189,12 @@ async def test_update_nonexistent_user_returns_404(client, seeded_users):
     assert body["code"] == "RESOURCE_NOT_FOUND"
 
 
-async def test_unknown_return_condition_returns_400_not_500(client, seeded_users):
+async def test_unknown_receipt_outcome_returns_422_not_500(client, seeded_users):
+    """Roadmap PR8B: receipt_outcome is a typed ReceiptOutcome enum, so an
+    unrecognized value is caught by Pydantic/FastAPI request validation
+    (422 VALIDATION_ERROR) before app.services.borrow_service ever runs --
+    not the pre-PR8B 400 INVALID_INPUT a free-form condition string needed
+    a runtime dict-lookup miss to detect, and never a 500."""
     admin_headers = await _auth_headers(client, "admin")
     nurse_headers = await _auth_headers(client, "ward_nurse")
 
@@ -209,12 +214,17 @@ async def test_unknown_return_condition_returns_400_not_500(client, seeded_users
     tx = borrow_resp.json()
 
     return_resp = await client.post(
-        f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"condition": "not-a-real-condition"}
+        f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"receipt_outcome": "not-a-real-outcome"}
     )
-    assert return_resp.status_code == 400
+    assert return_resp.status_code == 422
     body = return_resp.json()
-    _assert_safe_envelope(body, 400)
-    assert body["code"] == "INVALID_INPUT"
+    # A 422 body includes an additional `errors` array beyond the base
+    # {detail, code, status} envelope (docs/api/ERROR_CODES.md) --
+    # _assert_safe_envelope's exact-key-set check does not apply here.
+    assert body["status"] == 422
+    assert body["code"] == "VALIDATION_ERROR"
+    assert isinstance(body["detail"], str)
+    assert "Traceback" not in body["detail"]
 
 
 async def test_malformed_equipment_id_in_borrow_returns_400_not_500(client, seeded_users):
