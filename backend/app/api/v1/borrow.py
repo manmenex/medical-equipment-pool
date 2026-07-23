@@ -65,7 +65,7 @@ async def create_return(
     tx = await borrow_service.return_equipment(
         db,
         transaction_id=transaction_id,
-        condition=payload.condition,
+        receipt_outcome=payload.receipt_outcome,
         notes=payload.notes,
         received_by_user_id=user.id,
         ip_address=ip,

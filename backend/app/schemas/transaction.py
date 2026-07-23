@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.models.transaction import DispatchType, RoutineRound
+from app.models.transaction import DispatchType, ReceiptOutcome, RoutineRound
 from app.schemas.common import UUIDStr
 
 
@@ -61,16 +61,24 @@ class BorrowRequest(BaseModel):
 
 
 class ReturnRequest(BaseModel):
-    # Roadmap PR6 / owner-confirmed cleaning retirement: "cleaning" is
-    # deliberately absent from this contract -- cleaning happens as part
-    # of collecting/receiving equipment (AGENTS.md), not a distinct return
-    # outcome. Passing it is rejected the same as any other unrecognized
-    # condition (see app.services.borrow_service.RETURN_CONDITION_TO_STATUS
-    # / return_equipment), never silently accepted. This field is pre-PR8:
-    # the atomic single-operation, binary usable/defective receipt contract
-    # is not implemented here.
-    condition: str = Field(description="available|pm|calibration|repair")
+    """Roadmap PR8B (knowledge/adr/ADR-006-receipt-outcome-contract.md):
+    the frozen, canonical receipt contract. ``receipt_outcome`` replaces
+    the pre-PR8B four-value ``condition`` string entirely -- no
+    compatibility alias is kept, since no external client is known to
+    depend on the old field name (see the ADR's "Alternatives considered").
+    A caller still sending ``condition`` gets a hard 422 (``extra:
+    "forbid"``, the same BorrowRequest technique Roadmap PR7b's Codex
+    review established), never a silently-ignored field. Backend alone
+    maps this value to an `EquipmentStatus` (see
+    app.services.borrow_service.RECEIPT_OUTCOME_TO_STATUS) -- the frontend
+    must never submit a lifecycle state (`AVAILABLE_AT_POOL`/
+    `UNAVAILABLE_DEFECTIVE`) directly.
+    """
+
+    receipt_outcome: ReceiptOutcome
     notes: str | None = None
+
+    model_config = {"extra": "forbid"}
 
 
 class EquipmentSummary(BaseModel):
@@ -103,7 +111,15 @@ class TransactionOut(BaseModel):
     dispatch_type: DispatchType | None
     routine_round: RoutineRound | None
     phone_number: str | None
-    condition_on_return: str | None
+    # Roadmap PR8B: renamed from condition_on_return to the frozen
+    # receipt_outcome business term (BorrowTransaction.receipt_outcome,
+    # a passthrough property over the unchanged condition_on_return
+    # column -- see that property's docstring). Deliberately `str | None`,
+    # not `ReceiptOutcome | None`: a row from before this contract narrowed
+    # still holds one of the old `available`/`pm`/`calibration`/`repair`
+    # values, preserved as read-only history and never remapped, mirroring
+    # how `status` above is also a plain `str`, not a strict enum member.
+    receipt_outcome: str | None
     status: str
     notes: str | None
 

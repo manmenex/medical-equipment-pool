@@ -93,6 +93,30 @@ RoutineRoundType = Enum(
 )
 
 
+class ReceiptOutcome(str, enum.Enum):
+    """Roadmap PR8B (knowledge/adr/ADR-006-receipt-outcome-contract.md)
+    confirmed binary receipt outcome -- the exact domain vocabulary
+    `docs/HOSPITAL_DOMAIN_MODEL.md`'s "Confirmed workflow" already used
+    ("receipt outcome: usable" / "receipt outcome: defective"), now
+    expressed as the request/response contract's own field name and value
+    domain instead of only an internal dict lookup
+    (RETURN_CONDITION_TO_STATUS's pre-PR8B four-value `condition` string).
+
+    This is a request/response-contract type only -- it does not back a
+    database column (no ``ReceiptOutcomeType`` ``Enum(...)`` is defined
+    here, unlike TransactionStatusType/DispatchTypeType/RoutineRoundType
+    above). ``BorrowTransaction.condition_on_return`` remains the
+    unconstrained ``String(30)`` column it already was (see below) --
+    Option A from docs/design/PR8_IMPLEMENTATION_PLAN.md's Section 5
+    explicitly needs no schema migration, and the column still holds
+    genuine pre-PR8B historical values (`available`/`pm`/`calibration`/
+    `repair`) that predate this domain and are never remapped.
+    """
+
+    USABLE = "usable"
+    DEFECTIVE = "defective"
+
+
 class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "borrow_transactions"
     __table_args__ = (
@@ -137,6 +161,13 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     phone_number: Mapped[str | None] = mapped_column(String(20))
     pickup_location_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("locations.id"))
     dropoff_location_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("locations.id"))
+    # Roadmap PR8B: the column itself, its name, and every existing value
+    # are unchanged (Option A -- no schema migration). ``receipt_outcome``
+    # below is the wire-level business term exposed in the API response
+    # (app.schemas.transaction.TransactionOut); the column continues to
+    # hold pre-PR8B historical values too (`available`/`pm`/`calibration`/
+    # `repair`), which are preserved and remain readable exactly as
+    # PR7b preserved borrower_name/due_at/quantity -- never remapped.
     condition_on_return: Mapped[str | None] = mapped_column(String(30))
     notes: Mapped[str | None] = mapped_column(Text)
     received_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
@@ -168,6 +199,18 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     legacy_status: Mapped[str | None] = mapped_column(String(20))
 
     equipment: Mapped["Equipment"] = relationship()
+
+    @property
+    def receipt_outcome(self) -> str | None:
+        """Roadmap PR8B wire-level business term for the persisted
+        ``condition_on_return`` column -- read by
+        ``app.schemas.transaction.TransactionOut`` (``from_attributes``).
+        A plain passthrough, not a `ReceiptOutcome`-typed cast: the column
+        also holds genuine pre-PR8B historical values (`available`/`pm`/
+        `calibration`/`repair`) that predate the binary outcome domain and
+        are never remapped, so this must remain tolerant of both domains.
+        """
+        return self.condition_on_return
 
 
 class TransactionAttachment(UUIDPKMixin, Base):

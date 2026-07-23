@@ -47,7 +47,7 @@ A `422` validation error additionally includes an `errors` array:
 | `404` | Resource does not exist | Unknown equipment/transaction/user ID, unknown route |
 | `405` | HTTP method not supported on this route | e.g. `DELETE /equipment` (only `GET`/`POST` exist at that path) |
 | `409` | Conflict with current state | Equipment not available for dispatch, transaction already returned, duplicate unique key, disallowed status transition, unclassifiable integrity violation |
-| `422` | Request body/query failed schema validation | Missing required field, wrong type, a `model_validator` rule (e.g. `routine_round` required exactly when `dispatch_type == "routine_round"`) |
+| `422` | Request body/query failed schema validation | Missing required field, wrong type, an unrecognized enum value (e.g. `receipt_outcome` not one of `usable`/`defective`, Roadmap PR8B), a `model_validator` rule (e.g. `routine_round` required exactly when `dispatch_type == "routine_round"`), or an unrecognized field on a schema using `extra: "forbid"` (e.g. the retired `condition` on `ReturnRequest`) |
 | `500` | Unexpected server error | Any exception not otherwise handled |
 
 ## Application error codes (`code` field)
@@ -66,10 +66,10 @@ A `422` validation error additionally includes an `errors` array:
 | `EQUIPMENT_NOT_FOUND` | 404 | `EquipmentNotFoundError` | Equipment ID doesn't resolve (`GET/PATCH/DELETE /equipment/{id}`, QR resolve, dispatch, receipt) |
 | `EQUIPMENT_NOT_AVAILABLE` | 409 | `EquipmentNotAvailableError` | Dispatch attempted on equipment not in `available_at_pool` status, or a concurrent dispatch won the unique-index race |
 | `TRANSACTION_NOT_FOUND` | 404 | `TransactionNotFoundError` | Transaction ID doesn't resolve (`GET /transactions/{id}`, receipt) |
-| `TRANSACTION_ALREADY_RETURNED` | 409 | `TransactionAlreadyReturnedError` | Receipt attempted on a transaction whose `status` is not `OPEN` |
+| `TRANSACTION_ALREADY_RETURNED` | 409 | `TransactionAlreadyReturnedError` | Receipt attempted on a transaction whose `status` is not `OPEN` — either a genuine sequential repeat request (Case A, the row was already `CLOSED` before this request even read it), or this request lost a concurrent receipt race decided by Roadmap PR8A's conditional `UPDATE` (Case B). Both causes currently share this one response and code; a distinguishable race-vs-repeat message remains unimplemented (`knowledge/adr/ADR-006-receipt-outcome-contract.md`) |
 | `DUPLICATE` | 409 | `DuplicateError` | A unique-constraint violation was classified as `unique_violation` (see Integrity error translation below) |
 | `RESOURCE_NOT_FOUND` | 404 | `ResourceNotFoundError` | Generic not-found for resources without a dedicated error class (currently: user lookup in `app/api/v1/users.py`) |
-| `INVALID_INPUT` | 400 | `InvalidInputError` | Malformed UUID (`app.utils.parsing.parse_uuid`), a foreign-key field that doesn't reference an existing row (`app.core.references.ensure_referenced_row_exists`, or a foreign-key/not-null/check violation caught at flush time), or an unrecognized enum-like value (e.g. unknown `role_name`, unknown return `condition`) |
+| `INVALID_INPUT` | 400 | `InvalidInputError` | Malformed UUID (`app.utils.parsing.parse_uuid`), a foreign-key field that doesn't reference an existing row (`app.core.references.ensure_referenced_row_exists`, or a foreign-key/not-null/check violation caught at flush time), or an unrecognized enum-like value (e.g. unknown `role_name`) — receipt's `receipt_outcome` is no longer in this category as of Roadmap PR8B: it is a typed Pydantic enum, so an unrecognized value is now `422 VALIDATION_ERROR`, not this code (see `docs/api/receipt.md`) |
 | `MALFORMED_QR_CODE` | 400 | `MalformedQrCodeError` | Scanned QR payload isn't a valid Item No (empty, too long, URL-shaped, or a retired legacy format) — distinct from `EQUIPMENT_NOT_FOUND`: the QR itself is unreadable, not merely unmatched |
 | `INVALID_STATUS_TRANSITION` | 409 | `InvalidStatusTransitionError` | Requested equipment status change isn't in the caller's allowed transition set (see `equipment.md`'s status-transition tables) |
 | `CONFLICT` | 409 | `ConflictError` | Safe fallback for an `IntegrityError` that couldn't be classified into unique/foreign-key/not-null/check |

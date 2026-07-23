@@ -24,11 +24,11 @@ Roadmap PR7 (both slices, GitHub PR #19/#20) remains the most recent *fully comp
 
 ## Next planned PR
 
-Roadmap PR8 (PR8B slice) — condition-to-binary-outcome API contract narrowing, and distinguishing a race-loss rejection from a genuine repeat-request rejection — not yet started. PR8A (the database-level concurrency guard) is merged; concurrent-receipt protection is no longer an outstanding pilot blocker, but PR8's full scope is not complete until PR8B also merges.
+Roadmap PR8 (PR8B slice) — receipt outcome contract narrowing (`receipt_outcome`: `usable`/`defective`, replacing `condition`) — **in progress, Draft pending review** (no GitHub PR number or squash SHA yet; see `docs/DECISION_LOG.md` "Roadmap PR8 (PR8B slice)" and `knowledge/adr/ADR-006-receipt-outcome-contract.md`). This slice is backend-only: the frontend has not been updated to match (`docs/TECH_DEBT.md` TD-006), and a distinguishable race-loss-vs-genuine-repeat error message remains a separate, still-unimplemented gap. PR8A (the database-level concurrency guard) is merged; concurrent-receipt protection is no longer an outstanding pilot blocker, but PR8's full scope is not complete until PR8B also merges.
 
 ## Outstanding work
 
-- Roadmap PR8 (PR8B slice) through PR15 (contract narrowing, ward correction, role consolidation, frontend terminology, inventory import, search/reporting, reliability/performance hardening, observability/schema hygiene) are planned and not started.
+- Roadmap PR8 (PR8B slice, in progress) through PR15 (contract narrowing, ward correction, role consolidation, frontend terminology, inventory import, search/reporting, reliability/performance hardening, observability/schema hygiene) are planned or in progress, none merged yet.
 - Confirmed future work not yet scheduled to a Roadmap PR: Shift Sessions, Standby Snapshots, managed-deployment target selection (`docs/ROADMAP.md`).
 - `docs/TECH_DEBT.md` open items: TD-001 (equipment update/status `MissingGreenlet`), TD-002 (`0001_initial.py` uses current ORM metadata), TD-003 (CI now exists and fails closed, but branch protection requiring it is not enabled — partially resolved, needs re-assessment), TD-004 (naive `datetime.utcnow()`), TD-005 (temporary default/long-lived branch structure).
 

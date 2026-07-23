@@ -519,7 +519,7 @@ async def test_return_by_hospital_item_no_scan(client, seeded_users):
     assert resolved.json()["id"] == created["id"]
 
     return_resp = await client.post(
-        f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"condition": "available"}
+        f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"receipt_outcome": "usable"}
     )
     assert return_resp.status_code == 200, return_resp.text
     assert return_resp.json()["status"] == "closed"
@@ -959,7 +959,7 @@ async def test_item_no_absent_from_borrow_and_return_manual_selection_responses(
     assert "item_no" not in tx["equipment"]
 
     return_resp = await client.post(
-        f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"condition": "available"}
+        f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"receipt_outcome": "usable"}
     )
     assert return_resp.status_code == 200, return_resp.text
     assert "item_no" not in return_resp.json()["equipment"]
@@ -1168,10 +1168,12 @@ async def test_status_change_rejects_cleaning_as_new_active_status(client, seede
 
 
 async def test_return_condition_cleaning_is_rejected_not_silently_accepted(client, seeded_users):
-    """Roadmap PR6: cleaning is retired -- a client still sending
-    condition="cleaning" at receipt must get the same controlled 400 as
-    any other unknown condition, never a silent AVAILABLE_AT_POOL/legacy
-    CLEANING acceptance."""
+    """Roadmap PR6: cleaning is retired. Under the Roadmap PR8B binary
+    receipt_outcome contract (usable/defective), "cleaning" is impossible
+    to express by construction -- a client still sending
+    receipt_outcome="cleaning" gets a 422 VALIDATION_ERROR (unrecognized
+    enum value), never a silent AVAILABLE_AT_POOL/legacy CLEANING
+    acceptance."""
     headers = await _auth_headers(client, "admin")
     nurse_headers = await _auth_headers(client, "ward_nurse")
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR6-0007")
@@ -1182,10 +1184,10 @@ async def test_return_condition_cleaning_is_rejected_not_silently_accepted(clien
     tx = borrow_resp.json()
 
     return_resp = await client.post(
-        f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"condition": "cleaning"}
+        f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"receipt_outcome": "cleaning"}
     )
-    assert return_resp.status_code == 400
-    assert return_resp.json()["code"] == "INVALID_INPUT"
+    assert return_resp.status_code == 422
+    assert return_resp.json()["code"] == "VALIDATION_ERROR"
 
 
 async def test_defective_receipt_transitions_to_unavailable_defective(client, seeded_users):
@@ -1199,7 +1201,7 @@ async def test_defective_receipt_transitions_to_unavailable_defective(client, se
     tx = borrow_resp.json()
 
     return_resp = await client.post(
-        f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"condition": "repair"}
+        f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"receipt_outcome": "defective"}
     )
     assert return_resp.status_code == 200, return_resp.text
     assert return_resp.json()["equipment"]["status"] == "unavailable_defective"
@@ -1320,7 +1322,7 @@ async def test_dispatch_and_return_services_still_perform_valid_transitions(clie
     tx = borrow_resp.json()
 
     return_resp = await client.post(
-        f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"condition": "available"}
+        f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"receipt_outcome": "usable"}
     )
     assert return_resp.status_code == 200, return_resp.text
     assert return_resp.json()["equipment"]["status"] == "available_at_pool"
@@ -1378,23 +1380,26 @@ async def test_status_change_audit_still_records_manual_lifecycle_change(client,
 
 
 # ---------------------------------------------------------------------------
-# PR16-H1: ReturnRequest.condition no longer advertises "cleaning" in the
-# generated OpenAPI contract, while runtime rejection (See
-# test_return_condition_cleaning_is_rejected_not_silently_accepted above)
-# remains covered separately.
+# PR16-H1 / Roadmap PR8B: the receipt contract must never advertise
+# "cleaning" as an acceptable value. Under the pre-PR8B `condition` string
+# this was a description-text/runtime-rejection guarantee; under the
+# binary `receipt_outcome` enum (this test, updated for PR8B) it is
+# structural -- "cleaning" cannot appear in the schema's enum list at all.
+# Runtime rejection remains covered separately (see
+# test_return_condition_cleaning_is_rejected_not_silently_accepted above).
 # ---------------------------------------------------------------------------
 
 
 async def test_openapi_return_request_does_not_advertise_cleaning():
+    import json
+
     from app.main import app
 
     schema = app.openapi()["components"]["schemas"]["ReturnRequest"]
-    condition_description = schema["properties"]["condition"].get("description", "")
-    assert "cleaning" not in condition_description.lower()
-    # Whole-schema guard too, in case "cleaning" is ever moved into a
-    # different field (e.g. an enum list) rather than the description text.
-    import json
-
+    # Roadmap PR8B: `condition` no longer exists in the contract at all --
+    # not narrowed, replaced.
+    assert "condition" not in schema["properties"]
+    assert "receipt_outcome" in schema["properties"]
     assert "cleaning" not in json.dumps(schema).lower()
 
 

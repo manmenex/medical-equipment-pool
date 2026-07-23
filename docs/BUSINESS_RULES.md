@@ -17,7 +17,7 @@ Equipment has exactly four states: `AVAILABLE_AT_POOL`, `ISSUED_TO_WARD`, `UNAVA
 
 Cleaning is a physical operational activity, not a digital one. It may occur before or after the receipt record is entered — the system does not require or assume any particular order. Cleaning is not represented as an equipment state and does not require a separate cleaning workflow: there is no cleaning state, cleaning-complete action, or cleaning-status field. Equipment receipt is one atomic digital operation with a binary outcome — a usable receipt ends at `AVAILABLE_AT_POOL`; a defective receipt ends at `UNAVAILABLE_DEFECTIVE`.
 
-- Source: `docs/ARCHITECTURE_DECISIONS.md` ("No cleaning workflow"); `AGENTS.md` (Domain Guardrails); `docs/audits/04-consolidated-implementation-plan.md` Part B.1.
+- Source: `docs/ARCHITECTURE_DECISIONS.md` ("No cleaning workflow"); `AGENTS.md` (Domain Guardrails); `docs/audits/04-consolidated-implementation-plan.md` Part B.1. The binary outcome itself is now the request/response contract's own `receipt_outcome` field (Roadmap PR8B, `knowledge/adr/ADR-006-receipt-outcome-contract.md`), not only an internal mapping.
 
 ## UUID is relational identity
 

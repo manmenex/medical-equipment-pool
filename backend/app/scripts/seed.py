@@ -134,6 +134,10 @@ async def seed_bulk(db, refs: dict, equipment_count: int, transaction_count: int
                 equipment_id=eq_id,
                 borrower_name=f"Borrower {i % 500}",
                 status=TransactionStatus.CLOSED,
+                # Deliberately the pre-PR8B legacy value, not "usable" --
+                # this batch models historical rows, and condition_on_return
+                # preserves genuine history unchanged (see BorrowTransaction.
+                # receipt_outcome's docstring).
                 condition_on_return="available",
             )
         )

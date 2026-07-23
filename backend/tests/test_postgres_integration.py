@@ -3996,7 +3996,7 @@ async def test_concurrent_receipt_burst_produces_exactly_one_winner_on_postgres(
     # every loser's marker is absent (i.e. no loser wrote anything).
     async def _receipt(marker: str):
         return await pg_client.post(
-            f"/api/v1/return/{tx_id}", headers=headers, json={"condition": "available", "notes": marker}
+            f"/api/v1/return/{tx_id}", headers=headers, json={"receipt_outcome": "usable", "notes": marker}
         )
 
     # Zero-padded to a fixed width: an unpadded "race-marker-1" would be a
@@ -4036,12 +4036,12 @@ async def test_concurrent_receipt_burst_produces_exactly_one_winner_on_postgres(
     ).scalar_one()
     assert tx_row.status == TransactionStatus.CLOSED, "the transaction must be closed exactly once"
     assert tx_row.returned_at is not None
-    assert tx_row.condition_on_return == "available", "only the winner's outcome may be persisted"
+    assert tx_row.condition_on_return == "usable", "only the winner's outcome may be persisted"
     assert tx_row.received_by_user_id is not None
 
     # The response body must match the refreshed, persisted row exactly --
     # not merely "some" 200 response with plausible-looking fields.
-    assert winner.json()["condition_on_return"] == tx_row.condition_on_return
+    assert winner.json()["receipt_outcome"] == tx_row.condition_on_return
     assert winner.json()["notes"] == tx_row.notes
 
     assert winner_marker in (tx_row.notes or ""), "the persisted row must carry the winner's own marker"

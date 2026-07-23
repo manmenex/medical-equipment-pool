@@ -98,6 +98,17 @@ an `OPEN` transaction simply stays `OPEN` regardless of `due_at`
 (`app.worker.scheduler`'s `due_at`-driven notification job was removed; see
 `knowledge/adr/ADR-005-transaction-model.md` decision 3).
 
+**Receipt outcome** (Roadmap PR8B, `knowledge/adr/ADR-006-receipt-outcome-contract.md`):
+receipt is recorded via `receipt_outcome` (`ReceiptOutcome`: `usable` or
+`defective`), a single business term the backend alone maps to an
+`EquipmentStatus` (`usable -> AVAILABLE_AT_POOL`, `defective ->
+UNAVAILABLE_DEFECTIVE`) — the frontend never submits a lifecycle state
+directly. Replaces the pre-PR8B four-value `condition` string entirely, no
+compatibility alias kept. The underlying `condition_on_return` column and
+every existing pre-PR8B value are unchanged and remain readable as
+history, exposed through the same `receipt_outcome` name via a passthrough
+property on `BorrowTransaction`.
+
 ## Relationships
 
 ```text

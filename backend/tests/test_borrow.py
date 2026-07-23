@@ -33,7 +33,7 @@ async def test_borrow_then_return_flow(client, seeded_users):
     assert check_resp.json()["status"] == "issued_to_ward"
 
     return_resp = await client.post(
-        f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"condition": "available"}
+        f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"receipt_outcome": "usable"}
     )
     assert return_resp.status_code == 200, return_resp.text
     assert return_resp.json()["status"] == "closed"
@@ -219,7 +219,7 @@ async def test_receipt_closes_the_transaction_and_records_outcome(client, seeded
     tx_id = borrow_resp.json()["id"]
 
     return_resp = await client.post(
-        f"/api/v1/return/{tx_id}", headers=admin_headers, json={"condition": "available", "notes": "all good"}
+        f"/api/v1/return/{tx_id}", headers=admin_headers, json={"receipt_outcome": "usable", "notes": "all good"}
     )
     assert return_resp.status_code == 200, return_resp.text
     tx = return_resp.json()
@@ -234,10 +234,10 @@ async def test_closing_an_already_closed_transaction_is_rejected(client, seeded_
     borrow_resp = await client.post("/api/v1/borrow", headers=admin_headers, json=payload)
     tx_id = borrow_resp.json()["id"]
 
-    first = await client.post(f"/api/v1/return/{tx_id}", headers=admin_headers, json={"condition": "available"})
+    first = await client.post(f"/api/v1/return/{tx_id}", headers=admin_headers, json={"receipt_outcome": "usable"})
     assert first.status_code == 200, first.text
 
-    second = await client.post(f"/api/v1/return/{tx_id}", headers=admin_headers, json={"condition": "available"})
+    second = await client.post(f"/api/v1/return/{tx_id}", headers=admin_headers, json={"receipt_outcome": "usable"})
     assert second.status_code == 409
     assert second.json()["code"] == "TRANSACTION_ALREADY_RETURNED"
 
@@ -267,7 +267,7 @@ async def test_repository_close_sets_closed_status_and_receipt_fields(db_session
 
     receiver_id = uuid.uuid4()
     won = await transaction_crud.close(
-        db_session, tx, received_by_user_id=receiver_id, condition_on_return="available", notes="checked in"
+        db_session, tx, received_by_user_id=receiver_id, receipt_outcome="usable", notes="checked in"
     )
     assert won is True, "closing an OPEN transaction must report the win (rowcount == 1)"
 
@@ -276,7 +276,7 @@ async def test_repository_close_sets_closed_status_and_receipt_fields(db_session
     )
     assert tx.status == TransactionStatus.CLOSED
     assert tx.returned_at is not None
-    assert tx.condition_on_return == "available"
+    assert tx.condition_on_return == "usable"
     assert tx.received_by_user_id == receiver_id
     assert "checked in" in tx.notes
 
@@ -303,7 +303,7 @@ async def test_repository_close_second_call_on_closed_row_reports_loss_and_prese
 
     first_receiver = uuid.uuid4()
     won_first = await transaction_crud.close(
-        db_session, tx, received_by_user_id=first_receiver, condition_on_return="available", notes="first"
+        db_session, tx, received_by_user_id=first_receiver, receipt_outcome="usable", notes="first"
     )
     assert won_first is True
 
@@ -312,7 +312,7 @@ async def test_repository_close_second_call_on_closed_row_reports_loss_and_prese
     # must NOT overwrite the winner's outcome / receiver / notes.
     second_receiver = uuid.uuid4()
     won_second = await transaction_crud.close(
-        db_session, tx, received_by_user_id=second_receiver, condition_on_return="repair", notes="second"
+        db_session, tx, received_by_user_id=second_receiver, receipt_outcome="defective", notes="second"
     )
     assert won_second is False, "a close() against an already-closed row must report rowcount == 0"
 
@@ -320,7 +320,7 @@ async def test_repository_close_second_call_on_closed_row_reports_loss_and_prese
         tx, attribute_names=["status", "condition_on_return", "received_by_user_id", "notes"]
     )
     assert tx.status == TransactionStatus.CLOSED
-    assert tx.condition_on_return == "available", "the loser must not overwrite the winner's outcome"
+    assert tx.condition_on_return == "usable", "the loser must not overwrite the winner's outcome"
     assert tx.received_by_user_id == first_receiver, "the loser must not overwrite the winner's receiver"
     assert "second" not in (tx.notes or ""), "the loser's notes must not be persisted"
 
@@ -344,7 +344,7 @@ async def test_repository_get_open_transaction_for_equipment(db_session):
     assert found is not None
     assert found.id == tx.id
 
-    await transaction_crud.close(db_session, tx, received_by_user_id=None, condition_on_return="available", notes=None)
+    await transaction_crud.close(db_session, tx, received_by_user_id=None, receipt_outcome="usable", notes=None)
     await db_session.flush()
 
     assert await transaction_crud.get_open_transaction_for_equipment(db_session, equipment.id) is None
@@ -731,3 +731,218 @@ async def test_historical_transaction_fields_remain_readable_after_pr7b(db_sessi
     assert out.dispatch_type is None
     assert out.routine_round is None
     assert out.ward_id is None
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR8B (knowledge/adr/ADR-006-receipt-outcome-contract.md): the
+# frozen receipt_outcome contract (usable/defective), replacing the
+# pre-PR8B four-value condition string. Usable-receipt, repeat-receipt, and
+# basic response-shape coverage already exists above
+# (test_borrow_then_return_flow, test_receipt_closes_the_transaction_and_
+# records_outcome, test_closing_an_already_closed_transaction_is_rejected);
+# defective-outcome coverage is in tests/test_equipment.py; concurrent-
+# receipt coverage is in tests/test_postgres_integration.py (SQLite cannot
+# safely simulate real concurrency). These cover what those do not yet:
+# invalid-outcome/retired-field validation, the defensive invalid-
+# transition guard, audit/history row creation, full response consistency,
+# and the missing-transaction/missing-equipment error paths.
+# ---------------------------------------------------------------------------
+
+
+async def test_receipt_with_invalid_outcome_is_rejected_with_validation_error(client, seeded_users):
+    """receipt_outcome is a typed ReceiptOutcome enum -- an unrecognized
+    value is caught by Pydantic/FastAPI request validation (422) before
+    app.services.borrow_service ever runs, not the pre-PR8B 400
+    INVALID_INPUT a free-form condition string needed a runtime
+    dict-lookup miss to detect."""
+    admin_headers = await _auth_headers(client, "admin")
+    equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR8B-0001")
+    payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-PR8B-0001")
+
+    borrow_resp = await client.post("/api/v1/borrow", headers=admin_headers, json=payload)
+    assert borrow_resp.status_code == 201, borrow_resp.text
+    tx_id = borrow_resp.json()["id"]
+
+    return_resp = await client.post(
+        f"/api/v1/return/{tx_id}", headers=admin_headers, json={"receipt_outcome": "not-a-real-outcome"}
+    )
+    assert return_resp.status_code == 422, return_resp.text
+    assert return_resp.json()["code"] == "VALIDATION_ERROR"
+
+    # Zero side effects: equipment must still read ISSUED_TO_WARD.
+    check_resp = await client.get(f"/api/v1/equipment/{equipment['id']}", headers=admin_headers)
+    assert check_resp.json()["status"] == "issued_to_ward"
+
+
+async def test_receipt_rejects_the_retired_condition_field(client, seeded_users):
+    """No compatibility layer: ReturnRequest now sets extra: 'forbid'
+    (mirroring BorrowRequest's Roadmap PR7b precedent), so a caller still
+    sending the pre-PR8B `condition` field gets a hard 422, never a
+    silently-ignored field or a silently-accepted receipt."""
+    admin_headers = await _auth_headers(client, "admin")
+    equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR8B-0002")
+    payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-PR8B-0002")
+
+    borrow_resp = await client.post("/api/v1/borrow", headers=admin_headers, json=payload)
+    assert borrow_resp.status_code == 201, borrow_resp.text
+    tx_id = borrow_resp.json()["id"]
+
+    return_resp = await client.post(f"/api/v1/return/{tx_id}", headers=admin_headers, json={"condition": "available"})
+    assert return_resp.status_code == 422, return_resp.text
+    assert return_resp.json()["code"] == "VALIDATION_ERROR"
+
+    check_resp = await client.get(f"/api/v1/equipment/{equipment['id']}", headers=admin_headers)
+    assert check_resp.json()["status"] == "issued_to_ward", "a rejected request must produce zero side effects"
+
+
+async def test_receipt_on_missing_transaction_returns_404(client, seeded_users):
+    admin_headers = await _auth_headers(client, "admin")
+    missing_id = uuid.uuid4()
+
+    return_resp = await client.post(
+        f"/api/v1/return/{missing_id}", headers=admin_headers, json={"receipt_outcome": "usable"}
+    )
+    assert return_resp.status_code == 404, return_resp.text
+    assert return_resp.json()["code"] == "TRANSACTION_NOT_FOUND"
+
+
+async def test_receipt_on_transaction_with_missing_equipment_returns_404(db_session):
+    """Defensive case (app.services.borrow_service.return_equipment):
+    equipment_crud.get_by_id filters out soft-deleted rows. No ordinary API
+    path can reach this -- there is no client-facing action that both
+    keeps a transaction OPEN and soft-deletes its equipment -- so the
+    repository layer is exercised directly, standing in for the defensive
+    EquipmentNotFoundError branch."""
+    from app.core.exceptions import EquipmentNotFoundError
+    from app.crud import equipment as equipment_crud
+    from app.models.equipment import Equipment
+    from app.models.transaction import BorrowTransaction, ReceiptOutcome
+    from app.services import borrow_service
+
+    equipment = Equipment(asset_number="AST-PR8B-0003", equipment_name="Pump")
+    db_session.add(equipment)
+    await db_session.flush()
+
+    tx = BorrowTransaction(transaction_no="TX-PR8B-0003", equipment_id=equipment.id, borrower_name="Nurse Gone")
+    db_session.add(tx)
+    await db_session.flush()
+
+    await equipment_crud.soft_delete(db_session, equipment)
+    await db_session.flush()
+
+    with pytest.raises(EquipmentNotFoundError):
+        await borrow_service.return_equipment(
+            db_session,
+            transaction_id=tx.id,
+            receipt_outcome=ReceiptOutcome.USABLE,
+            notes=None,
+            received_by_user_id=None,
+            ip_address=None,
+            user_agent=None,
+        )
+
+
+async def test_receipt_rejects_invalid_equipment_transition(db_session):
+    """Defensive case: DISPATCH_RECEIPT_TRANSITIONS only allows
+    ISSUED_TO_WARD -> {AVAILABLE_AT_POOL, UNAVAILABLE_DEFECTIVE}. Ordinary
+    API use can never reach return_equipment() with equipment in any other
+    status while its transaction is still OPEN -- MANUAL_LIFECYCLE_
+    TRANSITIONS never touches ISSUED_TO_WARD as a source or target
+    (app.models.equipment) -- so this exercises app.crud.equipment.
+    change_status_for_dispatch_receipt's guard directly, standing in for a
+    corrupted/out-of-band equipment status."""
+    from app.core.exceptions import InvalidStatusTransitionError
+    from app.models.equipment import Equipment, EquipmentStatus
+    from app.models.transaction import BorrowTransaction, ReceiptOutcome
+    from app.services import borrow_service
+
+    equipment = Equipment(
+        asset_number="AST-PR8B-0004", equipment_name="Pump", status=EquipmentStatus.DECOMMISSIONED
+    )
+    db_session.add(equipment)
+    await db_session.flush()
+
+    tx = BorrowTransaction(transaction_no="TX-PR8B-0004", equipment_id=equipment.id, borrower_name="Nurse Corrupt")
+    db_session.add(tx)
+    await db_session.flush()
+
+    with pytest.raises(InvalidStatusTransitionError):
+        await borrow_service.return_equipment(
+            db_session,
+            transaction_id=tx.id,
+            receipt_outcome=ReceiptOutcome.USABLE,
+            notes=None,
+            received_by_user_id=None,
+            ip_address=None,
+            user_agent=None,
+        )
+
+
+async def test_receipt_creates_audit_and_history_rows_with_consistent_response(client, seeded_users, db_session):
+    """A single successful receipt must (1) close the transaction, (2)
+    transition equipment status, (3) write exactly one
+    EquipmentStatusHistory row, (4) write exactly one audit row recording
+    receipt_outcome, and (5) return a response whose fields are all
+    mutually consistent with the persisted state, not just individually
+    correct in isolation."""
+    from sqlalchemy import select
+
+    from app.models.audit import AuditLog
+    from app.models.equipment import EquipmentStatusHistory
+
+    admin_headers = await _auth_headers(client, "admin")
+    equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR8B-0005")
+    payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-PR8B-0005")
+
+    borrow_resp = await client.post("/api/v1/borrow", headers=admin_headers, json=payload)
+    assert borrow_resp.status_code == 201, borrow_resp.text
+    tx_id = borrow_resp.json()["id"]
+
+    return_resp = await client.post(
+        f"/api/v1/return/{tx_id}",
+        headers=admin_headers,
+        json={"receipt_outcome": "defective", "notes": "cracked housing"},
+    )
+    assert return_resp.status_code == 200, return_resp.text
+    body = return_resp.json()
+
+    # Response consistency: every field describing the outcome agrees.
+    assert body["status"] == "closed"
+    assert body["receipt_outcome"] == "defective"
+    assert body["equipment"]["status"] == "unavailable_defective"
+    assert body["returned_at"] is not None
+    assert body["notes"] is not None and "cracked housing" in body["notes"]
+
+    check_resp = await client.get(f"/api/v1/equipment/{equipment['id']}", headers=admin_headers)
+    assert check_resp.json()["status"] == "unavailable_defective", "response must match persisted equipment state"
+
+    history_rows = (
+        (
+            await db_session.execute(
+                select(EquipmentStatusHistory).where(
+                    EquipmentStatusHistory.equipment_id == uuid.UUID(equipment["id"])
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    receipt_history = [h for h in history_rows if h.to_status == "unavailable_defective"]
+    assert len(receipt_history) == 1
+    assert receipt_history[0].from_status == "issued_to_ward"
+
+    audit_rows = (
+        (
+            await db_session.execute(
+                select(AuditLog).where(
+                    AuditLog.action == "return",
+                    AuditLog.entity_type == "borrow_transaction",
+                    AuditLog.entity_id == uuid.UUID(tx_id),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(audit_rows) == 1
+    assert audit_rows[0].after_data == {"receipt_outcome": "defective"}

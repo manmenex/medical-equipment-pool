@@ -18,25 +18,22 @@ from app.crud import equipment as equipment_crud
 from app.crud import transaction as transaction_crud
 from app.models.equipment import EquipmentStatus
 from app.models.master_data import Ward
-from app.models.transaction import BorrowTransaction, DispatchType, RoutineRound, TransactionStatus
+from app.models.transaction import BorrowTransaction, DispatchType, ReceiptOutcome, RoutineRound, TransactionStatus
 from app.utils.parsing import parse_uuid
 
-# Roadmap PR6 / owner-confirmed cleaning retirement: "cleaning" is
-# deliberately absent here, not remapped. Cleaning is performed as part of
-# collecting/receiving equipment (AGENTS.md), not a separately recorded
-# receipt outcome -- a usable receipt already becomes AVAILABLE_AT_POOL
-# directly. Passing condition="cleaning" now falls through to the
-# `new_status is None` branch below and is rejected as an unknown
-# condition, the same as any other unrecognized value -- never silently
-# accepted or routed to a status. pm/calibration/repair all classify as
-# UNAVAILABLE_DEFECTIVE under the 4-state model (See
-# HOSPITAL_DOMAIN_MODEL.md): each blocks dispatch pending authorized
-# review, and the 4-state model has no more granular "why" status.
-RETURN_CONDITION_TO_STATUS = {
-    "available": EquipmentStatus.AVAILABLE_AT_POOL,
-    "pm": EquipmentStatus.UNAVAILABLE_DEFECTIVE,
-    "calibration": EquipmentStatus.UNAVAILABLE_DEFECTIVE,
-    "repair": EquipmentStatus.UNAVAILABLE_DEFECTIVE,
+# Roadmap PR8B (knowledge/adr/ADR-006-receipt-outcome-contract.md): the
+# frozen binary receipt contract. Replaces the pre-PR8B four-value
+# RETURN_CONDITION_TO_STATUS dict (`available`/`pm`/`calibration`/
+# `repair`) -- a `ReceiptOutcome` is validated by app.schemas.transaction.
+# ReturnRequest before this service ever runs, so this mapping is total
+# over the enum's members; there is no "unknown outcome" branch to guard
+# here anymore (see return_equipment below). Cleaning remains deliberately
+# absent (Roadmap PR6 / owner-confirmed cleaning retirement, AGENTS.md): a
+# usable receipt already becomes AVAILABLE_AT_POOL directly, and cleaning
+# is never a distinct receipt outcome.
+RECEIPT_OUTCOME_TO_STATUS = {
+    ReceiptOutcome.USABLE: EquipmentStatus.AVAILABLE_AT_POOL,
+    ReceiptOutcome.DEFECTIVE: EquipmentStatus.UNAVAILABLE_DEFECTIVE,
 }
 
 
@@ -152,7 +149,7 @@ async def return_equipment(
     db: AsyncSession,
     *,
     transaction_id: uuid.UUID,
-    condition: str,
+    receipt_outcome: ReceiptOutcome,
     notes: str | None,
     received_by_user_id: uuid.UUID | None,
     ip_address: str | None,
@@ -172,16 +169,19 @@ async def return_equipment(
     if tx.status != TransactionStatus.OPEN:
         raise TransactionAlreadyReturnedError("This transaction has already been returned")
 
-    new_status = RETURN_CONDITION_TO_STATUS.get(condition)
-    if new_status is None:
-        raise InvalidInputError(f"Unknown condition '{condition}'")
+    # Roadmap PR8B: receipt_outcome is a `ReceiptOutcome`, already validated
+    # by app.schemas.transaction.ReturnRequest before this service ever
+    # runs -- RECEIPT_OUTCOME_TO_STATUS is total over the enum's members, so
+    # there is no "unknown outcome" branch to guard here (contrast the
+    # pre-PR8B free-form `condition` string, which needed one).
+    new_status = RECEIPT_OUTCOME_TO_STATUS[receipt_outcome]
 
     # Roadmap PR8A -- the sole concurrency guard for the receipt race: a
     # conditional close (UPDATE ... WHERE status = 'open') decided by affected
     # -row count. Exactly one of N concurrent receipts for this transaction
     # gets won == True; the rest get won == False.
     won = await transaction_crud.close(
-        db, tx, received_by_user_id=received_by_user_id, condition_on_return=condition, notes=notes
+        db, tx, received_by_user_id=received_by_user_id, receipt_outcome=receipt_outcome.value, notes=notes
     )
     if not won:
         # Roadmap PR8A Case B -- lost a concurrent race. Another request
@@ -189,8 +189,11 @@ async def return_equipment(
         # We return here BEFORE any equipment-status, status-history, or audit
         # write, so a losing request produces zero side effects. Roll back the
         # (row-count-zero) UPDATE and the read, then reject with the SAME
-        # response as Case A -- PR8A introduces no new error code; the
-        # race-vs-genuine-repeat distinction is deferred to PR8B.
+        # response as Case A -- neither PR8A nor this PR's contract-narrowing
+        # slice of PR8B introduces a new error code; a distinguishable
+        # race-vs-genuine-repeat error message remains unimplemented and open
+        # (see knowledge/adr/ADR-006-receipt-outcome-contract.md's "Not
+        # decided here" section).
         await db.rollback()
         raise TransactionAlreadyReturnedError("This transaction has already been returned")
 
@@ -211,7 +214,11 @@ async def return_equipment(
         raise EquipmentNotFoundError("Equipment not found")
 
     await equipment_crud.change_status_for_dispatch_receipt(
-        db, equipment, new_status=new_status, changed_by_user_id=received_by_user_id, reason=f"Returned as {condition}"
+        db,
+        equipment,
+        new_status=new_status,
+        changed_by_user_id=received_by_user_id,
+        reason=f"Returned as {receipt_outcome.value}",
     )
     await audit_crud.create(
         db,
@@ -219,7 +226,7 @@ async def return_equipment(
         action="return",
         entity_type="borrow_transaction",
         entity_id=tx.id,
-        after_data={"condition": condition},
+        after_data={"receipt_outcome": receipt_outcome.value},
         ip_address=ip_address,
         user_agent=user_agent,
     )

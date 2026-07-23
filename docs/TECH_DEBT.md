@@ -18,6 +18,7 @@ verification passes.
 | TD-003 | No required PostgreSQL CI workflow | Medium | Open | PR #7 evidence review | PostgreSQL tests exist; `.github/workflows` absent | Repository Owner | 2026-07-17 |
 | TD-004 | Naive `datetime.utcnow()` usage | Low | Open | Governance Pack inventory | Multiple backend models/services | Backend Engineer | 2026-07-17 |
 | TD-005 | Temporary default/long-lived branch structure | Medium | Open | Repository cleanup assessment | Recall default; `claude/*` active base | Repository Owner | 2026-07-17 |
+| TD-006 | Frontend still submits the retired receipt `condition` field | High | Open | Roadmap PR8B implementation | `frontend/src/services/borrow.ts`, `types/index.ts`, `pages/ReturnPage.tsx`; `docs/api/receipt.md` | Frontend Engineer | 2026-07-23 |
 
 ## TD-001 — Equipment update/status response `MissingGreenlet`
 
@@ -87,3 +88,26 @@ verification passes.
 - **Verification to close:** `main` is protected/default, open PRs are correctly
   based, archive tags exist, legacy branches pass retention checks, and rollback
   is documented.
+
+## TD-006 — Frontend still submits the retired receipt `condition` field
+
+- **Description:** Roadmap PR8B (`knowledge/adr/ADR-006-receipt-outcome-contract.md`)
+  replaced `ReturnRequest.condition` (a four-value free-form string) with
+  `receipt_outcome` (a typed `usable`/`defective` enum), with no
+  compatibility alias. `frontend/src/services/borrow.ts`,
+  `frontend/src/types/index.ts`, and `frontend/src/pages/ReturnPage.tsx`
+  still build and submit the old `condition` shape — the frontend change
+  was explicitly out of scope for the task that implemented PR8B.
+- **Operational impact:** Every receipt submission from the deployed
+  frontend against a backend running this contract fails with
+  `422 VALIDATION_ERROR` (unrecognized field, missing required
+  `receipt_outcome`) — the receipt flow is non-functional end-to-end until
+  this is resolved.
+- **Why deferred:** The implementing task was explicitly scoped to the
+  backend contract only ("Do not begin frontend or authentication work").
+- **Resolution trigger:** A focused frontend PR adopting `receipt_outcome`
+  (`docs/api/receipt.md`), including `ReturnPage.tsx`'s two-choice
+  usable/defective selector.
+- **Verification to close:** End-to-end receipt flow (dispatch, then
+  receipt via the frontend UI) succeeds against a backend running this
+  contract, for both `usable` and `defective` outcomes.
