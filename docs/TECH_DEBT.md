@@ -141,7 +141,10 @@ verification passes.
   deployed together per the coordinated-release requirement above, so the
   frontend/backend compatibility gap this row tracked no longer exists. The
   legacy request field `condition` is retired and no longer sent.
-  This closes only the frontend/backend contract gap tracked by this row —
-  it does not imply Roadmap PR8's PR8C slice (race-loss-vs-genuine-repeat
-  distinguishable error) is complete; PR8C is separately tracked and not
-  started.
+  This closed only the frontend/backend contract gap tracked by this row —
+  it did not, by itself, imply Roadmap PR8's PR8C slice
+  (race-loss-vs-genuine-repeat distinguishable error) was complete; PR8C
+  was separately tracked. PR8C has since merged (GitHub PR #31, squash SHA
+  `f923f0aec8aa79fb4c33d2c1b0c05c08a057fe17`) — see `docs/DECISION_LOG.md`
+  ("Roadmap PR8 (PR8C slice)") and `docs/ROADMAP.md`. **Roadmap PR8 (PR8A,
+  PR8B, and PR8C) is now fully complete.**

@@ -112,7 +112,11 @@ two mutually-exclusive, passthrough-property-backed fields: `receipt_outcome`
 `legacy_condition_on_return` (`string | null`, the raw pre-PR8B value when
 one exists) — a legacy value is never translated into the new domain.
 Distinguishing a race-loss receipt rejection from a genuine repeat
-rejection is a separate, not-yet-started slice, Roadmap PR8 (PR8C slice).
+rejection was a separate slice, Roadmap PR8 (PR8C slice), which has since
+merged (GitHub PR #31): a losing receipt request now returns
+`TRANSACTION_ALREADY_RETURNED` or `RECEIPT_RACE_LOST` (both `409`)
+depending on cause — see `docs/api/receipt.md` and
+`knowledge/adr/ADR-006-receipt-outcome-contract.md`.
 
 ## Relationships
 
