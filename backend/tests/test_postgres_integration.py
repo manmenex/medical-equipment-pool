@@ -31,7 +31,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import inspect, select, text
+from sqlalchemy import func, inspect, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.db_errors import translate_integrity_error
@@ -3917,15 +3917,50 @@ async def _dispatch_one_open_transaction(pg_client, headers, *, asset_number: st
     return tx["id"], equipment_id
 
 
+# Codex PR26 review round 1, HIGH 1: pg_engine (fixture above) does not
+# override SQLAlchemy's default AsyncAdaptedQueuePool sizing (pool_size=5,
+# max_overflow=10 -- 15 connections total), and every concurrent HTTP request
+# in the burst below holds one connection for its full duration (pg_client's
+# override_get_db opens one session per request). Synchronizing more parties
+# than that would risk a pool-exhaustion deadlock (a party can't reach the
+# barrier without first acquiring a connection); this cap keeps the
+# synchronized group comfortably under capacity, with headroom for pg_session
+# and other fixture connections, while still forcing genuine contention on
+# the conditional UPDATE for every concurrency level in the required matrix.
+_RECEIPT_RACE_BARRIER_CAP = 10
+
+
 @pytest.mark.parametrize("concurrency", [1, 2, 5, 10, 50])
 async def test_concurrent_receipt_burst_produces_exactly_one_winner_on_postgres(
-    pg_client, pg_seeded_users, pg_transaction_seq, pg_session, concurrency
+    pg_client, pg_seeded_users, pg_transaction_seq, pg_session, concurrency, monkeypatch
 ):
     """Roadmap PR8A core safety property, across the required matrix
     (1 / 2 / 5 / 10 / 50 concurrent receipts for one transaction): exactly one
     request wins (200, closed), the rest get 409 TRANSACTION_ALREADY_RETURNED,
     and persistent database state -- not just the HTTP responses -- shows the
-    receipt happened exactly once."""
+    receipt happened exactly once, with the winner's own payload persisted.
+
+    Codex PR26 review round 1, HIGH 1: asyncio.gather() alone only starts the
+    HTTP requests concurrently -- it does not guarantee more than one of them
+    actually reaches the vulnerable window (having read status == OPEN, not
+    yet having raced the conditional UPDATE) at the same time. Without a
+    synchronization point, the whole burst could legitimately resolve
+    sequentially -- each request's own initial SELECT already observing the
+    previous request's committed CLOSED, so every "loser" is rejected by the
+    Case A fast-path in app.services.borrow_service.return_equipment() and
+    the conditional UPDATE/rowcount guard this test exists to prove is never
+    actually raced. The barrier below forces a bounded group of concurrent
+    requests to all reach transaction_crud.close() -- i.e. to have all passed
+    the initial OPEN read -- before any of them is allowed to proceed into
+    the real conditional UPDATE against real PostgreSQL. The wrapper still
+    calls the unmodified production transaction_crud.close(); only the
+    timing is constrained, nothing about the DB result or rowcount is mocked
+    (see the app.crud.transaction.create() wrapping pattern used elsewhere in
+    this file, e.g. test_dispatch_failure_after_transaction_no_generation_
+    leaves_safe_gap_on_postgres, for the same call-the-real-function style).
+    """
+    from app.crud import transaction as transaction_crud
+
     headers = await _admin_headers(pg_client)
     tx_id, equipment_id = await _dispatch_one_open_transaction(
         pg_client,
@@ -3934,12 +3969,43 @@ async def test_concurrent_receipt_burst_produces_exactly_one_winner_on_postgres(
         ward_code=f"PR8A-RCPT-WARD-{concurrency:03d}",
     )
 
-    async def _receipt():
+    barrier_size = min(concurrency, _RECEIPT_RACE_BARRIER_CAP)
+    barrier = asyncio.Barrier(barrier_size)
+    entrants = {"n": 0}
+    original_close = transaction_crud.close
+
+    async def _synchronized_close(db, tx, **kwargs):
+        # Synchronous check-and-increment: no `await` between reading and
+        # updating entrants["n"], so this is atomic under asyncio's
+        # cooperative scheduling -- exactly `barrier_size` calls (the first
+        # to arrive) wait, matching the barrier's party count exactly, so it
+        # always releases cleanly with no leftover waiters.
+        entrants["n"] += 1
+        seat = entrants["n"]
+        if seat <= barrier_size:
+            await barrier.wait()
+        return await original_close(db, tx, **kwargs)
+
+    monkeypatch.setattr(transaction_crud, "close", _synchronized_close)
+
+    # Codex PR26 review round 1, MEDIUM 2: an identical payload across every
+    # request cannot prove the persisted/response outcome is specifically the
+    # *winner's* -- any request's fields would look the same. Each request
+    # instead carries a unique marker in `notes`, so after the race we can
+    # assert that only the winning request's marker was ever persisted, and
+    # every loser's marker is absent (i.e. no loser wrote anything).
+    async def _receipt(marker: str):
         return await pg_client.post(
-            f"/api/v1/return/{tx_id}", headers=headers, json={"condition": "available"}
+            f"/api/v1/return/{tx_id}", headers=headers, json={"condition": "available", "notes": marker}
         )
 
-    responses = await asyncio.gather(*(_receipt() for _ in range(concurrency)))
+    # Zero-padded to a fixed width: an unpadded "race-marker-1" would be a
+    # literal substring of "race-marker-13"/"...-19" etc, so a marker
+    # `in`-containment check against the wrong index could pass by accident
+    # once concurrency reaches double digits. Equal-width numeric suffixes
+    # can only be substrings of each other by being identical.
+    markers = [f"race-marker-{i:03d}" for i in range(concurrency)]
+    responses = await asyncio.gather(*(_receipt(marker) for marker in markers))
     statuses = [r.status_code for r in responses]
 
     # --- HTTP-level: exactly one winner, the rest are clean 409s -----------
@@ -3947,8 +4013,13 @@ async def test_concurrent_receipt_burst_produces_exactly_one_winner_on_postgres(
     assert statuses.count(409) == concurrency - 1, f"expected {concurrency - 1} 409 losers, got statuses={statuses}"
     assert set(statuses) <= {200, 409}, f"no other status is acceptable, got {statuses}"
 
-    winner = next(r for r in responses if r.status_code == 200)
+    winner_index = next(i for i, r in enumerate(responses) if r.status_code == 200)
+    winner = responses[winner_index]
+    winner_marker = markers[winner_index]
     assert winner.json()["status"] == "closed", "the winning receipt response must report the transaction closed"
+    assert winner_marker in (winner.json()["notes"] or ""), (
+        "the winning response must reflect its own request's marker, not a stale/mixed value"
+    )
 
     for loser in (r for r in responses if r.status_code == 409):
         assert loser.json()["code"] == "TRANSACTION_ALREADY_RETURNED", (
@@ -3967,6 +4038,18 @@ async def test_concurrent_receipt_burst_produces_exactly_one_winner_on_postgres(
     assert tx_row.returned_at is not None
     assert tx_row.condition_on_return == "available", "only the winner's outcome may be persisted"
     assert tx_row.received_by_user_id is not None
+
+    # The response body must match the refreshed, persisted row exactly --
+    # not merely "some" 200 response with plausible-looking fields.
+    assert winner.json()["condition_on_return"] == tx_row.condition_on_return
+    assert winner.json()["notes"] == tx_row.notes
+
+    assert winner_marker in (tx_row.notes or ""), "the persisted row must carry the winner's own marker"
+    for i, other_marker in enumerate(markers):
+        if i != winner_index:
+            assert other_marker not in (tx_row.notes or ""), (
+                f"loser marker {other_marker!r} must never be persisted -- only the winner ({winner_marker!r}) may write"
+            )
 
     audit_rows = (
         await pg_session.execute(
@@ -3989,6 +4072,17 @@ async def test_concurrent_receipt_burst_produces_exactly_one_winner_on_postgres(
     ).scalars().all()
     assert len(receipt_history_rows) == 1, (
         f"exactly one receipt (issued_to_ward -> ...) status-history row must exist, found {len(receipt_history_rows)}"
+    )
+
+    tx_count_for_equipment = (
+        await pg_session.execute(
+            select(func.count())
+            .select_from(BorrowTransaction)
+            .where(BorrowTransaction.equipment_id == uuid.UUID(equipment_id))
+        )
+    ).scalar_one()
+    assert tx_count_for_equipment == 1, (
+        "exactly one transaction row must exist for this equipment -- no duplicate receipt row was created"
     )
 
     equipment_row = (
