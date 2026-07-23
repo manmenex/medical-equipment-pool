@@ -155,6 +155,16 @@ frontend's receipt flow receives `422 VALIDATION_ERROR` for every
 submission against a backend running this contract — see Decision 1's
 coordinated-deployment requirement and `docs/TECH_DEBT.md` TD-006.
 
+**Update:** that follow-up frontend change is now drafted (branch
+`feature/pr8b-frontend-receipt-outcome`) — `receipt_outcome`/
+`ReceiptOutcome` end to end, a two-choice usable/defective selector
+replacing the four-option condition radio group, and Vitest tests. It
+does not implement any lifecycle-state mapping in the frontend (the
+backend remains the single source of truth, per Decision 3) and does not
+touch PR8C or authentication. **Not yet merged** — TD-006 remains open
+until this frontend change and the already-merged backend (squash SHA
+`da4d76a640548e5a1d38ff3d7690695f950c85fe`) are deployed together.
+
 This repository has no OpenAPI-to-TypeScript code generation pipeline
 (`frontend/` types are hand-authored, not generated) — there is no
 "generated TypeScript client" for this decision to verify against.

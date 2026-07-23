@@ -1,8 +1,11 @@
 import { resolve } from "path";
 
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
+// vitest/config re-exports Vite's defineConfig with the `test` property's
+// types merged in -- this is the one config file both `vite build` and
+// `vitest run` read (docs/development/TESTING.md).
+import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [
@@ -63,5 +66,10 @@ export default defineConfig({
         },
       },
     },
+  },
+  test: {
+    environment: "jsdom",
+    setupFiles: ["./src/test/setup.ts"],
+    globals: false,
   },
 });

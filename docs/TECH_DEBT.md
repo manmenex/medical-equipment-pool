@@ -124,3 +124,11 @@ verification passes.
   receipt via the frontend UI) succeeds against a backend running this
   contract, for both `usable` and `defective` outcomes; the frontend's
   `receipt_outcome` type is a `"usable" | "defective"` union.
+- **Status update:** A fix is drafted (branch `feature/pr8b-frontend-receipt-outcome`)
+  and adopts `receipt_outcome`/`ReceiptOutcome` end to end
+  (`frontend/src/types/index.ts`, `services/borrow.ts`,
+  `pages/ReturnPage.tsx`), with Vitest component/unit tests. **Not yet
+  merged** — this row's status stays `Open` until the PR merges and the
+  backend (already merged, squash SHA `da4d76a640548e5a1d38ff3d7690695f950c85fe`)
+  and this frontend change are deployed together per the coordinated-release
+  requirement above.

@@ -1,5 +1,5 @@
 import { api } from "@/services/api";
-import type { DispatchType, Page, RoutineRound, TransactionOut } from "@/types";
+import type { DispatchType, Page, ReceiptOutcome, RoutineRound, TransactionOut } from "@/types";
 
 // Roadmap PR7b: borrower_name/due_at/quantity are deliberately absent --
 // no longer accepted by the active BorrowRequest contract (see
@@ -27,8 +27,13 @@ export async function listActiveBorrows(): Promise<TransactionOut[]> {
   return resp.data;
 }
 
+// Roadmap PR8B (backend/app/schemas/transaction.py's ReturnRequest,
+// knowledge/adr/ADR-006-receipt-outcome-contract.md): condition is
+// retired entirely -- receipt_outcome replaces it, no compatibility
+// alias. The backend rejects an unrecognized field (extra: "forbid"), so
+// this payload shape must match the current contract exactly.
 export interface ReturnPayload {
-  condition: string;
+  receipt_outcome: ReceiptOutcome;
   notes?: string;
 }
 
