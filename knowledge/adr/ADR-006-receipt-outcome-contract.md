@@ -136,17 +136,15 @@ decided to do about it" (a lifecycle transition).
 ## Not decided here
 
 This decision narrows the request/response **contract**. It does not
-implement a distinguishable error message or code for a race-loss
+itself implement a distinguishable error message or code for a race-loss
 rejection versus a genuine repeat-request rejection. To avoid leaving
-Roadmap PR8's completion ambiguous, that remaining gap is now named
-explicitly as its own slice, **Roadmap PR8 (PR8C slice)** — not yet
-started — following the same PR7a/PR7b/PR8A/PR8B lettered-slice
-precedent: PR8A (concurrency guard, merged), PR8B (this contract, this
-ADR), PR8C (race-vs-repeat distinguishable error, not started). **Roadmap
-PR8 as a whole is not complete until all three merge.** Both causes
-continue to share `409 TRANSACTION_ALREADY_RETURNED` (`docs/api/receipt.md`,
-`docs/api/ERROR_CODES.md`) until PR8C lands. See `docs/ROADMAP.md` and
-`docs/DECISION_LOG.md`.
+Roadmap PR8's completion ambiguous, that remaining gap was named
+explicitly as its own slice, **Roadmap PR8 (PR8C slice)**, following the
+same PR7a/PR7b/PR8A/PR8B lettered-slice precedent: PR8A (concurrency
+guard, merged), PR8B (this contract, this ADR), PR8C (race-vs-repeat
+distinguishable error). That slice has since been implemented and merged
+— see "Update" below. Both causes shared `409 TRANSACTION_ALREADY_RETURNED`
+(`docs/api/receipt.md`, `docs/api/ERROR_CODES.md`) until PR8C merged.
 
 This decision itself did not touch the frontend
 (`frontend/src/services/borrow.ts`, `frontend/src/types/index.ts`,
@@ -166,6 +164,24 @@ change and the backend (GitHub PR #28, squash SHA
 `da4d76a640548e5a1d38ff3d7690695f950c85fe`) were deployed together, per
 Decision 1's coordinated-deployment requirement. `docs/TECH_DEBT.md`
 TD-006, which tracked this gap, is now `Closed`.
+
+**Update (PR8C):** the remaining gap named in "Not decided here" above is
+also implemented and merged — GitHub PR #31, squash SHA
+`f923f0aec8aa79fb4c33d2c1b0c05c08a057fe17`. A losing receipt request now
+receives one of two distinguishable, machine-readable codes instead of
+always reusing `TRANSACTION_ALREADY_RETURNED`: that code for a genuine
+sequential repeat, and a new `RECEIPT_RACE_LOST` for a request whose own
+read observed the transaction as OPEN but which then lost the
+conditional-close race. Both remain `409 Conflict`; only `code` (and
+`detail`) differ. `RECEIPT_RACE_LOST`'s wording deliberately attributes
+the outcome to another *request*, not another person — the backend has no
+basis to identify who sent the winning request. The frontend
+(`ReturnPage.tsx`) branches on the response's `code` field, never on
+free-text `detail`. This did not change this ADR's contract (Decisions
+1-6 above are unaffected): no lifecycle state, schema, migration, or
+`receipt_outcome` request-contract change. **Roadmap PR8 (PR8A, PR8B, and
+PR8C) is now fully complete.** See `docs/DECISION_LOG.md` ("Roadmap PR8
+(PR8C slice)") and `docs/ROADMAP.md`.
 
 This repository has no OpenAPI-to-TypeScript code generation pipeline
 (`frontend/` types are hand-authored, not generated) — there is no
@@ -206,8 +222,8 @@ union, not a plain `string`, matching this contract's OpenAPI enum
   `legacy_condition_on_return` instead; the two fields are never both set
   for the same transaction.
 - Roadmap PR8's overall completion status is now unambiguous:
-  PR8A + PR8B + PR8C, all three required, tracked individually in
-  `docs/ROADMAP.md` and `docs/DECISION_LOG.md`.
+  PR8A + PR8B + PR8C, all three required, all three merged, tracked
+  individually in `docs/ROADMAP.md` and `docs/DECISION_LOG.md`.
 
 ## References
 
