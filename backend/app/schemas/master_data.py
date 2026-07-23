@@ -1,6 +1,16 @@
+from typing import Literal
+
 from pydantic import BaseModel
 
+from app.models.user import ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, ROLE_READ_ONLY
 from app.schemas.common import UUIDStr
+
+# Roadmap PR10: a closed, generated-OpenAPI-enum type for the 3 confirmed
+# role values -- a request naming a retired legacy role (or any other
+# unrecognized string) is now rejected at the schema layer with the
+# standard 422 VALIDATION_ERROR envelope, not silently accepted and only
+# later discovered to be unknown by the runtime `get_role_by_name` lookup.
+RoleName = Literal[ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, ROLE_READ_ONLY]
 
 
 class DepartmentOut(BaseModel):
@@ -76,12 +86,12 @@ class UserCreate(BaseModel):
     email: str
     phone: str | None = None
     password: str
-    role_name: str
+    role_name: RoleName
 
 
 class UserUpdate(BaseModel):
     full_name: str | None = None
     phone: str | None = None
-    role_name: str | None = None
+    role_name: RoleName | None = None
     is_active: bool | None = None
     password: str | None = None

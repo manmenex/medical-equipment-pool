@@ -14,7 +14,7 @@ from app.core.security import hash_password
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
-from app.models.user import ALL_ROLES, Role, User
+from app.models.user import ALL_ROLES, ROLE_ADMINISTRATOR, Role, User
 
 
 @pytest_asyncio.fixture
@@ -93,7 +93,7 @@ async def login(client: AsyncClient, identifier: str, password: str = "Password@
 # ---------------------------------------------------------------------------
 
 
-async def auth_headers(client: AsyncClient, role: str = "admin") -> dict:
+async def auth_headers(client: AsyncClient, role: str = ROLE_ADMINISTRATOR) -> dict:
     identifier = f"{role.upper()}001"
     token = await login(client, identifier)
     return {"Authorization": f"Bearer {token}"}

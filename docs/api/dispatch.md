@@ -11,7 +11,7 @@
 
 Creates a new borrow transaction and moves the selected equipment from `available_at_pool` to `issued_to_ward`, atomically.
 
-**Auth:** Bearer token required. Allowed roles: `admin`, `ward_nurse`, `transport_staff`.
+**Auth:** Bearer token required. Allowed roles (Roadmap PR10's confirmed 3-role model): `administrator`, `equipment_pool_staff` (`app.api.v1.deps.EQUIPMENT_POOL_OPERATION_ROLES`).
 
 ### Request body (`BorrowRequest`)
 
@@ -82,7 +82,7 @@ Creates a new borrow transaction and moves the selected equipment from `availabl
 | `404` | `EQUIPMENT_NOT_FOUND` | `equipment_id` doesn't resolve to an equipment row |
 | `409` | `EQUIPMENT_NOT_AVAILABLE` | Equipment's current status is not `available_at_pool`, or a concurrent dispatch of the same equipment won the race (unique-index collision on `idx_tx_one_active_borrow`) |
 | `422` | `VALIDATION_ERROR` | Missing required field, wrong type, an unrecognized field (`borrower_name`/`due_at`/`quantity`/anything else not in the schema), or `routine_round` present/absent inconsistently with `dispatch_type` |
-| `401` / `403` | `NOT_AUTHENTICATED` / `FORBIDDEN` | Missing/invalid token, or caller's role isn't `admin`/`ward_nurse`/`transport_staff` |
+| `401` / `403` | `NOT_AUTHENTICATED` / `FORBIDDEN` | Missing/invalid token, or caller's role isn't `administrator`/`equipment_pool_staff` |
 
 A bad `ward_id` reference is deliberately a `400 INVALID_INPUT`, not the `409 EQUIPMENT_NOT_AVAILABLE` conflict response — a missing ward is a client input error, not an equipment-availability conflict (see the comment in `borrow_service.borrow` referencing this repository's PR20 review round 1, finding MAJOR 3).
 
@@ -92,7 +92,7 @@ Full status/code reference: `docs/api/ERROR_CODES.md`.
 
 Returns every `BorrowTransaction` currently `OPEN` (i.e. not yet received back), as a plain list of `TransactionOut` (not paginated).
 
-**Auth:** Bearer token required. Allowed roles: `admin`, `ward_nurse`, `transport_staff`, `biomedical_engineer`, `viewer`.
+**Auth:** Bearer token required, any authenticated role — a view/list surface (Roadmap PR10), no role restriction beyond authentication, matching `GET /transactions`'s own gate.
 
 ### Response — `200 OK`
 

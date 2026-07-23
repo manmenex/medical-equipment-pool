@@ -8,16 +8,23 @@ from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.equipment import Equipment
 from app.models.notification import Notification
-from app.models.user import ROLE_ADMIN, ROLE_BIOMEDICAL_ENGINEER, Role, User
+from app.models.user import ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, Role, User
 
 logger = logging.getLogger(__name__)
 _scheduler: AsyncIOScheduler | None = None
 
 
 async def _notify_engineers(db, title: str, body: str, notif_type: str) -> None:
+    # Roadmap PR10: this PM/CAL due-date notification recipient list is
+    # unrelated to PR10's own scope, but biomedical_engineer (one of its two
+    # pre-PR10 recipient roles) is retired by the role-consolidation
+    # migration and can no longer be referenced. Updated to the two
+    # confirmed roles with an ongoing equipment-operations responsibility
+    # (Administrator, Equipment Pool Staff) -- a minimal, required rename to
+    # keep this existing feature working, not a redesign of it.
     result = await db.execute(
         select(User.id).join(Role, Role.id == User.role_id).where(
-            Role.name.in_([ROLE_ADMIN, ROLE_BIOMEDICAL_ENGINEER]), User.is_active.is_(True)
+            Role.name.in_([ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF]), User.is_active.is_(True)
         )
     )
     for (user_id,) in result.all():

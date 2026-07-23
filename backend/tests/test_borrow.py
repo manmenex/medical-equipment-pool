@@ -2,6 +2,7 @@ import uuid
 
 import pytest
 
+from app.models.user import ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, ROLE_READ_ONLY
 from tests.conftest import auth_headers as _auth_headers
 from tests.conftest import create_ward as _create_ward
 from tests.conftest import on_demand_borrow_payload as _on_demand_borrow_payload
@@ -18,8 +19,8 @@ async def _create_equipment(client, headers, asset_number="AST-1001", name="Infu
 
 
 async def test_borrow_then_return_flow(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
-    nurse_headers = await _auth_headers(client, "ward_nurse")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    nurse_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
 
     equipment = await _create_equipment(client, admin_headers)
     payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-FLOW")
@@ -43,8 +44,8 @@ async def test_borrow_then_return_flow(client, seeded_users):
 
 
 async def test_cannot_borrow_unavailable_equipment(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
-    nurse_headers = await _auth_headers(client, "ward_nurse")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    nurse_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-1002")
     payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-UNAVAIL")
 
@@ -84,8 +85,8 @@ async def test_unique_active_borrow_db_constraint(db_session):
 
 
 async def test_viewer_cannot_borrow(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
-    viewer_headers = await _auth_headers(client, "viewer")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    viewer_headers = await _auth_headers(client, ROLE_READ_ONLY)
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-1004")
     payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-VIEWER")
 
@@ -106,7 +107,7 @@ async def test_viewer_cannot_borrow(client, seeded_users):
 
 
 async def test_transaction_no_is_padded_to_at_least_eight_digits(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR4-0001")
     payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-PR4-0001")
 
@@ -130,7 +131,7 @@ async def test_borrow_creates_exactly_one_audit_row_matching_transaction_no(clie
 
     from app.models.audit import AuditLog
 
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR4-0002")
     payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-PR4-0002")
 
@@ -200,7 +201,7 @@ async def test_generate_transaction_no_fails_closed_for_unsupported_dialect(db_s
 
 
 async def test_new_dispatch_opens_a_transaction_with_status_open(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7-0001")
     payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-PR7-0001")
 
@@ -210,7 +211,7 @@ async def test_new_dispatch_opens_a_transaction_with_status_open(client, seeded_
 
 
 async def test_receipt_closes_the_transaction_and_records_outcome(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7-0002")
     payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-PR7-0002")
 
@@ -227,7 +228,7 @@ async def test_receipt_closes_the_transaction_and_records_outcome(client, seeded
 
 
 async def test_closing_an_already_closed_transaction_is_rejected(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7-0003")
     payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-PR7-0003")
 
@@ -272,7 +273,7 @@ async def test_receipt_race_loss_returns_a_distinguishable_code_with_zero_side_e
     """
     from app.crud import transaction as transaction_crud
 
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR8C-0001")
     payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-PR8C-0001")
 
@@ -636,7 +637,7 @@ async def test_removed_field_in_borrow_request_is_rejected_with_no_side_effects(
     from app.models.audit import AuditLog
     from app.models.transaction import BorrowTransaction
 
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment(client, admin_headers, asset_number=f"AST-PR20-{extra_field}")
     ward_id = await _create_ward(client, admin_headers, code=f"W-PR20-{extra_field}")
 
@@ -675,7 +676,7 @@ async def test_routine_round_dispatch_creates_exactly_one_open_transaction(clien
 
     from app.models.transaction import BorrowTransaction
 
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7B-0001")
     ward_id = await _create_ward(client, admin_headers, code="W-PR7B-0001")
 
@@ -705,7 +706,7 @@ async def test_on_demand_dispatch_creates_exactly_one_open_transaction(client, s
 
     from app.models.transaction import BorrowTransaction
 
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7B-0002")
     payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-PR7B-0002")
 
@@ -722,7 +723,7 @@ async def test_on_demand_dispatch_creates_exactly_one_open_transaction(client, s
 
 
 async def test_routine_round_dispatch_transitions_equipment_to_issued_to_ward(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7B-0003")
     ward_id = await _create_ward(client, admin_headers, code="W-PR7B-0003")
 
@@ -741,7 +742,7 @@ async def test_routine_round_dispatch_transitions_equipment_to_issued_to_ward(cl
 
 
 async def test_dispatch_without_ward_id_is_rejected_by_the_api(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7B-0004")
 
     resp = await client.post(
@@ -751,7 +752,7 @@ async def test_dispatch_without_ward_id_is_rejected_by_the_api(client, seeded_us
 
 
 async def test_dispatch_without_dispatch_type_is_rejected_by_the_api(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7B-0005")
     ward_id = await _create_ward(client, admin_headers, code="W-PR7B-0005")
 
@@ -762,7 +763,7 @@ async def test_dispatch_without_dispatch_type_is_rejected_by_the_api(client, see
 
 
 async def test_dispatch_type_and_routine_round_are_persisted_as_approved_lowercase_values(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7B-0006")
     ward_id = await _create_ward(client, admin_headers, code="W-PR7B-0006")
 
@@ -835,7 +836,7 @@ async def test_receipt_with_invalid_outcome_is_rejected_with_validation_error(cl
     app.services.borrow_service ever runs, not the pre-PR8B 400
     INVALID_INPUT a free-form condition string needed a runtime
     dict-lookup miss to detect."""
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR8B-0001")
     payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-PR8B-0001")
 
@@ -859,7 +860,7 @@ async def test_receipt_rejects_the_retired_condition_field(client, seeded_users)
     (mirroring BorrowRequest's Roadmap PR7b precedent), so a caller still
     sending the pre-PR8B `condition` field gets a hard 422, never a
     silently-ignored field or a silently-accepted receipt."""
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR8B-0002")
     payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-PR8B-0002")
 
@@ -876,7 +877,7 @@ async def test_receipt_rejects_the_retired_condition_field(client, seeded_users)
 
 
 async def test_receipt_on_missing_transaction_returns_404(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     missing_id = uuid.uuid4()
 
     return_resp = await client.post(
@@ -970,7 +971,7 @@ async def test_receipt_creates_audit_and_history_rows_with_consistent_response(c
     from app.models.audit import AuditLog
     from app.models.equipment import EquipmentStatusHistory
 
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR8B-0005")
     payload = await _on_demand_borrow_payload(client, admin_headers, equipment["id"], ward_code="W-PR8B-0005")
 

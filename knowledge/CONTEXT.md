@@ -11,7 +11,7 @@
 
 ## Current PR
 
-This governance-synchronization PR (not yet merged) — post-merge documentation/knowledge-layer sync after Roadmap PR9 (both slices) merged. Documentation-only; no production behavior change. No implementation PR is currently in progress. Since Roadmap PR7 (7b slice) merged as GitHub PR #20, seven process/documentation-only or governance PRs have merged in order, plus six production code changes (PR8A, PR8B backend, PR8B frontend, PR8C, PR9A, PR9B):
+**Roadmap PR10 — Role Model Consolidation** (branch `feature/pr10-role-consolidation`, baseline `bfe8a42a55d738d3e591ce27145c7918186643ac`; not yet merged, so the baseline above is unchanged by this entry). Replaces the legacy 5-role model with the confirmed 3-role model (`administrator`/`equipment_pool_staff`/`read_only`) across backend authorization, frontend visibility, user management, seed/bootstrap, and a new Alembic migration (`0009_role_consolidation.py`) with a fail-closed manifest mechanism for the three legacy roles that have no confirmed equivalent. See `docs/DECISION_LOG.md` ("Roadmap PR10") for full rationale and `docs/BUSINESS_RULES.md` ("Roles and the confirmed 3-role permission matrix") for the capability matrix. Before this PR, the most recently merged governance-synchronization PR (GitHub PR #35, squash `bc1b163929a4d07290e56add1db8ad99c592e1a2`) recorded Roadmap PR9's completion — the same seven process/documentation-only or governance PRs and six production code changes (PR8A, PR8B backend, PR8B frontend, PR8C, PR9A, PR9B) listed below remain the merged history this PR builds on:
 
 - **GitHub PR #21** (`0ed6598`) — post-merge governance sync: brought `docs/ROADMAP.md`, `docs/DECISION_LOG.md`, `docs/BUSINESS_RULES.md`, and this knowledge layer up to date after PR #20 merged.
 - **GitHub PR #22** (`06a736c`) — Test Infrastructure Cleanup: consolidated duplicated/inconsistent test helper functions (`auth_headers`, `create_ward`, `on_demand_borrow_payload`) into `backend/tests/conftest.py` as a single shared implementation. No test behavior change — verified via full local `pytest -m "not postgres"` (273 passed) and `pytest -m postgres` (78 passed) runs before merge.
@@ -32,11 +32,11 @@ Roadmap PR7 (both slices, GitHub PR #19/#20), Roadmap PR8 (all three slices, Git
 
 ## Next planned PR
 
-Roadmap PR9 (both slices) is merged and fully complete. The next unstarted item is **Roadmap PR10 — Role Model Consolidation (3 roles)**: replace the current 5-role model with the confirmed Administrator/Equipment Pool Staff/Read Only matrix (`docs/audits/03-hospital-equipment-pool-workflow-audit.md` §10), and update both the backend's `WARD_CORRECTION_ROLES` and the frontend's `canCorrectTransactionWard` — the two places PR9 deliberately left pointing at a single, centralized, temporary admin-only constant pending this consolidation. Planned, not yet started; no implementation detail is assumed here. See `docs/ROADMAP.md`.
+Roadmap PR10 is in progress (this PR, not yet merged) — see "Current PR" above. Once PR10 merges, the next unstarted item is **Roadmap PR11 — Frontend Terminology and Workflow UI Pass**, per `docs/audits/04-consolidated-implementation-plan.md` Part D and `docs/ROADMAP.md`. This PR does not perform PR10's own post-merge governance sync (that follows once PR10 actually merges, mirroring the PR9→GitHub-PR-#35 pattern) and does not start any PR11 work.
 
 ## Outstanding work
 
-- Roadmap PR9 (both slices) is merged; Roadmap PR9 is fully complete. Roadmap PR10 through PR15 (role consolidation, frontend terminology, inventory import, search/reporting, reliability/performance hardening, observability/schema hygiene) are planned, none merged yet. PR10 is next.
+- Roadmap PR9 (both slices) is merged and fully complete. **Roadmap PR10 (Role Model Consolidation) is in progress** on this Draft PR. Roadmap PR11 through PR15 (frontend terminology, inventory import, search/reporting, reliability/performance hardening, observability/schema hygiene) remain planned, none started yet.
 - Confirmed future work not yet scheduled to a Roadmap PR: Shift Sessions, Standby Snapshots, managed-deployment target selection (`docs/ROADMAP.md`).
 - `docs/TECH_DEBT.md` open items: TD-001 (equipment update/status `MissingGreenlet`), TD-002 (`0001_initial.py` uses current ORM metadata), TD-003 (CI now exists and fails closed, but branch protection requiring it is not enabled — partially resolved, needs re-assessment), TD-004 (naive `datetime.utcnow()`), TD-005 (temporary default/long-lived branch structure).
 

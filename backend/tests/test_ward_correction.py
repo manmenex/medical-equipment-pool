@@ -2,7 +2,7 @@ import uuid
 
 import pytest
 
-from app.models.user import ROLE_ADMIN, ROLE_BIOMEDICAL_ENGINEER, ROLE_TRANSPORT_STAFF, ROLE_VIEWER, ROLE_WARD_NURSE
+from app.models.user import ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, ROLE_READ_ONLY
 from tests.conftest import auth_headers as _auth_headers
 from tests.conftest import create_ward as _create_ward
 from tests.conftest import on_demand_borrow_payload as _on_demand_borrow_payload
@@ -34,38 +34,34 @@ async def _correct_ward(client, headers, tx_id, *, ward_id, reason="Correcting a
 
 
 # ---------------------------------------------------------------------------
-# Authorization -- intentionally conservative temporary matrix (Roadmap
-# PR9A): the current 5-role model has no confirmed, evidence-backed
-# equivalent of the future "Equipment Pool Staff" role, so only admin is
-# granted until Roadmap PR10 lands the confirmed 3-role permission matrix.
-# See app.api.v1.deps.WARD_CORRECTION_ROLES's docstring for the full
-# rationale -- this must not be inferred from, or claimed to match, the
-# roles trusted by dispatch (app.api.v1.borrow.BORROW_ROLES) or receipt.
+# Authorization -- confirmed 3-role permission matrix (Roadmap PR10): ward
+# correction is granted to Administrator and Equipment Pool Staff (the two
+# roles with an ongoing equipment-operations responsibility) and denied to
+# Read Only. See app.api.v1.deps.WARD_CORRECTION_ROLES's docstring for the
+# full rationale -- this must not be inferred from, or claimed to match,
+# the roles trusted by dispatch (app.api.v1.borrow.BORROW_ROLES) or
+# receipt, even though they happen to be the same set today.
 # ---------------------------------------------------------------------------
 
 _WARD_CORRECTION_ROLE_MATRIX = [
-    (ROLE_ADMIN, 200),
-    (ROLE_BIOMEDICAL_ENGINEER, 403),
-    (ROLE_WARD_NURSE, 403),
-    (ROLE_TRANSPORT_STAFF, 403),
-    (ROLE_VIEWER, 403),
+    (ROLE_ADMINISTRATOR, 200),
+    (ROLE_EQUIPMENT_POOL_STAFF, 200),
+    (ROLE_READ_ONLY, 403),
 ]
 
 
 @pytest.mark.parametrize("role, expected_status", _WARD_CORRECTION_ROLE_MATRIX)
 async def test_ward_correction_temporary_permission_matrix(client, seeded_users, db_session, role, expected_status):
-    """Exercises the complete temporary permission matrix: only `admin` is
-    granted (200); every other current role -- including
-    biomedical_engineer/ward_nurse/transport_staff, none of which is a
-    confirmed "Equipment Pool Staff" equivalent -- is denied (403). The
-    admin/200 case also confirms a successful correction creates exactly
-    one audit entry (the mandatory audit requirement, not just the
+    """Exercises the complete confirmed permission matrix: Administrator and
+    Equipment Pool Staff are granted (200); Read Only is denied (403). Every
+    granted case also confirms a successful correction creates exactly one
+    audit entry (the mandatory audit requirement, not just the
     authorization outcome)."""
     from sqlalchemy import select
 
     from app.models.audit import AuditLog
 
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     actor_headers = await _auth_headers(client, role)
     tx, original_ward_id = await _dispatch_open_transaction(
         client, admin_headers, asset_number=f"AST-WC-ROLE-{role}", ward_code=f"W-WC-R-{role[:8]}"
@@ -96,7 +92,7 @@ async def test_ward_correction_temporary_permission_matrix(client, seeded_users,
 
 
 async def test_missing_reason_is_rejected(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     tx, _ = await _dispatch_open_transaction(client, admin_headers, asset_number="AST-WC-NOREASON", ward_code="W-WC-NR-1")
     new_ward_id = await _create_ward(client, admin_headers, "W-WC-NR-2")
 
@@ -107,7 +103,7 @@ async def test_missing_reason_is_rejected(client, seeded_users):
 
 
 async def test_blank_reason_is_rejected(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     tx, _ = await _dispatch_open_transaction(client, admin_headers, asset_number="AST-WC-BLANK", ward_code="W-WC-BLANK-1")
     new_ward_id = await _create_ward(client, admin_headers, "W-WC-BLANK-2")
 
@@ -116,7 +112,7 @@ async def test_blank_reason_is_rejected(client, seeded_users):
 
 
 async def test_unknown_request_field_is_rejected(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     tx, _ = await _dispatch_open_transaction(client, admin_headers, asset_number="AST-WC-EXTRA", ward_code="W-WC-EXTRA-1")
     new_ward_id = await _create_ward(client, admin_headers, "W-WC-EXTRA-2")
 
@@ -129,7 +125,7 @@ async def test_unknown_request_field_is_rejected(client, seeded_users):
 
 
 async def test_missing_ward_id_is_rejected(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     tx, _ = await _dispatch_open_transaction(client, admin_headers, asset_number="AST-WC-NOWARD", ward_code="W-WC-NOWARD-1")
 
     resp = await client.post(
@@ -139,7 +135,7 @@ async def test_missing_ward_id_is_rejected(client, seeded_users):
 
 
 async def test_invalid_ward_id_is_rejected(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     tx, _ = await _dispatch_open_transaction(
         client, admin_headers, asset_number="AST-WC-BADWARD", ward_code="W-WC-BADWARD-1"
     )
@@ -149,7 +145,7 @@ async def test_invalid_ward_id_is_rejected(client, seeded_users):
 
 
 async def test_nonexistent_ward_id_is_rejected(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     tx, _ = await _dispatch_open_transaction(
         client, admin_headers, asset_number="AST-WC-GHOSTWARD", ward_code="W-WC-GHOSTWARD-1"
     )
@@ -160,7 +156,7 @@ async def test_nonexistent_ward_id_is_rejected(client, seeded_users):
 
 
 async def test_unknown_transaction_is_rejected(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     new_ward_id = await _create_ward(client, admin_headers, "W-WC-UNKNOWNTX")
 
     resp = await _correct_ward(client, admin_headers, str(uuid.uuid4()), ward_id=new_ward_id)
@@ -180,7 +176,7 @@ async def test_reason_at_exactly_the_max_length_is_accepted_and_audited(client, 
     from app.models.audit import AuditLog
     from app.schemas.transaction import WARD_CORRECTION_REASON_MAX_LENGTH
 
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     tx, _ = await _dispatch_open_transaction(
         client, admin_headers, asset_number="AST-WC-MAXLEN", ward_code="W-WC-MAXLEN-1"
     )
@@ -209,7 +205,7 @@ async def test_reason_one_character_over_the_max_length_is_rejected(client, seed
     from app.models.audit import AuditLog
     from app.schemas.transaction import WARD_CORRECTION_REASON_MAX_LENGTH
 
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     tx, original_ward_id = await _dispatch_open_transaction(
         client, admin_headers, asset_number="AST-WC-OVERLEN", ward_code="W-WC-OVERLEN-1"
     )
@@ -239,7 +235,7 @@ async def test_reason_surrounding_whitespace_is_trimmed_before_storage(client, s
 
     from app.models.audit import AuditLog
 
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     tx, _ = await _dispatch_open_transaction(
         client, admin_headers, asset_number="AST-WC-TRIM", ward_code="W-WC-TRIM-1"
     )
@@ -270,7 +266,7 @@ async def test_same_ward_correction_is_rejected_without_an_audit_entry(client, s
 
     from app.models.audit import AuditLog
 
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     tx, original_ward_id = await _dispatch_open_transaction(
         client, admin_headers, asset_number="AST-WC-NOOP", ward_code="W-WC-NOOP-1"
     )
@@ -298,7 +294,7 @@ async def test_same_ward_correction_is_rejected_without_an_audit_entry(client, s
 
 
 async def test_open_transaction_can_be_corrected(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     tx, _ = await _dispatch_open_transaction(client, admin_headers, asset_number="AST-WC-OPEN", ward_code="W-WC-OPEN-1")
     new_ward_id = await _create_ward(client, admin_headers, "W-WC-OPEN-2")
     assert tx["status"] == "open"
@@ -310,7 +306,7 @@ async def test_open_transaction_can_be_corrected(client, seeded_users):
 
 
 async def test_closed_transaction_can_be_corrected(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     tx, _ = await _dispatch_open_transaction(client, admin_headers, asset_number="AST-WC-CLOSED", ward_code="W-WC-CLOSED-1")
     new_ward_id = await _create_ward(client, admin_headers, "W-WC-CLOSED-2")
 
@@ -332,7 +328,7 @@ async def test_closed_transaction_can_be_corrected(client, seeded_users):
 
 
 async def test_only_ward_id_changes(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     tx, _ = await _dispatch_open_transaction(client, admin_headers, asset_number="AST-WC-ONLYWARD", ward_code="W-WC-OW-1")
     new_ward_id = await _create_ward(client, admin_headers, "W-WC-OW-2")
 
@@ -375,7 +371,7 @@ async def test_exactly_one_audit_entry_is_created(client, seeded_users, db_sessi
 
     from app.models.audit import AuditLog
 
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     tx, _ = await _dispatch_open_transaction(client, admin_headers, asset_number="AST-WC-AUDIT1", ward_code="W-WC-A1-1")
     new_ward_id = await _create_ward(client, admin_headers, "W-WC-A1-2")
 
@@ -399,7 +395,7 @@ async def test_audit_captures_actor_target_before_after_and_reason(client, seede
     from app.models.audit import AuditLog
     from app.models.user import User
 
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     tx, original_ward_id = await _dispatch_open_transaction(
         client, admin_headers, asset_number="AST-WC-AUDIT2", ward_code="W-WC-A2-1"
     )
@@ -409,7 +405,9 @@ async def test_audit_captures_actor_target_before_after_and_reason(client, seede
     resp = await _correct_ward(client, admin_headers, tx["id"], ward_id=new_ward_id, reason=reason)
     assert resp.status_code == 200, resp.text
 
-    admin_user = (await db_session.execute(select(User).where(User.employee_code == "ADMIN001"))).scalar_one()
+    admin_user = (
+        await db_session.execute(select(User).where(User.employee_code == f"{ROLE_ADMINISTRATOR.upper()}001"))
+    ).scalar_one()
 
     audit_row = (
         await db_session.execute(
@@ -493,7 +491,7 @@ async def test_audit_write_failure_rolls_back_the_ward_change(db_session, monkey
 
 
 async def test_receipt_path_leaves_ward_unchanged(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     tx, original_ward_id = await _dispatch_open_transaction(
         client, admin_headers, asset_number="AST-WC-RECEIPT", ward_code="W-WC-RECEIPT-1"
     )
@@ -510,7 +508,7 @@ async def test_receipt_request_schema_rejects_a_ward_id_field(client, seeded_use
     ReturnRequest's `extra: "forbid"` (Roadmap PR8B) means a caller cannot
     even submit ward_id to the receipt endpoint -- it is rejected at
     request-validation time, before any service code runs."""
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     tx, original_ward_id = await _dispatch_open_transaction(
         client, admin_headers, asset_number="AST-WC-RECEIPT-SCHEMA", ward_code="W-WC-RECEIPT-SCHEMA-1"
     )
@@ -524,7 +522,7 @@ async def test_receipt_request_schema_rejects_a_ward_id_field(client, seeded_use
 
 
 async def test_dispatch_creates_the_initial_ward_id(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     ward_id = await _create_ward(client, admin_headers, "W-WC-DISPATCH-1")
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-WC-DISPATCH")
 
@@ -540,7 +538,7 @@ async def test_dispatch_creates_the_initial_ward_id(client, seeded_users):
 async def test_no_generic_transaction_mutation_route_exists(client, seeded_users):
     """There is no PATCH/PUT on /transactions/{id} -- the only way to change
     ward_id after dispatch is the narrow, audited correction action."""
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     tx, _ = await _dispatch_open_transaction(
         client, admin_headers, asset_number="AST-WC-NOPATCH", ward_code="W-WC-NOPATCH-1"
     )

@@ -14,10 +14,16 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.audit import AuditLog
-from app.models.user import ALL_ROLES, Role, User
+from app.models.user import ALL_ROLES, ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, ROLE_READ_ONLY, Role, User
 from tests.conftest import auth_headers as _auth_headers
 
 pytestmark = pytest.mark.asyncio
+
+# The seeded_users fixture (tests/conftest.py) derives each user's
+# employee_code from its role name (f"{role_name.upper()}001") -- Roadmap
+# PR10 renamed the "admin" role to "administrator", so the seeded
+# administrator's employee_code is now ADMINISTRATOR001, not ADMIN001.
+ADMIN_EMPLOYEE_CODE = f"{ROLE_ADMINISTRATOR.upper()}001"
 
 
 async def _raw_client():
@@ -100,7 +106,7 @@ async def test_login_success_creates_audit_row(client, seeded_users, db_session)
     resp = await client.post(
         "/api/v1/auth/login",
         headers={"X-Correlation-ID": "corr-login-success"},
-        json={"identifier": "ADMIN001", "password": "Password@123"},
+        json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "Password@123"},
     )
     assert resp.status_code == 200
     assert resp.headers["x-correlation-id"] == "corr-login-success"
@@ -109,7 +115,7 @@ async def test_login_success_creates_audit_row(client, seeded_users, db_session)
     rows = await _rows(db_session, action="login_success", entity_type="auth")
     assert len(rows) == 1
     row = rows[0]
-    assert row.user_id == seeded_users["admin"].id
+    assert row.user_id == seeded_users[ROLE_ADMINISTRATOR].id
     assert row.correlation_id == "corr-login-success"
     assert row.request_id is not None
 
@@ -121,7 +127,7 @@ async def test_oversized_inbound_request_id_is_rejected_not_persisted_raw(client
     resp = await client.post(
         "/api/v1/auth/login",
         headers={"X-Request-ID": oversized, "X-Correlation-ID": oversized},
-        json={"identifier": "ADMIN001", "password": "Password@123"},
+        json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "Password@123"},
     )
     assert resp.status_code == 200, resp.text
     assert resp.headers["x-request-id"] != oversized
@@ -139,7 +145,7 @@ async def test_unsafe_characters_in_inbound_request_id_are_rejected(client, seed
     resp = await client.post(
         "/api/v1/auth/login",
         headers={"X-Request-ID": unsafe},
-        json={"identifier": "ADMIN001", "password": "Password@123"},
+        json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "Password@123"},
     )
     assert resp.status_code == 200, resp.text
     assert resp.headers["x-request-id"] != unsafe
@@ -154,7 +160,7 @@ async def test_user_agent_is_bounded_and_sanitized(client, seeded_users, db_sess
     resp = await client.post(
         "/api/v1/auth/login",
         headers={"User-Agent": oversized_ua},
-        json={"identifier": "ADMIN001", "password": "Password@123"},
+        json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "Password@123"},
     )
     assert resp.status_code == 200, resp.text
 
@@ -169,7 +175,7 @@ async def test_user_agent_control_characters_are_stripped(client, seeded_users, 
     resp = await client.post(
         "/api/v1/auth/login",
         headers={"User-Agent": unsafe_ua},
-        json={"identifier": "ADMIN001", "password": "Password@123"},
+        json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "Password@123"},
     )
     assert resp.status_code == 200, resp.text
 
@@ -190,7 +196,7 @@ async def test_trailing_newline_inbound_request_id_is_rejected(client, seeded_us
     resp = await client.post(
         "/api/v1/auth/login",
         headers={"X-Request-ID": trailing_newline},
-        json={"identifier": "ADMIN001", "password": "Password@123"},
+        json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "Password@123"},
     )
     assert resp.status_code == 200, resp.text
     assert resp.headers["x-request-id"] != trailing_newline
@@ -204,7 +210,7 @@ async def test_trailing_newline_inbound_request_id_is_rejected(client, seeded_us
 
 async def test_login_failure_wrong_password_known_account_has_null_actor(client, seeded_users, db_session):
     resp = await client.post(
-        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "wrong-password"}
+        "/api/v1/auth/login", json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "wrong-password"}
     )
     assert resp.status_code == 401
 
@@ -213,7 +219,7 @@ async def test_login_failure_wrong_password_known_account_has_null_actor(client,
     # Per ADR-0001: the actor is never the authentication target, even for
     # a known account — only the *subject* (entity_id) may reference it.
     assert rows[0].user_id is None
-    assert rows[0].entity_id == seeded_users["admin"].id
+    assert rows[0].entity_id == seeded_users[ROLE_ADMINISTRATOR].id
     # No form of the submitted identifier is persisted — not raw, not
     # hashed, not in any other representation.
     assert rows[0].after_data is None
@@ -248,7 +254,7 @@ async def test_login_succeeds_even_if_audit_write_fails(client, seeded_users, db
     monkeypatch.setattr("app.core.audit.audit_crud.create", _boom)
 
     resp = await client.post(
-        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+        "/api/v1/auth/login", json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "Password@123"}
     )
     assert resp.status_code == 200, resp.text
     assert "access_token" in resp.json()
@@ -375,7 +381,7 @@ async def test_login_failure_response_survives_commit_time_failure(
     _boom_commit(monkeypatch)
 
     resp = await sp_client.post(
-        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "wrong-password"}
+        "/api/v1/auth/login", json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "wrong-password"}
     )
     assert resp.status_code == 401, resp.text
     assert resp.json()["code"] == "INVALID_CREDENTIALS"
@@ -391,7 +397,7 @@ async def test_login_success_response_survives_commit_time_failure(
     _boom_commit(monkeypatch)
 
     resp = await sp_client.post(
-        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+        "/api/v1/auth/login", json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "Password@123"}
     )
     assert resp.status_code == 200, resp.text
     assert "access_token" in resp.json()
@@ -403,7 +409,7 @@ async def test_login_success_response_survives_commit_time_failure(
 
 async def test_refresh_response_survives_commit_time_failure(sp_client, sp_seeded_users, sp_engine, monkeypatch):
     login_resp = await sp_client.post(
-        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+        "/api/v1/auth/login", json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "Password@123"}
     )
     assert login_resp.status_code == 200
 
@@ -419,12 +425,12 @@ async def test_refresh_response_survives_commit_time_failure(sp_client, sp_seede
 
     # Session recovery: an ordinary follow-up request through the same
     # dependency-injected session machinery still works.
-    follow_up = await sp_client.get("/api/v1/audit-logs", headers=await _auth_headers(sp_client, "admin"))
+    follow_up = await sp_client.get("/api/v1/audit-logs", headers=await _auth_headers(sp_client, ROLE_ADMINISTRATOR))
     assert follow_up.status_code == 200
 
 
 async def test_logout_response_survives_commit_time_failure(sp_client, sp_seeded_users, sp_engine, monkeypatch):
-    headers = await _auth_headers(sp_client, "admin")
+    headers = await _auth_headers(sp_client, ROLE_ADMINISTRATOR)
 
     _boom_commit(monkeypatch)
 
@@ -479,7 +485,7 @@ async def test_login_failure_response_survives_commit_and_rollback_failure(
 
     with caplog.at_level(logging.WARNING, logger="app.core.audit"):
         resp = await sp_client.post(
-            "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "wrong-password"}
+            "/api/v1/auth/login", json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "wrong-password"}
         )
     assert resp.status_code == 401, resp.text
     assert resp.json()["code"] == "INVALID_CREDENTIALS"
@@ -489,7 +495,7 @@ async def test_login_failure_response_survives_commit_and_rollback_failure(
     # A fresh request (its own fresh session, per sp_client's dependency
     # override) still works normally — the failure did not wedge the app.
     follow_up = await sp_client.post(
-        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+        "/api/v1/auth/login", json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "Password@123"}
     )
     assert follow_up.status_code == 200, follow_up.text
 
@@ -501,7 +507,7 @@ async def test_login_success_response_survives_commit_and_rollback_failure(
 
     with caplog.at_level(logging.WARNING, logger="app.core.audit"):
         resp = await sp_client.post(
-            "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+            "/api/v1/auth/login", json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "Password@123"}
         )
     assert resp.status_code == 200, resp.text
     assert "access_token" in resp.json()
@@ -509,7 +515,7 @@ async def test_login_success_response_survives_commit_and_rollback_failure(
 
     monkeypatch.undo()
     follow_up = await sp_client.post(
-        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+        "/api/v1/auth/login", json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "Password@123"}
     )
     assert follow_up.status_code == 200, follow_up.text
 
@@ -518,7 +524,7 @@ async def test_refresh_response_survives_commit_and_rollback_failure(
     sp_client, sp_seeded_users, sp_engine, monkeypatch, caplog
 ):
     login_resp = await sp_client.post(
-        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+        "/api/v1/auth/login", json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "Password@123"}
     )
     assert login_resp.status_code == 200
 
@@ -533,14 +539,14 @@ async def test_refresh_response_survives_commit_and_rollback_failure(
     monkeypatch.undo()
     # Session recovery: an ordinary follow-up request through a fresh
     # session still works.
-    follow_up = await sp_client.get("/api/v1/audit-logs", headers=await _auth_headers(sp_client, "admin"))
+    follow_up = await sp_client.get("/api/v1/audit-logs", headers=await _auth_headers(sp_client, ROLE_ADMINISTRATOR))
     assert follow_up.status_code == 200
 
 
 async def test_logout_response_survives_commit_and_rollback_failure(
     sp_client, sp_seeded_users, sp_engine, monkeypatch, caplog
 ):
-    headers = await _auth_headers(sp_client, "admin")
+    headers = await _auth_headers(sp_client, ROLE_ADMINISTRATOR)
 
     _boom_commit_and_rollback(monkeypatch)
 
@@ -551,24 +557,24 @@ async def test_logout_response_survives_commit_and_rollback_failure(
 
     monkeypatch.undo()
     follow_up = await sp_client.post(
-        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+        "/api/v1/auth/login", json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "Password@123"}
     )
     assert follow_up.status_code == 200, follow_up.text
 
 
 async def test_logout_creates_audit_row(client, seeded_users, db_session):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.post("/api/v1/auth/logout", headers=headers)
     assert resp.status_code == 200
 
     rows = await _rows(db_session, action="logout", entity_type="auth")
     assert len(rows) == 1
-    assert rows[0].user_id == seeded_users["admin"].id
+    assert rows[0].user_id == seeded_users[ROLE_ADMINISTRATOR].id
 
 
 async def test_refresh_creates_audit_row(client, seeded_users, db_session):
     login_resp = await client.post(
-        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+        "/api/v1/auth/login", json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "Password@123"}
     )
     assert login_resp.status_code == 200
 
@@ -577,7 +583,7 @@ async def test_refresh_creates_audit_row(client, seeded_users, db_session):
 
     rows = await _rows(db_session, action="token_refresh", entity_type="auth")
     assert len(rows) == 1
-    assert rows[0].user_id == seeded_users["admin"].id
+    assert rows[0].user_id == seeded_users[ROLE_ADMINISTRATOR].id
 
 
 # ---------------------------------------------------------------------------
@@ -586,7 +592,7 @@ async def test_refresh_creates_audit_row(client, seeded_users, db_session):
 
 
 async def test_create_user_masks_password_in_audit(client, seeded_users, db_session):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.post(
         "/api/v1/users",
         headers=headers,
@@ -595,7 +601,7 @@ async def test_create_user_masks_password_in_audit(client, seeded_users, db_sess
             "full_name": "New Person",
             "email": "new.person@mep-hospital-test.dev",
             "password": "SuperSecret@123",
-            "role_name": "viewer",
+            "role_name": ROLE_READ_ONLY,
         },
     )
     assert resp.status_code == 201, resp.text
@@ -605,7 +611,7 @@ async def test_create_user_masks_password_in_audit(client, seeded_users, db_sess
     assert len(rows) == 1
     row = rows[0]
     assert str(row.entity_id) == new_user_id
-    assert row.user_id == seeded_users["admin"].id
+    assert row.user_id == seeded_users[ROLE_ADMINISTRATOR].id
     assert row.after_data["password"] == "***REDACTED***"
     assert "SuperSecret@123" not in str(row.after_data)
     assert row.after_data["employee_code"] == "NEWUSER01"
@@ -614,8 +620,8 @@ async def test_create_user_masks_password_in_audit(client, seeded_users, db_sess
 async def test_update_user_password_change_masks_password_and_records_before_after(
     client, seeded_users, db_session
 ):
-    headers = await _auth_headers(client, "admin")
-    target_id = str(seeded_users["viewer"].id)
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    target_id = str(seeded_users[ROLE_READ_ONLY].id)
 
     resp = await client.patch(
         f"/api/v1/users/{target_id}",
@@ -628,12 +634,64 @@ async def test_update_user_password_change_masks_password_and_records_before_aft
     assert len(rows) == 1
     row = rows[0]
     assert str(row.entity_id) == target_id
-    assert row.user_id == seeded_users["admin"].id
+    assert row.user_id == seeded_users[ROLE_ADMINISTRATOR].id
     assert row.after_data["password"] == "***REDACTED***"
     assert "BrandNewPassword@123" not in str(row.after_data)
     assert row.before_data["password_hash"] == "***REDACTED***"
     assert row.before_data["is_active"] is True
     assert row.after_data["is_active"] is False
+
+
+async def test_update_user_role_change_records_before_and_after_role_name(client, seeded_users, db_session):
+    """Roadmap PR10: a role reassignment is audited like any other user
+    update -- before_data/after_data must capture the actual role name
+    change (read_only -> equipment_pool_staff here), not just that some
+    update happened."""
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    target_id = str(seeded_users[ROLE_READ_ONLY].id)
+
+    resp = await client.patch(
+        f"/api/v1/users/{target_id}",
+        headers=headers,
+        json={"role_name": ROLE_EQUIPMENT_POOL_STAFF},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["role"] == ROLE_EQUIPMENT_POOL_STAFF
+
+    rows = await _rows(db_session, action="update", entity_type="user")
+    assert len(rows) == 1
+    row = rows[0]
+    assert str(row.entity_id) == target_id
+    assert row.user_id == seeded_users[ROLE_ADMINISTRATOR].id
+    assert row.before_data["role_name"] == ROLE_READ_ONLY
+    assert row.after_data["role_name"] == ROLE_EQUIPMENT_POOL_STAFF
+
+
+async def test_user_role_update_rolls_back_when_audit_write_fails(client, seeded_users, db_session, monkeypatch):
+    """Roadmap PR10: a role change must be atomic with its audit row, same
+    as user creation (test_user_create_rolls_back_when_audit_write_fails
+    above) -- if the audit write fails, the role_id UPDATE must not persist
+    either."""
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    target = seeded_users[ROLE_READ_ONLY]
+    target_id = str(target.id)
+    original_role_id = target.role_id
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("simulated audit persistence failure")
+
+    monkeypatch.setattr("app.core.audit.audit_crud.create", _boom)
+
+    async with await _raw_client() as raw_client:
+        resp = await raw_client.patch(
+            f"/api/v1/users/{target_id}",
+            headers=headers,
+            json={"role_name": ROLE_EQUIPMENT_POOL_STAFF},
+        )
+    assert resp.status_code == 500
+
+    await db_session.refresh(target, attribute_names=["role_id"])
+    assert target.role_id == original_role_id, "a failed audit write must roll back the role change too"
 
 
 # ---------------------------------------------------------------------------
@@ -642,7 +700,7 @@ async def test_update_user_password_change_masks_password_and_records_before_aft
 
 
 async def test_create_department_creates_audit_row(client, seeded_users, db_session):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.post(
         "/api/v1/departments", headers=headers, json={"code": "SURG", "name": "Surgery"}
     )
@@ -656,7 +714,7 @@ async def test_create_department_creates_audit_row(client, seeded_users, db_sess
 
 
 async def test_create_ward_location_category_create_audit_rows(client, seeded_users, db_session):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
 
     dept_resp = await client.post(
         "/api/v1/departments", headers=headers, json={"code": "ICU", "name": "Intensive Care"}
@@ -700,7 +758,7 @@ async def test_create_ward_location_category_create_audit_rows(client, seeded_us
 
 
 async def test_equipment_create_audit_row_has_request_and_correlation_ids(client, seeded_users, db_session):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -723,7 +781,7 @@ async def test_equipment_create_with_due_dates_is_json_safe(client, seeded_users
     # straight through as the audit row's after_data used to crash the
     # JSON/JSONB column's serializer (TypeError: Object of type date is not
     # JSON serializable) — after the equipment row had already committed.
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -755,7 +813,7 @@ async def test_equipment_create_with_due_dates_is_json_safe(client, seeded_users
 
 
 async def test_equipment_create_with_only_one_due_date_is_json_safe(client, seeded_users, db_session):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -782,7 +840,7 @@ async def test_equipment_update_audit_row_has_before_and_after(client, seeded_us
     # (Equipment.__mapper_args__ = {"eager_defaults": True}, merged via PR
     # #10) — the endpoint is expected to return 200 like any other endpoint,
     # via the ordinary `client` fixture.
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     create_resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -803,7 +861,7 @@ async def test_equipment_update_audit_row_has_before_and_after(client, seeded_us
     )
     assert len(rows) == 1
     row = rows[0]
-    assert row.user_id == seeded_users["admin"].id
+    assert row.user_id == seeded_users[ROLE_ADMINISTRATOR].id
     assert row.before_data["equipment_name"] == "Old Name"
     assert row.after_data["equipment_name"] == "New Name"
 
@@ -816,7 +874,7 @@ async def test_equipment_update_audit_row_has_before_and_after(client, seeded_us
 async def test_equipment_status_change_audit_row_has_correct_action_and_actor(client, seeded_users, db_session):
     # Same now-fixed defect as the update test above — see that test's
     # comment. This endpoint is expected to return 200.
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     create_resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -837,12 +895,12 @@ async def test_equipment_status_change_audit_row_has_correct_action_and_actor(cl
     )
     assert len(rows) == 1
     row = rows[0]
-    assert row.user_id == seeded_users["admin"].id
+    assert row.user_id == seeded_users[ROLE_ADMINISTRATOR].id
     assert row.after_data == {"status": "unavailable_defective", "reason": "Needs a new wheel"}
 
 
 async def test_no_duplicate_audit_rows_for_single_action(client, seeded_users, db_session):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -860,7 +918,7 @@ async def test_no_duplicate_audit_rows_for_single_action(client, seeded_users, d
 async def test_equipment_delete_audit_row_has_before_snapshot_and_null_after(
     client, seeded_users, db_session
 ):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     create_resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -894,7 +952,7 @@ async def test_equipment_create_rolls_back_when_audit_write_fails(
 
     # Log in (itself an audited action) before the audit write starts
     # failing, otherwise there would be no way to obtain valid credentials.
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
 
     async def _boom(*args, **kwargs):
         raise RuntimeError("simulated audit persistence failure")
@@ -917,7 +975,7 @@ async def test_equipment_create_rolls_back_when_audit_write_fails(
 
 
 async def test_user_create_rolls_back_when_audit_write_fails(client, seeded_users, db_session, monkeypatch):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
 
     async def _boom(*args, **kwargs):
         raise RuntimeError("simulated audit persistence failure")
@@ -933,7 +991,7 @@ async def test_user_create_rolls_back_when_audit_write_fails(client, seeded_user
                 "full_name": "Should Not Persist",
                 "email": "auditfail@mep-hospital-test.dev",
                 "password": "Whatever@123",
-                "role_name": "viewer",
+                "role_name": ROLE_READ_ONLY,
             },
         )
     assert resp.status_code == 500
@@ -950,13 +1008,13 @@ async def test_user_create_rolls_back_when_audit_write_fails(client, seeded_user
 
 
 async def test_audit_log_listing_requires_admin(client, seeded_users):
-    headers = await _auth_headers(client, "viewer")
+    headers = await _auth_headers(client, ROLE_READ_ONLY)
     resp = await client.get("/api/v1/audit-logs", headers=headers)
     assert resp.status_code == 403
 
 
 async def test_audit_log_listing_returns_request_and_correlation_ids(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     create_resp = await client.post(
         "/api/v1/departments", headers=admin_headers, json={"code": "LAB", "name": "Laboratory"}
     )
@@ -973,13 +1031,13 @@ async def test_audit_log_listing_returns_request_and_correlation_ids(client, see
 
 
 async def test_audit_log_listing_limit_is_bounded(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.get("/api/v1/audit-logs", headers=headers, params={"limit": 100000})
     assert resp.status_code == 422, "an unbounded limit must be rejected, not silently accepted"
 
 
 async def test_audit_log_listing_limit_must_be_at_least_one(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     for bad_limit in (0, -1):
         resp = await client.get("/api/v1/audit-logs", headers=headers, params={"limit": bad_limit})
         assert resp.status_code == 422, f"limit={bad_limit} must be rejected, not treated as 'no results'"
@@ -989,7 +1047,7 @@ async def test_audit_log_listing_ordering_is_deterministic(client, seeded_users)
     """Same query, called twice with no state change in between, must
     return rows in the same order — proves the tiebreaker (id) makes
     ordering stable even when multiple rows share a created_at value."""
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     for i in range(4):
         resp = await client.post(
             "/api/v1/departments", headers=headers, json={"code": f"ORD{i}", "name": f"Order Dept {i}"}
@@ -1008,7 +1066,7 @@ async def test_audit_log_listing_ordering_is_deterministic(client, seeded_users)
 
 
 async def test_audit_log_listing_supports_offset_pagination(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     for i in range(3):
         resp = await client.post(
             "/api/v1/departments", headers=headers, json={"code": f"PG{i}", "name": f"Page Dept {i}"}

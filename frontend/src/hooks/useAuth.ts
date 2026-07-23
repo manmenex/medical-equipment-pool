@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { fetchMe } from "@/services/auth";
 import { useAuthStore } from "@/store/authStore";
-import type { UserProfile } from "@/types";
+import type { Role, UserProfile } from "@/types";
 
 export function useAuth() {
   const accessToken = useAuthStore((s) => s.accessToken);
@@ -29,31 +29,70 @@ export function useAuth() {
   };
 }
 
+// Roadmap PR10 (Role Model Consolidation): Thai display labels for the
+// confirmed 3-role model. Display-only -- the backend never sends or
+// expects these strings, only the role value itself (see types/index.ts's
+// Role).
 const ROLE_LABELS: Record<string, string> = {
-  admin: "ผู้ดูแลระบบ",
-  biomedical_engineer: "วิศวกรชีวการแพทย์",
-  ward_nurse: "พยาบาลหอผู้ป่วย",
-  transport_staff: "เจ้าหน้าที่ขนส่ง",
-  viewer: "ผู้ใช้ทั่วไป",
+  administrator: "ผู้ดูแลระบบ",
+  equipment_pool_staff: "เจ้าหน้าที่ Equipment Pool",
+  read_only: "ผู้ใช้ทั่วไป (ดูอย่างเดียว)",
 };
 
 export function roleLabel(role: string): string {
   return ROLE_LABELS[role] ?? role;
 }
 
-// Roadmap PR9B (backend/app/api/v1/deps.py's WARD_CORRECTION_ROLES): a
-// frontend-only usability gate mirroring the merged PR9A backend's
-// temporary, intentionally conservative admin-only authorization
-// (docs/audits/03-hospital-equipment-pool-workflow-audit.md §10 -- the
-// current 5-role model has no confirmed, evidence-backed equivalent of the
-// future "Equipment Pool Staff" role, so only admin is granted pending
-// Roadmap PR10's Role Model Consolidation). This hides the action for a
-// role the backend would reject with 403 -- it is NOT a security boundary
-// by itself; the backend remains authoritative, and every caller of the
-// correction API must still handle a 403 response safely regardless of
-// this check (see WardCorrectionDialog). Single, centralized place for
-// Roadmap PR10 to update when the confirmed 3-role model lands -- update
-// ONLY this function, mirroring app.api.v1.deps.WARD_CORRECTION_ROLES.
-export function canCorrectTransactionWard(user: Pick<UserProfile, "role"> | null | undefined): boolean {
-  return user?.role === "admin";
+// ---------------------------------------------------------------------------
+// Roadmap PR10 (Role Model Consolidation): centralized frontend capability
+// layer mirroring backend/app/api/v1/deps.py's capability groups
+// (EQUIPMENT_POOL_OPERATION_ROLES, ADMINISTRATOR_ONLY_ROLES,
+// VIEW_AND_REPORT_ROLES) exactly. Every place in the frontend that decides
+// whether to show or hide an action must call one of these functions --
+// never compare user.role against a literal role string inline. None of
+// this is a security boundary: it only hides an action the backend would
+// reject with 403 anyway, so it exists purely for usability (don't offer a
+// button that will fail), and every caller must still handle a 403
+// response safely regardless of what these functions return (the backend
+// remains the sole authority).
+// ---------------------------------------------------------------------------
+
+type RoleLike = Pick<UserProfile, "role"> | null | undefined;
+
+function hasRole(user: RoleLike, ...roles: Role[]): boolean {
+  return user != null && (roles as string[]).includes(user.role);
+}
+
+// Dispatch, receipt, ward correction, and marking equipment defective.
+// Mirrors backend EQUIPMENT_POOL_OPERATION_ROLES.
+export function canCorrectTransactionWard(user: RoleLike): boolean {
+  return hasRole(user, "administrator", "equipment_pool_staff");
+}
+
+export function canMarkEquipmentDefective(user: RoleLike): boolean {
+  return hasRole(user, "administrator", "equipment_pool_staff");
+}
+
+// Administrator-only capabilities. Mirrors backend ADMINISTRATOR_ONLY_ROLES.
+export function canManageEquipmentMasterData(user: RoleLike): boolean {
+  return hasRole(user, "administrator");
+}
+
+export function canReactivateEquipment(user: RoleLike): boolean {
+  return hasRole(user, "administrator");
+}
+
+export function canDecommissionEquipment(user: RoleLike): boolean {
+  return hasRole(user, "administrator");
+}
+
+export function canManageUsers(user: RoleLike): boolean {
+  return hasRole(user, "administrator");
+}
+
+// Dispatch/receipt entry points (borrow/return). Read Only never performs
+// these -- mirrors backend EQUIPMENT_POOL_OPERATION_ROLES (app.api.v1.borrow.
+// BORROW_ROLES).
+export function canDispatchOrReceiveEquipment(user: RoleLike): boolean {
+  return hasRole(user, "administrator", "equipment_pool_staff");
 }

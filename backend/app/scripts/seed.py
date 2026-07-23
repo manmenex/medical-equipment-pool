@@ -14,7 +14,7 @@ from app.db.session import AsyncSessionLocal
 from app.models.equipment import Equipment, EquipmentStatus
 from app.models.master_data import Department, EquipmentCategory, Location, Ward
 from app.models.transaction import BorrowTransaction, TransactionStatus
-from app.models.user import ALL_ROLES, Role, User
+from app.models.user import ALL_ROLES, ROLE_ADMINISTRATOR, Role, User
 
 DEPARTMENTS = [("MED", "อายุรกรรม"), ("SURG", "ศัลยกรรม"), ("ICU", "ผู้ป่วยวิกฤต"), ("ER", "อุบัติเหตุฉุกเฉิน")]
 CATEGORIES = [
@@ -40,7 +40,7 @@ async def seed_reference_data(db) -> dict:
         full_name="System Administrator",
         email="admin@hospital.local",
         password_hash=hash_password("Admin@12345"),
-        role_id=roles["admin"].id,
+        role_id=roles[ROLE_ADMINISTRATOR].id,
     )
     db.add(admin)
 

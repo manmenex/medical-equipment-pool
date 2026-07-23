@@ -15,7 +15,7 @@ from app.core.references import ensure_referenced_row_exists
 from app.crud import master_data as md_crud
 from app.db.session import get_db
 from app.models.master_data import Department
-from app.models.user import ROLE_ADMIN
+from app.models.user import ROLE_ADMINISTRATOR
 from app.schemas.master_data import (
     CategoryCreate,
     CategoryOut,
@@ -41,7 +41,7 @@ async def create_department(
     payload: DepartmentCreate,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    actor=Depends(require_roles(ROLE_ADMIN)),
+    actor=Depends(require_roles(ROLE_ADMINISTRATOR)),
 ):
     async with translate_integrity_error(db, resource="department"):
         obj = await md_crud.create_department(db, code=payload.code, name=payload.name)
@@ -68,7 +68,7 @@ async def create_ward(
     payload: WardCreate,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    actor=Depends(require_roles(ROLE_ADMIN)),
+    actor=Depends(require_roles(ROLE_ADMINISTRATOR)),
 ):
     department_id = parse_uuid(payload.department_id, "department_id")
     await ensure_referenced_row_exists(db, Department, department_id, field_name="department_id")
@@ -97,7 +97,7 @@ async def create_location(
     payload: LocationCreate,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    actor=Depends(require_roles(ROLE_ADMIN)),
+    actor=Depends(require_roles(ROLE_ADMINISTRATOR)),
 ):
     # Location has no unique constraint in the current schema (see PR2 known
     # limitations); this wrapper is defense-in-depth against NOT NULL/other
@@ -127,7 +127,7 @@ async def create_category(
     payload: CategoryCreate,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    actor=Depends(require_roles(ROLE_ADMIN)),
+    actor=Depends(require_roles(ROLE_ADMINISTRATOR)),
 ):
     async with translate_integrity_error(db, resource="category"):
         obj = await md_crud.create_category(

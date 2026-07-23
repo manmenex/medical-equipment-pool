@@ -59,22 +59,13 @@ narrow, audited exception — it corrects an incorrect original record. **It
 does not represent the equipment moving between wards and is not
 ward-transfer tracking**; no such concept exists anywhere in this system.
 
-**Auth:** `admin` only, temporarily — an intentionally conservative
-restriction, not the confirmed final matrix. The confirmed 3-role
-permission matrix (`docs/audits/03-hospital-equipment-pool-workflow-audit.md`
-§10) grants this capability to Administrator **and** Equipment Pool Staff,
-but the current 5-role model has no confirmed, evidence-backed equivalent
-of Equipment Pool Staff — the workflow audit's own §10 note says
-`biomedical_engineer`/`ward_nurse`/`transport_staff` "have no clear place
-in this workflow as described." Because ward correction modifies
-historical operational data, an inferred mapping is unacceptable, so every
-role other than `admin` — `biomedical_engineer`, `ward_nurse`,
-`transport_staff`, and `viewer` alike — is denied with `403` until Roadmap
-PR10's Role Model Consolidation lands the confirmed 3-role model. This
-does not inherit permissions from, and is not derived from, which roles
-dispatch or receipt happen to trust. See `app.api.v1.deps.
-WARD_CORRECTION_ROLES`'s docstring for the single, centralized constant
-PR10 will update.
+**Auth:** `administrator` or `equipment_pool_staff` (Roadmap PR10's
+confirmed 3-role model — `app.api.v1.deps.WARD_CORRECTION_ROLES`, replacing
+the earlier Roadmap PR9A temporary `admin`-only rule now that the confirmed
+matrix exists). `read_only` is denied with `403`. This does not inherit
+permissions from, and is not derived from, which roles dispatch or receipt
+happen to trust — it is asserted independently, even though the two
+capability groups are the same set today.
 
 Works identically whether the transaction is `open` or `closed` — this
 corrects historical data, not an in-flight workflow step, so there is no
@@ -110,7 +101,7 @@ Same shape as `POST /borrow`'s response (see `docs/api/dispatch.md`), with
 | Status | Code | Cause |
 |---|---|---|
 | `400` | `INVALID_INPUT` | `ward_id` does not reference an existing ward |
-| `403` | `FORBIDDEN` | Caller's role is not Administrator/Equipment-Pool-Staff-equivalent |
+| `403` | `FORBIDDEN` | Caller's role isn't `administrator`/`equipment_pool_staff` |
 | `404` | `TRANSACTION_NOT_FOUND` | `transaction_id` doesn't resolve to a transaction |
 | `409` | `WARD_CORRECTION_NOOP` | Submitted `ward_id` equals the transaction's current `ward_id` — rejected as a no-op; no audit entry is written |
 | `409` | `WARD_CORRECTION_CONFLICT` | A concurrent correction changed this transaction's `ward_id` after this request read it, before this request's own write — refresh and resubmit against the current state. Distinct from Roadmap PR8C's receipt-flow codes (`RECEIPT_RACE_LOST`/`TRANSACTION_ALREADY_RETURNED`), which this endpoint never reuses |
@@ -168,17 +159,15 @@ loading disables the trigger, a failed load shows an explicit error with a
 and submission), so the mutation, error-code mapping, and validation logic
 exist exactly once. Both are gated on
 `frontend/src/hooks/useAuth.ts`'s `canCorrectTransactionWard(user)`
-returning true — a frontend-only mirror of this endpoint's `admin`-only
-gate, for usability, not security; every error path below (starting with
-`403`) is still handled explicitly because the backend remains the sole
-authority. The dialog enforces the same reason length/non-blank rules as
-this page's request-body table above before submitting, traps keyboard
-focus while open, and restores focus to the exact element that opened it
-on close. On `WARD_CORRECTION_CONFLICT` it refetches
-`GET /transactions/{transaction_id}` and displays the newly committed ward
-rather than retrying blindly. Roadmap PR10 updates
-`canCorrectTransactionWard` alongside `WARD_CORRECTION_ROLES` when the
-role mapping is consolidated.
+returning true — a frontend-only mirror of this endpoint's
+`administrator`/`equipment_pool_staff` gate, for usability, not security;
+every error path below (starting with `403`) is still handled explicitly
+because the backend remains the sole authority. The dialog enforces the
+same reason length/non-blank rules as this page's request-body table above
+before submitting, traps keyboard focus while open, and restores focus to
+the exact element that opened it on close. On `WARD_CORRECTION_CONFLICT`
+it refetches `GET /transactions/{transaction_id}` and displays the newly
+committed ward rather than retrying blindly.
 
 ## See also
 

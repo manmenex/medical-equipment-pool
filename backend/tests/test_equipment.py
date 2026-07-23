@@ -3,6 +3,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
+from app.models.user import ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, ROLE_READ_ONLY
 from tests.conftest import auth_headers as _auth_headers
 from tests.conftest import on_demand_borrow_payload as _on_demand_borrow_payload
 from tests.identifier_vectors import (
@@ -16,7 +17,7 @@ pytestmark = pytest.mark.asyncio
 
 
 async def test_create_and_get_equipment(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -33,7 +34,7 @@ async def test_create_and_get_equipment(client, seeded_users):
 
 
 async def test_viewer_cannot_create_equipment(client, seeded_users):
-    headers = await _auth_headers(client, "viewer")
+    headers = await _auth_headers(client, ROLE_READ_ONLY)
     resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -43,7 +44,7 @@ async def test_viewer_cannot_create_equipment(client, seeded_users):
 
 
 async def test_search_equipment_by_name(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -58,7 +59,7 @@ async def test_search_equipment_by_name(client, seeded_users):
 async def test_legacy_by_qr_route_removed(client, seeded_users):
     """ADR-004: the legacy exact-match-on-qr_code_value route is retired,
     not merely redirected — it must not exist at all."""
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.get("/api/v1/equipment/by-qr/MEP:AST-0004", headers=headers)
     assert resp.status_code == 404
 
@@ -66,7 +67,7 @@ async def test_legacy_by_qr_route_removed(client, seeded_users):
 async def test_legacy_qrcode_generation_route_removed(client, seeded_users):
     """ADR-004: the app must not generate/expose its own competing QR
     image for the retired legacy scheme."""
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     create_resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -89,7 +90,7 @@ async def test_legacy_qrcode_generation_route_removed(client, seeded_users):
 
 
 async def test_update_equipment_returns_200_with_updated_values(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     create_resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -112,7 +113,7 @@ async def test_update_equipment_returns_200_with_updated_values(client, seeded_u
 
 
 async def test_status_change_returns_200_with_new_status(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     create_resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -136,7 +137,7 @@ async def test_status_change_returns_200_with_new_status(client, seeded_users):
 async def test_update_equipment_persists_exactly_once_via_fresh_session(client, seeded_users, db_session):
     from app.models.equipment import Equipment
 
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     create_resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -160,7 +161,7 @@ async def test_update_equipment_persists_exactly_once_via_fresh_session(client, 
 async def test_update_equipment_produces_exactly_one_audit_row(client, seeded_users, db_session):
     from app.models.audit import AuditLog
 
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     create_resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -189,7 +190,7 @@ async def test_update_equipment_produces_exactly_one_audit_row(client, seeded_us
 async def test_status_change_produces_exactly_one_audit_row(client, seeded_users, db_session):
     from app.models.audit import AuditLog
 
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     create_resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -218,7 +219,7 @@ async def test_status_change_produces_exactly_one_audit_row(client, seeded_users
 async def test_ordinary_request_still_succeeds_after_update_and_status_change(client, seeded_users):
     """Proves the fix didn't leave the session/connection unusable — an
     unrelated, completely ordinary follow-up request still works."""
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     create_resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -269,7 +270,7 @@ async def _create_equipment_with_bcm(
 
 
 async def test_duplicate_bcm_code_is_rejected(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     await _create_equipment_with_bcm(client, headers, "AST-PR5-0001", bcm_code="BCM00001")
     resp = await client.post(
         "/api/v1/equipment",
@@ -281,7 +282,7 @@ async def test_duplicate_bcm_code_is_rejected(client, seeded_users):
 
 
 async def test_duplicate_item_no_is_rejected(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     await _create_equipment_with_bcm(client, headers, "AST-PR5-0003", item_no="ITEM-0001")
     resp = await client.post(
         "/api/v1/equipment",
@@ -293,7 +294,7 @@ async def test_duplicate_item_no_is_rejected(client, seeded_users):
 
 
 async def test_bcm_search_matches_only_bcm_code_not_other_fields(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     await _create_equipment_with_bcm(
         client, headers, "AST-PR5-0005", bcm_code="BCM00342", name="Very Special Pump Name"
     )
@@ -304,7 +305,7 @@ async def test_bcm_search_matches_only_bcm_code_not_other_fields(client, seeded_
 
 
 async def test_bcm_search_case_insensitive_and_trimmed(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     await _create_equipment_with_bcm(client, headers, "AST-PR5-0006", bcm_code="BCM00342")
     for q in ["342", "  342  ", "bcm00342", "BCM00342", "  bcm342  ", "Bcm342"]:
         resp = await client.get("/api/v1/equipment/search/bcm", headers=headers, params={"q": q})
@@ -314,7 +315,7 @@ async def test_bcm_search_case_insensitive_and_trimmed(client, seeded_users):
 
 
 async def test_bcm_search_supports_without_prefix_and_partial_matching(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     for asset, bcm in [
         ("AST-PR5-0007", "BCM00342"),
         ("AST-PR5-0008", "BCM01342"),
@@ -332,7 +333,7 @@ async def test_bcm_search_supports_without_prefix_and_partial_matching(client, s
 
 
 async def test_bcm_search_ranks_exact_match_before_partial_matches(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     await _create_equipment_with_bcm(client, headers, "AST-PR5-0012", bcm_code="BCM00342")
     await _create_equipment_with_bcm(client, headers, "AST-PR5-0013", bcm_code="BCM13420")
     await _create_equipment_with_bcm(client, headers, "AST-PR5-0014", bcm_code="BCM342")
@@ -345,7 +346,7 @@ async def test_bcm_search_ranks_exact_match_before_partial_matches(client, seede
 
 
 async def test_bcm_search_limits_result_count(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     for i in range(15):
         await _create_equipment_with_bcm(client, headers, f"AST-PR5-LIMIT-{i:03d}", bcm_code=f"BCM9{i:04d}")
     resp = await client.get("/api/v1/equipment/search/bcm", headers=headers, params={"q": "9", "limit": 5})
@@ -354,7 +355,7 @@ async def test_bcm_search_limits_result_count(client, seeded_users):
 
 
 async def test_bcm_suggestion_contains_only_minimum_selection_data(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     await _create_equipment_with_bcm(
         client, headers, "AST-PR5-0015", bcm_code="BCM00500", item_no="ITEM-0500", name="Must Not Appear"
     )
@@ -366,7 +367,7 @@ async def test_bcm_suggestion_contains_only_minimum_selection_data(client, seede
 
 
 async def test_bcm_search_item_no_does_not_act_as_manual_search_and_is_not_leaked(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     await _create_equipment_with_bcm(
         client, headers, "AST-PR5-0016", bcm_code="BCM00600", item_no="UNIQUE-ITEM-777"
     )
@@ -381,7 +382,7 @@ async def test_bcm_search_item_no_does_not_act_as_manual_search_and_is_not_leake
 
 
 async def test_bcm_search_empty_or_insufficient_query_returns_empty_not_full_list(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     await _create_equipment_with_bcm(client, headers, "AST-PR5-0017", bcm_code="BCM00700")
 
     resp = await client.get("/api/v1/equipment/search/bcm", headers=headers, params={"q": ""})
@@ -399,7 +400,7 @@ async def test_bcm_search_empty_or_insufficient_query_returns_empty_not_full_lis
 
 
 async def test_resolve_qr_by_item_no_finds_equipment(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     created = await _create_equipment_with_bcm(
         client, headers, "AST-PR5-0018", item_no="PHY-ITEM-001", name="Scanner Target"
     )
@@ -417,14 +418,14 @@ async def test_resolve_qr_by_item_no_finds_equipment(client, seeded_users):
 
 
 async def test_resolve_qr_unknown_item_no_returns_not_found(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.post("/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "NOPE-NOT-REAL"})
     assert resp.status_code == 404
     assert resp.json()["code"] == "EQUIPMENT_NOT_FOUND"
 
 
 async def test_resolve_qr_malformed_payload_returns_controlled_error(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
 
     resp = await client.post("/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "   "})
     assert resp.status_code == 400, resp.text
@@ -442,7 +443,7 @@ async def test_resolve_qr_malformed_payload_returns_controlled_error(client, see
 
 
 async def test_resolve_qr_uses_exact_item_no_not_partial_matching(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     await _create_equipment_with_bcm(client, headers, "AST-PR5-0019", item_no="ITEM-EXACT-100")
 
     resp = await client.post("/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "ITEM-EXACT-1"})
@@ -450,7 +451,7 @@ async def test_resolve_qr_uses_exact_item_no_not_partial_matching(client, seeded
 
 
 async def test_resolve_qr_and_bcm_search_use_separate_fields(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     await _create_equipment_with_bcm(
         client, headers, "AST-PR5-0020", item_no="ITEM-BOTH-001", bcm_code="BCM00800", name="Both Fields"
     )
@@ -473,7 +474,7 @@ async def test_resolve_qr_rejects_retired_mep_format_as_malformed(client, seeded
     """ADR-004: a scanned legacy MEP:{asset_number} label is rejected as
     unsupported, distinctly from an unrecognized-but-well-formed Item No
     (404) — never silently interpreted as an Item No candidate."""
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.post(
         "/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "MEP:AST-0001"}
     )
@@ -483,8 +484,8 @@ async def test_resolve_qr_rejects_retired_mep_format_as_malformed(client, seeded
 
 async def test_borrow_by_hospital_item_no_scan(client, seeded_users):
     """Full Borrow scanner flow: resolve-qr (Item No) -> equipment_id -> borrow."""
-    headers = await _auth_headers(client, "admin")
-    nurse_headers = await _auth_headers(client, "ward_nurse")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    nurse_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
     created = await _create_equipment_with_bcm(
         client, headers, "AST-PR5-0021", item_no="ITEM-BORROW-001", name="Borrow Scan Target"
     )
@@ -503,8 +504,8 @@ async def test_borrow_by_hospital_item_no_scan(client, seeded_users):
 
 async def test_return_by_hospital_item_no_scan(client, seeded_users):
     """Full Return scanner flow: resolve-qr (Item No) -> equipment_id -> return."""
-    headers = await _auth_headers(client, "admin")
-    nurse_headers = await _auth_headers(client, "ward_nurse")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    nurse_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
     created = await _create_equipment_with_bcm(
         client, headers, "AST-PR5-0022", item_no="ITEM-RETURN-001", name="Return Scan Target"
     )
@@ -526,7 +527,7 @@ async def test_return_by_hospital_item_no_scan(client, seeded_users):
 
 
 async def test_item_no_with_leading_zeros_preserved_through_resolution(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     await _create_equipment_with_bcm(client, headers, "AST-PR5-0023", item_no="0000123")
 
     resp = await client.post("/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "0000123"})
@@ -545,7 +546,7 @@ async def test_item_no_with_leading_zeros_preserved_through_resolution(client, s
 
 
 async def test_bcm_code_create_canonicalization(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -556,7 +557,7 @@ async def test_bcm_code_create_canonicalization(client, seeded_users):
 
 
 async def test_bcm_code_update_canonicalization(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     created = await _create_equipment_with_bcm(client, headers, "AST-CANON-0002")
 
     resp = await client.patch(
@@ -567,7 +568,7 @@ async def test_bcm_code_update_canonicalization(client, seeded_users):
 
 
 async def test_bcm_code_prefix_omitted_and_supplied_are_equivalent_for_uniqueness(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     created = await _create_equipment_with_bcm(client, headers, "AST-CANON-0003", bcm_code="003")
     assert created["bcm_code"] == "BCM003", "prefixless input must canonicalize to BCM003"
     resp = await client.post(
@@ -580,13 +581,13 @@ async def test_bcm_code_prefix_omitted_and_supplied_are_equivalent_for_uniquenes
 
 
 async def test_bcm_code_surrounding_whitespace_canonicalizes_on_create(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     created = await _create_equipment_with_bcm(client, headers, "AST-CANON-0003B", bcm_code="  BCM003B  ")
     assert created["bcm_code"] == "BCM003B"
 
 
 async def test_bcm_code_duplicate_by_case_is_rejected(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     await _create_equipment_with_bcm(client, headers, "AST-CANON-0005", bcm_code="BCM005")
     resp = await client.post(
         "/api/v1/equipment",
@@ -598,7 +599,7 @@ async def test_bcm_code_duplicate_by_case_is_rejected(client, seeded_users):
 
 
 async def test_bcm_code_duplicate_by_surrounding_whitespace_is_rejected(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     await _create_equipment_with_bcm(client, headers, "AST-CANON-0007", bcm_code="BCM007")
     resp = await client.post(
         "/api/v1/equipment",
@@ -610,13 +611,13 @@ async def test_bcm_code_duplicate_by_surrounding_whitespace_is_rejected(client, 
 
 
 async def test_bcm_code_leading_zeros_preserved(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     created = await _create_equipment_with_bcm(client, headers, "AST-CANON-0009", bcm_code="00042")
     assert created["bcm_code"] == "BCM00042"
 
 
 async def test_item_no_create_normalization_trims_whitespace_preserves_case(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     await _create_equipment_with_bcm(client, headers, "AST-CANON-0010", item_no="  MiXed-Case-001  ")
 
     resp = await client.post(
@@ -632,7 +633,7 @@ async def test_item_no_create_normalization_trims_whitespace_preserves_case(clie
 
 
 async def test_item_no_update_normalization_matches_create(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     created = await _create_equipment_with_bcm(client, headers, "AST-CANON-0011")
 
     resp = await client.patch(
@@ -648,7 +649,7 @@ async def test_item_no_update_normalization_matches_create(client, seeded_users)
 
 
 async def test_item_no_duplicate_by_whitespace_is_rejected(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     await _create_equipment_with_bcm(client, headers, "AST-CANON-0012", item_no="ITEM-WS-001")
     resp = await client.post(
         "/api/v1/equipment",
@@ -661,7 +662,7 @@ async def test_item_no_duplicate_by_whitespace_is_rejected(client, seeded_users)
 
 async def test_bcm_code_update_into_equivalent_existing_value_is_rejected(client, seeded_users):
     """PR5-H3R: a duplicate must be rejected on update, not only on create."""
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     await _create_equipment_with_bcm(client, headers, "AST-CANON-0014", bcm_code="BCM014")
     other = await _create_equipment_with_bcm(client, headers, "AST-CANON-0015", bcm_code="BCM015")
 
@@ -673,7 +674,7 @@ async def test_bcm_code_update_into_equivalent_existing_value_is_rejected(client
 
 
 async def test_item_no_update_into_equivalent_existing_value_is_rejected(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     await _create_equipment_with_bcm(client, headers, "AST-CANON-0016", item_no="ITEM-UPD-CONFLICT")
     other = await _create_equipment_with_bcm(client, headers, "AST-CANON-0017", item_no="ITEM-OTHER")
 
@@ -685,7 +686,7 @@ async def test_item_no_update_into_equivalent_existing_value_is_rejected(client,
 
 
 async def test_bcm_code_prefix_only_value_is_rejected(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -700,7 +701,7 @@ async def test_bcm_code_embedded_whitespace_after_prefix_is_rejected_not_folded(
     -- this must be rejected outright, never silently normalized to the
     same canonical form as the no-space input, and never silently
     persisted as its own distinct non-canonical value."""
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -711,7 +712,7 @@ async def test_bcm_code_embedded_whitespace_after_prefix_is_rejected_not_folded(
 
 
 async def test_item_no_empty_after_trim_is_rejected(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -730,7 +731,7 @@ async def test_item_no_empty_after_trim_is_rejected(client, seeded_users):
 
 
 async def test_bcm_code_prefixless_overlength_after_normalization_is_rejected(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     # 64 raw characters (passes the schema's max_length=64 on the raw
     # field) but becomes 67 once "BCM" is prepended -- must be rejected,
     # not truncated or 500'd.
@@ -752,7 +753,7 @@ async def test_bcm_code_prefixed_overlength_is_rejected(client, seeded_users):
     own max_length bound (422 VALIDATION_ERROR) before it ever reaches
     normalize_bcm_code. Either layer catching it is a controlled response;
     what must never happen is a database-level DataError/500."""
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     body = "BCM" + "9" * 65  # 68 raw chars, already over the column width
     resp = await client.post(
         "/api/v1/equipment",
@@ -764,7 +765,7 @@ async def test_bcm_code_prefixed_overlength_is_rejected(client, seeded_users):
 
 
 async def test_bcm_code_overlength_update_matches_create_behavior(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     created = await _create_equipment_with_bcm(client, headers, "AST-CANON-0023")
     resp = await client.patch(
         f"/api/v1/equipment/{created['id']}", headers=headers, json={"bcm_code": "9" * 64}
@@ -779,7 +780,7 @@ async def test_item_no_overlength_is_rejected_consistently_on_create_and_update(
     value is rejected identically -- same status, same error code -- on
     both paths, at the schema layer before ever reaching normalize_item_no.
     """
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     overlength = "I" * 65
 
     create_resp = await client.post(
@@ -811,7 +812,7 @@ async def test_item_no_overlength_is_rejected_consistently_on_create_and_update(
 
 @pytest.mark.parametrize("raw,expected_canonical", BCM_VALID_VECTORS)
 async def test_bcm_code_vector_accepted_with_expected_canonical_value(client, seeded_users, raw, expected_canonical):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -823,7 +824,7 @@ async def test_bcm_code_vector_accepted_with_expected_canonical_value(client, se
 
 @pytest.mark.parametrize("raw,category", BCM_INVALID_VECTORS)
 async def test_bcm_code_vector_rejected_never_500(client, seeded_users, raw, category):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -848,7 +849,7 @@ async def test_bcm_code_vector_rejected_never_500(client, seeded_users, raw, cat
 async def test_bcm_001_specifically_is_rejected_never_rewritten(client, seeded_users):
     """The exact vector named in this round's fix: 'BCM 001' must be
     rejected by the runtime, never silently rewritten to 'BCM001'."""
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -862,7 +863,7 @@ async def test_bcm_001_specifically_is_rejected_never_rewritten(client, seeded_u
 async def test_item_no_vector_accepted_with_expected_canonical_value(
     client, seeded_users, raw, expected_canonical
 ):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -881,7 +882,7 @@ async def test_item_no_vector_accepted_with_expected_canonical_value(
 
 @pytest.mark.parametrize("raw,category", ITEM_NO_INVALID_VECTORS)
 async def test_item_no_vector_rejected_never_500(client, seeded_users, raw, category):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.post(
         "/api/v1/equipment",
         headers=headers,
@@ -900,7 +901,7 @@ async def test_item_no_vector_rejected_never_500(client, seeded_users, raw, cate
 
 
 async def test_item_no_absent_from_create_response(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     created = await _create_equipment_with_bcm(
         client, headers, "AST-BOUND-0001", bcm_code="BCM00900", item_no="ITEM-BOUND-001"
     )
@@ -908,7 +909,7 @@ async def test_item_no_absent_from_create_response(client, seeded_users):
 
 
 async def test_item_no_absent_from_general_equipment_detail_and_list(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     created = await _create_equipment_with_bcm(
         client, headers, "AST-BOUND-0002", bcm_code="BCM00901", item_no="ITEM-BOUND-002"
     )
@@ -924,7 +925,7 @@ async def test_item_no_absent_from_general_equipment_detail_and_list(client, see
 
 
 async def test_item_no_absent_from_qr_resolution_response(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     await _create_equipment_with_bcm(client, headers, "AST-BOUND-0003", item_no="ITEM-BOUND-003")
 
     resp = await client.post(
@@ -935,7 +936,7 @@ async def test_item_no_absent_from_qr_resolution_response(client, seeded_users):
 
 
 async def test_item_no_absent_from_update_response(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     created = await _create_equipment_with_bcm(client, headers, "AST-BOUND-0004")
 
     resp = await client.patch(
@@ -946,8 +947,8 @@ async def test_item_no_absent_from_update_response(client, seeded_users):
 
 
 async def test_item_no_absent_from_borrow_and_return_manual_selection_responses(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
-    nurse_headers = await _auth_headers(client, "ward_nurse")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    nurse_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
     created = await _create_equipment_with_bcm(
         client, headers, "AST-BOUND-0005", bcm_code="BCM00902", item_no="ITEM-BOUND-005"
     )
@@ -974,8 +975,8 @@ async def test_item_no_absent_from_borrow_and_return_manual_selection_responses(
 
 
 async def test_dispatch_rejected_when_equipment_unavailable_defective(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
-    nurse_headers = await _auth_headers(client, "ward_nurse")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    nurse_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR6-0001")
 
     status_resp = await client.post(
@@ -992,8 +993,8 @@ async def test_dispatch_rejected_when_equipment_unavailable_defective(client, se
 
 
 async def test_dispatch_rejected_when_equipment_decommissioned(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
-    nurse_headers = await _auth_headers(client, "ward_nurse")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    nurse_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR6-0002")
 
     # Decommissioning requires passing through UNAVAILABLE_DEFECTIVE first
@@ -1027,8 +1028,8 @@ async def test_dispatch_succeeds_for_available_at_pool_with_legacy_status_cleani
     or influence dispatch eligibility (owner-confirmed cleaning retirement)."""
     from app.models.equipment import Equipment
 
-    headers = await _auth_headers(client, "admin")
-    nurse_headers = await _auth_headers(client, "ward_nurse")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    nurse_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR6-0003")
 
     row = (
@@ -1044,7 +1045,7 @@ async def test_dispatch_succeeds_for_available_at_pool_with_legacy_status_cleani
 
 
 async def test_decommissioned_has_no_normal_workflow_exit(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR6-0004")
 
     defective_resp = await client.post(
@@ -1108,7 +1109,7 @@ async def _reach_status_via_manual_endpoint(client, headers, equipment_id, targe
     ],
 )
 async def test_allowed_status_transitions_succeed(client, seeded_users, from_status, to_status):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     asset_number = f"AST-PR6A-{from_status[:3]}-{to_status[:3]}-{uuid.uuid4().hex[:6]}"
     equipment = await _create_equipment_with_bcm(client, headers, asset_number)
 
@@ -1132,7 +1133,7 @@ async def test_allowed_status_transitions_succeed(client, seeded_users, from_sta
     ],
 )
 async def test_invalid_status_transitions_are_rejected(client, seeded_users, from_status, to_status):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     asset_number = f"AST-PR6D-{from_status[:3]}-{to_status[:3]}-{uuid.uuid4().hex[:6]}"
     equipment = await _create_equipment_with_bcm(client, headers, asset_number)
 
@@ -1146,7 +1147,7 @@ async def test_invalid_status_transitions_are_rejected(client, seeded_users, fro
 
 
 async def test_status_change_rejects_old_eight_state_enum_value(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR6-0005")
 
     resp = await client.post(
@@ -1158,7 +1159,7 @@ async def test_status_change_rejects_old_eight_state_enum_value(client, seeded_u
 async def test_status_change_rejects_cleaning_as_new_active_status(client, seeded_users):
     """Retired: cleaning is never a writable status again -- only
     preserved historically via legacy_status on rows migrated before PR6."""
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR6-0006")
 
     resp = await client.post(
@@ -1174,8 +1175,8 @@ async def test_return_condition_cleaning_is_rejected_not_silently_accepted(clien
     receipt_outcome="cleaning" gets a 422 VALIDATION_ERROR (unrecognized
     enum value), never a silent AVAILABLE_AT_POOL/legacy CLEANING
     acceptance."""
-    headers = await _auth_headers(client, "admin")
-    nurse_headers = await _auth_headers(client, "ward_nurse")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    nurse_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR6-0007")
 
     payload = await _on_demand_borrow_payload(client, headers, equipment["id"], ward_code="W-PR6-0007")
@@ -1191,8 +1192,8 @@ async def test_return_condition_cleaning_is_rejected_not_silently_accepted(clien
 
 
 async def test_defective_receipt_transitions_to_unavailable_defective(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
-    nurse_headers = await _auth_headers(client, "ward_nurse")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    nurse_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR6-0008")
 
     payload = await _on_demand_borrow_payload(client, headers, equipment["id"], ward_code="W-PR6-0008")
@@ -1208,7 +1209,7 @@ async def test_defective_receipt_transitions_to_unavailable_defective(client, se
 
 
 async def test_dashboard_summary_uses_four_state_fields(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     await _create_equipment_with_bcm(client, headers, "AST-PR6-0009")
 
     resp = await client.get("/api/v1/dashboard/summary", headers=headers)
@@ -1236,7 +1237,7 @@ async def test_dashboard_summary_uses_four_state_fields(client, seeded_users):
 
 
 async def test_generic_status_endpoint_cannot_synthesize_issued_to_ward(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR16-H2-0001")
 
     resp = await client.post(
@@ -1253,8 +1254,8 @@ async def test_generic_status_endpoint_cannot_synthesize_issued_to_ward(client, 
 
 @pytest.mark.parametrize("target_status", ["available_at_pool", "unavailable_defective"])
 async def test_generic_status_endpoint_cannot_return_issued_equipment(client, seeded_users, target_status):
-    headers = await _auth_headers(client, "admin")
-    nurse_headers = await _auth_headers(client, "ward_nurse")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    nurse_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
     equipment = await _create_equipment_with_bcm(
         client, headers, f"AST-PR16-H2-RET-{target_status[:4]}-{uuid.uuid4().hex[:6]}"
     )
@@ -1280,8 +1281,8 @@ async def test_generic_status_endpoint_cannot_desynchronize_open_transaction(cli
     proving the block is real, not just a response-shape difference."""
     from app.models.transaction import BorrowTransaction
 
-    headers = await _auth_headers(client, "admin")
-    nurse_headers = await _auth_headers(client, "ward_nurse")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    nurse_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR16-H2-0002")
 
     payload = await _on_demand_borrow_payload(client, headers, equipment["id"], ward_code="W-PR16-H2-0002")
@@ -1311,8 +1312,8 @@ async def test_dispatch_and_return_services_still_perform_valid_transitions(clie
     dispatch/receipt flows it protects -- dispatch, then a usable return,
     then (via the now-separate manual endpoint) an authorized lifecycle
     change, all still succeed."""
-    headers = await _auth_headers(client, "admin")
-    nurse_headers = await _auth_headers(client, "ward_nurse")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    nurse_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR16-H2-0003")
 
     payload = await _on_demand_borrow_payload(client, headers, equipment["id"], ward_code="W-PR16-H2-0003")
@@ -1339,8 +1340,8 @@ async def test_dispatch_and_return_services_still_perform_valid_transitions(clie
 async def test_viewer_cannot_change_equipment_status(client, seeded_users):
     """PR16-H2: auth behavior on the generic status endpoint is unchanged
     by the transition-authority split -- role enforcement still runs."""
-    headers = await _auth_headers(client, "admin")
-    viewer_headers = await _auth_headers(client, "viewer")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    viewer_headers = await _auth_headers(client, ROLE_READ_ONLY)
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR16-H2-0004")
 
     resp = await client.post(
@@ -1356,7 +1357,7 @@ async def test_status_change_audit_still_records_manual_lifecycle_change(client,
     lifecycle-only) transitions is unchanged."""
     from app.models.audit import AuditLog
 
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR16-H2-0005")
 
     resp = await client.post(
@@ -1439,7 +1440,7 @@ async def test_openapi_transaction_out_receipt_outcome_is_a_typed_enum():
 
 
 async def test_available_at_pool_cannot_skip_directly_to_decommissioned(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR16-H3-0001")
 
     resp = await client.post(
@@ -1455,7 +1456,7 @@ async def test_available_at_pool_cannot_skip_directly_to_decommissioned(client, 
 
 
 async def test_decommission_requires_passing_through_unavailable_defective(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR16-H3-0002")
 
     defective_resp = await client.post(

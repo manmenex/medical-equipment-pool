@@ -1,9 +1,15 @@
 import uuid
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.deps import get_current_user, require_roles
+from app.api.v1.deps import (
+    ADMINISTRATOR_ONLY_ROLES,
+    EQUIPMENT_POOL_OPERATION_ROLES,
+    get_current_role_name,
+    get_current_user,
+    require_roles,
+)
 from app.core.audit import (
     AUDIT_ACTION_CREATE,
     AUDIT_ACTION_DELETE,
@@ -20,7 +26,7 @@ from app.crud import equipment as equipment_crud
 from app.db.session import get_db
 from app.models.equipment import EquipmentStatus
 from app.models.master_data import Department, EquipmentCategory, Location
-from app.models.user import ROLE_ADMIN, ROLE_BIOMEDICAL_ENGINEER
+from app.models.user import ROLE_ADMINISTRATOR
 from app.schemas.common import Page
 from app.schemas.equipment import (
     BcmSuggestion,
@@ -181,7 +187,12 @@ async def create_equipment(
     payload: EquipmentCreate,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_roles(ROLE_ADMIN, ROLE_BIOMEDICAL_ENGINEER)),
+    # Roadmap PR10: equipment master-data creation is Administrator-only
+    # (docs/audits/03-hospital-equipment-pool-workflow-audit.md §10's matrix
+    # leans Admin-only for MVP master data) -- narrowed from the pre-PR10
+    # admin+biomedical_engineer gate, since biomedical_engineer has no
+    # confirmed equivalent in the new 3-role model.
+    user=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
 ):
     data = payload.model_dump()
     # Canonicalize identifiers before write (See ADR-002;
@@ -233,7 +244,8 @@ async def update_equipment(
     payload: EquipmentUpdate,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_roles(ROLE_ADMIN, ROLE_BIOMEDICAL_ENGINEER)),
+    # Roadmap PR10: same Administrator-only master-data rule as create_equipment.
+    user=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
 ):
     equipment = await equipment_crud.get_by_id(db, equipment_id)
     if equipment is None:
@@ -276,20 +288,39 @@ async def update_equipment(
     return EquipmentOut.model_validate(_serialize(equipment))
 
 
+# Roadmap PR10: this single generic endpoint covers three distinct
+# capabilities depending on payload.status (see
+# app.models.equipment.MANUAL_LIFECYCLE_TRANSITIONS) -- marking defective
+# (target UNAVAILABLE_DEFECTIVE, from AVAILABLE_AT_POOL) is allowed to
+# Equipment Pool Staff, but reactivating (target AVAILABLE_AT_POOL, from
+# UNAVAILABLE_DEFECTIVE) and decommissioning (target DECOMMISSIONED, from
+# UNAVAILABLE_DEFECTIVE) are Administrator-only per the confirmed matrix.
+# A single static `require_roles(...)` dependency cannot express a
+# per-payload-value distinction, so the entry gate below only proves the
+# caller is Administrator or Equipment Pool Staff; the finer distinction is
+# enforced in the body, before any side effect or audit write.
+EQUIPMENT_STATUS_ADMINISTRATOR_ONLY_TARGETS = frozenset(
+    {EquipmentStatus.AVAILABLE_AT_POOL, EquipmentStatus.DECOMMISSIONED}
+)
+
+
 @router.post("/{equipment_id}/status", response_model=EquipmentOut)
 async def change_equipment_status(
     equipment_id: uuid.UUID,
     payload: EquipmentStatusChange,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_roles(ROLE_ADMIN, ROLE_BIOMEDICAL_ENGINEER)),
+    user=Depends(require_roles(*EQUIPMENT_POOL_OPERATION_ROLES)),
+    role_name: str = Depends(get_current_role_name),
 ):
+    if payload.status in EQUIPMENT_STATUS_ADMINISTRATOR_ONLY_TARGETS and role_name != ROLE_ADMINISTRATOR:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
     equipment = await equipment_crud.get_by_id(db, equipment_id)
     if equipment is None:
         raise EquipmentNotFoundError("Equipment not found")
-    # Roadmap PR6-H2: this generic admin/BME endpoint may only perform
-    # authorized maintenance-lifecycle changes -- never a dispatch or
-    # receipt transition, which must stay atomic with the corresponding
+    # Roadmap PR6-H2: this generic endpoint may only perform authorized
+    # maintenance-lifecycle changes -- never a dispatch or receipt
+    # transition, which must stay atomic with the corresponding
     # BorrowTransaction and belongs exclusively to app.services.
     # borrow_service (See app.models.equipment.MANUAL_LIFECYCLE_TRANSITIONS).
     await equipment_crud.change_status_for_manual_lifecycle(
@@ -315,7 +346,7 @@ async def delete_equipment(
     equipment_id: uuid.UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_roles(ROLE_ADMIN)),
+    user=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
 ):
     equipment = await equipment_crud.get_by_id(db, equipment_id)
     if equipment is None:

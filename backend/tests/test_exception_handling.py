@@ -3,6 +3,7 @@ import logging
 import pytest
 from sqlalchemy import select
 
+from app.models.user import ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, ROLE_READ_ONLY
 from tests.conftest import auth_headers as _auth_headers
 from tests.conftest import create_ward as _create_ward
 
@@ -36,7 +37,7 @@ def _assert_safe_envelope(body: dict, expected_status: int):
 
 
 async def test_duplicate_department_code_returns_409(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     payload = {"code": "CARD", "name": "Cardiology"}
     first = await client.post("/api/v1/departments", headers=headers, json=payload)
     assert first.status_code == 201, first.text
@@ -51,7 +52,7 @@ async def test_duplicate_department_code_returns_409(client, seeded_users):
 
 
 async def test_duplicate_ward_code_returns_409(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     dept = await client.post("/api/v1/departments", headers=headers, json={"code": "SURG", "name": "Surgery"})
     assert dept.status_code == 201, dept.text
 
@@ -70,7 +71,7 @@ async def test_ward_with_nonexistent_department_returns_400_not_500(client, seed
     identically regardless of whether the underlying database enforces FK
     constraints — this is what makes the case deterministically testable
     under the SQLite test database, which does not enforce FKs itself."""
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     fake_department_id = "00000000-0000-0000-0000-000000000000"
     resp = await client.post(
         "/api/v1/wards",
@@ -84,7 +85,7 @@ async def test_ward_with_nonexistent_department_returns_400_not_500(client, seed
 
 
 async def test_duplicate_category_name_returns_409(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     payload = {"name": "Infusion Pumps"}
     first = await client.post("/api/v1/categories", headers=headers, json=payload)
     assert first.status_code == 201, first.text
@@ -95,13 +96,13 @@ async def test_duplicate_category_name_returns_409(client, seeded_users):
 
 
 async def test_duplicate_user_employee_code_returns_409(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     payload = {
-        "employee_code": "ADMIN001",  # already used by the seeded admin user
+        "employee_code": f"{ROLE_ADMINISTRATOR.upper()}001",  # already used by the seeded admin user
         "full_name": "Someone Else",
         "email": "someone-else@mep-hospital-test.dev",
         "password": "Password@123",
-        "role_name": "viewer",
+        "role_name": ROLE_READ_ONLY,
     }
     resp = await client.post("/api/v1/users", headers=headers, json=payload)
     assert resp.status_code == 409
@@ -111,7 +112,7 @@ async def test_duplicate_user_employee_code_returns_409(client, seeded_users):
 
 
 async def test_duplicate_equipment_asset_number_returns_409(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     payload = {"asset_number": "DUP-0001", "equipment_name": "Syringe Pump"}
     first = await client.post("/api/v1/equipment", headers=headers, json=payload)
     assert first.status_code == 201, first.text
@@ -130,7 +131,7 @@ async def test_location_create_has_no_duplicate_protection_known_limitation(clie
     same location twice succeeds both times — documented as a known PR2
     limitation, not a bug: enforcing uniqueness here would require a schema
     migration, which is out of scope for this PR."""
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     payload = {"name": "Central Store", "type": "storage"}
     first = await client.post("/api/v1/locations", headers=headers, json=payload)
     second = await client.post("/api/v1/locations", headers=headers, json=payload)
@@ -144,7 +145,7 @@ async def test_location_create_has_no_duplicate_protection_known_limitation(clie
 
 
 async def test_malformed_department_id_query_param_returns_400(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.get("/api/v1/equipment", headers=headers, params={"department_id": "not-a-uuid"})
     assert resp.status_code == 400
     body = resp.json()
@@ -153,14 +154,21 @@ async def test_malformed_department_id_query_param_returns_400(client, seeded_us
 
 
 async def test_malformed_transaction_ward_id_query_param_returns_400(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.get("/api/v1/transactions", headers=headers, params={"ward_id": "garbage"})
     assert resp.status_code == 400
     _assert_safe_envelope(resp.json(), 400)
 
 
-async def test_unknown_role_on_create_user_returns_400(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+async def test_unknown_role_on_create_user_returns_422(client, seeded_users):
+    """Roadmap PR10: role_name is now a closed Literal (RoleName) at the
+    schema layer, so an unrecognized role is rejected by Pydantic/FastAPI
+    request validation (422 VALIDATION_ERROR) before the handler body --
+    and its runtime get_role_by_name lookup -- ever runs. This is a
+    behavior change from the pre-PR10 400 INVALID_INPUT (the runtime
+    lookup is retained as a defensive fallback, but is no longer reachable
+    via this endpoint for an unrecognized role_name)."""
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.post(
         "/api/v1/users",
         headers=headers,
@@ -172,14 +180,13 @@ async def test_unknown_role_on_create_user_returns_400(client, seeded_users):
             "role_name": "not_a_real_role",
         },
     )
-    assert resp.status_code == 400
+    assert resp.status_code == 422, resp.text
     body = resp.json()
-    _assert_safe_envelope(body, 400)
-    assert body["code"] == "INVALID_INPUT"
+    assert body["code"] == "VALIDATION_ERROR"
 
 
 async def test_update_nonexistent_user_returns_404(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.patch(
         "/api/v1/users/00000000-0000-0000-0000-000000000000", headers=headers, json={"full_name": "Nobody"}
     )
@@ -195,8 +202,8 @@ async def test_unknown_receipt_outcome_returns_422_not_500(client, seeded_users)
     (422 VALIDATION_ERROR) before app.services.borrow_service ever runs --
     not the pre-PR8B 400 INVALID_INPUT a free-form condition string needed
     a runtime dict-lookup miss to detect, and never a 500."""
-    admin_headers = await _auth_headers(client, "admin")
-    nurse_headers = await _auth_headers(client, "ward_nurse")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    nurse_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
 
     eq_resp = await client.post(
         "/api/v1/equipment", headers=admin_headers, json={"asset_number": "COND-0001", "equipment_name": "Monitor"}
@@ -228,8 +235,8 @@ async def test_unknown_receipt_outcome_returns_422_not_500(client, seeded_users)
 
 
 async def test_malformed_equipment_id_in_borrow_returns_400_not_500(client, seeded_users):
-    admin_headers = await _auth_headers(client, "admin")
-    nurse_headers = await _auth_headers(client, "ward_nurse")
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    nurse_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
     ward_id = await _create_ward(client, admin_headers, code="W-MALFORMED-0001")
     resp = await client.post(
         "/api/v1/borrow",
@@ -246,7 +253,7 @@ async def test_malformed_equipment_id_in_borrow_returns_400_not_500(client, seed
 
 
 async def test_rollback_after_duplicate_department_leaves_session_usable(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     payload = {"code": "ROLLBACK1", "name": "First"}
     first = await client.post("/api/v1/departments", headers=headers, json=payload)
     assert first.status_code == 201
@@ -268,7 +275,7 @@ async def test_rollback_after_duplicate_department_leaves_session_usable(client,
 async def test_no_partial_row_remains_after_duplicate_equipment_failure(client, seeded_users, db_session):
     from app.models.equipment import Equipment
 
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     payload = {"asset_number": "NOPARTIAL-0001", "equipment_name": "Ultrasound"}
     first = await client.post("/api/v1/equipment", headers=headers, json=payload)
     assert first.status_code == 201
@@ -284,7 +291,7 @@ async def test_no_partial_row_remains_after_duplicate_equipment_failure(client, 
 async def test_no_audit_log_entry_created_for_failed_duplicate_equipment(client, seeded_users, db_session):
     from app.models.audit import AuditLog
 
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     payload = {"asset_number": "NOAUDIT-0001", "equipment_name": "X-Ray"}
     first = await client.post("/api/v1/equipment", headers=headers, json=payload)
     assert first.status_code == 201
@@ -301,7 +308,7 @@ async def test_no_audit_log_entry_created_for_failed_duplicate_equipment(client,
 
 
 async def test_existing_successful_paths_still_work_after_exception_handling_changes(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.post(
         "/api/v1/equipment", headers=headers, json={"asset_number": "OK-0001", "equipment_name": "Working Pump"}
     )
@@ -343,7 +350,7 @@ async def test_unexpected_exception_returns_safe_generic_envelope_not_traceback(
 
     monkeypatch.setattr(equipment_module.equipment_crud, "search", boom)
 
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     async with await _raw_client() as raw_client:
         resp = await raw_client.get("/api/v1/equipment", headers=headers)
 
@@ -364,7 +371,7 @@ async def test_unexpected_exception_is_logged_server_side(client, seeded_users, 
 
     monkeypatch.setattr(equipment_module.equipment_crud, "search", boom)
 
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     with caplog.at_level(logging.ERROR, logger="app.main"):
         async with await _raw_client() as raw_client:
             resp = await raw_client.get("/api/v1/equipment", headers=headers)
@@ -374,7 +381,7 @@ async def test_unexpected_exception_is_logged_server_side(client, seeded_users, 
 
 
 async def test_handled_domain_error_does_not_log_a_full_traceback(client, seeded_users, caplog):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     with caplog.at_level(logging.INFO, logger="app.main"):
         resp = await client.get("/api/v1/equipment", headers=headers, params={"department_id": "bad-uuid"})
 
@@ -417,7 +424,7 @@ async def test_audit_write_failure_after_flush_leaves_no_equipment_or_audit_row(
 
     # Log in (itself an audited action as of PR3) before the audit write
     # starts failing, otherwise there would be no way to obtain credentials.
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
 
     async def failing_audit_create(*_args, **_kwargs):
         raise RuntimeError(injected_marker)

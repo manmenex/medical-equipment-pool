@@ -1,5 +1,6 @@
 import pytest
 
+from app.models.user import ROLE_ADMINISTRATOR, ROLE_READ_ONLY
 from tests.conftest import auth_headers as _auth_headers
 
 pytestmark = pytest.mark.asyncio
@@ -21,7 +22,7 @@ def _assert_envelope_shape(body: dict, expected_status: int, *, expects_errors: 
 
 
 async def test_malformed_uuid_path_parameter_returns_422_validation_error(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     # equipment_id is a typed uuid.UUID path parameter, so FastAPI/Pydantic
     # rejects it before any route code runs -> RequestValidationError.
     resp = await client.get("/api/v1/equipment/not-a-uuid", headers=headers)
@@ -35,7 +36,7 @@ async def test_malformed_uuid_path_parameter_returns_422_validation_error(client
 
 
 async def test_malformed_uuid_query_parameter_returns_400_invalid_input(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     # department_id is a plain-str query param validated by our own
     # parse_uuid(), not a Pydantic-typed one -> domain-layer 400, not 422.
     resp = await client.get("/api/v1/equipment", headers=headers, params={"department_id": "also-not-a-uuid"})
@@ -46,7 +47,7 @@ async def test_malformed_uuid_query_parameter_returns_400_invalid_input(client, 
 
 
 async def test_malformed_uuid_request_body_field_returns_400_invalid_input(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     # category_id is a plain-str body field validated by our own
     # parse_uuid() (see PR2 known limitations: kept as str, not a Pydantic
     # UUID type, to avoid a schema/contract change) -> 400, not 422.
@@ -67,7 +68,7 @@ async def test_malformed_uuid_request_body_field_returns_400_invalid_input(clien
 
 
 async def test_password_like_value_is_never_reflected_in_a_422_response(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     secret_marker = "S3cretMarkerThatMustNeverAppear!"
     # employee_code is required and omitted here, so this 422s — the
     # password value in the same payload must never appear in the response,
@@ -79,7 +80,7 @@ async def test_password_like_value_is_never_reflected_in_a_422_response(client, 
             "full_name": "New User",
             "email": "new-user-422@mep-hospital-test.dev",
             "password": secret_marker,
-            "role_name": "viewer",
+            "role_name": ROLE_READ_ONLY,
         },
     )
     assert resp.status_code == 422
@@ -89,14 +90,14 @@ async def test_password_like_value_is_never_reflected_in_a_422_response(client, 
 
 
 async def test_password_like_value_is_never_reflected_in_a_duplicate_conflict_response(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     secret_marker = "AnotherS3cretMarker!"
     payload = {
         "employee_code": "DUPPW001",
         "full_name": "New User",
         "email": "dup-pw-001@mep-hospital-test.dev",
         "password": secret_marker,
-        "role_name": "viewer",
+        "role_name": ROLE_READ_ONLY,
     }
     first = await client.post("/api/v1/users", headers=headers, json=payload)
     assert first.status_code == 201, first.text
@@ -130,7 +131,7 @@ async def test_invalid_access_token_returns_401_with_www_authenticate(client, se
 
 
 async def test_insufficient_permissions_returns_403_forbidden(client, seeded_users):
-    headers = await _auth_headers(client, "viewer")
+    headers = await _auth_headers(client, ROLE_READ_ONLY)
     resp = await client.post(
         "/api/v1/equipment", headers=headers, json={"asset_number": "FORBID-0001", "equipment_name": "X"}
     )
@@ -146,7 +147,7 @@ async def test_insufficient_permissions_returns_403_forbidden(client, seeded_use
 
 
 async def test_400_envelope_shape(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.get("/api/v1/equipment", headers=headers, params={"department_id": "bad"})
     assert resp.status_code == 400
     _assert_envelope_shape(resp.json(), 400)
@@ -159,7 +160,7 @@ async def test_401_envelope_shape(client):
 
 
 async def test_404_domain_not_found_envelope_shape(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.get("/api/v1/equipment/00000000-0000-0000-0000-000000000000", headers=headers)
     assert resp.status_code == 404
     body = resp.json()
@@ -168,7 +169,7 @@ async def test_404_domain_not_found_envelope_shape(client, seeded_users):
 
 
 async def test_404_unknown_route_envelope_shape(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.get("/api/v1/this-route-does-not-exist", headers=headers)
     assert resp.status_code == 404
     body = resp.json()
@@ -177,7 +178,7 @@ async def test_404_unknown_route_envelope_shape(client, seeded_users):
 
 
 async def test_405_method_not_allowed_envelope_shape(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     # /api/v1/equipment supports GET/POST, not DELETE.
     resp = await client.delete("/api/v1/equipment", headers=headers)
     assert resp.status_code == 405
@@ -187,7 +188,7 @@ async def test_405_method_not_allowed_envelope_shape(client, seeded_users):
 
 
 async def test_409_envelope_shape(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     payload = {"code": "ENV409", "name": "Dept"}
     first = await client.post("/api/v1/departments", headers=headers, json=payload)
     assert first.status_code == 201
@@ -197,7 +198,7 @@ async def test_409_envelope_shape(client, seeded_users):
 
 
 async def test_422_envelope_shape(client, seeded_users):
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.get("/api/v1/equipment/not-a-uuid", headers=headers)
     assert resp.status_code == 422
     _assert_envelope_shape(resp.json(), 422, expects_errors=True)
@@ -213,7 +214,7 @@ async def test_500_envelope_shape(client, seeded_users, monkeypatch):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(equipment_module.equipment_crud, "search", boom)
-    headers = await _auth_headers(client, "admin")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
 
     transport = ASGITransport(app=fastapi_app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://test") as raw_client:

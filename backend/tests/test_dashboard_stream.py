@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.v1 import dashboard as dashboard_module
 from app.core.security import create_access_token
+from app.models.user import ROLE_ADMINISTRATOR
 
 
 def test_stream_endpoint_has_no_direct_db_dependency():
@@ -59,8 +60,8 @@ async def test_stream_authentication_succeeds_and_releases_its_session_before_st
     closed: list = []
     monkeypatch.setattr(dashboard_module, "AsyncSessionLocal", _tracking_session_local(session_maker, opened, closed))
 
-    admin = seeded_users["admin"]
-    token = create_access_token(str(admin.id), "admin")
+    admin = seeded_users[ROLE_ADMINISTRATOR]
+    token = create_access_token(str(admin.id), ROLE_ADMINISTRATOR)
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
     user = await dashboard_module.get_current_user_for_stream(credentials)
@@ -78,13 +79,13 @@ async def test_stream_authentication_rejects_inactive_user(monkeypatch, db_engin
     session_maker = async_sessionmaker(db_engine, expire_on_commit=False, class_=AsyncSession)
     monkeypatch.setattr(dashboard_module, "AsyncSessionLocal", session_maker)
 
-    admin = seeded_users["admin"]
+    admin = seeded_users[ROLE_ADMINISTRATOR]
     async with session_maker() as session:
         db_user = await session.get(type(admin), admin.id)
         db_user.is_active = False
         await session.commit()
 
-    token = create_access_token(str(admin.id), "admin")
+    token = create_access_token(str(admin.id), ROLE_ADMINISTRATOR)
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
     with pytest.raises(HTTPException) as exc_info:
