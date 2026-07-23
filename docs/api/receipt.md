@@ -5,11 +5,11 @@
 **Update trigger:** The receipt endpoint's request/response shape, validation, or error behavior changes.
 **Maintainer:** Repository Owner
 
-> **Scope note:** This is the **frozen, canonical, post-PR8B** receipt contract (Roadmap PR8, PR8B slice — see `docs/DECISION_LOG.md` and `knowledge/adr/ADR-006-receipt-outcome-contract.md`). It replaces the pre-PR8B four-value `condition` string contract entirely — no compatibility alias was kept. This document does **not** cover a distinguishable race-vs-genuine-repeat error message: that is Roadmap PR8's separately-named **PR8C slice**, not started (see ADR-006's "Not decided here"). **Roadmap PR8 is not complete until PR8A, PR8B, and PR8C all merge.**
+> **Scope note:** This is the **frozen, canonical, post-PR8B** receipt contract (Roadmap PR8, PR8B slice — see `docs/DECISION_LOG.md` and `knowledge/adr/ADR-006-receipt-outcome-contract.md`). It replaces the pre-PR8B four-value `condition` string contract entirely — no compatibility alias was kept. Roadmap PR8's separately-named **PR8C slice** (see ADR-006's "Not decided here") adds the distinguishable race-vs-genuine-repeat error response documented below — the request/response shape (`receipt_outcome`, `TransactionOut`) is unchanged by PR8C; only the error side of a rejected receipt is affected.
 
 ## `POST /api/v1/return/{transaction_id}` — record a receipt
 
-Closes an open borrow transaction and moves the equipment to the status implied by the reported `receipt_outcome`, atomically. Exactly one concurrent receipt request for the same transaction succeeds (Roadmap PR8A's database-level concurrency guard); every loser produces zero side effects and receives `409 TRANSACTION_ALREADY_RETURNED` — the same response a genuine sequential repeat receives (see `docs/DECISION_LOG.md` "Roadmap PR8 (PR8A slice)").
+Closes an open borrow transaction and moves the equipment to the status implied by the reported `receipt_outcome`, atomically. Exactly one concurrent receipt request for the same transaction succeeds (Roadmap PR8A's database-level concurrency guard). Every loser produces zero side effects (no equipment-status change, no status-history row, no audit row) and is rejected with `409 Conflict`, using one of two distinguishable codes depending on cause (Roadmap PR8C — see Errors below): `TRANSACTION_ALREADY_RETURNED` for a genuine sequential repeat, or `RECEIPT_RACE_LOST` for a request that lost a concurrent race. Both share the same HTTP status; only the machine-readable `code` (and the human-readable `detail`) differ — see `docs/DECISION_LOG.md` "Roadmap PR8 (PR8A slice)" for the underlying concurrency guard these two causes sit on top of.
 
 **Auth:** Bearer token required. Allowed roles: `admin`, `ward_nurse`, `transport_staff`, `biomedical_engineer`.
 
@@ -94,7 +94,8 @@ Example of a **pre-PR8B** transaction's response (received before this contract 
 |---|---|---|
 | `404` | `TRANSACTION_NOT_FOUND` | `transaction_id` doesn't resolve to a transaction |
 | `404` | `EQUIPMENT_NOT_FOUND` | (Defensive case) the transaction's linked equipment row is gone |
-| `409` | `TRANSACTION_ALREADY_RETURNED` | The transaction's `status` is already `closed` — either a genuine repeat request, or this request lost a concurrent receipt race (Roadmap PR8A); both causes currently share this one response, see the scope note above |
+| `409` | `TRANSACTION_ALREADY_RETURNED` | Genuine sequential repeat: the transaction's `status` was already `closed` *before* this request read it (e.g. a reload/re-submit after a receipt that already completed) |
+| `409` | `RECEIPT_RACE_LOST` | Roadmap PR8C: this request read the transaction as `open`, but a concurrent request won Roadmap PR8A's conditional-close race and closed it first. The requester did nothing wrong — retrying is not appropriate; the caller should refresh to see the current record instead. Zero side effects (no equipment-status change, no status-history row, no audit row) |
 | `422` | `VALIDATION_ERROR` | `receipt_outcome` is missing, not one of `usable`/`defective`, or the request includes an unrecognized field (e.g. the retired `condition`); or `transaction_id` path parameter isn't a valid UUID (FastAPI-typed path parameter — this is a `422`, not the `400` a plain-string query/body UUID would get; see `docs/api/ERROR_CODES.md`) |
 | `401` / `403` | `NOT_AUTHENTICATED` / `FORBIDDEN` | Missing/invalid token, or caller's role isn't `admin`/`ward_nurse`/`transport_staff`/`biomedical_engineer` |
 

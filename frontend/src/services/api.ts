@@ -60,3 +60,18 @@ export function apiErrorMessage(error: unknown, fallback = "เกิดข้�
   }
   return fallback;
 }
+
+// Roadmap PR8C (backend/app/core/exceptions.py's DomainError subclasses):
+// the stable, machine-readable `code` field every backend error response
+// carries. Callers that need to branch on the specific cause of a failure
+// (e.g. ReturnPage distinguishing RECEIPT_RACE_LOST from
+// TRANSACTION_ALREADY_RETURNED) must read this, never `detail` -- `detail`
+// is a human-readable, free-text message not intended as a stable contract
+// for behavior branching.
+export function apiErrorCode(error: unknown): string | undefined {
+  if (axios.isAxiosError(error)) {
+    const data = error.response?.data as ApiError | undefined;
+    return data?.code;
+  }
+  return undefined;
+}

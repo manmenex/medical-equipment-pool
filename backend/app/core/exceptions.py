@@ -23,7 +23,31 @@ class TransactionNotFoundError(DomainError):
 
 
 class TransactionAlreadyReturnedError(DomainError):
+    """Raised for a genuine sequential repeat receipt: the transaction's
+    ``status`` was already not ``OPEN`` *before* this request's own read
+    (app.services.borrow_service.return_equipment's Case A) -- e.g. a
+    reload/re-submit of a receipt form after the receipt already
+    completed. See ReceiptRaceLostError for the sibling case this request
+    must not be confused with."""
+
     code = "TRANSACTION_ALREADY_RETURNED"
+    status_code = 409
+
+
+class ReceiptRaceLostError(DomainError):
+    """Roadmap PR8C (knowledge/adr/ADR-006-receipt-outcome-contract.md's
+    "Not decided here"): raised when this request's own read observed the
+    transaction as OPEN, but a concurrent request won Roadmap PR8A's
+    conditional-close race and closed it first -- app.services.
+    borrow_service.return_equipment's Case B. Deliberately a distinct
+    class/code from TransactionAlreadyReturnedError: the requester did
+    nothing wrong here (no prior receipt existed when they submitted
+    theirs), so "this transaction has already been returned" would be an
+    inaccurate description of the cause, even though the HTTP status
+    (409 Conflict) is the same for both -- see docs/design/
+    PR8_IMPLEMENTATION_PLAN.md Section 6."""
+
+    code = "RECEIPT_RACE_LOST"
     status_code = 409
 
 

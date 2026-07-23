@@ -8,6 +8,7 @@ from app.core.exceptions import (
     EquipmentNotAvailableError,
     EquipmentNotFoundError,
     InvalidInputError,
+    ReceiptRaceLostError,
     TransactionAlreadyReturnedError,
     TransactionNotFoundError,
 )
@@ -166,6 +167,12 @@ async def return_equipment(
     # guard: two truly concurrent requests both read status == OPEN here and
     # both pass this check -- the guard that separates them is the conditional
     # UPDATE below. See docs/design/PR8_IMPLEMENTATION_PLAN.md Section 3.
+    #
+    # Roadmap PR8C: this is the ONLY branch that may raise
+    # TransactionAlreadyReturnedError -- a request reaching here observed a
+    # transaction that was not OPEN at the moment it read it, which is a
+    # genuine duplicate/repeat submission, not a timing race with another
+    # in-flight request.
     if tx.status != TransactionStatus.OPEN:
         raise TransactionAlreadyReturnedError("This transaction has already been returned")
 
@@ -185,17 +192,27 @@ async def return_equipment(
     )
     if not won:
         # Roadmap PR8A Case B -- lost a concurrent race. Another request
-        # transitioned this row open -> closed between our read and our UPDATE.
-        # We return here BEFORE any equipment-status, status-history, or audit
-        # write, so a losing request produces zero side effects. Roll back the
-        # (row-count-zero) UPDATE and the read, then reject with the SAME
-        # response as Case A -- neither PR8A nor this PR's contract-narrowing
-        # slice of PR8B introduces a new error code; a distinguishable
-        # race-vs-genuine-repeat error message remains unimplemented and open
-        # (see knowledge/adr/ADR-006-receipt-outcome-contract.md's "Not
-        # decided here" section).
+        # transitioned this row open -> closed between our read (above, which
+        # observed OPEN -- otherwise Case A would already have rejected this
+        # request) and our own conditional UPDATE. We return here BEFORE any
+        # equipment-status, status-history, or audit write, so a losing
+        # request produces zero side effects. Roll back the (row-count-zero)
+        # UPDATE and the read, then reject.
+        #
+        # Roadmap PR8C (knowledge/adr/ADR-006-receipt-outcome-contract.md's
+        # "Not decided here"): this branch is the ONLY one that may raise
+        # ReceiptRaceLostError, a distinct code/class from
+        # TransactionAlreadyReturnedError -- this requester did nothing
+        # wrong (no prior receipt existed when their request read the row),
+        # so "this transaction has already been returned" would misdescribe
+        # the cause as a duplicate submission rather than a timing race with
+        # another concurrent, equally legitimate request. Same HTTP status
+        # (409) as Case A -- both are conflicts with current state -- but a
+        # different, stable, machine-readable `code` so a caller (the
+        # frontend, or any future API client) can distinguish the two
+        # without parsing free-text `detail`.
         await db.rollback()
-        raise TransactionAlreadyReturnedError("This transaction has already been returned")
+        raise ReceiptRaceLostError("Another receipt request completed first. Refresh to see the current record.")
 
     # The conditional UPDATE executed as Core SQL, bypassing the ORM unit of
     # work, so the in-memory ``tx`` still reads OPEN with no receipt fields.
