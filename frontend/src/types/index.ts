@@ -64,6 +64,16 @@ export interface EquipmentStatusHistoryItem {
 export type DispatchType = "routine_round" | "on_demand";
 export type RoutineRound = "06:00" | "11:00" | "15:00" | "21:00";
 
+// Roadmap PR8B (backend/app/models/transaction.py's ReceiptOutcome,
+// knowledge/adr/ADR-006-receipt-outcome-contract.md): the confirmed binary
+// receipt outcome -- the exact domain vocabulary
+// docs/HOSPITAL_DOMAIN_MODEL.md's "Confirmed workflow" uses ("receipt
+// outcome: usable" / "receipt outcome: defective"). This is a union, not a
+// generic `string` -- do not widen it. The backend alone maps this value
+// to an equipment lifecycle state (EquipmentStatus); the frontend must
+// never submit a lifecycle state directly.
+export type ReceiptOutcome = "usable" | "defective";
+
 export interface TransactionOut {
   id: string;
   transaction_no: string;
@@ -81,7 +91,18 @@ export interface TransactionOut {
   dispatch_type: DispatchType | null;
   routine_round: RoutineRound | null;
   phone_number: string | null;
-  condition_on_return: string | null;
+  // Roadmap PR8B: replaces condition_on_return. Strictly ReceiptOutcome |
+  // null -- never one of the pre-PR8B legacy values (available/pm/
+  // calibration/repair). Null both for a transaction not yet received and
+  // for one received before this contract existed; see
+  // legacy_condition_on_return below for that case.
+  receipt_outcome: ReceiptOutcome | null;
+  // Roadmap PR8B: a pre-PR8B transaction's original recorded value
+  // (available/pm/calibration/repair), preserved verbatim, read-only.
+  // Mutually exclusive with receipt_outcome -- never both non-null for the
+  // same transaction. Never rendered as if it were a current-contract
+  // outcome.
+  legacy_condition_on_return: string | null;
   status: "open" | "closed";
   notes: string | null;
 }
