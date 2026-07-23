@@ -190,12 +190,15 @@ union, not a plain `string`, matching this contract's OpenAPI enum
   current documentation of this contract; `docs/design/
   PR8_IMPLEMENTATION_PLAN.md` (uncommitted, design-only) remains a
   historical planning artifact, not a live contract reference.
-- The frontend was contract-mismatched with the backend for the interval
-  between the backend's merge and the follow-up frontend change's merge
-  (see "Not decided here" above) — a known, deliberately accepted,
-  temporary regression in the deployed system's usability, not an
-  oversight, resolved by releasing the backend and that follow-up frontend
-  change together (Decision 1) rather than independently.
+- The repository's merge state and its deployment state are distinct here:
+  for the interval between the backend's merge and the follow-up
+  frontend change's merge (see "Not decided here" above), the *repository*
+  temporarily contained a backend revision and a frontend revision that
+  were contract-mismatched with each other — a known, deliberately
+  accepted condition, not an oversight. The coordinated-release
+  requirement (Decision 1) meant the two were never deployed
+  independently, so this repository-level mismatch never became a
+  *deployment*-level one: production was not exposed to it.
 - A client parsing `TransactionOut.receipt_outcome` can rely on it being
   exactly `"usable"`, `"defective"`, or absent — never one of the four
   pre-PR8B legacy strings. A client that also needs a pre-PR8B

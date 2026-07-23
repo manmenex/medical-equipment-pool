@@ -94,15 +94,21 @@ verification passes.
 - **Description:** Roadmap PR8B (`knowledge/adr/ADR-006-receipt-outcome-contract.md`)
   replaced `ReturnRequest.condition` (a four-value free-form string) with
   `receipt_outcome` (a typed `usable`/`defective` enum), with no
-  compatibility alias. `frontend/src/services/borrow.ts`,
+  compatibility alias, in its backend slice (GitHub PR #28). Before
+  frontend PR #29 merged, `frontend/src/services/borrow.ts`,
   `frontend/src/types/index.ts`, and `frontend/src/pages/ReturnPage.tsx`
-  still build and submit the old `condition` shape — the frontend change
-  was explicitly out of scope for the task that implemented PR8B.
-- **Operational impact:** Every receipt submission from the deployed
-  frontend against a backend running this contract fails with
-  `422 VALIDATION_ERROR` (unrecognized field, missing required
-  `receipt_outcome`) — the receipt flow is non-functional end-to-end until
-  this is resolved.
+  still built and submitted the old `condition` shape — the frontend
+  change was explicitly out of scope for the task that implemented
+  PR8B's backend slice. For the interval between the two PRs, the
+  repository's merged history temporarily contained a backend revision
+  and a frontend revision that could not be deployed independently of
+  each other.
+- **Operational impact:** Had the backend slice been deployed ahead of
+  the frontend slice, every receipt submission from that frontend would
+  have failed with `422 VALIDATION_ERROR` (unrecognized field, missing
+  required `receipt_outcome`). The coordinated-release requirement below
+  ensured the two slices were deployed together, so production never
+  entered that incompatible state.
 - **Why deferred:** The implementing task was explicitly scoped to the
   backend contract only ("Do not begin frontend or authentication work").
 - **Coordinated release required:** This endpoint's only known client is
