@@ -42,12 +42,21 @@ const RECEIPT_OUTCOMES: { value: ReceiptOutcome; label: string; selectedClass: s
 // `code`s -- a genuine duplicate submission and a genuine timing race with
 // another concurrent request are different situations that call for
 // different operator guidance (a duplicate needs no action; a race means
-// someone else just received the same device and the operator should
+// another receipt request completed first and the operator should
 // refresh, not retry). Keyed by `code`, never by parsing `detail` text --
 // `detail` is a free-text, human-readable message, not a stable contract.
+//
+// Deliberately neutral wording: RECEIPT_RACE_LOST only proves another
+// receipt request committed first at the database level -- it does not
+// identify who or what sent that request. It could be a different staff
+// member, the same user double-clicking, a browser/network retry, or a
+// duplicate submission from the same session. Never attribute this to
+// "someone else"/another person -- the backend has no such evidence
+// (see app.services.borrow_service.return_equipment, which does not
+// compare received_by_user_id between the two requests).
 const RECEIPT_ERROR_MESSAGES: Record<string, string> = {
   TRANSACTION_ALREADY_RETURNED: "รายการนี้ถูกคืนไปแล้ว",
-  RECEIPT_RACE_LOST: "เพิ่งมีการคืนเครื่องนี้โดยผู้อื่นในเวลาเดียวกัน กรุณารีเฟรชหน้าเพื่อดูข้อมูลล่าสุด",
+  RECEIPT_RACE_LOST: "มีคำขอรับเครื่องอื่นดำเนินการสำเร็จก่อน กรุณารีเฟรชเพื่อดูข้อมูลล่าสุด",
 };
 
 export function ReturnPage() {

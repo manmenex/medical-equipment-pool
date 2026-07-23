@@ -158,10 +158,16 @@ describe("ReturnPage receipt errors (Roadmap PR8C)", () => {
     await waitFor(() => expect(screen.getByText("รายการนี้ถูกคืนไปแล้ว")).toBeInTheDocument());
   });
 
-  it("shows a distinct race-condition message for RECEIPT_RACE_LOST, not the duplicate-receipt message", async () => {
+  // Codex review round 1 (GitHub PR #31): the message must attribute this
+  // to another *request*, never another *person* -- RECEIPT_RACE_LOST only
+  // proves a concurrent request won the conditional-close race first; it
+  // could be a different staff member, the same user double-clicking, or a
+  // browser/network retry from the same session. No "someone else"/ผู้อื่น
+  // wording, and no received_by_user_id comparison backs this message.
+  it("shows a distinct race-condition message for RECEIPT_RACE_LOST, attributing it to another request not another person", async () => {
     listActiveBorrows.mockResolvedValue([transaction]);
     createReturn.mockRejectedValue(
-      fakeApiError("RECEIPT_RACE_LOST", "This equipment was just received by someone else. Refresh to see the current record.")
+      fakeApiError("RECEIPT_RACE_LOST", "Another receipt request completed first. Refresh to see the current record.")
     );
     const user = userEvent.setup();
     renderReturnPage();
@@ -170,9 +176,7 @@ describe("ReturnPage receipt errors (Roadmap PR8C)", () => {
     await user.click(screen.getByRole("button", { name: /ยืนยันการคืน/ }));
 
     await waitFor(() =>
-      expect(
-        screen.getByText("เพิ่งมีการคืนเครื่องนี้โดยผู้อื่นในเวลาเดียวกัน กรุณารีเฟรชหน้าเพื่อดูข้อมูลล่าสุด")
-      ).toBeInTheDocument()
+      expect(screen.getByText("มีคำขอรับเครื่องอื่นดำเนินการสำเร็จก่อน กรุณารีเฟรชเพื่อดูข้อมูลล่าสุด")).toBeInTheDocument()
     );
     expect(screen.queryByText("รายการนี้ถูกคืนไปแล้ว")).not.toBeInTheDocument();
   });
@@ -189,7 +193,7 @@ describe("ReturnPage receipt errors (Roadmap PR8C)", () => {
     await waitFor(() => expect(screen.getByText("Something else went wrong")).toBeInTheDocument());
     expect(screen.queryByText("รายการนี้ถูกคืนไปแล้ว")).not.toBeInTheDocument();
     expect(
-      screen.queryByText("เพิ่งมีการคืนเครื่องนี้โดยผู้อื่นในเวลาเดียวกัน กรุณารีเฟรชหน้าเพื่อดูข้อมูลล่าสุด")
+      screen.queryByText("มีคำขอรับเครื่องอื่นดำเนินการสำเร็จก่อน กรุณารีเฟรชเพื่อดูข้อมูลล่าสุด")
     ).not.toBeInTheDocument();
   });
 });

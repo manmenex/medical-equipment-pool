@@ -212,9 +212,7 @@ async def return_equipment(
         # frontend, or any future API client) can distinguish the two
         # without parsing free-text `detail`.
         await db.rollback()
-        raise ReceiptRaceLostError(
-            "This equipment was just received by someone else. Refresh to see the current record."
-        )
+        raise ReceiptRaceLostError("Another receipt request completed first. Refresh to see the current record.")
 
     # The conditional UPDATE executed as Core SQL, bypassing the ORM unit of
     # work, so the in-memory ``tx`` still reads OPEN with no receipt fields.

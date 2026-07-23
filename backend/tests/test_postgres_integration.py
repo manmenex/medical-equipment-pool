@@ -3977,6 +3977,15 @@ async def test_concurrent_receipt_burst_produces_exactly_one_winner_on_postgres(
     entrants = {"n": 0}
     original_close = transaction_crud.close
 
+    # Roadmap PR8C, Codex review round 1, MEDIUM 2: identify -- not just
+    # count -- which specific requests actually crossed the barrier, so the
+    # assertions below can be scoped to that exact subset instead of
+    # inferring it from timing. `kwargs["notes"]` is each request's own
+    # unique marker (see `_receipt` below), captured here before
+    # `transaction_crud.close()`'s own `notes` handling runs, so it always
+    # equals the raw marker string.
+    synced_markers: list[str] = []
+
     async def _synchronized_close(db, tx, **kwargs):
         # Synchronous check-and-increment: no `await` between reading and
         # updating entrants["n"], so this is atomic under asyncio's
@@ -3986,6 +3995,7 @@ async def test_concurrent_receipt_burst_produces_exactly_one_winner_on_postgres(
         entrants["n"] += 1
         seat = entrants["n"]
         if seat <= barrier_size:
+            synced_markers.append(kwargs.get("notes"))
             await barrier.wait()
         return await original_close(db, tx, **kwargs)
 
@@ -4045,6 +4055,40 @@ async def test_concurrent_receipt_burst_produces_exactly_one_winner_on_postgres(
                 "sequential repeat"
             )
     else:
+        # Codex review round 1, MEDIUM 2: a loose "either code is acceptable
+        # for every loser" check does not prove the barrier-synchronized
+        # requests actually reached and raced the real conditional UPDATE --
+        # a test with a broken/no-op barrier could still pass it. Scope the
+        # strong assertion to exactly the requests `_synchronized_close`
+        # recorded as having crossed the barrier (`synced_markers`), using
+        # each request's own unique marker to correlate it back to its
+        # response, rather than relying on response order or timing.
+        assert len(synced_markers) == barrier_size, (
+            f"expected exactly {barrier_size} requests to reach the barrier and be recorded, "
+            f"got {len(synced_markers)}"
+        )
+        marker_to_response = dict(zip(markers, responses))
+        synced_responses = [marker_to_response[marker] for marker in synced_markers]
+        for r in synced_responses:
+            assert r.status_code in (200, 409), (
+                f"a barrier-synchronized request must resolve to either the winner (200) or a conflict (409), "
+                f"got {r.status_code}"
+            )
+        race_lost_count = sum(
+            1 for r in synced_responses if r.status_code == 409 and r.json()["code"] == "RECEIPT_RACE_LOST"
+        )
+        # Exactly one request wins overall; at most one of the barrier-synced
+        # requests can be that winner, so at least `barrier_size - 1` of them
+        # must have lost specifically through the conditional-UPDATE race
+        # (RECEIPT_RACE_LOST) -- proving the barrier actually forced genuine
+        # contention among this subset, not merely that some 409 happened.
+        assert race_lost_count >= barrier_size - 1, (
+            f"expected at least {barrier_size - 1} of the {barrier_size} barrier-synchronized requests to lose "
+            f"via RECEIPT_RACE_LOST (proving they raced the real conditional UPDATE), got {race_lost_count}"
+        )
+
+        # Every loser overall (synced or queued behind the connection pool)
+        # must still use one of the two documented conflict codes.
         for loser in (r for r in responses if r.status_code == 409):
             assert loser.json()["code"] in {"RECEIPT_RACE_LOST", "TRANSACTION_ALREADY_RETURNED"}, (
                 f"unexpected error code for a receipt-burst loser above the barrier cap: {loser.json()['code']!r}"
