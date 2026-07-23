@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { api } from "@/services/api";
 import { createReturn } from "@/services/borrow";
@@ -9,6 +9,15 @@ import { createReturn } from "@/services/borrow";
 // frontend's request payload matches the current backend contract exactly
 // -- a regression here (e.g. someone reintroducing `condition`) would make
 // every receipt submission fail with 422 against the current backend.
+
+// Codex review round 1 (GitHub PR #29): restore in afterEach, not at the
+// end of each test body -- a failed assertion before the per-test
+// mockRestore() call would otherwise leave api.post spied/mocked for
+// every subsequent test in this file.
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("createReturn", () => {
   it("submits receipt_outcome, never the retired condition field", async () => {
     const postSpy = vi.spyOn(api, "post").mockResolvedValue({
@@ -23,8 +32,6 @@ describe("createReturn", () => {
     });
     const [, payload] = postSpy.mock.calls[0] as [string, Record<string, unknown>];
     expect(payload).not.toHaveProperty("condition");
-
-    postSpy.mockRestore();
   });
 
   it("submits the defective outcome unchanged", async () => {
@@ -33,7 +40,5 @@ describe("createReturn", () => {
     await createReturn("tx-2", { receipt_outcome: "defective" });
 
     expect(postSpy).toHaveBeenCalledWith("/return/tx-2", { receipt_outcome: "defective" });
-
-    postSpy.mockRestore();
   });
 });

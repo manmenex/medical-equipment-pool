@@ -58,7 +58,7 @@ describe("ReturnPage receipt outcome (Roadmap PR8B)", () => {
     await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
 
     expect(screen.getByRole("radio", { name: "พร้อมใช้งาน" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "ไม่พร้อมใช้งาน" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "ชำรุด" })).toBeInTheDocument();
     expect(screen.getAllByRole("radio")).toHaveLength(2);
 
     // The pre-PR8B options must never reappear.
@@ -92,10 +92,39 @@ describe("ReturnPage receipt outcome (Roadmap PR8B)", () => {
     renderReturnPage();
 
     await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
-    await user.click(screen.getByRole("radio", { name: "ไม่พร้อมใช้งาน" }));
+    await user.click(screen.getByRole("radio", { name: "ชำรุด" }));
     await user.click(screen.getByRole("button", { name: /ยืนยันการคืน/ }));
 
     await waitFor(() => expect(createReturn).toHaveBeenCalledTimes(1));
     expect(createReturn).toHaveBeenCalledWith("tx-1", { receipt_outcome: "defective", notes: undefined });
+  });
+
+  // Codex review round 1 (GitHub PR #29): a defective selection must never
+  // reuse the "available" (green) selected-state styling -- that would
+  // misleadingly present a defective outcome the same way as a usable one,
+  // even though the backend transitions equipment to UNAVAILABLE_DEFECTIVE
+  // for defective and AVAILABLE_AT_POOL for usable.
+  it("styles the usable selection with the available treatment, never the repair treatment", async () => {
+    listActiveBorrows.mockResolvedValue([transaction]);
+    renderReturnPage();
+
+    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
+    const usableLabel = screen.getByRole("radio", { name: "พร้อมใช้งาน" }).closest("label");
+
+    expect(usableLabel).toHaveClass("border-status-available", "bg-status-available/10");
+    expect(usableLabel).not.toHaveClass("border-status-repair", "bg-status-repair/10");
+  });
+
+  it("styles the defective selection with the repair treatment, never the available treatment", async () => {
+    listActiveBorrows.mockResolvedValue([transaction]);
+    const user = userEvent.setup();
+    renderReturnPage();
+
+    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
+    await user.click(screen.getByRole("radio", { name: "ชำรุด" }));
+    const defectiveLabel = screen.getByRole("radio", { name: "ชำรุด" }).closest("label");
+
+    expect(defectiveLabel).toHaveClass("border-status-repair", "bg-status-repair/10");
+    expect(defectiveLabel).not.toHaveClass("border-status-available", "bg-status-available/10");
   });
 });

@@ -13,19 +13,27 @@ import type { BcmSuggestion, ReceiptOutcome, TransactionOut } from "@/types";
 // condition radio group entirely -- a minimum functional change to the
 // option set only, per the same precedent Roadmap PR7b's dispatch-form
 // changes established (not the full terminology/workflow redesign
-// reserved for Roadmap PR11). Labels reuse this app's existing
-// EquipmentStatus vocabulary verbatim (StatusBadge.tsx) rather than
-// inventing new wording: a usable receipt reads exactly as
-// available_at_pool would ("พร้อมใช้งาน"), a defective receipt reads
-// exactly as unavailable_defective would ("ไม่พร้อมใช้งาน") -- these are
-// the equipment states the backend alone decides to apply, See
-// RECEIPT_OUTCOME_TO_STATUS. Roadmap PR6 / owner-confirmed cleaning
+// reserved for Roadmap PR11). Roadmap PR6 / owner-confirmed cleaning
 // retirement: no "cleaning" option here either, before or after this
 // change -- cleaning happens as part of collecting/receiving equipment
 // (AGENTS.md), never a distinct receipt outcome.
-const RECEIPT_OUTCOMES: { value: ReceiptOutcome; label: string }[] = [
-  { value: "usable", label: "พร้อมใช้งาน" },
-  { value: "defective", label: "ไม่พร้อมใช้งาน" },
+//
+// Codex review round 1 (GitHub PR #29): the label and selected-state
+// styling must describe the *outcome the operator observed*, not the
+// *lifecycle state the backend will apply* -- conflating the two here
+// would misleadingly present a defective selection with the same green
+// "available" styling used elsewhere for AVAILABLE_AT_POOL, even though
+// choosing it causes UNAVAILABLE_DEFECTIVE. "ชำรุด" ("defective/damaged")
+// is the outcome-oriented term, distinct from StatusBadge.tsx's
+// lifecycle-state label ("ไม่พร้อมใช้งาน", "not available"). Each option's
+// selected-state styling below intentionally differs for the same
+// reason: usable uses the available/green treatment, defective uses the
+// repair/amber treatment (StatusBadge.tsx already colors
+// unavailable_defective with `status-repair`) -- this is presentational
+// only, no lifecycle-state value is read, stored, or submitted here.
+const RECEIPT_OUTCOMES: { value: ReceiptOutcome; label: string; selectedClass: string }[] = [
+  { value: "usable", label: "พร้อมใช้งาน", selectedClass: "border-status-available bg-status-available/10" },
+  { value: "defective", label: "ชำรุด", selectedClass: "border-status-repair bg-status-repair/10" },
 ];
 
 export function ReturnPage() {
@@ -154,7 +162,7 @@ export function ReturnPage() {
             <label
               key={o.value}
               className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
-                outcome === o.value ? "border-status-available bg-status-available/10" : "border-[var(--border)]"
+                outcome === o.value ? o.selectedClass : "border-[var(--border)]"
               }`}
             >
               <input
