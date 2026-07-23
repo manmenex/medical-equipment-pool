@@ -140,6 +140,22 @@ shape Roadmap PR8A established for the receipt-close guard
 no longer current (a concurrent correction won first) gets
 `WARD_CORRECTION_CONFLICT`, never a silently-applied lost update.
 
+### Frontend consumer (Roadmap PR9B)
+
+`frontend/src/pages/ReturnPage.tsx` (the only screen that loads and
+displays a `TransactionOut`) shows a "แก้ไขแผนกรับเครื่อง" action and
+`frontend/src/components/WardCorrectionDialog.tsx`, but only when
+`frontend/src/hooks/useAuth.ts`'s `canCorrectTransactionWard(user)`
+returns true — a frontend-only mirror of this endpoint's `admin`-only
+gate, for usability, not security; every error path below (starting with
+`403`) is still handled explicitly because the backend remains the sole
+authority. The dialog enforces the same reason length/non-blank rules as
+this page's request-body table above before submitting, and on
+`WARD_CORRECTION_CONFLICT` refetches `GET /transactions/{transaction_id}`
+and displays the newly committed ward rather than retrying blindly.
+Roadmap PR10 updates `canCorrectTransactionWard` alongside
+`WARD_CORRECTION_ROLES` when the role mapping is consolidated.
+
 ## See also
 
 - `docs/api/dispatch.md` — create a transaction (`POST /borrow`), list only open ones (`GET /borrow/active`)

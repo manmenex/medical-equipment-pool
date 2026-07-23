@@ -1,5 +1,5 @@
 import { api } from "@/services/api";
-import type { DispatchType, Page, ReceiptOutcome, RoutineRound, TransactionOut } from "@/types";
+import type { DispatchType, Page, ReceiptOutcome, RoutineRound, TransactionOut, WardCorrectionPayload } from "@/types";
 
 // Roadmap PR7b: borrower_name/due_at/quantity are deliberately absent --
 // no longer accepted by the active BorrowRequest contract (see
@@ -50,5 +50,28 @@ export async function listTransactions(params: {
   limit?: number;
 }): Promise<Page<TransactionOut>> {
   const resp = await api.get<Page<TransactionOut>>("/transactions", { params });
+  return resp.data;
+}
+
+export async function getTransaction(transactionId: string): Promise<TransactionOut> {
+  const resp = await api.get<TransactionOut>(`/transactions/${transactionId}`);
+  return resp.data;
+}
+
+// Roadmap PR9A (backend/app/schemas/transaction.py): the mandatory reason's
+// declared maximum length, mirrored here so the frontend's own validation
+// and character counter can never silently drift from the backend's
+// authoritative limit.
+export const WARD_CORRECTION_REASON_MAX_LENGTH = 500;
+
+// Roadmap PR9B: consumes the merged PR9A backend contract exactly --
+// POST /transactions/{id}/correct-ward, body { ward_id, reason }, response
+// is the existing TransactionOut with the corrected ward_id. This backend
+// contract is not changed by PR9B; see docs/api/transactions.md.
+export async function correctTransactionWard(
+  transactionId: string,
+  payload: WardCorrectionPayload
+): Promise<TransactionOut> {
+  const resp = await api.post<TransactionOut>(`/transactions/${transactionId}/correct-ward`, payload);
   return resp.data;
 }
