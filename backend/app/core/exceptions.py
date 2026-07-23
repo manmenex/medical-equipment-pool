@@ -93,6 +93,40 @@ class InvalidStatusTransitionError(DomainError):
     status_code = 409
 
 
+class WardCorrectionNoOpError(DomainError):
+    """Roadmap PR9A (docs/audits/03-hospital-equipment-pool-workflow-audit.md
+    §7 "Ward Recording Rules"): raised when a ward-correction request's
+    ``ward_id`` equals the transaction's current ``ward_id`` at the moment
+    it was read. Not an error about the target ward or the transaction --
+    the request is well-formed and both reference real rows -- it is
+    rejected because applying it would not correct anything: there is no
+    prior-vs-corrected distinction to record, and writing an audit entry
+    for a no-op would misrepresent that a change happened. Deliberately a
+    distinct code from ``TRANSACTION_ALREADY_RETURNED``/
+    ``RECEIPT_RACE_LOST`` (Roadmap PR8C) -- this is a same-ward no-op, not
+    a receipt-flow conflict, and must not be confused with either."""
+
+    code = "WARD_CORRECTION_NOOP"
+    status_code = 409
+
+
+class WardCorrectionConflictError(DomainError):
+    """Roadmap PR9A: raised when this request's conditional ward-correction
+    update affected zero rows -- the transaction's ``ward_id`` was no
+    longer the value this request read at the start (a concurrent
+    correction won first). Mirrors ``ReceiptRaceLostError``'s
+    conditional-UPDATE-loses-the-race shape (Roadmap PR8A/PR8C) applied to
+    a different column, but is deliberately a distinct code: reusing a
+    receipt-flow code here would misdescribe the cause to a caller
+    inspecting the response, and the two flows must remain independently
+    evolvable. The requester did nothing wrong -- their read was accurate
+    when taken -- so the caller should refresh the transaction and decide
+    whether to resubmit against the new current state, not retry blindly."""
+
+    code = "WARD_CORRECTION_CONFLICT"
+    status_code = 409
+
+
 class ConflictError(DomainError):
     """Generic safe fallback for an IntegrityError that could not be classified.
 

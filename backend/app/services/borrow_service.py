@@ -1,8 +1,10 @@
 import uuid
 
+from fastapi import Request
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.audit import AUDIT_ACTION_WARD_CORRECTION, AUDIT_ENTITY_BORROW_TRANSACTION, record_audit_event
 from app.core.db_errors import IntegrityViolationKind, classify_integrity_error
 from app.core.exceptions import (
     EquipmentNotAvailableError,
@@ -11,6 +13,8 @@ from app.core.exceptions import (
     ReceiptRaceLostError,
     TransactionAlreadyReturnedError,
     TransactionNotFoundError,
+    WardCorrectionConflictError,
+    WardCorrectionNoOpError,
 )
 from app.core.redis import cache_delete_prefix
 from app.core.references import ensure_referenced_row_exists
@@ -251,4 +255,91 @@ async def return_equipment(
     await db.refresh(tx, attribute_names=["equipment"])
     await cache_delete_prefix("equipment:search:")
     await cache_delete_prefix("dashboard:")
+    return tx
+
+
+async def correct_ward(
+    db: AsyncSession,
+    *,
+    transaction_id: uuid.UUID,
+    new_ward_id: uuid.UUID,
+    reason: str,
+    actor_user_id: uuid.UUID,
+    request: Request | None,
+) -> BorrowTransaction:
+    """Roadmap PR9A (docs/audits/03-hospital-equipment-pool-workflow-audit.md
+    §7 "Ward Recording Rules"): a narrow, audited correction of a
+    transaction's recorded destination ward -- distinct from any general
+    edit capability, and explicitly NOT ward-transfer tracking (this fixes
+    an incorrect original record; the transaction never moves through a
+    "ward-to-ward transfer" concept, and no such concept exists anywhere in
+    this system). Deliberately has none of return_equipment's lifecycle
+    concerns: it never reads or writes ``status``, never touches equipment
+    state, and operates identically whether the transaction is OPEN or
+    CLOSED -- correcting historical data is valid either way.
+
+    Only ``ward_id`` changes. No other transaction field, lifecycle state,
+    dispatch_type/routine_round, or business-event timestamp is read or
+    written by this function.
+    """
+    tx = await transaction_crud.get_by_id(db, transaction_id)
+    if tx is None:
+        raise TransactionNotFoundError("Transaction not found")
+
+    await ensure_referenced_row_exists(db, Ward, new_ward_id, field_name="ward_id")
+
+    previous_ward_id = tx.ward_id
+    if previous_ward_id == new_ward_id:
+        # No audit entry: rejected before any write is attempted, so there is
+        # no before/after transition to record (see WardCorrectionNoOpError's
+        # docstring).
+        raise WardCorrectionNoOpError("The submitted ward is already recorded for this transaction.")
+
+    # Roadmap PR9A concurrency requirement -- the same conditional-UPDATE
+    # shape Roadmap PR8A established for close(), applied to ward_id: decide
+    # the outcome by affected-row count against the ward_id value read above,
+    # never by an unconditional UPDATE trusting the in-memory read to still
+    # be current.
+    won = await transaction_crud.correct_ward(db, tx, expected_ward_id=previous_ward_id, new_ward_id=new_ward_id)
+    if not won:
+        # A concurrent correction changed ward_id between this request's read
+        # (previous_ward_id, above) and its own conditional UPDATE. Roll back
+        # before any audit write -- exactly the same "loser produces zero
+        # side effects" shape as ReceiptRaceLostError, but a distinct
+        # exception/code: reusing a receipt-flow code here would misdescribe
+        # the cause to any caller inspecting the response.
+        await db.rollback()
+        raise WardCorrectionConflictError(
+            "Another correction updated this transaction's ward first. Refresh to see the current record."
+        )
+
+    # correct_ward() executed as Core SQL, bypassing the ORM unit of work, so
+    # the in-memory `tx` still reads the pre-correction ward_id. Refresh so
+    # the response reflects committed state, never a stale value (mirrors
+    # return_equipment's identical requirement after a winning close()).
+    await db.refresh(tx, attribute_names=["ward_id"])
+
+    # Exactly one audit entry per successful correction, via the canonical
+    # PR3 writer (app.core.audit.record_audit_event) -- not the lower-level
+    # audit_crud.create this module's older borrow()/return_equipment() call
+    # sites use, since only record_audit_event captures the full
+    # request/correlation-id and IP/user-agent metadata this action's audit
+    # requirement calls for. before/after record exactly the two ward values
+    # and the mandatory reason -- no other, unrestricted request data.
+    await record_audit_event(
+        db,
+        actor_user_id=actor_user_id,
+        action=AUDIT_ACTION_WARD_CORRECTION,
+        entity_type=AUDIT_ENTITY_BORROW_TRANSACTION,
+        entity_id=tx.id,
+        before={"ward_id": str(previous_ward_id) if previous_ward_id else None},
+        after={"ward_id": str(new_ward_id), "reason": reason},
+        request=request,
+    )
+    # Atomic: the ward_id UPDATE above and the audit INSERT are both only
+    # flushed, not committed, until this single commit -- either both
+    # persist or (on any exception before this point) neither does, since
+    # they share the same database transaction.
+    await db.commit()
+    await db.refresh(tx, attribute_names=["equipment"])
     return tx

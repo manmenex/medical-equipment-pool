@@ -1,9 +1,22 @@
 from datetime import datetime
+from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models.transaction import DispatchType, ReceiptOutcome, RoutineRound
 from app.schemas.common import UUIDStr
+
+# Roadmap PR9A: bounded, consistent with other free-text metadata fields in
+# this schema module's neighborhood (e.g. EquipmentBase.equipment_name at
+# 255) -- long enough for a genuine correction note, short enough to keep
+# audit_logs.after_data (JSON/JSONB) from accepting unbounded input. No
+# existing "reason"/"note" field in this codebase is currently length-bound
+# at the schema layer (EquipmentStatusChange.reason, BorrowRequest.notes,
+# ReturnRequest.notes are all unconstrained optional strings) -- this is the
+# first, chosen deliberately per this task's explicit requirement rather
+# than left open-ended, since a mandatory reason is exactly the kind of
+# field an operator could paste unbounded text into.
+WARD_CORRECTION_REASON_MAX_LENGTH = 500
 
 
 class BorrowRequest(BaseModel):
@@ -79,6 +92,47 @@ class ReturnRequest(BaseModel):
     notes: str | None = None
 
     model_config = {"extra": "forbid"}
+
+
+class WardCorrectionRequest(BaseModel):
+    """Roadmap PR9A (docs/audits/03-hospital-equipment-pool-workflow-audit.md
+    §7 "Ward Recording Rules": "Add a narrow, role-gated ... fully-audited
+    'Correct Destination Ward' action -- distinct from any general edit
+    capability, writing a clear before/after audit entry every time it's
+    used"; §10's permission matrix requires "(with mandatory audit note)").
+    Exactly two fields, matching that scope precisely -- this is not a
+    generic transaction PATCH (see docs/DECISION_LOG.md "Roadmap PR9A"):
+
+    - ``ward_id``: the corrected destination ward. A native ``UUID`` field
+      (not ``str``) so an invalid identifier fails Pydantic's own
+      validation with a standard 422 -- no bespoke parsing/normalization of
+      a malformed value is performed anywhere in this request's handling.
+    - ``reason``: the mandatory correction note the audit trail requires.
+      Trimmed before length/blank validation (a value that is only
+      whitespace must be rejected the same as an empty one, not accepted
+      because it has nonzero raw length), bounded at
+      ``WARD_CORRECTION_REASON_MAX_LENGTH``.
+
+    ``extra: "forbid"`` (the same BorrowRequest/ReturnRequest technique
+    Roadmap PR7b/PR8B established) -- a caller sending any other field gets
+    a hard 422, never a silently-ignored one.
+    """
+
+    ward_id: UUID
+    reason: str = Field(min_length=1, max_length=WARD_CORRECTION_REASON_MAX_LENGTH)
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _trim_reason(cls, value: object) -> object:
+        # mode="before" runs ahead of Field's min_length/max_length checks,
+        # so a whitespace-only submission (e.g. "   ") is trimmed down to ""
+        # first and then correctly rejected by min_length=1 -- never
+        # accepted just because its raw, untrimmed length was nonzero.
+        if isinstance(value, str):
+            return value.strip()
+        return value
 
 
 class EquipmentSummary(BaseModel):

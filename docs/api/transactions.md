@@ -5,7 +5,7 @@
 **Update trigger:** A transactions endpoint's request/response shape or error behavior changes.
 **Maintainer:** Repository Owner
 
-Base path: `/api/v1/transactions`. Both endpoints are read-only — transactions are created and closed exclusively through `docs/api/dispatch.md` (`POST /borrow`) and `docs/api/receipt.md` (`POST /return/{transaction_id}`).
+Base path: `/api/v1/transactions`. `GET /transactions` and `GET /transactions/{transaction_id}` are read-only — transactions are created and closed exclusively through `docs/api/dispatch.md` (`POST /borrow`) and `docs/api/receipt.md` (`POST /return/{transaction_id}`). `POST /transactions/{transaction_id}/correct-ward` (Roadmap PR9A) is the one narrow exception: a purpose-built, audited correction of a transaction's recorded ward — never a general edit endpoint.
 
 ## `GET /transactions` — search/list
 
@@ -49,6 +49,85 @@ Same shape as `POST /borrow`'s response (see `docs/api/dispatch.md`).
 | `422` | `VALIDATION_ERROR` | `transaction_id` path parameter isn't a valid UUID (FastAPI-typed path parameter) |
 
 Full status/code reference: `docs/api/ERROR_CODES.md`.
+
+## `POST /transactions/{transaction_id}/correct-ward` — correct a recorded ward
+
+Roadmap PR9A (`docs/audits/03-hospital-equipment-pool-workflow-audit.md` §7
+"Ward Recording Rules"): the system records only the first receiving ward
+for a dispatch, which is normally immutable. This endpoint is the one
+narrow, audited exception — it corrects an incorrect original record. **It
+does not represent the equipment moving between wards and is not
+ward-transfer tracking**; no such concept exists anywhere in this system.
+
+**Auth:** Administrator or Equipment Pool Staff only (currently
+`admin`/`ward_nurse`/`transport_staff` — see `app.api.v1.deps.
+WARD_CORRECTION_ROLES`'s docstring for the temporary mapping from the
+current 5-role model, pending Roadmap PR10's Role Model Consolidation).
+`viewer` (Read-Only/Supervisor) is denied with `403`.
+
+Works identically whether the transaction is `open` or `closed` — this
+corrects historical data, not an in-flight workflow step, so there is no
+lifecycle-status precondition. Only `ward_id` changes: no other transaction
+field, lifecycle state, `dispatch_type`/`routine_round`, or business-event
+timestamp is read or written. Equipment lifecycle state is never touched.
+
+### Request body
+
+```json
+{
+  "ward_id": "<UUID>",
+  "reason": "<non-empty correction reason, max 500 characters>"
+}
+```
+
+| Field | Notes |
+|---|---|
+| `ward_id` | Required. A native UUID field — a malformed value is `422 VALIDATION_ERROR` (no bespoke normalization is attempted). |
+| `reason` | Required. Trimmed before validation; a blank or whitespace-only value is `422 VALIDATION_ERROR`. Max 500 characters. |
+
+`extra: "forbid"` — an unrecognized field (e.g. an attempt to also change
+`status`) is `422 VALIDATION_ERROR`. This is deliberately not a generic
+transaction PATCH.
+
+### Response — `200 OK` (`TransactionOut`)
+
+Same shape as `POST /borrow`'s response (see `docs/api/dispatch.md`), with
+`ward_id` reflecting the correction.
+
+### Errors
+
+| Status | Code | Cause |
+|---|---|---|
+| `400` | `INVALID_INPUT` | `ward_id` does not reference an existing ward |
+| `403` | `FORBIDDEN` | Caller's role is not Administrator/Equipment-Pool-Staff-equivalent |
+| `404` | `TRANSACTION_NOT_FOUND` | `transaction_id` doesn't resolve to a transaction |
+| `409` | `WARD_CORRECTION_NOOP` | Submitted `ward_id` equals the transaction's current `ward_id` — rejected as a no-op; no audit entry is written |
+| `409` | `WARD_CORRECTION_CONFLICT` | A concurrent correction changed this transaction's `ward_id` after this request read it, before this request's own write — refresh and resubmit against the current state. Distinct from Roadmap PR8C's receipt-flow codes (`RECEIPT_RACE_LOST`/`TRANSACTION_ALREADY_RETURNED`), which this endpoint never reuses |
+| `422` | `VALIDATION_ERROR` | Missing/blank `reason`, missing/malformed `ward_id`, or an unrecognized request field |
+
+Full status/code reference: `docs/api/ERROR_CODES.md`.
+
+### Audit
+
+Every successful correction writes exactly one audit entry (the canonical
+PR3 writer, `app.core.audit.record_audit_event`) — action
+`ward_correction`, entity `borrow_transaction`, capturing the actor, the
+target transaction, the previous and new `ward_id`, and the mandatory
+`reason`, plus the standard request/correlation/IP/user-agent metadata the
+audit framework already captures for every other audited action. The
+transaction update and the audit write commit atomically — a failure
+writing the audit entry rolls back the ward change too. A rejected
+same-ward no-op never writes an audit entry, since nothing changed.
+
+### Concurrency
+
+A single conditional `UPDATE ... WHERE id = :id AND ward_id IS NOT
+DISTINCT FROM :expected_ward_id`, decided by affected-row count — the same
+shape Roadmap PR8A established for the receipt-close guard
+(`app.crud.transaction.close`), applied here to `ward_id` via
+`app.crud.transaction.correct_ward`. A request whose expected `ward_id` is
+no longer current (a concurrent correction won first) gets
+`WARD_CORRECTION_CONFLICT`, never a silently-applied lost update.
 
 ## See also
 

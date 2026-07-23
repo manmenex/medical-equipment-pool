@@ -1,14 +1,15 @@
 import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.deps import get_current_user
+from app.api.v1.deps import WARD_CORRECTION_ROLES, get_current_user, require_roles
 from app.core.exceptions import TransactionNotFoundError
 from app.crud import transaction as transaction_crud
 from app.db.session import get_db
 from app.schemas.common import Page
-from app.schemas.transaction import TransactionOut
+from app.schemas.transaction import TransactionOut, WardCorrectionRequest
+from app.services import borrow_service
 from app.utils.parsing import parse_uuid
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
@@ -43,3 +44,28 @@ async def get_transaction(
     if tx is None:
         raise TransactionNotFoundError("Transaction not found")
     return tx
+
+
+@router.post("/{transaction_id}/correct-ward", response_model=TransactionOut)
+async def correct_transaction_ward(
+    transaction_id: uuid.UUID,
+    payload: WardCorrectionRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_roles(*WARD_CORRECTION_ROLES)),
+):
+    """Roadmap PR9A: audited correction of a transaction's recorded
+    destination ward -- a narrow, purpose-built action (see
+    app.services.borrow_service.correct_ward's docstring), never a generic
+    transaction PATCH. Thin by design: all business orchestration (ward
+    validation, same-ward rejection, the conditional-update concurrency
+    guard, and the atomic audit write) lives in the service layer.
+    """
+    return await borrow_service.correct_ward(
+        db,
+        transaction_id=transaction_id,
+        new_ward_id=payload.ward_id,
+        reason=payload.reason,
+        actor_user_id=user.id,
+        request=request,
+    )
