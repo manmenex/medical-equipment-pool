@@ -7,7 +7,7 @@
 
 ## Current baseline
 
-`f6f7c2ae0b12025dae2afd7f856bb489548c81cc` — squash commit of the API & Error Catalog documentation PR (GitHub PR #24), on branch `claude/medical-equipment-pool-0c7fz0`.
+`4820dbaa683f4cb80732406892b7708d2e242d85` — squash commit of Roadmap PR8A, Atomic Receipt Concurrency Guard (GitHub PR #26), on branch `claude/medical-equipment-pool-0c7fz0`.
 
 ## Numbering note
 
@@ -32,10 +32,14 @@
 | — (infrastructure) | Test Infrastructure Cleanup — consolidated duplicated test helpers into `tests/conftest.py`, no behavior change | #22 | `06a736c` |
 | — (documentation) | Developer Documentation (`docs/development/`: SETUP, TESTING, MIGRATIONS, CODE_REVIEW, CONTRIBUTING) | #23 | `2e403fb` |
 | — (documentation) | API & Error Catalog (`docs/api/`: ERROR_CODES, dispatch, receipt, equipment, transactions) | #24 | `f6f7c2a` |
+| — (governance) | Post-merge governance sync after PR21-PR24 | #25 | `a308515` |
+| PR8 (PR8A slice) | Atomic receipt concurrency guard — PostgreSQL conditional `UPDATE` + affected-rowcount winner guard | #26 | `4820dba` |
 
-Full rationale and review-fix history for PR5 through PR7 (7b slice): `docs/DECISION_LOG.md`. PR21-PR24 (GitHub PR numbers) are process/documentation-only additions with no code, business-rule, or schema change — no `DECISION_LOG.md` entry was needed for them.
+Full rationale and review-fix history for PR5 through PR8 (PR8A slice): `docs/DECISION_LOG.md`. PR21-PR25 (GitHub PR numbers) are process/documentation-only additions with no code, business-rule, or schema change — no `DECISION_LOG.md` entry was needed for them. PR8A (GitHub PR #26) is different: it is a production code change (though not a business-rule, schema, or API-contract change) and does have a `DECISION_LOG.md` entry.
 
-**PR7 note:** `docs/audits/04-consolidated-implementation-plan.md` Part D's full PR7 entry recommended splitting into a 7a (lifecycle model) and 7b (`dispatch_type`/`routine_round`/ward-required/field-cleanup) slice "if the reviewing team prefers smaller units." PR7 (7a slice) shipped `TransactionStatus` (`OPEN`/`CLOSED`), the `create()`/`close()` mutator split, `legacy_status` preservation, and disabling the deprecated `due_at`-driven overdue-notification scheduler job (Codex PR7a review round 1, BLOCKER — see `docs/DECISION_LOG.md`). PR7 (7b slice) completed PR7's remaining scope: `dispatch_type` (`routine_round`/`on_demand`), `routine_round` (the four confirmed fixed times), a required `ward_id` for every new dispatch (application-layer enforced), and removing `borrower_name`/`due_at`/`quantity` from the active write path while preserving every existing historical value as read-only history — plus, after Codex round 1 review, `BorrowRequest` now rejects unknown request fields outright, an invalid `ward_id` is classified as a distinct 400 `INVALID_INPUT` rather than the equipment-conflict 409, and the migration 0008 test suite was rewritten to exercise a genuinely reconstructed pre-migration production schema. Roadmap PR7 (both slices) is now fully merged. Concurrent-receipt protection (two simultaneous receipts racing on the same OPEN transaction) was **not** part of either slice — it stays Roadmap PR8's responsibility and remains mandatory before pilot. See `knowledge/adr/ADR-005-transaction-model.md` and `docs/DECISION_LOG.md`.
+**PR7 note:** `docs/audits/04-consolidated-implementation-plan.md` Part D's full PR7 entry recommended splitting into a 7a (lifecycle model) and 7b (`dispatch_type`/`routine_round`/ward-required/field-cleanup) slice "if the reviewing team prefers smaller units." PR7 (7a slice) shipped `TransactionStatus` (`OPEN`/`CLOSED`), the `create()`/`close()` mutator split, `legacy_status` preservation, and disabling the deprecated `due_at`-driven overdue-notification scheduler job (Codex PR7a review round 1, BLOCKER — see `docs/DECISION_LOG.md`). PR7 (7b slice) completed PR7's remaining scope: `dispatch_type` (`routine_round`/`on_demand`), `routine_round` (the four confirmed fixed times), a required `ward_id` for every new dispatch (application-layer enforced), and removing `borrower_name`/`due_at`/`quantity` from the active write path while preserving every existing historical value as read-only history — plus, after Codex round 1 review, `BorrowRequest` now rejects unknown request fields outright, an invalid `ward_id` is classified as a distinct 400 `INVALID_INPUT` rather than the equipment-conflict 409, and the migration 0008 test suite was rewritten to exercise a genuinely reconstructed pre-migration production schema. Roadmap PR7 (both slices) is now fully merged. Concurrent-receipt protection (two simultaneous receipts racing on the same OPEN transaction) was **not** part of either slice — that gap is closed by Roadmap PR8A below.
+
+**PR8 note:** `docs/audits/04-consolidated-implementation-plan.md` Part D's full PR8 entry ("Atomic Single-Operation Equipment Receipt with concurrency guard") was split into two slices during implementation planning (`docs/design/PR8_IMPLEMENTATION_PLAN.md`, design-only, uncommitted), following the same PR7a/PR7b precedent. **PR8A** (this table's entry, GitHub PR #26) is the database-level concurrency guard only: `app.crud.transaction.close()` now performs a single conditional `UPDATE ... WHERE id = :id AND status = 'open'`, deciding the winner by affected-row count, so exactly one concurrent receipt request succeeds and every loser rolls back before any business side effect — proven with deterministic PostgreSQL tests forcing genuine contention across bursts of 1, 2, 5, 10, and 50 requests. No API contract, schema, or frontend change. **PR8B** (not yet started — see "Planned" below) is the remaining scope: narrowing the `condition` field to the confirmed binary usable/defective outcome, and distinguishing a race-loss rejection from a genuine repeat-request rejection. **Roadmap PR8 is not fully complete until PR8B also merges — do not describe PR8 as done.** See `docs/DECISION_LOG.md` ("Roadmap PR8 (PR8A slice)").
 
 ## In progress
 
@@ -47,7 +51,7 @@ Per `docs/audits/04-consolidated-implementation-plan.md` Part D:
 
 | Roadmap PR | Title |
 |---|---|
-| PR8 | Atomic Single-Operation Equipment Receipt with concurrency guard |
+| PR8 (PR8B slice) | Condition-to-binary-outcome API contract narrowing and race-vs-repeat error-message distinction |
 | PR9 | Ward Correction Action (audited) |
 | PR10 | Role Model Consolidation (3 roles) |
 | PR11 | Frontend Terminology and Workflow UI Pass |
