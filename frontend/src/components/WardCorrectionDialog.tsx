@@ -12,6 +12,11 @@ interface WardCorrectionDialogProps {
   // refresh -- either way the caller has a fresh, server-confirmed
   // TransactionOut and a Thai message describing what happened.
   onUpdated: (updated: TransactionOut, message: string) => void;
+  // Roadmap PR9B review round 2 (Finding 2): the exact element that opened
+  // this dialog, so focus can return to it on close -- captured by the
+  // caller (see WardCorrectionAction), never re-discovered here by
+  // searching the DOM for text or a CSS class.
+  triggerRef?: React.RefObject<HTMLElement | null>;
 }
 
 // Roadmap PR9A's exact codes for this endpoint (docs/api/transactions.md,
@@ -37,16 +42,35 @@ function getFocusableElements(container: HTMLElement): HTMLElement[] {
   );
 }
 
-export function WardCorrectionDialog({ transaction, wards, onClose, onUpdated }: WardCorrectionDialogProps) {
+export function WardCorrectionDialog({ transaction, wards, onClose, onUpdated, triggerRef }: WardCorrectionDialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const [wardId, setWardId] = useState("");
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Roadmap PR9B review round 2 (Finding 2): focus the first meaningful
+  // interactive control (the ward selector, since nothing focusable
+  // precedes it in the panel) rather than the panel itself -- the panel's
+  // tabIndex={-1} deliberately keeps it out of getFocusableElements, so
+  // landing focus there left Tab with nothing to cycle from. Falls back to
+  // the panel only if no focusable control exists yet.
   useEffect(() => {
-    panelRef.current?.focus();
+    if (!panelRef.current) return;
+    const focusable = getFocusableElements(panelRef.current);
+    (focusable[0] ?? panelRef.current).focus();
   }, []);
+
+  // Roadmap PR9B review round 2 (Finding 2): runs once, on unmount --
+  // covers every close path uniformly (Cancel, Escape, overlay click,
+  // successful submit, conflict refresh) since all of them unmount this
+  // component. Restores focus to the exact element that opened the dialog,
+  // never rediscovered by searching the DOM afterward.
+  useEffect(() => {
+    return () => {
+      triggerRef?.current?.focus();
+    };
+  }, [triggerRef]);
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -55,14 +79,30 @@ export function WardCorrectionDialog({ transaction, wards, onClose, onUpdated }:
         return;
       }
       if (e.key === "Tab" && panelRef.current) {
+        // Recomputed on every keypress (not cached) -- disabled/loading
+        // state changes (e.g. the Confirm button becoming enabled once the
+        // form is valid) change which elements are focusable, and a stale
+        // list would let Tab escape the trap.
         const focusable = getFocusableElements(panelRef.current);
         if (focusable.length === 0) return;
         const first = focusable[0];
         const last = focusable[focusable.length - 1];
-        if (e.shiftKey && document.activeElement === first) {
+        const active = document.activeElement;
+        const activeIndex = active ? focusable.indexOf(active as HTMLElement) : -1;
+        const focusNotContained = active === panelRef.current || activeIndex === -1;
+
+        if (focusNotContained) {
+          // Focus is on the panel itself, or has ended up outside the
+          // tracked focusable set entirely -- snap back into the dialog
+          // instead of letting Tab do nothing or leave the trap.
+          e.preventDefault();
+          (e.shiftKey ? last : first).focus();
+          return;
+        }
+        if (e.shiftKey && active === first) {
           e.preventDefault();
           last.focus();
-        } else if (!e.shiftKey && document.activeElement === last) {
+        } else if (!e.shiftKey && active === last) {
           e.preventDefault();
           first.focus();
         }
@@ -122,6 +162,7 @@ export function WardCorrectionDialog({ transaction, wards, onClose, onUpdated }:
         role="dialog"
         aria-modal="true"
         aria-labelledby="ward-correction-title"
+        aria-describedby="ward-correction-warning"
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         className="surface flex w-full max-w-sm flex-col gap-3 rounded-xl border p-4 outline-none"
@@ -194,7 +235,7 @@ export function WardCorrectionDialog({ transaction, wards, onClose, onUpdated }:
             </p>
           </div>
 
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--border)]/10 p-3 text-sm">
+          <div id="ward-correction-warning" className="rounded-lg border border-[var(--border)] bg-[var(--border)]/10 p-3 text-sm">
             การดำเนินการนี้จะแก้ไขแผนกรับเครื่องที่บันทึกไว้เดิม และจะถูกบันทึกในประวัติการตรวจสอบ
             ไม่ใช่การบันทึกการย้ายเครื่องระหว่างแผนก
           </div>

@@ -1,0 +1,284 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { EquipmentDetailPage } from "@/pages/EquipmentDetailPage";
+import type { Equipment, EquipmentStatusHistoryItem, Page, TransactionOut, UserProfile, Ward } from "@/types";
+
+// Roadmap PR9B review round 2 (Finding 3): the CLOSED-transaction entry
+// point. GET /transactions?equipment_id=... (services/borrow.ts's
+// listTransactions, already part of the merged backend contract, unchanged
+// by this PR) is the actual transaction-record source -- both OPEN and
+// CLOSED rows carry a real transaction ID, unlike getEquipmentHistory's
+// status-history rows.
+
+const equipment: Equipment = {
+  id: "eq-1",
+  asset_number: "AST-1",
+  serial_number: "SN-1",
+  equipment_name: "Infusion Pump",
+  category_id: null,
+  brand: "Acme",
+  model: "X1",
+  department_owner_id: null,
+  current_location_id: null,
+  status: "available_at_pool",
+  bcm_code: "BCM-1",
+  pm_due_date: null,
+  cal_due_date: null,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+};
+
+const openTransaction: TransactionOut = {
+  id: "tx-open-1",
+  transaction_no: "TX-OPEN-1",
+  equipment: { id: "eq-1", asset_number: "AST-1", equipment_name: "Infusion Pump", status: "issued_to_ward" },
+  quantity: 1,
+  borrowed_at: "2026-07-20T10:00:00Z",
+  returned_at: null,
+  borrower_name: null,
+  ward_id: "ward-1",
+  dispatch_type: "on_demand",
+  routine_round: null,
+  phone_number: null,
+  receipt_outcome: null,
+  legacy_condition_on_return: null,
+  status: "open",
+  notes: null,
+};
+
+const closedTransaction: TransactionOut = {
+  id: "tx-closed-1",
+  transaction_no: "TX-CLOSED-1",
+  equipment: { id: "eq-1", asset_number: "AST-1", equipment_name: "Infusion Pump", status: "available_at_pool" },
+  quantity: 1,
+  borrowed_at: "2026-07-10T10:00:00Z",
+  returned_at: "2026-07-12T10:00:00Z",
+  borrower_name: null,
+  ward_id: "ward-1",
+  dispatch_type: "on_demand",
+  routine_round: null,
+  phone_number: null,
+  receipt_outcome: "usable",
+  legacy_condition_on_return: null,
+  status: "closed",
+  notes: null,
+};
+
+const wards: Ward[] = [
+  { id: "ward-1", code: "W1", name: "Ward A", department_id: null },
+  { id: "ward-2", code: "W2", name: "Ward B", department_id: null },
+  { id: "ward-3", code: "W3", name: "Ward C", department_id: null },
+];
+
+const emptyHistory: EquipmentStatusHistoryItem[] = [];
+
+const getEquipment = vi.fn();
+const getEquipmentHistory = vi.fn();
+const listTransactions = vi.fn();
+const listWards = vi.fn();
+const correctTransactionWard = vi.fn();
+const getTransaction = vi.fn();
+
+vi.mock("@/services/equipment", () => ({
+  getEquipment: (...args: unknown[]) => getEquipment(...args),
+  getEquipmentHistory: (...args: unknown[]) => getEquipmentHistory(...args),
+}));
+vi.mock("@/services/borrow", () => ({
+  listTransactions: (...args: unknown[]) => listTransactions(...args),
+  correctTransactionWard: (...args: unknown[]) => correctTransactionWard(...args),
+  getTransaction: (...args: unknown[]) => getTransaction(...args),
+  WARD_CORRECTION_REASON_MAX_LENGTH: 500,
+}));
+vi.mock("@/services/masterData", () => ({
+  listWards: (...args: unknown[]) => listWards(...args),
+}));
+
+let mockUser: UserProfile | null = null;
+vi.mock("@/hooks/useAuth", async () => {
+  const actual = await vi.importActual<typeof import("@/hooks/useAuth")>("@/hooks/useAuth");
+  return {
+    ...actual,
+    useAuth: () => ({ user: mockUser, isAuthenticated: true, isLoading: false }),
+  };
+});
+
+function makeUser(role: UserProfile["role"]): UserProfile {
+  return { id: "user-1", employee_code: "U001", full_name: "Test User", email: "u@test.dev", role, permissions: {} };
+}
+
+function page(items: TransactionOut[]): Page<TransactionOut> {
+  return { items, next_cursor: null, total: items.length };
+}
+
+beforeEach(() => {
+  mockUser = makeUser("admin");
+  getEquipment.mockResolvedValue(equipment);
+  getEquipmentHistory.mockResolvedValue(emptyHistory);
+  listTransactions.mockResolvedValue(page([openTransaction, closedTransaction]));
+  listWards.mockResolvedValue(wards);
+});
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
+
+function renderPage() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={["/equipment/eq-1"]}>
+        <Routes>
+          <Route path="/equipment/:id" element={<EquipmentDetailPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+}
+
+const TRIGGER = /แก้ไขแผนกรับเครื่อง/;
+const CONFIRM_BUTTON = /ยืนยันการแก้ไข/;
+
+async function waitForHistoryLoaded() {
+  await waitFor(() => expect(screen.getByText("TX-OPEN-1", { exact: false })).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText("TX-CLOSED-1", { exact: false })).toBeInTheDocument());
+}
+
+function rowFor(transactionNo: string): HTMLElement {
+  return screen.getByText(transactionNo, { exact: false }).closest("li") as HTMLElement;
+}
+
+describe("EquipmentDetailPage transaction history (Roadmap PR9B review round 2, Finding 3)", () => {
+  it("lists both OPEN and CLOSED transactions with their own transaction numbers", async () => {
+    renderPage();
+    await waitForHistoryLoaded();
+
+    expect(screen.getByText(/อยู่ระหว่างยืม/)).toBeInTheDocument();
+    expect(screen.getByText(/คืนแล้ว/)).toBeInTheDocument();
+  });
+
+  it("never infers a transaction ID from the equipment ID -- the history query uses equipment_id, corrections use the real transaction id", async () => {
+    renderPage();
+    await waitForHistoryLoaded();
+
+    expect(listTransactions).toHaveBeenCalledWith(expect.objectContaining({ equipment_id: "eq-1" }));
+  });
+
+  it("admin can open ward correction for an OPEN transaction", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitForHistoryLoaded();
+
+    const openRow = rowFor("TX-OPEN-1");
+    await user.click(within(openRow).getByRole("button", { name: TRIGGER }));
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+  });
+
+  it("admin can open ward correction for a CLOSED transaction", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitForHistoryLoaded();
+
+    const closedRow = rowFor("TX-CLOSED-1");
+    await user.click(within(closedRow).getByRole("button", { name: TRIGGER }));
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+  });
+
+  it("CLOSED correction submits using the exact CLOSED transaction id, never the equipment id or the OPEN transaction's id", async () => {
+    correctTransactionWard.mockResolvedValue({ ...closedTransaction, ward_id: "ward-2" });
+    const user = userEvent.setup();
+    renderPage();
+    await waitForHistoryLoaded();
+
+    const closedRow = rowFor("TX-CLOSED-1");
+    await user.click(within(closedRow).getByRole("button", { name: TRIGGER }));
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+    await user.selectOptions(screen.getByLabelText(/แผนกที่ถูกต้อง/), "ward-2");
+    await user.type(screen.getByLabelText(/เหตุผลในการแก้ไข/), "Fixed after receipt");
+    await user.click(screen.getByRole("button", { name: CONFIRM_BUTTON }));
+
+    await waitFor(() => expect(correctTransactionWard).toHaveBeenCalledTimes(1));
+    const [txId] = correctTransactionWard.mock.calls[0];
+    expect(txId).toBe("tx-closed-1");
+    expect(txId).not.toBe("eq-1");
+    expect(txId).not.toBe("tx-open-1");
+  });
+
+  it("CLOSED correction is not blocked by the equipment already being available at the pool", async () => {
+    // `equipment.status` is already "available_at_pool" in this fixture --
+    // the correction action must not read or branch on equipment status.
+    correctTransactionWard.mockResolvedValue({ ...closedTransaction, ward_id: "ward-2" });
+    const user = userEvent.setup();
+    renderPage();
+    await waitForHistoryLoaded();
+
+    const closedRow = rowFor("TX-CLOSED-1");
+    await user.click(within(closedRow).getByRole("button", { name: TRIGGER }));
+    await user.selectOptions(screen.getByLabelText(/แผนกที่ถูกต้อง/), "ward-2");
+    await user.type(screen.getByLabelText(/เหตุผลในการแก้ไข/), "Fixed after receipt");
+    await user.click(screen.getByRole("button", { name: CONFIRM_BUTTON }));
+
+    await waitFor(() => expect(correctTransactionWard).toHaveBeenCalledTimes(1));
+  });
+
+  it("hides the ward-correction action from a non-admin for both OPEN and CLOSED transactions", async () => {
+    mockUser = makeUser("ward_nurse");
+    renderPage();
+    await waitForHistoryLoaded();
+
+    expect(screen.queryAllByRole("button", { name: TRIGGER })).toHaveLength(0);
+    expect(correctTransactionWard).not.toHaveBeenCalled();
+  });
+
+  it("refreshes the history after a successful CLOSED correction, without a page reload", async () => {
+    correctTransactionWard.mockResolvedValue({ ...closedTransaction, ward_id: "ward-2" });
+    const user = userEvent.setup();
+    renderPage();
+    await waitForHistoryLoaded();
+
+    expect(listTransactions).toHaveBeenCalledTimes(1);
+
+    listTransactions.mockResolvedValue(page([openTransaction, { ...closedTransaction, ward_id: "ward-2" }]));
+    const closedRow = rowFor("TX-CLOSED-1");
+    await user.click(within(closedRow).getByRole("button", { name: TRIGGER }));
+    await user.selectOptions(screen.getByLabelText(/แผนกที่ถูกต้อง/), "ward-2");
+    await user.type(screen.getByLabelText(/เหตุผลในการแก้ไข/), "Fixed after receipt");
+    await user.click(screen.getByRole("button", { name: CONFIRM_BUTTON }));
+
+    await waitFor(() => expect(listTransactions).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByText("แก้ไขแผนกรับเครื่องสำเร็จ")).toBeInTheDocument());
+  });
+
+  it("refreshes the history after a successful OPEN correction", async () => {
+    correctTransactionWard.mockResolvedValue({ ...openTransaction, ward_id: "ward-2" });
+    const user = userEvent.setup();
+    renderPage();
+    await waitForHistoryLoaded();
+
+    const openRow = rowFor("TX-OPEN-1");
+    await user.click(within(openRow).getByRole("button", { name: TRIGGER }));
+    await user.selectOptions(screen.getByLabelText(/แผนกที่ถูกต้อง/), "ward-2");
+    await user.type(screen.getByLabelText(/เหตุผลในการแก้ไข/), "Fixed a phone-in error");
+    await user.click(screen.getByRole("button", { name: CONFIRM_BUTTON }));
+
+    await waitFor(() => expect(listTransactions).toHaveBeenCalledTimes(2));
+  });
+
+  it("returns focus to the exact history-row trigger that opened the dialog after Cancel", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitForHistoryLoaded();
+
+    const closedRow = rowFor("TX-CLOSED-1");
+    const trigger = within(closedRow).getByRole("button", { name: TRIGGER });
+    await user.click(trigger);
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "ยกเลิก" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(trigger).toHaveFocus();
+  });
+});

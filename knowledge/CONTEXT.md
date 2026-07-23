@@ -31,7 +31,7 @@ Roadmap PR7 (both slices, GitHub PR #19/#20) and Roadmap PR8 (all three slices, 
 
 ## Next planned PR
 
-Roadmap PR9's PR9A (backend) slice is merged (GitHub PR #33). Only the PR9B (frontend) slice remains before Roadmap PR9 as a whole is complete — a minimal, mobile-first admin-only ward-correction action on `ReturnPage.tsx`, consuming PR9A's contract exactly, currently in progress (not yet merged) as of this snapshot. After PR9B merges, the next unstarted item is Roadmap PR10 — role-mapping consolidation. See `docs/ROADMAP.md`.
+Roadmap PR9's PR9A (backend) slice is merged (GitHub PR #33). Only the PR9B (frontend) slice remains before Roadmap PR9 as a whole is complete — a minimal, mobile-first admin-only ward-correction action reachable from `ReturnPage.tsx` (an OPEN transaction) and `EquipmentDetailPage.tsx`'s transaction history (OPEN or CLOSED, since PR9A's endpoint has no lifecycle-status precondition), sharing one `WardCorrectionAction`/`WardCorrectionDialog` pair so the mutation and validation logic are never duplicated per screen. Consumes PR9A's contract exactly, currently in progress (not yet merged) as of this snapshot. After PR9B merges, the next unstarted item is Roadmap PR10 — role-mapping consolidation. See `docs/ROADMAP.md`.
 
 ## Outstanding work
 

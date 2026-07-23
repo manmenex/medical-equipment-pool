@@ -1,11 +1,28 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { StatusBadge } from "@/components/StatusBadge";
+import { WardCorrectionAction } from "@/components/WardCorrectionAction";
+import { listTransactions } from "@/services/borrow";
 import { getEquipment, getEquipmentHistory } from "@/services/equipment";
+import { listWards } from "@/services/masterData";
+import type { TransactionOut } from "@/types";
 
+// Roadmap PR9B review round 2 (Finding 3): getEquipmentHistory's
+// EquipmentStatusHistoryItem rows (from_status/to_status/reason) are
+// equipment lifecycle-state transitions, not transactions -- they carry no
+// transaction ID and cannot substitute for one. GET /transactions with
+// equipment_id (already used elsewhere via services/borrow.ts's
+// listTransactions) is the actual transaction record source, with real
+// TransactionOut.id values for both OPEN and CLOSED transactions -- the
+// backend's ward-correction endpoint intentionally has no lifecycle-status
+// precondition (docs/api/transactions.md), so a CLOSED transaction (e.g. an
+// error discovered after the equipment was already received back into the
+// pool) must remain correctable from here.
 export function EquipmentDetailPage() {
   const { id = "" } = useParams();
+  const queryClient = useQueryClient();
   const { data: equipment, isLoading } = useQuery({
     queryKey: ["equipment", id],
     queryFn: () => getEquipment(id),
@@ -16,6 +33,32 @@ export function EquipmentDetailPage() {
     queryFn: () => getEquipmentHistory(id),
     enabled: Boolean(id),
   });
+  const transactionsQueryKey = ["equipment", id, "transactions"];
+  const { data: transactions } = useQuery({
+    queryKey: transactionsQueryKey,
+    queryFn: async () => (await listTransactions({ equipment_id: id, limit: 50 })).items,
+    enabled: Boolean(id),
+  });
+  const { data: wards } = useQuery({ queryKey: ["wards"], queryFn: listWards });
+  const [wardCorrectionNotice, setWardCorrectionNotice] = useState<string | null>(null);
+
+  function wardName(wardId: string | null): string {
+    if (!wardId) return "ไม่ทราบ";
+    return wards?.find((w) => w.id === wardId)?.name ?? "ไม่ทราบ";
+  }
+
+  function handleWardCorrected(_updated: TransactionOut, message: string) {
+    setWardCorrectionNotice(message);
+    // Roadmap PR9B review round 2: narrow, entity-scoped invalidation --
+    // this equipment's own transaction history is the list that displays
+    // the corrected ward, so it is refetched; the generic transactions
+    // namespace is also invalidated in case another screen (e.g.
+    // ReturnPage) has this same transaction cached. Equipment queries are
+    // deliberately not invalidated -- ward correction never changes
+    // equipment status or any equipment-detail field.
+    queryClient.invalidateQueries({ queryKey: transactionsQueryKey });
+    queryClient.invalidateQueries({ queryKey: ["transactions"] });
+  }
 
   if (isLoading || !equipment) {
     return <p className="text-sm text-[var(--text-muted)]">กำลังโหลด...</p>;
@@ -62,6 +105,37 @@ export function EquipmentDetailPage() {
             )}
           </div>
         </div>
+      </div>
+
+      {wardCorrectionNotice && <p className="text-sm text-status-available">{wardCorrectionNotice}</p>}
+
+      <div className="surface rounded-xl border p-4">
+        <h2 className="mb-3 text-sm font-medium">ประวัติการยืม-คืน</h2>
+        <ol className="flex flex-col gap-3">
+          {(transactions ?? []).map((tx) => (
+            <li key={tx.id} className="flex flex-col gap-1 rounded-lg border border-[var(--border)] p-3 text-sm">
+              <div>
+                เลขที่รายการ {tx.transaction_no} ·{" "}
+                <strong>{tx.status === "open" ? "อยู่ระหว่างยืม" : "คืนแล้ว"}</strong>
+              </div>
+              <div className="text-[var(--text-muted)]">แผนก: {wardName(tx.ward_id)}</div>
+              <div className="text-xs text-[var(--text-muted)]">
+                ยืมเมื่อ {new Date(tx.borrowed_at).toLocaleString("th-TH")}
+                {tx.returned_at ? ` · คืนเมื่อ ${new Date(tx.returned_at).toLocaleString("th-TH")}` : ""}
+              </div>
+              <div className="mt-1">
+                <WardCorrectionAction
+                  transaction={tx}
+                  onCorrected={handleWardCorrected}
+                  triggerClassName="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium disabled:opacity-60"
+                />
+              </div>
+            </li>
+          ))}
+          {(!transactions || transactions.length === 0) && (
+            <li className="text-sm text-[var(--text-muted)]">ยังไม่มีประวัติการยืม-คืน</li>
+          )}
+        </ol>
       </div>
 
       <div className="surface rounded-xl border p-4">

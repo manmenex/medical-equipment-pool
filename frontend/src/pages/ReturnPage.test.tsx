@@ -390,6 +390,41 @@ describe("ReturnPage ward correction form (Roadmap PR9B)", () => {
   });
 });
 
+// Roadmap PR9B review round 2 (Finding 1 and Finding 2): ward-query
+// loading/error/retry behavior and focus restoration, exercised through
+// ReturnPage -- the OPEN-transaction entry point. WardCorrectionAction and
+// WardCorrectionDialog have their own dedicated, more exhaustive tests
+// (src/components/WardCorrectionAction.test.tsx); these confirm the same
+// shared component behaves correctly once mounted inside this screen.
+describe("ReturnPage ward correction trigger state (Roadmap PR9B review round 2)", () => {
+  it("disables the trigger and shows a loading message while wards are loading", async () => {
+    listWards.mockReturnValue(new Promise(() => {}));
+    await openReturnedTransaction();
+
+    const trigger = await screen.findByRole("button", { name: /กำลังโหลดรายชื่อแผนก/ });
+    expect(trigger).toBeDisabled();
+  });
+
+  it("shows an explicit error and a retry action when the ward list fails to load, without opening the dialog", async () => {
+    listWards.mockRejectedValue(new Error("network down"));
+    await openReturnedTransaction();
+
+    expect(await screen.findByText("ไม่สามารถโหลดรายชื่อแผนกได้")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "ลองใหม่" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("returns focus to the ReturnPage trigger after the dialog closes", async () => {
+    const user = await openReturnedTransaction();
+    const trigger = screen.getByRole("button", { name: CORRECT_WARD_BUTTON });
+    await openWardCorrectionDialog(user);
+
+    await user.click(screen.getByRole("button", { name: CANCEL_BUTTON }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(trigger).toHaveFocus();
+  });
+});
+
 describe("ReturnPage ward correction submission (Roadmap PR9B)", () => {
   it("sends exactly the transaction id, ward_id, and trimmed reason -- no unknown fields", async () => {
     correctTransactionWard.mockResolvedValue({ ...transaction, ward_id: "ward-2" });

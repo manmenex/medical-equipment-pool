@@ -142,19 +142,39 @@ no longer current (a concurrent correction won first) gets
 
 ### Frontend consumer (Roadmap PR9B)
 
-`frontend/src/pages/ReturnPage.tsx` (the only screen that loads and
-displays a `TransactionOut`) shows a "แก้ไขแผนกรับเครื่อง" action and
-`frontend/src/components/WardCorrectionDialog.tsx`, but only when
+Two entry points render a "แก้ไขแผนกรับเครื่อง" action, since this
+endpoint has no lifecycle-status precondition (see "Works identically
+whether the transaction is `open` or `closed`" above) and a
+mis-recorded ward may be discovered after the transaction has already
+closed:
+
+- `frontend/src/pages/ReturnPage.tsx` — the transaction currently being
+  received (`open`).
+- `frontend/src/pages/EquipmentDetailPage.tsx`'s transaction-history
+  section — every transaction for that equipment, `open` or `closed`,
+  sourced from `GET /transactions?equipment_id=` (this file's `list_transactions`
+  above; not the equipment status-history endpoint, whose rows carry no
+  transaction ID and cannot substitute for one).
+
+Both render the shared `frontend/src/components/WardCorrectionAction.tsx`
+(the ward-list query's loading/error/retry state and the trigger button —
+loading disables the trigger, a failed load shows an explicit error with a
+"ลองใหม่" retry instead of opening the dialog) and
+`frontend/src/components/WardCorrectionDialog.tsx` (the form, confirmation,
+and submission), so the mutation, error-code mapping, and validation logic
+exist exactly once. Both are gated on
 `frontend/src/hooks/useAuth.ts`'s `canCorrectTransactionWard(user)`
-returns true — a frontend-only mirror of this endpoint's `admin`-only
+returning true — a frontend-only mirror of this endpoint's `admin`-only
 gate, for usability, not security; every error path below (starting with
 `403`) is still handled explicitly because the backend remains the sole
 authority. The dialog enforces the same reason length/non-blank rules as
-this page's request-body table above before submitting, and on
-`WARD_CORRECTION_CONFLICT` refetches `GET /transactions/{transaction_id}`
-and displays the newly committed ward rather than retrying blindly.
-Roadmap PR10 updates `canCorrectTransactionWard` alongside
-`WARD_CORRECTION_ROLES` when the role mapping is consolidated.
+this page's request-body table above before submitting, traps keyboard
+focus while open, and restores focus to the exact element that opened it
+on close. On `WARD_CORRECTION_CONFLICT` it refetches
+`GET /transactions/{transaction_id}` and displays the newly committed ward
+rather than retrying blindly. Roadmap PR10 updates
+`canCorrectTransactionWard` alongside `WARD_CORRECTION_ROLES` when the
+role mapping is consolidated.
 
 ## See also
 

@@ -4,7 +4,7 @@ import { useSearchParams } from "react-router-dom";
 
 import { BcmSearchInput } from "@/components/BcmSearchInput";
 import { QRScanner } from "@/components/QRScanner";
-import { WardCorrectionDialog } from "@/components/WardCorrectionDialog";
+import { WardCorrectionAction } from "@/components/WardCorrectionAction";
 import { canCorrectTransactionWard, useAuth } from "@/hooks/useAuth";
 import { apiErrorCode, apiErrorMessage } from "@/services/api";
 import { createReturn, listActiveBorrows } from "@/services/borrow";
@@ -80,9 +80,11 @@ export function ReturnPage() {
 
   // Roadmap PR9B: only fetched when the current user can even reach the
   // correction action -- no need to load ward data for a role that will
-  // never see the button (see canCorrectTransactionWard).
+  // never see the button (see canCorrectTransactionWard). Read-only, for
+  // the "แผนกที่บันทึกไว้" display line below; shares the ["wards"] cache
+  // entry with WardCorrectionAction's own query (same key, deduped by
+  // React Query), so this is not a second network request.
   const { data: wards } = useQuery({ queryKey: ["wards"], queryFn: listWards, enabled: canCorrectWard });
-  const [wardCorrectionOpen, setWardCorrectionOpen] = useState(false);
   const [wardCorrectionNotice, setWardCorrectionNotice] = useState<string | null>(null);
 
   const findActiveTransaction = useCallback(async (equipmentId: string) => {
@@ -198,13 +200,26 @@ export function ReturnPage() {
           </div>
         )}
         {canCorrectWard && (
-          <button
-            type="button"
-            onClick={() => setWardCorrectionOpen(true)}
-            className="mt-3 w-full rounded-lg border border-[var(--border)] py-2.5 text-sm font-medium"
-          >
-            แก้ไขแผนกรับเครื่อง
-          </button>
+          <div className="mt-3">
+            <WardCorrectionAction
+              transaction={transaction}
+              onCorrected={(updated, message) => {
+                setTransaction(updated);
+                setWardCorrectionNotice(message);
+                // Roadmap PR9B: narrow, entity-scoped invalidation -- the
+                // corrected transaction's own display already updates
+                // directly from the server-confirmed response above (never
+                // optimistic). This additionally invalidates any
+                // current/future consumer of the transactions list/detail
+                // query-key namespace (e.g. GET /transactions), so a stale
+                // cached copy elsewhere in the app is never served after a
+                // correction. Equipment queries are deliberately not
+                // invalidated -- ward correction never changes equipment
+                // status or any equipment-detail field.
+                queryClient.invalidateQueries({ queryKey: ["transactions"] });
+              }}
+            />
+          </div>
         )}
       </div>
 
@@ -254,29 +269,6 @@ export function ReturnPage() {
           {submitting ? "กำลังบันทึก..." : "ยืนยันการคืน"}
         </button>
       </form>
-
-      {wardCorrectionOpen && wards && (
-        <WardCorrectionDialog
-          transaction={transaction}
-          wards={wards}
-          onClose={() => setWardCorrectionOpen(false)}
-          onUpdated={(updated, message) => {
-            setTransaction(updated);
-            setWardCorrectionNotice(message);
-            setWardCorrectionOpen(false);
-            // Roadmap PR9B: narrow, entity-scoped invalidation -- the
-            // corrected transaction's own display already updates directly
-            // from the server-confirmed response above (never optimistic).
-            // This additionally invalidates any current/future consumer of
-            // the transactions list/detail query-key namespace (e.g.
-            // GET /transactions), so a stale cached copy elsewhere in the
-            // app is never served after a correction. Equipment queries are
-            // deliberately not invalidated -- ward correction never changes
-            // equipment status or any equipment-detail field.
-            queryClient.invalidateQueries({ queryKey: ["transactions"] });
-          }}
-        />
-      )}
     </div>
   );
 }
