@@ -46,7 +46,7 @@ A `422` validation error additionally includes an `errors` array:
 | `403` | Authenticated but not authorized | Caller's role is not in the endpoint's allowed-roles list |
 | `404` | Resource does not exist | Unknown equipment/transaction/user ID, unknown route |
 | `405` | HTTP method not supported on this route | e.g. `DELETE /equipment` (only `GET`/`POST` exist at that path) |
-| `409` | Conflict with current state | Equipment not available for dispatch, transaction already returned, lost a concurrent receipt race, duplicate unique key, disallowed status transition, unclassifiable integrity violation |
+| `409` | Conflict with current state | Equipment not available for dispatch, transaction already returned, lost a concurrent receipt race, a ward-correction request matches the already-current ward (no-op) or lost a concurrent ward-correction race, duplicate unique key, disallowed status transition, unclassifiable integrity violation |
 | `422` | Request body/query failed schema validation | Missing required field, wrong type, an unrecognized enum value (e.g. `receipt_outcome` not one of `usable`/`defective`, Roadmap PR8B), a `model_validator` rule (e.g. `routine_round` required exactly when `dispatch_type == "routine_round"`), or an unrecognized field on a schema using `extra: "forbid"` (e.g. the retired `condition` on `ReturnRequest`) |
 | `500` | Unexpected server error | Any exception not otherwise handled |
 
@@ -73,6 +73,8 @@ A `422` validation error additionally includes an `errors` array:
 | `INVALID_INPUT` | 400 | `InvalidInputError` | Malformed UUID (`app.utils.parsing.parse_uuid`), a foreign-key field that doesn't reference an existing row (`app.core.references.ensure_referenced_row_exists`, or a foreign-key/not-null/check violation caught at flush time), or an unrecognized enum-like value (e.g. unknown `role_name`) — receipt's `receipt_outcome` is no longer in this category as of Roadmap PR8B: it is a typed Pydantic enum, so an unrecognized value is now `422 VALIDATION_ERROR`, not this code (see `docs/api/receipt.md`) |
 | `MALFORMED_QR_CODE` | 400 | `MalformedQrCodeError` | Scanned QR payload isn't a valid Item No (empty, too long, URL-shaped, or a retired legacy format) — distinct from `EQUIPMENT_NOT_FOUND`: the QR itself is unreadable, not merely unmatched |
 | `INVALID_STATUS_TRANSITION` | 409 | `InvalidStatusTransitionError` | Requested equipment status change isn't in the caller's allowed transition set (see `equipment.md`'s status-transition tables) |
+| `WARD_CORRECTION_NOOP` | 409 | `WardCorrectionNoOpError` | Roadmap PR9A: a ward-correction request's `ward_id` equals the transaction's current `ward_id` at the moment it was read — rejected as a no-op, no audit entry written. Distinct from the receipt-flow codes above (`docs/api/transactions.md`) |
+| `WARD_CORRECTION_CONFLICT` | 409 | `WardCorrectionConflictError` | Roadmap PR9A: a ward-correction request's conditional update affected zero rows because a concurrent correction changed `ward_id` first. Mirrors `RECEIPT_RACE_LOST`'s conditional-UPDATE-loses-the-race shape, applied to a different column, but deliberately a distinct code — never reused between the two flows |
 | `CONFLICT` | 409 | `ConflictError` | Safe fallback for an `IntegrityError` that couldn't be classified into unique/foreign-key/not-null/check |
 
 ### FastAPI/Starlette-level errors (`backend/app/main.py`)

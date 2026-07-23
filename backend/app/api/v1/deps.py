@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decode_token
 from app.db.session import get_db
-from app.models.user import Role, User
+from app.models.user import ROLE_ADMIN, Role, User
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -73,6 +73,45 @@ def require_roles(*allowed_roles: str) -> Callable:
         return user
 
     return checker
+
+
+# Roadmap PR9A (docs/audits/03-hospital-equipment-pool-workflow-audit.md §10
+# "Role and Permission Review"): the confirmed 3-role permission matrix
+# grants the ward-correction capability to Administrator and Equipment Pool
+# Staff, and denies it to Read-Only/Supervisor. Roadmap PR10 ("Role Model
+# Consolidation") owns replacing the current 5-role model
+# (app.models.user.ALL_ROLES) with that 3-role model everywhere -- this PR
+# must not perform that migration, rename/remove any existing role, or grant
+# the capability to every authenticated user.
+#
+# The current 5-role model (admin/biomedical_engineer/ward_nurse/
+# transport_staff/viewer) has no confirmed, evidence-backed equivalent of
+# "Equipment Pool Staff" -- the workflow audit's §10 note explicitly says
+# biomedical_engineer/ward_nurse/transport_staff "have no clear place in
+# this workflow as described" and recommends treating them as out of scope
+# for this MVP's role model, not that any one of them stands in for
+# Equipment Pool Staff. Which roles other endpoints (dispatch, receipt)
+# happen to trust is a different, unrelated authorization decision for
+# those endpoints -- ward correction does not inherit permissions from
+# dispatch or receipt, and must not infer an equivalence the workflow audit
+# never confirmed. Because this action modifies historical operational
+# data, an inferred/guessed mapping is not acceptable here.
+#
+# Until PR10 lands the confirmed 3-role model, this is therefore
+# intentionally conservative and restricted to the one role this
+# repository's governance already confirms maps to Administrator:
+# ROLE_ADMIN. Every other current role (biomedical_engineer, ward_nurse,
+# transport_staff, viewer) is denied -- not because any of them is
+# confirmed equivalent to Read-Only/Supervisor, but because none of them is
+# confirmed equivalent to Equipment Pool Staff either, and a data-correction
+# action must fail closed on an unconfirmed mapping rather than guess.
+#
+# Single source of truth: when Roadmap PR10 lands the 3-role model, replace
+# this tuple's contents (and only this tuple) with the confirmed
+# Administrator + Equipment Pool Staff roles -- no other file should ever
+# gate ward correction by an inline role list. See docs/DECISION_LOG.md
+# ("Roadmap PR9A").
+WARD_CORRECTION_ROLES = (ROLE_ADMIN,)
 
 
 class PaginationParams:

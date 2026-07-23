@@ -35,6 +35,12 @@ AUDIT_ACTION_LOGIN_SUCCESS = "login_success"
 AUDIT_ACTION_LOGIN_FAILURE = "login_failure"
 AUDIT_ACTION_LOGOUT = "logout"
 AUDIT_ACTION_TOKEN_REFRESH = "token_refresh"
+# Roadmap PR9A (docs/audits/03-hospital-equipment-pool-workflow-audit.md §7):
+# a distinct action from AUDIT_ACTION_UPDATE -- this is a narrow, purpose-built
+# correction of a transaction's ward_id, never a generic field update, and the
+# audit trail should say so explicitly rather than reading as an
+# undifferentiated "update".
+AUDIT_ACTION_WARD_CORRECTION = "ward_correction"
 
 # Audit entity-type values, same rationale as the actions above.
 AUDIT_ENTITY_EQUIPMENT = "equipment"
@@ -44,6 +50,15 @@ AUDIT_ENTITY_WARD = "ward"
 AUDIT_ENTITY_LOCATION = "location"
 AUDIT_ENTITY_CATEGORY = "category"
 AUDIT_ENTITY_AUTH = "auth"
+# Roadmap PR9A: app.services.borrow_service.borrow/return_equipment predate
+# this constants block and call app.crud.audit.create directly with the
+# literal "borrow_transaction" string -- this constant is for the new
+# ward-correction call site, which goes through record_audit_event (see that
+# function's module docstring: "the single entry point every call site ...
+# should use"), and intentionally reuses the same entity-type string so all
+# three transaction-domain audit actions (borrow/return/ward_correction)
+# group under one entity_type in audit_logs queries.
+AUDIT_ENTITY_BORROW_TRANSACTION = "borrow_transaction"
 
 # Substrings matched case-insensitively against JSON keys in before/after
 # payloads. Deliberately broad (e.g. "token" covers access_token,

@@ -217,6 +217,67 @@ async def close(
     return result.rowcount == 1
 
 
+async def correct_ward(
+    db: AsyncSession,
+    tx: BorrowTransaction,
+    *,
+    expected_ward_id: uuid.UUID | None,
+    new_ward_id: uuid.UUID,
+) -> bool:
+    """Conditionally corrects ``ward_id`` and reports whether *this* call is
+    the one that applied it. The only path that may change ``ward_id`` on
+    an existing row -- mirrors ``close()``'s Roadmap PR8A conditional-UPDATE
+    shape (docs/design/PR8_IMPLEMENTATION_PLAN.md's pattern, reused here per
+    Roadmap PR9A's concurrency requirement), applied to a different column
+    and with no lifecycle involvement whatsoever: this never reads or
+    writes ``status``, and operates identically whether the transaction is
+    OPEN or CLOSED.
+
+    Emits a single
+
+        UPDATE borrow_transactions
+           SET ward_id = :new_ward_id
+         WHERE id = :id AND ward_id IS NOT DISTINCT FROM :expected_ward_id
+
+    and decides success by affected-row count, exactly like ``close()``:
+
+      - ``True``  -- this call applied the correction (rowcount == 1): the
+        caller's earlier read of ``ward_id`` (``expected_ward_id``) was
+        still current at the moment this UPDATE ran, so it is exactly the
+        before-value the audit entry must record.
+      - ``False`` -- the row's ``ward_id`` was no longer
+        ``expected_ward_id`` when this UPDATE ran (rowcount == 0): a
+        concurrent correction changed it first. The caller MUST NOT proceed
+        to any audit write in that case -- see
+        ``app.core.exceptions.WardCorrectionConflictError``.
+
+    ``IS NOT DISTINCT FROM`` (rather than ``=``) is required, not
+    cosmetic: ``ward_id`` is nullable (a transaction predating Roadmap
+    PR7b's required-ward_id rule may have none), and SQL's ``=`` never
+    matches ``NULL`` against anything, including another ``NULL`` -- an
+    ordinary ``=`` predicate would make a currently-null ``ward_id`` appear
+    to "not match itself," permanently reporting rowcount == 0 (a false
+    conflict) for exactly the rows most likely to need a first correction.
+    ``BorrowTransaction.ward_id.is_(None)`` still compiles to plain ``IS
+    NULL`` when ``expected_ward_id`` is ``None`` via SQLAlchemy's
+    ``is_not_distinct_from``, so both the null and non-null cases are
+    handled by the same statement. It does **not** mutate or refresh
+    ``tx``: like ``close()``, this executes as Core SQL, bypassing the ORM
+    unit of work, so a winning caller must ``db.refresh(tx)`` before using
+    it for the audit record or the response.
+    """
+    result = await db.execute(
+        update(BorrowTransaction)
+        .where(
+            BorrowTransaction.id == tx.id,
+            BorrowTransaction.ward_id.is_not_distinct_from(expected_ward_id),
+        )
+        .values(ward_id=new_ward_id)
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount == 1
+
+
 async def list_active(db: AsyncSession) -> list[BorrowTransaction]:
     result = await db.execute(
         select(BorrowTransaction)

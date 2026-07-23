@@ -4165,3 +4165,142 @@ async def test_concurrent_receipt_burst_produces_exactly_one_winner_on_postgres(
     )
 
     await pg_session.rollback()
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR9A: concurrent ward-correction requests for the SAME transaction,
+# all racing from the SAME originally-read ward_id, must resolve to exactly
+# one winner (200, the corrected ward persisted) and N-1 losers (409
+# WARD_CORRECTION_CONFLICT), with the losers producing ZERO side effects: no
+# overwrite of the winner's ward_id, no audit row. Mirrors the receipt-race
+# burst test above (Roadmap PR8A/PR8C) -- same conditional-UPDATE-decided-by-
+# affected-rowcount shape (app.crud.transaction.correct_ward), applied to a
+# different column with no lifecycle involvement.
+#
+# Only a real PostgreSQL database with real per-request connections can prove
+# this, for the same reason as the receipt-race test: PostgreSQL's row
+# locking under READ COMMITTED is what makes "exactly one UPDATE matches"
+# true under genuine concurrency. SQLite's single-connection test path can
+# only prove the rowcount logic sequentially
+# (tests/test_ward_correction.py::
+# test_repository_correct_ward_second_call_on_stale_read_reports_conflict).
+# ---------------------------------------------------------------------------
+
+# Same rationale as _RECEIPT_RACE_BARRIER_CAP above: pg_engine's default
+# connection pool holds 15 connections total (pool_size=5 + max_overflow=10),
+# and every concurrent HTTP request in the burst holds one for its duration.
+# Kept comfortably under that cap, with headroom for pg_session and other
+# fixture connections.
+_WARD_CORRECTION_BARRIER_CAP = 10
+
+
+@pytest.mark.parametrize("concurrency", [2, 5, 10])
+async def test_concurrent_ward_correction_produces_exactly_one_winner_on_postgres(
+    pg_client, pg_seeded_users, pg_transaction_seq, pg_session, concurrency, monkeypatch
+):
+    """Roadmap PR9A core concurrency safety property: N concurrent requests
+    each attempting to correct the same transaction's ward -- all reading the
+    same original ward_id -- must produce exactly one winner and N-1
+    deterministic conflicts, never a silently-accepted lost update.
+    """
+    assert concurrency <= _WARD_CORRECTION_BARRIER_CAP
+    from app.crud import transaction as transaction_crud
+
+    headers = await _admin_headers(pg_client)
+    tx_id, _equipment_id = await _dispatch_one_open_transaction(
+        pg_client,
+        headers,
+        asset_number=f"PR9A-WC-{concurrency:03d}",
+        ward_code=f"PR9A-O-{concurrency:02d}",
+    )
+
+    # Each concurrent request targets a distinct destination ward, so the
+    # persisted winner can be identified unambiguously afterward -- an
+    # identical target across every request could not prove *which* request's
+    # write actually landed (same rationale as the receipt-race test's unique
+    # per-request `notes` marker). Ward.code is String(20) -- kept short.
+    target_ward_ids = [
+        await _create_ward(pg_client, headers, f"PR9A-T-{concurrency:02d}-{i:02d}") for i in range(concurrency)
+    ]
+
+    barrier = asyncio.Barrier(concurrency)
+    original_correct_ward = transaction_crud.correct_ward
+
+    async def _synchronized_correct_ward(db, tx, **kwargs):
+        # Forces every one of the `concurrency` requests to have already
+        # completed its own read of the transaction (app.services.
+        # borrow_service.correct_ward's get_by_id + same-ward check) before
+        # any of them is allowed to proceed into the real conditional UPDATE
+        # -- otherwise asyncio.gather() alone does not guarantee more than
+        # one request actually reaches the vulnerable window at once (same
+        # reasoning as the receipt-race test's barrier).
+        await barrier.wait()
+        return await original_correct_ward(db, tx, **kwargs)
+
+    monkeypatch.setattr(transaction_crud, "correct_ward", _synchronized_correct_ward)
+
+    async def _correct(ward_id: str, marker: str):
+        return await pg_client.post(
+            f"/api/v1/transactions/{tx_id}/correct-ward",
+            headers=headers,
+            json={"ward_id": ward_id, "reason": f"race-marker-{marker}"},
+        )
+
+    markers = [f"{i:03d}" for i in range(concurrency)]
+    responses = await asyncio.gather(
+        *(_correct(ward_id, marker) for ward_id, marker in zip(target_ward_ids, markers))
+    )
+    statuses = [r.status_code for r in responses]
+
+    assert statuses.count(200) == 1, f"expected exactly one 200 winner, got statuses={statuses}"
+    assert statuses.count(409) == concurrency - 1, f"expected {concurrency - 1} 409 losers, got statuses={statuses}"
+    assert set(statuses) <= {200, 409}, f"no other status is acceptable, got {statuses}"
+
+    # Every loser must be the ward-correction-specific conflict code -- never
+    # a receipt-flow code (Roadmap PR8C's RECEIPT_RACE_LOST/
+    # TRANSACTION_ALREADY_RETURNED), and never a silent 200 masking a lost
+    # update.
+    for r in responses:
+        if r.status_code == 409:
+            assert r.json()["code"] == "WARD_CORRECTION_CONFLICT", (
+                f"unexpected error code for a ward-correction-burst loser: {r.json()['code']!r}"
+            )
+
+    winner_index = next(i for i, r in enumerate(responses) if r.status_code == 200)
+    winner = responses[winner_index]
+    winner_ward_id = target_ward_ids[winner_index]
+    assert winner.json()["ward_id"] == winner_ward_id, (
+        "the winning response must reflect its own request's target ward"
+    )
+
+    # --- Persistent database state: the correction happened EXACTLY once ---
+    await pg_session.rollback()
+
+    tx_row = (
+        await pg_session.execute(select(BorrowTransaction).where(BorrowTransaction.id == uuid.UUID(tx_id)))
+    ).scalar_one()
+    assert str(tx_row.ward_id) == winner_ward_id, "the persisted ward_id must match the winner's target, not a loser's"
+
+    audit_rows = (
+        await pg_session.execute(
+            select(AuditLog).where(
+                AuditLog.action == "ward_correction",
+                AuditLog.entity_type == "borrow_transaction",
+                AuditLog.entity_id == uuid.UUID(tx_id),
+            )
+        )
+    ).scalars().all()
+    assert len(audit_rows) == 1, f"exactly one 'ward_correction' audit row must exist, found {len(audit_rows)}"
+
+    audit_row = audit_rows[0]
+    assert audit_row.after_data["ward_id"] == winner_ward_id, (
+        "the audit row's recorded after-value must match the committed winner"
+    )
+    assert audit_row.before_data["ward_id"] != winner_ward_id, (
+        "the audit row's recorded before-value must be the original ward, never a loser's target"
+    )
+    for i, ward_id in enumerate(target_ward_ids):
+        if i != winner_index:
+            assert audit_row.after_data["ward_id"] != ward_id, (
+                "the audit row must never record a loser's target ward as the applied correction"
+            )
