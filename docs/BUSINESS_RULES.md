@@ -49,6 +49,14 @@ Dispatch and receipt (`backend/app/services/borrow_service.py`) are the only pat
 
 - Source: `backend/app/models/transaction.py`; `backend/app/schemas/transaction.py`; `backend/app/services/borrow_service.py`; `backend/app/crud/transaction.py`; `backend/alembic/versions/0008_dispatch_fields.py`; `docs/HOSPITAL_DOMAIN_MODEL.md`; `knowledge/adr/ADR-005-transaction-model.md`; `docs/audits/04-consolidated-implementation-plan.md` Part D (PR7).
 
+## Ward correction is audited, not a transfer
+
+A transaction's first recorded receiving ward is normally immutable after dispatch. It may only be changed through one narrow, purpose-built action, `POST /transactions/{transaction_id}/correct-ward` (`app.services.borrow_service.correct_ward`) — never a generic transaction PATCH. This is correction of historical operational data, not ward-to-ward transfer tracking or current-location tracking; no such concept exists anywhere in this system. The action works identically whether the transaction is `open` or `closed` — no lifecycle-status precondition applies, and no equipment or transaction lifecycle state, `dispatch_type`/`routine_round`, or business-event timestamp is read or written. A same-ward submission is rejected as a no-op (`409 WARD_CORRECTION_NOOP`); a concurrent stale-read loss is rejected distinctly (`409 WARD_CORRECTION_CONFLICT`), decided by the same conditional-`UPDATE`-by-affected-rowcount shape Roadmap PR8A established for the receipt-close guard. Every successful correction writes exactly one audit entry, atomic with the ward change.
+
+Authorization is temporarily restricted to `admin` only (`app.api.v1.deps.WARD_CORRECTION_ROLES`) — the current 5-role model has no confirmed, evidence-backed equivalent of the future "Equipment Pool Staff" role, so every other current role is denied with `403` pending Roadmap PR10's Role Model Consolidation. The frontend mirrors this as a usability-only gate (`frontend/src/hooks/useAuth.ts`'s `canCorrectTransactionWard`); the backend remains the sole authorization boundary regardless of frontend visibility.
+
+- Source: `backend/app/services/borrow_service.py`; `backend/app/crud/transaction.py`; `backend/app/api/v1/transactions.py`; `backend/app/api/v1/deps.py`; `frontend/src/components/WardCorrectionAction.tsx`; `frontend/src/components/WardCorrectionDialog.tsx`; `docs/api/transactions.md`; Roadmap PR9 (PR9A backend, GitHub PR #33; PR9B frontend, GitHub PR #34) — see `docs/DECISION_LOG.md`.
+
 ## Decommission requires AVAILABLE -> UNAVAILABLE_DEFECTIVE -> DECOMMISSIONED
 
 `AVAILABLE_AT_POOL` has no direct transition to `DECOMMISSIONED`. Equipment must first be marked `UNAVAILABLE_DEFECTIVE`; only `UNAVAILABLE_DEFECTIVE` may transition to `DECOMMISSIONED`. `DECOMMISSIONED` is terminal with no outgoing transition.
