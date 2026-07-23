@@ -909,6 +909,7 @@ async def test_receipt_creates_audit_and_history_rows_with_consistent_response(c
     # Response consistency: every field describing the outcome agrees.
     assert body["status"] == "closed"
     assert body["receipt_outcome"] == "defective"
+    assert body["legacy_condition_on_return"] is None, "a current-contract receipt must never set the legacy field"
     assert body["equipment"]["status"] == "unavailable_defective"
     assert body["returned_at"] is not None
     assert body["notes"] is not None and "cracked housing" in body["notes"]
@@ -946,3 +947,98 @@ async def test_receipt_creates_audit_and_history_rows_with_consistent_response(c
     )
     assert len(audit_rows) == 1
     assert audit_rows[0].after_data == {"receipt_outcome": "defective"}
+
+
+# ---------------------------------------------------------------------------
+# Codex review round 1 (Roadmap PR8B), finding 2: the response contract must
+# be exactly as binary as the request contract -- receipt_outcome must never
+# surface a pre-PR8B legacy value, and a legacy value must remain readable,
+# unmodified, through a separate field. These serialize a BorrowTransaction
+# directly through TransactionOut (no HTTP layer), covering both a genuine
+# pre-PR8B legacy row and a post-PR8B row, and the never-received case.
+# ---------------------------------------------------------------------------
+
+
+async def test_transaction_out_serializes_legacy_condition_separately_from_binary_outcome(db_session):
+    """A transaction closed before Roadmap PR8B existed (condition_on_return
+    holds one of the old available/pm/calibration/repair values) must
+    serialize with receipt_outcome=None and legacy_condition_on_return set
+    to the exact original value -- never translated into usable/defective."""
+    from app.models.equipment import Equipment
+    from app.models.transaction import BorrowTransaction, TransactionStatus
+    from app.schemas.transaction import TransactionOut
+
+    for legacy_value in ("available", "pm", "calibration", "repair"):
+        equipment = Equipment(asset_number=f"AST-PR8B-LEGACY-{legacy_value}", equipment_name="Legacy Pump")
+        db_session.add(equipment)
+        await db_session.flush()
+
+        tx = BorrowTransaction(
+            transaction_no=f"TX-PR8B-LEGACY-{legacy_value}",
+            equipment_id=equipment.id,
+            borrower_name="Pre-PR8B Nurse",
+            status=TransactionStatus.CLOSED,
+            condition_on_return=legacy_value,
+        )
+        tx.equipment = equipment
+        db_session.add(tx)
+        await db_session.flush()
+
+        out = TransactionOut.model_validate(tx, from_attributes=True)
+        assert out.receipt_outcome is None, f"{legacy_value!r} must never surface as a binary receipt_outcome"
+        assert out.legacy_condition_on_return == legacy_value, "the exact original legacy value must be preserved"
+
+
+async def test_transaction_out_serializes_current_outcome_without_legacy_field(db_session):
+    """A transaction closed under the current Roadmap PR8B contract
+    (condition_on_return holds exactly 'usable' or 'defective') must
+    serialize with receipt_outcome set to that ReceiptOutcome member and
+    legacy_condition_on_return null -- the two fields are mutually
+    exclusive."""
+    from app.models.equipment import Equipment
+    from app.models.transaction import BorrowTransaction, ReceiptOutcome, TransactionStatus
+    from app.schemas.transaction import TransactionOut
+
+    for outcome in (ReceiptOutcome.USABLE, ReceiptOutcome.DEFECTIVE):
+        equipment = Equipment(asset_number=f"AST-PR8B-CURRENT-{outcome.value}", equipment_name="Pump")
+        db_session.add(equipment)
+        await db_session.flush()
+
+        tx = BorrowTransaction(
+            transaction_no=f"TX-PR8B-CURRENT-{outcome.value}",
+            equipment_id=equipment.id,
+            borrower_name="Post-PR8B Nurse",
+            status=TransactionStatus.CLOSED,
+            condition_on_return=outcome.value,
+        )
+        tx.equipment = equipment
+        db_session.add(tx)
+        await db_session.flush()
+
+        out = TransactionOut.model_validate(tx, from_attributes=True)
+        assert out.receipt_outcome == outcome
+        assert out.legacy_condition_on_return is None
+
+
+async def test_transaction_out_serializes_unreceived_transaction_with_both_fields_null(db_session):
+    """An OPEN transaction (never received) must serialize with both
+    receipt_outcome and legacy_condition_on_return null -- neither field
+    fabricates a value for a receipt that has not happened yet."""
+    from app.models.equipment import Equipment
+    from app.models.transaction import BorrowTransaction
+    from app.schemas.transaction import TransactionOut
+
+    equipment = Equipment(asset_number="AST-PR8B-UNRECEIVED", equipment_name="Pump")
+    db_session.add(equipment)
+    await db_session.flush()
+
+    tx = BorrowTransaction(
+        transaction_no="TX-PR8B-UNRECEIVED", equipment_id=equipment.id, borrower_name="Nurse Waiting"
+    )
+    tx.equipment = equipment
+    db_session.add(tx)
+    await db_session.flush()
+
+    out = TransactionOut.model_validate(tx, from_attributes=True)
+    assert out.receipt_outcome is None
+    assert out.legacy_condition_on_return is None

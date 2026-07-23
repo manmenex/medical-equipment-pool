@@ -5,7 +5,7 @@
 **Update trigger:** The receipt endpoint's request/response shape, validation, or error behavior changes.
 **Maintainer:** Repository Owner
 
-> **Scope note:** This is the **frozen, canonical, post-PR8B** receipt contract (Roadmap PR8, PR8B slice — see `docs/DECISION_LOG.md` and `knowledge/adr/ADR-006-receipt-outcome-contract.md`). It replaces the pre-PR8B four-value `condition` string contract entirely — no compatibility alias was kept. This document does **not** cover a distinguishable race-vs-genuine-repeat error message: that half of Roadmap PR8's roadmap description remains unimplemented and open (see ADR-006's "Not decided here").
+> **Scope note:** This is the **frozen, canonical, post-PR8B** receipt contract (Roadmap PR8, PR8B slice — see `docs/DECISION_LOG.md` and `knowledge/adr/ADR-006-receipt-outcome-contract.md`). It replaces the pre-PR8B four-value `condition` string contract entirely — no compatibility alias was kept. This document does **not** cover a distinguishable race-vs-genuine-repeat error message: that is Roadmap PR8's separately-named **PR8C slice**, not started (see ADR-006's "Not decided here"). **Roadmap PR8 is not complete until PR8A, PR8B, and PR8C all merge.**
 
 ## `POST /api/v1/return/{transaction_id}` — record a receipt
 
@@ -69,12 +69,24 @@ Same shape as `POST /borrow`'s response (see `docs/api/dispatch.md`), with the c
   "routine_round": null,
   "phone_number": null,
   "receipt_outcome": "usable",
+  "legacy_condition_on_return": null,
   "status": "closed",
   "notes": null
 }
 ```
 
-`TransactionOut.receipt_outcome` is `string | null`, not a strict `"usable"`/`"defective"` enum in the response schema — a transaction closed **before** Roadmap PR8B still reads back its genuine historical value (`available`/`pm`/`calibration`/`repair`), preserved unmodified and never remapped, exactly as Roadmap PR7b preserved `borrower_name`/`due_at`/`quantity`. Every transaction closed **after** PR8B always reads back exactly `usable` or `defective`.
+**The response is exactly as binary as the request.** `TransactionOut.receipt_outcome` is a real, strictly-typed `ReceiptOutcome | None` enum field (emitted in the OpenAPI schema as an enum reference, not an unconstrained string) — it is **never** one of the pre-PR8B legacy strings (`available`/`pm`/`calibration`/`repair`). It is `null` both for a transaction not yet received and for one received **before** Roadmap PR8B existed. A transaction's genuine pre-PR8B legacy value is instead readable, unmodified, through a separate field, `legacy_condition_on_return` (`string | null`) — mutually exclusive with `receipt_outcome`: exactly one of the two is non-null for any received transaction, and both are `null` for a transaction not yet received. Neither field ever translates or backfills a legacy value into the new domain, matching how Roadmap PR7b preserved `borrower_name`/`due_at`/`quantity` and how `BorrowTransaction.legacy_status` keeps history in a distinct field rather than blending it into `status`.
+
+Example of a **pre-PR8B** transaction's response (received before this contract existed):
+
+```json
+{
+  "...": "...",
+  "receipt_outcome": null,
+  "legacy_condition_on_return": "pm",
+  "status": "closed"
+}
+```
 
 ### Errors
 
@@ -88,9 +100,9 @@ Same shape as `POST /borrow`'s response (see `docs/api/dispatch.md`), with the c
 
 Full status/code reference: `docs/api/ERROR_CODES.md`.
 
-## Known limitation: frontend not yet updated
+## Known limitation: frontend not yet updated — coordinated release required
 
-`frontend/src/services/borrow.ts`, `frontend/src/types/index.ts`, and `frontend/src/pages/ReturnPage.tsx` still submit the pre-PR8B `condition` field (`available`/`pm`/`calibration`/`repair`) — Roadmap PR8B's backend contract narrowing was deliberately implemented on its own, with no frontend or authentication work, per its assigned task scope. Until a follow-up frontend change adopts `receipt_outcome`, the deployed frontend's receipt flow will receive `422 VALIDATION_ERROR` for every submission against a backend running this contract. Tracked as `docs/TECH_DEBT.md` TD-006.
+`frontend/src/services/borrow.ts`, `frontend/src/types/index.ts`, and `frontend/src/pages/ReturnPage.tsx` still submit the pre-PR8B `condition` field (`available`/`pm`/`calibration`/`repair`) — Roadmap PR8B's backend contract narrowing was deliberately implemented on its own, with no frontend or authentication work, per its assigned task scope. This endpoint's only client is this project's own frontend (`docs/ARCHITECTURE_DECISIONS.md` "Browser-first application" — no native app, no known external/third-party integration); no compatibility layer was kept (`knowledge/adr/ADR-006-receipt-outcome-contract.md`). **The backend and frontend must therefore be deployed together, not independently:** deploying this backend ahead of a matching frontend change leaves the receipt flow non-functional (every submission gets `422 VALIDATION_ERROR`); deploying an updated frontend ahead of this backend would submit a shape the current backend rejects. Tracked as `docs/TECH_DEBT.md` TD-006. The follow-up frontend change's `receipt_outcome` type must be a `"usable" | "defective"` union, not a plain `string` — this repository has no OpenAPI-to-TypeScript code generation pipeline, so this is a hand-authored type to update, not a generated client to regenerate.
 
 ## See also
 

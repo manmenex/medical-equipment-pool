@@ -201,15 +201,47 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     equipment: Mapped["Equipment"] = relationship()
 
     @property
-    def receipt_outcome(self) -> str | None:
+    def receipt_outcome(self) -> "ReceiptOutcome | None":
         """Roadmap PR8B wire-level business term for the persisted
         ``condition_on_return`` column -- read by
         ``app.schemas.transaction.TransactionOut`` (``from_attributes``).
-        A plain passthrough, not a `ReceiptOutcome`-typed cast: the column
-        also holds genuine pre-PR8B historical values (`available`/`pm`/
-        `calibration`/`repair`) that predate the binary outcome domain and
-        are never remapped, so this must remain tolerant of both domains.
+
+        Codex review round 1, finding 2: the request contract is strictly
+        binary (`ReceiptOutcome`), so the response field of the same name
+        must also be strictly binary -- never one of the pre-PR8B legacy
+        strings (`available`/`pm`/`calibration`/`repair`). Returns `None`
+        for any column value that is not exactly `"usable"` or
+        `"defective"` (including a genuine pre-PR8B legacy value, or a
+        transaction that has not been received at all); it never
+        translates/backfills a legacy value into the new domain, which
+        would fabricate a fact the original receipt never recorded. A
+        legacy value remains readable, unchanged, via
+        `legacy_condition_on_return` below -- mutually exclusive with this
+        property, mirroring `Equipment.legacy_status`'s "marker vs. real
+        history, never both" precedent.
         """
+        try:
+            return ReceiptOutcome(self.condition_on_return)
+        except ValueError:
+            return None
+
+    @property
+    def legacy_condition_on_return(self) -> str | None:
+        """Roadmap PR8B: the raw, unmodified pre-PR8B receipt value
+        (`available`/`pm`/`calibration`/`repair`) for a transaction
+        received before the binary `receipt_outcome` contract existed.
+        `None` for a transaction received under the current contract, and
+        `None` for a transaction not yet received at all -- mutually
+        exclusive with `receipt_outcome` above. Never remapped or
+        interpreted; preserved verbatim, mirroring
+        `Equipment.legacy_status`'s and `BorrowTransaction.legacy_status`'s
+        existing "preserve the exact original value, never fabricate"
+        precedent.
+        """
+        if self.condition_on_return is None:
+            return None
+        if self.receipt_outcome is not None:
+            return None
         return self.condition_on_return
 
 

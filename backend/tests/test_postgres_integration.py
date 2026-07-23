@@ -4042,6 +4042,10 @@ async def test_concurrent_receipt_burst_produces_exactly_one_winner_on_postgres(
     # The response body must match the refreshed, persisted row exactly --
     # not merely "some" 200 response with plausible-looking fields.
     assert winner.json()["receipt_outcome"] == tx_row.condition_on_return
+    # Roadmap PR8B Codex review round 1, finding 2: a receipt under the
+    # current contract must never populate the legacy field, even under
+    # real concurrency.
+    assert winner.json()["legacy_condition_on_return"] is None
     assert winner.json()["notes"] == tx_row.notes
 
     assert winner_marker in (tx_row.notes or ""), "the persisted row must carry the winner's own marker"

@@ -68,6 +68,7 @@ Creates a new borrow transaction and moves the selected equipment from `availabl
   "routine_round": null,
   "phone_number": null,
   "receipt_outcome": null,
+  "legacy_condition_on_return": null,
   "status": "open",
   "notes": null
 }

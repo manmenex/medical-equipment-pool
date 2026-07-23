@@ -112,14 +112,20 @@ class TransactionOut(BaseModel):
     routine_round: RoutineRound | None
     phone_number: str | None
     # Roadmap PR8B: renamed from condition_on_return to the frozen
-    # receipt_outcome business term (BorrowTransaction.receipt_outcome,
-    # a passthrough property over the unchanged condition_on_return
-    # column -- see that property's docstring). Deliberately `str | None`,
-    # not `ReceiptOutcome | None`: a row from before this contract narrowed
-    # still holds one of the old `available`/`pm`/`calibration`/`repair`
-    # values, preserved as read-only history and never remapped, mirroring
-    # how `status` above is also a plain `str`, not a strict enum member.
-    receipt_outcome: str | None
+    # receipt_outcome business term. Codex review round 1, finding 2:
+    # since the request contract is strictly binary, the response field of
+    # the same name must be strictly binary too -- `ReceiptOutcome | None`,
+    # never one of the pre-PR8B legacy strings. `None` both for a
+    # transaction not yet received and for one received before this
+    # contract existed (BorrowTransaction.receipt_outcome's docstring).
+    receipt_outcome: ReceiptOutcome | None
+    # A pre-PR8B legacy value (`available`/`pm`/`calibration`/`repair`),
+    # preserved verbatim and read-only, exactly as it was recorded --
+    # never translated into the new domain. Always `None` for a
+    # transaction received under the current contract, and always `None`
+    # for one not yet received -- mutually exclusive with `receipt_outcome`
+    # above (BorrowTransaction.legacy_condition_on_return's docstring).
+    legacy_condition_on_return: str | None
     status: str
     notes: str | None
 

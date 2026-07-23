@@ -1403,6 +1403,33 @@ async def test_openapi_return_request_does_not_advertise_cleaning():
     assert "cleaning" not in json.dumps(schema).lower()
 
 
+async def test_openapi_transaction_out_receipt_outcome_is_a_typed_enum():
+    """Codex review round 1, finding 3: TransactionOut.receipt_outcome must
+    be emitted in the OpenAPI schema as a reference to the ReceiptOutcome
+    enum, not an unconstrained string -- otherwise a client generating
+    types from this schema would get `string`, not a `usable`/`defective`
+    union, even though the Python-side contract is strictly binary
+    (Codex review round 1, finding 2). legacy_condition_on_return, by
+    contrast, is deliberately an unconstrained string -- it carries
+    whatever a pre-PR8B row's raw value happened to be."""
+    from app.main import app
+
+    schemas = app.openapi()["components"]["schemas"]
+    tx_schema = schemas["TransactionOut"]
+
+    receipt_outcome_schema = tx_schema["properties"]["receipt_outcome"]
+    refs = [entry["$ref"] for entry in receipt_outcome_schema.get("anyOf", []) if "$ref" in entry]
+    assert refs == ["#/components/schemas/ReceiptOutcome"], (
+        f"receipt_outcome must reference the ReceiptOutcome enum component, got {receipt_outcome_schema}"
+    )
+    assert schemas["ReceiptOutcome"]["enum"] == ["usable", "defective"]
+
+    legacy_schema = tx_schema["properties"]["legacy_condition_on_return"]
+    types = [entry.get("type") for entry in legacy_schema.get("anyOf", [])]
+    assert "string" in types, "legacy_condition_on_return must remain an unconstrained string"
+    assert "$ref" not in str(legacy_schema), "legacy_condition_on_return must never reference the binary enum"
+
+
 # ---------------------------------------------------------------------------
 # PR16-H3 (review of Draft PR #16): AVAILABLE_AT_POOL must not skip directly
 # to DECOMMISSIONED -- equipment must first be classified

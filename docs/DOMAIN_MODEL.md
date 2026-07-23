@@ -104,10 +104,15 @@ receipt is recorded via `receipt_outcome` (`ReceiptOutcome`: `usable` or
 `EquipmentStatus` (`usable -> AVAILABLE_AT_POOL`, `defective ->
 UNAVAILABLE_DEFECTIVE`) — the frontend never submits a lifecycle state
 directly. Replaces the pre-PR8B four-value `condition` string entirely, no
-compatibility alias kept. The underlying `condition_on_return` column and
-every existing pre-PR8B value are unchanged and remain readable as
-history, exposed through the same `receipt_outcome` name via a passthrough
-property on `BorrowTransaction`.
+compatibility alias kept; the backend and frontend must be deployed
+together (ADR-006 Decision 1). The underlying `condition_on_return` column
+and every existing pre-PR8B value are unchanged. `TransactionOut` exposes
+two mutually-exclusive, passthrough-property-backed fields: `receipt_outcome`
+(strictly `usable`/`defective`/`null`, never a legacy value) and
+`legacy_condition_on_return` (`string | null`, the raw pre-PR8B value when
+one exists) — a legacy value is never translated into the new domain.
+Distinguishing a race-loss receipt rejection from a genuine repeat
+rejection is a separate, not-yet-started slice, Roadmap PR8 (PR8C slice).
 
 ## Relationships
 

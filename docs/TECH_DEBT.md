@@ -105,9 +105,22 @@ verification passes.
   this is resolved.
 - **Why deferred:** The implementing task was explicitly scoped to the
   backend contract only ("Do not begin frontend or authentication work").
+- **Coordinated release required:** This endpoint's only known client is
+  this project's own frontend (`docs/ARCHITECTURE_DECISIONS.md`
+  "Browser-first application" — no native app, no documented external/
+  third-party integration); no compatibility layer was kept. The backend
+  and the resolving frontend PR must therefore be **deployed together**,
+  not independently — deploying one ahead of the other leaves the receipt
+  flow non-functional in one direction or the other.
 - **Resolution trigger:** A focused frontend PR adopting `receipt_outcome`
   (`docs/api/receipt.md`), including `ReturnPage.tsx`'s two-choice
-  usable/defective selector.
+  usable/defective selector. The hand-authored TypeScript type for
+  `receipt_outcome` must be a `"usable" | "defective"` union, not a plain
+  `string` — this repository has no OpenAPI-to-TypeScript code generation
+  pipeline, so there is no generated client to regenerate; the type is
+  maintained by hand and must be kept in sync with `ReceiptOutcome`
+  (`backend/app/models/transaction.py`) manually.
 - **Verification to close:** End-to-end receipt flow (dispatch, then
   receipt via the frontend UI) succeeds against a backend running this
-  contract, for both `usable` and `defective` outcomes.
+  contract, for both `usable` and `defective` outcomes; the frontend's
+  `receipt_outcome` type is a `"usable" | "defective"` union.
