@@ -7,7 +7,11 @@ export type EquipmentStatus =
   | "unavailable_defective"
   | "decommissioned";
 
-export type Role = "admin" | "biomedical_engineer" | "ward_nurse" | "transport_staff" | "viewer";
+// Roadmap PR10 (Role Model Consolidation): the confirmed 3-role model,
+// replacing the legacy 5-role set (admin, biomedical_engineer, ward_nurse,
+// transport_staff, viewer). See backend/app/models/user.py's ALL_ROLES for
+// the single backend source of truth this type mirrors.
+export type Role = "administrator" | "equipment_pool_staff" | "read_only";
 
 export interface UserProfile {
   id: string;

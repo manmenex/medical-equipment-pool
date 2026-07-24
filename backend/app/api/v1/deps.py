@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decode_token
 from app.db.session import get_db
-from app.models.user import ROLE_ADMIN, Role, User
+from app.models.user import ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, ROLE_READ_ONLY, Role, User
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -75,43 +75,46 @@ def require_roles(*allowed_roles: str) -> Callable:
     return checker
 
 
-# Roadmap PR9A (docs/audits/03-hospital-equipment-pool-workflow-audit.md §10
-# "Role and Permission Review"): the confirmed 3-role permission matrix
-# grants the ward-correction capability to Administrator and Equipment Pool
-# Staff, and denies it to Read-Only/Supervisor. Roadmap PR10 ("Role Model
-# Consolidation") owns replacing the current 5-role model
-# (app.models.user.ALL_ROLES) with that 3-role model everywhere -- this PR
-# must not perform that migration, rename/remove any existing role, or grant
-# the capability to every authenticated user.
-#
-# The current 5-role model (admin/biomedical_engineer/ward_nurse/
-# transport_staff/viewer) has no confirmed, evidence-backed equivalent of
-# "Equipment Pool Staff" -- the workflow audit's §10 note explicitly says
-# biomedical_engineer/ward_nurse/transport_staff "have no clear place in
-# this workflow as described" and recommends treating them as out of scope
-# for this MVP's role model, not that any one of them stands in for
-# Equipment Pool Staff. Which roles other endpoints (dispatch, receipt)
-# happen to trust is a different, unrelated authorization decision for
-# those endpoints -- ward correction does not inherit permissions from
-# dispatch or receipt, and must not infer an equivalence the workflow audit
-# never confirmed. Because this action modifies historical operational
-# data, an inferred/guessed mapping is not acceptable here.
-#
-# Until PR10 lands the confirmed 3-role model, this is therefore
-# intentionally conservative and restricted to the one role this
-# repository's governance already confirms maps to Administrator:
-# ROLE_ADMIN. Every other current role (biomedical_engineer, ward_nurse,
-# transport_staff, viewer) is denied -- not because any of them is
-# confirmed equivalent to Read-Only/Supervisor, but because none of them is
-# confirmed equivalent to Equipment Pool Staff either, and a data-correction
-# action must fail closed on an unconfirmed mapping rather than guess.
-#
-# Single source of truth: when Roadmap PR10 lands the 3-role model, replace
-# this tuple's contents (and only this tuple) with the confirmed
-# Administrator + Equipment Pool Staff roles -- no other file should ever
-# gate ward correction by an inline role list. See docs/DECISION_LOG.md
-# ("Roadmap PR9A").
-WARD_CORRECTION_ROLES = (ROLE_ADMIN,)
+# Roadmap PR10 (Role Model Consolidation, docs/audits/03-hospital-equipment
+# -pool-workflow-audit.md §10 "Role and Permission Review"): centralized,
+# named capability groups mirroring the confirmed 3-role permission matrix.
+# Every endpoint's role gate references one of these groups -- never an
+# inline ad hoc role tuple -- so the whole application's authorization
+# matrix has exactly one reviewable source of truth. See
+# docs/BUSINESS_RULES.md and docs/DECISION_LOG.md ("Roadmap PR10") for the
+# full capability-by-capability rationale.
+
+# Equipment Pool day-to-day operations: view/search (see get_current_user,
+# used directly for those), dispatch, receipt, ward correction, and marking
+# equipment defective. Both Administrator and Equipment Pool Staff perform
+# these; Read Only never does (view-only).
+EQUIPMENT_POOL_OPERATION_ROLES = (ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF)
+
+# Administrator-only actions: reactivating defective equipment,
+# decommissioning, equipment master-data create/update, ward/department/
+# location/category master-data management, user and role management, and
+# audit-log reads. Equipment Pool Staff is explicitly denied every one of
+# these -- confirmed by docs/audits/03-hospital-equipment-pool-workflow-audit.md
+# §10's matrix (reactivation "recommend Admin-only gate for MVP"; master
+# data "lean toward Admin-only for MVP"; user management "Administrator
+# only").
+ADMINISTRATOR_ONLY_ROLES = (ROLE_ADMINISTRATOR,)
+
+# Read/reporting surfaces already available to every one of the pre-PR10
+# roles that had any access at all (admin, biomedical_engineer, viewer) --
+# PR10 preserves that existing breadth rather than narrowing it, per "do not
+# add export capability unless it already exists" and "do not add new
+# endpoints." All three new roles may view/export.
+VIEW_AND_REPORT_ROLES = (ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, ROLE_READ_ONLY)
+
+# Ward correction (Roadmap PR9A's endpoint): Administrator and Equipment
+# Pool Staff, per the confirmed matrix's "Correct a destination ward" row
+# ("✅ (with mandatory audit note)" for Equipment Pool Staff). Read Only is
+# denied. This replaces PR9's temporary Administrator-only restriction now
+# that the confirmed 3-role model exists -- no other change to the
+# ward-correction contract, concurrency guard, audit behavior, or OPEN/
+# CLOSED support.
+WARD_CORRECTION_ROLES = EQUIPMENT_POOL_OPERATION_ROLES
 
 
 class PaginationParams:

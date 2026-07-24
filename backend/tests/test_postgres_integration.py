@@ -21,6 +21,7 @@ Default connection target if POSTGRES_TEST_DATABASE_URL is unset:
 """
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -44,7 +45,7 @@ from app.main import app
 from app.models.audit import AuditLog
 from app.models.equipment import Equipment, EquipmentStatus, EquipmentStatusHistory
 from app.models.transaction import BorrowTransaction, TransactionStatus
-from app.models.user import ALL_ROLES, Role, User
+from app.models.user import ALL_ROLES, ROLE_ADMINISTRATOR, Role, User
 # Roadmap PR7b: every dispatch now requires ward_id, so every HTTP-level
 # /api/v1/borrow call in this suite needs a real ward row first --
 # create_ward is the same helper test_borrow.py/test_equipment.py/
@@ -53,6 +54,12 @@ from app.models.user import ALL_ROLES, Role, User
 from tests.conftest import create_ward as _create_ward
 
 pytestmark = pytest.mark.postgres
+
+# pg_seeded_users derives each user's employee_code from its role name
+# (f"{role_name.upper()}001") -- Roadmap PR10 renamed the "admin" role to
+# "administrator", so the seeded administrator's employee_code is now
+# ADMINISTRATOR001, not ADMIN001.
+ADMIN_EMPLOYEE_CODE = f"{ROLE_ADMINISTRATOR.upper()}001"
 
 POSTGRES_TEST_DATABASE_URL = os.environ.get(
     "POSTGRES_TEST_DATABASE_URL",
@@ -157,7 +164,7 @@ async def pg_transaction_seq(pg_engine):
 
 
 async def _admin_headers(client: AsyncClient) -> dict:
-    resp = await client.post("/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"})
+    resp = await client.post("/api/v1/auth/login", json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "Password@123"})
     assert resp.status_code == 200, resp.text
     return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
@@ -377,7 +384,7 @@ async def test_login_succeeds_on_postgres_even_if_audit_write_fails(pg_client, p
     monkeypatch.setattr("app.core.audit.audit_crud.create", _boom)
 
     resp = await pg_client.post(
-        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+        "/api/v1/auth/login", json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "Password@123"}
     )
     assert resp.status_code == 200, resp.text
     assert "access_token" in resp.json()
@@ -460,7 +467,7 @@ async def test_login_succeeds_on_postgres_even_if_commit_fails(pg_client, pg_see
     monkeypatch.setattr(AsyncSession, "commit", _boom)
 
     resp = await pg_client.post(
-        "/api/v1/auth/login", json={"identifier": "ADMIN001", "password": "Password@123"}
+        "/api/v1/auth/login", json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "Password@123"}
     )
     assert resp.status_code == 200, resp.text
     assert "access_token" in resp.json()
@@ -737,8 +744,10 @@ async def _drop_scratch_database() -> None:
         await conn.close()
 
 
-def _run_alembic(*args: str) -> None:
+def _run_alembic(*args: str, extra_env: dict | None = None) -> None:
     env = {**os.environ, "DATABASE_URL": _scratch_dsn("postgresql+asyncpg")}
+    if extra_env:
+        env.update(extra_env)
     result = subprocess.run(
         [sys.executable, "-m", "alembic", *args],
         cwd=str(_BACKEND_DIR),
@@ -4304,3 +4313,2232 @@ async def test_concurrent_ward_correction_produces_exactly_one_winner_on_postgre
             assert audit_row.after_data["ward_id"] != ward_id, (
                 "the audit row must never record a loser's target ward as the applied correction"
             )
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR10: migration 0009_role_consolidation.py, exercised for real via
+# the same scratch-database + `alembic` CLI pattern as 0002-0008 above. This
+# migration is not mechanical (see its own docstring) -- these tests prove
+# every one of its fail-closed guarantees: safe auto-mapping, the
+# ambiguous-role manifest mechanism (missing/invalid/incomplete), no user
+# deletion, no silent privilege change, and a lossless downgrade round trip.
+# ---------------------------------------------------------------------------
+
+_MEP_PR10_ROLE_MAPPING_ENV = "MEP_PR10_ROLE_MAPPING"
+
+
+def _run_alembic_allow_failure(*args: str, extra_env: dict | None = None) -> subprocess.CompletedProcess:
+    env = {**os.environ, "DATABASE_URL": _scratch_dsn("postgresql+asyncpg")}
+    env.pop(_MEP_PR10_ROLE_MAPPING_ENV, None)
+    if extra_env:
+        env.update(extra_env)
+    return subprocess.run(
+        [sys.executable, "-m", "alembic", *args],
+        cwd=str(_BACKEND_DIR),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+async def _insert_role_row(conn, name: str, permissions: dict | None = None) -> str:
+    role_id = str(uuid.uuid4())
+    await conn.execute(
+        text("INSERT INTO roles (id, name, permissions) VALUES (:id, :name, CAST(:permissions AS jsonb))"),
+        {"id": role_id, "name": name, "permissions": json.dumps(permissions or {})},
+    )
+    return role_id
+
+
+async def _insert_legacy_user_row(conn, employee_code: str, role_id: str) -> str:
+    user_id = str(uuid.uuid4())
+    await conn.execute(
+        text(
+            "INSERT INTO users (id, employee_code, full_name, email, password_hash, role_id, is_active) "
+            "VALUES (:id, :employee_code, :full_name, :email, :password_hash, :role_id, true)"
+        ),
+        {
+            "id": user_id,
+            "employee_code": employee_code,
+            "full_name": f"Test {employee_code}",
+            "email": f"{employee_code.lower()}@mep-hospital-test.dev",
+            "password_hash": hash_password("Password@123"),
+            "role_id": role_id,
+        },
+    )
+    return user_id
+
+
+async def _role_names() -> set[str]:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(text("SELECT name FROM roles"))
+            return {row[0] for row in result.all()}
+    finally:
+        await engine.dispose()
+
+
+async def _user_count() -> int:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(text("SELECT count(*) FROM users"))
+            return result.scalar_one()
+    finally:
+        await engine.dispose()
+
+
+async def _role_name_for_employee_code(employee_code: str) -> str:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT roles.name FROM users JOIN roles ON users.role_id = roles.id "
+                    "WHERE users.employee_code = :code"
+                ),
+                {"code": employee_code},
+            )
+            return result.scalar_one()
+    finally:
+        await engine.dispose()
+
+
+async def _legacy_role_name_column_value(employee_code: str) -> str | None:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text("SELECT legacy_role_name FROM users WHERE employee_code = :code"), {"code": employee_code}
+            )
+            return result.scalar_one()
+    finally:
+        await engine.dispose()
+
+
+async def _user_id_for_employee_code(employee_code: str) -> str:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text("SELECT id FROM users WHERE employee_code = :code"), {"code": employee_code}
+            )
+            return str(result.scalar_one())
+    finally:
+        await engine.dispose()
+
+
+async def _set_user_role_directly(employee_code: str, role_name: str) -> None:
+    """Simulates a legitimate post-upgrade role change made through the
+    ordinary application API (POST/PATCH /api/v1/users) -- a plain
+    role_id UPDATE, nothing migration-specific. Used only to prove
+    downgrade() detects and refuses to overwrite this kind of change."""
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "UPDATE users SET role_id = (SELECT id FROM roles WHERE name = :role_name) "
+                    "WHERE employee_code = :code"
+                ),
+                {"role_name": role_name, "code": employee_code},
+            )
+    finally:
+        await engine.dispose()
+
+
+def _stringify_uuids(row: dict) -> dict:
+    """asyncpg returns uuid columns as uuid.UUID objects via raw text()
+    queries -- normalize to str (preserving None, e.g. a deliberately
+    NULL user_id) so callers can compare against the plain str ids the
+    other helpers in this file already return."""
+    return {
+        key: (str(value) if key in ("user_id", "entity_id") and value is not None else value)
+        for key, value in row.items()
+    }
+
+
+async def _role_migration_audit_rows(entity_id: str | None = None, action: str | None = None) -> list[dict]:
+    """action=None returns rows for BOTH directions (role_migration_upgrade
+    and role_migration_downgrade) -- pass one of those two literal strings
+    to see only that direction's provenance."""
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            query = (
+                "SELECT user_id, entity_id, action, before_data, after_data, correlation_id FROM audit_logs "
+                "WHERE action = ANY(:actions)"
+            )
+            actions = [action] if action is not None else ["role_migration_upgrade", "role_migration_downgrade"]
+            params: dict = {"actions": actions}
+            if entity_id is not None:
+                query += " AND entity_id = :entity_id"
+                params["entity_id"] = entity_id
+            result = await conn.execute(text(query), params)
+            return [_stringify_uuids(dict(row._mapping)) for row in result.all()]
+    finally:
+        await engine.dispose()
+
+
+async def _user_role_migration_rows(revision: str = "0009_role_consolidation") -> list[dict]:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT user_id, revision, legacy_role, legacy_role_id, migrated_role, migrated_role_id "
+                    "FROM user_role_migrations WHERE revision = :revision"
+                ),
+                {"revision": revision},
+            )
+            rows = [_stringify_uuids(dict(row._mapping)) for row in result.all()]
+            for row in rows:
+                row["legacy_role_id"] = str(row["legacy_role_id"])
+                row["migrated_role_id"] = str(row["migrated_role_id"])
+            return rows
+    finally:
+        await engine.dispose()
+
+
+async def _role_snapshot_rows(revision: str = "0009_role_consolidation") -> list[dict]:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT legacy_role_id, legacy_role_name, legacy_role_permissions "
+                    "FROM role_migration_snapshots WHERE revision = :revision"
+                ),
+                {"revision": revision},
+            )
+            rows = [dict(row._mapping) for row in result.all()]
+            for row in rows:
+                row["legacy_role_id"] = str(row["legacy_role_id"])
+            return rows
+    finally:
+        await engine.dispose()
+
+
+async def _role_row_by_id(role_id: str) -> dict | None:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text("SELECT id, name, permissions FROM roles WHERE id = :id"), {"id": role_id}
+            )
+            row = result.mappings().one_or_none()
+            if row is None:
+                return None
+            row = dict(row)
+            row["id"] = str(row["id"])
+            return row
+    finally:
+        await engine.dispose()
+
+
+async def _all_role_rows() -> list[dict]:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(text("SELECT id, name, permissions FROM roles ORDER BY name"))
+            rows = [dict(row._mapping) for row in result.all()]
+            for row in rows:
+                row["id"] = str(row["id"])
+            return rows
+    finally:
+        await engine.dispose()
+
+
+async def _user_role_id(employee_code: str) -> str:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text("SELECT role_id FROM users WHERE employee_code = :code"), {"code": employee_code}
+            )
+            return str(result.scalar_one())
+    finally:
+        await engine.dispose()
+
+
+async def _table_exists(table_name: str) -> bool:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(text("SELECT to_regclass(:name)"), {"name": table_name})
+            return result.scalar_one() is not None
+    finally:
+        await engine.dispose()
+
+
+async def _ownership_rows(revision: str = "0009_role_consolidation") -> list[dict]:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT role_id, role_name, existed_before_upgrade, created_by_migration, "
+                    "pre_upgrade_permissions FROM confirmed_role_ownership WHERE revision = :revision"
+                ),
+                {"revision": revision},
+            )
+            rows = [dict(row._mapping) for row in result.all()]
+            for row in rows:
+                row["role_id"] = str(row["role_id"])
+            return rows
+    finally:
+        await engine.dispose()
+
+
+async def _user_row(employee_code: str) -> dict:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT id, full_name, email, password_hash, is_active FROM users "
+                    "WHERE employee_code = :code"
+                ),
+                {"code": employee_code},
+            )
+            return dict(result.mappings().one())
+    finally:
+        await engine.dispose()
+
+
+async def test_migration_0009_safe_auto_map_upgrades_admin_and_viewer_roles():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            viewer_role_id = await _insert_role_row(conn, "viewer")
+            await _insert_legacy_user_row(conn, "SAFEADMIN01", admin_role_id)
+            await _insert_legacy_user_row(conn, "SAFEVIEWER1", viewer_role_id)
+        await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+
+        assert await _role_name_for_employee_code("SAFEADMIN01") == "administrator"
+        assert await _role_name_for_employee_code("SAFEVIEWER1") == "read_only"
+
+        names = await _role_names()
+        assert names == {"administrator", "equipment_pool_staff", "read_only"}, (
+            f"legacy roles must be fully removed once no user references them, got {names}"
+        )
+
+        # Provenance: legacy_role_name records the exact pre-migration value.
+        assert await _legacy_role_name_column_value("SAFEADMIN01") == "admin"
+        assert await _legacy_role_name_column_value("SAFEVIEWER1") == "viewer"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_ambiguous_role_without_manifest_aborts_and_changes_nothing():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            bme_role_id = await _insert_role_row(conn, "biomedical_engineer")
+            await _insert_legacy_user_row(conn, "AMBIGUOUS01", bme_role_id)
+        await engine.dispose()
+
+        result = _run_alembic_allow_failure("upgrade", "head")
+        assert result.returncode != 0, "upgrade must abort when an ambiguous-role user has no manifest coverage"
+        assert "MEP_PR10_ROLE_MAPPING" in (result.stdout + result.stderr)
+
+        # Fails closed atomically: not even the safe/no-op parts of this
+        # revision (e.g. the legacy_role_name column add) persist.
+        assert await _role_names() == {"biomedical_engineer"}, "no role rewrite may occur on an aborted upgrade"
+        assert await _role_name_for_employee_code("AMBIGUOUS01") == "biomedical_engineer", (
+            "an aborted migration must never leave a user with an upgraded/changed role"
+        )
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_ambiguous_role_with_valid_manifest_succeeds():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            nurse_role_id = await _insert_role_row(conn, "ward_nurse")
+            await _insert_legacy_user_row(conn, "NURSE001", nurse_role_id)
+        await engine.dispose()
+
+        manifest = json.dumps([{"employee_code": "NURSE001", "target_role": "equipment_pool_staff"}])
+        _run_alembic("upgrade", "head", extra_env={_MEP_PR10_ROLE_MAPPING_ENV: manifest})
+
+        assert await _role_name_for_employee_code("NURSE001") == "equipment_pool_staff"
+        assert await _legacy_role_name_column_value("NURSE001") == "ward_nurse"
+        assert await _role_names() == {"administrator", "equipment_pool_staff", "read_only"}
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_manifest_invalid_target_role_aborts():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            transport_role_id = await _insert_role_row(conn, "transport_staff")
+            await _insert_legacy_user_row(conn, "TRANSPORT01", transport_role_id)
+        await engine.dispose()
+
+        # "manager" is not one of the 3 confirmed roles -- this must never
+        # be treated as an implicit privilege grant.
+        manifest = json.dumps([{"employee_code": "TRANSPORT01", "target_role": "manager"}])
+        result = _run_alembic_allow_failure("upgrade", "head", extra_env={_MEP_PR10_ROLE_MAPPING_ENV: manifest})
+        assert result.returncode != 0
+
+        assert await _role_name_for_employee_code("TRANSPORT01") == "transport_staff"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_manifest_nonexistent_employee_code_aborts():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            bme_role_id = await _insert_role_row(conn, "biomedical_engineer")
+            await _insert_legacy_user_row(conn, "REALUSER01", bme_role_id)
+        await engine.dispose()
+
+        # Covers REALUSER01 (so the coverage check alone would pass) but
+        # also references a code that names no real account.
+        manifest = json.dumps(
+            [
+                {"employee_code": "REALUSER01", "target_role": "equipment_pool_staff"},
+                {"employee_code": "GHOST404", "target_role": "administrator"},
+            ]
+        )
+        result = _run_alembic_allow_failure("upgrade", "head", extra_env={_MEP_PR10_ROLE_MAPPING_ENV: manifest})
+        assert result.returncode != 0
+        assert "GHOST404" in (result.stdout + result.stderr)
+
+        assert await _role_name_for_employee_code("REALUSER01") == "biomedical_engineer"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_manifest_duplicate_employee_code_aborts():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            bme_role_id = await _insert_role_row(conn, "biomedical_engineer")
+            await _insert_legacy_user_row(conn, "DUPCODE01", bme_role_id)
+        await engine.dispose()
+
+        manifest = json.dumps(
+            [
+                {"employee_code": "DUPCODE01", "target_role": "administrator"},
+                {"employee_code": "DUPCODE01", "target_role": "read_only"},
+            ]
+        )
+        result = _run_alembic_allow_failure("upgrade", "head", extra_env={_MEP_PR10_ROLE_MAPPING_ENV: manifest})
+        assert result.returncode != 0
+
+        assert await _role_name_for_employee_code("DUPCODE01") == "biomedical_engineer"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_never_deletes_a_user_row():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            viewer_role_id = await _insert_role_row(conn, "viewer")
+            bme_role_id = await _insert_role_row(conn, "biomedical_engineer")
+            await _insert_legacy_user_row(conn, "COUNTA01", admin_role_id)
+            await _insert_legacy_user_row(conn, "COUNTV01", viewer_role_id)
+            await _insert_legacy_user_row(conn, "COUNTB01", bme_role_id)
+        await engine.dispose()
+
+        before = await _user_count()
+        assert before == 3
+
+        manifest = json.dumps([{"employee_code": "COUNTB01", "target_role": "administrator"}])
+        _run_alembic("upgrade", "head", extra_env={_MEP_PR10_ROLE_MAPPING_ENV: manifest})
+
+        after = await _user_count()
+        assert after == before, "role consolidation must only ever change role_id, never delete a user"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_check_constraint_rejects_a_retired_role_name():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            from sqlalchemy.exc import DBAPIError
+
+            async with engine.begin() as conn:
+                with pytest.raises(DBAPIError):
+                    await conn.execute(
+                        text("INSERT INTO roles (id, name, permissions) VALUES (:id, 'admin', '{}'::jsonb)"),
+                        {"id": str(uuid.uuid4())},
+                    )
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_downgrade_round_trip_restores_legacy_roles_losslessly():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            await _insert_legacy_user_row(conn, "ROUNDTRIP1", admin_role_id)
+        await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        assert await _role_name_for_employee_code("ROUNDTRIP1") == "administrator"
+
+        _run_alembic("downgrade", "0008_dispatch_fields")
+        assert await _role_name_for_employee_code("ROUNDTRIP1") == "admin", (
+            "downgrade must losslessly restore the pre-migration role from legacy_role_name"
+        )
+        names = await _role_names()
+        assert "admin" in names
+
+        # Re-upgrade simulates a database catching back up -- must converge
+        # to the same confirmed state again.
+        _run_alembic("upgrade", "head")
+        assert await _role_name_for_employee_code("ROUNDTRIP1") == "administrator"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_downgrade_aborts_for_a_user_created_after_upgrade():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            result = await conn.execute(text("SELECT id FROM roles WHERE name = 'equipment_pool_staff'"))
+            new_role_id = result.scalar_one()
+            # legacy_role_name is left NULL -- exactly what a user created
+            # through the application after this migration's upgrade would
+            # have (see app.models.user.User.legacy_role_name's docstring).
+            await _insert_legacy_user_row(conn, "POSTMIGUSER", new_role_id)
+        await engine.dispose()
+
+        result = _run_alembic_allow_failure("downgrade", "0008_dispatch_fields")
+        assert result.returncode != 0, "downgrade must abort rather than fabricate a legacy role"
+
+        # Nothing changed: the new-model role rows are still present.
+        assert await _role_names() == {"administrator", "equipment_pool_staff", "read_only"}
+    finally:
+        await _drop_scratch_database()
+
+
+# ---------------------------------------------------------------------------
+# Codex review round 1 on PR #36 (review 4766143140), blocker 1: migration
+# role changes must carry truthful, atomic provenance -- a dedicated audit
+# row per changed user, never a fabricated authenticated actor.
+# ---------------------------------------------------------------------------
+
+
+async def test_migration_0009_upgrade_writes_one_audit_row_per_changed_user_with_no_fabricated_actor():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            viewer_role_id = await _insert_role_row(conn, "viewer")
+            bme_role_id = await _insert_role_row(conn, "biomedical_engineer")
+            # An "already migrated" user, standing in for a row this
+            # migration must never touch or audit -- simulates a partial
+            # prior run's own new-model role already existing.
+            admin_confirmed_role_id = await _insert_role_row(conn, "administrator")
+            await _insert_legacy_user_row(conn, "AUDITADMIN1", admin_role_id)
+            await _insert_legacy_user_row(conn, "AUDITVIEWR1", viewer_role_id)
+            await _insert_legacy_user_row(conn, "AUDITBME001", bme_role_id)
+            await _insert_legacy_user_row(conn, "ALREADYNEW1", admin_confirmed_role_id)
+        await engine.dispose()
+
+        manifest = json.dumps([{"employee_code": "AUDITBME001", "target_role": "equipment_pool_staff"}])
+        _run_alembic("upgrade", "head", extra_env={_MEP_PR10_ROLE_MAPPING_ENV: manifest})
+
+        admin_id = await _user_id_for_employee_code("AUDITADMIN1")
+        viewer_id = await _user_id_for_employee_code("AUDITVIEWR1")
+        bme_id = await _user_id_for_employee_code("AUDITBME001")
+        already_new_id = await _user_id_for_employee_code("ALREADYNEW1")
+
+        all_rows = await _role_migration_audit_rows()
+        assert len(all_rows) == 3, f"expected exactly 3 changed users to be audited, got {len(all_rows)}"
+
+        by_entity = {row["entity_id"]: row for row in all_rows}
+        assert set(by_entity) == {admin_id, viewer_id, bme_id}
+        assert already_new_id not in by_entity, "an already-confirmed-role user must never receive a role-change audit record"
+
+        assert by_entity[admin_id]["before_data"] == {"role": "admin"}
+        assert by_entity[admin_id]["after_data"]["role"] == "administrator"
+        assert by_entity[viewer_id]["before_data"] == {"role": "viewer"}
+        assert by_entity[viewer_id]["after_data"]["role"] == "read_only"
+        assert by_entity[bme_id]["before_data"] == {"role": "biomedical_engineer"}
+        assert by_entity[bme_id]["after_data"]["role"] == "equipment_pool_staff"
+
+        for row in all_rows:
+            assert row["user_id"] is None, "a migration-provenance audit row must never name a fabricated authenticated actor"
+            assert row["action"] == "role_migration_upgrade"
+            assert row["after_data"]["revision"] == "0009_role_consolidation"
+            assert row["correlation_id"] == "0009_role_consolidation"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_upgrade_downgrade_reupgrade_audit_trail_stays_deterministic():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            await _insert_legacy_user_row(conn, "DETERM0001", admin_role_id)
+        await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        first_upgrade_rows = await _role_migration_audit_rows(action="role_migration_upgrade")
+        assert len(first_upgrade_rows) == 1
+        assert await _role_migration_audit_rows(action="role_migration_downgrade") == []
+
+        _run_alembic("downgrade", "0008_dispatch_fields")
+        assert await _role_name_for_employee_code("DETERM0001") == "admin"
+        # H1: downgrade itself writes its own append-only provenance row,
+        # distinct in action from the upgrade row above -- never zero,
+        # never merged into/overwriting the upgrade row.
+        downgrade_rows = await _role_migration_audit_rows(action="role_migration_downgrade")
+        assert len(downgrade_rows) == 1
+
+        _run_alembic("upgrade", "head")
+        assert await _role_name_for_employee_code("DETERM0001") == "administrator"
+
+        # Deterministic: a fresh, real role change on re-upgrade produces
+        # exactly one more upgrade-action audit row (audit_logs is an
+        # append-only history, not overwritten) -- never zero (silently
+        # dropped) and never more than one extra (duplicated). The single
+        # downgrade-action row from the round trip above must still be
+        # present, untouched, alongside it.
+        second_pass_upgrade_rows = await _role_migration_audit_rows(action="role_migration_upgrade")
+        assert len(second_pass_upgrade_rows) == 2
+        assert await _role_migration_audit_rows(action="role_migration_downgrade") == downgrade_rows
+
+        all_rows = await _role_migration_audit_rows()
+        assert len(all_rows) == 3, "3 total provenance rows: 2 upgrades + 1 downgrade, all preserved"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_audit_write_failure_prevents_partial_role_migration():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            await _insert_legacy_user_row(conn, "AUDITFAIL01", admin_role_id)
+            # Force the migration's own audit_logs INSERT to fail with a
+            # realistic database-level error, standing in for any audit
+            # write failure -- renaming the table is simpler and just as
+            # valid a failure injection as a broken constraint.
+            await conn.execute(text("ALTER TABLE audit_logs RENAME TO audit_logs_disabled_for_test"))
+        await engine.dispose()
+
+        result = _run_alembic_allow_failure("upgrade", "head")
+        assert result.returncode != 0, "upgrade must abort when the migration-provenance audit write fails"
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            await conn.execute(text("ALTER TABLE audit_logs_disabled_for_test RENAME TO audit_logs"))
+        await engine.dispose()
+
+        assert await _role_name_for_employee_code("AUDITFAIL01") == "admin", (
+            "a failed audit write must roll back the role rewrite it was supposed to accompany"
+        )
+        assert await _role_names() == {"admin"}, (
+            "a failed audit write must roll back the whole transaction, including the new role rows"
+        )
+    finally:
+        await _drop_scratch_database()
+
+
+# ---------------------------------------------------------------------------
+# Codex review round 1 on PR #36 (review 4766143140), blocker 2: the
+# mapping manifest may only ever remap a user whose CURRENT role is
+# genuinely ambiguous -- never admin, never viewer, never an already-
+# confirmed role, never an unrecognized role, and never a nonexistent user.
+# ---------------------------------------------------------------------------
+
+
+async def test_migration_0009_manifest_entry_for_admin_is_rejected():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            bme_role_id = await _insert_role_row(conn, "biomedical_engineer")
+            await _insert_legacy_user_row(conn, "OVERRIDEADM", admin_role_id)
+            await _insert_legacy_user_row(conn, "REALAMBIG01", bme_role_id)
+        await engine.dispose()
+
+        manifest = json.dumps(
+            [
+                {"employee_code": "REALAMBIG01", "target_role": "equipment_pool_staff"},
+                {"employee_code": "OVERRIDEADM", "target_role": "read_only"},
+            ]
+        )
+        result = _run_alembic_allow_failure("upgrade", "head", extra_env={_MEP_PR10_ROLE_MAPPING_ENV: manifest})
+        assert result.returncode != 0, "a manifest entry for a current admin user must be rejected"
+        assert "OVERRIDEADM" in (result.stdout + result.stderr)
+
+        assert await _role_name_for_employee_code("OVERRIDEADM") == "admin"
+        assert await _role_name_for_employee_code("REALAMBIG01") == "biomedical_engineer"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_manifest_entry_for_viewer_is_rejected():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            viewer_role_id = await _insert_role_row(conn, "viewer")
+            bme_role_id = await _insert_role_row(conn, "biomedical_engineer")
+            await _insert_legacy_user_row(conn, "OVERRIDEVWR", viewer_role_id)
+            await _insert_legacy_user_row(conn, "REALAMBIG02", bme_role_id)
+        await engine.dispose()
+
+        manifest = json.dumps(
+            [
+                {"employee_code": "REALAMBIG02", "target_role": "equipment_pool_staff"},
+                {"employee_code": "OVERRIDEVWR", "target_role": "administrator"},
+            ]
+        )
+        result = _run_alembic_allow_failure("upgrade", "head", extra_env={_MEP_PR10_ROLE_MAPPING_ENV: manifest})
+        assert result.returncode != 0, "a manifest entry for a current viewer user must be rejected"
+        assert "OVERRIDEVWR" in (result.stdout + result.stderr)
+
+        assert await _role_name_for_employee_code("OVERRIDEVWR") == "viewer"
+        assert await _role_name_for_employee_code("REALAMBIG02") == "biomedical_engineer"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_manifest_entry_for_already_migrated_role_is_rejected():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            confirmed_role_id = await _insert_role_row(conn, "administrator")
+            bme_role_id = await _insert_role_row(conn, "biomedical_engineer")
+            await _insert_legacy_user_row(conn, "ALREADYCONF", confirmed_role_id)
+            await _insert_legacy_user_row(conn, "REALAMBIG03", bme_role_id)
+        await engine.dispose()
+
+        manifest = json.dumps(
+            [
+                {"employee_code": "REALAMBIG03", "target_role": "equipment_pool_staff"},
+                {"employee_code": "ALREADYCONF", "target_role": "read_only"},
+            ]
+        )
+        result = _run_alembic_allow_failure("upgrade", "head", extra_env={_MEP_PR10_ROLE_MAPPING_ENV: manifest})
+        assert result.returncode != 0, "a manifest entry for a user who already holds a confirmed role must be rejected"
+        assert "ALREADYCONF" in (result.stdout + result.stderr)
+
+        assert await _role_name_for_employee_code("ALREADYCONF") == "administrator"
+        assert await _role_name_for_employee_code("REALAMBIG03") == "biomedical_engineer"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_manifest_entry_for_unrecognized_role_is_rejected():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            # A role name outside both the legacy and confirmed domains
+            # entirely -- never ambiguous, never safe, never confirmed.
+            unknown_role_id = await _insert_role_row(conn, "guest")
+            bme_role_id = await _insert_role_row(conn, "biomedical_engineer")
+            await _insert_legacy_user_row(conn, "UNKNOWNROLE", unknown_role_id)
+            await _insert_legacy_user_row(conn, "REALAMBIG04", bme_role_id)
+        await engine.dispose()
+
+        manifest = json.dumps(
+            [
+                {"employee_code": "REALAMBIG04", "target_role": "equipment_pool_staff"},
+                {"employee_code": "UNKNOWNROLE", "target_role": "read_only"},
+            ]
+        )
+        result = _run_alembic_allow_failure("upgrade", "head", extra_env={_MEP_PR10_ROLE_MAPPING_ENV: manifest})
+        assert result.returncode != 0, "a manifest entry for a user with an unrecognized current role must be rejected"
+        assert "UNKNOWNROLE" in (result.stdout + result.stderr)
+
+        assert await _role_name_for_employee_code("UNKNOWNROLE") == "guest"
+        assert await _role_name_for_employee_code("REALAMBIG04") == "biomedical_engineer"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_one_invalid_manifest_entry_aborts_every_update():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            bme_role_id = await _insert_role_row(conn, "biomedical_engineer")
+            nurse_role_id = await _insert_role_row(conn, "ward_nurse")
+            await _insert_legacy_user_row(conn, "VALIDADMIN1", admin_role_id)
+            await _insert_legacy_user_row(conn, "VALIDAMBIG1", bme_role_id)
+            await _insert_legacy_user_row(conn, "VALIDAMBIG2", nurse_role_id)
+        await engine.dispose()
+
+        manifest = json.dumps(
+            [
+                {"employee_code": "VALIDAMBIG1", "target_role": "equipment_pool_staff"},
+                {"employee_code": "VALIDAMBIG2", "target_role": "administrator"},
+                {"employee_code": "VALIDADMIN1", "target_role": "read_only"},  # the one invalid entry
+            ]
+        )
+        result = _run_alembic_allow_failure("upgrade", "head", extra_env={_MEP_PR10_ROLE_MAPPING_ENV: manifest})
+        assert result.returncode != 0
+
+        # Every user is untouched -- not just the invalid entry's target.
+        assert await _role_name_for_employee_code("VALIDADMIN1") == "admin"
+        assert await _role_name_for_employee_code("VALIDAMBIG1") == "biomedical_engineer"
+        assert await _role_name_for_employee_code("VALIDAMBIG2") == "ward_nurse"
+        assert await _role_migration_audit_rows() == []
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_no_audit_records_written_on_failed_manifest_validation():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            bme_role_id = await _insert_role_row(conn, "biomedical_engineer")
+            await _insert_legacy_user_row(conn, "NOAUDITADM1", admin_role_id)
+            await _insert_legacy_user_row(conn, "NOAUDITAMB1", bme_role_id)
+        await engine.dispose()
+
+        manifest = json.dumps(
+            [
+                {"employee_code": "NOAUDITAMB1", "target_role": "equipment_pool_staff"},
+                {"employee_code": "NOAUDITADM1", "target_role": "read_only"},
+            ]
+        )
+        result = _run_alembic_allow_failure("upgrade", "head", extra_env={_MEP_PR10_ROLE_MAPPING_ENV: manifest})
+        assert result.returncode != 0
+
+        assert await _role_migration_audit_rows() == [], "a validation-aborted run must write zero provenance rows"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_manifest_only_changes_ambiguous_role_users():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            viewer_role_id = await _insert_role_row(conn, "viewer")
+            bme_role_id = await _insert_role_row(conn, "biomedical_engineer")
+            await _insert_legacy_user_row(conn, "MIXEDADMIN1", admin_role_id)
+            await _insert_legacy_user_row(conn, "MIXEDVIEWR1", viewer_role_id)
+            await _insert_legacy_user_row(conn, "MIXEDAMBIG1", bme_role_id)
+        await engine.dispose()
+
+        manifest = json.dumps([{"employee_code": "MIXEDAMBIG1", "target_role": "equipment_pool_staff"}])
+        _run_alembic("upgrade", "head", extra_env={_MEP_PR10_ROLE_MAPPING_ENV: manifest})
+
+        # The safe automatic mapping applied to admin/viewer, entirely
+        # independent of the manifest.
+        assert await _role_name_for_employee_code("MIXEDADMIN1") == "administrator"
+        assert await _role_name_for_employee_code("MIXEDVIEWR1") == "read_only"
+        # The manifest applied only to the ambiguous-role user.
+        assert await _role_name_for_employee_code("MIXEDAMBIG1") == "equipment_pool_staff"
+
+        rows = await _user_role_migration_rows()
+        by_code = {}
+        for row in rows:
+            employee_code = None
+            for code in ("MIXEDADMIN1", "MIXEDVIEWR1", "MIXEDAMBIG1"):
+                if row["user_id"] == await _user_id_for_employee_code(code):
+                    employee_code = code
+            by_code[employee_code] = row
+        assert by_code["MIXEDADMIN1"]["legacy_role"] == "admin"
+        assert by_code["MIXEDVIEWR1"]["legacy_role"] == "viewer"
+        assert by_code["MIXEDAMBIG1"]["legacy_role"] == "biomedical_engineer"
+    finally:
+        await _drop_scratch_database()
+
+
+# ---------------------------------------------------------------------------
+# Codex review round 1 on PR #36 (review 4766143140), blocker 3: downgrade
+# must be lossless per-user (never inferred from the new role alone) and
+# must never overwrite a legitimate post-upgrade role change.
+# ---------------------------------------------------------------------------
+
+
+async def test_migration_0009_downgrade_restores_each_ambiguous_legacy_role_exactly_even_when_mapped_to_the_same_new_role():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            bme_role_id = await _insert_role_row(conn, "biomedical_engineer")
+            nurse_role_id = await _insert_role_row(conn, "ward_nurse")
+            transport_role_id = await _insert_role_row(conn, "transport_staff")
+            await _insert_legacy_user_row(conn, "RESTOREBME1", bme_role_id)
+            await _insert_legacy_user_row(conn, "RESTORENUR1", nurse_role_id)
+            await _insert_legacy_user_row(conn, "RESTORETRN1", transport_role_id)
+        await engine.dispose()
+
+        # All three ambiguous legacy roles deliberately mapped to the SAME
+        # confirmed role -- proves downgrade cannot be reverse-inferred
+        # from the new role alone.
+        manifest = json.dumps(
+            [
+                {"employee_code": "RESTOREBME1", "target_role": "equipment_pool_staff"},
+                {"employee_code": "RESTORENUR1", "target_role": "equipment_pool_staff"},
+                {"employee_code": "RESTORETRN1", "target_role": "equipment_pool_staff"},
+            ]
+        )
+        _run_alembic("upgrade", "head", extra_env={_MEP_PR10_ROLE_MAPPING_ENV: manifest})
+        for code in ("RESTOREBME1", "RESTORENUR1", "RESTORETRN1"):
+            assert await _role_name_for_employee_code(code) == "equipment_pool_staff"
+
+        _run_alembic("downgrade", "0008_dispatch_fields")
+
+        assert await _role_name_for_employee_code("RESTOREBME1") == "biomedical_engineer"
+        assert await _role_name_for_employee_code("RESTORENUR1") == "ward_nurse"
+        assert await _role_name_for_employee_code("RESTORETRN1") == "transport_staff"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_downgrade_restores_admin_and_viewer_exactly():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            viewer_role_id = await _insert_role_row(conn, "viewer")
+            await _insert_legacy_user_row(conn, "RESTOREADM1", admin_role_id)
+            await _insert_legacy_user_row(conn, "RESTOREVWR1", viewer_role_id)
+        await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0008_dispatch_fields")
+
+        assert await _role_name_for_employee_code("RESTOREADM1") == "admin"
+        assert await _role_name_for_employee_code("RESTOREVWR1") == "viewer"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_downgrade_aborts_when_a_migrated_users_role_changed_after_upgrade():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            await _insert_legacy_user_row(conn, "DIVERGED001", admin_role_id)
+        await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        assert await _role_name_for_employee_code("DIVERGED001") == "administrator"
+
+        # A legitimate post-upgrade role change, e.g. an Administrator
+        # later reassigning this user via PATCH /api/v1/users/{id}.
+        await _set_user_role_directly("DIVERGED001", "read_only")
+
+        result = _run_alembic_allow_failure("downgrade", "0008_dispatch_fields")
+        assert result.returncode != 0, "downgrade must abort rather than overwrite a legitimate post-upgrade role change"
+        assert "DIVERGED001" in (result.stdout + result.stderr)
+
+        # Untouched -- the post-upgrade change survives.
+        assert await _role_name_for_employee_code("DIVERGED001") == "read_only"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_downgrade_abort_causes_no_partial_role_restoration():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            viewer_role_id = await _insert_role_row(conn, "viewer")
+            await _insert_legacy_user_row(conn, "PARTIALA001", admin_role_id)
+            await _insert_legacy_user_row(conn, "PARTIALB001", viewer_role_id)
+        await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        assert await _role_name_for_employee_code("PARTIALA001") == "administrator"
+        assert await _role_name_for_employee_code("PARTIALB001") == "read_only"
+
+        # Only ONE of the two migrated users diverges after upgrade.
+        await _set_user_role_directly("PARTIALA001", "equipment_pool_staff")
+
+        result = _run_alembic_allow_failure("downgrade", "0008_dispatch_fields")
+        assert result.returncode != 0
+
+        # Neither user was restored -- the undiverged user must not be
+        # partially downgraded while its sibling blocks the run.
+        assert await _role_name_for_employee_code("PARTIALA001") == "equipment_pool_staff"
+        assert await _role_name_for_employee_code("PARTIALB001") == "read_only"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_migration_metadata_is_complete_and_lossless():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            bme_role_id = await _insert_role_row(conn, "biomedical_engineer")
+            await _insert_legacy_user_row(conn, "METAADMIN01", admin_role_id)
+            await _insert_legacy_user_row(conn, "METAAMBIG01", bme_role_id)
+        await engine.dispose()
+
+        manifest = json.dumps([{"employee_code": "METAAMBIG01", "target_role": "read_only"}])
+        _run_alembic("upgrade", "head", extra_env={_MEP_PR10_ROLE_MAPPING_ENV: manifest})
+
+        admin_id = await _user_id_for_employee_code("METAADMIN01")
+        ambig_id = await _user_id_for_employee_code("METAAMBIG01")
+
+        rows = await _user_role_migration_rows()
+        by_user = {row["user_id"]: row for row in rows}
+        assert set(by_user) == {admin_id, ambig_id}
+        assert by_user[admin_id]["legacy_role"] == "admin"
+        assert by_user[admin_id]["migrated_role"] == "administrator"
+        assert by_user[admin_id]["revision"] == "0009_role_consolidation"
+        assert by_user[ambig_id]["legacy_role"] == "biomedical_engineer"
+        assert by_user[ambig_id]["migrated_role"] == "read_only"
+        assert by_user[ambig_id]["revision"] == "0009_role_consolidation"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_repeated_downgrade_cannot_silently_corrupt_roles():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            await _insert_legacy_user_row(conn, "REPEATDG001", admin_role_id)
+        await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0008_dispatch_fields")
+        assert await _role_name_for_employee_code("REPEATDG001") == "admin"
+
+        # alembic itself is already at 0008 -- asking to downgrade to 0008
+        # again must be a safe no-op, never a corrupting second attempt to
+        # "restore" an already-restored role.
+        _run_alembic("downgrade", "0008_dispatch_fields")
+        assert await _role_name_for_employee_code("REPEATDG001") == "admin"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_downgrade_preserves_credentials_and_unrelated_user_fields():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            await _insert_legacy_user_row(conn, "PRESERVE001", admin_role_id)
+        await engine.dispose()
+
+        before = await _user_row("PRESERVE001")
+
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0008_dispatch_fields")
+
+        after = await _user_row("PRESERVE001")
+        assert after["id"] == before["id"]
+        assert after["full_name"] == before["full_name"]
+        assert after["email"] == before["email"]
+        assert after["password_hash"] == before["password_hash"]
+        assert after["is_active"] == before["is_active"]
+    finally:
+        await _drop_scratch_database()
+
+
+# ---------------------------------------------------------------------------
+# Codex review round 2 on PR #36 (review 4769035499), remaining blocker H1:
+# downgrade role restorations must be audited too, with an action string
+# distinguishable from the upgrade direction, and that audit write must be
+# part of the same atomic downgrade -- never fabricating an actor.
+# ---------------------------------------------------------------------------
+
+
+async def test_migration_0009_downgrade_writes_one_audit_row_per_restored_user_with_no_fabricated_actor():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            viewer_role_id = await _insert_role_row(conn, "viewer")
+            await _insert_legacy_user_row(conn, "DGADMIN001", admin_role_id)
+            await _insert_legacy_user_row(conn, "DGVIEWER01", viewer_role_id)
+        await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        admin_id = await _user_id_for_employee_code("DGADMIN001")
+        viewer_id = await _user_id_for_employee_code("DGVIEWER01")
+
+        _run_alembic("downgrade", "0008_dispatch_fields")
+
+        rows = await _role_migration_audit_rows(action="role_migration_downgrade")
+        assert len(rows) == 2, f"expected exactly one downgrade audit row per restored user, got {len(rows)}"
+
+        by_entity = {row["entity_id"]: row for row in rows}
+        assert set(by_entity) == {admin_id, viewer_id}
+        assert by_entity[admin_id]["before_data"] == {"role": "administrator"}
+        assert by_entity[admin_id]["after_data"]["role"] == "admin"
+        assert by_entity[viewer_id]["before_data"] == {"role": "read_only"}
+        assert by_entity[viewer_id]["after_data"]["role"] == "viewer"
+
+        for row in rows:
+            assert row["user_id"] is None, "a downgrade provenance row must never name a fabricated authenticated actor"
+            assert row["action"] == "role_migration_downgrade"
+            assert row["after_data"]["revision"] == "0009_role_consolidation"
+            assert row["correlation_id"] == "0009_role_consolidation"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_downgrade_audit_action_distinguishable_from_upgrade_audit_action():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            await _insert_legacy_user_row(conn, "DISTINCT001", admin_role_id)
+        await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0008_dispatch_fields")
+
+        upgrade_rows = await _role_migration_audit_rows(action="role_migration_upgrade")
+        downgrade_rows = await _role_migration_audit_rows(action="role_migration_downgrade")
+        assert len(upgrade_rows) == 1
+        assert len(downgrade_rows) == 1
+        assert upgrade_rows[0]["action"] != downgrade_rows[0]["action"]
+        assert {row["action"] for row in upgrade_rows} == {"role_migration_upgrade"}
+        assert {row["action"] for row in downgrade_rows} == {"role_migration_downgrade"}
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_downgrade_audit_write_failure_prevents_partial_role_restoration():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            await _insert_legacy_user_row(conn, "DGAUDITFAIL", admin_role_id)
+        await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        assert await _role_name_for_employee_code("DGAUDITFAIL") == "administrator"
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            await conn.execute(text("ALTER TABLE audit_logs RENAME TO audit_logs_disabled_for_test"))
+        await engine.dispose()
+
+        result = _run_alembic_allow_failure("downgrade", "0008_dispatch_fields")
+        assert result.returncode != 0, "downgrade must abort when the downgrade-provenance audit write fails"
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            await conn.execute(text("ALTER TABLE audit_logs_disabled_for_test RENAME TO audit_logs"))
+        await engine.dispose()
+
+        assert await _role_name_for_employee_code("DGAUDITFAIL") == "administrator", (
+            "a failed downgrade audit write must roll back the role restoration it was supposed to accompany"
+        )
+        assert await _role_names() == {"administrator", "equipment_pool_staff", "read_only"}, (
+            "a failed downgrade audit write must roll back the whole transaction -- no legacy role "
+            "row may be partially recreated"
+        )
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_failed_downgrade_preflight_creates_no_downgrade_audit_events():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            await _insert_legacy_user_row(conn, "NODGADUDIT1", admin_role_id)
+        await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        await _set_user_role_directly("NODGADUDIT1", "read_only")  # legitimate post-upgrade change
+
+        result = _run_alembic_allow_failure("downgrade", "0008_dispatch_fields")
+        assert result.returncode != 0
+
+        assert await _role_migration_audit_rows(action="role_migration_downgrade") == [], (
+            "an aborted downgrade preflight must write zero downgrade-provenance rows"
+        )
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_failed_downgrade_preflight_leaves_migration_metadata_tables_intact():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            await _insert_legacy_user_row(conn, "METAINTACT1", admin_role_id)
+        await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        await _set_user_role_directly("METAINTACT1", "read_only")
+
+        result = _run_alembic_allow_failure("downgrade", "0008_dispatch_fields")
+        assert result.returncode != 0
+
+        assert await _table_exists("user_role_migrations") is True
+        assert await _table_exists("role_migration_snapshots") is True
+        assert await _user_role_migration_rows() != [], "downgrade metadata must survive an aborted preflight"
+        assert await _role_snapshot_rows() != [], "role snapshot metadata must survive an aborted preflight"
+        assert await _legacy_role_name_column_value("METAINTACT1") == "admin", (
+            "the legacy_role_name provenance column must not be dropped by an aborted downgrade"
+        )
+    finally:
+        await _drop_scratch_database()
+
+
+# ---------------------------------------------------------------------------
+# Codex review round 2 on PR #36 (review 4769035499), remaining blocker H3:
+# downgrade must restore the EXACT pre-upgrade role row -- same roles.id,
+# same permissions JSONB -- and the exact original user-role assignment,
+# never a same-named row with a freshly generated id, never inferred
+# permissions, never a collapsed record when several legacy roles mapped to
+# the same new role.
+# ---------------------------------------------------------------------------
+
+
+async def test_migration_0009_snapshot_captures_exact_legacy_role_id_and_permissions():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin", permissions={"can_do": ["a", "b"], "level": 3})
+            await _insert_legacy_user_row(conn, "SNAPADMIN01", admin_role_id)
+        await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+
+        snapshots = await _role_snapshot_rows()
+        admin_snap = next(row for row in snapshots if row["legacy_role_name"] == "admin")
+        assert admin_snap["legacy_role_id"] == admin_role_id, "the snapshot must capture the role's exact original id"
+        assert admin_snap["legacy_role_permissions"] == {"can_do": ["a", "b"], "level": 3}, (
+            "the snapshot must capture the role's exact original permissions, not an empty/inferred value"
+        )
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_downgrade_restores_exact_original_role_id_not_a_new_uuid():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            await _insert_legacy_user_row(conn, "EXACTID0001", admin_role_id)
+        await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0008_dispatch_fields")
+
+        restored = await _role_row_by_id(admin_role_id)
+        assert restored is not None, "the exact original role id must exist again after downgrade"
+        assert restored["name"] == "admin"
+
+        all_rows = await _all_role_rows()
+        admin_rows = [row for row in all_rows if row["name"] == "admin"]
+        assert len(admin_rows) == 1, "downgrade must never leave more than one row for a restored legacy role"
+        assert admin_rows[0]["id"] == admin_role_id, "downgrade must never generate a fresh id for a restored role"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_downgrade_restores_role_permissions_exactly_including_nested_values():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        permissions = {"scope": {"equipment": ["view", "edit"]}, "flag": True, "count": 0, "note": None}
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin", permissions=permissions)
+            await _insert_legacy_user_row(conn, "NESTEDPERM1", admin_role_id)
+        await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0008_dispatch_fields")
+
+        restored = await _role_row_by_id(admin_role_id)
+        assert restored["permissions"] == permissions, (
+            "every column of the restored role, including nested/null JSONB values, must round-trip exactly"
+        )
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_downgrade_restores_distinct_permission_sets_for_different_legacy_roles_mapped_to_same_new_role():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        bme_permissions = {"scope": "biomedical", "can_service_equipment": True}
+        nurse_permissions = {"scope": "nursing", "can_service_equipment": False}
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            bme_role_id = await _insert_role_row(conn, "biomedical_engineer", permissions=bme_permissions)
+            nurse_role_id = await _insert_role_row(conn, "ward_nurse", permissions=nurse_permissions)
+            await _insert_legacy_user_row(conn, "DISTPERM001", bme_role_id)
+            await _insert_legacy_user_row(conn, "DISTPERM002", nurse_role_id)
+        await engine.dispose()
+
+        # Both ambiguous legacy roles deliberately mapped to the SAME
+        # confirmed role -- their distinct original permission sets must
+        # still be recoverable, never merged or reverse-inferred.
+        manifest = json.dumps(
+            [
+                {"employee_code": "DISTPERM001", "target_role": "equipment_pool_staff"},
+                {"employee_code": "DISTPERM002", "target_role": "equipment_pool_staff"},
+            ]
+        )
+        _run_alembic("upgrade", "head", extra_env={_MEP_PR10_ROLE_MAPPING_ENV: manifest})
+        _run_alembic("downgrade", "0008_dispatch_fields")
+
+        restored_bme = await _role_row_by_id(bme_role_id)
+        restored_nurse = await _role_row_by_id(nurse_role_id)
+        assert restored_bme["permissions"] == bme_permissions
+        assert restored_nurse["permissions"] == nurse_permissions
+        assert restored_bme["permissions"] != restored_nurse["permissions"]
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_downgrade_restores_exact_user_role_ids_without_collapsing():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            bme_role_id = await _insert_role_row(conn, "biomedical_engineer")
+            nurse_role_id = await _insert_role_row(conn, "ward_nurse")
+            await _insert_legacy_user_row(conn, "COLLAPSE001", bme_role_id)
+            await _insert_legacy_user_row(conn, "COLLAPSE002", nurse_role_id)
+        await engine.dispose()
+
+        manifest = json.dumps(
+            [
+                {"employee_code": "COLLAPSE001", "target_role": "equipment_pool_staff"},
+                {"employee_code": "COLLAPSE002", "target_role": "equipment_pool_staff"},
+            ]
+        )
+        _run_alembic("upgrade", "head", extra_env={_MEP_PR10_ROLE_MAPPING_ENV: manifest})
+        _run_alembic("downgrade", "0008_dispatch_fields")
+
+        assert bme_role_id != nurse_role_id
+        assert await _user_role_id("COLLAPSE001") == bme_role_id, (
+            "each user must be restored to their own exact original legacy role id, never a collapsed shared one"
+        )
+        assert await _user_role_id("COLLAPSE002") == nurse_role_id
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_downgrade_aborts_when_snapshot_row_is_missing():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            await _insert_legacy_user_row(conn, "NOSNAPSHOT1", admin_role_id)
+        await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+
+        # Simulate the snapshot row being lost/corrupted independently of
+        # the per-user migration metadata -- downgrade must refuse to
+        # fabricate a role row it has no exact record of.
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("DELETE FROM role_migration_snapshots WHERE legacy_role_id = :id"), {"id": admin_role_id}
+            )
+        await engine.dispose()
+
+        result = _run_alembic_allow_failure("downgrade", "0008_dispatch_fields")
+        assert result.returncode != 0, "downgrade must abort when a referenced role snapshot is missing"
+        assert admin_role_id in (result.stdout + result.stderr)
+
+        assert await _role_name_for_employee_code("NOSNAPSHOT1") == "administrator", (
+            "no role may be restored when its snapshot is missing"
+        )
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_downgrade_aborts_when_restoring_role_id_would_collide():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            await _insert_legacy_user_row(conn, "COLLIDE0001", admin_role_id)
+        await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+
+        # Simulate some other row now legitimately occupying the exact id
+        # the snapshot needs to restore -- e.g. an operational anomaly
+        # unrelated to this migration. Dropping the CHECK constraint here
+        # is test setup only (mirrors this file's audit_logs RENAME
+        # failure-injection pattern elsewhere) -- downgrade() itself drops
+        # the same constraint unconditionally as its own first step.
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            await conn.execute(text("ALTER TABLE roles DROP CONSTRAINT IF EXISTS ck_roles_name_confirmed"))
+            await conn.execute(
+                text("INSERT INTO roles (id, name, permissions) VALUES (:id, 'orphan_role', '{}'::jsonb)"),
+                {"id": admin_role_id},
+            )
+        await engine.dispose()
+
+        result = _run_alembic_allow_failure("downgrade", "0008_dispatch_fields")
+        assert result.returncode != 0, "downgrade must abort rather than overwrite a role id already in use"
+        assert admin_role_id in (result.stdout + result.stderr)
+
+        assert await _role_name_for_employee_code("COLLIDE0001") == "administrator", (
+            "no role change may occur when restoring would collide"
+        )
+        orphan = await _role_row_by_id(admin_role_id)
+        assert orphan is not None and orphan["name"] == "orphan_role", (
+            "the unrelated row occupying the colliding id must be left untouched"
+        )
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_role_id_generation_remains_valid_after_downgrade_no_sequence_dependency():
+    # roles.id is a UUID (UUIDPKMixin), never backed by a PostgreSQL
+    # sequence -- restoring explicit legacy ids during downgrade has no
+    # sequence state to repair (unlike transaction_no_seq in migration
+    # 0003). This proves ordinary new-role-id generation still behaves
+    # normally immediately afterward.
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin")
+            await _insert_legacy_user_row(conn, "SEQCHECK001", admin_role_id)
+        await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("ALTER TABLE roles DROP CONSTRAINT IF EXISTS ck_roles_name_confirmed"))
+                new_id = str(uuid.uuid4())
+                await conn.execute(
+                    text("INSERT INTO roles (id, name, permissions) VALUES (:id, 'brand_new_role', '{}'::jsonb)"),
+                    {"id": new_id},
+                )
+                result = await conn.execute(text("SELECT id FROM roles WHERE id = :id"), {"id": new_id})
+                assert str(result.scalar_one()) == new_id
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_full_round_trip_preserves_roles_ids_permissions_and_user_assignments_exactly():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "admin", permissions={"admin_scope": True})
+            viewer_role_id = await _insert_role_row(conn, "viewer", permissions={"read": ["all"]})
+            bme_role_id = await _insert_role_row(
+                conn, "biomedical_engineer", permissions={"scope": "biomedical", "level": 2}
+            )
+            nurse_role_id = await _insert_role_row(conn, "ward_nurse", permissions={"scope": "nursing"})
+            transport_role_id = await _insert_role_row(conn, "transport_staff", permissions={})
+            await _insert_legacy_user_row(conn, "RTADMIN001", admin_role_id)
+            await _insert_legacy_user_row(conn, "RTADMIN002", admin_role_id)
+            await _insert_legacy_user_row(conn, "RTVIEWER01", viewer_role_id)
+            await _insert_legacy_user_row(conn, "RTBME00001", bme_role_id)
+            await _insert_legacy_user_row(conn, "RTNURSE001", nurse_role_id)
+            await _insert_legacy_user_row(conn, "RTTRANSP01", transport_role_id)
+        await engine.dispose()
+
+        before_roles = sorted(
+            [
+                {"id": admin_role_id, "name": "admin", "permissions": {"admin_scope": True}},
+                {"id": viewer_role_id, "name": "viewer", "permissions": {"read": ["all"]}},
+                {"id": bme_role_id, "name": "biomedical_engineer", "permissions": {"scope": "biomedical", "level": 2}},
+                {"id": nurse_role_id, "name": "ward_nurse", "permissions": {"scope": "nursing"}},
+                {"id": transport_role_id, "name": "transport_staff", "permissions": {}},
+            ],
+            key=lambda row: row["name"],
+        )
+        before_assignments = {
+            "RTADMIN001": admin_role_id,
+            "RTADMIN002": admin_role_id,
+            "RTVIEWER01": viewer_role_id,
+            "RTBME00001": bme_role_id,
+            "RTNURSE001": nurse_role_id,
+            "RTTRANSP01": transport_role_id,
+        }
+
+        manifest = json.dumps(
+            [
+                {"employee_code": "RTBME00001", "target_role": "equipment_pool_staff"},
+                {"employee_code": "RTNURSE001", "target_role": "read_only"},
+                {"employee_code": "RTTRANSP01", "target_role": "equipment_pool_staff"},
+            ]
+        )
+        _run_alembic("upgrade", "head", extra_env={_MEP_PR10_ROLE_MAPPING_ENV: manifest})
+        _run_alembic("downgrade", "0008_dispatch_fields")
+
+        after_roles = await _all_role_rows()
+        assert after_roles == before_roles, (
+            "every legacy role row must round-trip with identical id, name, and permissions -- "
+            "row-by-row equality, not just matching counts"
+        )
+
+        after_assignments = {code: await _user_role_id(code) for code in before_assignments}
+        assert after_assignments == before_assignments, (
+            "every user must be restored to the exact original legacy role id, with no collapsing "
+            "between users who shared a legacy role and no cross-assignment between users who "
+            "happened to migrate to the same new role"
+        )
+    finally:
+        await _drop_scratch_database()
+
+
+# ---------------------------------------------------------------------------
+# Codex review round 3 on PR #36 (review 4769328243), the remaining blocker:
+# downgrade must never delete a confirmed-role row (administrator,
+# equipment_pool_staff, read_only) merely because of its name -- only a role
+# this revision's own confirmed_role_ownership record proves it CREATED may
+# ever be deleted. A role that already existed under that name before
+# upgrade() ran must survive downgrade unconditionally, with its exact id
+# and pre-upgrade permissions restored.
+# ---------------------------------------------------------------------------
+
+
+async def test_migration_0009_upgrade_reuses_pre_existing_administrator_role_and_records_ownership():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "administrator", permissions={"pre_existing": True})
+        await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+
+        # Reused, never a fresh id.
+        role = await _role_row_by_id(admin_role_id)
+        assert role is not None
+        assert role["name"] == "administrator"
+        assert role["permissions"] == {"pre_existing": True}, "upgrade() must never overwrite a reused role's permissions"
+
+        ownership = await _ownership_rows()
+        admin_ownership = next(row for row in ownership if row["role_name"] == "administrator")
+        assert admin_ownership["role_id"] == admin_role_id
+        assert admin_ownership["existed_before_upgrade"] is True
+        assert admin_ownership["created_by_migration"] is False
+        assert admin_ownership["pre_upgrade_permissions"] == {"pre_existing": True}
+
+        _run_alembic("downgrade", "0008_dispatch_fields")
+
+        # Not deleted, exact id and permissions restored/unchanged.
+        role = await _role_row_by_id(admin_role_id)
+        assert role is not None, "downgrade must never delete a role that existed before this migration's upgrade"
+        assert role["name"] == "administrator"
+        assert role["permissions"] == {"pre_existing": True}
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_upgrade_reuses_pre_existing_read_only_role_and_records_ownership():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            read_only_role_id = await _insert_role_row(conn, "read_only", permissions={"scope": "reports_only"})
+        await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+
+        role = await _role_row_by_id(read_only_role_id)
+        assert role is not None
+        assert role["name"] == "read_only"
+        assert role["permissions"] == {"scope": "reports_only"}
+
+        ownership = await _ownership_rows()
+        read_only_ownership = next(row for row in ownership if row["role_name"] == "read_only")
+        assert read_only_ownership["role_id"] == read_only_role_id
+        assert read_only_ownership["existed_before_upgrade"] is True
+        assert read_only_ownership["created_by_migration"] is False
+        assert read_only_ownership["pre_upgrade_permissions"] == {"scope": "reports_only"}
+
+        _run_alembic("downgrade", "0008_dispatch_fields")
+
+        role = await _role_row_by_id(read_only_role_id)
+        assert role is not None, "downgrade must never delete a role that existed before this migration's upgrade"
+        assert role["name"] == "read_only"
+        assert role["permissions"] == {"scope": "reports_only"}
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_upgrade_creates_confirmed_role_and_records_ownership():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+        # No pre-existing confirmed-role rows at all -- upgrade() must create all 3.
+
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                result = await conn.execute(text("SELECT id FROM roles WHERE name = 'equipment_pool_staff'"))
+                created_role_id = str(result.scalar_one())
+        finally:
+            await engine.dispose()
+
+        ownership = await _ownership_rows()
+        staff_ownership = next(row for row in ownership if row["role_name"] == "equipment_pool_staff")
+        assert staff_ownership["role_id"] == created_role_id
+        assert staff_ownership["existed_before_upgrade"] is False
+        assert staff_ownership["created_by_migration"] is True
+        assert staff_ownership["pre_upgrade_permissions"] is None
+
+        _run_alembic("downgrade", "0008_dispatch_fields")
+
+        role = await _role_row_by_id(created_role_id)
+        assert role is None, "a role this migration created, with no unrelated reference, must be deleted on downgrade"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_mixed_ownership_upgrade_downgrade_preserves_pre_existing_role_and_removes_only_created_roles():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            # One confirmed role pre-exists...
+            admin_role_id = await _insert_role_row(conn, "administrator", permissions={"pre_existing": True})
+            await _insert_legacy_user_row(conn, "MIXPREEXST", admin_role_id)
+            # ...the other two do not, and legacy users exercise both the
+            # safe auto-map and the ambiguous-role manifest path.
+            legacy_viewer_role_id = await _insert_role_row(conn, "viewer")
+            legacy_bme_role_id = await _insert_role_row(conn, "biomedical_engineer")
+            await _insert_legacy_user_row(conn, "MIXVIEWER01", legacy_viewer_role_id)
+            await _insert_legacy_user_row(conn, "MIXBME00001", legacy_bme_role_id)
+        await engine.dispose()
+
+        before_admin_row = await _role_row_by_id(admin_role_id)
+
+        manifest = json.dumps([{"employee_code": "MIXBME00001", "target_role": "equipment_pool_staff"}])
+        _run_alembic("upgrade", "head", extra_env={_MEP_PR10_ROLE_MAPPING_ENV: manifest})
+
+        ownership = await _ownership_rows()
+        by_name = {row["role_name"]: row for row in ownership}
+        assert by_name["administrator"]["existed_before_upgrade"] is True
+        assert by_name["administrator"]["created_by_migration"] is False
+        assert by_name["equipment_pool_staff"]["existed_before_upgrade"] is False
+        assert by_name["equipment_pool_staff"]["created_by_migration"] is True
+        assert by_name["read_only"]["existed_before_upgrade"] is False
+        assert by_name["read_only"]["created_by_migration"] is True
+
+        _run_alembic("downgrade", "0008_dispatch_fields")
+
+        # Pre-existing role: unchanged id and metadata, still present.
+        after_admin_row = await _role_row_by_id(admin_role_id)
+        assert after_admin_row == before_admin_row
+
+        # Only the two migration-created roles are gone.
+        names = await _role_names()
+        assert "administrator" in names
+        assert "equipment_pool_staff" not in names
+        assert "read_only" not in names
+
+        # Legacy roles/assignments restored exactly.
+        assert await _role_name_for_employee_code("MIXVIEWER01") == "viewer"
+        assert await _role_name_for_employee_code("MIXBME00001") == "biomedical_engineer"
+        # The pre-existing administrator user was never touched by this
+        # migration in either direction -- still on the same reused role.
+        assert await _user_role_id("MIXPREEXST") == admin_role_id
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_downgrade_aborts_on_post_upgrade_reference_to_migration_created_role():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            result = await conn.execute(text("SELECT id FROM roles WHERE name = 'equipment_pool_staff'"))
+            staff_role_id = str(result.scalar_one())
+            # A brand-new user, assigned this migration-created role AFTER
+            # upgrade ran -- e.g. via the ordinary POST /api/v1/users API.
+            # Never migrated by 0009; no user_role_migrations row for them.
+            await _insert_legacy_user_row(conn, "POSTREF0001", staff_role_id)
+        await engine.dispose()
+
+        before_role_names = await _role_names()
+        before_user_count = await _user_count()
+
+        result = _run_alembic_allow_failure("downgrade", "0008_dispatch_fields")
+        assert result.returncode != 0, "downgrade must abort when a migration-created role has an unrelated post-upgrade reference"
+        assert staff_role_id in (result.stdout + result.stderr)
+
+        # Nothing changed at all.
+        assert await _role_names() == before_role_names
+        assert await _user_count() == before_user_count
+        assert await _role_name_for_employee_code("POSTREF0001") == "equipment_pool_staff"
+        assert await _role_migration_audit_rows(action="role_migration_downgrade") == []
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_downgrade_aborts_when_ownership_provenance_is_missing():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("DELETE FROM confirmed_role_ownership WHERE role_name = 'administrator'")
+            )
+        await engine.dispose()
+
+        result = _run_alembic_allow_failure("downgrade", "0008_dispatch_fields")
+        assert result.returncode != 0, "downgrade must abort when a confirmed role has no ownership provenance"
+        assert "administrator" in (result.stdout + result.stderr)
+
+        # Nothing changed -- still on the 3-role model.
+        assert await _role_names() == {"administrator", "equipment_pool_staff", "read_only"}
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_downgrade_aborts_when_ownership_role_id_is_mismatched():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            # Simulate ownership metadata drifting from reality: the
+            # recorded role_id no longer matches any real invariant this
+            # migration itself maintains.
+            await conn.execute(
+                text(
+                    "UPDATE confirmed_role_ownership SET role_id = :fake_id "
+                    "WHERE role_name = 'administrator'"
+                ),
+                {"fake_id": str(uuid.uuid4())},
+            )
+        await engine.dispose()
+
+        result = _run_alembic_allow_failure("downgrade", "0008_dispatch_fields")
+        assert result.returncode != 0, "downgrade must abort when ownership's role_id does not match the current role"
+        assert "administrator" in (result.stdout + result.stderr)
+
+        assert await _role_names() == {"administrator", "equipment_pool_staff", "read_only"}
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_downgrade_treats_same_name_different_primary_key_as_not_owned():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            # The original 'administrator' row this revision owns is
+            # replaced (deleted, then recreated under the same name with a
+            # brand-new id) by something entirely outside this migration --
+            # e.g. a manual operator fix. The ownership record still names
+            # the OLD id.
+            await conn.execute(text("ALTER TABLE roles DROP CONSTRAINT IF EXISTS ck_roles_name_confirmed"))
+            await conn.execute(text("DELETE FROM roles WHERE name = 'administrator'"))
+            new_id = str(uuid.uuid4())
+            await conn.execute(
+                text("INSERT INTO roles (id, name, permissions) VALUES (:id, 'administrator', '{}'::jsonb)"),
+                {"id": new_id},
+            )
+        await engine.dispose()
+
+        result = _run_alembic_allow_failure("downgrade", "0008_dispatch_fields")
+        assert result.returncode != 0, (
+            "a role name match must never be treated as ownership proof when the primary key differs"
+        )
+        assert "administrator" in (result.stdout + result.stderr)
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_ownership_table_rejects_duplicate_provenance_for_same_role_name():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            from sqlalchemy.exc import DBAPIError
+
+            async with engine.begin() as conn:
+                with pytest.raises(DBAPIError):
+                    await conn.execute(
+                        text(
+                            "INSERT INTO confirmed_role_ownership "
+                            "(id, revision, role_id, role_name, existed_before_upgrade, created_by_migration) "
+                            "VALUES (:id, '0009_role_consolidation', :role_id, 'administrator', true, false)"
+                        ),
+                        {"id": str(uuid.uuid4()), "role_id": str(uuid.uuid4())},
+                    )
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_ownership_table_rejects_contradictory_ownership_flags():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            from sqlalchemy.exc import DBAPIError
+
+            async with engine.begin() as conn:
+                with pytest.raises(DBAPIError):
+                    await conn.execute(
+                        text(
+                            "INSERT INTO confirmed_role_ownership "
+                            "(id, revision, role_id, role_name, existed_before_upgrade, created_by_migration) "
+                            "VALUES (:id, '0009_role_consolidation', :role_id, 'zz_corrupt_role', true, true)"
+                        ),
+                        {"id": str(uuid.uuid4()), "role_id": str(uuid.uuid4())},
+                    )
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_downgrade_preserves_pre_existing_role_and_its_users_credentials():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            admin_role_id = await _insert_role_row(conn, "administrator")
+            await _insert_legacy_user_row(conn, "PREEXISTUSR", admin_role_id)
+        await engine.dispose()
+
+        before = await _user_row("PREEXISTUSR")
+
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0008_dispatch_fields")
+
+        after = await _user_row("PREEXISTUSR")
+        assert after == before, "a user on a reused pre-existing role, never migrated, must be completely untouched"
+        assert await _user_role_id("PREEXISTUSR") == admin_role_id
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0009_mixed_ownership_round_trip_preserves_everything_exactly():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0008_dispatch_fields")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        async with engine.begin() as conn:
+            # Pre-existing confirmed role, with its own pre-existing user,
+            # entirely outside this migration's business.
+            admin_role_id = await _insert_role_row(conn, "administrator", permissions={"pre_existing": True})
+            await _insert_legacy_user_row(conn, "RT2ADMIN01", admin_role_id)
+
+            # Legacy roles/users this migration actually processes.
+            viewer_role_id = await _insert_role_row(conn, "viewer", permissions={"read": ["all"]})
+            bme_role_id = await _insert_role_row(conn, "biomedical_engineer", permissions={"scope": "biomedical"})
+            await _insert_legacy_user_row(conn, "RT2VIEWER1", viewer_role_id)
+            await _insert_legacy_user_row(conn, "RT2BME0001", bme_role_id)
+        await engine.dispose()
+
+        before_admin_row = await _role_row_by_id(admin_role_id)
+        before_admin_user_role = await _user_role_id("RT2ADMIN01")
+
+        before_legacy_roles = sorted(
+            [
+                {"id": viewer_role_id, "name": "viewer", "permissions": {"read": ["all"]}},
+                {"id": bme_role_id, "name": "biomedical_engineer", "permissions": {"scope": "biomedical"}},
+            ],
+            key=lambda row: row["name"],
+        )
+        before_legacy_assignments = {"RT2VIEWER1": viewer_role_id, "RT2BME0001": bme_role_id}
+
+        manifest = json.dumps([{"employee_code": "RT2BME0001", "target_role": "equipment_pool_staff"}])
+        _run_alembic("upgrade", "head", extra_env={_MEP_PR10_ROLE_MAPPING_ENV: manifest})
+        _run_alembic("downgrade", "0008_dispatch_fields")
+
+        # Pre-existing role and its user: byte-for-byte unchanged.
+        assert await _role_row_by_id(admin_role_id) == before_admin_row
+        assert await _user_role_id("RT2ADMIN01") == before_admin_user_role
+
+        # Legacy roles/assignments this migration DID process: fully
+        # restored, row-by-row, not merely by count.
+        after_legacy_roles = sorted(
+            [row for row in await _all_role_rows() if row["name"] in {"viewer", "biomedical_engineer"}],
+            key=lambda row: row["name"],
+        )
+        assert after_legacy_roles == before_legacy_roles
+        after_legacy_assignments = {code: await _user_role_id(code) for code in before_legacy_assignments}
+        assert after_legacy_assignments == before_legacy_assignments
+
+        # Only the confirmed roles this migration actually created are gone.
+        names = await _role_names()
+        assert names == {"administrator", "viewer", "biomedical_engineer"}
+    finally:
+        await _drop_scratch_database()

@@ -69,7 +69,7 @@ function fakeApiError(code: string, detail: string) {
 }
 
 beforeEach(() => {
-  mockUser = makeUser("admin");
+  mockUser = makeUser("administrator");
 });
 
 afterEach(() => {

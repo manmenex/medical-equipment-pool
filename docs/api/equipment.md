@@ -113,7 +113,7 @@ Deliberately minimal — never includes `item_no`, device name, brand, model, se
 
 ## `POST /equipment` — create
 
-**Auth:** Roles `admin` or `biomedical_engineer`.
+**Auth:** Role `administrator` only (Roadmap PR10's confirmed 3-role model — narrowed from the pre-PR10 `admin`/`biomedical_engineer` gate, since `biomedical_engineer` has no confirmed equivalent; `app.api.v1.deps.ADMINISTRATOR_ONLY_ROLES`).
 
 ### Request body (`EquipmentCreate`)
 
@@ -175,11 +175,11 @@ Note: `id`, `status`, `created_at`, `updated_at` are response-only fields — `i
 | `400` | `INVALID_INPUT` | A `*_id` reference field doesn't exist, or an `IntegrityError` was classified as foreign-key/not-null/check |
 | `409` | `DUPLICATE` | A unique-constraint violation (e.g. duplicate `bcm_code` or canonical identifier collision) |
 | `422` | `VALIDATION_ERROR` | Missing required field, wrong type, or a field exceeds its length bound |
-| `403` | `FORBIDDEN` | Caller's role isn't `admin`/`biomedical_engineer` |
+| `403` | `FORBIDDEN` | Caller's role isn't `administrator` |
 
 ## `PATCH /equipment/{equipment_id}` — partial update
 
-**Auth:** Roles `admin` or `biomedical_engineer`.
+**Auth:** Role `administrator` only (same rule as create above).
 
 ### Request body (`EquipmentUpdate`)
 
@@ -195,7 +195,7 @@ Same as `POST /equipment`, plus `404 EQUIPMENT_NOT_FOUND` if `equipment_id` does
 
 Authorized maintenance-lifecycle transitions only. **This endpoint can never perform a dispatch or receipt transition** — those are exclusively `POST /borrow` and `POST /return/{transaction_id}` (`docs/api/dispatch.md`, `docs/api/receipt.md`), since only those endpoints keep the corresponding `BorrowTransaction` atomically in sync.
 
-**Auth:** Roles `admin` or `biomedical_engineer`.
+**Auth:** Roles `administrator` or `equipment_pool_staff` may call this endpoint at all (`app.api.v1.deps.EQUIPMENT_POOL_OPERATION_ROLES`), but this single endpoint covers three distinct capabilities distinguished by the requested `status` target — Roadmap PR10's confirmed matrix grants marking equipment defective (target `unavailable_defective`) to both roles, but reactivating (target `available_at_pool`) and decommissioning (target `decommissioned`) to `administrator` only. A non-administrator request targeting either administrator-only status is rejected with `403 FORBIDDEN` in the request body, before any database read or side effect (`EQUIPMENT_STATUS_ADMINISTRATOR_ONLY_TARGETS`, `backend/app/api/v1/equipment.py`).
 
 ### Request body (`EquipmentStatusChange`)
 
@@ -232,11 +232,11 @@ Authorized maintenance-lifecycle transitions only. **This endpoint can never per
 |---|---|---|
 | `404` | `EQUIPMENT_NOT_FOUND` | `equipment_id` doesn't resolve |
 | `409` | `INVALID_STATUS_TRANSITION` | Requested `status` isn't in the current status's allowed-transitions set above |
-| `403` | `FORBIDDEN` | Caller's role isn't `admin`/`biomedical_engineer` |
+| `403` | `FORBIDDEN` | Caller's role isn't `administrator`/`equipment_pool_staff`, or the request targets an administrator-only status (`available_at_pool`/`decommissioned`) as a non-administrator |
 
 ## `DELETE /equipment/{equipment_id}` — soft delete
 
-**Auth:** Role `admin` only.
+**Auth:** Role `administrator` only.
 
 ### Response — `204 No Content` (empty body)
 
@@ -245,7 +245,7 @@ Authorized maintenance-lifecycle transitions only. **This endpoint can never per
 | Status | Code | Cause |
 |---|---|---|
 | `404` | `EQUIPMENT_NOT_FOUND` | `equipment_id` doesn't resolve |
-| `403` | `FORBIDDEN` | Caller's role isn't `admin` |
+| `403` | `FORBIDDEN` | Caller's role isn't `administrator` |
 
 ## See also
 

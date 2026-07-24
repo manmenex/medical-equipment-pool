@@ -11,7 +11,7 @@
 
 Closes an open borrow transaction and moves the equipment to the status implied by the reported `receipt_outcome`, atomically. Exactly one concurrent receipt request for the same transaction succeeds (Roadmap PR8A's database-level concurrency guard). Every loser produces zero side effects (no equipment-status change, no status-history row, no audit row) and is rejected with `409 Conflict`, using one of two distinguishable codes depending on cause (Roadmap PR8C — see Errors below): `TRANSACTION_ALREADY_RETURNED` for a genuine sequential repeat, or `RECEIPT_RACE_LOST` for a request that lost a concurrent race. Both share the same HTTP status; only the machine-readable `code` (and the human-readable `detail`) differ — see `docs/DECISION_LOG.md` "Roadmap PR8 (PR8A slice)" for the underlying concurrency guard these two causes sit on top of.
 
-**Auth:** Bearer token required. Allowed roles: `admin`, `ward_nurse`, `transport_staff`, `biomedical_engineer`.
+**Auth:** Bearer token required. Allowed roles (Roadmap PR10's confirmed 3-role model): `administrator`, `equipment_pool_staff` (`app.api.v1.deps.EQUIPMENT_POOL_OPERATION_ROLES`).
 
 ### Path parameter
 
@@ -97,7 +97,7 @@ Example of a **pre-PR8B** transaction's response (received before this contract 
 | `409` | `TRANSACTION_ALREADY_RETURNED` | Genuine sequential repeat: the transaction's `status` was already `closed` *before* this request read it (e.g. a reload/re-submit after a receipt that already completed) |
 | `409` | `RECEIPT_RACE_LOST` | Roadmap PR8C: this request read the transaction as `open`, but a concurrent request won Roadmap PR8A's conditional-close race and closed it first. The requester did nothing wrong — retrying is not appropriate; the caller should refresh to see the current record instead. Zero side effects (no equipment-status change, no status-history row, no audit row) |
 | `422` | `VALIDATION_ERROR` | `receipt_outcome` is missing, not one of `usable`/`defective`, or the request includes an unrecognized field (e.g. the retired `condition`); or `transaction_id` path parameter isn't a valid UUID (FastAPI-typed path parameter — this is a `422`, not the `400` a plain-string query/body UUID would get; see `docs/api/ERROR_CODES.md`) |
-| `401` / `403` | `NOT_AUTHENTICATED` / `FORBIDDEN` | Missing/invalid token, or caller's role isn't `admin`/`ward_nurse`/`transport_staff`/`biomedical_engineer` |
+| `401` / `403` | `NOT_AUTHENTICATED` / `FORBIDDEN` | Missing/invalid token, or caller's role isn't `administrator`/`equipment_pool_staff` |
 
 Full status/code reference: `docs/api/ERROR_CODES.md`.
 

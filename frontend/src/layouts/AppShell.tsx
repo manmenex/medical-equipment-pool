@@ -1,16 +1,22 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
-import { roleLabel, useAuth } from "@/hooks/useAuth";
+import { canDispatchOrReceiveEquipment, canManageEquipmentMasterData, roleLabel, useAuth } from "@/hooks/useAuth";
 import { logout as apiLogout } from "@/services/auth";
 import { useAuthStore } from "@/store/authStore";
 import { applyTheme, useUiStore } from "@/store/uiStore";
 
-const NAV_ITEMS = [
+const BASE_NAV_ITEMS = [
   { to: "/", label: "หน้าหลัก", icon: "🏠" },
   { to: "/equipment", label: "ค้นหา", icon: "🔍" },
+  { to: "/reports", label: "รายงาน", icon: "📊" },
+];
+
+// Roadmap PR10: dispatch/receipt (ยืม/คืน) nav entries are hidden for a
+// user who cannot perform them (Read Only) -- usability only, not a
+// security boundary; see hooks/useAuth.ts's capability-layer note.
+const DISPATCH_NAV_ITEMS = [
   { to: "/borrow", label: "ยืม", icon: "📷" },
   { to: "/return", label: "คืน", icon: "↩️" },
-  { to: "/reports", label: "รายงาน", icon: "📊" },
 ];
 
 export function AppShell() {
@@ -19,6 +25,10 @@ export function AppShell() {
   const theme = useUiStore((s) => s.theme);
   const setTheme = useUiStore((s) => s.setTheme);
   const logoutStore = useAuthStore((s) => s.logout);
+
+  const navItems = canDispatchOrReceiveEquipment(user)
+    ? [BASE_NAV_ITEMS[0], BASE_NAV_ITEMS[1], ...DISPATCH_NAV_ITEMS, BASE_NAV_ITEMS[2]]
+    : BASE_NAV_ITEMS;
 
   const toggleTheme = () => {
     const next = theme === "dark" ? "light" : "dark";
@@ -40,7 +50,7 @@ export function AppShell() {
       <aside className="surface hidden w-56 flex-col border-r p-4 md:flex">
         <div className="mb-6 text-lg font-semibold">Medical Equipment Pool</div>
         <nav className="flex flex-1 flex-col gap-1">
-          {NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -57,7 +67,7 @@ export function AppShell() {
               {item.label}
             </NavLink>
           ))}
-          {(user?.role === "admin" || user?.role === "biomedical_engineer") && (
+          {canManageEquipmentMasterData(user) && (
             <NavLink
               to="/admin"
               className={({ isActive }) =>
@@ -103,7 +113,7 @@ export function AppShell() {
         </main>
 
         <nav className="surface fixed inset-x-0 bottom-0 flex border-t md:hidden">
-          {NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}

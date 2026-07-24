@@ -75,7 +75,7 @@ function makeUser(role: UserProfile["role"]): UserProfile {
 }
 
 beforeEach(() => {
-  mockUser = makeUser("admin");
+  mockUser = makeUser("administrator");
   listWards.mockResolvedValue(wards);
 });
 
@@ -265,41 +265,30 @@ async function openWardCorrectionDialog(user: ReturnType<typeof userEvent.setup>
   await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
 }
 
-describe("ReturnPage ward correction visibility (Roadmap PR9B)", () => {
-  it("shows the ward-correction action to admin", async () => {
-    mockUser = makeUser("admin");
+describe("ReturnPage ward correction visibility (Roadmap PR10 confirmed 3-role matrix)", () => {
+  it("shows the ward-correction action to administrator", async () => {
+    mockUser = makeUser("administrator");
     await openReturnedTransaction();
     expect(screen.getByRole("button", { name: CORRECT_WARD_BUTTON })).toBeInTheDocument();
   });
 
-  it("hides the ward-correction action from biomedical_engineer", async () => {
-    mockUser = makeUser("biomedical_engineer");
+  it("shows the ward-correction action to equipment_pool_staff", async () => {
+    mockUser = makeUser("equipment_pool_staff");
+    await openReturnedTransaction();
+    expect(screen.getByRole("button", { name: CORRECT_WARD_BUTTON })).toBeInTheDocument();
+  });
+
+  it("hides the ward-correction action from read_only", async () => {
+    mockUser = makeUser("read_only");
     await openReturnedTransaction();
     expect(screen.queryByRole("button", { name: CORRECT_WARD_BUTTON })).not.toBeInTheDocument();
   });
 
-  it("hides the ward-correction action from ward_nurse", async () => {
-    mockUser = makeUser("ward_nurse");
-    await openReturnedTransaction();
-    expect(screen.queryByRole("button", { name: CORRECT_WARD_BUTTON })).not.toBeInTheDocument();
-  });
-
-  it("hides the ward-correction action from transport_staff", async () => {
-    mockUser = makeUser("transport_staff");
-    await openReturnedTransaction();
-    expect(screen.queryByRole("button", { name: CORRECT_WARD_BUTTON })).not.toBeInTheDocument();
-  });
-
-  it("hides the ward-correction action from viewer", async () => {
-    mockUser = makeUser("viewer");
-    await openReturnedTransaction();
-    expect(screen.queryByRole("button", { name: CORRECT_WARD_BUTTON })).not.toBeInTheDocument();
-  });
-
-  // A non-admin cannot trigger the API at all through the rendered UI --
-  // there is no button to click, so correctTransactionWard is never called.
-  it("never calls the correction API for a non-admin, since no trigger is rendered", async () => {
-    mockUser = makeUser("viewer");
+  // A role without the capability cannot trigger the API at all through
+  // the rendered UI -- there is no button to click, so
+  // correctTransactionWard is never called.
+  it("never calls the correction API for read_only, since no trigger is rendered", async () => {
+    mockUser = makeUser("read_only");
     await openReturnedTransaction();
     expect(screen.queryByRole("button", { name: CORRECT_WARD_BUTTON })).not.toBeInTheDocument();
     expect(correctTransactionWard).not.toHaveBeenCalled();

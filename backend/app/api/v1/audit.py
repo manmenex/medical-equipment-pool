@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.deps import require_roles
 from app.crud import audit as audit_crud
 from app.db.session import get_db
-from app.models.user import ROLE_ADMIN
+from app.models.user import ROLE_ADMINISTRATOR
 
 router = APIRouter(prefix="/audit-logs", tags=["audit"])
 
@@ -33,7 +33,7 @@ async def list_audit_logs(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
-    _user=Depends(require_roles(ROLE_ADMIN)),
+    _user=Depends(require_roles(ROLE_ADMINISTRATOR)),
 ):
     logs = await audit_crud.list_logs(
         db,

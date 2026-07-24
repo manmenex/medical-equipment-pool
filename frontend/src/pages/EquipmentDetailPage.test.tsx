@@ -115,7 +115,7 @@ function page(items: TransactionOut[]): Page<TransactionOut> {
 }
 
 beforeEach(() => {
-  mockUser = makeUser("admin");
+  mockUser = makeUser("administrator");
   getEquipment.mockResolvedValue(equipment);
   getEquipmentHistory.mockResolvedValue(emptyHistory);
   listTransactions.mockResolvedValue(page([openTransaction, closedTransaction]));
@@ -224,8 +224,8 @@ describe("EquipmentDetailPage transaction history (Roadmap PR9B review round 2, 
     await waitFor(() => expect(correctTransactionWard).toHaveBeenCalledTimes(1));
   });
 
-  it("hides the ward-correction action from a non-admin for both OPEN and CLOSED transactions", async () => {
-    mockUser = makeUser("ward_nurse");
+  it("hides the ward-correction action from read_only for both OPEN and CLOSED transactions", async () => {
+    mockUser = makeUser("read_only");
     renderPage();
     await waitForHistoryLoaded();
 

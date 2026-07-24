@@ -9,7 +9,7 @@ from app.core.db_errors import translate_integrity_error
 from app.core.exceptions import InvalidInputError, ResourceNotFoundError
 from app.crud import user as user_crud
 from app.db.session import get_db
-from app.models.user import ROLE_ADMIN, Role
+from app.models.user import ROLE_ADMINISTRATOR, Role
 from app.schemas.master_data import UserCreate, UserOut, UserUpdate
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -28,7 +28,7 @@ async def _serialize(db: AsyncSession, user) -> UserOut:
 
 
 @router.get("", response_model=list[UserOut])
-async def list_users(db: AsyncSession = Depends(get_db), _user=Depends(require_roles(ROLE_ADMIN))):
+async def list_users(db: AsyncSession = Depends(get_db), _user=Depends(require_roles(ROLE_ADMINISTRATOR))):
     users = await user_crud.list_users(db)
     return [await _serialize(db, u) for u in users]
 
@@ -38,7 +38,7 @@ async def create_user(
     payload: UserCreate,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    actor=Depends(require_roles(ROLE_ADMIN)),
+    actor=Depends(require_roles(ROLE_ADMINISTRATOR)),
 ):
     role = await user_crud.get_role_by_name(db, payload.role_name)
     if role is None:
@@ -64,7 +64,7 @@ async def update_user(
     payload: UserUpdate,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    actor=Depends(require_roles(ROLE_ADMIN)),
+    actor=Depends(require_roles(ROLE_ADMINISTRATOR)),
 ):
     user = await user_crud.get_by_id(db, user_id)
     if user is None:

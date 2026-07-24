@@ -52,7 +52,7 @@ Full rationale and review-fix history for PR5 through PR9 (both slices): `docs/D
 
 ## In progress
 
-None currently.
+**PR10 — Role Model Consolidation.** Draft PR opened from baseline `bfe8a42a55d738d3e591ce27145c7918186643ac` (the current baseline above; not yet merged, so the baseline pointer is unchanged by this entry). Replaces the legacy 5-role model (`admin`, `biomedical_engineer`, `ward_nurse`, `transport_staff`, `viewer`) with the confirmed 3-role model — `administrator`, `equipment_pool_staff`, `read_only` — everywhere a role is persisted or checked. See `docs/BUSINESS_RULES.md` ("Roles and the confirmed 3-role permission matrix") for the full capability-by-capability matrix and `docs/DECISION_LOG.md` ("Roadmap PR10") for the migration mechanism and design rationale. Once this PR merges, ward correction's temporary Administrator-only rule (Roadmap PR9A) is superseded by the confirmed matrix (Administrator + Equipment Pool Staff) — the PR9 note below intentionally still describes the temporary rule, since it was accurate for every commit through the current baseline; a follow-up documentation-only PR (mirroring the PR9 post-merge governance sync) will record PR10's completion once merged, not this PR.
 
 ## Planned (not yet started)
 
@@ -60,7 +60,6 @@ Per `docs/audits/04-consolidated-implementation-plan.md` Part D:
 
 | Roadmap PR | Title |
 |---|---|
-| PR10 | Role Model Consolidation (3 roles) |
 | PR11 | Frontend Terminology and Workflow UI Pass |
 | PR12 | Inventory Import |
 | PR13 | Search, History, and Reporting Adjustments |

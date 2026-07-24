@@ -3,15 +3,21 @@ import uuid
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.deps import require_roles
+from app.api.v1.deps import EQUIPMENT_POOL_OPERATION_ROLES, get_current_user, require_roles
 from app.db.session import get_db
-from app.models.user import ROLE_ADMIN, ROLE_TRANSPORT_STAFF, ROLE_WARD_NURSE
 from app.schemas.transaction import BorrowRequest, ReturnRequest, TransactionOut
 from app.services import borrow_service
 
 router = APIRouter(tags=["borrow"])
 
-BORROW_ROLES = (ROLE_ADMIN, ROLE_WARD_NURSE, ROLE_TRANSPORT_STAFF)
+# Roadmap PR10: dispatch and receipt are Equipment Pool operations --
+# Administrator and Equipment Pool Staff, never Read Only. Replaces the
+# pre-PR10 admin/ward_nurse/transport_staff gate (plus the inline
+# biomedical_engineer/viewer literals list_active_borrows and create_return
+# used to carry) -- none of those three legacy roles has a confirmed
+# equivalent in the new model, so this is a deliberate narrowing to the
+# confirmed matrix, not an oversight.
+BORROW_ROLES = EQUIPMENT_POOL_OPERATION_ROLES
 
 
 def _client_meta(request: Request) -> tuple[str | None, str | None]:
@@ -47,7 +53,10 @@ async def create_borrow(
 
 
 @router.get("/borrow/active", response_model=list[TransactionOut])
-async def list_active_borrows(db: AsyncSession = Depends(get_db), _user=Depends(require_roles(*BORROW_ROLES, "biomedical_engineer", "viewer"))):
+async def list_active_borrows(db: AsyncSession = Depends(get_db), _user=Depends(get_current_user)):
+    # Roadmap PR10: a view/list surface -- every authenticated role
+    # (including Read Only) may view active transactions, mirroring
+    # GET /transactions's own no-role-restriction gate.
     from app.crud import transaction as transaction_crud
 
     return await transaction_crud.list_active(db)
@@ -59,7 +68,7 @@ async def create_return(
     payload: ReturnRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user=Depends(require_roles(*BORROW_ROLES, "biomedical_engineer")),
+    user=Depends(require_roles(*BORROW_ROLES)),
 ):
     ip, ua = _client_meta(request)
     tx = await borrow_service.return_equipment(
