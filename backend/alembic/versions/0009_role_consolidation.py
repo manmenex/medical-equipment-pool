@@ -98,6 +98,16 @@ other pending change in that run from being committed):
      used elsewhere for a system/non-human event, e.g. a login failure
      against an unknown identifier) to record a truthful system/migration
      actor -- never a fabricated authenticated user.
+  4. `confirmed_role_ownership` (Codex review round 3, PR #36, the
+     remaining blocker) -- one row per confirmed role this revision
+     actually deals with, recording whether upgrade() *created* that role
+     row or *reused* one that already existed under that name before this
+     migration ever ran. Role name alone is never treated as proof of
+     ownership: this table is keyed by the role's exact primary key, not
+     its name, so a same-named row that turns out to have a different id
+     than what this table recorded is never assumed to be the same row.
+     downgrade() consults this table, never `roles.name`, to decide what
+     it may delete -- see the dedicated section below.
 
 The pre-existing `users.legacy_role_name` column (added by this same
 migration, mirroring `BorrowTransaction.legacy_status`'s Roadmap PR7
@@ -108,6 +118,45 @@ the application, and (unlike `user_role_migrations`/
 `role_migration_snapshots`) is not downgrade()'s authority, since a role
 name alone cannot losslessly reconstruct the original row identity or
 distinguish "still safe to restore" from "diverged after upgrade."
+
+Confirmed-role ownership (Codex review round 3 on PR #36, the remaining
+blocker): a deployment's `roles` table may already contain a row named
+`administrator`, `equipment_pool_staff`, or `read_only` before this
+migration ever runs (e.g. a partially-migrated environment, or an
+operator who pre-created these rows). upgrade() must never treat "this
+row's name matches a confirmed role" as "this migration owns this row" --
+that conflation is exactly what let round-2's downgrade() unconditionally
+`DELETE FROM roles WHERE name = ANY(the 3 confirmed names)`, destroying a
+pre-existing row (and, transitively, any of its own pre-existing data)
+that upgrade() never created. Fixed by recording, for every confirmed
+role upgrade() looks up or creates, exactly one `confirmed_role_ownership`
+row (see point 4 above) capturing whether that exact row existed before
+upgrade or was created by it. downgrade() then:
+  - deletes a role row only when its own ownership record for this
+    revision says `created_by_migration = true`, matched by exact role
+    id -- never by scanning for a name;
+  - never deletes a row whose ownership record says
+    `existed_before_upgrade = true`; instead it restores that row's
+    pre-upgrade `permissions` (captured in the same ownership row) onto
+    its own unchanged id, and otherwise leaves it exactly as it was;
+  - aborts before any write if a currently-confirmed role has no
+    ownership record for this revision, or if that record's role id does
+    not match the role currently sitting under that name (proof, not
+    inference, of "this is the same row upgrade() reasoned about");
+  - aborts before any write if a `created_by_migration = true` role still
+    has a *non-migrated* user referencing it (i.e. a user who is not in
+    this revision's own `user_role_migrations`) -- upgrade() never
+    deletes the row itself, so the only other foreign-key reference to
+    `roles.id` in this schema is `users.role_id` (confirmed by inspecting
+    `backend/app/models/user.py`; no other table references `roles`),
+    which is exactly what this check inspects.
+A `CHECK (existed_before_upgrade <> created_by_migration)` constraint
+makes the two ownership flags structurally incapable of ever agreeing or
+both being false/true for the same row -- there is no code path, correct
+or corrupted, that can persist a contradictory pair. `UNIQUE(revision,
+role_id)` and `UNIQUE(revision, role_name)` together make a duplicate or
+inconsistent ownership record for the same role, in either dimension,
+structurally impossible rather than merely checked at runtime.
 
 Schema changes:
   - users.legacy_role_name    new, nullable VARCHAR(50); migration
@@ -123,12 +172,19 @@ Schema changes:
                                 authority (see point 1 above). Created and
                                 fully dropped by this revision's upgrade/
                                 downgrade respectively.
+  - confirmed_role_ownership  new table; downgrade()'s sole authority for
+                                which confirmed-role rows it may ever
+                                delete (see point 4 above and the
+                                dedicated section below). Created and
+                                fully dropped by this revision's upgrade/
+                                downgrade respectively.
   - audit_logs                gains one row per user this migration
                                 changes, in either direction (no column
                                 change -- the table's existing nullable
                                 `user_id` and JSONB before_data/after_data
                                 columns are sufficient).
-  - roles                     the 3 confirmed rows are inserted; the
+  - roles                     each confirmed role is inserted only if no
+                                row of that name already exists; the
                                 legacy rows actually present are deleted
                                 once no user references them; a CHECK
                                 constraint then restricts roles.name to
@@ -136,25 +192,37 @@ Schema changes:
                                 depth -- the application layer, via
                                 app.models.user.ALL_ROLES and
                                 app.schemas.master_data.RoleName, is still
-                                the primary gate).
+                                the primary gate). downgrade() deletes
+                                only the confirmed-role rows it can prove
+                                (via confirmed_role_ownership) it created.
 
 No equipment/transaction lifecycle, dispatch/receipt/ward-correction
 contract, or unrelated schema change is part of this migration.
 
-Design note (Codex review round 2, migration design constraints): PR10 is
-unmerged, so this fix is made directly in this revision file rather than
-stacked as a follow-up migration -- there is no already-deployed copy of
-0009 anywhere for a stacked fix to be safer against, and stacking one here
-would only add an avoidable extra revision to review. The upgrade step
-order below adapts the reviewed suggestion in one place: capturing a
-user's `migrated_role_id` genuinely requires the new role rows to already
-exist (their ids are generated at insert time), so the per-user
-`user_role_migrations` row is written in the same per-user step that
-performs the role_id UPDATE (as it already was before this fix round),
-immediately after the role-level `role_migration_snapshots` capture and
-the confirmed-role-model creation that necessarily precedes it -- not
-before them. The *role*-level snapshot (point 1 above), which has no such
-dependency, is still taken first, before any roles-table mutation.
+Design note (Codex review rounds 2 and 3, migration design constraints):
+PR10 is unmerged, so every fix round is made directly in this revision
+file rather than stacked as a follow-up migration -- there is no
+already-deployed copy of 0009 anywhere for a stacked fix to be safer
+against, and stacking one here would only add an avoidable extra revision
+to review. The upgrade step order below adapts the reviewed suggestion in
+one place: capturing a user's `migrated_role_id` genuinely requires the
+new role rows to already exist (their ids are generated at insert time),
+so the per-user `user_role_migrations` row is written in the same
+per-user step that performs the role_id UPDATE (as it already was before
+this fix round), immediately after the role-level
+`role_migration_snapshots` capture and the confirmed-role-model
+creation/reuse that necessarily precedes it -- not before them. The
+*role*-level snapshot (point 1 above), which has no such dependency, is
+still taken first, before any roles-table mutation.
+
+Round 3's "validate the pre-existing row is safe to use" requirement is
+implemented as narrowly as the actual schema supports: `roles.permissions`
+is a plain JSONB column with no other structural constraint anywhere in
+this codebase, so the only concrete, schema-grounded conflict upgrade()
+can detect is a pre-existing row whose `permissions` value does not
+decode as a JSON object (the shape `app.models.user.Role.permissions`
+requires) -- upgrade() aborts before any write if that happens, rather
+than inventing a business rule this schema does not actually enforce.
 
 Like migrations 0006/0007/0008, this migration does not import any
 application module -- the confirmed role names and the legacy-to-new
@@ -200,6 +268,7 @@ AUDIT_ENTITY_TYPE_USER = "user"
 
 MIGRATION_TABLE = "user_role_migrations"
 SNAPSHOT_TABLE = "role_migration_snapshots"
+OWNERSHIP_TABLE = "confirmed_role_ownership"
 
 
 def _load_manifest() -> dict[str, str]:
@@ -298,6 +367,25 @@ def upgrade() -> None:
         f"CONSTRAINT uq_{MIGRATION_TABLE}_user_revision UNIQUE (user_id, revision)"
         ")"
     )
+    # downgrade()'s sole authority for whether it may ever delete a
+    # confirmed-role row (see module docstring, point 4 and the dedicated
+    # "Confirmed-role ownership" section) -- role name is never proof of
+    # ownership, only an exact (revision, role_id) match here is.
+    op.execute(
+        f"CREATE TABLE IF NOT EXISTS {OWNERSHIP_TABLE} ("
+        "id UUID PRIMARY KEY, "
+        "revision VARCHAR(64) NOT NULL, "
+        "role_id UUID NOT NULL, "
+        "role_name VARCHAR(50) NOT NULL, "
+        "existed_before_upgrade BOOLEAN NOT NULL, "
+        "created_by_migration BOOLEAN NOT NULL, "
+        "pre_upgrade_permissions JSONB, "
+        "snapshot_at TIMESTAMPTZ NOT NULL DEFAULT now(), "
+        f"CONSTRAINT uq_{OWNERSHIP_TABLE}_revision_role UNIQUE (revision, role_id), "
+        f"CONSTRAINT uq_{OWNERSHIP_TABLE}_revision_name UNIQUE (revision, role_name), "
+        f"CONSTRAINT ck_{OWNERSHIP_TABLE}_flags CHECK (existed_before_upgrade <> created_by_migration)"
+        ")"
+    )
 
     # Step 1: capture every user's current role name before anything is
     # rewritten -- migration provenance, mirrors legacy_status (PR7).
@@ -383,20 +471,62 @@ def upgrade() -> None:
             },
         )
 
-    # Step 5: insert the 3 confirmed role rows if not already present.
+    # Step 5: for each confirmed role, create it if no row of that name
+    # exists yet, or reuse the exact pre-existing row if one does -- and
+    # record ownership provenance either way (Codex review round 3, the
+    # remaining blocker: role name is never proof that this migration may
+    # later delete a row, only confirmed_role_ownership is).
+    new_role_ids: dict[str, str] = {}
     for name in NEW_ROLE_NAMES:
-        exists = bind.execute(sa.text("SELECT 1 FROM roles WHERE name = :name"), {"name": name}).first()
-        if not exists:
+        existing = bind.execute(
+            sa.text("SELECT id, permissions FROM roles WHERE name = :name"), {"name": name}
+        ).mappings().first()
+
+        if existing is None:
+            role_id = str(uuid.uuid4())
             bind.execute(
                 sa.text("INSERT INTO roles (id, name, permissions) VALUES (:id, :name, '{}'::jsonb)"),
-                {"id": str(uuid.uuid4()), "name": name},
+                {"id": role_id, "name": name},
             )
-    new_role_ids: dict[str, str] = {
-        row["name"]: row["id"]
-        for row in bind.execute(
-            sa.text("SELECT id, name FROM roles WHERE name = ANY(:names)"), {"names": list(NEW_ROLE_NAMES)}
-        ).mappings().all()
-    }
+            bind.execute(
+                sa.text(
+                    f"INSERT INTO {OWNERSHIP_TABLE} "
+                    "(id, revision, role_id, role_name, existed_before_upgrade, created_by_migration, "
+                    "pre_upgrade_permissions) "
+                    "VALUES (:id, :revision, :role_id, :role_name, false, true, NULL)"
+                ),
+                {"id": str(uuid.uuid4()), "revision": revision, "role_id": role_id, "role_name": name},
+            )
+        else:
+            role_id = existing["id"]
+            # "Validate the pre-existing row is safe to use" (round 3): the
+            # only structural requirement this schema places on
+            # `permissions` is that it decode as a JSON object -- see the
+            # module docstring's design note for why nothing stronger is
+            # checked here.
+            if not isinstance(existing["permissions"], dict):
+                raise RuntimeError(
+                    f"Migration 0009 aborted: a pre-existing '{name}' role row (id={existing['id']}) has a "
+                    f"permissions value that is not a JSON object ({existing['permissions']!r}), so it cannot "
+                    "be safely reused by this migration. No role was changed."
+                )
+            bind.execute(
+                sa.text(
+                    f"INSERT INTO {OWNERSHIP_TABLE} "
+                    "(id, revision, role_id, role_name, existed_before_upgrade, created_by_migration, "
+                    "pre_upgrade_permissions) "
+                    "VALUES (:id, :revision, :role_id, :role_name, true, false, CAST(:permissions AS jsonb))"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "revision": revision,
+                    "role_id": role_id,
+                    "role_name": name,
+                    "permissions": json.dumps(existing["permissions"]),
+                },
+            )
+
+        new_role_ids[name] = role_id
 
     # Step 6: resolve the complete, exact set of role changes this
     # upgrade will perform -- from real current state only, never assumed
@@ -555,27 +685,101 @@ def downgrade() -> None:
     ).mappings().all()
     migrated_by_user = {row["user_id"]: row for row in migrated_rows}
 
-    # 1. Every user currently holding a confirmed role must have this
-    # revision's per-user metadata -- otherwise there is nothing true to
-    # restore them to (e.g. a user created after this migration's upgrade).
-    missing_metadata = [row for row in current_new_role_users if row["user_id"] not in migrated_by_user]
-    if missing_metadata:
-        affected = sorted(row["employee_code"] for row in missing_metadata)
+    # Codex review round 3, the remaining blocker: this migration's own
+    # ownership provenance for every confirmed role it looked up or
+    # created (see module docstring, point 4 and the "Confirmed-role
+    # ownership" section). This is downgrade()'s sole authority for what
+    # it may ever delete -- role name is never treated as ownership proof.
+    ownership_rows = bind.execute(
+        sa.text(
+            f"SELECT role_id, role_name, existed_before_upgrade, created_by_migration, "
+            f"pre_upgrade_permissions FROM {OWNERSHIP_TABLE} WHERE revision = :revision"
+        ),
+        {"revision": revision},
+    ).mappings().all()
+    ownership_by_name = {row["role_name"]: row for row in ownership_rows}
+    ownership_by_role_id = {row["role_id"]: row for row in ownership_rows}
+
+    current_confirmed_roles = bind.execute(
+        sa.text("SELECT id, name FROM roles WHERE name = ANY(:new_roles)"),
+        {"new_roles": list(NEW_ROLE_NAMES)},
+    ).mappings().all()
+
+    # 1. Every confirmed-role row currently in `roles` must have this
+    # revision's own ownership record -- otherwise downgrade cannot prove
+    # whether it may ever delete that row, and must not guess from its
+    # name alone.
+    missing_ownership = [row for row in current_confirmed_roles if row["name"] not in ownership_by_name]
+    if missing_ownership:
+        affected = sorted(f"{row['name']} (id={row['id']})" for row in missing_ownership)
         raise RuntimeError(
-            f"Migration 0009 downgrade aborted: {len(missing_metadata)} user(s) hold a confirmed "
-            f"3-role-model role but have no {MIGRATION_TABLE} record for this revision (created "
-            "after this migration's upgrade, or never migrated by it), so there is nothing true to "
-            f"restore them to: {affected}. Back up and hand-resolve these rows before downgrading, "
-            "or prefer a forward fix instead. No role was changed."
+            f"Migration 0009 downgrade aborted: {len(missing_ownership)} confirmed-role row(s) have no "
+            f"{OWNERSHIP_TABLE} record for this revision, so downgrade cannot prove whether it created "
+            f"them: {affected}. No role was changed."
         )
 
-    # 2. Every migrated user must still hold EXACTLY the role id this
+    # 2. The role currently sitting under a confirmed name must be the
+    # EXACT same row this revision's ownership record describes -- a
+    # name match alone is never treated as proof of the same row (a
+    # different row could have been deleted and recreated under the same
+    # name by something else entirely).
+    id_mismatches = [
+        row for row in current_confirmed_roles if ownership_by_name[row["name"]]["role_id"] != row["id"]
+    ]
+    if id_mismatches:
+        affected = sorted(
+            f"{row['name']}: ownership expects id={ownership_by_name[row['name']]['role_id']}, "
+            f"found id={row['id']}"
+            for row in id_mismatches
+        )
+        raise RuntimeError(
+            f"Migration 0009 downgrade aborted: {len(id_mismatches)} confirmed-role name(s) are currently "
+            f"held by a different row than this revision's ownership record describes: {affected}. A "
+            "role name match is never treated as ownership proof. No role was changed."
+        )
+
+    # 3. Every user currently holding a MIGRATION-CREATED confirmed role
+    # must have this revision's per-user metadata. In this schema this one
+    # check simultaneously proves two things the review's preflight list
+    # asks for separately: (a) there is nothing true to restore such a
+    # user to (no metadata), and (b) the role has an "unrelated
+    # post-upgrade reference" (`users.role_id` is the only foreign-key
+    # reference to `roles.id` in this schema -- see the note after check 7
+    # below -- so any user on a migration-created role who is not in this
+    # revision's own metadata can only have gotten there via this
+    # migration itself or via later, unrelated application usage; there is
+    # no third possibility). Either way the role cannot be safely deleted
+    # while they reference it. A user on a REUSED pre-existing confirmed
+    # role with no metadata is expected and harmless -- this migration
+    # never owned that role's assignments and must leave both the role
+    # and the user alone.
+    missing_metadata = [
+        row
+        for row in current_new_role_users
+        if row["user_id"] not in migrated_by_user and ownership_by_role_id[row["current_role_id"]]["created_by_migration"]
+    ]
+    if missing_metadata:
+        affected = sorted(
+            f"role_id={row['current_role_id']} ({row['current_role']}): employee_code={row['employee_code']}"
+            for row in missing_metadata
+        )
+        raise RuntimeError(
+            f"Migration 0009 downgrade aborted: {len(missing_metadata)} user(s) hold a migration-created "
+            f"confirmed role but have no {MIGRATION_TABLE} record for this revision, so there is nothing "
+            f"true to restore them to, and the role cannot be safely deleted while an unrelated reference "
+            f"exists: {affected}. Back up and hand-resolve these rows before downgrading, or prefer a "
+            "forward fix instead. No role was changed."
+        )
+
+    # 4. Every migrated user must still hold EXACTLY the role id this
     # migration assigned them -- compared by id, never by name, so a
     # same-named-but-different role could never slip past this check.
+    # Scoped to migrated users only (see point 3 above).
     diverged = [
         row
         for row in current_new_role_users
-        if row["current_role_id"] != migrated_by_user[row["user_id"]]["migrated_role_id"]
+        if row["user_id"] in migrated_by_user
+        and row["current_role_id"] != migrated_by_user[row["user_id"]]["migrated_role_id"]
     ]
     if diverged:
         affected = sorted(row["employee_code"] for row in diverged)
@@ -586,7 +790,7 @@ def downgrade() -> None:
             "silently discard that legitimate change. No role was changed."
         )
 
-    # 3. Every legacy_role_id this revision's user metadata refers to must
+    # 5. Every legacy_role_id this revision's user metadata refers to must
     # have a matching row snapshot -- otherwise a role name alone would
     # have to be trusted to reconstruct the original row, which is exactly
     # the lossy behavior this fix replaces. UNIQUE(revision, legacy_role_id)
@@ -610,7 +814,7 @@ def downgrade() -> None:
             "cannot losslessly reconstruct the original role row. No role was changed."
         )
 
-    # 4. Restoring a snapshotted role must never collide with some other,
+    # 6. Restoring a snapshotted role must never collide with some other,
     # unrelated role that legitimately exists right now under that id.
     existing_role_ids = {row[0] for row in bind.execute(sa.text("SELECT id FROM roles")).all()}
     colliding_ids = sorted(str(i) for i in (set(snapshot_by_id) & existing_role_ids))
@@ -620,11 +824,31 @@ def downgrade() -> None:
             "and would collide with a snapshotted legacy role being restored. No role was changed."
         )
 
+    # 7. A reused pre-existing confirmed role must have a complete
+    # pre-upgrade snapshot to restore -- should be unreachable given how
+    # upgrade() writes this table, checked anyway rather than assumed.
+    reused_missing_snapshot = [row for row in ownership_rows if row["existed_before_upgrade"] and row["pre_upgrade_permissions"] is None]
+    if reused_missing_snapshot:
+        affected = sorted(row["role_name"] for row in reused_missing_snapshot)
+        raise RuntimeError(
+            f"Migration 0009 downgrade aborted: {len(reused_missing_snapshot)} reused confirmed role(s) "
+            f"have no pre-upgrade permissions snapshot recorded, so they cannot be losslessly restored: "
+            f"{affected}. This should be unreachable; investigate before retrying. No role was changed."
+        )
+
+    # (The review's own "migration-created confirmed roles have no
+    # unrelated post-upgrade references" preflight item is exactly check 3
+    # above, in this schema: `users.role_id` is the only foreign-key
+    # reference to `roles.id` anywhere in this codebase --
+    # backend/app/models/user.py; no other table references `roles` -- so
+    # a non-migrated user on a migration-created role IS the unrelated
+    # reference. There is no second, structurally-distinct case to check.)
+
     # ------------------------------------------------------------------
     # Every precondition passed -- perform the exact restoration.
     # ------------------------------------------------------------------
 
-    # 5. Recreate every snapshotted legacy role row EXACTLY -- the same
+    # 8. Recreate every snapshotted legacy role row EXACTLY -- the same
     # id, name, and permissions it had before upgrade. Every role that was
     # snapshotted is restored, not only the ones a currently-migrated user
     # happens to reference, so the `roles` table itself round-trips fully.
@@ -638,10 +862,25 @@ def downgrade() -> None:
             },
         )
 
-    # 6. Per restored user: write downgrade audit provenance, then restore
-    # role_id to the EXACT original role id (never inferred from the role
-    # name, never a freshly generated id).
+    # 9. Restore every REUSED confirmed role's exact pre-upgrade
+    # permissions onto its own unchanged id -- the row itself was never
+    # deleted, so only its mutable content needs restoring.
+    for row in ownership_rows:
+        if not row["existed_before_upgrade"]:
+            continue
+        bind.execute(
+            sa.text("UPDATE roles SET permissions = CAST(:permissions AS jsonb) WHERE id = :role_id"),
+            {"permissions": json.dumps(row["pre_upgrade_permissions"]), "role_id": row["role_id"]},
+        )
+
+    # 10. Per migrated user: write downgrade audit provenance, then
+    # restore role_id to the EXACT original role id (never inferred from
+    # the role name, never a freshly generated id). A non-migrated user on
+    # a reused role (see check 3) is deliberately left untouched here.
+    migrated_user_ids = list(migrated_by_user.keys())
     for row in current_new_role_users:
+        if row["user_id"] not in migrated_by_user:
+            continue
         meta = migrated_by_user[row["user_id"]]
 
         bind.execute(
@@ -668,23 +907,40 @@ def downgrade() -> None:
             {"legacy_role_id": meta["legacy_role_id"], "user_id": row["user_id"]},
         )
 
-    remaining = bind.execute(
-        sa.text(
-            "SELECT count(*) FROM users JOIN roles ON users.role_id = roles.id WHERE roles.name = ANY(:new_roles)"
-        ),
-        {"new_roles": list(NEW_ROLE_NAMES)},
-    ).scalar_one()
-    if remaining:
-        raise RuntimeError(
-            f"Migration 0009 downgrade aborted: {remaining} user(s) still reference a confirmed "
-            "3-role-model role after restoring legacy roles -- this should be unreachable; investigate "
-            "before retrying. No confirmed role row was deleted."
-        )
+    # Sanity check restricted to users this migration actually restored --
+    # a non-migrated user legitimately remaining on a reused confirmed
+    # role is expected, not an error (see check 3). Skipped entirely (not
+    # queried with an empty array parameter) when this revision migrated
+    # zero users -- vacuously satisfied, and an empty `= ANY(:param)` array
+    # parameter has no element type for the driver to infer.
+    if migrated_user_ids:
+        remaining = bind.execute(
+            sa.text(
+                "SELECT count(*) FROM users u JOIN roles r ON u.role_id = r.id "
+                "WHERE r.name = ANY(:new_roles) AND u.id = ANY(:migrated_user_ids)"
+            ),
+            {"new_roles": list(NEW_ROLE_NAMES), "migrated_user_ids": migrated_user_ids},
+        ).scalar_one()
+        if remaining:
+            raise RuntimeError(
+                f"Migration 0009 downgrade aborted: {remaining} migrated user(s) still reference a "
+                "confirmed 3-role-model role after restoring legacy roles -- this should be unreachable; "
+                "investigate before retrying. No confirmed role row was deleted."
+            )
 
-    op.execute("DELETE FROM roles WHERE name = ANY(ARRAY['administrator','equipment_pool_staff','read_only'])")
+    # 11. Delete ONLY the confirmed-role rows this revision's own
+    # ownership record proves it created -- by exact role id, never by
+    # scanning for a name. A reused pre-existing role is never deleted,
+    # regardless of its name.
+    for row in ownership_rows:
+        if not row["created_by_migration"]:
+            continue
+        bind.execute(sa.text("DELETE FROM roles WHERE id = :role_id"), {"role_id": row["role_id"]})
+
     op.execute("ALTER TABLE users DROP COLUMN IF EXISTS legacy_role_name")
     # This migration's own downgrade-authority tables -- dropped entirely,
     # not merely emptied, since no other revision or application code may
-    # ever depend on them (see module docstring, points 1-2).
+    # ever depend on them (see module docstring, points 1, 2, and 4).
     op.execute(f"DROP TABLE IF EXISTS {MIGRATION_TABLE}")
     op.execute(f"DROP TABLE IF EXISTS {SNAPSHOT_TABLE}")
+    op.execute(f"DROP TABLE IF EXISTS {OWNERSHIP_TABLE}")
