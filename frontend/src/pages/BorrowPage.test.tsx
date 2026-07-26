@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BorrowPage } from "@/pages/BorrowPage";
+import { useUiStore } from "@/store/uiStore";
 import type { Equipment, TransactionOut, Ward } from "@/types";
 
 // Roadmap PR11 review (PR11-M1): the dispatch form had no observable
@@ -82,6 +83,11 @@ beforeEach(() => {
   listWards.mockResolvedValue(wards);
   getEquipment.mockResolvedValue(equipment);
   createBorrow.mockResolvedValue(transaction);
+  // Roadmap PR7b: BorrowPage seeds its ward select from the persisted
+  // lastWard store on mount. Reset it per test so an earlier test's
+  // successful submission never leaks a preselected ward into a later
+  // test's "no selection" assertions.
+  useUiStore.setState({ lastWard: null });
 });
 
 afterEach(() => {
@@ -189,4 +195,68 @@ describe("BorrowPage dispatch form (Roadmap PR11 terminology + PR7b payload cont
     await user.selectOptions(screen.getByLabelText(/รอบเวลา/), "06:00");
     expect(screen.getByRole("button", { name: "ยืนยันการเบิก" })).not.toBeDisabled();
   });
+
+  it("keeps the confirm action disabled while no ward is selected (empty/no-selection state)", async () => {
+    renderBorrowPage();
+
+    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
+
+    expect(screen.getByLabelText(/หอผู้ป่วยที่รับเครื่อง/)).toHaveValue("");
+    expect(screen.getByRole("button", { name: "ยืนยันการเบิก" })).toBeDisabled();
+  });
+
+  it("shows an error and never the success view when the dispatch API call fails", async () => {
+    createBorrow.mockRejectedValue({
+      isAxiosError: true,
+      response: { status: 500, data: { detail: "Dispatch failed" } },
+    });
+    const user = userEvent.setup();
+    renderBorrowPage();
+
+    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
+    await user.selectOptions(screen.getByLabelText(/หอผู้ป่วยที่รับเครื่อง/), "ward-1");
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก" }));
+
+    await waitFor(() => expect(screen.getByText("Dispatch failed")).toBeInTheDocument());
+    expect(screen.queryByText("เบิกสำเร็จ")).not.toBeInTheDocument();
+    // The form remains usable after a failed submission -- the operator is
+    // not stranded on a dead page and can retry.
+    expect(screen.getByRole("button", { name: "ยืนยันการเบิก" })).toBeInTheDocument();
+  });
 });
+
+describe("BorrowPage equipment-loading states (Roadmap PR11 review: loading + error state coverage)", () => {
+  it("shows the scanning view (no equipment card yet) while the preset equipment is still resolving", async () => {
+    let resolveEquipment!: (value: Equipment) => void;
+    getEquipment.mockReturnValue(new Promise<Equipment>((resolve) => (resolveEquipment = resolve)));
+
+    renderBorrowPage();
+
+    // Nothing about the equipment (name, ward field, confirm action) is
+    // rendered yet -- only the QR/BCM scanning entry point is available
+    // while the fetch is in flight.
+    expect(screen.queryByText("Infusion Pump")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "ยืนยันการเบิก" })).not.toBeInTheDocument();
+
+    resolveEquipment(equipment);
+    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
+  });
+
+  it("shows an error when the preset equipment fails to resolve, and never renders the dispatch form", async () => {
+    getEquipment.mockRejectedValue({ isAxiosError: true, response: { status: 404, data: {} } });
+
+    renderBorrowPage();
+
+    await waitFor(() => expect(screen.getByText("ไม่พบเครื่องมือ")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "ยืนยันการเบิก" })).not.toBeInTheDocument();
+  });
+});
+
+// Roadmap PR11 review checklist item "permission-based disabled or hidden
+// behavior": not applicable to BorrowPage itself. BorrowPage performs no
+// per-role conditional rendering of its own -- access to the /borrow route
+// is gated at the navigation layer (AppShell.tsx's
+// canDispatchOrReceiveEquipment), which is unchanged by PR11 and outside
+// this frontend-terminology PR's scope (no RBAC logic is introduced or
+// modified here). Adding a role-gating test to this file would duplicate
+// coverage that belongs to, and already exists for, that layer instead.
