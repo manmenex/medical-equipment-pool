@@ -118,6 +118,21 @@ describe("DashboardPage rendering and lifecycle-status counts (Roadmap PR12)", (
 
     expect(document.querySelector(".recharts-wrapper")).not.toBeInTheDocument();
   });
+
+  // Roadmap PR12 review (PR40-H2): docs/audits/04-consolidated-implementation-plan.md's
+  // Roadmap PR13 entry explicitly retires PM/Calibration widgets as
+  // "MVP-irrelevant dashboard/report elements" -- this dashboard must never
+  // reintroduce them, even though the backend summary still returns those
+  // fields (removing them is Roadmap PR13's decision, not rendered here).
+  it("never renders PM or Calibration due-soon widgets", async () => {
+    fetchSummary.mockResolvedValue(summary);
+    renderDashboard();
+
+    await waitFor(() => expect(screen.getByText("42")).toBeInTheDocument());
+
+    expect(screen.queryByText(/PM ใกล้ครบกำหนด/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Calibration ใกล้ครบกำหนด/)).not.toBeInTheDocument();
+  });
 });
 
 describe("DashboardPage loading, empty, and error states (Roadmap PR12)", () => {
@@ -167,7 +182,21 @@ describe("DashboardPage quick actions (Roadmap PR12)", () => {
 
     expect(screen.getByRole("link", { name: /สแกน QR/ })).toHaveAttribute("href", "/scan");
     expect(screen.getByRole("link", { name: /ดูรายการเครื่อง/ })).toHaveAttribute("href", "/equipment");
-    expect(screen.getByRole("link", { name: /ดูประวัติรายการ/ })).toHaveAttribute("href", "/reports");
+    expect(screen.getByRole("link", { name: /ดูรายงาน/ })).toHaveAttribute("href", "/reports");
+  });
+
+  // Roadmap PR12 review (PR40-M1): the label must describe what /reports
+  // actually shows (a dispatch-frequency chart plus export controls, per
+  // ReportsPage.tsx) rather than promising a transaction-history list that
+  // does not exist -- "ดูประวัติรายการ" would have been that false promise.
+  it("labels the /reports quick action to match what that page actually shows, never as unbuilt transaction history", async () => {
+    fetchSummary.mockResolvedValue(summary);
+    renderDashboard();
+
+    await waitFor(() => expect(screen.getByText("พร้อมใช้งาน")).toBeInTheDocument());
+
+    expect(screen.queryByText("ดูประวัติรายการ")).not.toBeInTheDocument();
+    expect(screen.getByText("ดูรายงาน")).toBeInTheDocument();
   });
 
   it("shows the dispatch and receive quick actions for a role that can perform them", async () => {
