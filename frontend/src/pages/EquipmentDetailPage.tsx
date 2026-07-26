@@ -112,7 +112,7 @@ export function EquipmentDetailPage() {
                 to={`/borrow?equipment_id=${equipment.id}`}
                 className="rounded-lg bg-status-borrowed px-4 py-2 text-sm font-medium text-white"
               >
-                ยืมเครื่องนี้
+                เบิกเครื่องนี้
               </Link>
             )}
             {equipment.status === "issued_to_ward" && (
@@ -120,7 +120,7 @@ export function EquipmentDetailPage() {
                 to={`/return?equipment_id=${equipment.id}`}
                 className="rounded-lg bg-status-available px-4 py-2 text-sm font-medium text-white"
               >
-                คืนเครื่องนี้
+                รับคืนเครื่องนี้
               </Link>
             )}
           </div>
@@ -130,13 +130,20 @@ export function EquipmentDetailPage() {
       {wardCorrectionNotice && <p className="text-sm text-status-available">{wardCorrectionNotice}</p>}
 
       <div className="surface rounded-xl border p-4">
-        <h2 className="mb-3 text-sm font-medium">ประวัติการยืม-คืน</h2>
+        <h2 className="mb-1 text-sm font-medium">ประวัติการเบิก-รับคืน</h2>
+        {/* Workflow Audit §7.1: this is the detail-view caption -- the ward
+            shown per transaction below is a one-time record of where the
+            equipment was first sent, never a live tracker of its later
+            movement between wards. */}
+        <p className="mb-3 text-xs text-[var(--text-muted)]">
+          หอผู้ป่วยที่แสดงคือหอผู้ป่วยที่รับเครื่อง ณ วันที่เบิกเท่านั้น ระบบไม่ได้ติดตามการเคลื่อนย้ายเครื่องมือในภายหลัง
+        </p>
         {transactionsLoading && (
-          <p className="text-sm text-[var(--text-muted)]">กำลังโหลดประวัติการยืม-คืน...</p>
+          <p className="text-sm text-[var(--text-muted)]">กำลังโหลดประวัติการเบิก-รับคืน...</p>
         )}
         {transactionsError && (
           <div className="flex flex-col items-start gap-2">
-            <p className="text-sm text-status-repair">ไม่สามารถโหลดประวัติการยืม-คืนได้</p>
+            <p className="text-sm text-status-repair">ไม่สามารถโหลดประวัติการเบิก-รับคืนได้</p>
             <button
               type="button"
               onClick={() => refetchTransactions()}
@@ -153,12 +160,14 @@ export function EquipmentDetailPage() {
                 <li key={tx.id} className="flex flex-col gap-1 rounded-lg border border-[var(--border)] p-3 text-sm">
                   <div>
                     เลขที่รายการ {tx.transaction_no} ·{" "}
-                    <strong>{tx.status === "open" ? "อยู่ระหว่างยืม" : "คืนแล้ว"}</strong>
+                    <strong>{tx.status === "open" ? "อยู่ระหว่างเบิก" : "รับคืนแล้ว"}</strong>
                   </div>
-                  <div className="text-[var(--text-muted)]">แผนก: {wardName(tx.ward_id)}</div>
+                  <div className="text-[var(--text-muted)]">
+                    หอผู้ป่วยที่รับเครื่อง (บันทึก ณ วันที่เบิก): {wardName(tx.ward_id)}
+                  </div>
                   <div className="text-xs text-[var(--text-muted)]">
-                    ยืมเมื่อ {new Date(tx.borrowed_at).toLocaleString("th-TH")}
-                    {tx.returned_at ? ` · คืนเมื่อ ${new Date(tx.returned_at).toLocaleString("th-TH")}` : ""}
+                    เบิกเมื่อ {new Date(tx.borrowed_at).toLocaleString("th-TH")}
+                    {tx.returned_at ? ` · รับคืนเมื่อ ${new Date(tx.returned_at).toLocaleString("th-TH")}` : ""}
                   </div>
                   <div className="mt-1">
                     <WardCorrectionAction
@@ -170,7 +179,7 @@ export function EquipmentDetailPage() {
                 </li>
               ))}
               {transactions.length === 0 && (
-                <li className="text-sm text-[var(--text-muted)]">ยังไม่มีประวัติการยืม-คืน</li>
+                <li className="text-sm text-[var(--text-muted)]">ยังไม่มีประวัติการเบิก-รับคืน</li>
               )}
             </ol>
             {hasNextPage && (

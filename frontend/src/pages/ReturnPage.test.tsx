@@ -118,7 +118,7 @@ describe("ReturnPage receipt outcome (Roadmap PR8B)", () => {
     renderReturnPage();
 
     await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
-    await user.click(screen.getByRole("button", { name: /ยืนยันการคืน/ }));
+    await user.click(screen.getByRole("button", { name: /ยืนยันการรับคืน/ }));
 
     await waitFor(() => expect(createReturn).toHaveBeenCalledTimes(1));
     const [txId, payload] = createReturn.mock.calls[0];
@@ -137,7 +137,7 @@ describe("ReturnPage receipt outcome (Roadmap PR8B)", () => {
 
     await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
     await user.click(screen.getByRole("radio", { name: "ชำรุด" }));
-    await user.click(screen.getByRole("button", { name: /ยืนยันการคืน/ }));
+    await user.click(screen.getByRole("button", { name: /ยืนยันการรับคืน/ }));
 
     await waitFor(() => expect(createReturn).toHaveBeenCalledTimes(1));
     expect(createReturn).toHaveBeenCalledWith("tx-1", { receipt_outcome: "defective", notes: undefined });
@@ -197,9 +197,9 @@ describe("ReturnPage receipt errors (Roadmap PR8C)", () => {
     renderReturnPage();
 
     await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
-    await user.click(screen.getByRole("button", { name: /ยืนยันการคืน/ }));
+    await user.click(screen.getByRole("button", { name: /ยืนยันการรับคืน/ }));
 
-    await waitFor(() => expect(screen.getByText("รายการนี้ถูกคืนไปแล้ว")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("รายการนี้ถูกรับคืนไปแล้ว")).toBeInTheDocument());
   });
 
   // Codex review round 1 (GitHub PR #31): the message must attribute this
@@ -217,12 +217,12 @@ describe("ReturnPage receipt errors (Roadmap PR8C)", () => {
     renderReturnPage();
 
     await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
-    await user.click(screen.getByRole("button", { name: /ยืนยันการคืน/ }));
+    await user.click(screen.getByRole("button", { name: /ยืนยันการรับคืน/ }));
 
     await waitFor(() =>
       expect(screen.getByText("มีคำขอรับเครื่องอื่นดำเนินการสำเร็จก่อน กรุณารีเฟรชเพื่อดูข้อมูลล่าสุด")).toBeInTheDocument()
     );
-    expect(screen.queryByText("รายการนี้ถูกคืนไปแล้ว")).not.toBeInTheDocument();
+    expect(screen.queryByText("รายการนี้ถูกรับคืนไปแล้ว")).not.toBeInTheDocument();
   });
 
   it("falls back to the raw detail message for an unrecognized error code, never inferring behavior from it", async () => {
@@ -232,10 +232,10 @@ describe("ReturnPage receipt errors (Roadmap PR8C)", () => {
     renderReturnPage();
 
     await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
-    await user.click(screen.getByRole("button", { name: /ยืนยันการคืน/ }));
+    await user.click(screen.getByRole("button", { name: /ยืนยันการรับคืน/ }));
 
     await waitFor(() => expect(screen.getByText("Something else went wrong")).toBeInTheDocument());
-    expect(screen.queryByText("รายการนี้ถูกคืนไปแล้ว")).not.toBeInTheDocument();
+    expect(screen.queryByText("รายการนี้ถูกรับคืนไปแล้ว")).not.toBeInTheDocument();
     expect(
       screen.queryByText("มีคำขอรับเครื่องอื่นดำเนินการสำเร็จก่อน กรุณารีเฟรชเพื่อดูข้อมูลล่าสุด")
     ).not.toBeInTheDocument();
@@ -464,14 +464,14 @@ describe("ReturnPage ward correction submission (Roadmap PR9B)", () => {
   it("refreshes the displayed ward after a successful correction, without a page reload", async () => {
     correctTransactionWard.mockResolvedValue({ ...transaction, ward_id: "ward-2" });
     const user = await openReturnedTransaction();
-    expect(screen.getByText(/แผนกที่บันทึกไว้:/)).toHaveTextContent("Ward A");
+    expect(screen.getByText(/หอผู้ป่วยที่รับเครื่อง/)).toHaveTextContent("Ward A");
 
     await openWardCorrectionDialog(user);
     await user.selectOptions(screen.getByLabelText(/แผนกที่ถูกต้อง/), "ward-2");
     await user.type(screen.getByLabelText(/เหตุผลในการแก้ไข/), "Fixed a phone-in error");
     await user.click(screen.getByRole("button", { name: CONFIRM_BUTTON }));
 
-    await waitFor(() => expect(screen.getByText(/แผนกที่บันทึกไว้:/)).toHaveTextContent("Ward B"));
+    await waitFor(() => expect(screen.getByText(/หอผู้ป่วยที่รับเครื่อง/)).toHaveTextContent("Ward B"));
   });
 
   it("shows a Thai success message after a successful correction", async () => {
@@ -532,7 +532,7 @@ describe("ReturnPage ward correction errors (Roadmap PR9B)", () => {
       screen.getByText(/มีคำขอแก้ไขแผนกอื่นดำเนินการสำเร็จก่อนคำขอนี้/)
     ).toBeInTheDocument();
     // The newly committed ward (from the refetch) is now displayed.
-    await waitFor(() => expect(screen.getByText(/แผนกที่บันทึกไว้:/)).toHaveTextContent("Ward C"));
+    await waitFor(() => expect(screen.getByText(/หอผู้ป่วยที่รับเครื่อง/)).toHaveTextContent("Ward C"));
   });
 
   it("permits a safe retry on an unexpected failure, without losing the entered reason", async () => {

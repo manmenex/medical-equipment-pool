@@ -90,7 +90,7 @@ export function BorrowPage() {
       setLastWard(wardId || null);
       setSuccess(tx.transaction_no);
     } catch (err) {
-      setError(apiErrorMessage(err, "ยืมเครื่องมือไม่สำเร็จ"));
+      setError(apiErrorMessage(err, "เบิกเครื่องมือไม่สำเร็จ"));
     } finally {
       setSubmitting(false);
     }
@@ -100,7 +100,7 @@ export function BorrowPage() {
     return (
       <div className="surface mx-auto mt-8 max-w-sm rounded-xl border p-6 text-center">
         <div className="mb-2 text-4xl">✅</div>
-        <h2 className="text-lg font-semibold">ยืมสำเร็จ</h2>
+        <h2 className="text-lg font-semibold">เบิกสำเร็จ</h2>
         <p className="mt-1 text-sm text-[var(--text-muted)]">เลขที่รายการ {success}</p>
         <button
           onClick={() => {
@@ -110,7 +110,7 @@ export function BorrowPage() {
           }}
           className="mt-4 rounded-lg bg-status-borrowed px-4 py-2 text-sm font-medium text-white"
         >
-          ยืมเครื่องถัดไป
+          เบิกเครื่องถัดไป
         </button>
       </div>
     );
@@ -119,7 +119,7 @@ export function BorrowPage() {
   if (!equipment) {
     return (
       <div className="mx-auto flex max-w-sm flex-col gap-4">
-        <h1 className="text-lg font-semibold">ยืมเครื่องมือ</h1>
+        <h1 className="text-lg font-semibold">เบิกเครื่องมือ</h1>
         <QRScanner active={scanning} onScan={resolveEquipmentFromQr} />
         <p className="text-center text-sm text-[var(--text-muted)]">หรือค้นหาด้วยรหัส BCM</p>
         <BcmSearchInput onSelect={handleBcmSelect} />
@@ -140,12 +140,12 @@ export function BorrowPage() {
 
       {equipment.status !== "available_at_pool" ? (
         <p className="rounded-lg bg-status-repair/10 p-3 text-sm text-status-repair">
-          เครื่องนี้ไม่พร้อมให้ยืม (สถานะปัจจุบัน: {equipment.status})
+          เครื่องนี้ไม่พร้อมให้เบิก (สถานะปัจจุบัน: {equipment.status})
         </p>
       ) : (
         <>
           <div>
-            <label className="mb-1 block text-sm font-medium">หอผู้ป่วย / Ward *</label>
+            <label className="mb-1 block text-sm font-medium">หอผู้ป่วยที่รับเครื่อง (บันทึก ณ วันที่เบิก) *</label>
             <select
               required
               value={wardId}
@@ -159,6 +159,12 @@ export function BorrowPage() {
                 </option>
               ))}
             </select>
+            {/* Workflow Audit §7.1: the ward field must never imply
+                real-time location tracking -- this is a one-time record of
+                where the equipment was first sent, not a live location. */}
+            <p className="mt-1 text-xs text-[var(--text-muted)]">
+              ระบบบันทึกเฉพาะหอผู้ป่วยที่ส่งเครื่องไปครั้งแรก ไม่ได้ติดตามการเคลื่อนย้ายเครื่องมือในภายหลัง
+            </p>
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium">ประเภทการเบิก *</label>
@@ -219,7 +225,7 @@ export function BorrowPage() {
             disabled={submitting || !wardId || (dispatchType === "routine_round" && !routineRound)}
             className="rounded-lg bg-status-borrowed py-2.5 font-medium text-white disabled:opacity-60"
           >
-            {submitting ? "กำลังบันทึก..." : "ยืนยันการยืม"}
+            {submitting ? "กำลังบันทึก..." : "ยืนยันการเบิก"}
           </button>
         </>
       )}
