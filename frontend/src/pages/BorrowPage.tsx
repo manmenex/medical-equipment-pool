@@ -145,8 +145,11 @@ export function BorrowPage() {
       ) : (
         <>
           <div>
-            <label className="mb-1 block text-sm font-medium">หอผู้ป่วยที่รับเครื่อง (บันทึก ณ วันที่เบิก) *</label>
+            <label htmlFor="borrow-ward" className="mb-1 block text-sm font-medium">
+              หอผู้ป่วยที่รับเครื่อง (บันทึก ณ วันที่เบิก) *
+            </label>
             <select
+              id="borrow-ward"
               required
               value={wardId}
               onChange={(e) => setWardId(e.target.value)}
@@ -167,8 +170,11 @@ export function BorrowPage() {
             </p>
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium">ประเภทการเบิก *</label>
+            <label htmlFor="borrow-dispatch-type" className="mb-1 block text-sm font-medium">
+              ประเภทการเบิก *
+            </label>
             <select
+              id="borrow-dispatch-type"
               required
               value={dispatchType}
               onChange={(e) => {
@@ -184,8 +190,11 @@ export function BorrowPage() {
           </div>
           {dispatchType === "routine_round" && (
             <div>
-              <label className="mb-1 block text-sm font-medium">รอบเวลา *</label>
+              <label htmlFor="borrow-routine-round" className="mb-1 block text-sm font-medium">
+                รอบเวลา *
+              </label>
               <select
+                id="borrow-routine-round"
                 required
                 value={routineRound}
                 onChange={(e) => setRoutineRound(e.target.value as RoutineRound)}
@@ -201,16 +210,22 @@ export function BorrowPage() {
             </div>
           )}
           <div>
-            <label className="mb-1 block text-sm font-medium">เบอร์โทร</label>
+            <label htmlFor="borrow-phone" className="mb-1 block text-sm font-medium">
+              เบอร์โทร
+            </label>
             <input
+              id="borrow-phone"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               className="w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium">หมายเหตุ</label>
+            <label htmlFor="borrow-notes" className="mb-1 block text-sm font-medium">
+              หมายเหตุ
+            </label>
             <textarea
+              id="borrow-notes"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               className="w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
