@@ -14,6 +14,7 @@ const EquipmentDetailPage = lazy(() =>
 );
 const BorrowPage = lazy(() => import("@/pages/BorrowPage").then((m) => ({ default: m.BorrowPage })));
 const ReturnPage = lazy(() => import("@/pages/ReturnPage").then((m) => ({ default: m.ReturnPage })));
+const ScanPage = lazy(() => import("@/pages/ScanPage").then((m) => ({ default: m.ScanPage })));
 const ReportsPage = lazy(() => import("@/pages/ReportsPage").then((m) => ({ default: m.ReportsPage })));
 const AdminPage = lazy(() => import("@/pages/AdminPage").then((m) => ({ default: m.AdminPage })));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
@@ -38,6 +39,7 @@ export function App() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/equipment" element={<EquipmentListPage />} />
           <Route path="/equipment/:id" element={<EquipmentDetailPage />} />
+          <Route path="/scan" element={<ScanPage />} />
           <Route path="/borrow" element={<BorrowPage />} />
           <Route path="/return" element={<ReturnPage />} />
           <Route path="/reports" element={<ReportsPage />} />
