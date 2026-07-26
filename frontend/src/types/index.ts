@@ -192,3 +192,41 @@ export type WardCorrectionErrorCode =
   | "WARD_CORRECTION_NOOP"
   | "WARD_CORRECTION_CONFLICT"
   | "VALIDATION_ERROR";
+
+// Roadmap PR12 (Inventory Import, backend/app/services/import_service.py):
+// per-row outcome of a parsed spreadsheet row. "skipped" is distinct from
+// "failed" -- a skip means the row's BCM Code already exists in the
+// database and update mode was off (not a data-quality problem with the
+// row itself).
+export type ImportRowStatus = "success" | "failed" | "skipped";
+
+// Present only for a "success" row -- distinguishes a brand-new equipment
+// record from an update to an existing one (matched solely by BCM Code,
+// per the backend's documented design).
+export type ImportRowAction = "create" | "update";
+
+export interface ImportRowResult {
+  row_number: number;
+  bcm_code: string | null;
+  item_no: string | null;
+  asset_id: string | null;
+  status: ImportRowStatus;
+  action: ImportRowAction | null;
+  reason: string | null;
+  equipment_id: string | null;
+}
+
+export interface ImportPreviewResponse {
+  filename: string;
+  total_rows: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  rows: ImportRowResult[];
+}
+
+// Roadmap PR12: `audit_log_id` is the one batch-level audit entry recorded
+// for a commit -- never one entry per row.
+export interface ImportCommitResponse extends ImportPreviewResponse {
+  audit_log_id: string | null;
+}

@@ -163,6 +163,24 @@ class Equipment(UUIDPKMixin, TimestampMixin, SoftDeleteMixin, Base):
     rfid_tag: Mapped[str | None] = mapped_column(String(64))
     pm_due_date: Mapped[date | None] = mapped_column(Date, index=True)
     cal_due_date: Mapped[date | None] = mapped_column(Date, index=True)
+    # Roadmap PR12 (docs/audits/04-consolidated-implementation-plan.md Part
+    # E, row "Add Asset ID"; Part F.1): the inventory import source file's
+    # "Asset ID" column -- new, optional metadata, deliberately separate
+    # from asset_number (Part E: "not renamed, reused, or merged into
+    # either identifier column"). Not unique-constrained: hospital-wide
+    # uniqueness is unconfirmed (§14 open question 2), so
+    # app.services.import_service treats a duplicate as a conservative,
+    # row-level, application-only conflict rather than a database
+    # constraint -- see migration 0010's docstring.
+    asset_id: Mapped[str | None] = mapped_column(String(100), index=True)
+    # Roadmap PR12 (Part F.1 step 3): the import source file's "Asset
+    # Status" value, preserved verbatim before being mapped into
+    # EquipmentStatus through Part F.2's explicit, approved (currently
+    # illustrative) mapping table. Never read by any workflow or
+    # eligibility check -- provenance only, the same role legacy_status
+    # plays for Roadmap PR6. Left NULL for every row not created/updated
+    # by an inventory import.
+    raw_source_status: Mapped[str | None] = mapped_column(String(100))
     equipment_metadata: Mapped[dict] = mapped_column("metadata", JSONType, default=dict)
 
     category: Mapped["EquipmentCategory | None"] = relationship()

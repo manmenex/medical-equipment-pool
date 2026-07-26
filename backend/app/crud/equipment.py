@@ -100,6 +100,39 @@ async def get_by_asset_number(db: AsyncSession, asset_number: str) -> Equipment 
     return result.scalar_one_or_none()
 
 
+async def get_by_bcm_code(db: AsyncSession, bcm_code: str) -> Equipment | None:
+    """Exact BCM Code lookup. Roadmap PR12: the sole match key
+    app.services.import_service uses to decide whether an import row is a
+    new record or an update to an existing one -- never item_no,
+    asset_id, or serial_number (see import_service's module docstring)."""
+    result = await db.execute(
+        select(Equipment).where(Equipment.bcm_code == bcm_code, Equipment.deleted_at.is_(None))
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_by_serial_number(db: AsyncSession, serial_number: str) -> Equipment | None:
+    """Exact Serial Number lookup (Roadmap PR12 import duplicate check --
+    serial_number is already database-unique)."""
+    result = await db.execute(
+        select(Equipment).where(Equipment.serial_number == serial_number, Equipment.deleted_at.is_(None))
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_by_asset_id(db: AsyncSession, asset_id: str) -> Equipment | None:
+    """Roadmap PR12: asset_id carries no database uniqueness constraint
+    (see migration 0010's docstring -- hospital-wide uniqueness is
+    unconfirmed), so this returns one representative match for
+    application-layer conflict flagging, not a uniqueness guarantee."""
+    result = await db.execute(
+        select(Equipment)
+        .where(Equipment.asset_id == asset_id, Equipment.deleted_at.is_(None))
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def search(
     db: AsyncSession,
     *,
