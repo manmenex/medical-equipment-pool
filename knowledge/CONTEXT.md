@@ -40,9 +40,14 @@ Roadmap PR7 (both slices, GitHub PR #19/#20), Roadmap PR8 (all three slices, Git
 
 Roadmap PR11 is now merged — see "Current PR" above. The next unstarted item is **Roadmap PR12 — Inventory Import**, per `docs/audits/04-consolidated-implementation-plan.md` Part D and `docs/ROADMAP.md`. No PR12 work has started.
 
+## Non-Roadmap work in flight
+
+**GitHub PR #40 — "Dashboard & Equipment Status"** (frontend-only Dashboard/quick-actions redesign, open, Draft, unmerged) is **not** Roadmap PR12. A governance decision (this PR; see `docs/DECISION_LOG.md`, "Governance — GitHub PR #40 classification") classifies it as an **unnumbered Post-PR11 Frontend Dashboard UX Follow-up** instead — the originating task description's "PR12" label conflicted with this repository's actual Roadmap PR12 (Inventory Import), which two independent Codex reviews on GitHub PR #40 blocked on (finding PR40-H1: review `4781262010` — initial review, identified PR40-H1; review `4781273707` — follow-up review, blocker remained). Roadmap PR12 and Roadmap PR13 are both unchanged by this decision. GitHub PR #40 itself has not been modified by this governance sync — it still carries the (now-superseded) "PR12" framing in its title/description/code comments/test descriptions, to be corrected in a follow-up rebase once this Governance PR merges.
+
 ## Outstanding work
 
 - Roadmap PR9 (both slices), Roadmap PR10 (Role Model Consolidation), and Roadmap PR11 (Frontend Terminology and Workflow UI Pass) are merged and fully complete. Roadmap PR12 through PR15 (inventory import, search/reporting, reliability/performance hardening, observability/schema hygiene) remain planned, none started yet.
+- GitHub PR #40 (Dashboard & Equipment Status, unnumbered per the governance decision above) needs a follow-up rebase onto this Governance PR's merge tip, with every "Roadmap PR12" reference removed from its title, description, code comments, and test descriptions once that tip is available.
 - Confirmed future work not yet scheduled to a Roadmap PR: Shift Sessions, Standby Snapshots, managed-deployment target selection (`docs/ROADMAP.md`).
 - `docs/TECH_DEBT.md` open items: TD-001 (equipment update/status `MissingGreenlet`), TD-002 (`0001_initial.py` uses current ORM metadata), TD-003 (CI now exists and fails closed, but branch protection requiring it is not enabled — partially resolved, needs re-assessment), TD-004 (naive `datetime.utcnow()`), TD-005 (temporary default/long-lived branch structure).
 

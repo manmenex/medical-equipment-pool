@@ -71,6 +71,10 @@ Per `docs/audits/04-consolidated-implementation-plan.md` Part D:
 
 **PR14 above is Reliability and Performance Hardening — it is not related to GitHub PR #14 (which implemented Roadmap PR5).** See the numbering note.
 
+## Non-Roadmap work in flight (not a Roadmap PR)
+
+**GitHub PR #40 — "Dashboard & Equipment Status" (frontend-only Dashboard UX follow-up).** This work does **not** implement Roadmap PR12. Its task description used "PR12" as an informal label, which conflicted with this file's Roadmap PR12 (Inventory Import, unchanged — see the Planned table above). Governance decision (see `docs/DECISION_LOG.md`, "Governance — GitHub PR #40 classification"): GitHub PR #40 is classified as an **unnumbered Post-PR11 Frontend Dashboard UX Follow-up** — the same "— (infrastructure)"/"— (governance)"/"— (documentation)" pattern this file already uses in the Completed table for work that was never assigned a Roadmap PR number. Roadmap PR12 (Inventory Import) and Roadmap PR13 (Search, History, and Reporting Adjustments) are both unchanged by this decision — neither their scope, number, nor ordering was touched. Once GitHub PR #40 merges, it will be recorded in the Completed table above as an unnumbered "— (frontend)" row, exactly like the existing unnumbered rows.
+
 ## Confirmed future work (not scheduled to a Roadmap PR)
 
 - **Shift Sessions** — flexible DAY/NIGHT sessions replacing hard-coded routine-round times.
