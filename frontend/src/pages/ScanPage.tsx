@@ -7,8 +7,9 @@ import { apiErrorMessage } from "@/services/api";
 import { resolveEquipmentByQr } from "@/services/equipment";
 import type { BcmSuggestion } from "@/types";
 
-// Roadmap PR12 (Dashboard & Equipment Status): a neutral "scan to check
-// status" quick action, distinct from the dispatch (BorrowPage) and receipt
+// Dashboard & Equipment Status (unnumbered Post-PR11 frontend follow-up): a
+// neutral "scan to check status" quick action, distinct from the dispatch
+// (BorrowPage) and receipt
 // (ReturnPage) entry points -- this page never commits to either workflow,
 // it only resolves the scanned/searched equipment and opens its detail
 // view. Reuses QRScanner, BcmSearchInput, and resolveEquipmentByQr exactly

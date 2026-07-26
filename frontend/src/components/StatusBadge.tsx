@@ -4,7 +4,7 @@ import type { EquipmentStatus } from "@/types";
 // AVAILABLE_AT_POOL equipment -- it renders with this same label/color,
 // never a distinct or defect-styled badge (owner-confirmed cleaning
 // retirement: see docs/audits/04-consolidated-implementation-plan.md PR6).
-// Exported (Roadmap PR12 review, PR40-L1) so any other status-count display
+// Exported (Dashboard UX follow-up review, PR40-L1) so any other status-count display
 // -- e.g. DashboardPage.tsx -- reuses this single source instead of
 // duplicating the same four literals and risking future drift.
 export const STATUS_LABELS: Record<EquipmentStatus, string> = {

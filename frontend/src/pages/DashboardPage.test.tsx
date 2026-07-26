@@ -7,7 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardPage } from "@/pages/DashboardPage";
 import type { DashboardSummary, UserProfile } from "@/types";
 
-// Roadmap PR12 (Dashboard & Equipment Status): observable-behavior coverage
+// Dashboard & Equipment Status (unnumbered Post-PR11 frontend follow-up):
+// observable-behavior coverage
 // for the redesigned dashboard -- the four confirmed lifecycle-status
 // counts, loading/empty/error states, quick-action destinations, and
 // permission-gated dispatch/receipt quick actions (mirroring AppShell.tsx's
@@ -70,7 +71,7 @@ function renderDashboard() {
   );
 }
 
-describe("DashboardPage rendering and lifecycle-status counts (Roadmap PR12)", () => {
+describe("DashboardPage rendering and lifecycle-status counts", () => {
   it("renders the page title and all four confirmed lifecycle-status counts, plus the running total", async () => {
     fetchSummary.mockResolvedValue(summary);
     renderDashboard();
@@ -119,7 +120,7 @@ describe("DashboardPage rendering and lifecycle-status counts (Roadmap PR12)", (
     expect(document.querySelector(".recharts-wrapper")).not.toBeInTheDocument();
   });
 
-  // Roadmap PR12 review (PR40-H2): docs/audits/04-consolidated-implementation-plan.md's
+  // Review PR40-H2: docs/audits/04-consolidated-implementation-plan.md's
   // Roadmap PR13 entry explicitly retires PM/Calibration widgets as
   // "MVP-irrelevant dashboard/report elements" -- this dashboard must never
   // reintroduce them, even though the backend summary still returns those
@@ -135,7 +136,7 @@ describe("DashboardPage rendering and lifecycle-status counts (Roadmap PR12)", (
   });
 });
 
-describe("DashboardPage loading, empty, and error states (Roadmap PR12)", () => {
+describe("DashboardPage loading, empty, and error states", () => {
   it("shows a loading state while the summary is in flight, before any counts render", async () => {
     let resolveSummary!: (value: DashboardSummary) => void;
     fetchSummary.mockReturnValue(new Promise<DashboardSummary>((resolve) => (resolveSummary = resolve)));
@@ -173,7 +174,7 @@ describe("DashboardPage loading, empty, and error states (Roadmap PR12)", () => 
   });
 });
 
-describe("DashboardPage quick actions (Roadmap PR12)", () => {
+describe("DashboardPage quick actions", () => {
   it("renders the scan, equipment-list, and history quick actions with their target routes", async () => {
     fetchSummary.mockResolvedValue(summary);
     renderDashboard();
@@ -185,7 +186,7 @@ describe("DashboardPage quick actions (Roadmap PR12)", () => {
     expect(screen.getByRole("link", { name: /ดูรายงาน/ })).toHaveAttribute("href", "/reports");
   });
 
-  // Roadmap PR12 review (PR40-M1): the label must describe what /reports
+  // Review PR40-M1: the label must describe what /reports
   // actually shows (a dispatch-frequency chart plus export controls, per
   // ReportsPage.tsx) rather than promising a transaction-history list that
   // does not exist -- "ดูประวัติรายการ" would have been that false promise.

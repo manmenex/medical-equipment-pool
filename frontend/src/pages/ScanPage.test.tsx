@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScanPage } from "@/pages/ScanPage";
 import type { BcmSuggestion, Equipment } from "@/types";
 
-// Roadmap PR12 (Dashboard & Equipment Status): ScanPage is the destination
+// Dashboard & Equipment Status (unnumbered Post-PR11 frontend follow-up):
+// ScanPage is the destination
 // for the dashboard's "สแกน QR" quick action -- a neutral equipment lookup
 // that resolves a scan/search to the existing EquipmentDetailPage, never
 // committing to dispatch or receipt. Reuses resolveEquipmentByQr exactly as
@@ -79,7 +80,7 @@ function renderScanPage() {
   );
 }
 
-describe("ScanPage (Roadmap PR12 quick action destination)", () => {
+describe("ScanPage (Dashboard quick action destination)", () => {
   it("renders the page heading and both scan/search entry points", () => {
     renderScanPage();
     expect(screen.getByRole("heading", { name: "สแกน QR" })).toBeInTheDocument();

@@ -6,12 +6,12 @@ import { STATUS_LABELS } from "@/components/StatusBadge";
 import { canDispatchOrReceiveEquipment, useAuth } from "@/hooks/useAuth";
 import { fetchSummary } from "@/services/dashboard";
 
-// Roadmap PR12 (Dashboard & Equipment Status): the dashboard's job is to
-// let staff understand current Equipment Pool status and reach frequent
-// workflows quickly -- simple operational counts and quick actions only.
-// No trend/frequency charts here (that analysis lives on ReportsPage.tsx,
-// out of scope for this PR). No PM/Calibration widgets either (Roadmap PR12
-// review, PR40-H2): docs/audits/04-consolidated-implementation-plan.md's
+// Dashboard & Equipment Status (unnumbered Post-PR11 frontend follow-up):
+// the dashboard's job is to let staff understand current Equipment Pool
+// status and reach frequent workflows quickly -- simple operational counts
+// and quick actions only. No trend/frequency charts here (that analysis
+// lives on ReportsPage.tsx, out of scope for this PR). No PM/Calibration
+// widgets either (review PR40-H2): docs/audits/04-consolidated-implementation-plan.md's
 // Roadmap PR13 entry explicitly retires these as "MVP-irrelevant
 // dashboard/report elements" scheduled for removal -- carrying them forward
 // on a freshly redesigned dashboard would contradict that plan. The running
@@ -25,7 +25,7 @@ interface QuickAction {
   label: string;
 }
 
-// Roadmap PR12 review (PR40-M1): "ดูประวัติรายการ" (view transaction
+// Review PR40-M1: "ดูประวัติรายการ" (view transaction
 // history) promised a destination /reports does not provide -- it shows a
 // dispatch-frequency chart and CSV/XLSX export, not a transaction list.
 // Relabeled to accurately describe that destination; a real history surface
