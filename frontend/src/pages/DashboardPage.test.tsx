@@ -175,7 +175,7 @@ describe("DashboardPage loading, empty, and error states", () => {
 });
 
 describe("DashboardPage quick actions", () => {
-  it("renders the scan, equipment-list, and history quick actions with their target routes", async () => {
+  it("renders the scan, equipment-list, and report quick actions with their target routes", async () => {
     fetchSummary.mockResolvedValue(summary);
     renderDashboard();
 
