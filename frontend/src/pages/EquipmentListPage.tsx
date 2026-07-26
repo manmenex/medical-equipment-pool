@@ -34,6 +34,7 @@ export function EquipmentListPage() {
 
   return (
     <div className="flex flex-col gap-4">
+      <h1 className="text-lg font-semibold">ค้นหาเครื่องมือ</h1>
       <div className="flex flex-col gap-2 md:flex-row md:items-center">
         <input
           value={q}

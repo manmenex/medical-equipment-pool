@@ -23,6 +23,7 @@ export function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <h1 className="text-lg font-semibold">ภาพรวมระบบ</h1>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-8">
         <StatCard label="ทั้งหมด" value={summary?.total ?? 0} to="/equipment" />
         <StatCard
@@ -63,7 +64,7 @@ export function DashboardPage() {
       </div>
 
       <div className="surface rounded-xl border p-4">
-        <div className="mb-3 text-sm font-medium">แนวโน้มการยืม (30 วัน)</div>
+        <div className="mb-3 text-sm font-medium">แนวโน้มการเบิก (30 วัน)</div>
         <ResponsiveContainer width="100%" height={220}>
           <LineChart data={trend ?? []}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -76,7 +77,7 @@ export function DashboardPage() {
       </div>
 
       <div className="surface rounded-xl border p-4">
-        <div className="mb-3 text-sm font-medium">เครื่องที่ถูกยืมบ่อยที่สุด</div>
+        <div className="mb-3 text-sm font-medium">เครื่องที่ถูกเบิกบ่อยที่สุด</div>
         <ResponsiveContainer width="100%" height={260}>
           <BarChart data={topBorrowed ?? []} layout="vertical" margin={{ left: 24 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />

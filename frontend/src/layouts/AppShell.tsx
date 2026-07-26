@@ -11,12 +11,16 @@ const BASE_NAV_ITEMS = [
   { to: "/reports", label: "รายงาน", icon: "📊" },
 ];
 
-// Roadmap PR10: dispatch/receipt (ยืม/คืน) nav entries are hidden for a
+// Roadmap PR10: dispatch/receipt (เบิก/รับคืน) nav entries are hidden for a
 // user who cannot perform them (Read Only) -- usability only, not a
 // security boundary; see hooks/useAuth.ts's capability-layer note.
+// Roadmap PR11: labels use "เบิก"/"รับคืน" (issue/receive) consistently --
+// never "ยืม"/"คืน" (borrow/return), which the confirmed workflow
+// terminology retires everywhere in the UI (docs/audits/
+// 04-consolidated-implementation-plan.md Part D, PR11 acceptance criteria).
 const DISPATCH_NAV_ITEMS = [
-  { to: "/borrow", label: "ยืม", icon: "📷" },
-  { to: "/return", label: "คืน", icon: "↩️" },
+  { to: "/borrow", label: "เบิก", icon: "📷" },
+  { to: "/return", label: "รับคืน", icon: "↩️" },
 ];
 
 export function AppShell() {

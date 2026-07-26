@@ -17,7 +17,7 @@ export function ReportsPage() {
     const url = URL.createObjectURL(resp.data as Blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `borrow_report.${format}`;
+    a.download = `dispatch_report.${format}`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -40,19 +40,19 @@ export function ReportsPage() {
             onClick={() => download("xlsx")}
             className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium"
           >
-            Export Excel
+            ส่งออก Excel
           </button>
           <button
             onClick={() => download("csv")}
             className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium"
           >
-            Export CSV
+            ส่งออก CSV
           </button>
         </div>
       </div>
 
       <div className="surface rounded-xl border p-4">
-        <div className="mb-3 text-sm font-medium">Borrow Frequency</div>
+        <div className="mb-3 text-sm font-medium">ความถี่การเบิก</div>
         <ResponsiveContainer width="100%" height={280}>
           <BarChart data={trend ?? []}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />

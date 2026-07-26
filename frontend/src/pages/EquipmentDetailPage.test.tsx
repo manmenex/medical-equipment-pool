@@ -156,8 +156,8 @@ describe("EquipmentDetailPage transaction history (Roadmap PR9B review round 2, 
     renderPage();
     await waitForHistoryLoaded();
 
-    expect(screen.getByText(/อยู่ระหว่างยืม/)).toBeInTheDocument();
-    expect(screen.getByText(/คืนแล้ว/)).toBeInTheDocument();
+    expect(screen.getByText(/อยู่ระหว่างเบิก/)).toBeInTheDocument();
+    expect(screen.getByText(/รับคืนแล้ว/)).toBeInTheDocument();
   });
 
   it("never infers a transaction ID from the equipment ID -- the history query uses equipment_id, corrections use the real transaction id", async () => {
@@ -296,16 +296,16 @@ describe("EquipmentDetailPage transaction history pagination and load state (Roa
     listTransactions.mockReturnValue(new Promise(() => {}));
     renderPage();
 
-    expect(await screen.findByText("กำลังโหลดประวัติการยืม-คืน...")).toBeInTheDocument();
+    expect(await screen.findByText("กำลังโหลดประวัติการเบิก-รับคืน...")).toBeInTheDocument();
   });
 
   it("shows an explicit error and a retry action when the transaction history fails to load, distinct from an empty history", async () => {
     listTransactions.mockRejectedValue(new Error("network down"));
     renderPage();
 
-    expect(await screen.findByText("ไม่สามารถโหลดประวัติการยืม-คืนได้")).toBeInTheDocument();
+    expect(await screen.findByText("ไม่สามารถโหลดประวัติการเบิก-รับคืนได้")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "ลองใหม่" })).toBeInTheDocument();
-    expect(screen.queryByText("ยังไม่มีประวัติการยืม-คืน")).not.toBeInTheDocument();
+    expect(screen.queryByText("ยังไม่มีประวัติการเบิก-รับคืน")).not.toBeInTheDocument();
   });
 
   it("retry calls the transaction-history query again and recovers on success", async () => {
@@ -319,7 +319,7 @@ describe("EquipmentDetailPage transaction history pagination and load state (Roa
     listTransactions.mockResolvedValueOnce(page([openTransaction, closedTransaction]));
     await user.click(screen.getByRole("button", { name: "ลองใหม่" }));
 
-    await waitFor(() => expect(screen.queryByText("ไม่สามารถโหลดประวัติการยืม-คืนได้")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("ไม่สามารถโหลดประวัติการเบิก-รับคืนได้")).not.toBeInTheDocument());
     await waitForHistoryLoaded();
   });
 

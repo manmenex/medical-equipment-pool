@@ -59,7 +59,7 @@ const RECEIPT_OUTCOMES: { value: ReceiptOutcome; label: string; selectedClass: s
 // (see app.services.borrow_service.return_equipment, which does not
 // compare received_by_user_id between the two requests).
 const RECEIPT_ERROR_MESSAGES: Record<string, string> = {
-  TRANSACTION_ALREADY_RETURNED: "รายการนี้ถูกคืนไปแล้ว",
+  TRANSACTION_ALREADY_RETURNED: "รายการนี้ถูกรับคืนไปแล้ว",
   RECEIPT_RACE_LOST: "มีคำขอรับเครื่องอื่นดำเนินการสำเร็จก่อน กรุณารีเฟรชเพื่อดูข้อมูลล่าสุด",
 };
 
@@ -91,7 +91,7 @@ export function ReturnPage() {
     const active = await listActiveBorrows();
     const match = active.find((tx) => tx.equipment.id === equipmentId);
     if (!match) {
-      throw new Error("ไม่พบรายการยืมที่ยังไม่คืนสำหรับเครื่องนี้");
+      throw new Error("ไม่พบรายการเบิกที่ยังไม่รับคืนสำหรับเครื่องนี้");
     }
     return match;
   }, []);
@@ -107,7 +107,7 @@ export function ReturnPage() {
         setTransaction(tx);
         setScanning(false);
       } catch (err) {
-        setError(err instanceof Error ? err.message : apiErrorMessage(err, "ไม่พบรายการยืม"));
+        setError(err instanceof Error ? err.message : apiErrorMessage(err, "ไม่พบรายการเบิก"));
       }
     },
     [findActiveTransaction]
@@ -123,7 +123,7 @@ export function ReturnPage() {
         setTransaction(tx);
         setScanning(false);
       } catch (err) {
-        setError(err instanceof Error ? err.message : apiErrorMessage(err, "ไม่พบรายการยืม"));
+        setError(err instanceof Error ? err.message : apiErrorMessage(err, "ไม่พบรายการเบิก"));
       }
     },
     [findActiveTransaction]
@@ -133,7 +133,7 @@ export function ReturnPage() {
     if (presetEquipmentId) {
       findActiveTransaction(presetEquipmentId)
         .then(setTransaction)
-        .catch((err) => setError(err instanceof Error ? err.message : "ไม่พบรายการยืม"));
+        .catch((err) => setError(err instanceof Error ? err.message : "ไม่พบรายการเบิก"));
     }
   }, [presetEquipmentId, findActiveTransaction]);
 
@@ -148,7 +148,7 @@ export function ReturnPage() {
     } catch (err) {
       const code = apiErrorCode(err);
       const knownMessage = code ? RECEIPT_ERROR_MESSAGES[code] : undefined;
-      setError(knownMessage ?? apiErrorMessage(err, "คืนเครื่องมือไม่สำเร็จ"));
+      setError(knownMessage ?? apiErrorMessage(err, "รับคืนเครื่องมือไม่สำเร็จ"));
     } finally {
       setSubmitting(false);
     }
@@ -158,7 +158,7 @@ export function ReturnPage() {
     return (
       <div className="surface mx-auto mt-8 max-w-sm rounded-xl border p-6 text-center">
         <div className="mb-2 text-4xl">✅</div>
-        <h2 className="text-lg font-semibold">คืนเครื่องมือสำเร็จ</h2>
+        <h2 className="text-lg font-semibold">รับคืนเครื่องมือสำเร็จ</h2>
         <button
           onClick={() => {
             setSuccess(false);
@@ -167,7 +167,7 @@ export function ReturnPage() {
           }}
           className="mt-4 rounded-lg bg-status-available px-4 py-2 text-sm font-medium text-white"
         >
-          คืนเครื่องถัดไป
+          รับคืนเครื่องถัดไป
         </button>
       </div>
     );
@@ -176,7 +176,7 @@ export function ReturnPage() {
   if (!transaction) {
     return (
       <div className="mx-auto flex max-w-sm flex-col gap-4">
-        <h1 className="text-lg font-semibold">คืนเครื่องมือ</h1>
+        <h1 className="text-lg font-semibold">รับคืนเครื่องมือ</h1>
         <QRScanner active={scanning} onScan={resolveByQr} />
         <p className="text-center text-sm text-[var(--text-muted)]">หรือค้นหาด้วยรหัส BCM</p>
         <BcmSearchInput onSelect={handleBcmSelect} />
@@ -191,12 +191,15 @@ export function ReturnPage() {
         <div className="font-medium">{transaction.equipment.equipment_name}</div>
         <div className="text-sm text-[var(--text-muted)]">{transaction.equipment.asset_number}</div>
         <div className="mt-1 text-sm text-[var(--text-muted)]">
-          {transaction.borrower_name ? `ผู้ยืม: ${transaction.borrower_name} · ` : ""}ยืมเมื่อ{" "}
+          {transaction.borrower_name ? `ผู้เบิก: ${transaction.borrower_name} · ` : ""}เบิกเมื่อ{" "}
           {new Date(transaction.borrowed_at).toLocaleString("th-TH")}
         </div>
         {canCorrectWard && wards && (
+          // Workflow Audit §7.1: labeled as the ward recorded at dispatch
+          // time, never "current location" -- this is a one-time record,
+          // not a live tracker of the equipment's later movement.
           <div className="mt-1 text-sm text-[var(--text-muted)]">
-            แผนกที่บันทึกไว้: {wards.find((w) => w.id === transaction.ward_id)?.name ?? "ไม่ทราบ"}
+            หอผู้ป่วยที่รับเครื่อง (บันทึก ณ วันที่เบิก): {wards.find((w) => w.id === transaction.ward_id)?.name ?? "ไม่ทราบ"}
           </div>
         )}
         {canCorrectWard && (
@@ -227,7 +230,7 @@ export function ReturnPage() {
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <div>
-          <label className="mb-1 block text-sm font-medium">สภาพเครื่องเมื่อคืน</label>
+          <label className="mb-1 block text-sm font-medium">สภาพเครื่องเมื่อรับคืน</label>
           <div className="grid grid-cols-2 gap-2">
             {RECEIPT_OUTCOMES.map((o) => (
               <label
@@ -266,7 +269,7 @@ export function ReturnPage() {
           disabled={submitting}
           className="rounded-lg bg-status-available py-2.5 font-medium text-white disabled:opacity-60"
         >
-          {submitting ? "กำลังบันทึก..." : "ยืนยันการคืน"}
+          {submitting ? "กำลังบันทึก..." : "ยืนยันการรับคืน"}
         </button>
       </form>
     </div>
