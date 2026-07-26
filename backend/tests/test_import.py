@@ -240,6 +240,52 @@ async def test_update_mode_never_touches_status_or_legacy_status(client, seeded_
     assert equipment2.legacy_status == "manually_set"
 
 
+async def test_update_mode_rejects_row_whose_item_no_belongs_to_a_different_record(client, seeded_users):
+    """Review finding PR12-H3: Create mode has always rejected an Item No
+    that belongs to a different equipment record; update mode must apply
+    the same cross-record check, even though it never writes Item No
+    itself."""
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    await _commit(client, headers, [_base_row(**{"ID CODE": "901", "Item No.": "ITEM-OTHER"})])
+    await _commit(client, headers, [_base_row(**{"ID CODE": "902"})])
+
+    conflicting_row = _base_row(**{"ID CODE": "902", "Item No.": "ITEM-OTHER"})
+    resp = await _commit(client, headers, [conflicting_row], update_existing=True)
+    body = resp.json()
+    assert body["failed"] == 1
+    assert "Item No" in body["rows"][0]["reason"]
+
+
+async def test_update_mode_rejects_row_whose_serial_number_belongs_to_a_different_record(client, seeded_users):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    await _commit(client, headers, [_base_row(**{"ID CODE": "903", "Serial Number": "SN-OTHER"})])
+    await _commit(client, headers, [_base_row(**{"ID CODE": "904"})])
+
+    conflicting_row = _base_row(**{"ID CODE": "904", "Serial Number": "SN-OTHER"})
+    resp = await _commit(client, headers, [conflicting_row], update_existing=True)
+    body = resp.json()
+    assert body["failed"] == 1
+    assert "Serial Number" in body["rows"][0]["reason"]
+
+
+async def test_update_mode_allows_row_whose_item_no_and_serial_number_belong_to_the_same_record(
+    client, seeded_users, db_session
+):
+    """A value that already belongs to the *same* BCM-matched record is
+    not a conflict -- re-importing an unchanged row in update mode must
+    still succeed."""
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    row = _base_row(**{"ID CODE": "905", "Item No.": "ITEM905", "Serial Number": "SN905"})
+    first = await _commit(client, headers, [row])
+    equipment_id = first.json()["rows"][0]["equipment_id"]
+
+    second = await _commit(client, headers, [row], update_existing=True)
+    body = second.json()
+    assert body["succeeded"] == 1
+    assert body["rows"][0]["action"] == "update"
+    assert body["rows"][0]["equipment_id"] == equipment_id
+
+
 # ---------------------------------------------------------------------------
 # Asset ID conservative duplicate detection (approved treatment)
 # ---------------------------------------------------------------------------
@@ -292,18 +338,41 @@ async def test_no_unique_constraint_added_for_asset_id(db_session):
 
 
 # ---------------------------------------------------------------------------
-# asset_number derivation policy (approved decision)
+# asset_number placeholder policy (review finding PR12-H1 / ADR-002)
 # ---------------------------------------------------------------------------
 
 
-async def test_new_equipment_asset_number_derived_from_bcm_code(client, seeded_users, db_session):
+async def test_new_equipment_asset_number_is_random_placeholder_not_derived_from_bcm_or_item_no(
+    client, seeded_users, db_session
+):
+    """ADR-002: Asset Number must never be "merged with, or inferred
+    from, BCM Code or Item No." The import source file has no Asset
+    Number column, so a newly created row gets an opaque random
+    placeholder token, never a value derived from its own BCM Code or
+    Item No."""
     headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
-    resp = await _commit(client, headers, [_base_row(**{"ID CODE": "601"})])
+    resp = await _commit(client, headers, [_base_row(**{"ID CODE": "601", "Item No.": "ITEM601"})])
     equipment_id = resp.json()["rows"][0]["equipment_id"]
     result = await db_session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment_id)))
     equipment = result.scalar_one()
-    assert equipment.asset_number == "BCM601"
     assert equipment.bcm_code == "BCM601"
+    assert equipment.item_no == "ITEM601"
+    assert equipment.asset_number.startswith("IMPORT-")
+    assert "601" not in equipment.asset_number
+    assert equipment.asset_number != equipment.bcm_code
+    assert equipment.asset_number != equipment.item_no
+
+
+async def test_asset_number_placeholders_are_unique_across_a_batch(client, seeded_users, db_session):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    rows = [_base_row(**{"ID CODE": "611"}), _base_row(**{"ID CODE": "612"}), _base_row(**{"ID CODE": "613"})]
+    resp = await _commit(client, headers, rows)
+    body = resp.json()
+    assert body["succeeded"] == 3
+    equipment_ids = [uuid.UUID(r["equipment_id"]) for r in body["rows"]]
+    result = await db_session.execute(select(Equipment).where(Equipment.id.in_(equipment_ids)))
+    asset_numbers = {e.asset_number for e in result.scalars().all()}
+    assert len(asset_numbers) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -349,3 +418,103 @@ async def test_commit_produces_exactly_one_audit_log_entry_per_batch(client, see
     entry = [a for a in after if str(a.id) == body["audit_log_id"]][0]
     assert entry.after_data["succeeded"] == 2
     assert entry.after_data["failed"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Upload bounds (review finding PR12-H2)
+# ---------------------------------------------------------------------------
+
+
+async def test_oversized_upload_rejected_before_parsing(client, seeded_users):
+    from app.services import import_service
+
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    oversized = b"x" * (import_service.MAX_UPLOAD_BYTES + 1)
+    resp = await client.post(
+        "/api/v1/import/preview",
+        headers=headers,
+        files={"file": ("big.xlsx", oversized, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        data={"update_existing": "false"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "INVALID_INPUT"
+    assert "maximum allowed size" in resp.json()["detail"]
+
+
+async def test_too_many_rows_rejected(client, seeded_users):
+    from app.services import import_service
+
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    rows = [_base_row(**{"ID CODE": str(1000 + i)}) for i in range(import_service.MAX_IMPORT_ROWS + 1)]
+    resp = await _preview(client, headers, rows)
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "INVALID_INPUT"
+    assert "maximum a single import batch" in resp.json()["detail"]
+
+
+async def test_filename_exceeding_max_length_rejected(client, seeded_users):
+    from app.services import import_service
+
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    long_name = ("a" * (import_service.MAX_FILENAME_LENGTH + 1)) + ".xlsx"
+    content = _build_workbook([_base_row()])
+    resp = await client.post(
+        "/api/v1/import/preview",
+        headers=headers,
+        files={"file": (long_name, content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        data={"update_existing": "false"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "INVALID_INPUT"
+    assert "Filename exceeds" in resp.json()["detail"]
+
+
+async def test_non_xlsx_extension_rejected(client, seeded_users):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    content = _build_workbook([_base_row()])
+    resp = await client.post(
+        "/api/v1/import/preview",
+        headers=headers,
+        files={"file": ("inventory.csv", content, "text/csv")},
+        data={"update_existing": "false"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "INVALID_INPUT"
+    assert "Only .xlsx files are supported" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Preview-phase field length validation (review finding PR12-H4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "field,header",
+    [
+        ("Asset ID", "Asset ID"),
+        ("Serial Number", "Serial Number"),
+        ("Equipment Name", "Equipment Name"),
+        ("Manufacturer", "Manufacturer"),
+        ("Model", "Model"),
+        ("Asset Status", "Asset Status"),
+    ],
+)
+async def test_overlength_field_fails_in_preview_not_just_commit(client, seeded_users, field, header):
+    from app.services.import_service import FIELD_MAX_LENGTHS
+
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    overlength_value = "x" * (FIELD_MAX_LENGTHS[field] + 1)
+    row = _base_row(**{"ID CODE": "951", header: overlength_value})
+
+    preview_resp = await _preview(client, headers, [row])
+    preview_body = preview_resp.json()
+    assert preview_body["failed"] == 1
+    assert field in preview_body["rows"][0]["reason"]
+
+    # Committing the same row must fail the same way (never a raw DB
+    # DataError) -- preview and commit never disagree on whether a row
+    # will fit the database.
+    commit_resp = await _commit(client, headers, [row])
+    commit_body = commit_resp.json()
+    assert commit_body["failed"] == 1
+    assert field in commit_body["rows"][0]["reason"]

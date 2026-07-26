@@ -2,7 +2,9 @@
 
 See docs/audits/04-consolidated-implementation-plan.md Part D ("PR12 --
 Inventory import") and Part F ("Inventory Import Plan", §10) for the full
-authoritative design this module implements.
+authoritative design this module implements, and ADR-002
+(knowledge/adr/ADR-002-identifier-model.md) for the identifier model this
+module must not violate.
 
 Design summary (do not restate elsewhere -- read the plan for rationale):
 
@@ -23,20 +25,28 @@ Design summary (do not restate elsewhere -- read the plan for rationale):
     inside `equipment_metadata`) -- it never writes `status`,
     `legacy_status`, `asset_number`, `item_no`, `serial_number`, or
     `equipment_name` on an existing record (Part F.3).
-  - Newly created equipment has no source "Asset Number" column to draw
-    from (Part F.1's header list has none) -- per explicit Repository
-    Owner decision, `asset_number` is provisionally set to the row's own
-    canonical BCM Code (deterministic, already unique, introduces no new
-    identifier scheme). Documented as a temporary compatibility policy
-    for the current schema, not a new business rule.
   - Unexpected failures during the commit write phase roll back the
     entire batch (no partial commit); expected per-row validation
-    failures never reach the write phase at all, so they coexist freely
-    with rows that do succeed.
+    failures never reach the write phase at all (every bounded/persisted
+    field is length- and duplicate-checked during validation, not left to
+    fail at the database), so they coexist freely with rows that do
+    succeed.
+  - ADR-002 review finding PR12-H1: Asset Number is "retained as
+    inventory metadata only ... not merged with, or inferred from, BCM
+    Code or Item No." New equipment therefore never reuses the row's BCM
+    Code as its Asset Number (the import source file has no equivalent
+    "Asset Number" column) -- see `_generate_placeholder_asset_numbers`.
+  - Review finding PR12-H2: uploads are bounded (size, row count,
+    filename, extension) before any parsing, and the CPU-bound XLSX
+    parse runs off the event loop via `asyncio.to_thread`. Database
+    duplicate lookups are bulk `IN(...)` queries (a handful of queries
+    per batch), not one query per row.
 """
 
+import asyncio
 import io
 import logging
+import secrets
 import uuid
 from dataclasses import dataclass
 from enum import Enum
@@ -53,6 +63,19 @@ from app.models.equipment import EquipmentStatus
 from app.services.identifiers import normalize_bcm_code, normalize_item_no
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Upload bounds (review finding PR12-H2). Conservative for the confirmed
+# project scale assumption ("low hundreds of equipment records", Part A) --
+# generous enough for a real hospital import batch, small enough that an
+# oversized/pathological upload is rejected before it can consume
+# unbounded memory or event-loop time.
+# ---------------------------------------------------------------------------
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MiB
+MAX_IMPORT_ROWS = 5000
+MAX_FILENAME_LENGTH = 255
+ALLOWED_FILENAME_EXTENSIONS = (".xlsx",)
+_UPLOAD_READ_CHUNK_BYTES = 65536
 
 # ---------------------------------------------------------------------------
 # Part F.1 step 2: the confirmed source spreadsheet headers. Matched
@@ -89,6 +112,37 @@ ASSET_STATUS_MAPPING: dict[str, EquipmentStatus] = {
     "disposed": EquipmentStatus.DECOMMISSIONED,
     "written off": EquipmentStatus.DECOMMISSIONED,
 }
+
+# Review finding PR12-H4: every bounded/persisted field's maximum length,
+# copied from backend/app/models/equipment.py's column widths. Checked
+# during validation (preview and commit alike), so an overlength value is
+# always reported as a per-row failure -- never a PostgreSQL DataError
+# discovered only at commit time, after preview already reported success.
+FIELD_MAX_LENGTHS: dict[str, int] = {
+    "Asset ID": 100,
+    "Serial Number": 100,
+    "Equipment Name": 255,
+    "Manufacturer": 100,
+    "Model": 100,
+    "Asset Status": 100,  # raw_source_status
+}
+
+# Review finding PR12-H1 (ADR-002): a placeholder Asset Number for newly
+# imported equipment, since the import source file has no "Asset Number"
+# column. Deliberately random and visually distinct from any BCM Code or
+# Item No value -- never derived from, equal to, or containing either --
+# so it cannot be mistaken for or substitute one identifier for another
+# (ADR-002: "No identifier substitutes for another" / "Not merged with,
+# or inferred from, BCM Code or Item No"). Documented as a temporary
+# compatibility policy for the current schema (Asset Number remains
+# NOT NULL with no source column to populate it from), not a new business
+# rule -- a future ADR may revisit the asset-identity model.
+_PLACEHOLDER_ASSET_NUMBER_PREFIX = "IMPORT-"
+_PLACEHOLDER_ASSET_NUMBER_TOKEN_LENGTH = 12
+
+
+def _generate_placeholder_asset_number() -> str:
+    return _PLACEHOLDER_ASSET_NUMBER_PREFIX + secrets.token_hex(_PLACEHOLDER_ASSET_NUMBER_TOKEN_LENGTH // 2).upper()
 
 
 class ImportRowStatus(str, Enum):
@@ -155,6 +209,48 @@ def _cell_to_text(value: object) -> str:
     if isinstance(value, int):
         return str(value)
     return str(value).strip()
+
+
+# ---------------------------------------------------------------------------
+# Upload validation (review finding PR12-H2). All of this happens before a
+# single byte is handed to openpyxl.
+# ---------------------------------------------------------------------------
+
+
+def _validate_filename(filename: str | None) -> str:
+    name = (filename or "").strip()
+    if not name:
+        return "upload.xlsx"
+    if len(name) > MAX_FILENAME_LENGTH:
+        raise InvalidInputError(f"Filename exceeds the maximum length of {MAX_FILENAME_LENGTH} characters.")
+    if not name.lower().endswith(ALLOWED_FILENAME_EXTENSIONS):
+        raise InvalidInputError("Only .xlsx files are supported.")
+    return name
+
+
+async def _read_upload_bounded(file: UploadFile, *, max_bytes: int) -> bytes:
+    """Reads the upload in fixed-size chunks, aborting as soon as the
+    running total exceeds `max_bytes` -- an oversized upload is rejected
+    without ever buffering the whole thing into memory."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_UPLOAD_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise InvalidInputError(
+                f"Uploaded file exceeds the maximum allowed size of {max_bytes // (1024 * 1024)} MB."
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+# ---------------------------------------------------------------------------
+# Synchronous parsing (review finding PR12-H2: run via asyncio.to_thread so
+# CPU-bound XLSX decompression/parsing never blocks the event loop).
+# ---------------------------------------------------------------------------
 
 
 def _load_worksheet(content: bytes) -> Worksheet:
@@ -226,6 +322,11 @@ def _parse_rows(worksheet: Worksheet, header_index: dict[str, int]) -> list[_Par
     for row_number, values in enumerate(worksheet.iter_rows(min_row=2, values_only=True), start=2):
         if values is None or all(v is None or _cell_to_text(v) == "" for v in values):
             continue  # trailing/blank row -- not counted, not reported
+        if len(parsed) >= MAX_IMPORT_ROWS:
+            raise InvalidInputError(
+                f"The uploaded file contains more than {MAX_IMPORT_ROWS} data rows, "
+                "exceeding the maximum a single import batch may contain."
+            )
         parsed.append(
             _ParsedRow(
                 row_number=row_number,
@@ -246,6 +347,16 @@ def _parse_rows(worksheet: Worksheet, header_index: dict[str, int]) -> list[_Par
     return parsed
 
 
+def _parse_workbook_sync(content: bytes) -> list[_ParsedRow]:
+    """Everything CPU-bound and synchronous about turning raw file bytes
+    into parsed rows, run as one unit via asyncio.to_thread (review
+    finding PR12-H2) so it never blocks the event loop that serves every
+    other concurrent request."""
+    worksheet = _load_worksheet(content)
+    header_index = _validate_headers(worksheet)
+    return _parse_rows(worksheet, header_index)
+
+
 def _find_in_file_duplicates(values: dict[int, str]) -> set[int]:
     """values: {row_number: normalized_value} for rows where the value is
     non-empty. Returns the set of row_numbers whose value appears more
@@ -261,6 +372,13 @@ def _find_in_file_duplicates(values: dict[int, str]) -> set[int]:
     return duplicated_rows
 
 
+def _length_violation(field_label: str, value: str | None) -> str | None:
+    max_length = FIELD_MAX_LENGTHS[field_label]
+    if value is not None and len(value) > max_length:
+        return f"{field_label} exceeds the maximum length of {max_length} characters."
+    return None
+
+
 async def _validate_rows(
     db: AsyncSession, parsed_rows: list[_ParsedRow], *, update_existing: bool
 ) -> list[_RowPlan]:
@@ -270,34 +388,29 @@ async def _validate_rows(
     normalized_asset_id: dict[int, str] = {}
     normalized_serial: dict[int, str] = {}
 
-    # Pass 1: structural normalization. A row that fails here is final --
-    # it never reaches a database check.
+    def fail(row_number: int, bcm_code: str | None, item_no: str | None, asset_id: str | None, reason: str) -> None:
+        plans[row_number] = _RowPlan(
+            result=ImportRowResult(
+                row_number=row_number,
+                bcm_code=bcm_code,
+                item_no=item_no,
+                asset_id=asset_id,
+                status=ImportRowStatus.FAILED,
+                reason=reason,
+            )
+        )
+
+    # Pass 1: structural normalization + length validation (review finding
+    # PR12-H4). A row that fails here is final -- it never reaches a
+    # database check.
     for row in parsed_rows:
         if not row.bcm_code_raw:
-            plans[row.row_number] = _RowPlan(
-                result=ImportRowResult(
-                    row_number=row.row_number,
-                    bcm_code=None,
-                    item_no=row.item_no_raw or None,
-                    asset_id=row.asset_id_raw or None,
-                    status=ImportRowStatus.FAILED,
-                    reason="Missing BCM Code (ID CODE column).",
-                )
-            )
+            fail(row.row_number, None, row.item_no_raw or None, row.asset_id_raw or None, "Missing BCM Code (ID CODE column).")
             continue
         try:
             bcm_code = normalize_bcm_code(row.bcm_code_raw)
         except InvalidInputError as exc:
-            plans[row.row_number] = _RowPlan(
-                result=ImportRowResult(
-                    row_number=row.row_number,
-                    bcm_code=None,
-                    item_no=row.item_no_raw or None,
-                    asset_id=row.asset_id_raw or None,
-                    status=ImportRowStatus.FAILED,
-                    reason=f"Invalid BCM Code: {exc.message}",
-                )
-            )
+            fail(row.row_number, None, row.item_no_raw or None, row.asset_id_raw or None, f"Invalid BCM Code: {exc.message}")
             continue
 
         item_no: str | None = None
@@ -305,17 +418,20 @@ async def _validate_rows(
             try:
                 item_no = normalize_item_no(row.item_no_raw)
             except InvalidInputError as exc:
-                plans[row.row_number] = _RowPlan(
-                    result=ImportRowResult(
-                        row_number=row.row_number,
-                        bcm_code=bcm_code,
-                        item_no=None,
-                        asset_id=row.asset_id_raw or None,
-                        status=ImportRowStatus.FAILED,
-                        reason=f"Invalid Item No: {exc.message}",
-                    )
-                )
+                fail(row.row_number, bcm_code, None, row.asset_id_raw or None, f"Invalid Item No: {exc.message}")
                 continue
+
+        length_error = (
+            _length_violation("Asset ID", row.asset_id_raw or None)
+            or _length_violation("Serial Number", row.serial_number_raw or None)
+            or _length_violation("Equipment Name", row.equipment_name_raw or None)
+            or _length_violation("Manufacturer", row.brand_raw or None)
+            or _length_violation("Model", row.model_raw or None)
+            or _length_violation("Asset Status", row.asset_status_raw or None)
+        )
+        if length_error is not None:
+            fail(row.row_number, bcm_code, item_no, row.asset_id_raw or None, length_error)
+            continue
 
         normalized_bcm[row.row_number] = bcm_code
         if item_no:
@@ -337,78 +453,50 @@ async def _validate_rows(
         bcm_code = normalized_bcm[row.row_number]
         item_no = normalized_item_no.get(row.row_number)
         asset_id = normalized_asset_id.get(row.row_number) or None
-        serial_number = normalized_serial.get(row.row_number) or None
 
         if row.row_number in dup_bcm:
-            plans[row.row_number] = _RowPlan(
-                result=ImportRowResult(
-                    row_number=row.row_number,
-                    bcm_code=bcm_code,
-                    item_no=item_no,
-                    asset_id=asset_id,
-                    status=ImportRowStatus.FAILED,
-                    reason="Duplicate BCM Code within the uploaded file.",
-                )
-            )
-            continue
-        if row.row_number in dup_item_no:
-            plans[row.row_number] = _RowPlan(
-                result=ImportRowResult(
-                    row_number=row.row_number,
-                    bcm_code=bcm_code,
-                    item_no=item_no,
-                    asset_id=asset_id,
-                    status=ImportRowStatus.FAILED,
-                    reason="Duplicate Item No within the uploaded file.",
-                )
-            )
-            continue
-        if row.row_number in dup_asset_id:
-            plans[row.row_number] = _RowPlan(
-                result=ImportRowResult(
-                    row_number=row.row_number,
-                    bcm_code=bcm_code,
-                    item_no=item_no,
-                    asset_id=asset_id,
-                    status=ImportRowStatus.FAILED,
-                    reason="Duplicate Asset ID within the uploaded file.",
-                )
-            )
-            continue
-        if row.row_number in dup_serial:
-            plans[row.row_number] = _RowPlan(
-                result=ImportRowResult(
-                    row_number=row.row_number,
-                    bcm_code=bcm_code,
-                    item_no=item_no,
-                    asset_id=asset_id,
-                    status=ImportRowStatus.FAILED,
-                    reason="Duplicate Serial Number within the uploaded file.",
-                )
-            )
-            continue
+            fail(row.row_number, bcm_code, item_no, asset_id, "Duplicate BCM Code within the uploaded file.")
+        elif row.row_number in dup_item_no:
+            fail(row.row_number, bcm_code, item_no, asset_id, "Duplicate Item No within the uploaded file.")
+        elif row.row_number in dup_asset_id:
+            fail(row.row_number, bcm_code, item_no, asset_id, "Duplicate Asset ID within the uploaded file.")
+        elif row.row_number in dup_serial:
+            fail(row.row_number, bcm_code, item_no, asset_id, "Duplicate Serial Number within the uploaded file.")
 
-    # Pass 3: database checks, only for rows still unresolved.
-    for row in parsed_rows:
-        if row.row_number in plans:
-            continue
+    # Pass 3: bulk database lookups (review finding PR12-H2) -- a fixed
+    # handful of IN(...) queries for the whole batch, never one query per
+    # row.
+    surviving_rows = [row for row in parsed_rows if row.row_number not in plans]
+    bcm_codes_to_check = {normalized_bcm[row.row_number] for row in surviving_rows}
+    item_nos_to_check = {normalized_item_no[row.row_number] for row in surviving_rows if row.row_number in normalized_item_no}
+    serials_to_check = {normalized_serial[row.row_number] for row in surviving_rows if row.row_number in normalized_serial}
+    asset_ids_to_check = {normalized_asset_id[row.row_number] for row in surviving_rows if row.row_number in normalized_asset_id}
+
+    existing_by_bcm = await equipment_crud.get_by_bcm_codes(db, list(bcm_codes_to_check))
+    existing_by_item_no = await equipment_crud.get_by_item_nos(db, list(item_nos_to_check))
+    existing_by_serial = await equipment_crud.get_by_serial_numbers(db, list(serials_to_check))
+    existing_by_asset_id = await equipment_crud.get_by_asset_ids(db, list(asset_ids_to_check))
+
+    # Pass 4: per-row resolution, purely in-memory against the bulk-fetched
+    # lookup tables above -- no further database round trips in this loop.
+    create_row_numbers: list[int] = []
+    for row in surviving_rows:
         bcm_code = normalized_bcm[row.row_number]
         item_no = normalized_item_no.get(row.row_number)
         asset_id = normalized_asset_id.get(row.row_number) or None
         serial_number = normalized_serial.get(row.row_number) or None
 
-        existing = await equipment_crud.get_by_bcm_code(db, bcm_code)
+        existing = existing_by_bcm.get(bcm_code)
         if existing is not None and not update_existing:
-            plans[row.row_number] = _RowPlan(
-                result=ImportRowResult(
-                    row_number=row.row_number,
-                    bcm_code=bcm_code,
-                    item_no=item_no,
-                    asset_id=asset_id,
-                    status=ImportRowStatus.SKIPPED,
-                    reason="BCM Code already exists in the database (update mode is off).",
-                )
+            fail_skip = ImportRowResult(
+                row_number=row.row_number,
+                bcm_code=bcm_code,
+                item_no=item_no,
+                asset_id=asset_id,
+                status=ImportRowStatus.SKIPPED,
+                reason="BCM Code already exists in the database (update mode is off).",
             )
+            plans[row.row_number] = _RowPlan(result=fail_skip)
             continue
 
         # Asset Status: validated for every remaining row, whether create
@@ -418,16 +506,7 @@ async def _validate_rows(
         # be classified at all.
         mapped_status = ASSET_STATUS_MAPPING.get(row.asset_status_raw.strip().lower())
         if mapped_status is None:
-            plans[row.row_number] = _RowPlan(
-                result=ImportRowResult(
-                    row_number=row.row_number,
-                    bcm_code=bcm_code,
-                    item_no=item_no,
-                    asset_id=asset_id,
-                    status=ImportRowStatus.FAILED,
-                    reason=f"Unrecognized Asset Status value: '{row.asset_status_raw}'.",
-                )
-            )
+            fail(row.row_number, bcm_code, item_no, asset_id, f"Unrecognized Asset Status value: '{row.asset_status_raw}'.")
             continue
 
         import_source_metadata = {
@@ -440,36 +519,22 @@ async def _validate_rows(
         if existing is None:
             # CREATE path.
             if not row.equipment_name_raw:
-                plans[row.row_number] = _RowPlan(
-                    result=ImportRowResult(
-                        row_number=row.row_number,
-                        bcm_code=bcm_code,
-                        item_no=item_no,
-                        asset_id=asset_id,
-                        status=ImportRowStatus.FAILED,
-                        reason="Equipment Name is required.",
-                    )
-                )
+                fail(row.row_number, bcm_code, item_no, asset_id, "Equipment Name is required.")
                 continue
 
-            conflict_reason = await _find_create_conflict(
-                db, bcm_code=bcm_code, item_no=item_no, serial_number=serial_number, asset_id=asset_id
+            conflict_reason = _find_create_conflict(
+                item_no=item_no,
+                serial_number=serial_number,
+                asset_id=asset_id,
+                existing_by_item_no=existing_by_item_no,
+                existing_by_serial=existing_by_serial,
+                existing_by_asset_id=existing_by_asset_id,
             )
             if conflict_reason is not None:
-                plans[row.row_number] = _RowPlan(
-                    result=ImportRowResult(
-                        row_number=row.row_number,
-                        bcm_code=bcm_code,
-                        item_no=item_no,
-                        asset_id=asset_id,
-                        status=ImportRowStatus.FAILED,
-                        reason=conflict_reason,
-                    )
-                )
+                fail(row.row_number, bcm_code, item_no, asset_id, conflict_reason)
                 continue
 
             create_data = {
-                "asset_number": bcm_code,
                 "bcm_code": bcm_code,
                 "item_no": item_no,
                 "asset_id": asset_id,
@@ -492,24 +557,28 @@ async def _validate_rows(
                 ),
                 create_data=create_data,
             )
+            create_row_numbers.append(row.row_number)
         else:
             # UPDATE path (Part F.3): only the approved master-data field
             # set -- never status/legacy_status/asset_number/item_no/
-            # serial_number/equipment_name/bcm_code.
-            if asset_id is not None:
-                other = await equipment_crud.get_by_asset_id(db, asset_id)
-                if other is not None and other.id != existing.id:
-                    plans[row.row_number] = _RowPlan(
-                        result=ImportRowResult(
-                            row_number=row.row_number,
-                            bcm_code=bcm_code,
-                            item_no=item_no,
-                            asset_id=asset_id,
-                            status=ImportRowStatus.FAILED,
-                            reason="Asset ID already belongs to a different equipment record.",
-                        )
-                    )
-                    continue
+            # serial_number/equipment_name/bcm_code. Review finding
+            # PR12-H3: Item No and Serial Number are still validated
+            # (against a *different* equipment record) even though this
+            # path never writes them, so a source row whose identifiers
+            # point at a different physical device is never reported as a
+            # clean update.
+            conflict_reason = _find_update_conflict(
+                existing_id=existing.id,
+                item_no=item_no,
+                serial_number=serial_number,
+                asset_id=asset_id,
+                existing_by_item_no=existing_by_item_no,
+                existing_by_serial=existing_by_serial,
+                existing_by_asset_id=existing_by_asset_id,
+            )
+            if conflict_reason is not None:
+                fail(row.row_number, bcm_code, item_no, asset_id, conflict_reason)
+                continue
 
             update_data = {
                 "asset_id": asset_id,
@@ -531,24 +600,88 @@ async def _validate_rows(
                 import_source_metadata=import_source_metadata,
             )
 
+    # Pass 5 (review finding PR12-H1): assign a placeholder Asset Number to
+    # every CREATE-path row, then defensively bulk-check none of the
+    # generated tokens already exist (astronomically unlikely -- 48 bits
+    # of randomness -- but checked rather than assumed).
+    if create_row_numbers:
+        assigned: dict[int, str] = {}
+        used_tokens: set[str] = set()
+        for row_number in create_row_numbers:
+            token = _generate_placeholder_asset_number()
+            while token in used_tokens:
+                token = _generate_placeholder_asset_number()
+            used_tokens.add(token)
+            assigned[row_number] = token
+
+        colliding = await equipment_crud.get_by_asset_numbers(db, list(used_tokens))
+        for row_number in create_row_numbers:
+            token = assigned[row_number]
+            if token in colliding:
+                plan = plans[row_number]
+                plan.create_data = None
+                plan.result = ImportRowResult(
+                    row_number=plan.result.row_number,
+                    bcm_code=plan.result.bcm_code,
+                    item_no=plan.result.item_no,
+                    asset_id=plan.result.asset_id,
+                    status=ImportRowStatus.FAILED,
+                    reason="Could not generate a unique Asset Number for this row; please retry the import.",
+                )
+                continue
+            plans[row_number].create_data["asset_number"] = token
+
     # Preserve original row order.
     return [plans[row.row_number] for row in parsed_rows]
 
 
-async def _find_create_conflict(
-    db: AsyncSession, *, bcm_code: str, item_no: str | None, serial_number: str | None, asset_id: str | None
+def _find_create_conflict(
+    *,
+    item_no: str | None,
+    serial_number: str | None,
+    asset_id: str | None,
+    existing_by_item_no: dict,
+    existing_by_serial: dict,
+    existing_by_asset_id: dict,
 ) -> str | None:
-    """Roadmap PR12: proactive database duplicate checks for a row about
-    to become a new equipment record, so an expected conflict is reported
-    as a per-row validation failure rather than surfacing as an
-    IntegrityError during the commit write phase."""
-    if await equipment_crud.get_by_asset_number(db, bcm_code) is not None:
-        return "Generated asset_number (from BCM Code) conflicts with an existing equipment record."
-    if item_no is not None and await equipment_crud.get_by_item_no(db, item_no) is not None:
+    """Roadmap PR12: database duplicate checks for a row about to become a
+    new equipment record, so an expected conflict is reported as a
+    per-row validation failure rather than surfacing as an IntegrityError
+    during the commit write phase."""
+    if item_no is not None and item_no in existing_by_item_no:
         return "Item No already belongs to a different equipment record."
-    if serial_number is not None and await equipment_crud.get_by_serial_number(db, serial_number) is not None:
+    if serial_number is not None and serial_number in existing_by_serial:
         return "Serial Number already belongs to a different equipment record."
-    if asset_id is not None and await equipment_crud.get_by_asset_id(db, asset_id) is not None:
+    if asset_id is not None and asset_id in existing_by_asset_id:
+        return "Asset ID already belongs to a different equipment record."
+    return None
+
+
+def _find_update_conflict(
+    *,
+    existing_id: uuid.UUID,
+    item_no: str | None,
+    serial_number: str | None,
+    asset_id: str | None,
+    existing_by_item_no: dict,
+    existing_by_serial: dict,
+    existing_by_asset_id: dict,
+) -> str | None:
+    """Review finding PR12-H3: an update-mode row must not be reported as
+    a clean update when its Item No or Serial Number belongs to a
+    *different* equipment record than the one BCM Code matched -- even
+    though update mode never writes either field, accepting such a row
+    as "success" would misrepresent that the uploaded data is internally
+    consistent. A value that belongs to the same record (or is absent)
+    is not a conflict."""
+    other_item_no = existing_by_item_no.get(item_no) if item_no is not None else None
+    if other_item_no is not None and other_item_no.id != existing_id:
+        return "Item No already belongs to a different equipment record."
+    other_serial = existing_by_serial.get(serial_number) if serial_number is not None else None
+    if other_serial is not None and other_serial.id != existing_id:
+        return "Serial Number already belongs to a different equipment record."
+    other_asset_id = existing_by_asset_id.get(asset_id) if asset_id is not None else None
+    if other_asset_id is not None and other_asset_id.id != existing_id:
         return "Asset ID already belongs to a different equipment record."
     return None
 
@@ -569,7 +702,12 @@ class ImportCommitFailedError(DomainError):
     """Unexpected failure during the commit write phase (Roadmap PR12) --
     the entire batch is rolled back, never partially committed. Distinct
     from any per-row validation failure, which never reaches the write
-    phase at all and does not raise."""
+    phase at all and does not raise. Review findings PR12-H4/"keep the
+    entire import transactional": every bounded/persisted field is
+    length- and duplicate-checked during validation, so this branch is
+    reserved for genuinely unexpected failures (e.g. a dropped database
+    connection), not a foreseeable validation error -- the client always
+    sees a safe, generic message here, never a raw database exception."""
 
     code = "IMPORT_COMMIT_FAILED"
     status_code = 500
@@ -650,18 +788,20 @@ async def process_import(
     stale or tampered client-supplied preview payload cannot influence
     what actually gets written.
     """
-    content = await file.read()
-    worksheet = _load_worksheet(content)
-    header_index = _validate_headers(worksheet)
-    parsed_rows = _parse_rows(worksheet, header_index)
+    filename = _validate_filename(file.filename)
+    content = await _read_upload_bounded(file, max_bytes=MAX_UPLOAD_BYTES)
+    # Review finding PR12-H2: CPU-bound XLSX parsing runs in a worker
+    # thread, never blocking the event loop this coroutine shares with
+    # every other concurrent request.
+    parsed_rows = await asyncio.to_thread(_parse_workbook_sync, content)
     plans = await _validate_rows(db, parsed_rows, update_existing=update_existing)
 
     if not commit:
-        return _summarize(file.filename or "upload.xlsx", plans)
+        return _summarize(filename, plans)
 
     return await _commit_rows(
         db,
-        filename=file.filename or "upload.xlsx",
+        filename=filename,
         plans=plans,
         update_existing=update_existing,
         actor_user_id=actor_user_id,

@@ -6542,3 +6542,122 @@ async def test_migration_0009_mixed_ownership_round_trip_preserves_everything_ex
         assert names == {"administrator", "viewer", "biomedical_engineer"}
     finally:
         await _drop_scratch_database()
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR12 review finding PR12-M1: migration
+# 0010_inventory_import_columns.py's real upgrade/downgrade/re-upgrade
+# behavior from an actual 0009 baseline, proven against a real PostgreSQL
+# database rather than only asserted by static inspection of the
+# migration file.
+# ---------------------------------------------------------------------------
+
+
+async def test_migration_0010_upgrade_adds_asset_id_and_raw_source_status_columns_and_index():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0009_role_consolidation")
+        columns = await _equipment_columns()
+        assert "asset_id" not in columns
+        assert "raw_source_status" not in columns
+
+        _run_alembic("upgrade", "head")
+        columns = await _equipment_columns()
+        assert {"asset_id", "raw_source_status"} <= columns
+
+        indexes = await _equipment_indexes()
+        by_name = {idx["name"]: idx for idx in indexes}
+        assert "ix_equipment_asset_id" in by_name
+        assert by_name["ix_equipment_asset_id"]["unique"] is False
+        assert by_name["ix_equipment_asset_id"]["column_names"] == ["asset_id"]
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0010_upgrade_downgrade_re_upgrade_round_trip_preserves_pre_existing_equipment():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0009_role_consolidation")
+
+        # Equipment row seeded on the pre-0010 schema, before asset_id /
+        # raw_source_status exist at all -- proves the migration is
+        # additive-only and never disturbs a pre-existing row.
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        equipment_id = None
+        try:
+            session_maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+            async with session_maker() as session:
+                equipment = Equipment(asset_number="AST-PR12-0001", equipment_name="Pre-PR12 Pump")
+                session.add(equipment)
+                await session.commit()
+                equipment_id = equipment.id
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        columns = await _equipment_columns()
+        assert {"asset_id", "raw_source_status"} <= columns
+
+        # The pre-existing row survives with both new columns NULL, and
+        # can be populated like any inventory-import-created row.
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            session_maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+            async with session_maker() as session:
+                row = (await session.execute(select(Equipment).where(Equipment.id == equipment_id))).scalar_one()
+                assert row.equipment_name == "Pre-PR12 Pump"
+                assert row.asset_id is None
+                assert row.raw_source_status is None
+                row.asset_id = "AID-0001"
+                row.raw_source_status = "Active"
+                await session.commit()
+        finally:
+            await engine.dispose()
+
+        _run_alembic("downgrade", "0009_role_consolidation")
+        columns = await _equipment_columns()
+        assert "asset_id" not in columns
+        assert "raw_source_status" not in columns
+
+        indexes = await _equipment_indexes()
+        assert "ix_equipment_asset_id" not in {idx["name"] for idx in indexes}
+
+        # The row itself (identity + fields that existed before 0010)
+        # survives the downgrade even though asset_id/raw_source_status
+        # values written after upgrade are necessarily discarded with
+        # the dropped columns -- documented, expected downgrade behavior.
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            session_maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+            async with session_maker() as session:
+                row = (await session.execute(select(Equipment).where(Equipment.id == equipment_id))).scalar_one()
+                assert row.equipment_name == "Pre-PR12 Pump"
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        columns = await _equipment_columns()
+        assert {"asset_id", "raw_source_status"} <= columns
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            session_maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+            async with session_maker() as session:
+                row = (await session.execute(select(Equipment).where(Equipment.id == equipment_id))).scalar_one()
+                assert row.equipment_name == "Pre-PR12 Pump"
+                # Re-added columns start NULL again -- the downgrade's
+                # column drop was real, not a no-op.
+                assert row.asset_id is None
+                assert row.raw_source_status is None
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
