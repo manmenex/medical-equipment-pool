@@ -45,7 +45,7 @@ const previewResponse: ImportPreviewResponse = {
       item_no: null,
       asset_id: null,
       status: "success",
-      action: "create",
+      action: "update",
       reason: null,
       equipment_id: null,
     },

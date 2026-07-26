@@ -200,10 +200,11 @@ export type WardCorrectionErrorCode =
 // row itself).
 export type ImportRowStatus = "success" | "failed" | "skipped";
 
-// Present only for a "success" row -- distinguishes a brand-new equipment
-// record from an update to an existing one (matched solely by BCM Code,
-// per the backend's documented design).
-export type ImportRowAction = "create" | "update";
+// Present only for a "success" row. Roadmap PR12 is update-only (see the
+// backend module docstring): every successful row is an update to an
+// existing equipment record matched by BCM Code -- import never creates
+// new equipment.
+export type ImportRowAction = "update";
 
 export interface ImportRowResult {
   row_number: number;

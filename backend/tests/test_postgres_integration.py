@@ -6545,26 +6545,47 @@ async def test_migration_0009_mixed_ownership_round_trip_preserves_everything_ex
 
 
 # ---------------------------------------------------------------------------
-# Roadmap PR12 review finding PR12-M1: migration
+# Roadmap PR12 review finding PR12-M1 / PR12-M1R: migration
 # 0010_inventory_import_columns.py's real upgrade/downgrade/re-upgrade
 # behavior from an actual 0009 baseline, proven against a real PostgreSQL
-# database rather than only asserted by static inspection of the
-# migration file.
+# database.
+#
+# Structural trap this repeatedly fell into (PR12-M1R): migration
+# 0001_initial.py builds its schema from `Base.metadata.create_all()` --
+# the *current* ORM model, which already declares `asset_id` and
+# `raw_source_status`. On a fresh scratch database, upgrading only to
+# 0009_role_consolidation therefore already has both columns (0010's own
+# `ADD COLUMN IF NOT EXISTS` becomes a silent no-op), and once a genuine
+# downgrade later drops them for real, any query built through the
+# current `Equipment` ORM class fails with `UndefinedColumnError` because
+# the model still declares columns the live database no longer has.
+#
+# So this suite proves two things independently, exactly as the review
+# requires:
+#   1. Fresh-schema convergence: a brand-new database upgraded straight
+#      to head ends up with the columns/index (this alone does NOT prove
+#      migration 0010 did the work -- 0001 could have supplied them).
+#   2. Historical-schema round trip: a database deliberately stripped of
+#      the 0010 additions after reaching 0009 (simulating the schema a
+#      real pre-PR12 deployment would have) is upgraded through Alembic,
+#      which must perform the ADD COLUMN work for real this time, then is
+#      downgraded and re-upgraded. All inspection/seeding across the
+#      "historical" window uses raw SQL (`_equipment_columns`/
+#      `_equipment_indexes`/`text()`), never the current ORM class, so the
+#      test cannot accidentally depend on the schema already matching it.
 # ---------------------------------------------------------------------------
 
 
-async def test_migration_0010_upgrade_adds_asset_id_and_raw_source_status_columns_and_index():
+async def test_migration_0010_fresh_database_upgrade_to_head_converges_on_expected_schema():
+    """Fresh-schema convergence only -- does not by itself prove 0010 did
+    the work (0001 already builds from current ORM metadata), but proves
+    a brand-new deployment ends up in the right final state."""
     try:
         await _recreate_scratch_database()
     except Exception as exc:
         pytest.skip(f"Cannot create scratch database for migration test: {exc}")
 
     try:
-        _run_alembic("upgrade", "0009_role_consolidation")
-        columns = await _equipment_columns()
-        assert "asset_id" not in columns
-        assert "raw_source_status" not in columns
-
         _run_alembic("upgrade", "head")
         columns = await _equipment_columns()
         assert {"asset_id", "raw_source_status"} <= columns
@@ -6578,7 +6599,44 @@ async def test_migration_0010_upgrade_adds_asset_id_and_raw_source_status_column
         await _drop_scratch_database()
 
 
-async def test_migration_0010_upgrade_downgrade_re_upgrade_round_trip_preserves_pre_existing_equipment():
+async def _strip_0010_additions_to_build_historical_0009_schema(engine) -> None:
+    """After `alembic upgrade 0009_role_consolidation` on a fresh scratch
+    database, `asset_id`/`raw_source_status`/`ix_equipment_asset_id`
+    already exist -- supplied by 0001_initial's `Base.metadata.create_all()`
+    against the *current* ORM model, not by any migration between 0002
+    and 0009. This deliberately removes them via raw DDL so the database
+    is actually shaped like a real pre-0010 deployment before migration
+    0010 is exercised through Alembic."""
+    async with engine.begin() as conn:
+        await conn.execute(text("DROP INDEX IF EXISTS ix_equipment_asset_id"))
+        await conn.execute(text("ALTER TABLE equipment DROP COLUMN IF EXISTS raw_source_status"))
+        await conn.execute(text("ALTER TABLE equipment DROP COLUMN IF EXISTS asset_id"))
+
+
+async def _insert_historical_pre_0010_equipment(engine, *, asset_number: str, equipment_name: str) -> str:
+    """Raw-SQL insert (not the ORM) -- the live schema at this point in
+    the test is the historical pre-0010 shape, which the current
+    `Equipment` model no longer accurately describes."""
+    equipment_id = str(uuid.uuid4())
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata) "
+                "VALUES (:id, :asset_number, :equipment_name, 'available_at_pool', '{}')"
+            ),
+            {"id": equipment_id, "asset_number": asset_number, "equipment_name": equipment_name},
+        )
+    return equipment_id
+
+
+async def _fetch_equipment_row_via_raw_sql(engine, equipment_id: str) -> dict | None:
+    async with engine.connect() as conn:
+        result = await conn.execute(text("SELECT * FROM equipment WHERE id = :id"), {"id": equipment_id})
+        row = result.mappings().first()
+        return dict(row) if row is not None else None
+
+
+async def test_migration_0010_historical_0009_upgrade_downgrade_re_upgrade_round_trip():
     try:
         await _recreate_scratch_database()
     except Exception as exc:
@@ -6587,32 +6645,48 @@ async def test_migration_0010_upgrade_downgrade_re_upgrade_round_trip_preserves_
     try:
         _run_alembic("upgrade", "0009_role_consolidation")
 
-        # Equipment row seeded on the pre-0010 schema, before asset_id /
-        # raw_source_status exist at all -- proves the migration is
-        # additive-only and never disturbs a pre-existing row.
         engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
-        equipment_id = None
         try:
-            session_maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
-            async with session_maker() as session:
-                equipment = Equipment(asset_number="AST-PR12-0001", equipment_name="Pre-PR12 Pump")
-                session.add(equipment)
-                await session.commit()
-                equipment_id = equipment.id
+            await _strip_0010_additions_to_build_historical_0009_schema(engine)
+
+            # Genuine historical baseline, confirmed absent -- not assumed.
+            columns = await _equipment_columns()
+            assert "asset_id" not in columns
+            assert "raw_source_status" not in columns
+            indexes = await _equipment_indexes()
+            assert "ix_equipment_asset_id" not in {idx["name"] for idx in indexes}
+
+            # Representative pre-0010 row, seeded via raw SQL against the
+            # actual historical schema (the ORM model does not describe
+            # this database state and must not be used here).
+            equipment_id = await _insert_historical_pre_0010_equipment(
+                engine, asset_number="AST-PR12-HIST-0001", equipment_name="Pre-PR12 Pump"
+            )
         finally:
             await engine.dispose()
 
+        # Real upgrade through Alembic -- 0010's ADD COLUMN work now
+        # actually executes against a database that genuinely lacks the
+        # columns, rather than silently no-op'ing.
         _run_alembic("upgrade", "head")
         columns = await _equipment_columns()
         assert {"asset_id", "raw_source_status"} <= columns
+        indexes = await _equipment_indexes()
+        by_name = {idx["name"]: idx for idx in indexes}
+        assert "ix_equipment_asset_id" in by_name
+        assert by_name["ix_equipment_asset_id"]["unique"] is False
+        assert by_name["ix_equipment_asset_id"]["column_names"] == ["asset_id"]
 
-        # The pre-existing row survives with both new columns NULL, and
-        # can be populated like any inventory-import-created row.
+        # The pre-existing row survives with both new columns NULL. At
+        # this point the live schema matches the current ORM exactly, so
+        # both raw SQL and the ORM are valid; use the ORM to also prove
+        # the model can write back into the newly added columns like any
+        # inventory-import-created row.
         engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
         try:
             session_maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
             async with session_maker() as session:
-                row = (await session.execute(select(Equipment).where(Equipment.id == equipment_id))).scalar_one()
+                row = (await session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment_id)))).scalar_one()
                 assert row.equipment_name == "Pre-PR12 Pump"
                 assert row.asset_id is None
                 assert row.raw_source_status is None
@@ -6622,36 +6696,45 @@ async def test_migration_0010_upgrade_downgrade_re_upgrade_round_trip_preserves_
         finally:
             await engine.dispose()
 
+        # Real downgrade -- columns/index genuinely dropped. From this
+        # point until the re-upgrade below, only raw SQL is valid: the
+        # current ORM class still declares asset_id/raw_source_status,
+        # and a SELECT built through it would raise UndefinedColumnError
+        # against a database that no longer has them.
         _run_alembic("downgrade", "0009_role_consolidation")
         columns = await _equipment_columns()
         assert "asset_id" not in columns
         assert "raw_source_status" not in columns
-
         indexes = await _equipment_indexes()
         assert "ix_equipment_asset_id" not in {idx["name"] for idx in indexes}
 
-        # The row itself (identity + fields that existed before 0010)
-        # survives the downgrade even though asset_id/raw_source_status
-        # values written after upgrade are necessarily discarded with
-        # the dropped columns -- documented, expected downgrade behavior.
         engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
         try:
-            session_maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
-            async with session_maker() as session:
-                row = (await session.execute(select(Equipment).where(Equipment.id == equipment_id))).scalar_one()
-                assert row.equipment_name == "Pre-PR12 Pump"
+            # asset_id/raw_source_status values written after the upgrade
+            # are necessarily discarded with the dropped columns --
+            # documented, expected downgrade behavior (see 0010's
+            # docstring). Only pre-0010 fields are expected to survive.
+            row = await _fetch_equipment_row_via_raw_sql(engine, equipment_id)
+            assert row is not None
+            assert row["equipment_name"] == "Pre-PR12 Pump"
+            assert "asset_id" not in row
+            assert "raw_source_status" not in row
         finally:
             await engine.dispose()
 
+        # Re-upgrade: convergence proven a second time, from the real
+        # historical-turned-downgraded state, not merely once from fresh.
         _run_alembic("upgrade", "head")
         columns = await _equipment_columns()
         assert {"asset_id", "raw_source_status"} <= columns
+        indexes = await _equipment_indexes()
+        assert "ix_equipment_asset_id" in {idx["name"] for idx in indexes}
 
         engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
         try:
             session_maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
             async with session_maker() as session:
-                row = (await session.execute(select(Equipment).where(Equipment.id == equipment_id))).scalar_one()
+                row = (await session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment_id)))).scalar_one()
                 assert row.equipment_name == "Pre-PR12 Pump"
                 # Re-added columns start NULL again -- the downgrade's
                 # column drop was real, not a no-op.

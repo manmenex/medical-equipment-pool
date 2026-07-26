@@ -154,19 +154,6 @@ async def get_by_asset_ids(db: AsyncSession, values: Sequence[str]) -> dict[str,
     return mapping
 
 
-async def get_by_asset_numbers(db: AsyncSession, values: Sequence[str]) -> dict[str, Equipment]:
-    """Bulk exact Asset Number lookup (Roadmap PR12 review PR12-H2: used
-    to defensively confirm generated placeholder Asset Numbers -- see
-    import_service's asset_number policy -- don't collide with an
-    existing row; asset_number is already database-unique)."""
-    if not values:
-        return {}
-    result = await db.execute(
-        select(Equipment).where(Equipment.asset_number.in_(values), Equipment.deleted_at.is_(None))
-    )
-    return {e.asset_number: e for e in result.scalars().all()}
-
-
 async def search(
     db: AsyncSession,
     *,

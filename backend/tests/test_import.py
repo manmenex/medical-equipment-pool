@@ -1,17 +1,27 @@
 import io
 import uuid
+import zipfile
 
 import pytest
 from openpyxl import Workbook
 from sqlalchemy import select
 
+from app.crud import equipment as equipment_crud
 from app.models.audit import AuditLog
 from app.models.equipment import Equipment, EquipmentStatus
 from app.models.user import ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, ROLE_READ_ONLY
-from app.services.import_service import REQUIRED_HEADERS
+from app.services.import_service import NO_MATCHING_EQUIPMENT_REASON, REQUIRED_HEADERS
 from tests.conftest import auth_headers as _auth_headers
 
 pytestmark = pytest.mark.asyncio
+
+# Roadmap PR12 is update-only (Repository Owner decision resolving review
+# findings PR12-H1/H1R -- see import_service.py's module docstring): the
+# import workflow never creates new equipment and never generates,
+# derives, or synthesizes an Asset Number. Every test that needs an
+# import row to succeed must first seed a matching equipment record
+# directly through app.crud.equipment (never through the import endpoints
+# themselves, since import can no longer create anything).
 
 
 def _build_workbook(rows: list[dict[str, str]]) -> bytes:
@@ -65,6 +75,38 @@ async def _commit(client, headers, rows, *, update_existing: bool = False):
         files=_upload(rows),
         data={"update_existing": "true" if update_existing else "false"},
     )
+
+
+async def _seed_equipment(
+    db_session,
+    *,
+    bcm_code: str,
+    item_no: str | None = None,
+    serial_number: str | None = None,
+    asset_id: str | None = None,
+    equipment_name: str = "Seed Equipment",
+    brand: str | None = None,
+    model: str | None = None,
+    asset_number: str | None = None,
+) -> str:
+    """Creates an equipment record directly (never through the import
+    endpoints, which can no longer create anything) so import-mode tests
+    have an existing record to match by BCM Code and update."""
+    equipment = await equipment_crud.create(
+        db_session,
+        data={
+            "asset_number": asset_number or f"AST-{bcm_code}",
+            "bcm_code": bcm_code,
+            "item_no": item_no,
+            "serial_number": serial_number,
+            "asset_id": asset_id,
+            "equipment_name": equipment_name,
+            "brand": brand,
+            "model": model,
+        },
+    )
+    await db_session.commit()
+    return str(equipment.id)
 
 
 # ---------------------------------------------------------------------------
@@ -134,18 +176,24 @@ async def test_duplicate_bcm_code_within_file_flags_all_occurrences(client, seed
     assert all(r["status"] == "failed" and "Duplicate BCM Code" in r["reason"] for r in body["rows"])
 
 
-async def test_leading_zero_bcm_code_round_trip(client, seeded_users):
+async def test_leading_zero_bcm_code_round_trip(client, seeded_users, db_session):
     headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
-    resp = await _commit(client, headers, [_base_row(**{"ID CODE": "00042"})])
+    await _seed_equipment(db_session, bcm_code="BCM00042")
+
+    resp = await _commit(client, headers, [_base_row(**{"ID CODE": "00042"})], update_existing=True)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["succeeded"] == 1
     assert body["rows"][0]["bcm_code"] == "BCM00042"
 
 
-async def test_unrecognized_asset_status_fails_row(client, seeded_users):
+async def test_unrecognized_asset_status_fails_row(client, seeded_users, db_session):
     headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
-    resp = await _preview(client, headers, [_base_row(**{"Asset Status": "Mystery Value"})])
+    await _seed_equipment(db_session, bcm_code="BCM001")
+
+    resp = await _preview(
+        client, headers, [_base_row(**{"Asset Status": "Mystery Value"})], update_existing=True
+    )
     body = resp.json()
     assert body["failed"] == 1
     assert "Unrecognized Asset Status" in body["rows"][0]["reason"]
@@ -165,12 +213,15 @@ async def test_duplicate_serial_number_within_file_flagged(client, seeded_users)
 
 async def test_partial_row_failure_still_commits_valid_rows(client, seeded_users, db_session):
     headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    await _seed_equipment(db_session, bcm_code="BCM201")
+    await _seed_equipment(db_session, bcm_code="BCM202")
+
     rows = [
         _base_row(**{"ID CODE": "201"}),
         _base_row(**{"ID CODE": ""}),  # invalid, missing BCM
         _base_row(**{"ID CODE": "202"}),
     ]
-    resp = await _commit(client, headers, rows)
+    resp = await _commit(client, headers, rows, update_existing=True)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["succeeded"] == 2
@@ -181,18 +232,64 @@ async def test_partial_row_failure_still_commits_valid_rows(client, seeded_users
 
 
 # ---------------------------------------------------------------------------
+# Update-only architecture (Repository Owner decision resolving review
+# findings PR12-H1/H1R): import never creates new equipment and never
+# generates, derives, or synthesizes an Asset Number.
+# ---------------------------------------------------------------------------
+
+
+async def test_non_matching_bcm_code_fails_row_and_creates_nothing(client, seeded_users, db_session):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    before = (await db_session.execute(select(Equipment))).scalars().all()
+
+    resp = await _commit(client, headers, [_base_row(**{"ID CODE": "601"})], update_existing=True)
+    body = resp.json()
+    assert body["succeeded"] == 0
+    assert body["failed"] == 1
+    assert body["rows"][0]["reason"] == NO_MATCHING_EQUIPMENT_REASON
+    assert body["rows"][0]["equipment_id"] is None
+
+    after = (await db_session.execute(select(Equipment))).scalars().all()
+    assert len(after) == len(before), "a non-matching BCM Code must never create a new equipment record"
+
+
+async def test_non_matching_bcm_code_fails_even_with_update_existing_true(client, seeded_users):
+    """update_existing only ever changes whether an *existing* match is
+    updated or skipped -- it must never enable row creation."""
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await _commit(client, headers, [_base_row(**{"ID CODE": "602"})], update_existing=True)
+    body = resp.json()
+    assert body["failed"] == 1
+    assert body["rows"][0]["reason"] == NO_MATCHING_EQUIPMENT_REASON
+
+
+async def test_update_never_changes_asset_number(client, seeded_users, db_session):
+    equipment_id = await _seed_equipment(db_session, bcm_code="BCM603", asset_number="AST-ORIGINAL-603")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+
+    resp = await _commit(
+        client, headers, [_base_row(**{"ID CODE": "603", "Model": "Revised"})], update_existing=True
+    )
+    body = resp.json()
+    assert body["succeeded"] == 1
+
+    result = await db_session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment_id)))
+    equipment = result.scalar_one()
+    assert equipment.asset_number == "AST-ORIGINAL-603"
+    assert equipment.model == "Revised"
+
+
+# ---------------------------------------------------------------------------
 # Database-duplicate handling / update mode
 # ---------------------------------------------------------------------------
 
 
-async def test_db_duplicate_bcm_skipped_when_update_mode_off(client, seeded_users):
+async def test_db_duplicate_bcm_skipped_when_update_mode_off(client, seeded_users, db_session):
     headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
-    row = _base_row(**{"ID CODE": "301"})
-    first = await _commit(client, headers, [row])
-    assert first.json()["succeeded"] == 1
+    await _seed_equipment(db_session, bcm_code="BCM301")
 
-    second = await _commit(client, headers, [row], update_existing=False)
-    body = second.json()
+    resp = await _commit(client, headers, [_base_row(**{"ID CODE": "301"})], update_existing=False)
+    body = resp.json()
     assert body["skipped"] == 1
     assert body["succeeded"] == 0
     assert "update mode is off" in body["rows"][0]["reason"]
@@ -200,13 +297,11 @@ async def test_db_duplicate_bcm_skipped_when_update_mode_off(client, seeded_user
 
 async def test_db_duplicate_bcm_updates_master_data_when_update_mode_on(client, seeded_users, db_session):
     headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
-    row = _base_row(**{"ID CODE": "302", "Model": "Original"})
-    first = await _commit(client, headers, [row])
-    equipment_id = first.json()["rows"][0]["equipment_id"]
+    equipment_id = await _seed_equipment(db_session, bcm_code="BCM302", model="Original")
 
     updated_row = _base_row(**{"ID CODE": "302", "Model": "Revised"})
-    second = await _commit(client, headers, [updated_row], update_existing=True)
-    body = second.json()
+    resp = await _commit(client, headers, [updated_row], update_existing=True)
+    body = resp.json()
     assert body["succeeded"] == 1
     assert body["rows"][0]["action"] == "update"
     assert body["rows"][0]["equipment_id"] == equipment_id
@@ -218,9 +313,7 @@ async def test_db_duplicate_bcm_updates_master_data_when_update_mode_on(client, 
 
 async def test_update_mode_never_touches_status_or_legacy_status(client, seeded_users, db_session):
     headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
-    row = _base_row(**{"ID CODE": "303", "Asset Status": "Active"})
-    first = await _commit(client, headers, [row])
-    equipment_id = first.json()["rows"][0]["equipment_id"]
+    equipment_id = await _seed_equipment(db_session, bcm_code="BCM303")
 
     result = await db_session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment_id)))
     equipment = result.scalar_one()
@@ -231,8 +324,8 @@ async def test_update_mode_never_touches_status_or_legacy_status(client, seeded_
     # Re-import the same BCM Code with a *different* Asset Status in update
     # mode -- status/legacy_status must remain exactly as manually set above.
     updated_row = _base_row(**{"ID CODE": "303", "Asset Status": "Decommissioned"})
-    second = await _commit(client, headers, [updated_row], update_existing=True)
-    assert second.json()["succeeded"] == 1
+    resp = await _commit(client, headers, [updated_row], update_existing=True)
+    assert resp.json()["succeeded"] == 1
 
     result2 = await db_session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment_id)))
     equipment2 = result2.scalar_one()
@@ -240,14 +333,13 @@ async def test_update_mode_never_touches_status_or_legacy_status(client, seeded_
     assert equipment2.legacy_status == "manually_set"
 
 
-async def test_update_mode_rejects_row_whose_item_no_belongs_to_a_different_record(client, seeded_users):
-    """Review finding PR12-H3: Create mode has always rejected an Item No
-    that belongs to a different equipment record; update mode must apply
-    the same cross-record check, even though it never writes Item No
-    itself."""
+async def test_update_mode_rejects_row_whose_item_no_belongs_to_a_different_record(client, seeded_users, db_session):
+    """Review finding PR12-H3: update mode must reject a row whose Item
+    No belongs to a *different* equipment record than the one BCM Code
+    matched, even though it never writes Item No itself."""
     headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
-    await _commit(client, headers, [_base_row(**{"ID CODE": "901", "Item No.": "ITEM-OTHER"})])
-    await _commit(client, headers, [_base_row(**{"ID CODE": "902"})])
+    await _seed_equipment(db_session, bcm_code="BCM901", item_no="ITEM-OTHER")
+    await _seed_equipment(db_session, bcm_code="BCM902")
 
     conflicting_row = _base_row(**{"ID CODE": "902", "Item No.": "ITEM-OTHER"})
     resp = await _commit(client, headers, [conflicting_row], update_existing=True)
@@ -256,10 +348,10 @@ async def test_update_mode_rejects_row_whose_item_no_belongs_to_a_different_reco
     assert "Item No" in body["rows"][0]["reason"]
 
 
-async def test_update_mode_rejects_row_whose_serial_number_belongs_to_a_different_record(client, seeded_users):
+async def test_update_mode_rejects_row_whose_serial_number_belongs_to_a_different_record(client, seeded_users, db_session):
     headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
-    await _commit(client, headers, [_base_row(**{"ID CODE": "903", "Serial Number": "SN-OTHER"})])
-    await _commit(client, headers, [_base_row(**{"ID CODE": "904"})])
+    await _seed_equipment(db_session, bcm_code="BCM903", serial_number="SN-OTHER")
+    await _seed_equipment(db_session, bcm_code="BCM904")
 
     conflicting_row = _base_row(**{"ID CODE": "904", "Serial Number": "SN-OTHER"})
     resp = await _commit(client, headers, [conflicting_row], update_existing=True)
@@ -275,12 +367,11 @@ async def test_update_mode_allows_row_whose_item_no_and_serial_number_belong_to_
     not a conflict -- re-importing an unchanged row in update mode must
     still succeed."""
     headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
-    row = _base_row(**{"ID CODE": "905", "Item No.": "ITEM905", "Serial Number": "SN905"})
-    first = await _commit(client, headers, [row])
-    equipment_id = first.json()["rows"][0]["equipment_id"]
+    equipment_id = await _seed_equipment(db_session, bcm_code="BCM905", item_no="ITEM905", serial_number="SN905")
 
-    second = await _commit(client, headers, [row], update_existing=True)
-    body = second.json()
+    row = _base_row(**{"ID CODE": "905", "Item No.": "ITEM905", "Serial Number": "SN905"})
+    resp = await _commit(client, headers, [row], update_existing=True)
+    body = resp.json()
     assert body["succeeded"] == 1
     assert body["rows"][0]["action"] == "update"
     assert body["rows"][0]["equipment_id"] == equipment_id
@@ -291,14 +382,16 @@ async def test_update_mode_allows_row_whose_item_no_and_serial_number_belong_to_
 # ---------------------------------------------------------------------------
 
 
-async def test_asset_id_duplicate_in_file_flagged_but_others_unaffected(client, seeded_users):
+async def test_asset_id_duplicate_in_file_flagged_but_others_unaffected(client, seeded_users, db_session):
     headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    await _seed_equipment(db_session, bcm_code="BCM403")
+
     rows = [
         _base_row(**{"ID CODE": "401", "Asset ID": "A-1"}),
         _base_row(**{"ID CODE": "402", "Asset ID": "A-1"}),
         _base_row(**{"ID CODE": "403", "Asset ID": "A-2"}),
     ]
-    resp = await _commit(client, headers, rows)
+    resp = await _commit(client, headers, rows, update_existing=True)
     body = resp.json()
     assert body["succeeded"] == 1
     assert body["failed"] == 2
@@ -308,11 +401,14 @@ async def test_asset_id_duplicate_in_file_flagged_but_others_unaffected(client, 
     assert by_bcm["BCM403"]["status"] == "success"
 
 
-async def test_asset_id_duplicate_against_existing_db_row_flagged(client, seeded_users):
+async def test_asset_id_duplicate_against_existing_db_row_flagged(client, seeded_users, db_session):
+    await _seed_equipment(db_session, bcm_code="BCM501", asset_id="DUP-ASSET")
+    await _seed_equipment(db_session, bcm_code="BCM502")
     headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
-    await _commit(client, headers, [_base_row(**{"ID CODE": "501", "Asset ID": "DUP-ASSET"})])
 
-    resp = await _commit(client, headers, [_base_row(**{"ID CODE": "502", "Asset ID": "DUP-ASSET"})])
+    resp = await _commit(
+        client, headers, [_base_row(**{"ID CODE": "502", "Asset ID": "DUP-ASSET"})], update_existing=True
+    )
     body = resp.json()
     assert body["failed"] == 1
     assert "Asset ID" in body["rows"][0]["reason"]
@@ -323,8 +419,6 @@ async def test_no_unique_constraint_added_for_asset_id(db_session):
     database uniqueness constraint (hospital-wide uniqueness unconfirmed).
     Two equipment rows sharing an asset_id must be a valid database
     state -- only application-layer import validation flags it."""
-    from app.crud import equipment as equipment_crud
-
     e1 = await equipment_crud.create(
         db_session,
         data={"asset_number": "AST-D1", "equipment_name": "A", "asset_id": "SHARED"},
@@ -338,54 +432,18 @@ async def test_no_unique_constraint_added_for_asset_id(db_session):
 
 
 # ---------------------------------------------------------------------------
-# asset_number placeholder policy (review finding PR12-H1 / ADR-002)
-# ---------------------------------------------------------------------------
-
-
-async def test_new_equipment_asset_number_is_random_placeholder_not_derived_from_bcm_or_item_no(
-    client, seeded_users, db_session
-):
-    """ADR-002: Asset Number must never be "merged with, or inferred
-    from, BCM Code or Item No." The import source file has no Asset
-    Number column, so a newly created row gets an opaque random
-    placeholder token, never a value derived from its own BCM Code or
-    Item No."""
-    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
-    resp = await _commit(client, headers, [_base_row(**{"ID CODE": "601", "Item No.": "ITEM601"})])
-    equipment_id = resp.json()["rows"][0]["equipment_id"]
-    result = await db_session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment_id)))
-    equipment = result.scalar_one()
-    assert equipment.bcm_code == "BCM601"
-    assert equipment.item_no == "ITEM601"
-    assert equipment.asset_number.startswith("IMPORT-")
-    assert "601" not in equipment.asset_number
-    assert equipment.asset_number != equipment.bcm_code
-    assert equipment.asset_number != equipment.item_no
-
-
-async def test_asset_number_placeholders_are_unique_across_a_batch(client, seeded_users, db_session):
-    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
-    rows = [_base_row(**{"ID CODE": "611"}), _base_row(**{"ID CODE": "612"}), _base_row(**{"ID CODE": "613"})]
-    resp = await _commit(client, headers, rows)
-    body = resp.json()
-    assert body["succeeded"] == 3
-    equipment_ids = [uuid.UUID(r["equipment_id"]) for r in body["rows"]]
-    result = await db_session.execute(select(Equipment).where(Equipment.id.in_(equipment_ids)))
-    asset_numbers = {e.asset_number for e in result.scalars().all()}
-    assert len(asset_numbers) == 3
-
-
-# ---------------------------------------------------------------------------
 # Preview vs. commit isolation
 # ---------------------------------------------------------------------------
 
 
 async def test_preview_performs_zero_database_writes(client, seeded_users, db_session):
     headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    await _seed_equipment(db_session, bcm_code="BCM701")
+
     before_equipment = (await db_session.execute(select(Equipment))).scalars().all()
     before_audit = (await db_session.execute(select(AuditLog))).scalars().all()
 
-    resp = await _preview(client, headers, [_base_row(**{"ID CODE": "701"})])
+    resp = await _preview(client, headers, [_base_row(**{"ID CODE": "701"})], update_existing=True)
     assert resp.status_code == 200
     assert resp.json()["succeeded"] == 1
 
@@ -395,21 +453,25 @@ async def test_preview_performs_zero_database_writes(client, seeded_users, db_se
     assert len(after_audit) == len(before_audit)
 
 
-async def test_commit_does_not_require_a_prior_preview_call(client, seeded_users):
+async def test_commit_does_not_require_a_prior_preview_call(client, seeded_users, db_session):
     """Commit independently re-parses/re-validates the raw uploaded file
     -- it never depends on or trusts a client-supplied preview result."""
     headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
-    resp = await _commit(client, headers, [_base_row(**{"ID CODE": "702"})])
+    await _seed_equipment(db_session, bcm_code="BCM702")
+
+    resp = await _commit(client, headers, [_base_row(**{"ID CODE": "702"})], update_existing=True)
     assert resp.status_code == 200
     assert resp.json()["succeeded"] == 1
 
 
 async def test_commit_produces_exactly_one_audit_log_entry_per_batch(client, seeded_users, db_session):
     headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    await _seed_equipment(db_session, bcm_code="BCM801")
+    await _seed_equipment(db_session, bcm_code="BCM802")
     before = (await db_session.execute(select(AuditLog).where(AuditLog.action == "import"))).scalars().all()
 
     rows = [_base_row(**{"ID CODE": "801"}), _base_row(**{"ID CODE": "802"}), _base_row(**{"ID CODE": ""})]
-    resp = await _commit(client, headers, rows)
+    resp = await _commit(client, headers, rows, update_existing=True)
     body = resp.json()
     assert body["audit_log_id"] is not None
 
@@ -504,6 +566,9 @@ async def test_overlength_field_fails_in_preview_not_just_commit(client, seeded_
 
     headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     overlength_value = "x" * (FIELD_MAX_LENGTHS[field] + 1)
+    # Deliberately a non-matching BCM Code -- the length check (Pass 1)
+    # happens before any database lookup, so this must fail on length,
+    # never on "no matching equipment".
     row = _base_row(**{"ID CODE": "951", header: overlength_value})
 
     preview_resp = await _preview(client, headers, [row])
@@ -518,3 +583,157 @@ async def test_overlength_field_fails_in_preview_not_just_commit(client, seeded_
     commit_body = commit_resp.json()
     assert commit_body["failed"] == 1
     assert field in commit_body["rows"][0]["reason"]
+
+
+# ---------------------------------------------------------------------------
+# Decompressed XLSX archive bounds (review finding PR12-H2R). An .xlsx file
+# is a ZIP container -- these prove a small, highly-compressible upload
+# (well under MAX_UPLOAD_BYTES on the wire) is still rejected before
+# openpyxl is allowed to decompress its content.
+# ---------------------------------------------------------------------------
+
+
+def _build_raw_zip(entries: dict[str, bytes], *, compress: bool = True) -> bytes:
+    buf = io.BytesIO()
+    compression = zipfile.ZIP_DEFLATED if compress else zipfile.ZIP_STORED
+    with zipfile.ZipFile(buf, "w", compression=compression) as archive:
+        for name, content in entries.items():
+            archive.writestr(name, content)
+    return buf.getvalue()
+
+
+async def _upload_raw_bytes(client, headers, content: bytes, filename: str = "inventory.xlsx"):
+    return await client.post(
+        "/api/v1/import/preview",
+        headers=headers,
+        files={"file": (filename, content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        data={"update_existing": "false"},
+    )
+
+
+async def test_zip_entry_exceeding_uncompressed_size_limit_rejected(client, seeded_users):
+    from app.services import import_service
+
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    # Highly compressible content: tiny on the wire, far larger once
+    # expanded than any legitimate inventory-import spreadsheet member.
+    oversized_member = b"0" * (import_service.MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES + 1)
+    content = _build_raw_zip({"xl/sharedStrings.xml": oversized_member})
+    assert len(content) < import_service.MAX_UPLOAD_BYTES
+
+    resp = await _upload_raw_bytes(client, headers, content)
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "INVALID_INPUT"
+
+
+async def test_zip_total_uncompressed_size_exceeding_aggregate_limit_rejected(client, seeded_users):
+    from app.services import import_service
+
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    # Each entry stays under the per-entry cap, but three of them together
+    # exceed the aggregate cap.
+    per_entry = 21 * 1024 * 1024
+    assert per_entry < import_service.MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES
+    assert per_entry * 3 > import_service.MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES
+    entries = {
+        "xl/sharedStrings.xml": b"1" * per_entry,
+        "xl/styles.xml": b"2" * per_entry,
+        "xl/theme/theme1.xml": b"3" * per_entry,
+    }
+    content = _build_raw_zip(entries)
+    assert len(content) < import_service.MAX_UPLOAD_BYTES
+
+    resp = await _upload_raw_bytes(client, headers, content)
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "INVALID_INPUT"
+
+
+async def test_zip_suspicious_compression_ratio_rejected(client, seeded_users):
+    from app.services import import_service
+
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    # Under the per-entry absolute size cap, but a single repeated byte
+    # compresses at a ratio far beyond MAX_ZIP_COMPRESSION_RATIO.
+    member_size = min(20 * 1024 * 1024, import_service.MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES - 1)
+    content = _build_raw_zip({"xl/sharedStrings.xml": b"\x00" * member_size})
+    assert len(content) < import_service.MAX_UPLOAD_BYTES
+
+    resp = await _upload_raw_bytes(client, headers, content)
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "INVALID_INPUT"
+
+
+async def test_zip_entry_with_disallowed_path_rejected(client, seeded_users):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    content = _build_raw_zip({"unexpected/payload.bin": b"hello"})
+
+    resp = await _upload_raw_bytes(client, headers, content)
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "INVALID_INPUT"
+
+
+async def test_zip_path_traversal_entry_rejected(client, seeded_users):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    content = _build_raw_zip({"../../etc/passwd": b"hello"})
+
+    resp = await _upload_raw_bytes(client, headers, content)
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "INVALID_INPUT"
+
+
+async def test_zip_too_many_entries_rejected(client, seeded_users):
+    from app.services import import_service
+
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    entries = {f"xl/worksheets/sheet{i}.xml": b"x" for i in range(import_service.MAX_ZIP_ENTRIES + 1)}
+    content = _build_raw_zip(entries)
+
+    resp = await _upload_raw_bytes(client, headers, content)
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "INVALID_INPUT"
+
+
+async def test_too_many_worksheets_rejected(client, seeded_users):
+    from app.services import import_service
+
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    wb = Workbook()
+    ws = wb.active
+    ws.append(list(REQUIRED_HEADERS))
+    for i in range(import_service.MAX_WORKSHEET_COUNT + 1):
+        wb.create_sheet(f"Extra{i}")
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    resp = await _upload_raw_bytes(client, headers, buf.getvalue())
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "INVALID_INPUT"
+    assert "worksheets" in resp.json()["detail"]
+
+
+async def test_too_many_header_columns_rejected(client, seeded_users):
+    from app.services import import_service
+
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    wb = Workbook()
+    ws = wb.active
+    padded_headers = list(REQUIRED_HEADERS) + [f"Extra{i}" for i in range(import_service.MAX_HEADER_COLUMNS)]
+    ws.append(padded_headers)
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    resp = await _upload_raw_bytes(client, headers, buf.getvalue())
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "INVALID_INPUT"
+    assert "columns" in resp.json()["detail"]
+
+
+async def test_valid_small_workbook_still_accepted_after_zip_bounds_checks(client, seeded_users, db_session):
+    """Sanity check: the new archive-bounds validation must not reject a
+    normal, legitimate import file -- it must still reach full per-row
+    processing."""
+    await _seed_equipment(db_session, bcm_code="BCM961")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await _preview(client, headers, [_base_row(**{"ID CODE": "961"})], update_existing=True)
+    assert resp.status_code == 200
+    assert resp.json()["succeeded"] == 1

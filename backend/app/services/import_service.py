@@ -8,11 +8,19 @@ module must not violate.
 
 Design summary (do not restate elsewhere -- read the plan for rationale):
 
-  - BCM Code is the sole match key used to decide whether an import row is
-    a new equipment record or an update to an existing one. Item No,
-    Asset ID, and Serial Number are validated as uniqueness constraints
-    against *other* records, never used to look up "is this the same
-    equipment" (per the Repository Owner's explicit approved treatment).
+  - Roadmap PR12 review findings PR12-H1/H1R (ADR-002) + Repository Owner
+    decision: this workflow is UPDATE-ONLY. BCM Code is the sole match
+    key used to find the existing equipment record a row refers to; a row
+    whose BCM Code does not match an existing record fails validation
+    rather than creating one, because the import source file has no
+    Asset Number column and equipment.asset_number is NOT NULL/UNIQUE
+    real inventory metadata this workflow must never generate, derive,
+    or synthesize (ADR-002: "Not merged with, or inferred from, BCM Code
+    or Item No"). Create-from-import is deferred to a future Roadmap
+    item. Item No, Asset ID, and Serial Number are validated as
+    uniqueness constraints against *other* records, never used to look
+    up "is this the same equipment" (per the Repository Owner's explicit
+    approved treatment).
   - `process_import` is the single entry point for both preview
     (`commit=False`, read-only, zero database writes including audit
     writes) and commit (`commit=True`, revalidates from the raw uploaded
@@ -31,23 +39,24 @@ Design summary (do not restate elsewhere -- read the plan for rationale):
     field is length- and duplicate-checked during validation, not left to
     fail at the database), so they coexist freely with rows that do
     succeed.
-  - ADR-002 review finding PR12-H1: Asset Number is "retained as
-    inventory metadata only ... not merged with, or inferred from, BCM
-    Code or Item No." New equipment therefore never reuses the row's BCM
-    Code as its Asset Number (the import source file has no equivalent
-    "Asset Number" column) -- see `_generate_placeholder_asset_numbers`.
-  - Review finding PR12-H2: uploads are bounded (size, row count,
-    filename, extension) before any parsing, and the CPU-bound XLSX
-    parse runs off the event loop via `asyncio.to_thread`. Database
-    duplicate lookups are bulk `IN(...)` queries (a handful of queries
-    per batch), not one query per row.
+  - Review finding PR12-H2 / PR12-H2R: uploads are bounded (compressed
+    size, row count, filename, extension) before any parsing; the .xlsx
+    ZIP container's central directory is inspected (entry count, per-
+    entry and aggregate uncompressed size, compression ratio, permitted
+    entry paths) before a single byte of member content is decompressed,
+    so a small, highly-compressible archive cannot expand past these
+    bounds inside openpyxl. Worksheet count and header column count are
+    likewise capped. The CPU-bound XLSX parse runs off the event loop via
+    `asyncio.to_thread`. Database duplicate lookups are bulk `IN(...)`
+    queries (a handful of queries per batch), not one query per row.
 """
 
 import asyncio
 import io
 import logging
-import secrets
+import re
 import uuid
+import zipfile
 from dataclasses import dataclass
 from enum import Enum
 
@@ -76,6 +85,33 @@ MAX_IMPORT_ROWS = 5000
 MAX_FILENAME_LENGTH = 255
 ALLOWED_FILENAME_EXTENSIONS = (".xlsx",)
 _UPLOAD_READ_CHUNK_BYTES = 65536
+
+# ---------------------------------------------------------------------------
+# Decompressed-archive bounds (review finding PR12-H2R). An .xlsx file is a
+# ZIP container -- the compressed MAX_UPLOAD_BYTES cap above bounds what is
+# read off the wire, but says nothing about how large the *decompressed*
+# content is. A small, highly-compressible upload (a classic zip-bomb
+# pattern: repetitive XML/shared-string content) can still stay under
+# MAX_UPLOAD_BYTES while expanding to a size that exhausts memory/CPU once
+# `openpyxl.load_workbook` decompresses it. These bounds are enforced by
+# reading the ZIP central directory only (`ZipFile.infolist()` never
+# decompresses member data) before openpyxl -- or any other library -- is
+# allowed to touch the archive's actual content.
+# ---------------------------------------------------------------------------
+MAX_ZIP_ENTRIES = 100
+MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES = 25 * 1024 * 1024  # 25 MiB per member
+MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES = 60 * 1024 * 1024  # 60 MiB aggregate
+MAX_ZIP_COMPRESSION_RATIO = 200  # uncompressed:compressed; classic zip bombs are far higher
+MAX_WORKSHEET_COUNT = 25
+MAX_HEADER_COLUMNS = 200
+
+# Only entries under these top-level OOXML package paths are permitted --
+# an .xlsx member outside this list (path traversal, an embedded macro/
+# object type this application never reads, an unrelated payload smuggled
+# into the archive) is rejected outright rather than silently ignored.
+_ALLOWED_ZIP_ENTRY_PATTERN = re.compile(
+    r"^(\[Content_Types\]\.xml|_rels/|docProps/|xl/|customXml/)"
+)
 
 # ---------------------------------------------------------------------------
 # Part F.1 step 2: the confirmed source spreadsheet headers. Matched
@@ -127,22 +163,30 @@ FIELD_MAX_LENGTHS: dict[str, int] = {
     "Asset Status": 100,  # raw_source_status
 }
 
-# Review finding PR12-H1 (ADR-002): a placeholder Asset Number for newly
-# imported equipment, since the import source file has no "Asset Number"
-# column. Deliberately random and visually distinct from any BCM Code or
-# Item No value -- never derived from, equal to, or containing either --
-# so it cannot be mistaken for or substitute one identifier for another
-# (ADR-002: "No identifier substitutes for another" / "Not merged with,
-# or inferred from, BCM Code or Item No"). Documented as a temporary
-# compatibility policy for the current schema (Asset Number remains
-# NOT NULL with no source column to populate it from), not a new business
-# rule -- a future ADR may revisit the asset-identity model.
-_PLACEHOLDER_ASSET_NUMBER_PREFIX = "IMPORT-"
-_PLACEHOLDER_ASSET_NUMBER_TOKEN_LENGTH = 12
-
-
-def _generate_placeholder_asset_number() -> str:
-    return _PLACEHOLDER_ASSET_NUMBER_PREFIX + secrets.token_hex(_PLACEHOLDER_ASSET_NUMBER_TOKEN_LENGTH // 2).upper()
+# Review findings PR12-H1 / PR12-H1R (ADR-002) + Repository Owner decision:
+# equipment.asset_number is NOT NULL + UNIQUE and used throughout the
+# application (dashboards, reports, PM/Calibration notifications, API
+# responses) as a real, hospital-assigned business identifier. The import
+# source file has no "Asset Number" column, and both an attempted
+# BCM-derived value and a random placeholder token were independently
+# rejected as fabricating that identifier, contrary to ADR-002 ("Not
+# merged with, or inferred from, BCM Code or Item No" / Asset Number is
+# assigned inventory metadata, not application-generated).
+#
+# Resolution (Repository Owner decision): Roadmap PR12 is update-only.
+# Import never creates new equipment and never generates, derives, or
+# synthesizes an Asset Number. A row whose BCM Code does not match an
+# existing equipment record fails validation, instructing the operator to
+# create that equipment through the standard Equipment Master workflow
+# first, then re-import to update it. Create-from-import is deferred to a
+# future Roadmap item that must first define the real hospital Asset
+# Number assignment workflow.
+NO_MATCHING_EQUIPMENT_REASON = (
+    "No existing equipment matches this BCM Code. Roadmap PR12 Inventory "
+    "Import is update-only and does not create new equipment records or "
+    "assign Asset Numbers. Create this equipment through the standard "
+    "Equipment Master workflow first, then re-import this file to update it."
+)
 
 
 class ImportRowStatus(str, Enum):
@@ -152,7 +196,6 @@ class ImportRowStatus(str, Enum):
 
 
 class ImportRowAction(str, Enum):
-    CREATE = "create"
     UPDATE = "update"
 
 
@@ -183,7 +226,6 @@ class ImportBatchResult:
 class _RowPlan:
     result: ImportRowResult
     equipment_id: uuid.UUID | None = None
-    create_data: dict | None = None
     update_data: dict | None = None
     import_source_metadata: dict | None = None
 
@@ -253,13 +295,67 @@ async def _read_upload_bounded(file: UploadFile, *, max_bytes: int) -> bytes:
 # ---------------------------------------------------------------------------
 
 
+def _validate_zip_archive_bounds(content: bytes) -> None:
+    """Review finding PR12-H2R: inspect the .xlsx ZIP container's central
+    directory -- which `ZipFile.infolist()` reads without decompressing
+    any member -- and reject an unsafe archive before openpyxl (or
+    anything else) is allowed to expand a single byte of member content.
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            infos = archive.infolist()
+    except zipfile.BadZipFile as exc:
+        raise InvalidInputError(
+            "The uploaded file could not be read as a valid Excel (.xlsx) spreadsheet."
+        ) from exc
+
+    if len(infos) > MAX_ZIP_ENTRIES:
+        raise InvalidInputError(
+            f"The uploaded file's internal structure contains more than {MAX_ZIP_ENTRIES} "
+            "parts, exceeding what a normal Excel (.xlsx) file contains."
+        )
+
+    total_uncompressed = 0
+    for info in infos:
+        name = info.filename.replace("\\", "/")
+        if ".." in name.split("/") or name.startswith("/") or not _ALLOWED_ZIP_ENTRY_PATTERN.match(name):
+            raise InvalidInputError(
+                "The uploaded file contains an unexpected internal component and could not "
+                "be accepted as a valid Excel (.xlsx) spreadsheet."
+            )
+        if info.file_size > MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES:
+            raise InvalidInputError(
+                "The uploaded file's internal content is too large to process safely."
+            )
+        if info.compress_size == 0:
+            ratio = float(info.file_size) if info.file_size else 0.0
+        else:
+            ratio = info.file_size / info.compress_size
+        if ratio > MAX_ZIP_COMPRESSION_RATIO:
+            raise InvalidInputError(
+                "The uploaded file's internal content is compressed in a way that could not "
+                "be accepted as a valid Excel (.xlsx) spreadsheet."
+            )
+        total_uncompressed += info.file_size
+        if total_uncompressed > MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES:
+            raise InvalidInputError(
+                "The uploaded file's internal content is too large to process safely."
+            )
+
+
 def _load_worksheet(content: bytes) -> Worksheet:
+    _validate_zip_archive_bounds(content)
     try:
         workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     except Exception as exc:
         raise InvalidInputError(
             "The uploaded file could not be read as a valid Excel (.xlsx) spreadsheet."
         ) from exc
+    if len(workbook.sheetnames) > MAX_WORKSHEET_COUNT:
+        raise InvalidInputError(
+            f"The uploaded file contains more than {MAX_WORKSHEET_COUNT} worksheets, "
+            "exceeding what a normal inventory import file contains."
+        )
     worksheet = workbook.active
     if worksheet is None:
         raise InvalidInputError("The uploaded spreadsheet has no worksheets.")
@@ -273,6 +369,11 @@ def _validate_headers(worksheet: Worksheet) -> dict[str, int]:
     header_row = next(worksheet.iter_rows(min_row=1, max_row=1, values_only=True), None)
     if header_row is None:
         raise InvalidInputError("The uploaded spreadsheet is empty; no header row was found.")
+    if len(header_row) > MAX_HEADER_COLUMNS:
+        raise InvalidInputError(
+            f"The uploaded file's header row contains more than {MAX_HEADER_COLUMNS} columns, "
+            "exceeding what a normal inventory import file contains."
+        )
 
     found: dict[str, int] = {}
     for idx, raw in enumerate(header_row):
@@ -479,7 +580,15 @@ async def _validate_rows(
 
     # Pass 4: per-row resolution, purely in-memory against the bulk-fetched
     # lookup tables above -- no further database round trips in this loop.
-    create_row_numbers: list[int] = []
+    #
+    # Repository Owner decision (resolving review findings PR12-H1/H1R):
+    # Roadmap PR12 is update-only. A row whose BCM Code does not match an
+    # existing equipment record fails validation rather than creating a
+    # new record -- the import source file has no Asset Number column,
+    # and equipment.asset_number is NOT NULL/UNIQUE real inventory
+    # metadata that this workflow must never generate, derive, or
+    # synthesize (ADR-002). Create-from-import is deferred to a future
+    # Roadmap item.
     for row in surviving_rows:
         bcm_code = normalized_bcm[row.row_number]
         item_no = normalized_item_no.get(row.row_number)
@@ -487,7 +596,11 @@ async def _validate_rows(
         serial_number = normalized_serial.get(row.row_number) or None
 
         existing = existing_by_bcm.get(bcm_code)
-        if existing is not None and not update_existing:
+        if existing is None:
+            fail(row.row_number, bcm_code, item_no, asset_id, NO_MATCHING_EQUIPMENT_REASON)
+            continue
+
+        if not update_existing:
             fail_skip = ImportRowResult(
                 row_number=row.row_number,
                 bcm_code=bcm_code,
@@ -499,11 +612,12 @@ async def _validate_rows(
             plans[row.row_number] = _RowPlan(result=fail_skip)
             continue
 
-        # Asset Status: validated for every remaining row, whether create
-        # or update (Part F.1 step 3's per-row rule is unconditional) --
-        # even though an update row never writes `status`, raw_source_
-        # status is only ever persisted for rows whose source value could
-        # be classified at all.
+        # Asset Status: validated for every row about to be updated (Part
+        # F.1 step 3's per-row rule) -- even though update never writes
+        # `status`, an unrecognized source value still fails the row as a
+        # data-quality signal, and raw_source_status is only ever
+        # persisted for rows whose source value could be classified at
+        # all.
         mapped_status = ASSET_STATUS_MAPPING.get(row.asset_status_raw.strip().lower())
         if mapped_status is None:
             fail(row.row_number, bcm_code, item_no, asset_id, f"Unrecognized Asset Status value: '{row.asset_status_raw}'.")
@@ -516,145 +630,48 @@ async def _validate_rows(
             "purchase_year": row.purchase_year_raw or None,
         }
 
-        if existing is None:
-            # CREATE path.
-            if not row.equipment_name_raw:
-                fail(row.row_number, bcm_code, item_no, asset_id, "Equipment Name is required.")
-                continue
+        # UPDATE path (Part F.3): only the approved master-data field set
+        # -- never status/legacy_status/asset_number/item_no/
+        # serial_number/equipment_name/bcm_code. Review finding PR12-H3:
+        # Item No and Serial Number are still validated (against a
+        # *different* equipment record) even though this path never
+        # writes them, so a source row whose identifiers point at a
+        # different physical device is never reported as a clean update.
+        conflict_reason = _find_update_conflict(
+            existing_id=existing.id,
+            item_no=item_no,
+            serial_number=serial_number,
+            asset_id=asset_id,
+            existing_by_item_no=existing_by_item_no,
+            existing_by_serial=existing_by_serial,
+            existing_by_asset_id=existing_by_asset_id,
+        )
+        if conflict_reason is not None:
+            fail(row.row_number, bcm_code, item_no, asset_id, conflict_reason)
+            continue
 
-            conflict_reason = _find_create_conflict(
+        update_data = {
+            "asset_id": asset_id,
+            "brand": row.brand_raw or None,
+            "model": row.model_raw or None,
+            "raw_source_status": row.asset_status_raw or None,
+        }
+        plans[row.row_number] = _RowPlan(
+            result=ImportRowResult(
+                row_number=row.row_number,
+                bcm_code=bcm_code,
                 item_no=item_no,
-                serial_number=serial_number,
                 asset_id=asset_id,
-                existing_by_item_no=existing_by_item_no,
-                existing_by_serial=existing_by_serial,
-                existing_by_asset_id=existing_by_asset_id,
-            )
-            if conflict_reason is not None:
-                fail(row.row_number, bcm_code, item_no, asset_id, conflict_reason)
-                continue
-
-            create_data = {
-                "bcm_code": bcm_code,
-                "item_no": item_no,
-                "asset_id": asset_id,
-                "serial_number": serial_number,
-                "equipment_name": row.equipment_name_raw,
-                "brand": row.brand_raw or None,
-                "model": row.model_raw or None,
-                "raw_source_status": row.asset_status_raw or None,
-                "status": mapped_status,
-                "equipment_metadata": {"import_source": import_source_metadata},
-            }
-            plans[row.row_number] = _RowPlan(
-                result=ImportRowResult(
-                    row_number=row.row_number,
-                    bcm_code=bcm_code,
-                    item_no=item_no,
-                    asset_id=asset_id,
-                    status=ImportRowStatus.SUCCESS,
-                    action=ImportRowAction.CREATE,
-                ),
-                create_data=create_data,
-            )
-            create_row_numbers.append(row.row_number)
-        else:
-            # UPDATE path (Part F.3): only the approved master-data field
-            # set -- never status/legacy_status/asset_number/item_no/
-            # serial_number/equipment_name/bcm_code. Review finding
-            # PR12-H3: Item No and Serial Number are still validated
-            # (against a *different* equipment record) even though this
-            # path never writes them, so a source row whose identifiers
-            # point at a different physical device is never reported as a
-            # clean update.
-            conflict_reason = _find_update_conflict(
-                existing_id=existing.id,
-                item_no=item_no,
-                serial_number=serial_number,
-                asset_id=asset_id,
-                existing_by_item_no=existing_by_item_no,
-                existing_by_serial=existing_by_serial,
-                existing_by_asset_id=existing_by_asset_id,
-            )
-            if conflict_reason is not None:
-                fail(row.row_number, bcm_code, item_no, asset_id, conflict_reason)
-                continue
-
-            update_data = {
-                "asset_id": asset_id,
-                "brand": row.brand_raw or None,
-                "model": row.model_raw or None,
-                "raw_source_status": row.asset_status_raw or None,
-            }
-            plans[row.row_number] = _RowPlan(
-                result=ImportRowResult(
-                    row_number=row.row_number,
-                    bcm_code=bcm_code,
-                    item_no=item_no,
-                    asset_id=asset_id,
-                    status=ImportRowStatus.SUCCESS,
-                    action=ImportRowAction.UPDATE,
-                ),
-                equipment_id=existing.id,
-                update_data=update_data,
-                import_source_metadata=import_source_metadata,
-            )
-
-    # Pass 5 (review finding PR12-H1): assign a placeholder Asset Number to
-    # every CREATE-path row, then defensively bulk-check none of the
-    # generated tokens already exist (astronomically unlikely -- 48 bits
-    # of randomness -- but checked rather than assumed).
-    if create_row_numbers:
-        assigned: dict[int, str] = {}
-        used_tokens: set[str] = set()
-        for row_number in create_row_numbers:
-            token = _generate_placeholder_asset_number()
-            while token in used_tokens:
-                token = _generate_placeholder_asset_number()
-            used_tokens.add(token)
-            assigned[row_number] = token
-
-        colliding = await equipment_crud.get_by_asset_numbers(db, list(used_tokens))
-        for row_number in create_row_numbers:
-            token = assigned[row_number]
-            if token in colliding:
-                plan = plans[row_number]
-                plan.create_data = None
-                plan.result = ImportRowResult(
-                    row_number=plan.result.row_number,
-                    bcm_code=plan.result.bcm_code,
-                    item_no=plan.result.item_no,
-                    asset_id=plan.result.asset_id,
-                    status=ImportRowStatus.FAILED,
-                    reason="Could not generate a unique Asset Number for this row; please retry the import.",
-                )
-                continue
-            plans[row_number].create_data["asset_number"] = token
+                status=ImportRowStatus.SUCCESS,
+                action=ImportRowAction.UPDATE,
+            ),
+            equipment_id=existing.id,
+            update_data=update_data,
+            import_source_metadata=import_source_metadata,
+        )
 
     # Preserve original row order.
     return [plans[row.row_number] for row in parsed_rows]
-
-
-def _find_create_conflict(
-    *,
-    item_no: str | None,
-    serial_number: str | None,
-    asset_id: str | None,
-    existing_by_item_no: dict,
-    existing_by_serial: dict,
-    existing_by_asset_id: dict,
-) -> str | None:
-    """Roadmap PR12: database duplicate checks for a row about to become a
-    new equipment record, so an expected conflict is reported as a
-    per-row validation failure rather than surfacing as an IntegrityError
-    during the commit write phase."""
-    if item_no is not None and item_no in existing_by_item_no:
-        return "Item No already belongs to a different equipment record."
-    if serial_number is not None and serial_number in existing_by_serial:
-        return "Serial Number already belongs to a different equipment record."
-    if asset_id is not None and asset_id in existing_by_asset_id:
-        return "Asset ID already belongs to a different equipment record."
-    return None
 
 
 def _find_update_conflict(
@@ -726,21 +743,20 @@ async def _commit_rows(
         for plan in plans:
             if plan.result.status != ImportRowStatus.SUCCESS:
                 continue
-            if plan.result.action == ImportRowAction.CREATE:
-                equipment = await equipment_crud.create(db, data=plan.create_data)
-                plan.result.equipment_id = str(equipment.id)
-            else:
-                existing = await equipment_crud.get_by_id(db, plan.equipment_id)
-                if existing is None:
-                    raise ImportCommitFailedError(
-                        f"Equipment {plan.equipment_id} no longer exists mid-commit."
-                    )
-                merged_metadata = dict(existing.equipment_metadata or {})
-                merged_metadata["import_source"] = plan.import_source_metadata
-                update_payload = dict(plan.update_data)
-                update_payload["equipment_metadata"] = merged_metadata
-                await equipment_crud.update(db, existing, data=update_payload)
-                plan.result.equipment_id = str(existing.id)
+            # Roadmap PR12 is update-only (see _validate_rows): every
+            # SUCCESS row's action is ImportRowAction.UPDATE by
+            # construction -- there is no create path to branch on here.
+            existing = await equipment_crud.get_by_id(db, plan.equipment_id)
+            if existing is None:
+                raise ImportCommitFailedError(
+                    f"Equipment {plan.equipment_id} no longer exists mid-commit."
+                )
+            merged_metadata = dict(existing.equipment_metadata or {})
+            merged_metadata["import_source"] = plan.import_source_metadata
+            update_payload = dict(plan.update_data)
+            update_payload["equipment_metadata"] = merged_metadata
+            await equipment_crud.update(db, existing, data=update_payload)
+            plan.result.equipment_id = str(existing.id)
 
         summary = _summarize(filename, plans)
         audit_log = await record_audit_event(
