@@ -6744,3 +6744,411 @@ async def test_migration_0010_historical_0009_upgrade_downgrade_re_upgrade_round
             await engine.dispose()
     finally:
         await _drop_scratch_database()
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR14B (Pagination Performance): migration 0011 adds two composite
+# ordering indexes -- ix_equipment_created_at_id, ix_borrow_transactions_
+# created_at_id -- matching app.crud.equipment.search()'s and app.crud.
+# transaction.search()'s real `ORDER BY created_at DESC, id DESC` cursor-
+# pagination clause. Index-only: no column, constraint, or data change. See
+# docs/audits/06-pr14b-pagination-index-evidence.md for the full
+# EXPLAIN (ANALYZE, BUFFERS) evidence this migration is based on.
+# ---------------------------------------------------------------------------
+
+EQUIPMENT_INDEX_NAME = "ix_equipment_created_at_id"
+TRANSACTIONS_INDEX_NAME = "ix_borrow_transactions_created_at_id"
+
+
+async def _pagination_indexdefs() -> dict[str, str]:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text("SELECT indexname, indexdef FROM pg_indexes WHERE indexname IN (:eq, :tx)"),
+                {"eq": EQUIPMENT_INDEX_NAME, "tx": TRANSACTIONS_INDEX_NAME},
+            )
+            return {row.indexname: row.indexdef for row in result.all()}
+    finally:
+        await engine.dispose()
+
+
+async def test_migration_0011_fresh_database_upgrade_to_head_converges_on_expected_schema():
+    """Fresh-schema convergence only -- 0001 never creates these indexes
+    (they are deliberately absent from the ORM models, see 0011's own
+    docstring on why), so this also proves 0011 is not silently skipped
+    on a brand-new deployment."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        indexdefs = await _pagination_indexdefs()
+        assert set(indexdefs) == {"ix_equipment_created_at_id", "ix_borrow_transactions_created_at_id"}
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0011_historical_0010_upgrade_downgrade_re_upgrade_round_trip():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        # 0001 never creates these indexes regardless of ORM state (see
+        # 0011's docstring), so 0010 is already a genuine "index absent"
+        # baseline -- no raw-DDL stripping needed here, unlike 0010's own
+        # historical test against 0009's ORM-drifted columns.
+        _run_alembic("upgrade", "0010_inventory_import_columns")
+        indexdefs = await _pagination_indexdefs()
+        assert indexdefs == {}
+
+        _run_alembic("upgrade", "head")
+        indexdefs = await _pagination_indexdefs()
+        assert set(indexdefs) == {"ix_equipment_created_at_id", "ix_borrow_transactions_created_at_id"}
+
+        _run_alembic("downgrade", "0010_inventory_import_columns")
+        indexdefs = await _pagination_indexdefs()
+        assert indexdefs == {}
+
+        _run_alembic("upgrade", "head")
+        indexdefs = await _pagination_indexdefs()
+        assert set(indexdefs) == {"ix_equipment_created_at_id", "ix_borrow_transactions_created_at_id"}
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0011_indexes_are_descending_matching_the_orm_query_order():
+    """app.crud.equipment.search() and app.crud.transaction.search() both
+    `.order_by(Model.created_at.desc(), Model.id.desc())` -- an ascending
+    index on the same columns would not let PostgreSQL satisfy that
+    ORDER BY without a Sort node, defeating the point of this migration."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        indexdefs = await _pagination_indexdefs()
+        assert "DESC" in indexdefs["ix_equipment_created_at_id"]
+        assert "created_at" in indexdefs["ix_equipment_created_at_id"]
+        assert "DESC" in indexdefs["ix_borrow_transactions_created_at_id"]
+        assert "created_at" in indexdefs["ix_borrow_transactions_created_at_id"]
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0011_planner_uses_the_new_index_for_first_page_equipment_query():
+    """Review condition: 'the index is considered justified only if
+    PostgreSQL actually chooses it' -- verified structurally via EXPLAIN,
+    not assumed. Seeds enough rows that an unindexed first-page query
+    would need a real sequential scan + sort, then asserts the planner's
+    *actual* chosen plan (not just that the index exists) uses an Index
+    Scan and contains no Sort node, for exactly the query app.crud.
+    equipment.search() issues with no filters and no cursor."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata) "
+                        "SELECT gen_random_uuid(), 'PLAN-' || g, 'Plan Test Device', 'available_at_pool', '{}' "
+                        "FROM generate_series(1, 3000) AS g"
+                    )
+                )
+            async with engine.connect() as conn:
+                await conn.execute(text("ANALYZE equipment"))
+                plan_rows = (
+                    await conn.execute(
+                        text(
+                            "EXPLAIN SELECT * FROM equipment WHERE deleted_at IS NULL "
+                            "ORDER BY created_at DESC, id DESC LIMIT 26"
+                        )
+                    )
+                ).all()
+                plan_text = "\n".join(row[0] for row in plan_rows)
+                assert "Index Scan" in plan_text, f"expected an Index Scan, got:\n{plan_text}"
+                assert "Sort" not in plan_text, f"an Index Scan should make a separate Sort node unnecessary:\n{plan_text}"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0011_cursor_pagination_returns_identical_complete_result_set():
+    """Correctness, not just performance: paginating through every row
+    with app.crud.equipment.search() (index present) must visit every
+    seeded row exactly once, in the same order a single unpaginated query
+    would return them -- proving the index changed the query plan, not
+    the result."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        from app.crud import equipment as equipment_crud
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            session_maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+            async with session_maker() as session:
+                for i in range(120):
+                    session.add(
+                        Equipment(asset_number=f"PAGE-{i:04d}", equipment_name=f"Pagination Device {i}")
+                    )
+                await session.commit()
+
+            async with session_maker() as session:
+                seen_ids: list[str] = []
+                cursor = None
+                for _ in range(20):  # 120 rows / limit 10 -> 12 pages; generous upper bound
+                    rows, cursor, total = await equipment_crud.search(session, limit=10, cursor=cursor)
+                    seen_ids.extend(str(r.id) for r in rows)
+                    if cursor is None:
+                        break
+
+                assert total == 120
+                assert len(seen_ids) == 120, "every row must be visited exactly once across all pages"
+                assert len(set(seen_ids)) == 120, "no row may be returned on more than one page"
+
+                unpaginated, _, _ = await equipment_crud.search(session, limit=120)
+                assert [str(r.id) for r in unpaginated] == seen_ids, (
+                    "paginated traversal order must match a single unpaginated page's order"
+                )
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0011_count_star_behavior_is_unchanged():
+    """Explicit non-regression check for the Repository Owner's standing
+    instruction that PR14B must not touch COUNT(*) behavior: `total` from
+    app.crud.equipment.search() must still be a genuine, unindexed
+    COUNT(*) over deleted_at IS NULL, not an index-derived estimate."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        from app.crud import equipment as equipment_crud
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            session_maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+            async with session_maker() as session:
+                for i in range(15):
+                    session.add(Equipment(asset_number=f"CNT-{i:04d}", equipment_name=f"Count Device {i}"))
+                deleted = Equipment(asset_number="CNT-DELETED", equipment_name="Soft Deleted")
+                session.add(deleted)
+                await session.flush()
+                deleted.deleted_at = datetime.utcnow()
+                await session.commit()
+
+            async with session_maker() as session:
+                _, _, total = await equipment_crud.search(session, limit=5)
+                assert total == 15, "soft-deleted rows must still be excluded from the count, exactly as before"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def _mark_index_invalid(engine, index_name: str) -> None:
+    """Simulates the exact state PostgreSQL leaves behind when a `CREATE
+    INDEX CONCURRENTLY` build is interrupted (process killed, connection
+    lost, deadlock, genuine build failure): a relation with the target
+    name exists, but `pg_index.indisvalid` is false. Manipulating
+    `pg_index` directly (rather than actually interrupting a build, which
+    is not deterministically reproducible in a test) is the standard way
+    to reproduce this state for testing -- the migration code under test
+    only ever reads this catalog state, never distinguishes how it arose."""
+    async with engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE pg_index SET indisvalid = false WHERE indexrelid = to_regclass(:name)"),
+            {"name": index_name},
+        )
+
+
+async def test_migration_0011_interrupted_concurrent_build_fails_closed_not_silent_skip():
+    """Merge-blocking review finding: a bare `CREATE INDEX CONCURRENTLY
+    IF NOT EXISTS` retry cannot tell an INVALID index (left behind by an
+    interrupted build) apart from a genuinely completed one -- both
+    satisfy `IF NOT EXISTS`, so a naive retry would silently skip forever
+    and Alembic would record the migration as successful while the
+    intended index is still unusable. This proves the actual failure
+    mode end to end: a real `CREATE INDEX CONCURRENTLY` build, manually
+    invalidated to reproduce an interrupted-build state, then a real
+    `alembic upgrade` rerun through the CLI (not just calling the
+    migration function directly) -- and that the rerun fails loudly
+    rather than reporting success, does not partially apply, and that
+    the documented recovery step (drop, then re-run) actually works."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0010_inventory_import_columns")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                await conn.execution_options(isolation_level="AUTOCOMMIT")
+                await conn.execute(
+                    text(f"CREATE INDEX CONCURRENTLY {EQUIPMENT_INDEX_NAME} ON equipment (created_at DESC, id DESC)")
+                )
+            await _mark_index_invalid(engine, EQUIPMENT_INDEX_NAME)
+
+            # Confirm the simulated pre-condition before exercising the
+            # migration against it -- this test must prove a genuinely
+            # INVALID index, not assume one.
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        text("SELECT indisvalid, indisready FROM pg_index WHERE indexrelid = to_regclass(:name)"),
+                        {"name": EQUIPMENT_INDEX_NAME},
+                    )
+                ).one()
+                assert row.indisvalid is False, "test setup must produce a genuinely INVALID index before proceeding"
+        finally:
+            await engine.dispose()
+
+        result = _run_alembic_allow_failure("upgrade", "head")
+        assert result.returncode != 0, (
+            "a rerun against an INVALID pre-existing index must fail, not silently report success:\n"
+            f"stdout={result.stdout}\nstderr={result.stderr}"
+        )
+        combined_output = result.stdout + result.stderr
+        assert "not usable" in combined_output or "indisvalid" in combined_output, (
+            f"failure must explain the detected invalid-index state, not fail for an unrelated reason:\n{combined_output}"
+        )
+
+        # Confirm the failure did not leave partial/misleading state: the
+        # transactions index (unaffected by the simulated failure) must
+        # still be genuinely absent -- the migration must not have
+        # partially applied past the equipment index's failure.
+        engine2 = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine2.connect() as conn:
+                exists = (
+                    await conn.execute(
+                        text("SELECT 1 FROM pg_indexes WHERE indexname = :name"),
+                        {"name": TRANSACTIONS_INDEX_NAME},
+                    )
+                ).scalar_one_or_none()
+                assert exists is None, "the migration must not partially apply past the first failure"
+
+            # Recovery path: drop the invalid index (the documented
+            # operator remediation) and confirm the migration then
+            # succeeds cleanly.
+            async with engine2.connect() as conn:
+                await conn.execution_options(isolation_level="AUTOCOMMIT")
+                await conn.execute(text(f"DROP INDEX CONCURRENTLY IF EXISTS {EQUIPMENT_INDEX_NAME}"))
+        finally:
+            await engine2.dispose()
+
+        _run_alembic("upgrade", "head")
+        indexdefs = await _pagination_indexdefs()
+        assert set(indexdefs) == {EQUIPMENT_INDEX_NAME, TRANSACTIONS_INDEX_NAME}
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0011_mismatched_definition_fails_closed():
+    """Second fail-closed path: an existing, *valid* index that happens
+    to share the expected name but not the expected definition (e.g. a
+    manually created index, or a name collision from unrelated tooling)
+    must not be silently treated as "this migration's work is already
+    done" either."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0010_inventory_import_columns")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                # Ascending, not the expected descending composite order --
+                # valid and ready, but not what this migration expects.
+                await conn.execute(text(f"CREATE INDEX {EQUIPMENT_INDEX_NAME} ON equipment (created_at ASC)"))
+        finally:
+            await engine.dispose()
+
+        result = _run_alembic_allow_failure("upgrade", "head")
+        assert result.returncode != 0, "a mismatched existing index must fail the migration, not be silently accepted"
+        combined_output = result.stdout + result.stderr
+        assert "does not match" in combined_output or "Expected" in combined_output, (
+            f"failure must explain the detected definition mismatch:\n{combined_output}"
+        )
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0011_planner_uses_the_new_index_for_first_page_transaction_query():
+    """Same 'presence alone is insufficient' requirement as the equipment
+    planner test above, verified independently for borrow_transactions --
+    the two tables have independent indexes and independent query shapes
+    (no `deleted_at` filter on transactions)."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata) "
+                        "VALUES (gen_random_uuid(), 'PLANTX-EQ-0001', 'Plan Test Device', 'available_at_pool', '{}')"
+                    )
+                )
+                await conn.execute(
+                    text(
+                        "INSERT INTO borrow_transactions "
+                        "(id, transaction_no, equipment_id, quantity, status, condition_on_return, borrowed_at) "
+                        "SELECT gen_random_uuid(), 'PLANTX-' || g, "
+                        "(SELECT id FROM equipment WHERE asset_number = 'PLANTX-EQ-0001'), "
+                        "1, 'closed', 'available', now() "
+                        "FROM generate_series(1, 3000) AS g"
+                    )
+                )
+            async with engine.connect() as conn:
+                await conn.execute(text("ANALYZE borrow_transactions"))
+                plan_rows = (
+                    await conn.execute(
+                        text("EXPLAIN SELECT * FROM borrow_transactions ORDER BY created_at DESC, id DESC LIMIT 26")
+                    )
+                ).all()
+                plan_text = "\n".join(row[0] for row in plan_rows)
+                assert "Index Scan" in plan_text, f"expected an Index Scan, got:\n{plan_text}"
+                assert "Sort" not in plan_text, f"an Index Scan should make a separate Sort node unnecessary:\n{plan_text}"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
