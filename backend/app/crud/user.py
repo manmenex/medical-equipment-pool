@@ -3,8 +3,18 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import InvalidInputError
 from app.core.security import hash_password
 from app.models.user import Role, User
+
+# Roadmap PR14A (Backend Audit 4.1): `data` only ever contains keys the
+# client explicitly supplied (see UserUpdate/update_user's
+# exclude_unset=True) -- a key mapped to None here means the client asked
+# to clear that field. Both are `nullable=False` in the database
+# (app.models.user.User) and must never be nulled by a PATCH. This only
+# rejects an explicit null; blank/whitespace-only string validation for
+# full_name is a separate concern left to a future focused PR.
+REQUIRED_NON_NULL_FIELDS = frozenset({"full_name", "is_active"})
 
 
 async def get_by_id(db: AsyncSession, user_id: uuid.UUID) -> User | None:
@@ -44,11 +54,19 @@ async def create(db: AsyncSession, *, data: dict, role_id: uuid.UUID) -> User:
 
 
 async def update(db: AsyncSession, user: User, *, data: dict, role_id: uuid.UUID | None = None) -> User:
-    if data.get("full_name") is not None:
+    # Pass 1: validate every incoming field before any mutation occurs.
+    for key in REQUIRED_NON_NULL_FIELDS:
+        if key in data and data[key] is None:
+            raise InvalidInputError(f"'{key}' is required and cannot be cleared.")
+
+    # Pass 2: mutate. `phone` is nullable, so an explicit None here is a
+    # legitimate clear request, not a bug -- unlike full_name/is_active
+    # above, which pass 1 already guarantees are never None at this point.
+    if "full_name" in data:
         user.full_name = data["full_name"]
-    if data.get("phone") is not None:
+    if "phone" in data:
         user.phone = data["phone"]
-    if data.get("is_active") is not None:
+    if "is_active" in data:
         user.is_active = data["is_active"]
     if data.get("password"):
         user.password_hash = hash_password(data["password"])

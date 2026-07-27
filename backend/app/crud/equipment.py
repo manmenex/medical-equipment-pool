@@ -5,7 +5,7 @@ from datetime import datetime
 from sqlalchemy import String, and_, case, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import InvalidStatusTransitionError
+from app.core.exceptions import InvalidInputError, InvalidStatusTransitionError
 from app.models.equipment import (
     DISPATCH_RECEIPT_TRANSITIONS,
     MANUAL_LIFECYCLE_TRANSITIONS,
@@ -212,10 +212,43 @@ async def create(db: AsyncSession, *, data: dict) -> Equipment:
     return equipment
 
 
+# Roadmap PR14A (Backend Audit 4.1): `data` only ever contains keys the
+# client explicitly supplied (see EquipmentUpdate/update_equipment's
+# exclude_unset=True) -- a key mapped to None here means the client asked
+# to clear that field, not that the client omitted it. equipment_name is
+# `nullable=False` in the database (app.models.equipment.Equipment) and
+# must never be nulled by a PATCH. This only rejects an explicit null;
+# blank/whitespace-only string validation is a separate concern left to a
+# future focused PR.
+REQUIRED_NON_NULL_FIELDS = frozenset({"equipment_name"})
+
+# Roadmap PR14A adjustment #2 (ADR-002): bcm_code/item_no are canonical
+# identity fields and have never been clearable via PATCH. Previously a
+# null here was silently dropped by the same `if value is not None` guard
+# this function used for every field, which could produce a misleading
+# audit record showing the submitted null while the persisted identifier
+# stayed unchanged. This makes that existing non-clearable contract
+# explicit -- a null here is now a rejected request, not a silent no-op.
+# Raising before any setattr call below means no audit event is ever
+# recorded for the rejected request. Does not alter ADR-002 itself.
+IMMUTABLE_IDENTITY_FIELDS = frozenset({"bcm_code", "item_no"})
+
+
 async def update(db: AsyncSession, equipment: Equipment, *, data: dict) -> Equipment:
+    # Pass 1: validate every incoming field before any mutation occurs.
+    for key in REQUIRED_NON_NULL_FIELDS:
+        if key in data and data[key] is None:
+            raise InvalidInputError(f"'{key}' is required and cannot be cleared.")
+    for key in IMMUTABLE_IDENTITY_FIELDS:
+        if key in data and data[key] is None:
+            raise InvalidInputError(f"'{key}' cannot be cleared once assigned.")
+
+    # Pass 2: mutate. Every remaining key/value pair -- including an
+    # explicit None on a nullable field (e.g. brand, pm_due_date) -- is
+    # now safe to apply: pass 1 already rejected every null this model
+    # cannot accept.
     for key, value in data.items():
-        if value is not None:
-            setattr(equipment, key, value)
+        setattr(equipment, key, value)
     await db.flush()
     return equipment
 
