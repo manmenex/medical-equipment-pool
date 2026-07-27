@@ -53,25 +53,47 @@ Deployment safety -- `CREATE INDEX CONCURRENTLY` (not plain `CREATE
 INDEX`): `equipment` and `borrow_transactions` are actively
 read/written during normal hospital-equipment-pool operation (dispatch,
 receipt, PM/CAL scheduling), and this migration is specifically motivated
-by tables that can grow large -- exactly the case where a plain `CREATE
-INDEX`'s ACCESS EXCLUSIVE lock (blocking all reads and writes on the
-table for the full build duration) is least acceptable. `CONCURRENTLY`
-avoids that at the cost of building the index in the background without
-blocking concurrent DML, and does not require a maintenance window.
+by tables that can grow large. A plain, non-concurrent `CREATE INDEX`
+takes a `SHARE` lock on the table for the full build duration: ordinary
+reads (`SELECT`) remain available throughout, but every write (`INSERT`/
+`UPDATE`/`DELETE`, and any DDL) blocks until the build finishes -- on a
+large table that can be minutes of blocked dispatch/receipt operations.
+(This corrects an earlier draft of this docstring, which incorrectly
+described the plain-`CREATE INDEX` lock as blocking reads too -- it does
+not; only writes are blocked.) `CONCURRENTLY` avoids blocking either
+reads or writes, at the cost of building the index in the background and
+scanning the table twice, and does not require a maintenance window.
+
 Trade-offs this deployment explicitly accepts: (1) `CREATE INDEX
 CONCURRENTLY` cannot run inside a transaction block, so this migration
-runs the two `CREATE INDEX CONCURRENTLY IF NOT EXISTS` statements inside
-`op.get_context().autocommit_block()` -- each statement commits on its
-own as soon as it completes, so this migration is not atomic with
-whatever ran immediately before or after it in the same `alembic upgrade`
-invocation (every other migration in this project *is* one atomic
-transaction; this is a deliberate, documented exception). (2) if a
-concurrent index build is interrupted (process killed, connection lost),
-PostgreSQL can leave behind an INVALID index that must be dropped and
-recreated -- this migration's `IF NOT EXISTS` guard does not detect or
-repair that state automatically; operators should check
-`pg_index.indisvalid` after a failed/interrupted run of this migration
-before assuming success.
+runs its work inside `op.get_context().autocommit_block()` -- each
+statement commits on its own as soon as it completes, so this migration
+is not atomic with whatever ran immediately before or after it in the
+same `alembic upgrade` invocation (every other migration in this project
+*is* one atomic transaction; this is a deliberate, documented exception).
+(2) if a concurrent index build is interrupted (process killed,
+connection lost, deadlock, or a genuine build failure such as a Postgres
+crash mid-build), PostgreSQL leaves behind an INVALID index under the
+target name.
+
+That second point is exactly the failure mode a bare `CREATE INDEX
+CONCURRENTLY IF NOT EXISTS` retry gets wrong: `IF NOT EXISTS` only checks
+whether a relation with that name exists, not whether it is a complete,
+usable index -- an interrupted run's INVALID index would satisfy
+`IF NOT EXISTS` on the next attempt and be silently skipped forever,
+letting Alembic record this migration as successful while the intended
+index is still unusable. `_ensure_index_concurrently()` below closes that
+gap: before deciding "already exists, nothing to do," it checks
+`pg_index.indisvalid`/`indisready` and the index's actual definition via
+`pg_indexes.indexdef`. Repository Owner's explicit direction: fail
+closed, not auto-repair -- an INVALID index's root cause (interrupted
+deployment, I/O problem, concurrent DDL) is something this migration
+cannot determine, and silently dropping/rebuilding it could interact
+badly with whatever caused the original interruption. On any unusable or
+mismatched existing index, this migration raises `RuntimeError` and
+refuses to continue, with an explicit operator remediation step in the
+message -- matching this project's existing abort-closed convention (see
+migration 0009's manifest/ambiguous-role validation).
 
 IF NOT EXISTS everywhere, dialect-gated postgresql/else (same pattern as
 0002_audit_request_ids.py and 0004_equipment_item_no_bcm_code.py, see
@@ -83,15 +105,15 @@ Declaring `index=True` on `created_at` would mean a fresh database's
 0001 already creates this index (since 0001 dynamically reflects current
 ORM state, see TD-002 / docs/TECH_DEBT.md), and this dedicated migration
 would then be racing 0001's own index for the same name on that path --
-IF NOT EXISTS makes that safe regardless, but leaving the ORM model
-untouched avoids the drift question entirely: 0001's behavior is
-identical before and after this migration exists, and this migration is
-the single, sole source of truth for whether these two indexes exist, on
-every path (fresh install, historical upgrade, downgrade, re-upgrade).
-This mirrors how the GIN trigram indexes (idx_equipment_bcm_trgm et al.,
-migration 0004) are also migration-only with no ORM declaration -- they
-are not expressible as a plain SQLAlchemy `index=True` either, for the
-same underlying reason.
+IF NOT EXISTS (plus the validity/definition check above) makes that safe
+regardless, but leaving the ORM model untouched avoids the drift question
+entirely: 0001's behavior is identical before and after this migration
+exists, and this migration is the single, sole source of truth for
+whether these two indexes exist, on every path (fresh install, historical
+upgrade, downgrade, re-upgrade). This mirrors how the GIN trigram indexes
+(idx_equipment_bcm_trgm et al., migration 0004) are also migration-only
+with no ORM declaration -- they are not expressible as a plain SQLAlchemy
+`index=True` either, for the same underlying reason.
 
 Purely additive: no existing table, column, constraint, or row is
 touched, dropped, or altered. `equipment.deleted_at IS NULL` (the
@@ -103,6 +125,7 @@ part of this change.
 """
 from typing import Sequence, Union
 
+import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0011_pagination_ordering_indexes"
@@ -113,27 +136,88 @@ depends_on: Union[str, Sequence[str], None] = None
 EQUIPMENT_INDEX = "ix_equipment_created_at_id"
 TRANSACTIONS_INDEX = "ix_borrow_transactions_created_at_id"
 
+_INDEX_SPECS = (
+    (EQUIPMENT_INDEX, "equipment", "created_at DESC, id DESC"),
+    (TRANSACTIONS_INDEX, "borrow_transactions", "created_at DESC, id DESC"),
+)
+
+
+def _expected_indexdef(index_name: str, table: str, columns_desc: str) -> str:
+    # The exact canonical string PostgreSQL itself renders for this index
+    # shape (confirmed against a live PostgreSQL 16 instance) -- used to
+    # detect a same-named-but-differently-defined index, not just a
+    # same-named-and-valid one.
+    return f"CREATE INDEX {index_name} ON public.{table} USING btree ({columns_desc})"
+
+
+def _ensure_index_concurrently(bind, *, index_name: str, table: str, columns_desc: str) -> None:
+    """Fail-closed equivalent of `CREATE INDEX CONCURRENTLY IF NOT EXISTS`.
+
+    A bare `IF NOT EXISTS` only checks whether a relation with this name
+    exists -- not whether it is a complete, valid, correctly-defined
+    index. This checks the PostgreSQL catalog directly (`pg_indexes`,
+    `pg_index`) and refuses to treat an INVALID, NOT READY, or
+    differently-defined existing index as "already done." See this
+    module's docstring for the interrupted-build scenario this guards
+    against, and why fail-closed (not auto-repair) was chosen.
+    """
+    expected_indexdef = _expected_indexdef(index_name, table, columns_desc)
+
+    existing_indexdef = bind.execute(
+        sa.text("SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = :name"),
+        {"name": index_name},
+    ).scalar_one_or_none()
+
+    if existing_indexdef is not None:
+        indisvalid, indisready = bind.execute(
+            sa.text("SELECT indisvalid, indisready FROM pg_index WHERE indexrelid = to_regclass(:name)"),
+            {"name": index_name},
+        ).one()
+
+        if not indisvalid or not indisready:
+            raise RuntimeError(
+                f"Migration 0011 aborted: index '{index_name}' already exists but is "
+                f"not usable (indisvalid={indisvalid}, indisready={indisready}). This "
+                "usually means a previous CREATE INDEX CONCURRENTLY was interrupted "
+                "(process killed, connection lost, deadlock, or a genuine build "
+                "failure). Refusing to silently continue and let this migration be "
+                "recorded as successful while the intended index is still unusable. "
+                f"Inspect the index, then run "
+                f"'DROP INDEX CONCURRENTLY IF EXISTS {index_name};' and re-run this "
+                "migration."
+            )
+
+        if existing_indexdef != expected_indexdef:
+            raise RuntimeError(
+                f"Migration 0011 aborted: index '{index_name}' already exists and is "
+                "valid, but its definition does not match what this migration "
+                f"expects.\n  Found:    {existing_indexdef}\n"
+                f"  Expected: {expected_indexdef}\n"
+                "This may be a different, unrelated index that happens to share this "
+                "name. Refusing to silently continue -- inspect and resolve manually "
+                "before re-running this migration."
+            )
+
+        # Valid, ready, and correctly defined: already done, nothing to do.
+        return
+
+    bind.execute(sa.text(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {index_name} ON {table} ({columns_desc})"))
+
 
 def upgrade() -> None:
     bind = op.get_bind()
 
     if bind.dialect.name == "postgresql":
         with op.get_context().autocommit_block():
-            op.execute(
-                f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {EQUIPMENT_INDEX} "
-                "ON equipment (created_at DESC, id DESC)"
-            )
-            op.execute(
-                f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {TRANSACTIONS_INDEX} "
-                "ON borrow_transactions (created_at DESC, id DESC)"
-            )
+            for index_name, table, columns_desc in _INDEX_SPECS:
+                _ensure_index_concurrently(bind, index_name=index_name, table=table, columns_desc=columns_desc)
     else:
         # Migrations only ever run against PostgreSQL in this project (the
         # SQLite test/dev path never runs Alembic at all -- see 0002/0004's
-        # identical branch). CONCURRENTLY is PostgreSQL-specific, so the
-        # fallback here is a plain index -- never exercised in practice,
-        # kept only so this migration does not hard-fail on an unsupported
-        # dialect.
+        # identical branch). CONCURRENTLY and the catalog-based validity
+        # check are both PostgreSQL-specific, so the fallback here is a
+        # plain index -- never exercised in practice, kept only so this
+        # migration does not hard-fail on an unsupported dialect.
         op.create_index(EQUIPMENT_INDEX, "equipment", ["created_at", "id"])
         op.create_index(TRANSACTIONS_INDEX, "borrow_transactions", ["created_at", "id"])
 
@@ -144,7 +228,14 @@ def downgrade() -> None:
     Queries remain fully correct without these indexes (that was true
     before this migration existed); they simply revert to the slower
     sequential-scan-and-sort plan this migration's evidence document
-    measured."""
+    measured.
+
+    No fail-closed validity check on this direction: dropping an index
+    (valid, invalid, or not ready) is safe regardless -- PostgreSQL
+    supports `DROP INDEX CONCURRENTLY` on an INVALID index specifically
+    as the documented recovery path for an interrupted build, and there
+    is no data-loss or silent-corruption risk symmetrical to upgrade's
+    "recorded successful but actually unusable" failure mode."""
     bind = op.get_bind()
 
     if bind.dialect.name == "postgresql":
