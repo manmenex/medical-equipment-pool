@@ -18,7 +18,8 @@ import pytest
 
 from app import main as main_module
 from app.core.log_context import correlation_id_var, job_run_id_var, request_id_var
-from app.core.logging import JsonFormatter, configure_logging
+from app.core.logging import JsonFormatter, configure_logging, safe_log
+from app.core.logging import _FALLBACK_LOGGER_NAME as OBSERVABILITY_FALLBACK_LOGGER_NAME
 from app.worker.scheduler import check_pm_cal_due
 from tests.conftest import auth_headers
 
@@ -243,6 +244,33 @@ async def test_logging_failure_never_affects_request_outcome(client, seeded_user
 
     # The ContextVar reset must still happen even when the access-log
     # emission itself raised.
+    assert request_id_var.get() is None
+    assert correlation_id_var.get() is None
+
+
+async def test_access_log_failure_and_its_own_fallback_failure_do_not_affect_response(
+    client, seeded_users, monkeypatch
+):
+    """PR #50 merge-review round 2 (H2): safe_log()'s fallback report call
+    can itself raise (e.g. the same broken logging subsystem that broke the
+    primary call) -- that must *also* never propagate, since this runs
+    inside app.main's request_context_middleware `finally` block, where an
+    unguarded exception would replace an already-successful response with
+    an unhandled error."""
+
+    def _broken_info(*_args, **_kwargs):
+        raise RuntimeError("simulated logging subsystem failure")
+
+    def _broken_fallback_warning(*_args, **_kwargs):
+        raise RuntimeError("simulated fallback logging failure too")
+
+    monkeypatch.setattr(main_module.access_logger, "info", _broken_info)
+    monkeypatch.setattr(
+        logging.getLogger(OBSERVABILITY_FALLBACK_LOGGER_NAME), "warning", _broken_fallback_warning
+    )
+
+    resp = await client.get(f"/api/v1/equipment/{uuid.uuid4()}", headers=await auth_headers(client))
+    assert resp.status_code == 404, "a doubly-broken logging path must still not change the real response"
     assert request_id_var.get() is None
     assert correlation_id_var.get() is None
 
@@ -493,3 +521,140 @@ async def test_post_commit_logging_failure_does_not_convert_success_into_failure
     assert summary.succeeded == 1
     assert summary.failed == 0
     assert summary.audit_log_id is not None, "the committed batch's audit_log_id must still be reported"
+
+
+async def test_import_success_log_failure_and_its_fallback_failure_do_not_affect_result(monkeypatch):
+    """PR #50 merge-review round 2 (H2): the import completion log's own
+    fallback report call can itself raise. That must *also* never escape
+    _commit_rows -- an already-committed batch's result must never be
+    replaced by a logging-layer exception, no matter how many logging
+    attempts in a row fail."""
+    from app.services import import_service
+
+    class _FakePlanResult:
+        def __init__(self, status):
+            self.status = status
+
+    class _FakePlan:
+        def __init__(self):
+            self.result = _FakePlanResult(import_service.ImportRowStatus.SUCCESS)
+            self.equipment_id = uuid.uuid4()
+            self.import_source_metadata = {}
+            self.update_data = {}
+
+    class _FakeEquipment:
+        equipment_metadata = {}
+        id = uuid.uuid4()
+
+    class _FakeAuditLog:
+        id = uuid.uuid4()
+
+    commit_calls: list[bool] = []
+
+    class _FakeDB:
+        async def commit(self):
+            commit_calls.append(True)
+
+        async def rollback(self):
+            raise AssertionError(
+                "rollback must not be triggered by a logging-only failure that happens after commit"
+            )
+
+    async def _fake_get_by_id(_db, _id):
+        return _FakeEquipment()
+
+    async def _fake_update(_db, _existing, *, data):
+        return None
+
+    async def _fake_record_audit_event(*_args, **_kwargs):
+        return _FakeAuditLog()
+
+    def _broken_info(*_args, **_kwargs):
+        raise RuntimeError("simulated logging subsystem failure")
+
+    def _broken_fallback_warning(*_args, **_kwargs):
+        raise RuntimeError("simulated fallback logging failure too")
+
+    monkeypatch.setattr(import_service.equipment_crud, "get_by_id", _fake_get_by_id)
+    monkeypatch.setattr(import_service.equipment_crud, "update", _fake_update)
+    monkeypatch.setattr(import_service, "record_audit_event", _fake_record_audit_event)
+    monkeypatch.setattr(import_service.logger, "info", _broken_info)
+    monkeypatch.setattr(
+        logging.getLogger(OBSERVABILITY_FALLBACK_LOGGER_NAME), "warning", _broken_fallback_warning
+    )
+
+    plans = [_FakePlan()]
+    summary = await import_service._commit_rows(
+        _FakeDB(),
+        filename="upload.xlsx",
+        plans=plans,
+        update_existing=True,
+        actor_user_id=None,
+        request=None,
+    )
+
+    assert commit_calls == [True], "the database commit must have actually gone through"
+    assert summary.succeeded == 1
+    assert summary.audit_log_id is not None
+
+
+async def test_scheduler_completion_logger_failure_does_not_fail_the_job(monkeypatch, db_engine):
+    """PR #50 merge-review round 2 (H2): a failure in the scheduler's
+    success-path completion log (which runs after `await db.commit()` has
+    already succeeded) must never turn a completed run into a raised
+    exception -- the scheduler must still report the run as successful
+    (i.e. check_pm_cal_due() must return normally)."""
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from app.worker import scheduler as scheduler_module
+
+    session_maker = async_sessionmaker(db_engine, expire_on_commit=False, class_=AsyncSession)
+    monkeypatch.setattr(scheduler_module, "AsyncSessionLocal", session_maker)
+
+    def _broken_info(*_args, **_kwargs):
+        raise RuntimeError("simulated logging subsystem failure")
+
+    monkeypatch.setattr(scheduler_module.logger, "info", _broken_info)
+
+    # Must not raise: the run (an empty due-list pass, in this fixture's
+    # seed-free database) already committed successfully before this
+    # broken completion log call is ever reached.
+    await check_pm_cal_due()
+
+    assert job_run_id_var.get() is None, "job_run_id_var must still be reset even when completion logging failed"
+
+
+def test_safe_log_swallows_primary_failure_and_reports_via_fallback(caplog):
+    """Unit coverage of the safe_log() helper itself: a raising primary
+    log call must not propagate, and should be reported once via the
+    dedicated fallback logger."""
+
+    def _broken():
+        raise RuntimeError("simulated logging subsystem failure")
+
+    with caplog.at_level(logging.WARNING, logger=OBSERVABILITY_FALLBACK_LOGGER_NAME):
+        safe_log(_broken)  # must not raise
+
+    fallback_records = [r for r in caplog.records if r.name == OBSERVABILITY_FALLBACK_LOGGER_NAME]
+    assert fallback_records, "expected safe_log() to report the failure via its fallback logger"
+    assert fallback_records[0].levelno == logging.WARNING
+    assert fallback_records[0].exc_info is not None
+
+
+def test_safe_log_swallows_failure_even_when_fallback_logger_also_raises(monkeypatch):
+    """The architecture rule ("no observability failure may ever escape")
+    must hold even in the worst case: the primary log call raises, and
+    safe_log()'s own fallback report call raises too. Nothing may
+    propagate out of safe_log() under any circumstance."""
+
+    def _broken():
+        raise RuntimeError("simulated logging subsystem failure")
+
+    def _broken_fallback_warning(*_args, **_kwargs):
+        raise RuntimeError("simulated fallback logging failure too")
+
+    monkeypatch.setattr(
+        logging.getLogger(OBSERVABILITY_FALLBACK_LOGGER_NAME), "warning", _broken_fallback_warning
+    )
+
+    safe_log(_broken)  # must not raise, even with a doubly-broken logging path

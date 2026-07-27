@@ -67,6 +67,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import AUDIT_ACTION_IMPORT, AUDIT_ENTITY_EQUIPMENT, record_audit_event
 from app.core.exceptions import DomainError, InvalidInputError
+from app.core.logging import safe_log
 from app.crud import equipment as equipment_crud
 from app.models.equipment import EquipmentStatus
 from app.services.identifiers import normalize_bcm_code, normalize_item_no
@@ -823,10 +824,14 @@ async def _commit_rows(
         await db.rollback()
         # Roadmap PR15A: aggregate operational statistics only -- never the
         # filename (or any row/cell content), matching this workflow's
-        # existing "no spreadsheet content in logs" discipline.
-        logger.exception(
-            "Inventory import commit failed unexpectedly; batch rolled back",
-            extra={"attempted_rows": len(plans)},
+        # existing "no spreadsheet content in logs" discipline. safe_log():
+        # a failure while *logging* this failure must never replace the
+        # real exception raised below with an unrelated logging failure.
+        safe_log(
+            lambda: logger.exception(
+                "Inventory import commit failed unexpectedly; batch rolled back",
+                extra={"attempted_rows": len(plans)},
+            )
         )
         if isinstance(exc, ImportCommitFailedError):
             raise
@@ -839,11 +844,12 @@ async def _commit_rows(
     # has already succeeded -- a failure here (a broken handler, a full
     # disk, anything) must never turn an already-committed, successful
     # import into an HTTP 500, and must never be interpreted by the client
-    # as a reason to retry a batch that in fact already applied. Logging is
-    # strictly best-effort at this point, exactly like the access-log
-    # emission in app.main's request_context_middleware.
-    try:
-        logger.info(
+    # as a reason to retry a batch that in fact already applied. safe_log()
+    # (not a bare try/except with an unguarded fallback) guarantees this,
+    # exactly like the access-log emission in app.main's
+    # request_context_middleware.
+    safe_log(
+        lambda: logger.info(
             "Inventory import committed successfully",
             extra={
                 "total_rows": summary.total_rows,
@@ -853,8 +859,7 @@ async def _commit_rows(
                 "update_existing": update_existing,
             },
         )
-    except Exception:
-        logger.warning("Failed to emit import-success log event", exc_info=True)
+    )
     return summary
 
 

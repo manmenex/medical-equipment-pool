@@ -56,6 +56,41 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str)
 
 
+# Logger name for safe_log's own fallback report -- deliberately distinct
+# from any application logger name so it's never confused with a real
+# business-logic or access-log event when filtering/searching logs.
+_FALLBACK_LOGGER_NAME = "app.observability"
+
+
+def safe_log(emit) -> None:
+    """Runs a zero-arg logging callable and guarantees no exception ever
+    escapes back to the caller (Roadmap PR15A architecture rule:
+    observability must never influence business outcome). Every
+    post-success `logger.*` call this application makes -- access-log
+    emission, scheduler completion logging, import completion logging --
+    must go through this, not a bare try/except with an unguarded fallback
+    log call, because an *unguarded* fallback can itself raise and, if
+    that happens inside a `finally` block after a successful `try`,
+    silently replace a successful return value with an unhandled
+    exception (or, inside an `except` block, replace the real exception
+    being propagated with an unrelated logging failure).
+
+    A failure in `emit` is reported via a best-effort fallback log call;
+    if even *that* fails, it is silently discarded -- there is no further
+    fallback to fall back to, and letting a third attempt raise would
+    defeat the entire point of this function.
+    """
+    try:
+        emit()
+    except Exception:
+        try:
+            logging.getLogger(_FALLBACK_LOGGER_NAME).warning(
+                "Observability logging call failed", exc_info=True
+            )
+        except Exception:
+            pass
+
+
 def configure_logging(debug: bool = False) -> None:
     level = logging.DEBUG if debug else logging.INFO
     handler = logging.StreamHandler(sys.stdout)

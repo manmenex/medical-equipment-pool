@@ -14,7 +14,7 @@ from app.api.v1.router import api_router
 from app.core.config import InsecureConfigurationError, settings, validate_production_secrets
 from app.core.exceptions import DomainError
 from app.core.log_context import correlation_id_var, request_id_var
-from app.core.logging import configure_logging
+from app.core.logging import configure_logging, safe_log
 from app.worker.scheduler import start_scheduler, stop_scheduler
 
 # Stable, safe codes for FastAPI/Starlette's own HTTPException, keyed by
@@ -140,11 +140,16 @@ def create_app() -> FastAPI:
             response.headers["X-Correlation-ID"] = correlation_id
             return response
         finally:
-            # Logging must never become a dependency for request success:
-            # a failure while building/emitting the access-log line must
+            # Logging must never become a dependency for request success: a
+            # failure while building/emitting the access-log line must
             # never mask the real response (or the real exception, if one
-            # is propagating past this finally block).
-            try:
+            # is propagating past this finally block) -- an *unguarded*
+            # fallback log call inside a bare except would itself be able
+            # to raise here and, since this runs inside `finally` after a
+            # successful `try`, silently replace a good response with an
+            # unhandled exception. safe_log() guarantees nothing raised
+            # inside it is ever allowed to propagate.
+            def _emit_access_log() -> None:
                 latency_ms = (time.monotonic() - start) * 1000
                 # Route *template* (e.g. "/api/v1/equipment/{equipment_id}"),
                 # not the raw URL: request.scope["route"] is populated by
@@ -165,8 +170,8 @@ def create_app() -> FastAPI:
                         "latency_ms": round(latency_ms, 2),
                     },
                 )
-            except Exception:
-                logger.warning("Failed to emit access-log event", exc_info=True)
+
+            safe_log(_emit_access_log)
             request_id_var.reset(request_id_token)
             correlation_id_var.reset(correlation_id_token)
 

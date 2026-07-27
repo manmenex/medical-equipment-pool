@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.log_context import job_run_id_var
+from app.core.logging import safe_log
 from app.db.session import AsyncSessionLocal
 from app.models.equipment import Equipment
 from app.models.notification import Notification
@@ -86,9 +87,15 @@ async def check_pm_cal_due() -> None:
 
             if not pm_due and not cal_due:
                 await db.commit()
-                logger.info(
-                    "PM/CAL due check complete: 0 PM, 0 CAL",
-                    extra={"duration_ms": round((time.monotonic() - start) * 1000, 2)},
+                # safe_log(): this run has already committed successfully --
+                # a failure in this completion log call (or its own
+                # fallback) must never turn a successful run into a raised
+                # exception (Roadmap PR15A architecture rule).
+                safe_log(
+                    lambda: logger.info(
+                        "PM/CAL due check complete: 0 PM, 0 CAL",
+                        extra={"duration_ms": round((time.monotonic() - start) * 1000, 2)},
+                    )
                 )
                 return
 
@@ -113,16 +120,23 @@ async def check_pm_cal_due() -> None:
                 )
 
             await db.commit()
-            logger.info(
-                "PM/CAL due check complete: %d PM, %d CAL",
-                len(pm_due),
-                len(cal_due),
-                extra={"duration_ms": round((time.monotonic() - start) * 1000, 2)},
+            safe_log(
+                lambda: logger.info(
+                    "PM/CAL due check complete: %d PM, %d CAL",
+                    len(pm_due),
+                    len(cal_due),
+                    extra={"duration_ms": round((time.monotonic() - start) * 1000, 2)},
+                )
             )
     except Exception:
-        logger.exception(
-            "PM/CAL due check failed",
-            extra={"duration_ms": round((time.monotonic() - start) * 1000, 2)},
+        # safe_log(): a failure while *logging* this failure must never
+        # replace the real exception below -- `raise` must always re-raise
+        # the original business failure, never a logging-related one.
+        safe_log(
+            lambda: logger.exception(
+                "PM/CAL due check failed",
+                extra={"duration_ms": round((time.monotonic() - start) * 1000, 2)},
+            )
         )
         raise
     finally:
