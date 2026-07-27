@@ -46,6 +46,14 @@ export async function listTransactions(params: {
   ward_id?: string;
   equipment_id?: string;
   status?: string;
+  // Roadmap PR13: dispatch-type/round-aware history filtering, plus a
+  // date range bounding the dispatch (borrowed_at) date -- all optional
+  // and independently combinable, mirroring backend/app/crud/transaction.py's
+  // search().
+  dispatch_type?: DispatchType;
+  routine_round?: RoutineRound;
+  from_date?: string;
+  to_date?: string;
   cursor?: string | null;
   limit?: number;
 }): Promise<Page<TransactionOut>> {

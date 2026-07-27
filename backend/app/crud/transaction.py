@@ -1,11 +1,11 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime, time
 
 from sqlalchemy import String, and_, cast, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.transaction import BorrowTransaction, TransactionStatus
+from app.models.transaction import BorrowTransaction, DispatchType, RoutineRound, TransactionStatus
 from app.utils.pagination import decode_cursor, encode_cursor
 
 # Roadmap PR4 (docs/kickoffs/PR4-architecture-kickoff.md): the numeric
@@ -294,9 +294,29 @@ async def search(
     ward_id: uuid.UUID | None = None,
     equipment_id: uuid.UUID | None = None,
     status: str | None = None,
+    dispatch_type: DispatchType | None = None,
+    routine_round: RoutineRound | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
     limit: int = 25,
     cursor: str | None = None,
 ) -> tuple[list[BorrowTransaction], str | None, int]:
+    """Roadmap PR13: dispatch_type/routine_round/date-range are history
+    filters on top of the existing ward/equipment/status filters -- all
+    additive and independently optional, combined with AND like the rest.
+    from_date/to_date bound BorrowTransaction.borrowed_at (the dispatch
+    date, the only date every transaction has, open or closed) to a
+    whole-day-inclusive range.
+
+    Review fix (correctness, not caller-validated here): the upper bound
+    is computed as `to_date` at `time.max`, never by adding a day to
+    `to_date` -- incrementing a `date` overflows for `date.max`
+    (9999-12-31), which callers can send as an ordinary ISO date string.
+    `datetime.combine(to_date, time.max)` is always representable for any
+    valid `date`, so this bound can never raise. from_date/to_date
+    ordering is validated by the caller (app/api/v1/transactions.py)
+    before this function is ever called -- search() trusts its inputs,
+    consistent with every other filter here."""
     filters = []
     if ward_id is not None:
         filters.append(BorrowTransaction.ward_id == ward_id)
@@ -304,6 +324,14 @@ async def search(
         filters.append(BorrowTransaction.equipment_id == equipment_id)
     if status is not None:
         filters.append(BorrowTransaction.status == status)
+    if dispatch_type is not None:
+        filters.append(BorrowTransaction.dispatch_type == dispatch_type)
+    if routine_round is not None:
+        filters.append(BorrowTransaction.routine_round == routine_round)
+    if from_date is not None:
+        filters.append(BorrowTransaction.borrowed_at >= datetime.combine(from_date, time.min))
+    if to_date is not None:
+        filters.append(BorrowTransaction.borrowed_at <= datetime.combine(to_date, time.max))
 
     count_stmt = select(func.count()).select_from(BorrowTransaction).where(and_(*filters)) if filters else select(
         func.count()

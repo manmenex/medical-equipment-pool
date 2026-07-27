@@ -11,14 +11,12 @@ import { fetchSummary } from "@/services/dashboard";
 // status and reach frequent workflows quickly -- simple operational counts
 // and quick actions only. No trend/frequency charts here (that analysis
 // lives on ReportsPage.tsx, out of scope for this PR). No PM/Calibration
-// widgets either (review PR40-H2): docs/audits/04-consolidated-implementation-plan.md's
-// Roadmap PR13 entry explicitly retires these as "MVP-irrelevant
-// dashboard/report elements" scheduled for removal -- carrying them forward
-// on a freshly redesigned dashboard would contradict that plan. The running
-// total is kept; it is a plain count of the four confirmed statuses, not a
-// maintenance-workflow concept. The backend response still returns
-// pm_due_soon/cal_due_soon unchanged -- removing those fields is Roadmap
-// PR13's decision, not this PR's.
+// widgets either (review PR40-H2, Roadmap PR13): docs/audits/04-consolidated-implementation-plan.md's
+// PR13 entry retires these as "MVP-irrelevant dashboard/report elements" --
+// the backend summary (services/dashboard.ts's DashboardSummary) no longer
+// even returns pm_due_soon/cal_due_soon. The running total is kept; it is a
+// plain count of the four confirmed statuses, not a maintenance-workflow
+// concept.
 interface QuickAction {
   to: string;
   icon: string;

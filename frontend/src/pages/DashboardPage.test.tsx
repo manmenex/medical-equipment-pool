@@ -19,8 +19,6 @@ const summary: DashboardSummary = {
   issued_to_ward: 15,
   unavailable_defective: 5,
   decommissioned: 2,
-  pm_due_soon: 3,
-  cal_due_soon: 1,
 };
 
 const emptySummary: DashboardSummary = {
@@ -29,8 +27,6 @@ const emptySummary: DashboardSummary = {
   issued_to_ward: 0,
   unavailable_defective: 0,
   decommissioned: 0,
-  pm_due_soon: 0,
-  cal_due_soon: 0,
 };
 
 const fetchSummary = vi.fn();
@@ -120,11 +116,11 @@ describe("DashboardPage rendering and lifecycle-status counts", () => {
     expect(document.querySelector(".recharts-wrapper")).not.toBeInTheDocument();
   });
 
-  // Review PR40-H2: docs/audits/04-consolidated-implementation-plan.md's
-  // Roadmap PR13 entry explicitly retires PM/Calibration widgets as
-  // "MVP-irrelevant dashboard/report elements" -- this dashboard must never
-  // reintroduce them, even though the backend summary still returns those
-  // fields (removing them is Roadmap PR13's decision, not rendered here).
+  // Review PR40-H2 / Roadmap PR13: docs/audits/04-consolidated-implementation-plan.md's
+  // PR13 entry retires PM/Calibration widgets as "MVP-irrelevant
+  // dashboard/report elements" -- the backend summary (Roadmap PR13) no
+  // longer even returns pm_due_soon/cal_due_soon, and this dashboard must
+  // never reintroduce them.
   it("never renders PM or Calibration due-soon widgets", async () => {
     fetchSummary.mockResolvedValue(summary);
     renderDashboard();
