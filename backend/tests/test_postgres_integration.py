@@ -6744,3 +6744,228 @@ async def test_migration_0010_historical_0009_upgrade_downgrade_re_upgrade_round
             await engine.dispose()
     finally:
         await _drop_scratch_database()
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR14B (Pagination Performance): migration 0011 adds two composite
+# ordering indexes -- ix_equipment_created_at_id, ix_borrow_transactions_
+# created_at_id -- matching app.crud.equipment.search()'s and app.crud.
+# transaction.search()'s real `ORDER BY created_at DESC, id DESC` cursor-
+# pagination clause. Index-only: no column, constraint, or data change. See
+# docs/audits/06-pr14b-pagination-index-evidence.md for the full
+# EXPLAIN (ANALYZE, BUFFERS) evidence this migration is based on.
+# ---------------------------------------------------------------------------
+
+
+async def _pagination_indexdefs() -> dict[str, str]:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT indexname, indexdef FROM pg_indexes "
+                    "WHERE indexname IN ('ix_equipment_created_at_id', 'ix_borrow_transactions_created_at_id')"
+                )
+            )
+            return {row.indexname: row.indexdef for row in result.all()}
+    finally:
+        await engine.dispose()
+
+
+async def test_migration_0011_fresh_database_upgrade_to_head_converges_on_expected_schema():
+    """Fresh-schema convergence only -- 0001 never creates these indexes
+    (they are deliberately absent from the ORM models, see 0011's own
+    docstring on why), so this also proves 0011 is not silently skipped
+    on a brand-new deployment."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        indexdefs = await _pagination_indexdefs()
+        assert set(indexdefs) == {"ix_equipment_created_at_id", "ix_borrow_transactions_created_at_id"}
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0011_historical_0010_upgrade_downgrade_re_upgrade_round_trip():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        # 0001 never creates these indexes regardless of ORM state (see
+        # 0011's docstring), so 0010 is already a genuine "index absent"
+        # baseline -- no raw-DDL stripping needed here, unlike 0010's own
+        # historical test against 0009's ORM-drifted columns.
+        _run_alembic("upgrade", "0010_inventory_import_columns")
+        indexdefs = await _pagination_indexdefs()
+        assert indexdefs == {}
+
+        _run_alembic("upgrade", "head")
+        indexdefs = await _pagination_indexdefs()
+        assert set(indexdefs) == {"ix_equipment_created_at_id", "ix_borrow_transactions_created_at_id"}
+
+        _run_alembic("downgrade", "0010_inventory_import_columns")
+        indexdefs = await _pagination_indexdefs()
+        assert indexdefs == {}
+
+        _run_alembic("upgrade", "head")
+        indexdefs = await _pagination_indexdefs()
+        assert set(indexdefs) == {"ix_equipment_created_at_id", "ix_borrow_transactions_created_at_id"}
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0011_indexes_are_descending_matching_the_orm_query_order():
+    """app.crud.equipment.search() and app.crud.transaction.search() both
+    `.order_by(Model.created_at.desc(), Model.id.desc())` -- an ascending
+    index on the same columns would not let PostgreSQL satisfy that
+    ORDER BY without a Sort node, defeating the point of this migration."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        indexdefs = await _pagination_indexdefs()
+        assert "DESC" in indexdefs["ix_equipment_created_at_id"]
+        assert "created_at" in indexdefs["ix_equipment_created_at_id"]
+        assert "DESC" in indexdefs["ix_borrow_transactions_created_at_id"]
+        assert "created_at" in indexdefs["ix_borrow_transactions_created_at_id"]
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0011_planner_uses_the_new_index_for_first_page_equipment_query():
+    """Review condition: 'the index is considered justified only if
+    PostgreSQL actually chooses it' -- verified structurally via EXPLAIN,
+    not assumed. Seeds enough rows that an unindexed first-page query
+    would need a real sequential scan + sort, then asserts the planner's
+    *actual* chosen plan (not just that the index exists) uses an Index
+    Scan and contains no Sort node, for exactly the query app.crud.
+    equipment.search() issues with no filters and no cursor."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata) "
+                        "SELECT gen_random_uuid(), 'PLAN-' || g, 'Plan Test Device', 'available_at_pool', '{}' "
+                        "FROM generate_series(1, 3000) AS g"
+                    )
+                )
+            async with engine.connect() as conn:
+                await conn.execute(text("ANALYZE equipment"))
+                plan_rows = (
+                    await conn.execute(
+                        text(
+                            "EXPLAIN SELECT * FROM equipment WHERE deleted_at IS NULL "
+                            "ORDER BY created_at DESC, id DESC LIMIT 26"
+                        )
+                    )
+                ).all()
+                plan_text = "\n".join(row[0] for row in plan_rows)
+                assert "Index Scan" in plan_text, f"expected an Index Scan, got:\n{plan_text}"
+                assert "Sort" not in plan_text, f"an Index Scan should make a separate Sort node unnecessary:\n{plan_text}"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0011_cursor_pagination_returns_identical_complete_result_set():
+    """Correctness, not just performance: paginating through every row
+    with app.crud.equipment.search() (index present) must visit every
+    seeded row exactly once, in the same order a single unpaginated query
+    would return them -- proving the index changed the query plan, not
+    the result."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        from app.crud import equipment as equipment_crud
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            session_maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+            async with session_maker() as session:
+                for i in range(120):
+                    session.add(
+                        Equipment(asset_number=f"PAGE-{i:04d}", equipment_name=f"Pagination Device {i}")
+                    )
+                await session.commit()
+
+            async with session_maker() as session:
+                seen_ids: list[str] = []
+                cursor = None
+                for _ in range(20):  # 120 rows / limit 10 -> 12 pages; generous upper bound
+                    rows, cursor, total = await equipment_crud.search(session, limit=10, cursor=cursor)
+                    seen_ids.extend(str(r.id) for r in rows)
+                    if cursor is None:
+                        break
+
+                assert total == 120
+                assert len(seen_ids) == 120, "every row must be visited exactly once across all pages"
+                assert len(set(seen_ids)) == 120, "no row may be returned on more than one page"
+
+                unpaginated, _, _ = await equipment_crud.search(session, limit=120)
+                assert [str(r.id) for r in unpaginated] == seen_ids, (
+                    "paginated traversal order must match a single unpaginated page's order"
+                )
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0011_count_star_behavior_is_unchanged():
+    """Explicit non-regression check for the Repository Owner's standing
+    instruction that PR14B must not touch COUNT(*) behavior: `total` from
+    app.crud.equipment.search() must still be a genuine, unindexed
+    COUNT(*) over deleted_at IS NULL, not an index-derived estimate."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        from app.crud import equipment as equipment_crud
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            session_maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+            async with session_maker() as session:
+                for i in range(15):
+                    session.add(Equipment(asset_number=f"CNT-{i:04d}", equipment_name=f"Count Device {i}"))
+                deleted = Equipment(asset_number="CNT-DELETED", equipment_name="Soft Deleted")
+                session.add(deleted)
+                await session.flush()
+                deleted.deleted_at = datetime.utcnow()
+                await session.commit()
+
+            async with session_maker() as session:
+                _, _, total = await equipment_crud.search(session, limit=5)
+                assert total == 15, "soft-deleted rows must still be excluded from the count, exactly as before"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
