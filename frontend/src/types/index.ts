@@ -123,8 +123,6 @@ export interface DashboardSummary {
   issued_to_ward: number;
   unavailable_defective: number;
   decommissioned: number;
-  pm_due_soon: number;
-  cal_due_soon: number;
 }
 
 export interface BorrowTrendPoint {

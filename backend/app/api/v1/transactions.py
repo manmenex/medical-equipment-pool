@@ -1,4 +1,5 @@
 import uuid
+from datetime import date
 
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,6 +8,7 @@ from app.api.v1.deps import WARD_CORRECTION_ROLES, get_current_user, require_rol
 from app.core.exceptions import TransactionNotFoundError
 from app.crud import transaction as transaction_crud
 from app.db.session import get_db
+from app.models.transaction import DispatchType, RoutineRound
 from app.schemas.common import Page
 from app.schemas.transaction import TransactionOut, WardCorrectionRequest
 from app.services import borrow_service
@@ -20,6 +22,10 @@ async def list_transactions(
     ward_id: str | None = None,
     equipment_id: str | None = None,
     status: str | None = None,
+    dispatch_type: DispatchType | None = None,
+    routine_round: RoutineRound | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
     limit: int = Query(default=25, le=200),
     cursor: str | None = None,
     db: AsyncSession = Depends(get_db),
@@ -30,6 +36,10 @@ async def list_transactions(
         ward_id=parse_uuid(ward_id, "ward_id"),
         equipment_id=parse_uuid(equipment_id, "equipment_id"),
         status=status,
+        dispatch_type=dispatch_type,
+        routine_round=routine_round,
+        from_date=from_date,
+        to_date=to_date,
         limit=limit,
         cursor=cursor,
     )

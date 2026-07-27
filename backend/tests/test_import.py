@@ -310,6 +310,38 @@ async def test_update_existing_false_is_rejected_with_clear_error(client, seeded
     assert equipment.equipment_name == "Seed Equipment"
 
 
+async def test_update_existing_field_omitted_defaults_to_update_only(client, seeded_users, db_session):
+    """Review 4782986913 non-blocking comment: the router declares
+    `update_existing: bool = Form(default=True)`, so a client that omits
+    the field entirely (not just one that sends "true") must still be
+    accepted and treated as update-only, matching the explicit-true path."""
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    equipment_id = await _seed_equipment(db_session, bcm_code="BCM399", model="Original")
+    row = _base_row(**{"ID CODE": "399", "Model": "Revised"})
+
+    preview_resp = await client.post(
+        "/api/v1/import/preview",
+        headers=headers,
+        files=_upload([row]),
+    )
+    assert preview_resp.status_code == 200
+    assert preview_resp.json()["rows"][0]["action"] == "update"
+
+    commit_resp = await client.post(
+        "/api/v1/import/commit",
+        headers=headers,
+        files=_upload([row]),
+    )
+    assert commit_resp.status_code == 200
+    body = commit_resp.json()
+    assert body["succeeded"] == 1
+    assert body["rows"][0]["equipment_id"] == equipment_id
+
+    result = await db_session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment_id)))
+    equipment = result.scalar_one()
+    assert equipment.model == "Revised"
+
+
 async def test_db_duplicate_bcm_updates_master_data_when_update_mode_on(client, seeded_users, db_session):
     headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment_id = await _seed_equipment(db_session, bcm_code="BCM302", model="Original")

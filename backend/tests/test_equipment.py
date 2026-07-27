@@ -1215,7 +1215,10 @@ async def test_dashboard_summary_uses_four_state_fields(client, seeded_users):
     resp = await client.get("/api/v1/dashboard/summary", headers=headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert set(body.keys()) >= {
+    # Roadmap PR13: pm_due_soon/cal_due_soon are retired -- MVP-irrelevant
+    # dashboard widgets per docs/audits/04-consolidated-implementation-plan.md's
+    # PR13 entry. The response shape now matches exactly.
+    assert set(body.keys()) == {
         "total",
         "available_at_pool",
         "issued_to_ward",

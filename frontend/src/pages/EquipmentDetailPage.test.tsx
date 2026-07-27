@@ -367,3 +367,99 @@ describe("EquipmentDetailPage transaction history pagination and load state (Roa
     expect(txId).toBe("tx-closed-page2");
   });
 });
+
+describe("EquipmentDetailPage history filters and dispatch-type/days-since display (Roadmap PR13)", () => {
+  const routineTransaction: TransactionOut = {
+    ...openTransaction,
+    id: "tx-routine-1",
+    transaction_no: "TX-ROUTINE-1",
+    dispatch_type: "routine_round",
+    routine_round: "11:00",
+  };
+
+  it("distinguishes an on-demand dispatch from a routine-round dispatch in the history list (Part H acceptance criterion)", async () => {
+    listTransactions.mockResolvedValue(page([openTransaction, routineTransaction]));
+    renderPage();
+    await waitFor(() => expect(screen.getByText("TX-OPEN-1", { exact: false })).toBeInTheDocument());
+
+    const onDemandRow = rowFor("TX-OPEN-1");
+    expect(within(onDemandRow).getByText(/On-Demand/)).toBeInTheDocument();
+
+    const routineRow = rowFor("TX-ROUTINE-1");
+    expect(within(routineRow).getByText(/Routine Round/)).toBeInTheDocument();
+    expect(within(routineRow).getByText(/11:00/)).toBeInTheDocument();
+  });
+
+  it('shows a "days since dispatch" indicator only for OPEN transactions', async () => {
+    listTransactions.mockResolvedValue(page([openTransaction, closedTransaction]));
+    renderPage();
+    await waitForHistoryLoaded();
+
+    const openRow = rowFor("TX-OPEN-1");
+    expect(within(openRow).getByText(/เบิกมาแล้ว/)).toBeInTheDocument();
+
+    const closedRow = rowFor("TX-CLOSED-1");
+    expect(within(closedRow).queryByText(/เบิกมาแล้ว/)).not.toBeInTheDocument();
+  });
+
+  it("re-queries transaction history with dispatch_type when the dispatch-type filter changes", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitForHistoryLoaded();
+
+    await user.selectOptions(screen.getByLabelText("ประเภทการเบิก"), "routine_round");
+
+    await waitFor(() =>
+      expect(listTransactions).toHaveBeenLastCalledWith(
+        expect.objectContaining({ equipment_id: "eq-1", dispatch_type: "routine_round" })
+      )
+    );
+  });
+
+  it("re-queries transaction history with routine_round when the round filter changes, and resets it when dispatch type moves off routine_round", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitForHistoryLoaded();
+
+    await user.selectOptions(screen.getByLabelText("ประเภทการเบิก"), "routine_round");
+    await user.selectOptions(screen.getByLabelText("รอบเวลา"), "15:00");
+
+    await waitFor(() =>
+      expect(listTransactions).toHaveBeenLastCalledWith(
+        expect.objectContaining({ dispatch_type: "routine_round", routine_round: "15:00" })
+      )
+    );
+
+    await user.selectOptions(screen.getByLabelText("ประเภทการเบิก"), "on_demand");
+
+    await waitFor(() =>
+      expect(listTransactions).toHaveBeenLastCalledWith(
+        expect.objectContaining({ dispatch_type: "on_demand", routine_round: undefined })
+      )
+    );
+  });
+
+  it("disables the routine-round filter unless the dispatch-type filter is set to routine_round", async () => {
+    renderPage();
+    await waitForHistoryLoaded();
+
+    expect(screen.getByLabelText("รอบเวลา")).toBeDisabled();
+  });
+
+  it("re-queries transaction history with from_date/to_date when the date-range filters change", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitForHistoryLoaded();
+
+    const fromInput = screen.getByLabelText("ตั้งแต่วันที่");
+    const toInput = screen.getByLabelText("ถึงวันที่");
+    await user.type(fromInput, "2026-07-01");
+    await user.type(toInput, "2026-07-31");
+
+    await waitFor(() =>
+      expect(listTransactions).toHaveBeenLastCalledWith(
+        expect.objectContaining({ from_date: "2026-07-01", to_date: "2026-07-31" })
+      )
+    );
+  });
+});

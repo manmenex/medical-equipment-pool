@@ -7,7 +7,25 @@ import { WardCorrectionAction } from "@/components/WardCorrectionAction";
 import { listTransactions } from "@/services/borrow";
 import { getEquipment, getEquipmentHistory } from "@/services/equipment";
 import { listWards } from "@/services/masterData";
-import type { TransactionOut } from "@/types";
+import type { DispatchType, RoutineRound, TransactionOut } from "@/types";
+
+// Roadmap PR13 (docs/audits/04-consolidated-implementation-plan.md's PR13
+// entry, Part H acceptance criterion "when viewed in history, [an
+// on-demand dispatch] is distinguishable from routine dispatches"):
+// reuses BorrowPage.tsx's own dispatch-type/round labels so the two
+// screens describe the same concept identically.
+const DISPATCH_TYPE_LABELS: Record<DispatchType, string> = {
+  on_demand: "เบิกตามคำขอ (On-Demand)",
+  routine_round: "รอบเวลาปกติ (Routine Round)",
+};
+
+const ROUTINE_ROUNDS: RoutineRound[] = ["06:00", "11:00", "15:00", "21:00"];
+
+function daysSinceDispatch(borrowedAt: string): number {
+  const borrowed = new Date(borrowedAt).getTime();
+  const elapsedMs = Date.now() - borrowed;
+  return Math.max(0, Math.floor(elapsedMs / (1000 * 60 * 60 * 24)));
+}
 
 // Roadmap PR9B review round 2 (Finding 3): getEquipmentHistory's
 // EquipmentStatusHistoryItem rows (from_status/to_status/reason) are
@@ -33,6 +51,14 @@ export function EquipmentDetailPage() {
     queryFn: () => getEquipmentHistory(id),
     enabled: Boolean(id),
   });
+  // Roadmap PR13: dispatch-type/round-aware and date-range history
+  // filtering, on top of the equipment_id scope this page already applies.
+  // All optional and independently combinable (backend/app/crud/transaction.py's
+  // search()).
+  const [dispatchTypeFilter, setDispatchTypeFilter] = useState<DispatchType | "">("");
+  const [routineRoundFilter, setRoutineRoundFilter] = useState<RoutineRound | "">("");
+  const [fromDateFilter, setFromDateFilter] = useState("");
+  const [toDateFilter, setToDateFilter] = useState("");
   // Roadmap PR9B review round 2 (Codex incremental review, PR34-R2-M2): a
   // single limit:50 page silently hid every CLOSED transaction beyond the
   // first page for equipment with a long history, and had no distinct
@@ -42,7 +68,15 @@ export function EquipmentDetailPage() {
   // contract) through an explicit "โหลดเพิ่มเติม" action instead of
   // discarding it, and isLoading/isError below are read and rendered
   // distinctly from an empty result.
-  const transactionsQueryKey = ["equipment", id, "transactions"];
+  const transactionsQueryKey = [
+    "equipment",
+    id,
+    "transactions",
+    dispatchTypeFilter,
+    routineRoundFilter,
+    fromDateFilter,
+    toDateFilter,
+  ];
   const {
     data: transactionPages,
     isLoading: transactionsLoading,
@@ -53,7 +87,16 @@ export function EquipmentDetailPage() {
     isFetchingNextPage,
   } = useInfiniteQuery({
     queryKey: transactionsQueryKey,
-    queryFn: ({ pageParam }) => listTransactions({ equipment_id: id, limit: 50, cursor: pageParam }),
+    queryFn: ({ pageParam }) =>
+      listTransactions({
+        equipment_id: id,
+        dispatch_type: dispatchTypeFilter || undefined,
+        routine_round: routineRoundFilter || undefined,
+        from_date: fromDateFilter || undefined,
+        to_date: toDateFilter || undefined,
+        limit: 50,
+        cursor: pageParam,
+      }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.next_cursor,
     enabled: Boolean(id),
@@ -76,7 +119,12 @@ export function EquipmentDetailPage() {
     // ReturnPage) has this same transaction cached. Equipment queries are
     // deliberately not invalidated -- ward correction never changes
     // equipment status or any equipment-detail field.
-    queryClient.invalidateQueries({ queryKey: transactionsQueryKey });
+    // Roadmap PR13: invalidate by the ["equipment", id, "transactions"]
+    // prefix, not the full filtered transactionsQueryKey -- the key now
+    // carries the active filter values, and every filter combination this
+    // equipment's history has been fetched under must be refetched, not
+    // just the one currently selected.
+    queryClient.invalidateQueries({ queryKey: ["equipment", id, "transactions"] });
     queryClient.invalidateQueries({ queryKey: ["transactions"] });
   }
 
@@ -138,6 +186,76 @@ export function EquipmentDetailPage() {
         <p className="mb-3 text-xs text-[var(--text-muted)]">
           หอผู้ป่วยที่แสดงคือหอผู้ป่วยที่รับเครื่อง ณ วันที่เบิกเท่านั้น ระบบไม่ได้ติดตามการเคลื่อนย้ายเครื่องมือในภายหลัง
         </p>
+
+        {/* Roadmap PR13: dispatch-type/round-aware and date-range history
+            filtering (docs/audits/04-consolidated-implementation-plan.md's
+            PR13 entry). All four filters are optional and independently
+            combinable; changing any of them refetches from the first page. */}
+        <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div>
+            <label htmlFor="tx-filter-dispatch-type" className="mb-1 block text-xs text-[var(--text-muted)]">
+              ประเภทการเบิก
+            </label>
+            <select
+              id="tx-filter-dispatch-type"
+              value={dispatchTypeFilter}
+              onChange={(e) => {
+                const next = e.target.value as DispatchType | "";
+                setDispatchTypeFilter(next);
+                if (next !== "routine_round") setRoutineRoundFilter("");
+              }}
+              className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
+            >
+              <option value="">ทั้งหมด</option>
+              <option value="on_demand">{DISPATCH_TYPE_LABELS.on_demand}</option>
+              <option value="routine_round">{DISPATCH_TYPE_LABELS.routine_round}</option>
+            </select>
+          </div>
+          <div>
+            <label htmlFor="tx-filter-routine-round" className="mb-1 block text-xs text-[var(--text-muted)]">
+              รอบเวลา
+            </label>
+            <select
+              id="tx-filter-routine-round"
+              value={routineRoundFilter}
+              onChange={(e) => setRoutineRoundFilter(e.target.value as RoutineRound | "")}
+              disabled={dispatchTypeFilter !== "routine_round"}
+              className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm disabled:opacity-50"
+            >
+              <option value="">ทั้งหมด</option>
+              {ROUTINE_ROUNDS.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="tx-filter-from-date" className="mb-1 block text-xs text-[var(--text-muted)]">
+              ตั้งแต่วันที่
+            </label>
+            <input
+              id="tx-filter-from-date"
+              type="date"
+              value={fromDateFilter}
+              onChange={(e) => setFromDateFilter(e.target.value)}
+              className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label htmlFor="tx-filter-to-date" className="mb-1 block text-xs text-[var(--text-muted)]">
+              ถึงวันที่
+            </label>
+            <input
+              id="tx-filter-to-date"
+              type="date"
+              value={toDateFilter}
+              onChange={(e) => setToDateFilter(e.target.value)}
+              className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
+            />
+          </div>
+        </div>
+
         {transactionsLoading && (
           <p className="text-sm text-[var(--text-muted)]">กำลังโหลดประวัติการเบิก-รับคืน...</p>
         )}
@@ -162,6 +280,13 @@ export function EquipmentDetailPage() {
                     เลขที่รายการ {tx.transaction_no} ·{" "}
                     <strong>{tx.status === "open" ? "อยู่ระหว่างเบิก" : "รับคืนแล้ว"}</strong>
                   </div>
+                  {/* Roadmap PR13 (Part H acceptance criterion): an
+                      on-demand dispatch must be distinguishable from a
+                      routine-round dispatch when viewed in history. */}
+                  <div className="text-[var(--text-muted)]">
+                    {tx.dispatch_type ? DISPATCH_TYPE_LABELS[tx.dispatch_type] : "ไม่ระบุประเภทการเบิก"}
+                    {tx.dispatch_type === "routine_round" && tx.routine_round ? ` · รอบ ${tx.routine_round}` : ""}
+                  </div>
                   <div className="text-[var(--text-muted)]">
                     หอผู้ป่วยที่รับเครื่อง (บันทึก ณ วันที่เบิก): {wardName(tx.ward_id)}
                   </div>
@@ -169,6 +294,13 @@ export function EquipmentDetailPage() {
                     เบิกเมื่อ {new Date(tx.borrowed_at).toLocaleString("th-TH")}
                     {tx.returned_at ? ` · รับคืนเมื่อ ${new Date(tx.returned_at).toLocaleString("th-TH")}` : ""}
                   </div>
+                  {/* Roadmap PR13: a read-only "days since dispatch"
+                      indicator replaces the retired overdue-indicator
+                      concept -- purely informational, never implies a due
+                      date or a maintenance/compliance deadline. */}
+                  {tx.status === "open" && (
+                    <div className="text-xs text-[var(--text-muted)]">เบิกมาแล้ว {daysSinceDispatch(tx.borrowed_at)} วัน</div>
+                  )}
                   <div className="mt-1">
                     <WardCorrectionAction
                       transaction={tx}

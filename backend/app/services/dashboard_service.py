@@ -3,7 +3,6 @@ from datetime import date, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.redis import cache_get, cache_set
 from app.models.equipment import Equipment, EquipmentStatus
 from app.models.transaction import BorrowTransaction
@@ -27,36 +26,12 @@ async def get_summary(db: AsyncSession) -> dict:
         counts[key] = count
         total += count
 
-    today = date.today()
-    pm_due_soon = (
-        await db.execute(
-            select(func.count()).select_from(Equipment).where(
-                Equipment.deleted_at.is_(None),
-                Equipment.pm_due_date.is_not(None),
-                Equipment.pm_due_date <= today + timedelta(days=settings.PM_DUE_SOON_DAYS),
-                Equipment.pm_due_date >= today,
-            )
-        )
-    ).scalar_one()
-    cal_due_soon = (
-        await db.execute(
-            select(func.count()).select_from(Equipment).where(
-                Equipment.deleted_at.is_(None),
-                Equipment.cal_due_date.is_not(None),
-                Equipment.cal_due_date <= today + timedelta(days=settings.CAL_DUE_SOON_DAYS),
-                Equipment.cal_due_date >= today,
-            )
-        )
-    ).scalar_one()
-
     result = {
         "total": total,
         "available_at_pool": counts.get("available_at_pool", 0),
         "issued_to_ward": counts.get("issued_to_ward", 0),
         "unavailable_defective": counts.get("unavailable_defective", 0),
         "decommissioned": counts.get("decommissioned", 0),
-        "pm_due_soon": pm_due_soon,
-        "cal_due_soon": cal_due_soon,
     }
     await cache_set("dashboard:summary", result, ttl_seconds=15)
     return result

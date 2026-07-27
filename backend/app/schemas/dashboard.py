@@ -7,8 +7,6 @@ class DashboardSummary(BaseModel):
     issued_to_ward: int
     unavailable_defective: int
     decommissioned: int
-    pm_due_soon: int
-    cal_due_soon: int
 
 
 class BorrowTrendPoint(BaseModel):
