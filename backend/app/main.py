@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 import uuid
 from contextlib import asynccontextmanager
 
@@ -12,6 +13,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api.v1.router import api_router
 from app.core.config import InsecureConfigurationError, settings, validate_production_secrets
 from app.core.exceptions import DomainError
+from app.core.log_context import correlation_id_var, request_id_var
 from app.core.logging import configure_logging
 from app.worker.scheduler import start_scheduler, stop_scheduler
 
@@ -29,6 +31,12 @@ _HTTP_EXCEPTION_CODES = {
 configure_logging(settings.DEBUG)
 
 logger = logging.getLogger(__name__)
+# Dedicated logger for the one-per-request access-log event (Roadmap
+# PR15A) -- kept distinct from `logger` (used for application/exception
+# events above) so an operator can filter access-log noise separately,
+# mirroring the common "app" vs "access" logger split (e.g. uvicorn's own
+# uvicorn.error/uvicorn.access split).
+access_logger = logging.getLogger("app.access")
 
 # audit_logs.request_id/correlation_id are String(64) (see
 # app/models/audit.py) — an inbound X-Request-ID/X-Correlation-ID header is
@@ -51,6 +59,21 @@ def _safe_inbound_id(value: str | None) -> str | None:
     if value and _SAFE_REQUEST_ID_PATTERN.fullmatch(value):
         return value
     return None
+
+
+def _log_context(request: Request) -> dict:
+    # Read from request.state, not the ContextVar: the catch-all Exception
+    # handler below runs inside Starlette's ServerErrorMiddleware, which
+    # sits *outside* request_context_middleware -- by the time it runs for
+    # a genuinely unhandled exception, that middleware's `finally` block has
+    # already reset the ContextVar (see app.core.log_context's
+    # RequestContextFilter docstring). request.state survives regardless,
+    # so every handler here uses this instead of relying on the ambient
+    # ContextVar value being present.
+    return {
+        "request_id": getattr(request.state, "request_id", None),
+        "correlation_id": getattr(request.state, "correlation_id", None),
+    }
 
 
 @asynccontextmanager
@@ -98,10 +121,54 @@ def create_app() -> FastAPI:
         correlation_id = _safe_inbound_id(request.headers.get("x-correlation-id")) or request_id
         request.state.request_id = request_id
         request.state.correlation_id = correlation_id
-        response = await call_next(request)
-        response.headers["X-Request-ID"] = request_id
-        response.headers["X-Correlation-ID"] = correlation_id
-        return response
+
+        # Roadmap PR15A: make the same IDs available to every log call in
+        # this request's async call chain (service/CRUD-layer code has no
+        # access to `request.state`) via ContextVar, not a second ID
+        # mechanism. Tokens are reset in `finally` unconditionally -- an
+        # unreset ContextVar would leak this request's IDs into whatever
+        # runs next on this task/worker, including a later, unrelated
+        # request if the ASGI server reuses the task.
+        request_id_token = request_id_var.set(request_id)
+        correlation_id_token = correlation_id_var.set(correlation_id)
+        start = time.monotonic()
+        status_code = 500  # only surfaces in the access log if call_next itself raises past FastAPI's own exception handling
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            response.headers["X-Request-ID"] = request_id
+            response.headers["X-Correlation-ID"] = correlation_id
+            return response
+        finally:
+            # Logging must never become a dependency for request success:
+            # a failure while building/emitting the access-log line must
+            # never mask the real response (or the real exception, if one
+            # is propagating past this finally block).
+            try:
+                latency_ms = (time.monotonic() - start) * 1000
+                # Route *template* (e.g. "/api/v1/equipment/{equipment_id}"),
+                # not the raw URL: request.scope["route"] is populated by
+                # Starlette's router before the endpoint runs, so it's
+                # available here once call_next returns. Using the raw path
+                # would make every equipment/transaction/user detail
+                # request a distinct high-cardinality log key. No route
+                # matches (e.g. a 404) fall back to a fixed "unmatched"
+                # label rather than the raw path, for the same reason.
+                route = request.scope.get("route")
+                route_template = getattr(route, "path", None) or "unmatched"
+                access_logger.info(
+                    "request completed",
+                    extra={
+                        "http_method": request.method,
+                        "http_route": route_template,
+                        "http_status": status_code,
+                        "latency_ms": round(latency_ms, 2),
+                    },
+                )
+            except Exception:
+                logger.warning("Failed to emit access-log event", exc_info=True)
+            request_id_var.reset(request_id_token)
+            correlation_id_var.reset(correlation_id_token)
 
     @app.exception_handler(DomainError)
     async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
@@ -113,6 +180,7 @@ def create_app() -> FastAPI:
             exc.code,
             exc.status_code,
             request.url.path,
+            extra=_log_context(request),
         )
         return JSONResponse(
             status_code=exc.status_code,
@@ -127,7 +195,7 @@ def create_app() -> FastAPI:
         # dropped: Pydantic v2 includes the offending value there verbatim,
         # which would otherwise reflect back anything the client submitted
         # to a field, including passwords or other sensitive values.
-        logger.info("Request validation failed: path=%s", request.url.path)
+        logger.info("Request validation failed: path=%s", request.url.path, extra=_log_context(request))
         errors = [
             {
                 "field": ".".join(str(part) for part in err.get("loc", ()) if part != "body"),
@@ -155,7 +223,9 @@ def create_app() -> FastAPI:
         # every other error response. `exc.headers` (e.g. WWW-Authenticate on
         # a 401) is forwarded unchanged; authorization behavior itself is
         # untouched, this only changes the response body shape.
-        logger.info("HTTP exception: status=%s path=%s", exc.status_code, request.url.path)
+        logger.info(
+            "HTTP exception: status=%s path=%s", exc.status_code, request.url.path, extra=_log_context(request)
+        )
         detail = exc.detail if isinstance(exc.detail, str) else "HTTP error"
         code = _HTTP_EXCEPTION_CODES.get(exc.status_code, "HTTP_ERROR")
         return JSONResponse(
@@ -171,7 +241,7 @@ def create_app() -> FastAPI:
         # specific handlers). The full exception is logged server-side for
         # diagnosis; the client only ever sees a safe, generic envelope —
         # never the exception message, type, or a stack trace.
-        logger.exception("Unhandled exception on path=%s", request.url.path)
+        logger.exception("Unhandled exception on path=%s", request.url.path, extra=_log_context(request))
         return JSONResponse(
             status_code=500,
             content={"detail": "An unexpected error occurred.", "code": "INTERNAL_ERROR", "status": 500},

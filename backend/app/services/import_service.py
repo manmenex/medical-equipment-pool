@@ -821,7 +821,13 @@ async def _commit_rows(
         await db.commit()
     except Exception as exc:
         await db.rollback()
-        logger.exception("Inventory import commit failed unexpectedly; batch rolled back (filename=%s)", filename)
+        # Roadmap PR15A: aggregate operational statistics only -- never the
+        # filename (or any row/cell content), matching this workflow's
+        # existing "no spreadsheet content in logs" discipline.
+        logger.exception(
+            "Inventory import commit failed unexpectedly; batch rolled back",
+            extra={"attempted_rows": len(plans)},
+        )
         if isinstance(exc, ImportCommitFailedError):
             raise
         raise ImportCommitFailedError(
@@ -829,6 +835,16 @@ async def _commit_rows(
         ) from exc
 
     summary.audit_log_id = str(audit_log.id)
+    logger.info(
+        "Inventory import committed successfully",
+        extra={
+            "total_rows": summary.total_rows,
+            "succeeded": summary.succeeded,
+            "failed": summary.failed,
+            "skipped": summary.skipped,
+            "update_existing": update_existing,
+        },
+    )
     return summary
 
 
