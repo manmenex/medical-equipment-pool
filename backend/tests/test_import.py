@@ -59,7 +59,7 @@ def _upload(rows: list[dict[str, str]], filename: str = "inventory.xlsx"):
     return {"file": (filename, content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
 
 
-async def _preview(client, headers, rows, *, update_existing: bool = False):
+async def _preview(client, headers, rows, *, update_existing: bool = True):
     return await client.post(
         "/api/v1/import/preview",
         headers=headers,
@@ -68,7 +68,7 @@ async def _preview(client, headers, rows, *, update_existing: bool = False):
     )
 
 
-async def _commit(client, headers, rows, *, update_existing: bool = False):
+async def _commit(client, headers, rows, *, update_existing: bool = True):
     return await client.post(
         "/api/v1/import/commit",
         headers=headers,
@@ -145,7 +145,7 @@ async def test_missing_required_header_rejects_whole_file(client, seeded_users):
         "/api/v1/import/preview",
         headers=headers,
         files={"file": ("bad.xlsx", buf.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
-        data={"update_existing": "false"},
+        data={"update_existing": "true"},
     )
     assert resp.status_code == 400
     assert resp.json()["code"] == "INVALID_INPUT"
@@ -284,15 +284,30 @@ async def test_update_never_changes_asset_number(client, seeded_users, db_sessio
 # ---------------------------------------------------------------------------
 
 
-async def test_db_duplicate_bcm_skipped_when_update_mode_off(client, seeded_users, db_session):
+async def test_update_existing_false_is_rejected_with_clear_error(client, seeded_users, db_session):
+    """Review finding PR12-H1R: Roadmap PR12 is update-only, so
+    `update_existing=false` no longer has a coherent meaning -- there is
+    no create path for it to select instead. The request is rejected
+    clearly and immediately (before any row is parsed), rather than
+    silently accepted into a batch where nothing could ever succeed."""
     headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     await _seed_equipment(db_session, bcm_code="BCM301")
+    row = _base_row(**{"ID CODE": "301"})
 
-    resp = await _commit(client, headers, [_base_row(**{"ID CODE": "301"})], update_existing=False)
-    body = resp.json()
-    assert body["skipped"] == 1
-    assert body["succeeded"] == 0
-    assert "update mode is off" in body["rows"][0]["reason"]
+    preview_resp = await _preview(client, headers, [row], update_existing=False)
+    assert preview_resp.status_code == 400
+    assert preview_resp.json()["code"] == "INVALID_INPUT"
+    assert "update-only" in preview_resp.json()["detail"]
+
+    commit_resp = await _commit(client, headers, [row], update_existing=False)
+    assert commit_resp.status_code == 400
+    assert commit_resp.json()["code"] == "INVALID_INPUT"
+    assert "update-only" in commit_resp.json()["detail"]
+
+    # Nothing was written -- the rejection happens before any parsing.
+    result = await db_session.execute(select(Equipment).where(Equipment.bcm_code == "BCM301"))
+    equipment = result.scalar_one()
+    assert equipment.equipment_name == "Seed Equipment"
 
 
 async def test_db_duplicate_bcm_updates_master_data_when_update_mode_on(client, seeded_users, db_session):
@@ -496,7 +511,7 @@ async def test_oversized_upload_rejected_before_parsing(client, seeded_users):
         "/api/v1/import/preview",
         headers=headers,
         files={"file": ("big.xlsx", oversized, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
-        data={"update_existing": "false"},
+        data={"update_existing": "true"},
     )
     assert resp.status_code == 400
     assert resp.json()["code"] == "INVALID_INPUT"
@@ -524,7 +539,7 @@ async def test_filename_exceeding_max_length_rejected(client, seeded_users):
         "/api/v1/import/preview",
         headers=headers,
         files={"file": (long_name, content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
-        data={"update_existing": "false"},
+        data={"update_existing": "true"},
     )
     assert resp.status_code == 400
     assert resp.json()["code"] == "INVALID_INPUT"
@@ -538,7 +553,7 @@ async def test_non_xlsx_extension_rejected(client, seeded_users):
         "/api/v1/import/preview",
         headers=headers,
         files={"file": ("inventory.csv", content, "text/csv")},
-        data={"update_existing": "false"},
+        data={"update_existing": "true"},
     )
     assert resp.status_code == 400
     assert resp.json()["code"] == "INVALID_INPUT"
@@ -607,7 +622,7 @@ async def _upload_raw_bytes(client, headers, content: bytes, filename: str = "in
         "/api/v1/import/preview",
         headers=headers,
         files={"file": (filename, content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
-        data={"update_existing": "false"},
+        data={"update_existing": "true"},
     )
 
 
@@ -737,3 +752,113 @@ async def test_valid_small_workbook_still_accepted_after_zip_bounds_checks(clien
     resp = await _preview(client, headers, [_base_row(**{"ID CODE": "961"})], update_existing=True)
     assert resp.status_code == 200
     assert resp.json()["succeeded"] == 1
+
+
+# ---------------------------------------------------------------------------
+# raw_source_status verbatim preservation (review finding PR12-#2).
+# raw_source_status is an audit field and must store the exact source-cell
+# text -- business validation (the Asset Status mapping lookup) uses a
+# separately normalized copy, never mutating the persisted value.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "source_value",
+    [
+        "  Active",  # leading spaces
+        "Active  ",  # trailing spaces
+        "  Active  ",  # leading and trailing spaces
+        "AcTiVe",  # mixed casing
+        "aCTIVE",  # mixed casing, different pattern
+    ],
+)
+async def test_raw_source_status_preserves_exact_source_cell_text(client, seeded_users, db_session, source_value):
+    equipment_id = await _seed_equipment(db_session, bcm_code="BCM971")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+
+    resp = await _commit(
+        client, headers, [_base_row(**{"ID CODE": "971", "Asset Status": source_value})], update_existing=True
+    )
+    body = resp.json()
+    assert body["succeeded"] == 1, body
+
+    result = await db_session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment_id)))
+    equipment = result.scalar_one()
+    assert equipment.raw_source_status == source_value, (
+        f"raw_source_status must preserve the source cell text exactly, "
+        f"got {equipment.raw_source_status!r} for source {source_value!r}"
+    )
+
+
+async def test_raw_source_status_verbatim_preview_matches_commit(client, seeded_users, db_session):
+    """Preview and commit must agree on the verbatim value (both re-parse
+    the same raw file independently -- see process_import's docstring)."""
+    await _seed_equipment(db_session, bcm_code="BCM972")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    row = _base_row(**{"ID CODE": "972", "Asset Status": "  In Use  "})
+
+    preview_resp = await _preview(client, headers, [row], update_existing=True)
+    assert preview_resp.json()["succeeded"] == 1
+
+    commit_resp = await _commit(client, headers, [row], update_existing=True)
+    body = commit_resp.json()
+    assert body["succeeded"] == 1
+    equipment_id = body["rows"][0]["equipment_id"]
+
+    result = await db_session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment_id)))
+    equipment = result.scalar_one()
+    assert equipment.raw_source_status == "  In Use  "
+
+
+async def test_raw_source_status_verbatim_value_still_maps_correctly_despite_whitespace_and_casing(
+    client, seeded_users, db_session
+):
+    """The verbatim value is stored as-is, but business validation (status
+    mapping) must still succeed via a separately normalized copy -- an
+    unusual but valid source value must not spuriously fail the row."""
+    equipment_id = await _seed_equipment(db_session, bcm_code="BCM973")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+
+    resp = await _commit(
+        client, headers, [_base_row(**{"ID CODE": "973", "Asset Status": "  DeFECTIVE  "})], update_existing=True
+    )
+    body = resp.json()
+    assert body["succeeded"] == 1, body
+
+    result = await db_session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment_id)))
+    equipment = result.scalar_one()
+    # Raw value preserved verbatim...
+    assert equipment.raw_source_status == "  DeFECTIVE  "
+    # ...while the normalized value correctly drove the (unpersisted,
+    # since update mode never writes status) mapping to UNAVAILABLE_DEFECTIVE
+    # -- proven indirectly by the row succeeding rather than failing as
+    # "Unrecognized Asset Status value".
+    assert equipment.status.value == "available_at_pool"  # unchanged -- update never writes status
+
+
+@pytest.mark.parametrize(
+    "source_value",
+    [
+        "  Mystery Value  ",  # leading/trailing whitespace
+        "In  Use",  # internal whitespace (double space) -- normalization
+        # is strip+lower only, so this legitimately does not match the
+        # "in use" mapping key; the point here is that the exact source
+        # text still appears in the failure reason, not a collapsed copy.
+        "In\tUse",  # internal whitespace (tab)
+    ],
+)
+async def test_unrecognized_asset_status_error_message_shows_verbatim_text(
+    client, seeded_users, db_session, source_value
+):
+    """The per-row failure reason must quote what the user actually typed,
+    including any leading/trailing/internal whitespace, not a
+    silently-normalized copy."""
+    await _seed_equipment(db_session, bcm_code="BCM974")
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+
+    resp = await _preview(
+        client, headers, [_base_row(**{"ID CODE": "974", "Asset Status": source_value})], update_existing=True
+    )
+    body = resp.json()
+    assert body["failed"] == 1
+    assert f"'{source_value}'" in body["rows"][0]["reason"]

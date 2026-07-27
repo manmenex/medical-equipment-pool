@@ -192,9 +192,13 @@ function CategoriesList() {
 // independent uploads of the same raw file -- this component never sends
 // a preview result back to the server as if it were the commit payload
 // (see services/import.ts).
+//
+// Review finding PR12-H1R / Repository Owner decision: Roadmap PR12 is
+// update-only -- it updates equipment that already exists in the system,
+// matched by BCM Code. There is no control here to request anything else
+// (see services/import.ts, which always sends update_existing=true).
 function InventoryImportPanel() {
   const [file, setFile] = useState<File | null>(null);
-  const [updateExisting, setUpdateExisting] = useState(false);
   const [previewResult, setPreviewResult] = useState<ImportPreviewResponse | null>(null);
   const [commitResult, setCommitResult] = useState<ImportCommitResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -214,7 +218,7 @@ function InventoryImportPanel() {
     setLoading(true);
     setError(null);
     try {
-      setPreviewResult(await previewImport(file, updateExisting));
+      setPreviewResult(await previewImport(file));
     } catch (err) {
       setError(apiErrorMessage(err, "ไม่สามารถอ่านไฟล์ได้"));
     } finally {
@@ -227,7 +231,7 @@ function InventoryImportPanel() {
     setLoading(true);
     setError(null);
     try {
-      const result = await commitImport(file, updateExisting);
+      const result = await commitImport(file);
       setCommitResult(result);
       queryClient.invalidateQueries({ queryKey: ["equipment"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
@@ -285,14 +289,11 @@ function InventoryImportPanel() {
         onChange={(e) => setFile(e.target.files?.[0] ?? null)}
         className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
       />
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={updateExisting}
-          onChange={(e) => setUpdateExisting(e.target.checked)}
-        />
-        อัปเดตข้อมูลเครื่องมือที่มีรหัส BCM ซ้ำในระบบ
-      </label>
+      <p className="text-sm text-[var(--text-muted)]">
+        ระบบจะอัปเดตข้อมูลเฉพาะเครื่องมือที่มีอยู่แล้วในระบบ โดยจับคู่ด้วยรหัส BCM เท่านั้น
+        หากไม่พบรหัส BCM ที่ตรงกัน แถวนั้นจะไม่ถูกบันทึกและจะไม่มีการสร้างรายการครุภัณฑ์ใหม่ —
+        กรุณาสร้างรายการครุภัณฑ์ผ่านเมนู &quot;เพิ่มเครื่องมือ&quot; ก่อน แล้วจึงนำเข้าไฟล์นี้อีกครั้งเพื่ออัปเดต
+      </p>
       {error && <p className="text-sm text-status-repair">{error}</p>}
       <button
         type="submit"

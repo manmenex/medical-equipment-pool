@@ -192,6 +192,12 @@ NO_MATCHING_EQUIPMENT_REASON = (
 class ImportRowStatus(str, Enum):
     SUCCESS = "success"
     FAILED = "failed"
+    # Review finding PR12-H1R / Repository Owner decision: Roadmap PR12 is
+    # update-only and `update_existing=false` is now rejected outright at
+    # process_import's entry point (never reaching per-row validation), so
+    # no code path can currently produce SKIPPED. Kept in the API contract
+    # (never emitted) rather than removed, since narrowing the response
+    # shape is a separate decision from this fix.
     SKIPPED = "skipped"
 
 
@@ -251,6 +257,33 @@ def _cell_to_text(value: object) -> str:
     if isinstance(value, int):
         return str(value)
     return str(value).strip()
+
+
+def _cell_to_text_verbatim(value: object) -> str:
+    """Like `_cell_to_text`, but never strips or otherwise normalizes a
+    string value -- used only for the Asset Status source cell, whose
+    exact original text (leading/trailing whitespace, casing, internal
+    whitespace) must be preserved byte-for-byte in the `raw_source_status`
+    audit column. Business validation (the Asset Status mapping lookup)
+    normalizes its own copy of this value at the point of use; this
+    function's output is never itself normalized, since it is what gets
+    persisted verbatim.
+
+    A non-string cell still needs the same type coercion `_cell_to_text`
+    applies -- there is no "original whitespace" to lose for a numeric
+    cell, since Excel's own numeric type never carries surrounding text.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, float):
+        if value.is_integer():
+            return str(int(value))
+        return str(value)
+    if isinstance(value, int):
+        return str(value)
+    return str(value)
 
 
 # ---------------------------------------------------------------------------
@@ -411,13 +444,22 @@ class _ParsedRow:
     receive_date_raw: str
     register_date_raw: str
     purchase_year_raw: str
-    asset_status_raw: str
+    # Review finding PR12-#2: the exact, unmodified Asset Status source
+    # cell text (no strip/case/whitespace normalization) -- this is what
+    # gets persisted verbatim into equipment.raw_source_status. Business
+    # validation (the status mapping lookup) normalizes its own copy at
+    # the point of use; see _validate_rows.
+    asset_status_verbatim: str
 
 
 def _parse_rows(worksheet: Worksheet, header_index: dict[str, int]) -> list[_ParsedRow]:
     def cell(values: tuple, header: str) -> str:
         idx = header_index[header]
         return _cell_to_text(values[idx]) if idx < len(values) else ""
+
+    def cell_verbatim(values: tuple, header: str) -> str:
+        idx = header_index[header]
+        return _cell_to_text_verbatim(values[idx]) if idx < len(values) else ""
 
     parsed: list[_ParsedRow] = []
     for row_number, values in enumerate(worksheet.iter_rows(min_row=2, values_only=True), start=2):
@@ -442,7 +484,7 @@ def _parse_rows(worksheet: Worksheet, header_index: dict[str, int]) -> list[_Par
                 receive_date_raw=cell(values, "Receive Date"),
                 register_date_raw=cell(values, "Register Date"),
                 purchase_year_raw=cell(values, "Purchase Year"),
-                asset_status_raw=cell(values, "Asset Status"),
+                asset_status_verbatim=cell_verbatim(values, "Asset Status"),
             )
         )
     return parsed
@@ -480,9 +522,7 @@ def _length_violation(field_label: str, value: str | None) -> str | None:
     return None
 
 
-async def _validate_rows(
-    db: AsyncSession, parsed_rows: list[_ParsedRow], *, update_existing: bool
-) -> list[_RowPlan]:
+async def _validate_rows(db: AsyncSession, parsed_rows: list[_ParsedRow]) -> list[_RowPlan]:
     plans: dict[int, _RowPlan] = {}
     normalized_bcm: dict[int, str] = {}
     normalized_item_no: dict[int, str] = {}
@@ -528,7 +568,7 @@ async def _validate_rows(
             or _length_violation("Equipment Name", row.equipment_name_raw or None)
             or _length_violation("Manufacturer", row.brand_raw or None)
             or _length_violation("Model", row.model_raw or None)
-            or _length_violation("Asset Status", row.asset_status_raw or None)
+            or _length_violation("Asset Status", row.asset_status_verbatim or None)
         )
         if length_error is not None:
             fail(row.row_number, bcm_code, item_no, row.asset_id_raw or None, length_error)
@@ -600,27 +640,28 @@ async def _validate_rows(
             fail(row.row_number, bcm_code, item_no, asset_id, NO_MATCHING_EQUIPMENT_REASON)
             continue
 
-        if not update_existing:
-            fail_skip = ImportRowResult(
-                row_number=row.row_number,
-                bcm_code=bcm_code,
-                item_no=item_no,
-                asset_id=asset_id,
-                status=ImportRowStatus.SKIPPED,
-                reason="BCM Code already exists in the database (update mode is off).",
-            )
-            plans[row.row_number] = _RowPlan(result=fail_skip)
-            continue
-
         # Asset Status: validated for every row about to be updated (Part
         # F.1 step 3's per-row rule) -- even though update never writes
         # `status`, an unrecognized source value still fails the row as a
         # data-quality signal, and raw_source_status is only ever
         # persisted for rows whose source value could be classified at
         # all.
-        mapped_status = ASSET_STATUS_MAPPING.get(row.asset_status_raw.strip().lower())
+        #
+        # Review finding PR12-#2: raw_source_status is an audit field and
+        # must preserve the exact source-cell text, so business
+        # validation here reads from a separately normalized copy
+        # (trimmed, lowercased) -- row.asset_status_verbatim itself is
+        # never mutated and is what gets persisted below, unmodified.
+        normalized_source_status = row.asset_status_verbatim.strip().lower()
+        mapped_status = ASSET_STATUS_MAPPING.get(normalized_source_status)
         if mapped_status is None:
-            fail(row.row_number, bcm_code, item_no, asset_id, f"Unrecognized Asset Status value: '{row.asset_status_raw}'.")
+            fail(
+                row.row_number,
+                bcm_code,
+                item_no,
+                asset_id,
+                f"Unrecognized Asset Status value: '{row.asset_status_verbatim}'.",
+            )
             continue
 
         import_source_metadata = {
@@ -654,7 +695,9 @@ async def _validate_rows(
             "asset_id": asset_id,
             "brand": row.brand_raw or None,
             "model": row.model_raw or None,
-            "raw_source_status": row.asset_status_raw or None,
+            # Verbatim source text, never the normalized value used for
+            # the mapping lookup above (review finding PR12-#2).
+            "raw_source_status": row.asset_status_verbatim or None,
         }
         plans[row.row_number] = _RowPlan(
             result=ImportRowResult(
@@ -804,13 +847,27 @@ async def process_import(
     stale or tampered client-supplied preview payload cannot influence
     what actually gets written.
     """
+    # Review finding PR12-H1R / Repository Owner decision: Roadmap PR12 is
+    # update-only. `update_existing` is kept in the request shape for API
+    # compatibility, but `false` no longer has a coherent meaning -- there
+    # is no create path for it to select instead, so a request that sends
+    # it is rejected clearly and immediately, rather than silently
+    # accepted and processed into a batch where every row can only ever
+    # fail or (formerly) skip.
+    if not update_existing:
+        raise InvalidInputError(
+            "Roadmap PR12 Inventory Import is update-only; update_existing must be true. "
+            "Import never creates new equipment -- create the equipment through the "
+            "standard Equipment Master workflow first, then re-import this file to update it."
+        )
+
     filename = _validate_filename(file.filename)
     content = await _read_upload_bounded(file, max_bytes=MAX_UPLOAD_BYTES)
     # Review finding PR12-H2: CPU-bound XLSX parsing runs in a worker
     # thread, never blocking the event loop this coroutine shares with
     # every other concurrent request.
     parsed_rows = await asyncio.to_thread(_parse_workbook_sync, content)
-    plans = await _validate_rows(db, parsed_rows, update_existing=update_existing)
+    plans = await _validate_rows(db, parsed_rows)
 
     if not commit:
         return _summarize(filename, plans)

@@ -120,7 +120,7 @@ describe("InventoryImportPanel upload -> preview -> commit", () => {
     await user.click(screen.getByRole("button", { name: "ดูตัวอย่างก่อนนำเข้า" }));
 
     await waitFor(() => expect(previewImport).toHaveBeenCalledTimes(1));
-    expect(previewImport).toHaveBeenCalledWith(file, false);
+    expect(previewImport).toHaveBeenCalledWith(file);
     expect(screen.getByText("ตัวอย่างผลการนำเข้า (ยังไม่บันทึกข้อมูลลงระบบ)")).toBeInTheDocument();
     expect(screen.getByText("สำเร็จ 1")).toBeInTheDocument();
     expect(screen.getByText("ล้มเหลว 1")).toBeInTheDocument();
@@ -128,16 +128,18 @@ describe("InventoryImportPanel upload -> preview -> commit", () => {
     expect(commitImport).not.toHaveBeenCalled();
   });
 
-  it("passes update_existing through to the preview call when the checkbox is checked", async () => {
+  it("never offers a control to request anything other than update-only import (review finding PR12-H1R)", async () => {
     previewImport.mockResolvedValue(previewResponse);
     const user = await openImportTab();
 
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+
     const file = new File(["dummy"], "inventory.xlsx", { type: "application/octet-stream" });
     await user.upload(document.querySelector('input[type="file"]') as HTMLInputElement, file);
-    await user.click(screen.getByRole("checkbox"));
     await user.click(screen.getByRole("button", { name: "ดูตัวอย่างก่อนนำเข้า" }));
 
-    await waitFor(() => expect(previewImport).toHaveBeenCalledWith(file, true));
+    await waitFor(() => expect(previewImport).toHaveBeenCalledWith(file));
+    expect(previewImport.mock.calls[0]).toHaveLength(1);
   });
 
   it("commits after a preview and shows the commit summary", async () => {
@@ -152,7 +154,7 @@ describe("InventoryImportPanel upload -> preview -> commit", () => {
 
     await user.click(screen.getByRole("button", { name: "ยืนยันนำเข้า" }));
     await waitFor(() => expect(commitImport).toHaveBeenCalledTimes(1));
-    expect(commitImport).toHaveBeenCalledWith(file, false);
+    expect(commitImport).toHaveBeenCalledWith(file);
     expect(screen.getByText("นำเข้าข้อมูลสำเร็จ")).toBeInTheDocument();
   });
 

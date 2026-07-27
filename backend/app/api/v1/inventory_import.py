@@ -20,7 +20,11 @@ router = APIRouter(prefix="/import", tags=["import"])
 @router.post("/preview", response_model=ImportPreviewResponse)
 async def preview_import(
     file: UploadFile = File(...),
-    update_existing: bool = Form(default=False),
+    # Roadmap PR12 is update-only (see app.services.import_service's
+    # module docstring). Defaults to True so an omitted field behaves
+    # correctly; an explicit `false` is rejected by process_import with a
+    # clear error rather than silently accepted.
+    update_existing: bool = Form(default=True),
     db: AsyncSession = Depends(get_db),
     user=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
 ):
@@ -36,7 +40,11 @@ async def preview_import(
 async def commit_import(
     request: Request,
     file: UploadFile = File(...),
-    update_existing: bool = Form(default=False),
+    # Roadmap PR12 is update-only (see app.services.import_service's
+    # module docstring). Defaults to True so an omitted field behaves
+    # correctly; an explicit `false` is rejected by process_import with a
+    # clear error rather than silently accepted.
+    update_existing: bool = Form(default=True),
     db: AsyncSession = Depends(get_db),
     user=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
 ):

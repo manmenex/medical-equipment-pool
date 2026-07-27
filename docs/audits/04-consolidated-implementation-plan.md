@@ -321,7 +321,7 @@ Per the confirmed requirements and this reconciliation:
 #### PR12 — Inventory import
 - **Objective:** Build the confirmed inventory import workflow (see full design in §10).
 - **Included findings:** Confirmed requirements §2/§10.
-- **Expected files/modules:** New `app/services/import_service.py`, new `app/api/v1/import.py` (upload/preview/commit endpoints), `app/crud/equipment.py` (bulk-aware create/update path).
+- **Expected files/modules:** New `app/services/import_service.py`, new `app/api/v1/import.py` (upload/preview/commit endpoints), `app/crud/equipment.py` (bulk-aware update path).
 - **Database migration impact:** None beyond PR5's columns.
 - **API contract impact:** New endpoints only, no existing-contract changes.
 - **Frontend impact:** New Administrator-only import UI (upload → preview → confirm).
@@ -330,6 +330,7 @@ Per the confirmed requirements and this reconciliation:
 - **Dependencies:** PR5 (target schema must exist), **PR3 (import must produce an audit record per the confirmed requirement)**.
 - **Rollback strategy:** Revert; import is an additive capability with no effect on existing data unless explicitly run.
 - **Risk level:** Medium (data-quality risk is the primary concern, mitigated by mandatory preview and per-row validation — see §10).
+- **Implementation note (added during PR12's independent review, GitHub PR #43):** Inventory Import **updates existing equipment only**, matched by canonical BCM Code — it does not create new equipment records. A row whose BCM Code does not match an existing record is rejected during preview (and again, independently, at commit) with a message directing the operator to create that equipment first through the standard Equipment Master workflow, then re-import the file to update it. This is a scoping decision made because `equipment.asset_number` is `NOT NULL`/`UNIQUE` real, hospital-assigned inventory metadata (see `knowledge/adr/ADR-002-identifier-model.md`) that the import source spreadsheet has no column for, and that the import workflow must never generate, derive, or synthesize. **This is deferred follow-up scope, not a permanent prohibition on bulk creation** — a future Roadmap item may add create-from-import once it first defines the real hospital Asset Number assignment workflow (hospital-assigned values, a nullable-provisional-record model, or another authoritative approach), deciding through a dedicated ADR if the identifier model itself needs to change. §10 below is retained as originally written (including its "update existing" design, F.3) as the historical record of the pre-implementation plan; this note is the authoritative statement of what actually shipped.
 
 #### PR13 — Search, history, and reporting adjustments
 - **Objective:** Finalize BCM-Code-first search/scan priority (`knowledge/adr/ADR-003-bcm-manual-search.md`), dispatch-type/round-aware history filtering, and remove MVP-irrelevant dashboard/report elements (PM/CAL widgets, overdue indicators) in favor of a read-only "days since dispatch" indicator.
@@ -417,6 +418,7 @@ Per the confirmed requirements and this reconciliation:
    - BCM Code (from `ID CODE`): required; text-typed (never numeric-parsed, preserving leading zeros); missing → row flagged as failed.
    - Duplicate BCM Code **within the uploaded file itself**: flagged as failed for all but the first occurrence (or all occurrences, product decision — recommend flagging all duplicates within a file as failed, forcing the source file to be corrected, since silently picking "the first one" risks picking the wrong record).
    - Duplicate BCM Code **already present in the database**: not a failure by default — routed to "update existing" handling (see F.3) only when the operator has explicitly selected update mode; otherwise flagged as a skip with a clear reason.
+   - BCM Code **with no match in the database at all**: **as implemented (see PR12's implementation note in Part D above), always a per-row failure — Inventory Import does not create new equipment.** The failure reason directs the operator to create the equipment through the standard Equipment Master workflow first, then re-import this file to update it. Deferred follow-up scope, not a permanent prohibition on future bulk creation.
    - Item No. (from the `Item No.` source column): text-typed, case and leading zeros preserved exactly as sourced (per `knowledge/architecture/identifiers.md`); validated for file-internal and database duplicates the same way as BCM Code above.
    - Asset ID / Serial Number duplicate checks: validated against existing database values where those fields are expected to be unique (Serial Number, confirmed unique already; Asset ID uniqueness pending hospital confirmation, §14) — flagged, not silently overwritten.
    - Asset Status: raw value preserved verbatim into `raw_source_status`; mapped into the target 4-state model only through the explicit, approved mapping table (illustrative version below, **pending confirmation of real source values**, §14); an unrecognized status value is a per-row failure, not a guess.
@@ -438,9 +440,11 @@ Per the confirmed requirements and this reconciliation:
 
 Off by default. When explicitly enabled by the Administrator for a given import run: a row whose BCM Code or Item No matches an existing record updates that record's metadata fields (Asset ID, Manufacturer, Model, dates) but **never** silently changes `status`/`legacy_status` through the import path — status changes always go through the normal dispatch/receipt/defective/decommission actions, keeping the import path scoped to master-data fields only. This avoids the import feature becoming a backdoor around the state-machine's transition rules.
 
+> **Implementation note (PR12, GitHub PR #43):** as implemented, Inventory Import is update-only in every run — there is no off/on toggle, because there is no create path for an "off" mode to select instead (see Part D's PR12 implementation note above). The `update_existing` request field is retained for API compatibility, but the backend rejects an explicit `false` with a clear error rather than silently accepting a request that could never do anything (no create path, and no in-DB match to skip either, if the intent was ever "create-or-skip"). The frontend never offers a control to request anything else. The master-data field set and never-touches-`status`/`legacy_status` guarantee described above are otherwise unchanged and still apply to every successful row.
+
 ### F.4 Partial success behavior
 
-An import batch is never all-or-nothing. Valid rows commit; invalid/duplicate rows are reported and excluded; the operator can correct the source file and re-import only the corrected rows (re-import is idempotent for previously-successful BCM Codes / Item Nos when update mode is off — they're simply skipped again with a clear reason, not re-validated as new).
+An import batch is never all-or-nothing. Valid rows commit; invalid/duplicate rows are reported and excluded; the operator can correct the source file and re-import only the corrected rows. **As implemented (PR12, GitHub PR #43):** a row whose BCM Code has no match in the database is always a per-row failure (see F.1 step 3), not a skip — re-import after creating the missing equipment through the standard Equipment Master workflow will then match and update it.
 
 ---
 
@@ -481,8 +485,10 @@ An import batch is never all-or-nothing. Valid rows commit; invalid/duplicate ro
 
 - Missing BCM Code → row fails.
 - Duplicate BCM Code within one file → flagged, not silently deduplicated.
-- BCM Code already in database, update mode off → skipped with reason.
 - BCM Code already in database, update mode on → metadata updated, status untouched.
+- **As implemented (PR12, GitHub PR #43):** BCM Code with no match in the database at all → row fails, no equipment created, regardless of `update_existing` — Inventory Import does not create new equipment (deferred follow-up scope, not a permanent prohibition; see Part D's PR12 implementation note).
+- **As implemented:** an explicit `update_existing=false` request is rejected outright (400) with a clear message before any row is parsed, rather than silently accepted into a batch where nothing could ever succeed (there is no create path for it to select, and no per-row "skip" outcome is reachable either).
+- **As implemented:** `raw_source_status` preserves the exact source-cell text (leading/trailing/internal whitespace, casing) — a separately normalized copy is used only for the Asset Status mapping lookup, never persisted.
 - Leading-zero preservation round-trip.
 - Invalid/unrecognized source status → row fails, not guessed.
 - Duplicate Serial Number → flagged.
