@@ -4,6 +4,7 @@ import {
   canCorrectTransactionWard,
   canDecommissionEquipment,
   canDispatchOrReceiveEquipment,
+  canImportInventory,
   canManageEquipmentMasterData,
   canManageUsers,
   canMarkEquipmentDefective,
@@ -55,6 +56,7 @@ describe("capability layer (ADMINISTRATOR_ONLY_ROLES: administrator only)", () =
     ["canReactivateEquipment", canReactivateEquipment],
     ["canDecommissionEquipment", canDecommissionEquipment],
     ["canManageUsers", canManageUsers],
+    ["canImportInventory", canImportInventory],
   ];
 
   for (const [name, fn] of cases) {

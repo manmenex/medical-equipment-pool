@@ -41,6 +41,11 @@ AUDIT_ACTION_TOKEN_REFRESH = "token_refresh"
 # audit trail should say so explicitly rather than reading as an
 # undifferentiated "update".
 AUDIT_ACTION_WARD_CORRECTION = "ward_correction"
+# Roadmap PR12 (docs/audits/04-consolidated-implementation-plan.md Part F.1
+# step 7): one audit_logs entry per import commit batch (who ran it, when,
+# filename, aggregate row counts) -- deliberately not one entry per
+# imported equipment row; see app.services.import_service.
+AUDIT_ACTION_IMPORT = "import"
 
 # Audit entity-type values, same rationale as the actions above.
 AUDIT_ENTITY_EQUIPMENT = "equipment"

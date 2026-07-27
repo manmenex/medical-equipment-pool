@@ -90,6 +90,12 @@ export function canManageUsers(user: RoleLike): boolean {
   return hasRole(user, "administrator");
 }
 
+// Roadmap PR12 (Inventory Import): mirrors backend
+// app.api.v1.inventory_import's ADMINISTRATOR_ONLY_ROLES gate.
+export function canImportInventory(user: RoleLike): boolean {
+  return hasRole(user, "administrator");
+}
+
 // Dispatch/receipt entry points (borrow/return). Read Only never performs
 // these -- mirrors backend EQUIPMENT_POOL_OPERATION_ROLES (app.api.v1.borrow.
 // BORROW_ROLES).

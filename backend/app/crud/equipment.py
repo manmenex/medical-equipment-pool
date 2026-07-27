@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
 
 from sqlalchemy import String, and_, case, cast, func, or_, select
@@ -98,6 +99,59 @@ async def get_by_asset_number(db: AsyncSession, asset_number: str) -> Equipment 
         select(Equipment).where(Equipment.asset_number == asset_number, Equipment.deleted_at.is_(None))
     )
     return result.scalar_one_or_none()
+
+
+async def get_by_bcm_codes(db: AsyncSession, values: Sequence[str]) -> dict[str, Equipment]:
+    """Bulk exact BCM Code lookup. Roadmap PR12 (review PR12-H2): a single
+    IN(...) query for an entire import batch, replacing what was
+    previously one query per row -- app.services.import_service is the
+    only caller, and BCM Code is the sole match key it uses to decide
+    whether an import row is a new record or an update to an existing
+    one (never item_no, asset_id, or serial_number)."""
+    if not values:
+        return {}
+    result = await db.execute(
+        select(Equipment).where(Equipment.bcm_code.in_(values), Equipment.deleted_at.is_(None))
+    )
+    return {e.bcm_code: e for e in result.scalars().all()}
+
+
+async def get_by_item_nos(db: AsyncSession, values: Sequence[str]) -> dict[str, Equipment]:
+    """Bulk exact Item No lookup (Roadmap PR12 review PR12-H2/H3 import
+    duplicate check -- item_no is already database-unique)."""
+    if not values:
+        return {}
+    result = await db.execute(
+        select(Equipment).where(Equipment.item_no.in_(values), Equipment.deleted_at.is_(None))
+    )
+    return {e.item_no: e for e in result.scalars().all()}
+
+
+async def get_by_serial_numbers(db: AsyncSession, values: Sequence[str]) -> dict[str, Equipment]:
+    """Bulk exact Serial Number lookup (Roadmap PR12 review PR12-H2/H3
+    import duplicate check -- serial_number is already database-unique)."""
+    if not values:
+        return {}
+    result = await db.execute(
+        select(Equipment).where(Equipment.serial_number.in_(values), Equipment.deleted_at.is_(None))
+    )
+    return {e.serial_number: e for e in result.scalars().all()}
+
+
+async def get_by_asset_ids(db: AsyncSession, values: Sequence[str]) -> dict[str, Equipment]:
+    """Roadmap PR12: asset_id carries no database uniqueness constraint
+    (see migration 0010's docstring -- hospital-wide uniqueness is
+    unconfirmed), so this returns one representative match per value for
+    application-layer conflict flagging, not a uniqueness guarantee."""
+    if not values:
+        return {}
+    result = await db.execute(
+        select(Equipment).where(Equipment.asset_id.in_(values), Equipment.deleted_at.is_(None))
+    )
+    mapping: dict[str, Equipment] = {}
+    for e in result.scalars().all():
+        mapping.setdefault(e.asset_id, e)
+    return mapping
 
 
 async def search(
