@@ -232,3 +232,117 @@ async def test_invalid_date_value_rejected_not_500(client, seeded_users):
     admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
     resp = await client.get("/api/v1/transactions", headers=admin, params={"from_date": "not-a-date"})
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Review fix (correctness): date-range edge cases. The original
+# `to_date + timedelta(days=1)` upper-bound arithmetic could raise
+# OverflowError for `to_date=9999-12-31` (Python's date.max), an ordinary
+# ISO date string a client can send -- that would have surfaced as an
+# unhandled 500, not a clean validation response. The fix computes the
+# upper bound as `to_date` at `time.max` instead of incrementing the date,
+# which can never overflow, and the API layer now rejects a reversed range
+# (from_date > to_date) outright with a 400 before it ever reaches
+# transaction_crud.search().
+# ---------------------------------------------------------------------------
+
+
+async def test_to_date_at_date_max_does_not_raise_overflow_error(client, seeded_users):
+    """Regression test: to_date=9999-12-31 (date.max) must not crash the
+    server -- it is an ordinary, syntactically valid ISO date string."""
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await client.get("/api/v1/transactions", headers=admin, params={"to_date": "9999-12-31"})
+    assert resp.status_code == 200, resp.text
+
+
+async def test_from_date_at_date_min_does_not_raise(client, seeded_users):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await client.get("/api/v1/transactions", headers=admin, params={"from_date": "0001-01-01"})
+    assert resp.status_code == 200, resp.text
+
+
+async def test_reversed_date_range_rejected_with_structured_400(client, seeded_users):
+    """from_date after to_date can never match anything -- rejected
+    explicitly rather than silently returning an empty page."""
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await client.get(
+        "/api/v1/transactions",
+        headers=admin,
+        params={"from_date": "2026-07-31", "to_date": "2026-07-01"},
+    )
+    assert resp.status_code == 400, resp.text
+    body = resp.json()
+    assert body["code"] == "INVALID_INPUT"
+    assert "from_date" in body["detail"]
+    assert "to_date" in body["detail"]
+
+
+async def test_reversed_date_range_at_the_extreme_still_rejected_not_500(client, seeded_users):
+    """Combines both edge cases: a reversed range where to_date is also
+    date.max must still be a clean 400, never an OverflowError-driven 500."""
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await client.get(
+        "/api/v1/transactions",
+        headers=admin,
+        params={"from_date": "9999-12-31", "to_date": "0001-01-01"},
+    )
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["code"] == "INVALID_INPUT"
+
+
+async def test_equal_from_and_to_date_is_a_valid_single_day_range(client, seeded_users):
+    """from_date == to_date is not a reversed range -- it is a valid,
+    whole-day-inclusive single-day filter."""
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    ward_id = await _create_ward(client, admin, "W-PR13-9")
+
+    equipment = await _create_equipment(client, admin, "AST-PR13-0013")
+    tx = await _dispatch(client, staff, equipment["id"], ward_id, dispatch_type="on_demand")
+    borrowed_date = datetime.fromisoformat(tx["borrowed_at"]).date()
+
+    resp = await client.get(
+        "/api/v1/transactions",
+        headers=admin,
+        params={
+            "equipment_id": equipment["id"],
+            "from_date": str(borrowed_date),
+            "to_date": str(borrowed_date),
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()["items"]) == 1
+
+
+async def test_omitted_dates_leave_behavior_unchanged(client, seeded_users):
+    """Regression guard: from_date/to_date are independently optional --
+    omitting both (the pre-PR13 request shape) must behave exactly as
+    before, and omitting just one must not implicitly bound the other."""
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    ward_id = await _create_ward(client, admin, "W-PR13-10")
+
+    equipment = await _create_equipment(client, admin, "AST-PR13-0014")
+    await _dispatch(client, staff, equipment["id"], ward_id, dispatch_type="on_demand")
+
+    resp_no_dates = await client.get(
+        "/api/v1/transactions", headers=admin, params={"equipment_id": equipment["id"]}
+    )
+    assert resp_no_dates.status_code == 200, resp_no_dates.text
+    assert len(resp_no_dates.json()["items"]) == 1
+
+    resp_from_only = await client.get(
+        "/api/v1/transactions",
+        headers=admin,
+        params={"equipment_id": equipment["id"], "from_date": "0001-01-01"},
+    )
+    assert resp_from_only.status_code == 200, resp_from_only.text
+    assert len(resp_from_only.json()["items"]) == 1
+
+    resp_to_only = await client.get(
+        "/api/v1/transactions",
+        headers=admin,
+        params={"equipment_id": equipment["id"], "to_date": "9999-12-31"},
+    )
+    assert resp_to_only.status_code == 200, resp_to_only.text
+    assert len(resp_to_only.json()["items"]) == 1

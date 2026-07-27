@@ -1,5 +1,5 @@
 import uuid
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time
 
 from sqlalchemy import String, and_, cast, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -306,7 +306,17 @@ async def search(
     additive and independently optional, combined with AND like the rest.
     from_date/to_date bound BorrowTransaction.borrowed_at (the dispatch
     date, the only date every transaction has, open or closed) to a
-    whole-day-inclusive range."""
+    whole-day-inclusive range.
+
+    Review fix (correctness, not caller-validated here): the upper bound
+    is computed as `to_date` at `time.max`, never by adding a day to
+    `to_date` -- incrementing a `date` overflows for `date.max`
+    (9999-12-31), which callers can send as an ordinary ISO date string.
+    `datetime.combine(to_date, time.max)` is always representable for any
+    valid `date`, so this bound can never raise. from_date/to_date
+    ordering is validated by the caller (app/api/v1/transactions.py)
+    before this function is ever called -- search() trusts its inputs,
+    consistent with every other filter here."""
     filters = []
     if ward_id is not None:
         filters.append(BorrowTransaction.ward_id == ward_id)
@@ -321,7 +331,7 @@ async def search(
     if from_date is not None:
         filters.append(BorrowTransaction.borrowed_at >= datetime.combine(from_date, time.min))
     if to_date is not None:
-        filters.append(BorrowTransaction.borrowed_at < datetime.combine(to_date + timedelta(days=1), time.min))
+        filters.append(BorrowTransaction.borrowed_at <= datetime.combine(to_date, time.max))
 
     count_stmt = select(func.count()).select_from(BorrowTransaction).where(and_(*filters)) if filters else select(
         func.count()

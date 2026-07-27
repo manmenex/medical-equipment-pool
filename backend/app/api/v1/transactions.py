@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import WARD_CORRECTION_ROLES, get_current_user, require_roles
-from app.core.exceptions import TransactionNotFoundError
+from app.core.exceptions import InvalidInputError, TransactionNotFoundError
 from app.crud import transaction as transaction_crud
 from app.db.session import get_db
 from app.models.transaction import DispatchType, RoutineRound
@@ -31,6 +31,14 @@ async def list_transactions(
     db: AsyncSession = Depends(get_db),
     _user=Depends(get_current_user),
 ):
+    # Review fix: a reversed date range (from_date after to_date) can never
+    # match anything and is almost always a client mistake -- reject it
+    # explicitly with a 400 here, at the API boundary, before it reaches
+    # transaction_crud.search()'s business logic, rather than silently
+    # returning an empty page that looks identical to "no matches."
+    if from_date is not None and to_date is not None and from_date > to_date:
+        raise InvalidInputError("'from_date' must not be after 'to_date'")
+
     rows, next_cursor, total = await transaction_crud.search(
         db,
         ward_id=parse_uuid(ward_id, "ward_id"),
