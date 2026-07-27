@@ -216,6 +216,152 @@ async def test_status_change_produces_exactly_one_audit_row(client, seeded_users
     assert len(rows) == 1, "exactly one audit row must exist for the status change"
 
 
+# ---------------------------------------------------------------------------
+# Roadmap PR14A (Backend Audit 4.1): PATCH nullable-field correctness.
+# ---------------------------------------------------------------------------
+
+
+async def test_update_equipment_can_clear_a_nullable_field(client, seeded_users, db_session):
+    """Proves persisted state actually changed, not just that the PATCH
+    response body echoes null -- a fresh GET (new request, same committed
+    row) and a direct DB re-read both confirm the clear landed, and the
+    audit row's `after` payload records the null explicitly."""
+    from app.models.audit import AuditLog
+    from app.models.equipment import Equipment
+
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    create_resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "PR14A-0001", "equipment_name": "Pump", "brand": "Acme"},
+    )
+    equipment_id = create_resp.json()["id"]
+    assert create_resp.json()["brand"] == "Acme"
+
+    update_resp = await client.patch(
+        f"/api/v1/equipment/{equipment_id}", headers=headers, json={"brand": None}
+    )
+    assert update_resp.status_code == 200, update_resp.text
+    assert update_resp.json()["brand"] is None
+
+    get_resp = await client.get(f"/api/v1/equipment/{equipment_id}", headers=headers)
+    assert get_resp.json()["brand"] is None, "a fresh read must also see the cleared value, not a stale echo"
+
+    db_session.expire_all()
+    row = await db_session.get(Equipment, uuid.UUID(equipment_id))
+    assert row.brand is None, "brand must actually be cleared in the database"
+
+    result = await db_session.execute(
+        select(AuditLog).where(
+            AuditLog.action == "update",
+            AuditLog.entity_type == "equipment",
+            AuditLog.entity_id == uuid.UUID(equipment_id),
+        )
+    )
+    audit_rows = result.scalars().all()
+    assert len(audit_rows) == 1
+    assert audit_rows[0].after_data["brand"] is None, "the audit row must record after.brand = null"
+
+
+async def test_update_equipment_rejects_null_on_required_equipment_name(client, seeded_users, db_session):
+    from app.models.audit import AuditLog
+
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    create_resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "PR14A-0002", "equipment_name": "Old Name"},
+    )
+    equipment_id = create_resp.json()["id"]
+
+    update_resp = await client.patch(
+        f"/api/v1/equipment/{equipment_id}", headers=headers, json={"equipment_name": None}
+    )
+    assert update_resp.status_code == 400, update_resp.text
+    assert update_resp.json()["code"] == "INVALID_INPUT"
+
+    get_resp = await client.get(f"/api/v1/equipment/{equipment_id}", headers=headers)
+    assert get_resp.json()["equipment_name"] == "Old Name", "the required field must remain unchanged"
+
+    result = await db_session.execute(
+        select(AuditLog).where(
+            AuditLog.action == "update",
+            AuditLog.entity_type == "equipment",
+            AuditLog.entity_id == uuid.UUID(equipment_id),
+        )
+    )
+    assert result.scalars().all() == [], "a rejected request must produce no audit event"
+
+
+async def test_update_equipment_rejects_null_bcm_code_with_no_mutation_and_no_audit_event(
+    client, seeded_users, db_session
+):
+    from app.models.audit import AuditLog
+
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    created = await _create_equipment_with_bcm(client, headers, "PR14A-0003", bcm_code="BCM00900")
+    equipment_id = created["id"]
+
+    update_resp = await client.patch(
+        f"/api/v1/equipment/{equipment_id}", headers=headers, json={"bcm_code": None}
+    )
+    assert update_resp.status_code == 400, update_resp.text
+    assert update_resp.json()["code"] == "INVALID_INPUT"
+
+    get_resp = await client.get(f"/api/v1/equipment/{equipment_id}", headers=headers)
+    assert get_resp.json()["bcm_code"] == "BCM00900", "bcm_code must not be cleared by a rejected request"
+
+    result = await db_session.execute(
+        select(AuditLog).where(
+            AuditLog.action == "update",
+            AuditLog.entity_type == "equipment",
+            AuditLog.entity_id == uuid.UUID(equipment_id),
+        )
+    )
+    assert result.scalars().all() == [], "a rejected identifier-null request must produce no audit event"
+
+
+async def test_update_equipment_rejects_null_item_no_with_no_mutation_and_no_audit_event(
+    client, seeded_users, db_session
+):
+    from app.models.audit import AuditLog
+
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    created = await _create_equipment_with_bcm(client, headers, "PR14A-0004", item_no="ITEM-PR14A-0004")
+    equipment_id = created["id"]
+
+    update_resp = await client.patch(
+        f"/api/v1/equipment/{equipment_id}", headers=headers, json={"item_no": None}
+    )
+    assert update_resp.status_code == 400, update_resp.text
+    assert update_resp.json()["code"] == "INVALID_INPUT"
+
+    resolved = await client.post(
+        "/api/v1/equipment/resolve-qr", headers=headers, json={"raw_value": "ITEM-PR14A-0004"}
+    )
+    assert resolved.status_code == 200, "item_no must not be cleared by a rejected request"
+
+    result = await db_session.execute(
+        select(AuditLog).where(
+            AuditLog.action == "update",
+            AuditLog.entity_type == "equipment",
+            AuditLog.entity_id == uuid.UUID(equipment_id),
+        )
+    )
+    assert result.scalars().all() == [], "a rejected identifier-null request must produce no audit event"
+
+
+async def test_update_equipment_still_accepts_a_nonnull_bcm_code_change(client, seeded_users):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    created = await _create_equipment_with_bcm(client, headers, "PR14A-0005", bcm_code="BCM00901")
+
+    update_resp = await client.patch(
+        f"/api/v1/equipment/{created['id']}", headers=headers, json={"bcm_code": "BCM00902"}
+    )
+    assert update_resp.status_code == 200, update_resp.text
+    assert update_resp.json()["bcm_code"] == "BCM00902"
+
+
 async def test_ordinary_request_still_succeeds_after_update_and_status_change(client, seeded_users):
     """Proves the fix didn't leave the session/connection unusable — an
     unrelated, completely ordinary follow-up request still works."""

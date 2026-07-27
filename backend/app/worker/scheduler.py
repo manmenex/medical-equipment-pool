@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 _scheduler: AsyncIOScheduler | None = None
 
 
-async def _notify_engineers(db, title: str, body: str, notif_type: str) -> None:
+async def _get_recipient_ids(db) -> list:
     # Roadmap PR10: this PM/CAL due-date notification recipient list is
     # unrelated to PR10's own scope, but biomedical_engineer (one of its two
     # pre-PR10 recipient roles) is retired by the role-consolidation
@@ -27,11 +27,20 @@ async def _notify_engineers(db, title: str, body: str, notif_type: str) -> None:
             Role.name.in_([ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF]), User.is_active.is_(True)
         )
     )
-    for (user_id,) in result.all():
+    return [user_id for (user_id,) in result.all()]
+
+
+def _notify_recipients(db, recipient_ids, *, title: str, body: str, notif_type: str) -> None:
+    for user_id in recipient_ids:
         db.add(Notification(user_id=user_id, type=notif_type, title=title, body=body))
 
 
 async def check_pm_cal_due() -> None:
+    # Roadmap PR14A (Backend Audit 16.1): the recipient list used to be
+    # re-queried once per due equipment row (N+1). It is now loaded at most
+    # once per run, and only once there is at least one PM- or CAL-due row
+    # to notify about -- a run with nothing due performs zero recipient
+    # queries.
     async with AsyncSessionLocal() as db:
         today = date.today()
         pm_horizon = today + timedelta(days=settings.PM_DUE_SOON_DAYS)
@@ -47,13 +56,6 @@ async def check_pm_cal_due() -> None:
                 )
             )
         ).scalars().all()
-        for eq in pm_due:
-            await _notify_engineers(
-                db,
-                title=f"PM ใกล้ครบกำหนด: {eq.equipment_name}",
-                body=f"เครื่อง {eq.asset_number} มีกำหนด PM วันที่ {eq.pm_due_date}",
-                notif_type="pm",
-            )
 
         cal_due = (
             await db.execute(
@@ -65,9 +67,27 @@ async def check_pm_cal_due() -> None:
                 )
             )
         ).scalars().all()
-        for eq in cal_due:
-            await _notify_engineers(
+
+        if not pm_due and not cal_due:
+            await db.commit()
+            logger.info("PM/CAL due check complete: 0 PM, 0 CAL")
+            return
+
+        recipient_ids = await _get_recipient_ids(db)
+
+        for eq in pm_due:
+            _notify_recipients(
                 db,
+                recipient_ids,
+                title=f"PM ใกล้ครบกำหนด: {eq.equipment_name}",
+                body=f"เครื่อง {eq.asset_number} มีกำหนด PM วันที่ {eq.pm_due_date}",
+                notif_type="pm",
+            )
+
+        for eq in cal_due:
+            _notify_recipients(
+                db,
+                recipient_ids,
                 title=f"Calibration ใกล้ครบกำหนด: {eq.equipment_name}",
                 body=f"เครื่อง {eq.asset_number} มีกำหนด Calibration วันที่ {eq.cal_due_date}",
                 notif_type="calibration",
