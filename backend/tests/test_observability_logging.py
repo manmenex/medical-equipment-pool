@@ -18,7 +18,7 @@ import pytest
 
 from app import main as main_module
 from app.core.log_context import correlation_id_var, job_run_id_var, request_id_var
-from app.core.logging import JsonFormatter
+from app.core.logging import JsonFormatter, configure_logging
 from app.worker.scheduler import check_pm_cal_due
 from tests.conftest import auth_headers
 
@@ -387,3 +387,109 @@ async def test_scheduler_failure_is_logged_with_run_id_and_reraised(monkeypatch,
     assert error_records, "expected the scheduler failure to be logged, not silent"
     assert error_records[0].job_run_id is not None
     assert job_run_id_var.get() is None, "job_run_id_var must still be reset even when the job raised"
+
+
+def test_configure_logging_is_idempotent_when_handlers_already_exist():
+    """PR #50 merge-review fix: logging.basicConfig() is a silent no-op
+    once the root logger already has *any* handler (unless force=True) --
+    so whichever of Uvicorn, pytest, or app.core.logging happens to run
+    first would otherwise decide, by accident of import order, whether
+    application logs come out as JSON or as whatever that other caller
+    installed. configure_logging() must not depend on basicConfig's
+    default idempotency: it must always end up with exactly one JSON
+    handler installed, regardless of what was already there, and calling
+    it twice must never accumulate a second handler."""
+    root = logging.getLogger()
+    original_handlers = list(root.handlers)
+    original_level = root.level
+    try:
+        # Simulate another caller (e.g. Uvicorn's own logging setup, which
+        # -- depending on import order -- can run before this module is
+        # ever imported) having already installed a plain-text handler.
+        pre_existing = logging.StreamHandler()
+        pre_existing.setFormatter(logging.Formatter("%(message)s"))
+        root.handlers = [pre_existing]
+
+        configure_logging(debug=False)
+        assert len(root.handlers) == 1, "expected exactly one handler after configure_logging()"
+        assert isinstance(root.handlers[0].formatter, JsonFormatter)
+
+        # Calling it again (e.g. a second create_app() in the same
+        # process) must not leave a duplicate handler installed.
+        configure_logging(debug=False)
+        assert len(root.handlers) == 1, "configure_logging() must be idempotent, not additive"
+        assert isinstance(root.handlers[0].formatter, JsonFormatter)
+    finally:
+        root.handlers = original_handlers
+        root.setLevel(original_level)
+
+
+async def test_post_commit_logging_failure_does_not_convert_success_into_failure(monkeypatch):
+    """PR #50 merge-review fix (primary merge blocker): once db.commit()
+    has already succeeded, a failure in the subsequent success-log call
+    must never propagate back to the caller. That would turn an
+    already-committed, successful import batch into an HTTP 500 --
+    misrepresenting a real success as a failure and inviting the client to
+    unsafely retry work that was, in fact, already applied."""
+    from app.services import import_service
+
+    class _FakePlanResult:
+        def __init__(self, status):
+            self.status = status
+
+    class _FakePlan:
+        def __init__(self):
+            self.result = _FakePlanResult(import_service.ImportRowStatus.SUCCESS)
+            self.equipment_id = uuid.uuid4()
+            self.import_source_metadata = {}
+            self.update_data = {}
+
+    class _FakeEquipment:
+        equipment_metadata = {}
+        id = uuid.uuid4()
+
+    class _FakeAuditLog:
+        id = uuid.uuid4()
+
+    commit_calls: list[bool] = []
+
+    class _FakeDB:
+        async def commit(self):
+            commit_calls.append(True)
+
+        async def rollback(self):
+            raise AssertionError(
+                "rollback must not be triggered by a logging-only failure that happens after commit"
+            )
+
+    async def _fake_get_by_id(_db, _id):
+        return _FakeEquipment()
+
+    async def _fake_update(_db, _existing, *, data):
+        return None
+
+    async def _fake_record_audit_event(*_args, **_kwargs):
+        return _FakeAuditLog()
+
+    def _broken_info(*_args, **_kwargs):
+        raise RuntimeError("simulated logging subsystem failure")
+
+    monkeypatch.setattr(import_service.equipment_crud, "get_by_id", _fake_get_by_id)
+    monkeypatch.setattr(import_service.equipment_crud, "update", _fake_update)
+    monkeypatch.setattr(import_service, "record_audit_event", _fake_record_audit_event)
+    monkeypatch.setattr(import_service.logger, "info", _broken_info)
+
+    plans = [_FakePlan()]
+    summary = await import_service._commit_rows(
+        _FakeDB(),
+        filename="upload.xlsx",
+        plans=plans,
+        update_existing=True,
+        actor_user_id=None,
+        request=None,
+    )
+
+    assert commit_calls == [True], "the database commit must have actually gone through"
+    assert summary.succeeded == 1
+    assert summary.failed == 0
+    assert summary.audit_log_id is not None, "the committed batch's audit_log_id must still be reported"

@@ -61,8 +61,18 @@ def configure_logging(debug: bool = False) -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())
     handler.addFilter(RequestContextFilter())
-    # `handlers=[handler]` (not manual root-logger mutation) preserves
-    # logging.basicConfig's existing idempotency: a second call with
-    # existing root handlers already installed is a no-op unless
-    # force=True, exactly like the prior plain-text implementation.
-    logging.basicConfig(level=level, handlers=[handler])
+
+    # `logging.basicConfig(handlers=[handler])` is a silent no-op once the
+    # root logger already has *any* handler, unless force=True -- so
+    # whichever of Uvicorn, pytest, or this module happens to run first
+    # would otherwise decide, by accident of import order, whether
+    # application logs come out as JSON or as whatever that other caller
+    # installed. Explicitly clearing the root logger's existing handlers
+    # before adding this one makes the end state deterministic regardless
+    # of import order, and calling this twice never leaves more than the
+    # one handler installed here (idempotent).
+    root = logging.getLogger()
+    for existing in list(root.handlers):
+        root.removeHandler(existing)
+    root.addHandler(handler)
+    root.setLevel(level)

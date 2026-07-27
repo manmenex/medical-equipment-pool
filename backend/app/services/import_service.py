@@ -835,16 +835,26 @@ async def _commit_rows(
         ) from exc
 
     summary.audit_log_id = str(audit_log.id)
-    logger.info(
-        "Inventory import committed successfully",
-        extra={
-            "total_rows": summary.total_rows,
-            "succeeded": summary.succeeded,
-            "failed": summary.failed,
-            "skipped": summary.skipped,
-            "update_existing": update_existing,
-        },
-    )
+    # Roadmap PR15A merge-review fix: this log call runs *after* db.commit()
+    # has already succeeded -- a failure here (a broken handler, a full
+    # disk, anything) must never turn an already-committed, successful
+    # import into an HTTP 500, and must never be interpreted by the client
+    # as a reason to retry a batch that in fact already applied. Logging is
+    # strictly best-effort at this point, exactly like the access-log
+    # emission in app.main's request_context_middleware.
+    try:
+        logger.info(
+            "Inventory import committed successfully",
+            extra={
+                "total_rows": summary.total_rows,
+                "succeeded": summary.succeeded,
+                "failed": summary.failed,
+                "skipped": summary.skipped,
+                "update_existing": update_existing,
+            },
+        )
+    except Exception:
+        logger.warning("Failed to emit import-success log event", exc_info=True)
     return summary
 
 
