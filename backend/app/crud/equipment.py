@@ -223,15 +223,18 @@ async def create(db: AsyncSession, *, data: dict) -> Equipment:
 REQUIRED_NON_NULL_FIELDS = frozenset({"equipment_name"})
 
 # Roadmap PR14A adjustment #2 (ADR-002): bcm_code/item_no are canonical
-# identity fields and have never been clearable via PATCH. Previously a
-# null here was silently dropped by the same `if value is not None` guard
-# this function used for every field, which could produce a misleading
-# audit record showing the submitted null while the persisted identifier
-# stayed unchanged. This makes that existing non-clearable contract
-# explicit -- a null here is now a rejected request, not a silent no-op.
-# Raising before any setattr call below means no audit event is ever
-# recorded for the rejected request. Does not alter ADR-002 itself.
-IMMUTABLE_IDENTITY_FIELDS = frozenset({"bcm_code", "item_no"})
+# identity fields and have never been clearable via PATCH -- they are not
+# immutable in general (canonicalized non-null updates are still allowed,
+# see test_bcm_code_update_canonicalization), only non-clearable via an
+# explicit null. Previously a null here was silently dropped by the same
+# `if value is not None` guard this function used for every field, which
+# could produce a misleading audit record showing the submitted null while
+# the persisted identifier stayed unchanged. This makes that existing
+# non-clearable contract explicit -- a null here is now a rejected
+# request, not a silent no-op. Raising before any setattr call below means
+# no audit event is ever recorded for the rejected request. Does not alter
+# ADR-002 itself.
+NON_CLEARABLE_IDENTITY_FIELDS = frozenset({"bcm_code", "item_no"})
 
 
 async def update(db: AsyncSession, equipment: Equipment, *, data: dict) -> Equipment:
@@ -239,7 +242,7 @@ async def update(db: AsyncSession, equipment: Equipment, *, data: dict) -> Equip
     for key in REQUIRED_NON_NULL_FIELDS:
         if key in data and data[key] is None:
             raise InvalidInputError(f"'{key}' is required and cannot be cleared.")
-    for key in IMMUTABLE_IDENTITY_FIELDS:
+    for key in NON_CLEARABLE_IDENTITY_FIELDS:
         if key in data and data[key] is None:
             raise InvalidInputError(f"'{key}' cannot be cleared once assigned.")
 

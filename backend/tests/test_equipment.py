@@ -221,7 +221,14 @@ async def test_status_change_produces_exactly_one_audit_row(client, seeded_users
 # ---------------------------------------------------------------------------
 
 
-async def test_update_equipment_can_clear_a_nullable_field(client, seeded_users):
+async def test_update_equipment_can_clear_a_nullable_field(client, seeded_users, db_session):
+    """Proves persisted state actually changed, not just that the PATCH
+    response body echoes null -- a fresh GET (new request, same committed
+    row) and a direct DB re-read both confirm the clear landed, and the
+    audit row's `after` payload records the null explicitly."""
+    from app.models.audit import AuditLog
+    from app.models.equipment import Equipment
+
     headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     create_resp = await client.post(
         "/api/v1/equipment",
@@ -236,6 +243,24 @@ async def test_update_equipment_can_clear_a_nullable_field(client, seeded_users)
     )
     assert update_resp.status_code == 200, update_resp.text
     assert update_resp.json()["brand"] is None
+
+    get_resp = await client.get(f"/api/v1/equipment/{equipment_id}", headers=headers)
+    assert get_resp.json()["brand"] is None, "a fresh read must also see the cleared value, not a stale echo"
+
+    db_session.expire_all()
+    row = await db_session.get(Equipment, uuid.UUID(equipment_id))
+    assert row.brand is None, "brand must actually be cleared in the database"
+
+    result = await db_session.execute(
+        select(AuditLog).where(
+            AuditLog.action == "update",
+            AuditLog.entity_type == "equipment",
+            AuditLog.entity_id == uuid.UUID(equipment_id),
+        )
+    )
+    audit_rows = result.scalars().all()
+    assert len(audit_rows) == 1
+    assert audit_rows[0].after_data["brand"] is None, "the audit row must record after.brand = null"
 
 
 async def test_update_equipment_rejects_null_on_required_equipment_name(client, seeded_users, db_session):

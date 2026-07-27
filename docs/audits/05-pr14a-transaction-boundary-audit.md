@@ -82,8 +82,8 @@ together.
 | Site | Function |
 | --- | --- |
 | `app/core/audit.py::commit_best_effort` | shared by all four call sites below |
-| `app/services/auth_service.py:54` | login (success path) |
-| `app/services/auth_service.py:83` | login (failure path, before raising) |
+| `app/services/auth_service.py:54` | login (failure path, before raising `InvalidCredentialsError`) |
+| `app/services/auth_service.py:83` | login (success path) |
 | `app/services/auth_service.py:140` | refresh |
 | `app/services/auth_service.py:165` | logout |
 
@@ -93,9 +93,29 @@ catches and logs a commit failure instead of propagating it, so a
 transient audit-subsystem problem can never turn a legitimate
 authentication outcome into an unrelated 500. See that function's
 docstring for the full rationale. This is an intentional deviation from
-the ordinary-commit pattern above, not an inconsistency — authentication
-is the only flow where there is no other business row this commit must
-stay atomic with.
+the ordinary-commit pattern above: authentication's commit protects a
+different, narrower set of pending changes, and unlike the ordinary-commit
+sites it must not fail the request just because that protection layer
+(the audit write or the commit itself) had a transient problem.
+
+**The success-path commit is not audit-only.** On a successful login
+(`authenticate()`, `app/services/auth_service.py:62`), `user.last_login_at`
+is set to the current time *before* the audit event is recorded and before
+`commit_best_effort` runs at line 83 — so that commit closes both the
+`last_login_at` update on the `User` row and the `login_success` audit row
+together, as one unit. If the commit fails, `commit_best_effort` logs the
+failure and rolls back, so neither `last_login_at` nor the audit row
+persists for that login — but the failure is still swallowed and the
+already-decided authentication outcome (a valid access/refresh token pair)
+is still returned to the caller. This is the intentional, documented
+trade-off of the best-effort boundary: an authenticated session can be
+issued without its `last_login_at`/audit bookkeeping having landed, in
+exchange for guaranteeing that a transient persistence problem in that
+bookkeeping can never turn a legitimate login into a 500. Token issuance
+itself never depends on this commit succeeding (see the comments in
+`authenticate()`). This is a real, intentional difference from the
+ordinary-commit sites above, where a failed commit does propagate and the
+request does fail — not an oversight to be reconciled with them.
 
 ### Seed/script commits
 

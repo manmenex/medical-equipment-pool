@@ -1,8 +1,10 @@
+import uuid
+
 import pytest
 from sqlalchemy import select
 
 from app.models.audit import AuditLog
-from app.models.user import ROLE_ADMINISTRATOR, ROLE_READ_ONLY
+from app.models.user import ROLE_ADMINISTRATOR, ROLE_READ_ONLY, User
 from tests.conftest import auth_headers as _auth_headers
 
 pytestmark = pytest.mark.asyncio
@@ -33,12 +35,37 @@ async def _create_user(client, headers, employee_code: str) -> dict:
     return resp.json()
 
 
-async def test_update_user_can_clear_nullable_phone(client, seeded_users):
+async def test_update_user_can_clear_nullable_phone(client, seeded_users, db_session):
+    """Proves persisted state actually changed -- HTTP 200 alone is
+    insufficient, since the pre-PR14A implementation (`if data.get("phone")
+    is not None: ...`) silently kept the old phone value and still
+    returned 200. `UserOut` never serializes `phone` (see
+    app.schemas.master_data.UserOut), so persistence is verified by
+    re-reading the row directly, plus the audit row's `after` payload."""
     headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     created = await _create_user(client, headers, "PR14A-USR-0001")
+    user_id = uuid.UUID(created["id"])
+
+    before = await db_session.get(User, user_id)
+    assert before.phone == "0800000000"
 
     resp = await client.patch(f"/api/v1/users/{created['id']}", headers=headers, json={"phone": None})
     assert resp.status_code == 200, resp.text
+
+    db_session.expire_all()
+    after = await db_session.get(User, user_id)
+    assert after.phone is None, "phone must actually be cleared in the database, not just report HTTP 200"
+
+    result = await db_session.execute(
+        select(AuditLog).where(
+            AuditLog.action == "update",
+            AuditLog.entity_type == "user",
+            AuditLog.entity_id == user_id,
+        )
+    )
+    audit_rows = result.scalars().all()
+    assert len(audit_rows) == 1
+    assert audit_rows[0].after_data["phone"] is None, "the audit row must record after.phone = null"
 
 
 async def test_update_user_rejects_null_full_name_with_no_audit_event(client, seeded_users, db_session):
