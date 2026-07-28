@@ -115,6 +115,16 @@ required, independent gate checked on both sides of both directions
 interrupted-index-build regression tests (§8.7d/§11), including the case
 where the *legacy*-named object itself is unhealthy.
 
+**PR15B-H3: a name backed by only one of {index, unique constraint} is a
+third, distinct catalog state -- PARTIAL -- never collapsed into ABSENT.**
+For the 7 constraint renames, a name is only genuinely absent if *neither*
+a `pg_indexes` row *nor* a `pg_constraint` row exists under it. `_classify_
+rename()` checks for PARTIAL on both the legacy and target name, in both
+directions, before it ever reaches the ABSENT/COMPLETE-based outcomes below
+-- a standalone index with no owning constraint (or vice versa) found under
+either name always raises `RuntimeError` before any rename, no-op, drop, or
+recreate is attempted.
+
 **Migration impact:** every rename is `ALTER INDEX .../ALTER TABLE ...
 RENAME CONSTRAINT ...`-shaped -- metadata-only, no rebuild, no lock beyond
 the brief catalog-update `ALTER` requires. Fully reversible: downgrade
@@ -191,6 +201,39 @@ def _unique_constraint_row(bind, name: str):
     return bind.execute(_UNIQUE_CONSTRAINT_ROW_SQL, {"name": name}).one_or_none()
 
 
+class _CatalogState:
+    """PR15B-H3: tags a verifier's `fetch()` result as exactly one of three
+    distinct states -- never just "found" (a raw row) or "not found" (None)
+    -- so a genuinely PARTIAL catalog state (only one of an index/unique-
+    constraint pair exists under a name) is never silently collapsed into
+    ABSENT (neither exists). `.data` carries the fetched row (or row tuple)
+    only when `.kind == COMPLETE`; `.detail` carries a human-readable
+    description of what was actually found, only when `.kind == PARTIAL`."""
+
+    ABSENT = "absent"
+    COMPLETE = "complete"
+    PARTIAL = "partial"
+
+    __slots__ = ("kind", "data", "detail")
+
+    def __init__(self, kind: str, *, data=None, detail: Union[str, None] = None):
+        self.kind = kind
+        self.data = data
+        self.detail = detail
+
+    @property
+    def is_absent(self) -> bool:
+        return self.kind == self.ABSENT
+
+    @property
+    def is_complete(self) -> bool:
+        return self.kind == self.COMPLETE
+
+    @property
+    def is_partial(self) -> bool:
+        return self.kind == self.PARTIAL
+
+
 class _IndexVerifier:
     """Semantic verifier for a plain (non-constraint-backed) index rename
     -- the 4 GIN trigram indexes and the borrow-transactions partial
@@ -200,8 +243,11 @@ class _IndexVerifier:
         self.unique = unique
         self.access_method = access_method
 
-    def fetch(self, bind, name: str):
-        return _index_row(bind, name)
+    def fetch(self, bind, name: str) -> _CatalogState:
+        row = _index_row(bind, name)
+        if row is None:
+            return _CatalogState(_CatalogState.ABSENT)
+        return _CatalogState(_CatalogState.COMPLETE, data=row)
 
     def matches(self, state, expected_indexdef: str) -> bool:
         return (
@@ -227,12 +273,30 @@ class _ConstraintVerifier:
     unique = True
     access_method = "btree"  # the only access method PostgreSQL supports for UNIQUE
 
-    def fetch(self, bind, name: str):
-        index_state = _index_row(bind, name)
-        constraint_state = _unique_constraint_row(bind, name)
-        if index_state is None or constraint_state is None:
-            return None
-        return (index_state, constraint_state)
+    def fetch(self, bind, name: str) -> _CatalogState:
+        index_row = _index_row(bind, name)
+        constraint_row = _unique_constraint_row(bind, name)
+
+        if index_row is None and constraint_row is None:
+            return _CatalogState(_CatalogState.ABSENT)
+
+        if index_row is not None and constraint_row is not None:
+            return _CatalogState(_CatalogState.COMPLETE, data=(index_row, constraint_row))
+
+        # PR15B-H3: exactly one of {index, unique constraint} exists under
+        # this name -- a genuinely PARTIAL catalog state, distinct from and
+        # never reported as ABSENT.
+        return _CatalogState(
+            _CatalogState.PARTIAL,
+            detail=(
+                f"a standalone index named '{name}' "
+                + ("exists" if index_row is not None else "does NOT exist")
+                + f", and a unique constraint named '{name}' "
+                + ("exists" if constraint_row is not None else "does NOT exist")
+                + " -- a named unique constraint and its backing index must both exist or both "
+                "be absent under the same name"
+            ),
+        )
 
     def matches(self, state, expected_condef: str) -> bool:
         index_state, constraint_state = state
@@ -275,7 +339,25 @@ def _classify_rename(
     old_state = verifier.fetch(bind, old_name)
     new_state = verifier.fetch(bind, new_name)
 
-    if old_state is not None and new_state is not None:
+    # PR15B-H3: PARTIAL is checked first, before anything else -- it must
+    # never fall through to (and be silently treated as) ABSENT, and must
+    # never be reached only after an outcome has already been decided.
+    if old_state.is_partial:
+        raise RuntimeError(
+            f"Migration 0014 {direction} aborted: '{old_name}' is in a partial catalog state on "
+            f"table '{table}' -- {old_state.detail}. Refusing to rename, no-op, or otherwise "
+            f"treat '{old_name}' as absent. Inspect and resolve manually before re-running this "
+            f"{direction} (PR15B-H3)."
+        )
+    if new_state.is_partial:
+        raise RuntimeError(
+            f"Migration 0014 {direction} aborted: '{new_name}' is in a partial catalog state on "
+            f"table '{table}' -- {new_state.detail}. Refusing to rename, no-op, or otherwise "
+            f"treat '{new_name}' as absent. Inspect and resolve manually before re-running this "
+            f"{direction} (PR15B-H3)."
+        )
+
+    if old_state.is_complete and new_state.is_complete:
         raise RuntimeError(
             f"Migration 0014 {direction} aborted: both '{old_name}' and '{new_name}' exist "
             f"simultaneously on table '{table}'. This should not happen under any normal "
@@ -285,15 +367,15 @@ def _classify_rename(
             "§8.7c)."
         )
 
-    if old_state is not None:
-        if not verifier.matches(old_state, old_expected):
+    if old_state.is_complete:
+        if not verifier.matches(old_state.data, old_expected):
             raise RuntimeError(
                 f"Migration 0014 {direction} aborted: '{old_name}' exists but its definition "
                 f"does not match what this migration expects. Refusing to silently continue -- "
                 f"inspect and resolve manually before re-running this {direction} (Scenario 2, "
                 "§8.7c)."
             )
-        if not verifier.healthy(old_state):
+        if not verifier.healthy(old_state.data):
             raise RuntimeError(
                 f"Migration 0014 {direction} aborted: '{old_name}' exists with a matching "
                 "definition but is not usable (indisvalid/indisready). This usually means a "
@@ -303,8 +385,8 @@ def _classify_rename(
             )
         return _NEEDS_TRANSFORM
 
-    if new_state is not None:
-        if not verifier.healthy(new_state):
+    if new_state.is_complete:
+        if not verifier.healthy(new_state.data):
             raise RuntimeError(
                 f"Migration 0014 {direction} aborted: '{new_name}' already exists under its "
                 "target name but is not usable (indisvalid/indisready). This usually means a "
@@ -313,7 +395,7 @@ def _classify_rename(
                 f"CONCURRENTLY IF EXISTS {new_name};' and re-run this {direction} (Scenario 3, "
                 "§8.7c)."
             )
-        if not verifier.matches(new_state, new_expected):
+        if not verifier.matches(new_state.data, new_expected):
             raise RuntimeError(
                 f"Migration 0014 {direction} aborted: '{new_name}' already exists under its "
                 "target name but its definition does not match. Refusing to silently continue "
@@ -324,6 +406,7 @@ def _classify_rename(
         # intentional no-op -- reached only after both checks above passed.
         return _NOOP
 
+    # Both ABSENT (never PARTIAL -- that was ruled out above).
     raise RuntimeError(
         f"Migration 0014 {direction} aborted: neither '{old_name}' nor '{new_name}' was found "
         f"on table '{table}'. This migration expects one of the two to already exist -- "
