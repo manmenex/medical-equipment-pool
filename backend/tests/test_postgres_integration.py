@@ -8077,6 +8077,275 @@ async def test_migration_0014_mismatched_unique_constraint_semantics_fails_close
         await _drop_scratch_database()
 
 
+async def _index_health_snapshot(engine, name: str):
+    """(indexdef, indisvalid, indisready) for a standalone index, or None
+    if no index with this name exists -- used by the PR15B-H3 tests to
+    prove a partial-catalog-state object is byte-for-byte unchanged, health
+    flags included, after a failed migration attempt."""
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(
+                text(
+                    "SELECT ix.indexdef, i.indisvalid, i.indisready "
+                    "FROM pg_indexes ix "
+                    "JOIN pg_class c ON c.relname = ix.indexname AND c.relnamespace = 'public'::regnamespace "
+                    "JOIN pg_index i ON i.indexrelid = c.oid "
+                    "WHERE ix.schemaname = 'public' AND ix.indexname = :name"
+                ),
+                {"name": name},
+            )
+        ).one_or_none()
+    return None if row is None else (row.indexdef, row.indisvalid, row.indisready)
+
+
+async def test_migration_0014_valid_target_constraint_with_legacy_standalone_index_fails_closed():
+    """PR15B-H3: the target name (`uq_equipment_serial_number`) is a fully
+    valid, healthy unique constraint, but the legacy name
+    (`equipment_serial_number_key`) is a standalone index with no owning
+    unique constraint -- a genuinely PARTIAL catalog state that must never
+    be silently treated as ABSENT (which would otherwise let the migration
+    conclude 'legacy name not found, target already correct' and no-op past
+    a leftover, un-constrained index)."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0011_pagination_ordering_indexes")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            await _strip_pr15b_additions_to_build_historical_0011_schema(engine)
+            async with engine.begin() as conn:
+                # Replace the genuine legacy constraint with the real
+                # target constraint (a fully valid, healthy COMPLETE state
+                # under the target name)...
+                await conn.execute(text("ALTER TABLE equipment DROP CONSTRAINT equipment_serial_number_key"))
+                await conn.execute(
+                    text("ALTER TABLE equipment ADD CONSTRAINT uq_equipment_serial_number UNIQUE (serial_number)")
+                )
+                # ...then leave a standalone index under the legacy name --
+                # no owning unique constraint, a genuine PARTIAL state.
+                await conn.execute(
+                    text("CREATE UNIQUE INDEX equipment_serial_number_key ON equipment (serial_number)")
+                )
+        finally:
+            await engine.dispose()
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            legacy_before = await _index_health_snapshot(engine, "equipment_serial_number_key")
+            target_before = await _index_health_snapshot(engine, "uq_equipment_serial_number")
+            assert legacy_before is not None and target_before is not None, "test setup must produce both objects"
+        finally:
+            await engine.dispose()
+
+        result = _run_alembic_allow_failure("upgrade", "head")
+        assert result.returncode != 0, "a legacy-named standalone index (no owning constraint) must fail closed"
+        combined = result.stdout + result.stderr
+        assert "partial catalog state" in combined, f"failure must name the partial-state scenario:\n{combined}"
+        assert "equipment_serial_number_key" in combined
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            assert await _index_exists(engine, "equipment_serial_number_key"), (
+                "the standalone legacy index must not have been renamed or dropped"
+            )
+            assert await _constraint_exists(engine, "uq_equipment_serial_number", "u"), (
+                "the valid target constraint must not have been touched"
+            )
+            legacy_after = await _index_health_snapshot(engine, "equipment_serial_number_key")
+            target_after = await _index_health_snapshot(engine, "uq_equipment_serial_number")
+        finally:
+            await engine.dispose()
+
+        assert legacy_after == legacy_before, "the partial legacy index must be byte-for-byte unchanged, health included"
+        assert target_after == target_before, "the valid target constraint must be byte-for-byte unchanged, health included"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0014_valid_legacy_constraint_with_target_standalone_index_fails_closed():
+    """PR15B-H3, symmetric case: the legacy name
+    (`equipment_serial_number_key`) is a fully valid, healthy unique
+    constraint (the ordinary historical-upgrade starting state), but the
+    target name (`uq_equipment_serial_number`) is already a standalone
+    index with no owning unique constraint -- PARTIAL under the *target*
+    name this time. Must not be silently treated as ABSENT (which would
+    otherwise let the migration conclude 'target not found, proceed to
+    rename the legacy constraint onto it' and collide with -- or silently
+    ignore -- the leftover un-constrained index)."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0011_pagination_ordering_indexes")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            await _strip_pr15b_additions_to_build_historical_0011_schema(engine)
+            async with engine.begin() as conn:
+                # The genuine legacy constraint is left exactly as-is
+                # (equipment_serial_number_key, COMPLETE) -- only add a
+                # standalone index under the target name.
+                await conn.execute(
+                    text("CREATE UNIQUE INDEX uq_equipment_serial_number ON equipment (serial_number)")
+                )
+        finally:
+            await engine.dispose()
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            legacy_before = await _index_health_snapshot(engine, "equipment_serial_number_key")
+            target_before = await _index_health_snapshot(engine, "uq_equipment_serial_number")
+            assert legacy_before is not None and target_before is not None, "test setup must produce both objects"
+        finally:
+            await engine.dispose()
+
+        result = _run_alembic_allow_failure("upgrade", "head")
+        assert result.returncode != 0, "a target-named standalone index (no owning constraint) must fail closed"
+        combined = result.stdout + result.stderr
+        assert "partial catalog state" in combined, f"failure must name the partial-state scenario:\n{combined}"
+        assert "uq_equipment_serial_number" in combined
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            assert await _constraint_exists(engine, "equipment_serial_number_key", "u"), (
+                "the valid legacy constraint must not have been renamed away"
+            )
+            assert await _index_exists(engine, "uq_equipment_serial_number"), (
+                "the standalone target index must not have been dropped or recreated"
+            )
+            legacy_after = await _index_health_snapshot(engine, "equipment_serial_number_key")
+            target_after = await _index_health_snapshot(engine, "uq_equipment_serial_number")
+        finally:
+            await engine.dispose()
+
+        assert legacy_after == legacy_before, "the valid legacy constraint must be byte-for-byte unchanged, health included"
+        assert target_after == target_before, "the partial target index must be byte-for-byte unchanged, health included"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0014_downgrade_partial_state_fails_closed_no_mutation():
+    """PR15B-H3, downgrade direction: starting from a fully-upgraded head
+    (genuine, healthy `uq_equipment_serial_number` constraint), the target
+    constraint is dropped and replaced with a standalone index under the
+    *legacy* name only -- so from downgrade's perspective (roles swapped:
+    'old' = target, 'new' = legacy), the legacy name is PARTIAL and the
+    target name is ABSENT. Must fail closed, not silently proceed as if the
+    legacy name were simply absent and something needed recreating. Also
+    proves the other 6 renamed constraints (and 5 renamed indexes) are not
+    mutated by the same failed downgrade attempt (transactional abort)."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("ALTER TABLE equipment DROP CONSTRAINT uq_equipment_serial_number"))
+                await conn.execute(
+                    text("CREATE UNIQUE INDEX equipment_serial_number_key ON equipment (serial_number)")
+                )
+            # Snapshot every OTHER renamed index/constraint's target-state
+            # name before the downgrade attempt, to prove none of them get
+            # reverted either.
+            async with engine.connect() as conn:
+                other_index_names_before = sorted(
+                    r[0]
+                    for r in (
+                        await conn.execute(
+                            text(
+                                "SELECT indexname FROM pg_indexes WHERE schemaname='public' "
+                                "AND indexname IN ('ix_equipment_asset_number_trgm', "
+                                "'ix_equipment_bcm_code_trgm', 'ix_equipment_equipment_name_trgm', "
+                                "'ix_equipment_serial_number_trgm', 'ix_borrow_transactions_one_active_borrow')"
+                            )
+                        )
+                    ).all()
+                )
+                other_constraint_names_before = sorted(
+                    r[0]
+                    for r in (
+                        await conn.execute(
+                            text(
+                                "SELECT conname FROM pg_constraint WHERE contype='u' AND conname IN "
+                                "('uq_equipment_categories_name', 'uq_departments_code', 'uq_wards_code', "
+                                "'uq_roles_name', 'uq_users_employee_code', 'uq_users_email')"
+                            )
+                        )
+                    ).all()
+                )
+            legacy_before = await _index_health_snapshot(engine, "equipment_serial_number_key")
+            assert legacy_before is not None, "test setup must produce the partial legacy index"
+            assert not await _constraint_exists(engine, "uq_equipment_serial_number", "u"), (
+                "test setup must leave the target name genuinely absent"
+            )
+        finally:
+            await engine.dispose()
+
+        result = _run_alembic_allow_failure("downgrade", "0013_fk_ondelete_policy")
+        assert result.returncode != 0, "a partial legacy-named index must fail the downgrade, not be silently accepted"
+        combined = result.stdout + result.stderr
+        assert "partial catalog state" in combined, f"downgrade failure must name the partial-state scenario:\n{combined}"
+        assert "downgrade" in combined, f"failure message must identify this as a downgrade:\n{combined}"
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            assert await _index_exists(engine, "equipment_serial_number_key"), (
+                "the partial legacy index must not have been renamed, dropped, or recreated"
+            )
+            assert not await _constraint_exists(engine, "uq_equipment_serial_number", "u"), (
+                "the failed downgrade must not have recreated the target constraint"
+            )
+            legacy_after = await _index_health_snapshot(engine, "equipment_serial_number_key")
+
+            async with engine.connect() as conn:
+                other_index_names_after = sorted(
+                    r[0]
+                    for r in (
+                        await conn.execute(
+                            text(
+                                "SELECT indexname FROM pg_indexes WHERE schemaname='public' "
+                                "AND indexname IN ('ix_equipment_asset_number_trgm', "
+                                "'ix_equipment_bcm_code_trgm', 'ix_equipment_equipment_name_trgm', "
+                                "'ix_equipment_serial_number_trgm', 'ix_borrow_transactions_one_active_borrow')"
+                            )
+                        )
+                    ).all()
+                )
+                other_constraint_names_after = sorted(
+                    r[0]
+                    for r in (
+                        await conn.execute(
+                            text(
+                                "SELECT conname FROM pg_constraint WHERE contype='u' AND conname IN "
+                                "('uq_equipment_categories_name', 'uq_departments_code', 'uq_wards_code', "
+                                "'uq_roles_name', 'uq_users_employee_code', 'uq_users_email')"
+                            )
+                        )
+                    ).all()
+                )
+        finally:
+            await engine.dispose()
+
+        assert legacy_after == legacy_before, "the partial legacy index must be byte-for-byte unchanged, health included"
+        assert other_index_names_after == other_index_names_before, (
+            "no other renamed index may be reverted by the same failed downgrade attempt"
+        )
+        assert other_constraint_names_after == other_constraint_names_before, (
+            "no other renamed constraint may be reverted by the same failed downgrade attempt"
+        )
+    finally:
+        await _drop_scratch_database()
+
+
 async def test_migration_0014_safety_index_still_rejects_duplicate_active_borrow_after_rename():
     """§6.4/§11: renaming idx_tx_one_active_borrow to
     ix_borrow_transactions_one_active_borrow must not weaken its role as
