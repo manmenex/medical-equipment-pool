@@ -1,13 +1,13 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String
+from sqlalchemy import Boolean, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
 from app.db.base import Base
-from app.models.mixins import TimestampMixin, UUIDPKMixin
+from app.models.mixins import TimestampMixin, UTCDateTime, UUIDPKMixin
 
 JSONType = JSONB().with_variant(JSON(), "sqlite")
 
@@ -58,8 +58,12 @@ SAFE_LEGACY_ROLE_MAPPING = {
 
 class Role(UUIDPKMixin, Base):
     __tablename__ = "roles"
+    # Roadmap PR15B (docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md §6.4): explicit
+    # name converges with migration 0014's `uq_roles_name` rename instead of
+    # leaving `unique=True` produce PostgreSQL's unnamed `roles_name_key`.
+    __table_args__ = (UniqueConstraint("name", name="uq_roles_name"),)
 
-    name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(50), nullable=False)
     permissions: Mapped[dict] = mapped_column(JSONType, default=dict)
 
     users: Mapped[list["User"]] = relationship(back_populates="role")
@@ -67,15 +71,19 @@ class Role(UUIDPKMixin, Base):
 
 class User(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "users"
+    __table_args__ = (
+        UniqueConstraint("employee_code", name="uq_users_employee_code"),
+        UniqueConstraint("email", name="uq_users_email"),
+    )
 
-    employee_code: Mapped[str] = mapped_column(String(30), unique=True, nullable=False)
+    employee_code: Mapped[str] = mapped_column(String(30), nullable=False)
     full_name: Mapped[str] = mapped_column(String(150), nullable=False)
-    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(20))
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    role_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("roles.id"), nullable=False)
+    role_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("roles.id", ondelete="RESTRICT"), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     # Roadmap PR10 migration provenance (mirrors BorrowTransaction.
     # legacy_status's established pattern, Roadmap PR7): the exact legacy
     # role name (see ALL_LEGACY_ROLES) this user held immediately before
