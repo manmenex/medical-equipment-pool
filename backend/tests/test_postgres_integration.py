@@ -7566,6 +7566,92 @@ async def test_migration_0013_mismatched_definition_fails_closed():
         await _drop_scratch_database()
 
 
+async def test_migration_0013_downgrade_mismatched_definition_fails_closed_no_mutation():
+    """Design-compliance (H2): downgrade must use the *same* semantic
+    verification helper as upgrade, not `confdeltype` alone. Constructs a
+    fully-upgraded database (all 25 FKs genuinely RESTRICT), then tampers
+    with one FK to point at the wrong referenced table while leaving
+    `confdeltype='r'` untouched -- a downgrade that only checked
+    `confdeltype` would happily "revert" this to `NO ACTION` without ever
+    noticing the wrong referenced table. Asserts the downgrade raises
+    before mutating *any* FK, including ones after it in iteration order."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                # Deliberately wrong: points at departments, not
+                # equipment_categories, but still carries ON DELETE
+                # RESTRICT -- confdeltype alone would look like a
+                # legitimate "already downgraded... no wait, still
+                # RESTRICT" state; only the full semantic check catches
+                # the wrong referenced table.
+                await conn.execute(text("ALTER TABLE equipment DROP CONSTRAINT equipment_category_id_fkey"))
+                await conn.execute(
+                    text(
+                        "ALTER TABLE equipment ADD CONSTRAINT equipment_category_id_fkey "
+                        "FOREIGN KEY (department_owner_id) REFERENCES departments(id) ON DELETE RESTRICT"
+                    )
+                )
+            # Snapshot every OTHER FK's confdeltype before the downgrade
+            # attempt, to prove none of them get mutated either.
+            async with engine.connect() as conn:
+                before = sorted(
+                    (
+                        await conn.execute(
+                            text(
+                                "SELECT conname, confdeltype::text FROM pg_constraint "
+                                "WHERE contype='f' AND conname != 'equipment_category_id_fkey'"
+                            )
+                        )
+                    ).all()
+                )
+        finally:
+            await engine.dispose()
+
+        result = _run_alembic_allow_failure("downgrade", "0011_pagination_ordering_indexes")
+        assert result.returncode != 0, (
+            "a mismatched FK definition must fail the downgrade, not be silently reverted"
+        )
+        combined = result.stdout + result.stderr
+        assert "does not match" in combined, f"downgrade failure must explain the mismatch:\n{combined}"
+        assert "downgrade" in combined, f"failure message must identify this as a downgrade, not an upgrade:\n{combined}"
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                after = sorted(
+                    (
+                        await conn.execute(
+                            text(
+                                "SELECT conname, confdeltype::text FROM pg_constraint "
+                                "WHERE contype='f' AND conname != 'equipment_category_id_fkey'"
+                            )
+                        )
+                    ).all()
+                )
+                mismatched_still_restrict = (
+                    await conn.execute(
+                        text(
+                            "SELECT confdeltype::text FROM pg_constraint WHERE conname = 'equipment_category_id_fkey'"
+                        )
+                    )
+                ).scalar_one()
+        finally:
+            await engine.dispose()
+
+        assert before == after, "the failed downgrade must not have mutated any other FK"
+        assert mismatched_still_restrict == "r", "the failed downgrade must not have touched the mismatched FK either"
+    finally:
+        await _drop_scratch_database()
+
+
 async def test_migration_0014_fresh_database_converges_on_ix_uq_naming():
     try:
         await _recreate_scratch_database()
@@ -7834,6 +7920,163 @@ async def test_migration_0014_interrupted_index_build_fails_closed_not_silent_sk
         await _drop_scratch_database()
 
 
+async def test_migration_0014_unhealthy_legacy_index_fails_closed_no_rename():
+    """Explicit H1 regression scenario: legacy name, correct/expected
+    definition, but indisvalid=false -- must never qualify as
+    rename-eligible. Distinct from
+    test_migration_0014_interrupted_index_build_fails_closed_not_silent_skip
+    above, which makes the *target*-named index unhealthy; this makes the
+    *legacy*-named index unhealthy before any rename is attempted, proving
+    the same health check applies on the legacy-name branch of
+    _classify_rename, not just the target-name branch."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0013_fk_ondelete_policy")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "UPDATE pg_index SET indisvalid = false "
+                        "WHERE indexrelid = 'idx_equipment_asset_trgm'::regclass"
+                    )
+                )
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        text(
+                            "SELECT indisvalid FROM pg_index "
+                            "WHERE indexrelid = 'idx_equipment_asset_trgm'::regclass"
+                        )
+                    )
+                ).one()
+                assert row.indisvalid is False, "test setup must produce a genuinely unhealthy legacy index"
+        finally:
+            await engine.dispose()
+
+        result = _run_alembic_allow_failure("upgrade", "head")
+        assert result.returncode != 0, "an unhealthy legacy-named index must fail the migration, not be renamed"
+        combined = result.stdout + result.stderr
+        assert "indisvalid" in combined or "not usable" in combined, f"failure must name the health-state mismatch:\n{combined}"
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            assert await _index_exists(engine, "idx_equipment_asset_trgm"), (
+                "the unhealthy legacy index must not have been renamed away"
+            )
+            assert not await _index_exists(engine, "ix_equipment_asset_number_trgm"), (
+                "no rename may occur when the legacy-named index is unhealthy"
+            )
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0014_unhealthy_target_index_indisready_false_fails_closed():
+    """Explicit H1 regression scenario distinct from
+    test_migration_0014_interrupted_index_build_fails_closed_not_silent_skip:
+    isolates indisready=false with indisvalid left true, proving the
+    health check requires indisvalid AND indisready, not merely
+    indisvalid."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0013_fk_ondelete_policy")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("DROP INDEX idx_equipment_bcm_trgm"))
+                await conn.execute(
+                    text(
+                        "CREATE INDEX ix_equipment_bcm_code_trgm ON public.equipment "
+                        "USING gin (bcm_code gin_trgm_ops)"
+                    )
+                )
+                await conn.execute(
+                    text(
+                        "UPDATE pg_index SET indisready = false "
+                        "WHERE indexrelid = 'ix_equipment_bcm_code_trgm'::regclass"
+                    )
+                )
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        text(
+                            "SELECT indisvalid, indisready FROM pg_index "
+                            "WHERE indexrelid = 'ix_equipment_bcm_code_trgm'::regclass"
+                        )
+                    )
+                ).one()
+                assert row.indisvalid is True and row.indisready is False, (
+                    "test setup must isolate indisready=false with indisvalid still true"
+                )
+        finally:
+            await engine.dispose()
+
+        result = _run_alembic_allow_failure("upgrade", "head")
+        assert result.returncode != 0, "indisready=false alone must fail closed, not be accepted as target-state"
+        combined = result.stdout + result.stderr
+        assert "indisready" in combined or "not usable" in combined, f"failure must name the health-state mismatch:\n{combined}"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0014_mismatched_unique_constraint_semantics_fails_closed():
+    """Explicit H1 regression scenario: a unique constraint under the
+    legacy name matches on table/columns but differs in full semantics
+    (DEFERRABLE INITIALLY DEFERRED) -- the pg_get_constraintdef()-based
+    _ConstraintVerifier must catch this even though a shallower
+    table+columns-only check would not."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0011_pagination_ordering_indexes")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            await _strip_pr15b_additions_to_build_historical_0011_schema(engine)
+            async with engine.begin() as conn:
+                await conn.execute(text("ALTER TABLE equipment DROP CONSTRAINT equipment_serial_number_key"))
+                await conn.execute(
+                    text(
+                        "ALTER TABLE equipment ADD CONSTRAINT equipment_serial_number_key "
+                        "UNIQUE (serial_number) DEFERRABLE INITIALLY DEFERRED"
+                    )
+                )
+        finally:
+            await engine.dispose()
+
+        result = _run_alembic_allow_failure("upgrade", "head")
+        assert result.returncode != 0, (
+            "a deferrable unique constraint under the legacy name must fail closed, not be renamed"
+        )
+        combined = result.stdout + result.stderr
+        assert "does not match" in combined, f"failure must explain the semantic mismatch:\n{combined}"
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            assert await _constraint_exists(engine, "equipment_serial_number_key", "u"), (
+                "the mismatched legacy-named constraint must not have been renamed away"
+            )
+            assert not await _constraint_exists(engine, "uq_equipment_serial_number", "u")
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
 async def test_migration_0014_safety_index_still_rejects_duplicate_active_borrow_after_rename():
     """§6.4/§11: renaming idx_tx_one_active_borrow to
     ix_borrow_transactions_one_active_borrow must not weaken its role as
@@ -7887,8 +8130,27 @@ async def test_migration_0014_safety_index_still_rejects_duplicate_active_borrow
 async def test_pr15b_schema_convergence_fresh_and_historical_paths_are_identical():
     """§11: a fresh base->head install and a historical 0011->head upgrade
     (against a database seeded with realistic pre-existing rows) must
-    reach byte-identical information_schema.columns/pg_constraint/
-    pg_indexes snapshots for every object the three migrations touch."""
+    reach byte-identical **healthy schema**, not just matching names --
+    full information_schema.columns/pg_get_constraintdef()/
+    pg_get_indexdef() definitions, plus pg_index health flags
+    (indisvalid/indisready), for every object the three migrations touch."""
+
+    _RENAMED_INDEX_NAMES = (
+        "ix_equipment_asset_number_trgm",
+        "ix_equipment_bcm_code_trgm",
+        "ix_equipment_equipment_name_trgm",
+        "ix_equipment_serial_number_trgm",
+        "ix_borrow_transactions_one_active_borrow",
+    )
+    _RENAMED_CONSTRAINT_NAMES = (
+        "uq_equipment_serial_number",
+        "uq_equipment_categories_name",
+        "uq_departments_code",
+        "uq_wards_code",
+        "uq_roles_name",
+        "uq_users_employee_code",
+        "uq_users_email",
+    )
 
     async def _snapshot(engine) -> dict:
         async with engine.connect() as conn:
@@ -7907,8 +8169,52 @@ async def test_pr15b_schema_convergence_fresh_and_historical_paths_are_identical
                 ).all()
             )
             fks = sorted(
-                (await conn.execute(text("SELECT conname, confdeltype::text FROM pg_constraint WHERE contype='f'"))).all()
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT conname, confdeltype::text, pg_get_constraintdef(oid) "
+                            "FROM pg_constraint WHERE contype='f'"
+                        )
+                    )
+                ).all()
             )
+            index_defs = {}
+            for name in _RENAMED_INDEX_NAMES:
+                row = (
+                    await conn.execute(
+                        text(
+                            "SELECT ix.indexdef, i.indisvalid, i.indisready "
+                            "FROM pg_indexes ix "
+                            "JOIN pg_class c ON c.relname = ix.indexname AND c.relnamespace = 'public'::regnamespace "
+                            "JOIN pg_index i ON i.indexrelid = c.oid "
+                            "WHERE ix.schemaname = 'public' AND ix.indexname = :name"
+                        ),
+                        {"name": name},
+                    )
+                ).one()
+                index_defs[name] = (row.indexdef, row.indisvalid, row.indisready)
+            constraint_defs = {}
+            for name in _RENAMED_CONSTRAINT_NAMES:
+                row = (
+                    await conn.execute(
+                        text(
+                            "SELECT pg_get_constraintdef(con.oid) AS condef, con.condeferrable, "
+                            "con.condeferred, i.indisvalid, i.indisready, i.indnullsnotdistinct "
+                            "FROM pg_constraint con "
+                            "JOIN pg_index i ON i.indexrelid = con.conindid "
+                            "WHERE con.conname = :name AND con.contype = 'u'"
+                        ),
+                        {"name": name},
+                    )
+                ).one()
+                constraint_defs[name] = (
+                    row.condef,
+                    row.condeferrable,
+                    row.condeferred,
+                    row.indisvalid,
+                    row.indisready,
+                    row.indnullsnotdistinct,
+                )
             index_names = sorted(
                 r[0]
                 for r in (
@@ -7920,7 +8226,13 @@ async def test_pr15b_schema_convergence_fresh_and_historical_paths_are_identical
                     )
                 ).all()
             )
-        return {"columns": columns, "fks": fks, "index_names": index_names}
+        return {
+            "columns": columns,
+            "fks": fks,
+            "index_names": index_names,
+            "index_defs": index_defs,
+            "constraint_defs": constraint_defs,
+        }
 
     try:
         await _recreate_scratch_database()

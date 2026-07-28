@@ -39,53 +39,87 @@ uniqueness, indexed column) -- only its name -- and this migration's
 regression tests (§11) prove a duplicate-active-borrow attempt is still
 rejected after the rename.
 
-**Paired with the companion ORM model changes (§6.4), not a database-only
-change.** `0001_initial.py` bootstraps schema via `Base.metadata.create_all()`
-against *current* ORM metadata, and `tests/conftest.py` builds the SQLite
-test schema the same way. The 7 unique-constraint columns now carry
-explicit `UniqueConstraint(name="uq_...")` declarations (replacing bare
-`unique=True`) in `app/models/equipment.py`, `master_data.py`, `user.py`.
-`ix_borrow_transactions_one_active_borrow` (formerly `idx_tx_one_active_
-borrow`) is likewise now declared under its target name directly in
-`app/models/transaction.py`'s `Index(...)` -- a correction discovered
-during implementation: unlike the 4 GIN trigram indexes (which remain
-migration-only, with no ORM declaration at all, confirmed via grep), this
-partial unique index IS declared in ORM metadata, so it needed the same
-name-convergence fix as the 7 unique constraints for a fresh install and
-the SQLite test suite to agree with this migration's rename target.
+**Not paired with an ORM rename for this one object.** Unlike the 7 unique
+constraints (which now carry explicit `UniqueConstraint(name="uq_...")`
+declarations in `app/models/equipment.py`, `master_data.py`, `user.py`,
+replacing bare `unique=True`), `idx_tx_one_active_borrow` is deliberately
+**not** renamed in `app/models/transaction.py`'s `Index(...)` declaration.
+`migration 0007_transaction_lifecycle.py` (an immutable historical
+migration) unconditionally issues `DROP INDEX IF EXISTS
+idx_tx_one_active_borrow` / `CREATE UNIQUE INDEX idx_tx_one_active_borrow
+...` on every run, regardless of what a fresh install's `0001_initial.py`
+bootstrap already produced from ORM metadata. If the ORM declared the
+target name instead, a fresh install would end up with *two* indexes --
+the ORM-created one under the target name, and a second one 0007
+unconditionally (re)creates under the legacy name -- a genuine duplicate-
+index bug, not a convergence fix (discovered and reverted during
+implementation). Renaming this index to its target name is therefore
+`0014`'s job on *every* path (fresh or historical) -- it is never already
+at target state on the fresh-install path the way the 7 unique constraints
+are, and this migration's verify-and-no-op logic reflects that: the
+legacy-name branch is the one normally taken for this object, not a
+transient historical-only case. The 4 GIN trigram indexes remain
+migration-only with no ORM declaration at all (confirmed via grep) --
+unaffected by this distinction.
 
 **Verify-and-no-op with full semantic-definition + health-state comparison
 (§8.7a/§8.7b), not name matching alone.** For each of the 12 renames, this
-migration:
+migration inspects `pg_get_indexdef()`/`pg_get_constraintdef()` plus the
+underlying `pg_index`/`pg_constraint`/`pg_am`/`pg_attribute` columns --
+access method, uniqueness, indexed column(s), expressions, predicates,
+per-column collation (checked against the indexed column's own collation,
+catching an unexpected `COLLATE` override), included columns, and (for the
+7 unique constraints) deferrable/initially-deferred state and `NULLS NOT
+DISTINCT` -- **plus** `pg_index.indisvalid`/`indisready` health flags.
 
-  1. Queries `pg_indexes`/`pg_constraint` for the **old** name. Found ->
-     confirms (via `pg_get_indexdef()`/`pg_get_constraintdef()` plus the
-     relevant `pg_index`/`pg_constraint` columns -- indexed column(s),
-     uniqueness, expression, predicate, sort/null order, included columns,
-     collation, access method) that the object found is the one expected
-     there, then performs the rename (`ALTER INDEX ... RENAME TO ...` for
-     the 5 indexes; `ALTER TABLE ... RENAME CONSTRAINT ... TO ...` for the
-     7 unique constraints, which also renames the backing index).
-  2. Old name not found -> queries for the **target** name. Found, full
-     definition matches, **and `pg_index.indisvalid = true` /
-     `indisready = true`** -> no-op (the fresh-install-after-ORM-fix case).
-     Target name found but definition mismatched, or matches but unhealthy
-     -> §8.7c's fail-closed mixed-state policy (Scenario 2 / Scenario 3).
-  3. Neither old nor target name found, or both found simultaneously
-     (Scenario 1) -> fails closed: raises `RuntimeError` naming the
-     specific mismatch. Never silently repaired, overwritten, or rebuilt.
+**One shared classification helper, `_classify_rename()`, drives every
+execution path identically** (design-compliance requirement: no code path
+may rename, recreate, or no-op based on partial verification). It is used,
+unmodified, for:
+
+  - the legacy-name side of `upgrade()`,
+  - the target-name side of `upgrade()`,
+  - the legacy-name side of `downgrade()` (i.e. `downgrade()`'s own
+    "already-reverted" no-op case, from the *target* name's perspective),
+  - the target-name side of `downgrade()` (i.e. `downgrade()`'s own
+    "needs reverting" case, from the *legacy* name's perspective).
+
+`downgrade()` calls the identical classifier with the old/new roles
+swapped -- it never renames or recreates based on presence/absence alone;
+full semantic verification and health checks run first, on *both* names,
+in *both* directions, exactly as `upgrade()` does. Outcomes:
+
+  1. **Needs transformation** -- found under one name, semantically
+     verified as a full match, **and healthy** -- perform the rename
+     (`ALTER INDEX ... RENAME TO ...` for the 5 indexes; `ALTER TABLE ...
+     RENAME CONSTRAINT ... TO ...` for the 7 unique constraints, which also
+     renames the backing index).
+  2. **Already at target state** -- found under the other name, full
+     definition matches, **and healthy** -- no-op (the fresh-install-
+     after-ORM-fix case for the 7 renamed unique constraints).
+  3. **Fails closed** -- found under either name but the *semantic
+     definition* does not match (Scenario 2, §8.7c), found under either
+     name but **unhealthy** (`indisvalid = false` or `indisready = false`,
+     Scenario 3, §8.7c) -- checked identically whichever name it is found
+     under, not just the target name -- both names found simultaneously
+     (Scenario 1, §8.7c), or neither name found at all: raises
+     `RuntimeError` naming the specific mismatch. Never silently repaired,
+     overwritten, or rebuilt.
 
 An index or index-backed constraint that matches every definitional check
 but has `indisvalid = false` or `indisready = false` (e.g. left behind by an
 interrupted `CREATE INDEX CONCURRENTLY`/`REINDEX CONCURRENTLY`) is never
-treated as a valid no-op target -- health state is a required, independent
-gate (§8.7b/§8.7c Scenario 3), proven by this migration's mandatory
-interrupted-index-build regression test (§8.7d/§11).
+treated as a valid state to rename from *or* to -- health state is a
+required, independent gate checked on both sides of both directions
+(§8.7b/§8.7c Scenario 3), proven by this migration's mandatory
+interrupted-index-build regression tests (§8.7d/§11), including the case
+where the *legacy*-named object itself is unhealthy.
 
 **Migration impact:** every rename is `ALTER INDEX .../ALTER TABLE ...
 RENAME CONSTRAINT ...`-shaped -- metadata-only, no rebuild, no lock beyond
 the brief catalog-update `ALTER` requires. Fully reversible: downgrade
-renames back to the legacy names under the same verify-and-no-op discipline.
+renames back to the legacy names under the identical semantic-verification
+helper as upgrade.
 
 Only ever runs against PostgreSQL in this project (see 0002/0004/0011/0012/
 0013's identical dialect-gated pattern).
@@ -100,33 +134,240 @@ down_revision: Union[str, None] = "0013_fk_ondelete_policy"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+_NEEDS_TRANSFORM = "needs_transform"
+_NOOP = "noop"
+
+# The complete structural+health query shared by both plain indexes and
+# constraint-backed indexes (a named unique constraint's backing index is
+# always named identically to the constraint itself, confirmed against a
+# live PostgreSQL 16 instance) -- one query, reused for every object kind
+# this migration touches.
+_INDEX_ROW_SQL = sa.text(
+    """
+    SELECT
+        ix.indexdef,
+        i.indisvalid,
+        i.indisready,
+        i.indisunique,
+        am.amname AS access_method,
+        (i.indnkeyatts = i.indnatts) AS no_included_columns,
+        NOT EXISTS (
+            SELECT 1
+            FROM generate_series(0, i.indnkeyatts - 1) AS k(pos)
+            JOIN pg_attribute a
+              ON a.attrelid = i.indrelid AND a.attnum = i.indkey[k.pos]
+            WHERE i.indcollation[k.pos] IS DISTINCT FROM a.attcollation
+        ) AS collation_matches_columns,
+        i.indnullsnotdistinct
+    FROM pg_indexes ix
+    JOIN pg_class c ON c.relname = ix.indexname AND c.relnamespace = 'public'::regnamespace
+    JOIN pg_index i ON i.indexrelid = c.oid
+    JOIN pg_am am ON am.oid = c.relam
+    WHERE ix.schemaname = 'public' AND ix.indexname = :name
+    """
+)
+
+_UNIQUE_CONSTRAINT_ROW_SQL = sa.text(
+    """
+    SELECT pg_get_constraintdef(oid) AS condef, condeferrable, condeferred
+    FROM pg_constraint
+    WHERE conname = :name AND contype = 'u'
+    """
+)
+
+
+def _index_row(bind, name: str):
+    """Full structural+health state for an index by name (whether or not
+    it backs a unique constraint), or None if no index with this name
+    exists. This is the single source of index-catalog truth this
+    migration uses -- both `_IndexVerifier` and `_ConstraintVerifier`
+    below call it."""
+    return bind.execute(_INDEX_ROW_SQL, {"name": name}).one_or_none()
+
+
+def _unique_constraint_row(bind, name: str):
+    """`pg_constraint`-specific fields for a named unique constraint, or
+    None if no such constraint exists."""
+    return bind.execute(_UNIQUE_CONSTRAINT_ROW_SQL, {"name": name}).one_or_none()
+
+
+class _IndexVerifier:
+    """Semantic verifier for a plain (non-constraint-backed) index rename
+    -- the 4 GIN trigram indexes and the borrow-transactions partial
+    unique safety index."""
+
+    def __init__(self, *, unique: bool, access_method: str):
+        self.unique = unique
+        self.access_method = access_method
+
+    def fetch(self, bind, name: str):
+        return _index_row(bind, name)
+
+    def matches(self, state, expected_indexdef: str) -> bool:
+        return (
+            state.indexdef == expected_indexdef
+            and state.indisunique == self.unique
+            and state.access_method == self.access_method
+            and state.no_included_columns
+            and state.collation_matches_columns
+        )
+
+    @staticmethod
+    def healthy(state) -> bool:
+        return bool(state.indisvalid) and bool(state.indisready)
+
+
+class _ConstraintVerifier:
+    """Semantic verifier for a unique-constraint-backed rename (also
+    renames the backing index). Reuses `_index_row()` for the structural/
+    health half of the check -- a named unique constraint's backing index
+    is always named identically to the constraint (confirmed live), so no
+    separate index-name resolution step is needed."""
+
+    unique = True
+    access_method = "btree"  # the only access method PostgreSQL supports for UNIQUE
+
+    def fetch(self, bind, name: str):
+        index_state = _index_row(bind, name)
+        constraint_state = _unique_constraint_row(bind, name)
+        if index_state is None or constraint_state is None:
+            return None
+        return (index_state, constraint_state)
+
+    def matches(self, state, expected_condef: str) -> bool:
+        index_state, constraint_state = state
+        return (
+            constraint_state.condef == expected_condef
+            and not constraint_state.condeferrable
+            and not constraint_state.condeferred
+            and not index_state.indnullsnotdistinct
+            and index_state.indisunique == self.unique
+            and index_state.access_method == self.access_method
+            and index_state.no_included_columns
+            and index_state.collation_matches_columns
+        )
+
+    @staticmethod
+    def healthy(state) -> bool:
+        index_state, _constraint_state = state
+        return bool(index_state.indisvalid) and bool(index_state.indisready)
+
+
+def _classify_rename(
+    bind,
+    verifier,
+    *,
+    old_name: str,
+    new_name: str,
+    old_expected,
+    new_expected,
+    table: str,
+    direction: str,
+) -> str:
+    """The single shared classification helper (design-compliance
+    requirement) driving every execution path in this migration: the
+    legacy-name check, the target-name check, `upgrade()`, and
+    `downgrade()` (called with `old_name`/`new_name` and their matching
+    `*_expected` values swapped). Full semantic verification and health
+    checks run identically on *both* names before any outcome is decided --
+    no path may classify from presence/absence alone.
+    """
+    old_state = verifier.fetch(bind, old_name)
+    new_state = verifier.fetch(bind, new_name)
+
+    if old_state is not None and new_state is not None:
+        raise RuntimeError(
+            f"Migration 0014 {direction} aborted: both '{old_name}' and '{new_name}' exist "
+            f"simultaneously on table '{table}'. This should not happen under any normal "
+            "upgrade/downgrade or fresh-install path -- it suggests a partially-applied prior "
+            "migration attempt or manual intervention. Refusing to guess which is correct; "
+            f"inspect and resolve manually before re-running this {direction} (Scenario 1, "
+            "§8.7c)."
+        )
+
+    if old_state is not None:
+        if not verifier.matches(old_state, old_expected):
+            raise RuntimeError(
+                f"Migration 0014 {direction} aborted: '{old_name}' exists but its definition "
+                f"does not match what this migration expects. Refusing to silently continue -- "
+                f"inspect and resolve manually before re-running this {direction} (Scenario 2, "
+                "§8.7c)."
+            )
+        if not verifier.healthy(old_state):
+            raise RuntimeError(
+                f"Migration 0014 {direction} aborted: '{old_name}' exists with a matching "
+                "definition but is not usable (indisvalid/indisready). This usually means a "
+                "previous CREATE INDEX CONCURRENTLY / REINDEX CONCURRENTLY was interrupted. "
+                "Refusing to silently continue -- inspect the index and resolve manually before "
+                f"re-running this {direction} (Scenario 3, §8.7c)."
+            )
+        return _NEEDS_TRANSFORM
+
+    if new_state is not None:
+        if not verifier.healthy(new_state):
+            raise RuntimeError(
+                f"Migration 0014 {direction} aborted: '{new_name}' already exists under its "
+                "target name but is not usable (indisvalid/indisready). This usually means a "
+                "previous CREATE INDEX CONCURRENTLY / REINDEX CONCURRENTLY was interrupted. "
+                f"Refusing to silently continue -- inspect the index, then run 'DROP INDEX "
+                f"CONCURRENTLY IF EXISTS {new_name};' and re-run this {direction} (Scenario 3, "
+                "§8.7c)."
+            )
+        if not verifier.matches(new_state, new_expected):
+            raise RuntimeError(
+                f"Migration 0014 {direction} aborted: '{new_name}' already exists under its "
+                "target name but its definition does not match. Refusing to silently continue "
+                f"-- inspect and resolve manually before re-running this {direction} (Scenario "
+                "2, §8.7c)."
+            )
+        # Already at target state, semantically verified, healthy:
+        # intentional no-op -- reached only after both checks above passed.
+        return _NOOP
+
+    raise RuntimeError(
+        f"Migration 0014 {direction} aborted: neither '{old_name}' nor '{new_name}' was found "
+        f"on table '{table}'. This migration expects one of the two to already exist -- "
+        f"refusing to guess or create it fresh. Inspect the schema manually before re-running "
+        f"this {direction}."
+    )
+
 
 class _IndexRename:
     """A plain (non-constraint-backed) index rename -- GIN trigram or the
     borrow-transactions partial unique safety index."""
 
-    __slots__ = ("old_name", "new_name", "table", "expected_indexdef")
+    __slots__ = ("old_name", "new_name", "table", "indexdef_template", "verifier")
 
-    def __init__(self, old_name: str, new_name: str, table: str, expected_indexdef_template: str):
+    def __init__(self, old_name: str, new_name: str, table: str, expected_indexdef_template: str, *, unique: bool, access_method: str):
         self.old_name = old_name
         self.new_name = new_name
         self.table = table
         # %(name)s is substituted with whichever name (old or new) is
         # currently live, since pg_get_indexdef() always reports the
         # index's *current* name regardless of what we expect it to be.
-        self.expected_indexdef = expected_indexdef_template
+        self.indexdef_template = expected_indexdef_template
+        self.verifier = _IndexVerifier(unique=unique, access_method=access_method)
+
+    def expected_indexdef(self, name: str) -> str:
+        return self.indexdef_template % {"name": name}
 
 
 class _ConstraintRename:
     """A unique-constraint-backed rename (also renames the backing index)."""
 
-    __slots__ = ("old_name", "new_name", "table", "column")
+    __slots__ = ("old_name", "new_name", "table", "column", "expected_condef", "verifier")
 
     def __init__(self, old_name: str, new_name: str, table: str, column: str):
         self.old_name = old_name
         self.new_name = new_name
         self.table = table
         self.column = column
+        # pg_get_constraintdef() for a plain UNIQUE constraint never
+        # mentions the constraint's own name, so the expected definition
+        # is identical regardless of which name (old or new) it is
+        # currently found under.
+        self.expected_condef = f"UNIQUE ({column})"
+        self.verifier = _ConstraintVerifier()
 
 
 _INDEX_RENAMES: tuple[_IndexRename, ...] = (
@@ -135,24 +376,32 @@ _INDEX_RENAMES: tuple[_IndexRename, ...] = (
         "ix_equipment_asset_number_trgm",
         "equipment",
         "CREATE INDEX %(name)s ON public.equipment USING gin (asset_number gin_trgm_ops)",
+        unique=False,
+        access_method="gin",
     ),
     _IndexRename(
         "idx_equipment_bcm_trgm",
         "ix_equipment_bcm_code_trgm",
         "equipment",
         "CREATE INDEX %(name)s ON public.equipment USING gin (bcm_code gin_trgm_ops)",
+        unique=False,
+        access_method="gin",
     ),
     _IndexRename(
         "idx_equipment_name_trgm",
         "ix_equipment_equipment_name_trgm",
         "equipment",
         "CREATE INDEX %(name)s ON public.equipment USING gin (equipment_name gin_trgm_ops)",
+        unique=False,
+        access_method="gin",
     ),
     _IndexRename(
         "idx_equipment_serial_trgm",
         "ix_equipment_serial_number_trgm",
         "equipment",
         "CREATE INDEX %(name)s ON public.equipment USING gin (serial_number gin_trgm_ops)",
+        unique=False,
+        access_method="gin",
     ),
     _IndexRename(
         "idx_tx_one_active_borrow",
@@ -160,6 +409,8 @@ _INDEX_RENAMES: tuple[_IndexRename, ...] = (
         "borrow_transactions",
         "CREATE UNIQUE INDEX %(name)s ON public.borrow_transactions USING btree (equipment_id) "
         "WHERE ((status)::text = 'open'::text)",
+        unique=True,
+        access_method="btree",
     ),
 )
 
@@ -176,206 +427,67 @@ _CONSTRAINT_RENAMES: tuple[_ConstraintRename, ...] = (
 )
 
 
-def _index_state(bind, *, name: str):
-    """Returns (indexdef, indisvalid, indisready) for an index by name, or
-    None if no index with this name exists."""
-    row = bind.execute(
-        sa.text(
-            """
-            SELECT i.indexdef, x.indisvalid, x.indisready
-            FROM pg_indexes i
-            JOIN pg_class c ON c.relname = i.indexname
-            JOIN pg_index x ON x.indexrelid = c.oid
-            WHERE i.schemaname = 'public' AND i.indexname = :name
-            """
-        ),
-        {"name": name},
-    ).one_or_none()
-    return row
-
-
-def _rename_index(bind, spec: _IndexRename) -> None:
-    old_state = _index_state(bind, name=spec.old_name)
-    new_state = _index_state(bind, name=spec.new_name)
-
-    if old_state is not None and new_state is not None:
-        raise RuntimeError(
-            f"Migration 0014 aborted: both the legacy index name '{spec.old_name}' and the "
-            f"target name '{spec.new_name}' exist simultaneously on table '{spec.table}'. This "
-            "should not happen under any normal upgrade or fresh-install path -- it suggests a "
-            "partially-applied prior migration attempt or manual intervention. Refusing to "
-            "guess which is correct; inspect and resolve manually (Scenario 1, §8.7c)."
-        )
-
-    if old_state is not None:
-        expected = spec.expected_indexdef % {"name": spec.old_name}
-        if old_state.indexdef != expected:
-            raise RuntimeError(
-                f"Migration 0014 aborted: index '{spec.old_name}' exists but its definition "
-                f"does not match what this migration expects.\n  Found:    {old_state.indexdef}\n"
-                f"  Expected: {expected}\n"
-                "This may be a different, unrelated index sharing this name. Refusing to "
-                "silently continue -- inspect and resolve manually before re-running this "
-                "migration."
-            )
-        op.execute(f"ALTER INDEX {spec.old_name} RENAME TO {spec.new_name}")
-        return
-
-    if new_state is not None:
-        expected = spec.expected_indexdef % {"name": spec.new_name}
-        if not new_state.indisvalid or not new_state.indisready:
-            raise RuntimeError(
-                f"Migration 0014 aborted: index '{spec.new_name}' already exists under its "
-                f"target name but is not usable (indisvalid={new_state.indisvalid}, "
-                f"indisready={new_state.indisready}). This usually means a previous "
-                "CREATE INDEX CONCURRENTLY / REINDEX CONCURRENTLY was interrupted. Refusing to "
-                "silently continue -- inspect the index, then run 'DROP INDEX CONCURRENTLY IF "
-                f"EXISTS {spec.new_name};' and re-run this migration (Scenario 3, §8.7c)."
-            )
-        if new_state.indexdef != expected:
-            raise RuntimeError(
-                f"Migration 0014 aborted: index '{spec.new_name}' already exists under its "
-                f"target name but its definition does not match.\n"
-                f"  Found:    {new_state.indexdef}\n  Expected: {expected}\n"
-                "Refusing to silently continue -- inspect and resolve manually before "
-                "re-running this migration (Scenario 2, §8.7c)."
-            )
-        # Already at target state, valid, healthy: intentional no-op.
-        return
-
-    raise RuntimeError(
-        f"Migration 0014 aborted: neither the legacy index name '{spec.old_name}' nor the "
-        f"target name '{spec.new_name}' was found on table '{spec.table}'. This migration "
-        "expects one of the two to already exist -- refusing to guess or create it fresh. "
-        "Inspect the schema manually before re-running this migration."
+def _rename_index(bind, spec: _IndexRename, *, direction: str = "upgrade") -> None:
+    outcome = _classify_rename(
+        bind,
+        spec.verifier,
+        old_name=spec.old_name,
+        new_name=spec.new_name,
+        old_expected=spec.expected_indexdef(spec.old_name),
+        new_expected=spec.expected_indexdef(spec.new_name),
+        table=spec.table,
+        direction=direction,
     )
+    if outcome == _NEEDS_TRANSFORM:
+        op.execute(f"ALTER INDEX {spec.old_name} RENAME TO {spec.new_name}")
 
 
 def _rename_index_back(bind, spec: _IndexRename) -> None:
-    old_state = _index_state(bind, name=spec.old_name)
-    new_state = _index_state(bind, name=spec.new_name)
-
-    if old_state is not None and new_state is not None:
-        raise RuntimeError(
-            f"Migration 0014 downgrade aborted: both '{spec.old_name}' and '{spec.new_name}' "
-            f"exist simultaneously on table '{spec.table}'. Inspect and resolve manually."
-        )
-
-    if new_state is not None:
+    # Downgrade: the same shared classifier, with the old/new roles
+    # swapped -- "old" (source) is now the current target name, "new"
+    # (destination) is the legacy name being restored.
+    outcome = _classify_rename(
+        bind,
+        spec.verifier,
+        old_name=spec.new_name,
+        new_name=spec.old_name,
+        old_expected=spec.expected_indexdef(spec.new_name),
+        new_expected=spec.expected_indexdef(spec.old_name),
+        table=spec.table,
+        direction="downgrade",
+    )
+    if outcome == _NEEDS_TRANSFORM:
         op.execute(f"ALTER INDEX {spec.new_name} RENAME TO {spec.old_name}")
-        return
 
-    if old_state is not None:
-        # Already downgraded -- no-op.
-        return
 
-    raise RuntimeError(
-        f"Migration 0014 downgrade aborted: neither '{spec.old_name}' nor '{spec.new_name}' "
-        f"was found on table '{spec.table}'. Inspect the schema manually before re-running "
-        "this downgrade."
+def _rename_constraint(bind, spec: _ConstraintRename, *, direction: str = "upgrade") -> None:
+    outcome = _classify_rename(
+        bind,
+        spec.verifier,
+        old_name=spec.old_name,
+        new_name=spec.new_name,
+        old_expected=spec.expected_condef,
+        new_expected=spec.expected_condef,
+        table=spec.table,
+        direction=direction,
     )
-
-
-def _constraint_state(bind, *, name: str, table: str, column: str):
-    """Returns a row describing the unique constraint by name, or None."""
-    row = bind.execute(
-        sa.text(
-            """
-            SELECT
-                con.conrelid::regclass::text AS table_name,
-                (SELECT attname FROM pg_attribute
-                 WHERE attrelid = con.conrelid AND attnum = con.conkey[1]) AS column_name,
-                array_length(con.conkey, 1) AS key_length,
-                idx.indisvalid,
-                idx.indisready
-            FROM pg_constraint con
-            JOIN pg_class c ON c.oid = con.conrelid
-            JOIN pg_index idx ON idx.indexrelid = con.conindid
-            WHERE con.conname = :name AND con.contype = 'u'
-            """
-        ),
-        {"name": name},
-    ).one_or_none()
-    return row
-
-
-def _rename_constraint(bind, spec: _ConstraintRename) -> None:
-    old_state = _constraint_state(bind, name=spec.old_name, table=spec.table, column=spec.column)
-    new_state = _constraint_state(bind, name=spec.new_name, table=spec.table, column=spec.column)
-
-    if old_state is not None and new_state is not None:
-        raise RuntimeError(
-            f"Migration 0014 aborted: both the legacy constraint name '{spec.old_name}' and "
-            f"the target name '{spec.new_name}' exist simultaneously on table '{spec.table}'. "
-            "Refusing to guess which is correct; inspect and resolve manually (Scenario 1, "
-            "§8.7c)."
-        )
-
-    def _matches(row) -> bool:
-        return row.table_name == spec.table and row.column_name == spec.column and row.key_length == 1
-
-    if old_state is not None:
-        if not _matches(old_state):
-            raise RuntimeError(
-                f"Migration 0014 aborted: unique constraint '{spec.old_name}' exists but does "
-                f"not match the expected definition (table={spec.table}, column={spec.column}). "
-                f"Found: table={old_state.table_name}, column={old_state.column_name}, "
-                f"key_length={old_state.key_length}. Refusing to silently continue -- inspect "
-                "and resolve manually before re-running this migration."
-            )
+    if outcome == _NEEDS_TRANSFORM:
         op.execute(f"ALTER TABLE {spec.table} RENAME CONSTRAINT {spec.old_name} TO {spec.new_name}")
-        return
-
-    if new_state is not None:
-        if not new_state.indisvalid or not new_state.indisready:
-            raise RuntimeError(
-                f"Migration 0014 aborted: unique constraint '{spec.new_name}' already exists "
-                f"under its target name but its backing index is not usable "
-                f"(indisvalid={new_state.indisvalid}, indisready={new_state.indisready}). "
-                "Refusing to silently continue -- inspect and resolve manually (Scenario 3, "
-                "§8.7c)."
-            )
-        if not _matches(new_state):
-            raise RuntimeError(
-                f"Migration 0014 aborted: unique constraint '{spec.new_name}' already exists "
-                f"under its target name but does not match the expected definition "
-                f"(table={spec.table}, column={spec.column}). Found: table={new_state.table_name}, "
-                f"column={new_state.column_name}, key_length={new_state.key_length}. Refusing to "
-                "silently continue -- inspect and resolve manually (Scenario 2, §8.7c)."
-            )
-        # Already at target state, valid, healthy: intentional no-op.
-        return
-
-    raise RuntimeError(
-        f"Migration 0014 aborted: neither the legacy constraint name '{spec.old_name}' nor the "
-        f"target name '{spec.new_name}' was found on table '{spec.table}'. Refusing to guess or "
-        "create it fresh. Inspect the schema manually before re-running this migration."
-    )
 
 
 def _rename_constraint_back(bind, spec: _ConstraintRename) -> None:
-    old_state = _constraint_state(bind, name=spec.old_name, table=spec.table, column=spec.column)
-    new_state = _constraint_state(bind, name=spec.new_name, table=spec.table, column=spec.column)
-
-    if old_state is not None and new_state is not None:
-        raise RuntimeError(
-            f"Migration 0014 downgrade aborted: both '{spec.old_name}' and '{spec.new_name}' "
-            f"exist simultaneously on table '{spec.table}'. Inspect and resolve manually."
-        )
-
-    if new_state is not None:
-        op.execute(f"ALTER TABLE {spec.table} RENAME CONSTRAINT {spec.new_name} TO {spec.old_name}")
-        return
-
-    if old_state is not None:
-        # Already downgraded -- no-op.
-        return
-
-    raise RuntimeError(
-        f"Migration 0014 downgrade aborted: neither '{spec.old_name}' nor '{spec.new_name}' was "
-        f"found on table '{spec.table}'. Inspect the schema manually before re-running this "
-        "downgrade."
+    outcome = _classify_rename(
+        bind,
+        spec.verifier,
+        old_name=spec.new_name,
+        new_name=spec.old_name,
+        old_expected=spec.expected_condef,
+        new_expected=spec.expected_condef,
+        table=spec.table,
+        direction="downgrade",
     )
+    if outcome == _NEEDS_TRANSFORM:
+        op.execute(f"ALTER TABLE {spec.table} RENAME CONSTRAINT {spec.new_name} TO {spec.old_name}")
 
 
 def upgrade() -> None:

@@ -38,30 +38,45 @@ not `confdeltype` alone.** For each of the 25 named FK constraints, this
 migration inspects `pg_constraint` for: referenced table (`confrelid`),
 referenced column(s) (`confkey`), local column(s) (`conkey`), `ON UPDATE`
 (`confupdtype`), deferrable/deferred state (`condeferrable`/`condeferred`),
-and validation state (`convalidated`) -- comparing the complete definition,
-not a single field, against this migration's own §4-sourced expectation.
-Every FK in this schema is single-column today (confirmed, §4), so column
-resolution here does not need to handle composite keys. Outcomes:
+validation state (`convalidated`), and the full `pg_get_constraintdef()`
+rendering (a self-consistency cross-check against the individual columns
+above, catching any rendering detail -- e.g. `NOT VALID`, `MATCH FULL` --
+the individual columns don't directly surface) -- comparing the complete
+definition, not a single field, against this migration's own §4-sourced
+expectation. Every FK in this schema is single-column today (confirmed,
+§4), so column resolution here does not need to handle composite keys.
+
+**One shared classification helper, `_classify_fk()`, drives both
+directions identically** (design-compliance requirement: no code path may
+transform, no-op, or fail closed based on partial verification). It always
+performs the full semantic-definition comparison *first* -- identically
+regardless of direction -- and only *then* inspects `confdeltype` to decide
+the outcome:
 
   1. **Needs transformation** -- every field matches this migration's
-     expectation except `confdeltype = 'a'` (`NO ACTION`): drop and recreate
-     the constraint (same name) with `ON DELETE RESTRICT`.
+     expectation except `confdeltype`, which is at the *source* state for
+     this direction (`'a'` NO ACTION for upgrade, `'r'` RESTRICT for
+     downgrade): drop and recreate the constraint (same name) with the
+     target `ON DELETE` clause.
   2. **Already at target state** -- every field matches, including
-     `confdeltype = 'r'` (`RESTRICT`) already: no-op, nothing to do (the
-     fresh-install-after-ORM-fix case for the 24 ORM-backed FKs, and simply
-     "someone already ran this migration" for the 25th).
+     `confdeltype` already at this direction's *target* value: no-op,
+     nothing to do (the fresh-install-after-ORM-fix case for the 24
+     ORM-backed FKs on upgrade, and simply "already downgraded" on a
+     repeated downgrade).
   3. **Fails closed** -- the constraint is not found under its expected name
      at all, or is found but any field (other than `confdeltype`) does not
-     match this migration's expectation, or `confdeltype` is something this
-     proposal never intends (`c` CASCADE, `d` SET DEFAULT, `n` SET NULL):
-     raises `RuntimeError` naming the constraint and the actual vs. expected
+     match this migration's expectation, or `confdeltype` is neither this
+     direction's source nor target value (e.g. `c` CASCADE, `d` SET
+     DEFAULT, `n` SET NULL found where `'a'`/`'r'` was expected): raises
+     `RuntimeError` naming the constraint and the actual vs. expected
      definition. Never silently repaired, overwritten, or guessed (§8.7c).
 
 **Migration impact:** all changes are `ALTER TABLE ... DROP CONSTRAINT ...
 ADD CONSTRAINT ... FOREIGN KEY (...) REFERENCES ... (...) ON DELETE
 RESTRICT`-shaped -- metadata-only, no data rewrite. Fully reversible:
 downgrade drops the explicit `RESTRICT` constraint and recreates the
-implicit-`NO ACTION` one, under the same verify-and-no-op discipline.
+implicit-`NO ACTION` one, under the *same* semantic-verification helper as
+upgrade -- downgrade never renames/recreates based on `confdeltype` alone.
 
 Only ever runs against PostgreSQL in this project (see 0002/0004/0011/0012's
 identical dialect-gated pattern).
@@ -144,6 +159,24 @@ _NO_ACTION = "a"
 _RESTRICT = "r"
 _ALREADY_INTENDED_ONUPDATE = "a"  # NO ACTION -- this proposal never changes ON UPDATE
 
+_NEEDS_TRANSFORM = "needs_transform"
+_NOOP = "noop"
+
+
+def _expected_condef(spec: "_FKSpec", *, confdeltype: str) -> str:
+    """The exact `pg_get_constraintdef()` rendering PostgreSQL produces for
+    this FK at the given `confdeltype` -- `NO ACTION` renders with no
+    `ON DELETE` clause at all; `RESTRICT` renders `ON DELETE RESTRICT`
+    (confirmed against a live PostgreSQL 16 instance). Used as a
+    self-consistency cross-check against the individual `pg_constraint`
+    columns already compared -- catches any rendering detail (e.g. an
+    unexpected `NOT VALID` or `MATCH FULL` clause) that a column-by-column
+    comparison alone might not surface (§8.7b)."""
+    base = f"FOREIGN KEY ({spec.column}) REFERENCES {spec.ref_table}({spec.ref_column})"
+    if confdeltype == _RESTRICT:
+        return f"{base} ON DELETE RESTRICT"
+    return base
+
 
 def _fetch_fk(bind, *, name: str):
     row = bind.execute(
@@ -162,7 +195,8 @@ def _fetch_fk(bind, *, name: str):
                 c.condeferrable,
                 c.condeferred,
                 c.convalidated,
-                array_length(c.conkey, 1) AS key_length
+                array_length(c.conkey, 1) AS key_length,
+                pg_get_constraintdef(c.oid) AS condef
             FROM pg_constraint c
             WHERE c.conname = :name AND c.contype = 'f'
             """
@@ -172,7 +206,12 @@ def _fetch_fk(bind, *, name: str):
     return row
 
 
-def _expected_matches(row, spec: _FKSpec) -> bool:
+def _expected_matches(row, spec: "_FKSpec") -> bool:
+    """Full semantic-definition comparison (§8.7b) -- every field except
+    `confdeltype` itself, which `_classify_fk()` checks separately since
+    its expected value depends on migration direction. Includes the
+    `pg_get_constraintdef()` self-consistency cross-check (computed against
+    the row's *own* observed `confdeltype`, not an assumed one)."""
     return (
         row.local_table == spec.table
         and row.ref_table == spec.ref_table
@@ -183,6 +222,7 @@ def _expected_matches(row, spec: _FKSpec) -> bool:
         and not row.condeferrable
         and not row.condeferred
         and row.convalidated
+        and row.condef == _expected_condef(spec, confdeltype=row.confdeltype)
     )
 
 
@@ -192,47 +232,64 @@ def _describe(row) -> str:
         f"ref_table={row.ref_table}, ref_column={row.ref_column}, "
         f"confdeltype={row.confdeltype!r}, confupdtype={row.confupdtype!r}, "
         f"condeferrable={row.condeferrable}, condeferred={row.condeferred}, "
-        f"convalidated={row.convalidated}, key_length={row.key_length}"
+        f"convalidated={row.convalidated}, key_length={row.key_length}, "
+        f"condef={row.condef!r}"
     )
 
 
-def _apply_restrict(bind, spec: _FKSpec) -> None:
+def _classify_fk(bind, spec: "_FKSpec", *, source_deltype: str, target_deltype: str, direction: str) -> str:
+    """Single shared classification helper -- used identically by both
+    `_apply_restrict()` (upgrade: source='a' NO ACTION, target='r'
+    RESTRICT) and `_revert_to_no_action()` (downgrade: source='r', target=
+    'a'). Full semantic verification (`_expected_matches()`) always runs
+    *first*, identically regardless of direction, before `confdeltype` is
+    even inspected -- no code path may classify based on `confdeltype`
+    alone (design-compliance requirement)."""
     row = _fetch_fk(bind, name=spec.name)
 
     if row is None:
         raise RuntimeError(
-            f"Migration 0013 aborted: expected foreign key constraint '{spec.name}' on table "
-            f"'{spec.table}' was not found in the PostgreSQL catalog. This migration expects it "
-            "to already exist (created by an earlier migration's implicit or explicit FK "
-            "declaration) -- refusing to guess or create it fresh. Inspect the schema manually "
-            "before re-running this migration."
+            f"Migration 0013 {direction} aborted: expected foreign key constraint '{spec.name}' "
+            f"on table '{spec.table}' was not found in the PostgreSQL catalog. This migration "
+            "expects it to already exist -- refusing to guess or create it fresh. Inspect the "
+            f"schema manually before re-running this {direction}."
         )
 
     if not _expected_matches(row, spec):
         raise RuntimeError(
-            f"Migration 0013 aborted: foreign key constraint '{spec.name}' exists but its "
-            f"definition does not match what this migration expects.\n"
+            f"Migration 0013 {direction} aborted: foreign key constraint '{spec.name}' exists but "
+            f"its definition does not match what this migration expects.\n"
             f"  Found:    {_describe(row)}\n"
             f"  Expected: local_table={spec.table}, local_column={spec.column}, "
             f"ref_table={spec.ref_table}, ref_column={spec.ref_column}, confupdtype='a', "
             "condeferrable=False, condeferred=False, convalidated=True.\n"
             "This may indicate a partially-applied prior migration attempt or manual "
-            "intervention. Refusing to silently repair or overwrite -- inspect and resolve "
-            "manually before re-running this migration."
+            f"intervention. Refusing to silently repair or overwrite -- inspect and resolve "
+            f"manually before re-running this {direction}."
         )
 
-    if row.confdeltype == _RESTRICT:
-        # Already at target state -- intentional no-op (§8.7a outcome 2).
+    if row.confdeltype == target_deltype:
+        # Already at this direction's target state -- intentional no-op
+        # (§8.7a outcome 2), reached only after full semantic verification
+        # above succeeded.
+        return _NOOP
+
+    if row.confdeltype == source_deltype:
+        return _NEEDS_TRANSFORM
+
+    raise RuntimeError(
+        f"Migration 0013 {direction} aborted: foreign key constraint '{spec.name}' has an "
+        f"unexpected ON DELETE action confdeltype={row.confdeltype!r} (expected "
+        f"{source_deltype!r} or already {target_deltype!r}). This proposal never introduces "
+        "CASCADE/SET DEFAULT/SET NULL for this relationship -- refusing to silently proceed. "
+        f"Inspect and resolve manually before re-running this {direction}."
+    )
+
+
+def _apply_restrict(bind, spec: "_FKSpec") -> None:
+    outcome = _classify_fk(bind, spec, source_deltype=_NO_ACTION, target_deltype=_RESTRICT, direction="upgrade")
+    if outcome == _NOOP:
         return
-
-    if row.confdeltype != _NO_ACTION:
-        raise RuntimeError(
-            f"Migration 0013 aborted: foreign key constraint '{spec.name}' has an unexpected "
-            f"ON DELETE action confdeltype={row.confdeltype!r} (expected 'a' NO ACTION or "
-            "already 'r' RESTRICT). This proposal never introduces CASCADE/SET DEFAULT/SET "
-            "NULL for this relationship -- refusing to silently proceed. Inspect and resolve "
-            "manually before re-running this migration."
-        )
 
     op.execute(f"ALTER TABLE {spec.table} DROP CONSTRAINT {spec.name}")
     op.execute(
@@ -242,27 +299,10 @@ def _apply_restrict(bind, spec: _FKSpec) -> None:
     )
 
 
-def _revert_to_no_action(bind, spec: _FKSpec) -> None:
-    row = _fetch_fk(bind, name=spec.name)
-
-    if row is None:
-        raise RuntimeError(
-            f"Migration 0013 downgrade aborted: expected foreign key constraint '{spec.name}' "
-            f"on table '{spec.table}' was not found. Inspect the schema manually before "
-            "re-running this downgrade."
-        )
-
-    if row.confdeltype == _NO_ACTION:
-        # Already downgraded -- no-op.
+def _revert_to_no_action(bind, spec: "_FKSpec") -> None:
+    outcome = _classify_fk(bind, spec, source_deltype=_RESTRICT, target_deltype=_NO_ACTION, direction="downgrade")
+    if outcome == _NOOP:
         return
-
-    if row.confdeltype != _RESTRICT:
-        raise RuntimeError(
-            f"Migration 0013 downgrade aborted: foreign key constraint '{spec.name}' has an "
-            f"unexpected ON DELETE action confdeltype={row.confdeltype!r} (expected 'r' "
-            "RESTRICT or already 'a' NO ACTION). Inspect and resolve manually before "
-            "re-running this downgrade."
-        )
 
     op.execute(f"ALTER TABLE {spec.table} DROP CONSTRAINT {spec.name}")
     op.execute(
