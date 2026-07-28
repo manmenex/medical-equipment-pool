@@ -1,6 +1,6 @@
 import uuid
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import String, and_, case, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -257,7 +257,7 @@ async def update(db: AsyncSession, equipment: Equipment, *, data: dict) -> Equip
 
 
 async def soft_delete(db: AsyncSession, equipment: Equipment) -> None:
-    equipment.deleted_at = datetime.utcnow()
+    equipment.deleted_at = datetime.now(timezone.utc)
     await db.flush()
 
 

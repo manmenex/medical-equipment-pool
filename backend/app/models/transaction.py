@@ -1,12 +1,12 @@
 import enum
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Enum, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
-from app.models.mixins import TimestampMixin, UUIDPKMixin
+from app.models.mixins import TimestampMixin, UTCDateTime, UUIDPKMixin
 
 
 class TransactionStatus(str, enum.Enum):
@@ -119,6 +119,23 @@ class ReceiptOutcome(str, enum.Enum):
 
 class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "borrow_transactions"
+    # Named `idx_tx_one_active_borrow`, matching the identical name
+    # migration 0007_transaction_lifecycle.py's raw SQL unconditionally
+    # (re)creates this index under on every path -- see 0007's `DROP INDEX
+    # IF EXISTS idx_tx_one_active_borrow` / `CREATE UNIQUE INDEX
+    # idx_tx_one_active_borrow ...`. Because 0007 (an immutable historical
+    # migration) always targets this literal name regardless of what a
+    # fresh install's 0001 bootstrap already produced from ORM metadata,
+    # the ORM declaration must keep matching it -- renaming it here to the
+    # `ix_`-prefixed target name migration 0014 uses (Roadmap PR15B,
+    # docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md §6.2) would make 0001 create
+    # one index under the new name while 0007 unconditionally creates a
+    # *second*, differently-named duplicate -- a real bug, not a
+    # convergence fix. Migration 0014 renames this index at the database
+    # level identically on every path (fresh or historical) precisely
+    # because 0007 always leaves it under this legacy name; no ORM-side
+    # rename is safe or necessary here, unlike the 7 unique constraints in
+    # equipment.py/master_data.py/user.py.
     __table_args__ = (
         Index(
             "idx_tx_one_active_borrow",
@@ -130,7 +147,9 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     )
 
     transaction_no: Mapped[str] = mapped_column(String(30), unique=True, nullable=False, index=True)
-    equipment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("equipment.id"), nullable=False, index=True)
+    equipment_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("equipment.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
     # Roadmap PR7b: no longer accepted from BorrowRequest (See
     # app.schemas.transaction.BorrowRequest) -- one scan/dispatch is always
     # exactly one physical device (docs/HOSPITAL_DOMAIN_MODEL.md: "quantity
@@ -139,7 +158,11 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     # rather than receiving an explicit value. Existing historical values
     # are preserved and remain readable (e.g. app.services.report_service).
     quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
-    borrowed_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, nullable=False, index=True)
+    # See app.models.audit.AuditLog.created_at's identical comment (Roadmap
+    # PR15B, docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md §3.4/§3.5).
+    borrowed_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True
+    )
     # Roadmap PR7b: removed from the active request/response contract
     # entirely (See app.schemas.transaction.BorrowRequest, TransactionOut)
     # -- ADR-005 decision 3 already retired the due-date/overdue *workflow*;
@@ -147,20 +170,34 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     # surface too. The column itself, and every existing value, are
     # unchanged and remain queryable/exportable (e.g. app.services.
     # report_service's CSV/XLSX export reads it directly from the ORM row).
+    # Roadmap PR15B (docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md §3.4a):
+    # deliberately excluded from the timezone conversion applied to the
+    # other four naive-`timestamp` columns -- this column was already
+    # removed from the write path before its historical values' timezone
+    # provenance could be confirmed, so it remains naive rather than being
+    # converted on an unproven assumption.
     due_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    returned_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    borrower_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    returned_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    borrower_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
     # Roadmap PR7b: relaxed from NOT NULL (migration
     # 0008_dispatch_fields.py) -- no longer accepted or required by
     # BorrowRequest (confirmed acceptance criteria: "when no borrower_name
     # is supplied, then the request succeeds"). Every existing value is
     # preserved as read-only history and remains visible in TransactionOut.
     borrower_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
-    ward_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("wards.id"), index=True)
-    department_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("departments.id"))
+    ward_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("wards.id", ondelete="RESTRICT"), index=True)
+    department_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("departments.id", ondelete="RESTRICT")
+    )
     phone_number: Mapped[str | None] = mapped_column(String(20))
-    pickup_location_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("locations.id"))
-    dropoff_location_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("locations.id"))
+    pickup_location_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("locations.id", ondelete="RESTRICT")
+    )
+    dropoff_location_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("locations.id", ondelete="RESTRICT")
+    )
     # Roadmap PR8B: the column itself, its name, and every existing value
     # are unchanged (Option A -- no schema migration). ``receipt_outcome``
     # below is the wire-level business term exposed in the API response
@@ -170,7 +207,9 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     # PR7b preserved borrower_name/due_at/quantity -- never remapped.
     condition_on_return: Mapped[str | None] = mapped_column(String(30))
     notes: Mapped[str | None] = mapped_column(Text)
-    received_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    received_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
     status: Mapped[TransactionStatus] = mapped_column(
         TransactionStatusType, default=TransactionStatus.OPEN, nullable=False, index=True
     )
@@ -249,8 +288,10 @@ class TransactionAttachment(UUIDPKMixin, Base):
     __tablename__ = "transaction_attachments"
 
     transaction_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("borrow_transactions.id"), nullable=False, index=True
+        ForeignKey("borrow_transactions.id", ondelete="RESTRICT"), nullable=False, index=True
     )
     file_url: Mapped[str] = mapped_column(String(500), nullable=False)
     kind: Mapped[str | None] = mapped_column(String(30))  # photo | signature
-    uploaded_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    uploaded_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )

@@ -1,5 +1,5 @@
 import uuid
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timezone
 
 from sqlalchemy import String, and_, cast, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -195,7 +195,7 @@ async def close(
     """
     values: dict = {
         "status": TransactionStatus.CLOSED,
-        "returned_at": datetime.utcnow(),
+        "returned_at": datetime.now(timezone.utc),
         "condition_on_return": receipt_outcome,
         "received_by_user_id": received_by_user_id,
     }
