@@ -1,5 +1,16 @@
 # Roadmap PR8 Implementation Plan — Atomic Receipt & Concurrency Protection
 
+> **HISTORICAL / NON-AUTHORITATIVE.** This is a preserved pre-implementation
+> design draft, committed here for historical reference only. Roadmap PR8
+> (all three slices — PR8A GitHub PR #26, PR8B GitHub PR #28/#29, PR8C
+> GitHub PR #31) is now fully implemented and merged; the actual shipped
+> design differs from this draft in places (most notably, the PR8B/PR8C
+> split described below was refined further during implementation — see
+> `docs/DECISION_LOG.md`, "Roadmap PR8 (PR8A/PR8B/PR8C slice)" entries, and
+> `docs/ROADMAP.md`'s "PR8 note" for the authoritative, as-built record).
+> Do not treat any statement below as describing current system behavior;
+> read the code and the documents above for that.
+
 **Status:** Design only. Nothing in this document has been implemented.
 **Prepared against baseline:** `d0e888f3095c9a794928a9bd7d68b60907654522` — squash commit of Roadmap PR7 (7b slice), GitHub PR #20, on branch `claude/medical-equipment-pool-0c7fz0`. (A documentation-only governance sync, GitHub PR #21, is open against the same baseline and does not change any file this plan depends on.)
 **Roadmap authority:** `docs/audits/04-consolidated-implementation-plan.md` Part D, "PR8 — Atomic single-operation equipment receipt with concurrency guard" (the authoritative scope, acceptance criteria, and test-matrix source for this plan); `docs/HOSPITAL_DOMAIN_MODEL.md` ("Confirmed workflow"); `knowledge/adr/ADR-005-transaction-model.md`.

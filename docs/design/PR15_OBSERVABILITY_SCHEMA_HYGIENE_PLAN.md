@@ -1,5 +1,20 @@
 # Roadmap PR15 — Observability and Schema Hygiene: Design Proposal (Revision 2)
 
+> **HISTORICAL / NON-AUTHORITATIVE.** This is a preserved pre-implementation
+> design draft, committed here for historical reference only. It is the
+> immediate predecessor of the architecture-approved PR15B design
+> (`docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md`, GitHub PR #52, approved and
+> merged), which superseded this document's schema-hygiene proposals
+> (timezone policy, FK `ondelete` policy, index-naming convergence) with
+> its own — now-implemented — decisions; wherever this document and the
+> approved PR15B design disagree, the PR15B design and the shipped
+> implementation (migrations `0012`–`0014`) are authoritative, not this
+> draft. This document's Observability half was likewise superseded by the
+> separately-shipped PR15A slice (GitHub PR #50, merged — see
+> `docs/ROADMAP.md`'s "PR15 note"). Any "awaiting approval" / "not yet
+> decided" language below describes this draft's status at the time it was
+> written, not the current state of the project.
+
 **Status:** Design only, uncommitted (same convention as `PR8_IMPLEMENTATION_PLAN.md`) — not part of any PR diff. Awaiting architecture approval before any implementation begins.
 **Baseline investigated:** `a43b680a5558aa322a613b3e3eba0eeb45858edf` (post-PR14 baseline).
 **Revision note:** Revision 1 was reviewed and found incomplete — it substituted a narrower technical-debt-driven scope for the Roadmap's actual PR15 topic list, and proposed a mechanical timezone fix without an explicit policy. This revision (1) enumerates every Roadmap PR15 topic with an explicit disposition, verified against the authoritative scope text in `docs/audits/04-consolidated-implementation-plan.md` Part D (PR15 entry) and Part C item 28 (Schema Audit citation), (2) defines a timezone policy before proposing any migration, and (3) re-verifies every schema claim against a live PostgreSQL instance rehearsed from `base` to `head` — not against assumptions or a stale local test database (see §2.0 methodology note).
