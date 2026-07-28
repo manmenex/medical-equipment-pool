@@ -47,7 +47,7 @@ A separate Codex documentation audit is understood to be occurring in parallel (
 - **PR16 does own** introducing the `shift` classification concept itself (a `Day`/`Night` domain value) and the `business_date` concept, in one data model — this is explicitly "the approved PR16 direction," not an invention.
 - **PR16 does not own**, and this document does **not** invent, the exact clock-time boundary(ies) that separate `Day` from `Night`, nor the derivation rule for a dispatch that is not tied to one of the four confirmed `RoutineRound` values (`on_demand` dispatches). Nothing in any authoritative document states these boundaries. Inventing them here would be exactly the "invent fixed boundaries" GLOSSARY.md forbids.
 
-This is marked as **Open Owner Decision #1** (§18) and is a hard implementation blocker: the design below specifies precisely what must be produced once that decision is made, structured so that supplying the boundary is the *only* remaining step, but does not guess the value.
+This was marked as **Open Owner Decision #1** (§18) and a hard implementation blocker; it has since been **resolved** by the Repository Owner and recorded in `docs/DECISION_LOG.md` ("Roadmap PR16 — Owner Decision #1") — see §18 for the confirmed values.
 
 ---
 
@@ -80,10 +80,10 @@ This is explicitly **not**: analytics, BI, a dashboard redesign, an arbitrary re
 
 **Current state vs. historical transaction distinction:** `business_date`/`shift` are properties of a **transaction event**, computed once from that event's own timestamp — they must never be confused with, or computed from, an equipment row's *current* lifecycle status (`AVAILABLE_AT_POOL`/`ISSUED_TO_WARD`/`UNAVAILABLE_DEFECTIVE`/`DECOMMISSIONED`) or its *current* location. This mirrors the separation already established between `DashboardPage.tsx` (current counts) and `EquipmentDetailPage.tsx`'s transaction history (per-event records) — reporting reads historical event facts, never current-state joins presented as if they were historical.
 
-**Assumptions made where roadmap detail is insufficient** (none of these invent a business rule; each is either a direct restatement of an existing, confirmed fact or a deliberately conservative placeholder pending Owner Decision #1):
-1. The hospital's civil-day/shift boundary is evaluated in Thailand's single, DST-free timezone (`Asia/Bangkok`, UTC+7) — an uncontested geographic fact for this deployment (Thai-first UI, `"th-TH"` locale already used for display), not a new business-rule invention. This is distinct from, and does not resolve, Open Owner Decision #1 (the clock-time boundary *within* that timezone).
+**Assumptions made where roadmap detail is insufficient** (none of these invent a business rule; each is either a direct restatement of an existing, confirmed fact or a value the Repository Owner has since confirmed via Owner Decision #1, §18):
+1. The hospital's civil-day/shift boundary is evaluated in Thailand's single, DST-free timezone (`Asia/Bangkok`, UTC+7) — an uncontested geographic fact for this deployment (Thai-first UI, `"th-TH"` locale already used for display), not a new business-rule invention. This is distinct from, and was resolved separately by, Owner Decision #1 (the clock-time boundary *within* that timezone).
 2. A `Shift` domain has exactly two values, `DAY` and `NIGHT`, per `docs/HOSPITAL_DOMAIN_MODEL.md` — no third value is introduced.
-3. Until Open Owner Decision #1 is answered, this document specifies the derivation's *shape* (inputs, outputs, where the boundary constant lives) but the boundary constant itself is a placeholder, not implemented.
+3. Owner Decision #1 has been answered (§18); this document's §7 now specifies the derivation with the confirmed boundary-policy values, not a placeholder.
 
 ---
 
@@ -108,12 +108,12 @@ Design order followed throughout: Business Workflow → Domain/query model → A
 New module: `backend/app/core/reporting_time.py` (naming mirrors the existing `app/core/` convention — `log_context.py`, `logging.py`, `security.py` — a small, named, single-purpose module, not a generic "utils" dumping ground).
 
 - `class Shift(str, enum.Enum): DAY = "day"; NIGHT = "night"` — mirrors the existing `(str, enum.Enum)` + `values_callable` shape already used by `TransactionStatus`/`DispatchType`/`RoutineRound`, for consistency, even though this one never backs a database column (same non-column precedent as `ReceiptOutcome`).
-- **(Corrected per PR16-H3.)** A single named policy point for the boundary, but **not** a single hour constant — one hour cannot represent a Day/Night policy, since a policy needs both transitions and an explicit rule for which business_date an overnight shift's post-midnight instants belong to. The placeholder shape (values **not** set by this document, per Open Owner Decision #1) is:
+- **(Corrected per PR16-H3; values confirmed per Owner Decision #1 — see §18.)** A single named policy point for the boundary, but **not** a single hour constant — one hour cannot represent a Day/Night policy, since a policy needs both transitions and an explicit rule for which business_date an overnight shift's post-midnight instants belong to. The Repository Owner has confirmed the following values (recorded in `docs/DECISION_LOG.md`, "Roadmap PR16 — Owner Decision #1"):
   ```python
   @dataclass(frozen=True)
   class _ShiftBoundaryPolicy:
-      day_start_local: time       # Night -> Day transition (e.g. would-be 08:00)
-      night_start_local: time     # Day -> Night transition (e.g. would-be 20:00)
+      day_start_local: time       # Night -> Day transition
+      night_start_local: time     # Day -> Night transition
       business_date_anchor: Literal["shift_start_date", "instant_calendar_date"]
       # "shift_start_date": every instant in a shift takes the calendar date the
       # shift *started* on (a Night shift starting 2026-07-28 20:00 and running
@@ -122,13 +122,18 @@ New module: `backend/app/core/reporting_time.py` (naming mirrors the existing `a
       # calendar date of the instant itself (a post-midnight Night instant is
       # business_date = the next day).
       # These two rules disagree for exactly the post-midnight portion of an
-      # overnight shift -- the anchor is therefore not cosmetic and must be an
+      # overnight shift -- the anchor is therefore not cosmetic and was an
       # explicit owner decision, not a default.
-  _SHIFT_BOUNDARY_POLICY: _ShiftBoundaryPolicy  # placeholder; not instantiated by this document
+  _SHIFT_BOUNDARY_POLICY = _ShiftBoundaryPolicy(
+      day_start_local=time(8, 0),        # Day shift: 08:00-19:59:59.999999 Asia/Bangkok
+      night_start_local=time(20, 0),     # Night shift: 20:00-07:59:59.999999 Asia/Bangkok
+      business_date_anchor="shift_start_date",
+  )
   ```
   A single total function `classify(ts_local: datetime) -> tuple[date, Shift]` derived from this policy covers all 24 hours of the day (both the Night→Day and Day→Night transitions), not one boundary hour — kept in exactly one named place so a future confirmed change to the policy is a one-object edit, not a multi-file hunt.
-- `def business_date_and_shift(ts: datetime) -> tuple[date, Shift]:` — the pure-Python reference implementation. Takes an aware UTC `datetime` (matching `UTCDateTime`'s existing contract — see §11), converts to `Asia/Bangkok`, and applies `_SHIFT_BOUNDARY_POLICY.classify(...)` above (pending Owner Decision #1).
+- `def business_date_and_shift(ts: datetime) -> tuple[date, Shift]:` — the pure-Python reference implementation. Takes an aware UTC `datetime` (matching `UTCDateTime`'s existing contract — see §11), converts to `Asia/Bangkok`, and applies `_SHIFT_BOUNDARY_POLICY.classify(...)` above.
 - `def business_date_and_shift_sql(column) -> tuple[ColumnElement, ColumnElement]:` — the SQLAlchemy-expression twin, built from the identical boundary constant, for use inside `crud/transaction.py`'s `select()`/`WHERE` clauses. Both implementations are tested against each other (see §15) so they can never silently diverge.
+- **On-demand classification (confirmed per Owner Decision #1):** a `dispatch_type = on_demand` transaction (not tied to one of the four confirmed `RoutineRound` values) is classified purely by `borrowed_at`'s Bangkok clock time against `_SHIFT_BOUNDARY_POLICY`, identically to a `RoutineRound`-tied dispatch — no special-case branch exists in `classify()` for `on_demand`.
 - No repository abstraction, no generic query builder, and no materialized view are introduced — deliberately, per this task's explicit list of things to avoid. The query boundary is exactly the existing `app/crud/transaction.py::search()` function, extended with four more optional filter parameters (`business_date_from`, `business_date_to`, `shift`, `event` — corrected per PR16-H2), exactly as Roadmap PR13 already extended it with `dispatch_type`/`routine_round`/`from_date`/`to_date`.
 
 ---
@@ -148,7 +153,7 @@ New module: `backend/app/core/reporting_time.py` (naming mirrors the existing `a
 | **Pagination model** | Unchanged — existing cursor pagination on `(created_at DESC, id DESC)`, `Page[TransactionOut]` |
 | **Sorting** | Unchanged |
 | **Error responses** | `400 INVALID_INPUT` (reversed business-date range), `401`, `403` (unchanged existing cases), `422` (schema validation) — no new error code needed |
-| **Performance considerations** | The SQL-expression twin (§7) must be sargable enough for PostgreSQL to use the existing `ix_borrow_transactions_created_at_id`/`borrowed_at`-indexed lookups where possible; if the boundary expression is not index-friendly once Owner Decision #1 is answered, that is evaluated at implementation time against real `EXPLAIN` evidence (PR14B precedent), not assumed here |
+| **Performance considerations** | The SQL-expression twin (§7) must be sargable enough for PostgreSQL to use the existing `ix_borrow_transactions_created_at_id`/`borrowed_at`-indexed lookups where possible; whether the now-confirmed boundary expression (§18) is index-friendly is evaluated at implementation time against real `EXPLAIN` evidence (PR14B precedent), not assumed here |
 
 Avoided per instruction: no single unrestricted "report query" endpoint is introduced anywhere in this design.
 
@@ -190,7 +195,7 @@ No dashboard-heavy UI, no chart, no new component library is introduced. Busines
 - **UTC storage/serialization:** Unchanged. Every value read by `business_date_and_shift()` is already a UTC-aware `datetime` per `UTCDateTime`'s existing, unmodified contract (fail-closed on a non-UTC aware value at bind time — Roadmap PR15B). This design adds a *read-side, display/report-oriented* conversion to `Asia/Bangkok` for classification purposes only — it does not change what is stored, and does not touch `UTCDateTime` itself.
 - **User-facing timezone behavior:** Unchanged from the existing frontend convention (`new Date(...)` + `.toLocaleString("th-TH")`, browser-local display). The new `dispatch_business_date`/`dispatch_shift` fields are pre-derived server-side in `Asia/Bangkok` terms specifically (not the browser's local timezone, which this application has no server-side knowledge of) — this is a deliberate, explicit design point: a hospital "business day" is a property of the hospital's own operating timezone, not of whichever browser happens to be viewing the report.
 - **Inclusive/exclusive date boundaries:** **(Corrected per PR16-H1.)** `business_date_from`/`business_date_to` are both inclusive, but the bound is enforced by comparing them **directly against the derived `business_date` value** (a calendar `date`, produced by §7's SQL twin) — `business_date_expr BETWEEN business_date_from AND business_date_to`. This is a date-to-date comparison, not a timestamp range, so `datetime.combine(date, time.min/max)` does **not** apply to it and is not part of this filter's implementation. `datetime.combine(date, time.min/max)` remains exactly as it is today, but exclusively for the existing, separate, unmodified `from_date`/`to_date` raw-timestamp filters (Roadmap PR13/PR45) — the two boundary mechanisms must not be conflated, which is the defect this correction removes.
-- **Business-date rollover / anchor:** Which calendar date an overnight (Night) shift's post-midnight instants are assigned to is governed by `_ShiftBoundaryPolicy.business_date_anchor` (§7), part of Open Owner Decision #1 (§18) — not assumed to be the instant's own Bangkok calendar date.
+- **Business-date rollover / anchor:** Which calendar date an overnight (Night) shift's post-midnight instants are assigned to is governed by `_ShiftBoundaryPolicy.business_date_anchor` (§7) — confirmed as `"shift_start_date"` by Owner Decision #1 (§18): a Night shift starting at 20:00 and running past midnight is entirely one business_date, not split across two.
 - **Open-ended ranges:** Either bound may be omitted independently, matching existing `from_date`/`to_date` behavior.
 - **Stable ordering for equal timestamps:** Unchanged — existing `(created_at DESC, id DESC)` tie-break, untouched by this design (the new fields are filter/display-only, never part of the sort key).
 - **Historical vs. current status:** See §5 — `business_date`/`shift` are per-event, never derived from or mixed with an equipment row's current lifecycle state.
@@ -234,7 +239,7 @@ At confirmed real-world scale ("low hundreds of devices, thousands of transactio
 
 | Area | Coverage |
 |---|---|
-| Backend unit — `reporting_time.py` | `business_date_and_shift()` pure function: **(Corrected per PR16-H3)** both shift transitions (Night→Day and Day→Night), the midnight instant itself, business-date rollover instants under both `business_date_anchor` values, `on_demand`-dispatch classification (no `RoutineRound` to anchor to), `Asia/Bangkok` conversion correctness for a UTC instant, deterministic for a fixed instant — all once Owner Decision #1 is answered |
+| Backend unit — `reporting_time.py` | `business_date_and_shift()` pure function: **(Corrected per PR16-H3)** both shift transitions (08:00 Night→Day and 20:00 Day→Night, per Owner Decision #1), the midnight instant itself, business-date rollover instants confirming `shift_start_date` anchoring, `on_demand`-dispatch classification (no `RoutineRound` to anchor to), `Asia/Bangkok` conversion correctness for a UTC instant, deterministic for a fixed instant |
 | Backend unit — SQL/Python parity | **(Corrected per PR16-H3)** A property-style test asserting the SQL-expression twin and the pure-Python function agree for a representative sample of timestamps, explicitly including both shift transitions, midnight, and business-date-rollover instants (prevents the two implementations from silently diverging — this is the single most important test this design requires) |
 | API integration | `GET /transactions` with each new filter individually and combined with existing filters (`ward_id`, `dispatch_type`, `from_date`/`to_date`); reversed `business_date_from`/`_to` → `400`; invalid `shift` or `event` value → `422` |
 | API integration — dispatch/receipt event basis (PR16-H2) | The same transaction is found via `event=dispatch` business_date/shift filters, and, once closed, independently via `event=receipt` filters; an **open** transaction (`returned_at IS NULL`) must not match any non-null `event=receipt` filter |
@@ -253,8 +258,8 @@ At confirmed real-world scale ("low hundreds of devices, thousands of transactio
 ## 16. Implementation Slices
 
 **Slice 1 — Backend derivation module (`app/core/reporting_time.py`) + tests.**
-- Scope: `Shift` enum, the (pending-boundary) pure function, the SQL-expression twin, the SQL/Python parity test, unit tests for Asia/Bangkok conversion. **(Corrected per PR16-H3.)** The boundary policy implemented must be the full `_ShiftBoundaryPolicy` shape (§7: both transition times plus `business_date_anchor`), not a single hour constant — supplying one integer is explicitly **not** sufficient to complete this slice.
-- Dependencies: **Open Owner Decision #1 must be answered before this slice can be completed** (the full boundary-policy value — both transitions and the business-date anchor rule — is the one unresolved input).
+- Scope: `Shift` enum, the pure function, the SQL-expression twin, the SQL/Python parity test, unit tests for Asia/Bangkok conversion. **(Corrected per PR16-H3.)** The boundary policy implemented must be the full `_ShiftBoundaryPolicy` shape (§7: both transition times plus `business_date_anchor`), not a single hour constant.
+- Dependencies: **None remaining.** Owner Decision #1 is resolved (§18, `docs/DECISION_LOG.md`) — this slice may now begin.
 - Files/layers: `backend/app/core/reporting_time.py` (new), `backend/tests/test_reporting_time.py` (new).
 - Acceptance criteria: pure function and SQL twin agree on every test case, including both shift transitions, midnight, business-date rollover, and `on_demand` classification; both correctly classify a representative set of known UTC instants into (business_date, shift).
 - Test gate: unit tests green, no PostgreSQL dependency required for this slice alone.
@@ -296,7 +301,13 @@ Every slice above is a plain code revert with no migration to reverse (§14). No
 
 ## 18. Risks and Open Questions
 
-**Open Owner Decision #1 (blocking):** The exact Day/Night shift boundary policy in `Asia/Bangkok` local time is not confirmed anywhere in this repository's authoritative documentation, and `docs/GLOSSARY.md` explicitly instructs against inventing one. This blocks Slice 1 (and therefore everything downstream). **(Corrected per PR16-H3 — a single boundary hour is not a complete policy and must not be treated as the only remaining input.)** Recommend the Repository Owner confirm the full `_ShiftBoundaryPolicy` (§7): (a) the Night→Day transition time, (b) the Day→Night transition time (these need not be exactly 12 hours apart and must both be stated, not inferred from one), (c) the `business_date_anchor` rule — whether an overnight Night shift's post-midnight instants take the shift's *start* date or their own calendar date, and (d) how a `dispatch_type = on_demand` transaction (not tied to one of the four confirmed `RoutineRound` values) is classified into Day/Night — is it purely a function of `borrowed_at`'s clock time against (a)/(b) regardless of dispatch type, or does something else apply? Nothing in this document assumes an answer to any of (a)–(d).
+**Owner Decision #1 — RESOLVED.** The exact Day/Night shift boundary policy in `Asia/Bangkok` local time was not confirmed anywhere in this repository's authoritative documentation at the time this design was first proposed, and `docs/GLOSSARY.md` explicitly instructs against inventing one; this originally blocked Slice 1 (and therefore everything downstream). The Repository Owner has since confirmed the full `_ShiftBoundaryPolicy` (§7), recorded in `docs/DECISION_LOG.md` ("Roadmap PR16 — Owner Decision #1"):
+- (a) Night→Day transition (Day shift start): **08:00** `Asia/Bangkok`.
+- (b) Day→Night transition (Night shift start): **20:00** `Asia/Bangkok`.
+- (c) `business_date_anchor`: **`shift_start_date`** — an overnight Night shift's post-midnight instants take the shift's *start* date, not their own calendar date.
+- (d) `on_demand` dispatch classification: purely a function of `borrowed_at`'s Bangkok clock time against (a)/(b), identically to a `RoutineRound`-tied dispatch — no special-case rule.
+
+Slice 1 may now proceed with these confirmed values (§16).
 
 **Risk — dispatch vs. receipt business_date divergence:** A transaction's dispatch and receipt business_date/shift can legitimately differ (§5, §8). This is presented as a fact of the domain, not a defect, but PR17's report design must explicitly decide, per report, which one it reports against — flagged here so that decision is not made implicitly or inconsistently across the three PR17 reports.
 
@@ -317,7 +328,7 @@ Restated from the authoritative source, unchanged: **"New reporting data can be 
 This document does not update `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, `docs/DECISION_LOG.md`, or `knowledge/CHANGE_HISTORY.md` — per this repository's established convention (confirmed by inspecting every prior design document in `docs/design/`, none of which touched roadmap files themselves; roadmap files are updated only in the post-merge governance-sync step, after an implementation PR actually merges, exactly as was just done for Roadmap PR15B). Planning impact for the Repository Owner to note when this design is reviewed:
 
 - PR16's scope, as designed here, is narrower than "reporting" colloquially suggests — it does not produce a single new user-visible report screen. This is intentional and matches the authoritative Group 7 split (PR16 foundation → PR17 reports → PR18 export); flagging it explicitly so reviewers do not expect PR17-shaped deliverables from a PR16 implementation PR.
-- Implementation cannot begin until Open Owner Decision #1 is resolved (§18).
+- Owner Decision #1 is resolved (§18); implementation Slice 1 may now begin.
 - No change to the PR17/PR18 dependency chain, sequencing, or acceptance criteria already recorded in `docs/ROADMAP.md`/`docs/audits/04-consolidated-implementation-plan.md`.
 
 ---
