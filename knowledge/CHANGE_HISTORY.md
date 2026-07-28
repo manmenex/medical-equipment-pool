@@ -15,6 +15,10 @@ Verify Checklist reports plus PDF/Excel/hard-copy output as PR16–PR18; and
 places Equipment Master plus AppSheet Receive/Issue history migration,
 validation, reconciliation, and cutover readiness in PR19–PR23 before PR24
 Go-live. Equipment Verify Checklist history is outside the Version 1 migration.
+PR20 is limited to Equipment Master fields, QR linkage, equipment duplicates,
+and equipment-record validation. Transaction-derived BME names, Ward values,
+transaction duplicates, and source references belong to PR21; cross-import
+validation and reconciliation belong to PR22.
 See `docs/ROADMAP.md` and `docs/DECISION_LOG.md`.
 
 ## Cleaning status removed

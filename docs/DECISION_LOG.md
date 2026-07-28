@@ -19,7 +19,13 @@
 - **Migration contract:** Version 1 imports Equipment Master plus only the
   AppSheet equipment receive-data and equipment issue-data history sheets.
   Equipment Verify Checklist history is excluded. Existing hospital QR codes
-  are preserved.
+  are preserved. PR20 owns BCM, Item Number, equipment attributes, existing
+  hospital QR linkage, equipment duplicate detection, and equipment-record
+  validation. PR21 owns Receive/Issue history, legacy BME-name preservation
+  and user mapping, Ward normalization and mapping, transaction-row duplicate
+  detection, and transaction source references. PR22 owns cross-import
+  validation, reconciliation, source traceability verification, duplicate
+  review, and unified legacy/new history validation.
 - **Source:** `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`,
   `docs/DOCUMENTATION_AUDIT.md`.
 - **Status:** Approved documentation alignment; implementation not started.

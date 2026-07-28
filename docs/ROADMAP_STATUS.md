@@ -45,10 +45,16 @@ implementation. It does not consume or renumber a Roadmap PR.
 - Version 1 legacy history migration includes only the AppSheet equipment
   receive-data and equipment issue-data sheets. Equipment Verify Checklist
   history is excluded unless a later approved decision changes the scope.
-- Migration covers Equipment Master and supports BCM and Item Number matching,
-  existing hospital QR codes, BME-name preservation/later user mapping, Ward
-  normalization, duplicate detection, source traceability, import validation,
-  reconciliation, and unified display of old and new history.
+- PR20 Equipment Master Import covers BCM, Item Number, equipment attributes,
+  existing hospital QR linkage, equipment duplicate detection, and
+  equipment-record validation. It does not own transaction BME or Ward data.
+- PR21 Legacy Receive and Issue History Import covers Receive and Issue
+  history, legacy BME-name preservation and user mapping, Ward normalization
+  and mapping, transaction-row duplicate detection, and transaction source
+  references.
+- PR22 Legacy Data Validation and Reconciliation covers cross-import
+  validation, reconciliation, source traceability verification, duplicate
+  review, and unified legacy/new history validation.
 - Legacy migration occurs before Go-live and does not redesign or replace
   existing hospital QR codes.
 - The only equipment lifecycle states remain `AVAILABLE_AT_POOL`,

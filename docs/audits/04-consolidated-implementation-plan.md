@@ -413,22 +413,26 @@ Per the confirmed requirements and this reconciliation:
 
 #### PR20 — Equipment Master Import
 - **Objective:** Import Equipment Master data using BCM and Item Number
-  matching; preserve existing hospital QR codes and BME names for later user
-  mapping; normalize Ward values; detect duplicates.
+  matching, including equipment attributes and existing hospital QR linkage.
+  Detect equipment duplicates and validate equipment records.
+- **Boundary:** Legacy BME names and Ward values belong to transaction history
+  and are handled by PR21, not this Equipment Master import.
 - **Dependencies:** PR19.
 
 #### PR21 — Legacy Receive and Issue History Import
 - **Objective:** Import the AppSheet equipment receive-data and equipment
-  issue-data sheets.
+  issue-data sheets; preserve legacy BME names for later user mapping;
+  normalize and map Ward values; detect duplicate transaction rows; and retain
+  transaction source references.
 - **Version 1 boundary:** These are the only transaction-history sheets in the
   initial migration. Equipment Verify Checklist history is not required unless
   a later approved decision explicitly adds it.
 - **Dependencies:** PR19, PR20.
 
 #### PR22 — Legacy Data Validation and Reconciliation
-- **Objective:** Validate imports, retain source traceability, review
-  duplicates, reconcile counts/history before Go-live, and verify unified
-  display of legacy and new transaction history.
+- **Objective:** Perform cross-import validation and reconciliation, verify
+  source traceability, review duplicates, and validate the unified display of
+  legacy and new transaction history before Go-live.
 - **Dependencies:** PR20, PR21.
 
 #### PR23 — Cutover Readiness

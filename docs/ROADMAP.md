@@ -99,9 +99,9 @@ Roadmap PR18.
 | PR17 | Date/shift-filtered Receive, Issue, and Equipment Verify Checklist reports |
 | PR18 | PDF export, Excel export, and print-ready Hard Copy templates |
 | PR19 | Legacy Import Foundation |
-| PR20 | Equipment Master Import |
-| PR21 | Legacy Receive and Issue History Import |
-| PR22 | Legacy Data Validation and Reconciliation |
+| PR20 | Equipment Master Import: BCM, Item Number, equipment attributes, existing hospital QR linkage, equipment duplicate detection, and equipment-record validation |
+| PR21 | Legacy Receive and Issue History Import: Receive/Issue history, legacy BME-name preservation and user mapping, Ward normalization and mapping, transaction-row duplicate detection, and transaction source references |
+| PR22 | Legacy Data Validation and Reconciliation: cross-import validation, reconciliation, source traceability verification, duplicate review, and unified legacy/new history validation |
 | PR23 | Cutover Readiness |
 | PR24 | Go-live / deployment, blocked by PR19–PR23 |
 
@@ -128,11 +128,20 @@ Legacy migration is mandatory before Go-live. The minimum Version 1 scope is:
 - legacy Issue history from the AppSheet equipment issue-data sheet.
 
 Equipment Verify Checklist history is not part of the initial migration. The
-migration must support BCM and Item Number matching, existing hospital QR
-codes, BME-name preservation for later user mapping, Ward normalization,
-duplicate detection, source traceability, import validation, reconciliation
-before Go-live, and unified display of old and new transaction history. It
-must not redesign or replace the hospital QR system.
+migration scope is divided as follows:
+
+- **PR20 — Equipment Master Import:** BCM, Item Number, equipment attributes,
+  existing hospital QR linkage, equipment duplicate detection, and
+  equipment-record validation.
+- **PR21 — Legacy Receive and Issue History Import:** Receive history, Issue
+  history, legacy BME-name preservation and user mapping, Ward normalization
+  and mapping, transaction-row duplicate detection, and transaction source
+  references.
+- **PR22 — Legacy Data Validation and Reconciliation:** cross-import
+  validation, reconciliation, source traceability verification, duplicate
+  review, and unified legacy/new history validation.
+
+The migration must not redesign or replace the hospital QR system.
 
 ## Prior planned note (superseded where inconsistent)
 

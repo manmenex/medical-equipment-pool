@@ -73,10 +73,14 @@ Day/Night tables.
 
 Version 1 legacy migration includes Equipment Master plus only the AppSheet
 equipment receive-data and equipment issue-data history sheets. Equipment
-Verify Checklist history is excluded. Import must preserve source traceability,
-existing QR codes, and BME names for later mapping; normalize Ward values;
-detect duplicates; validate and reconcile before Go-live; and show old and new
-transaction history together.
+Verify Checklist history is excluded. PR20 imports BCM, Item Number, equipment
+attributes, and existing hospital QR linkage, with equipment duplicate
+detection and equipment-record validation. PR21 imports Receive and Issue
+history, preserves legacy BME names for later user mapping, normalizes and maps
+Ward values, detects duplicate transaction rows, and retains transaction source
+references. PR22 performs cross-import validation, reconciliation, source
+traceability verification, duplicate review, and unified legacy/new history
+validation before Go-live.
 
 ## Working references
 

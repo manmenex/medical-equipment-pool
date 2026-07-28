@@ -193,8 +193,9 @@ without changing the approved scope:
 
 - The repository's Roadmap numbering is preserved. Therefore PR16–PR18 are the
   reporting sequence, PR19–PR23 are migration/cutover, and PR24 is Go-live.
-- “BME name preservation” means retaining the legacy source value and mapping
-  it later; this audit does not define user identities or mapping rules.
+- “BME name preservation” is PR21 transaction-import scope: retain the legacy
+  source value and map it later. This audit does not define user identities or
+  mapping rules.
 - Equipment Verify Checklist history is excluded from Version 1 migration
   because no existing approved document requires it.
 - The approved PR15B design at GitHub PR #52 is current work, but its
@@ -205,7 +206,7 @@ without changing the approved scope:
 1. Implement and review PR15B from its approved design.
 2. Produce focused designs and acceptance tests for PR16–PR18 reporting work.
 3. Obtain representative legacy Equipment Master, Receive, and Issue samples
-   before PR19/PR20 implementation.
+   before PR19 foundation work and the PR20/PR21 imports.
 4. Define import manifests, traceability identifiers, validation reports, and
    reconciliation sign-off for PR19–PR23.
 5. Do not begin PR24 Go-live/deployment until PR19–PR23 are complete.

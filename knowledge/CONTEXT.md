@@ -28,9 +28,15 @@ behavior, or business rule.
 3. PR17 — Receive, Issue, and Equipment Verify Checklist reports.
 4. PR18 — PDF, Excel, and print-ready Hard Copy output.
 5. PR19 — Legacy Import Foundation.
-6. PR20 — Equipment Master Import.
-7. PR21 — AppSheet Receive and Issue history import.
-8. PR22 — Validation and reconciliation.
+6. PR20 — Equipment Master Import: BCM, Item Number, equipment attributes,
+   existing hospital QR linkage, equipment duplicate detection, and
+   equipment-record validation.
+7. PR21 — AppSheet Receive and Issue history import: legacy BME-name
+   preservation and user mapping, Ward normalization and mapping,
+   transaction-row duplicate detection, and transaction source references.
+8. PR22 — Validation and reconciliation: cross-import validation,
+   reconciliation, source traceability verification, duplicate review, and
+   unified legacy/new history validation.
 9. PR23 — Cutover readiness.
 10. PR24 — Go-live / deployment.
 
@@ -55,8 +61,10 @@ Legacy migration and reconciliation are mandatory before PR24.
   merge gate.
 - The default branch still has a temporary `claude/*` name.
 - PR16 must define exact shift values and `business_date` rollover rules.
-- PR19–PR23 must define source mappings, BME-name/user mapping, Ward
-  normalization, reconciliation ownership, and cutover evidence.
+- PR19 must define the import framework and source mappings; PR20 must define
+  Equipment Master matching/validation; PR21 must define transaction
+  BME-name/user and Ward mappings; PR22 must define cross-import validation
+  and reconciliation ownership; PR23 must define cutover evidence.
 - Broader PR15 metrics/tracing/dashboards/aggregation/alerting work is still
   unscheduled.
 
