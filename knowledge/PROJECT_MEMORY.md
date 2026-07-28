@@ -47,10 +47,13 @@ Sources: `docs/PROJECT_PLAYBOOK.md`, `docs/ARCHITECTURE_GUARDRAILS.md`,
 
 ## Current baseline and Roadmap
 
-Current baseline: `4b0d422` (GitHub PR #52, approved PR15B design). PR15A is
-implemented; PR15B implementation is next.
+Current baseline: `6f66d76189ab58b95f307bbb8e28fdad54e734f7`.
+Roadmap PR15B Schema Hygiene completed through GitHub PR #54. GitHub PR #55 is
+the documentation/governance post-merge baseline sync; it is not a Roadmap
+implementation PR.
 
-The approved sequence after PR15B is:
+The next planned work is Roadmap PR16 — Reporting Foundation. The approved
+sequence is:
 
 - PR16–PR18: reporting foundation, `business_date`/`shift`, operational
   reports, PDF/Excel/Hard Copy output;

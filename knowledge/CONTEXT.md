@@ -10,35 +10,36 @@ ordering
 
 ## Current baseline
 
-`4b0d422` on `claude/medical-equipment-pool-0c7fz0` — GitHub PR #52, the
-approved documentation-only PR15B Schema Hygiene design. PR15A Observability is
-implemented. PR15B implementation has not started.
+Current baseline: `6f66d76189ab58b95f307bbb8e28fdad54e734f7` on
+`claude/medical-equipment-pool-0c7fz0` — Roadmap PR15B Schema Hygiene completed
+through GitHub PR #54. Both scheduled Roadmap PR15 slices, PR15A Observability
+and PR15B Schema Hygiene, are implemented.
 
 ## Current work
 
-This documentation-only audit aligns the active Roadmap, status dashboard,
-implementation plan, architecture decisions, and knowledge snapshots. It
-changes no application code, migration, schema, API behavior, frontend
-behavior, or business rule.
+GitHub PR #55 is a documentation/governance post-merge baseline sync for
+Roadmap PR15B. It is not a Roadmap implementation PR and changes no application
+code, migration, schema, API behavior, frontend behavior, or business rule.
 
 ## Next sequence
 
-1. PR15B — Schema Hygiene implementation.
-2. PR16 — Reporting Foundation: actual timestamp, `business_date`, `shift`.
-3. PR17 — Receive, Issue, and Equipment Verify Checklist reports.
-4. PR18 — PDF, Excel, and print-ready Hard Copy output.
-5. PR19 — Legacy Import Foundation.
-6. PR20 — Equipment Master Import: BCM, Item Number, equipment attributes,
+The next planned work is Roadmap PR16 — Reporting Foundation.
+
+1. PR16 — Reporting Foundation: actual timestamp, `business_date`, `shift`.
+2. PR17 — Receive, Issue, and Equipment Verify Checklist reports.
+3. PR18 — PDF, Excel, and print-ready Hard Copy output.
+4. PR19 — Legacy Import Foundation.
+5. PR20 — Equipment Master Import: BCM, Item Number, equipment attributes,
    existing hospital QR linkage, equipment duplicate detection, and
    equipment-record validation.
-7. PR21 — AppSheet Receive and Issue history import: legacy BME-name
+6. PR21 — AppSheet Receive and Issue history import: legacy BME-name
    preservation and user mapping, Ward normalization and mapping,
    transaction-row duplicate detection, and transaction source references.
-8. PR22 — Validation and reconciliation: cross-import validation,
+7. PR22 — Validation and reconciliation: cross-import validation,
    reconciliation, source traceability verification, duplicate review, and
    unified legacy/new history validation.
-9. PR23 — Cutover readiness.
-10. PR24 — Go-live / deployment.
+8. PR23 — Cutover readiness.
+9. PR24 — Go-live / deployment.
 
 Legacy migration and reconciliation are mandatory before PR24.
 
