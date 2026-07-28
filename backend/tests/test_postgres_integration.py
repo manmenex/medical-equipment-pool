@@ -26,7 +26,7 @@ import os
 import subprocess
 import sys
 import uuid
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -37,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.core.db_errors import translate_integrity_error
 from app.core.exceptions import DuplicateError, InvalidInputError
+from app.core.reporting_time import Shift, business_date_and_shift, business_date_and_shift_sql
 from app.core.security import hash_password
 from app.crud import master_data as md_crud
 from app.db.base import Base
@@ -8543,3 +8544,42 @@ async def test_pr15b_schema_convergence_fresh_and_historical_paths_are_identical
     assert fresh_snapshot == historical_snapshot, (
         "fresh-install and historical-upgrade paths must converge on an identical final schema"
     )
+
+
+# Roadmap PR16 (Reporting Foundation, Implementation Slice 1) -- the SQL-expression
+# twin evaluated against a real PostgreSQL 16 instance (timestamptz, AT TIME ZONE),
+# not just SQLite's fixed +7 hour fallback, confirming both dialects agree with the
+# pure-Python reference for the same rows. Owner Decision #1 (docs/DECISION_LOG.md):
+# Day 08:00-20:00, Night 20:00-08:00 Asia/Bangkok, business_date_anchor=shift_start_date.
+_REPORTING_TIME_CASES = [
+    (datetime(2026, 7, 28, 0, 30, 0, tzinfo=timezone.utc), date(2026, 7, 27), Shift.NIGHT),
+    (datetime(2026, 7, 27, 17, 0, 0, tzinfo=timezone.utc), date(2026, 7, 27), Shift.NIGHT),  # exact midnight Bangkok
+    (datetime(2026, 7, 28, 0, 59, 59, tzinfo=timezone.utc), date(2026, 7, 27), Shift.NIGHT),  # 07:59:59 Bangkok
+    (datetime(2026, 7, 28, 1, 0, 0, tzinfo=timezone.utc), date(2026, 7, 28), Shift.DAY),  # 08:00:00 Bangkok, Day start
+    (datetime(2026, 7, 28, 12, 59, 59, tzinfo=timezone.utc), date(2026, 7, 28), Shift.DAY),  # 19:59:59 Bangkok
+    (datetime(2026, 7, 28, 13, 0, 0, tzinfo=timezone.utc), date(2026, 7, 28), Shift.NIGHT),  # 20:00:00 Bangkok, Night start
+    (datetime(2026, 7, 28, 16, 59, 59, tzinfo=timezone.utc), date(2026, 7, 28), Shift.NIGHT),  # 23:59:59 Bangkok
+]
+
+
+async def test_reporting_time_sql_python_parity_on_postgres(pg_session):
+    for utc_instant, _, _ in _REPORTING_TIME_CASES:
+        pg_session.add(AuditLog(action="pr16_reporting_time_parity", entity_type="test", created_at=utc_instant))
+    await pg_session.commit()
+
+    business_date_expr, shift_expr = business_date_and_shift_sql(AuditLog.created_at)
+    rows = (
+        await pg_session.execute(
+            select(AuditLog.created_at, business_date_expr, shift_expr).where(
+                AuditLog.action == "pr16_reporting_time_parity"
+            )
+        )
+    ).all()
+    by_created_at = {created_at: (sql_business_date, sql_shift) for created_at, sql_business_date, sql_shift in rows}
+
+    assert len(rows) == len(_REPORTING_TIME_CASES)
+    for utc_instant, expected_date, expected_shift in _REPORTING_TIME_CASES:
+        sql_business_date, sql_shift = by_created_at[utc_instant]
+        py_business_date, py_shift = business_date_and_shift(utc_instant)
+        assert sql_business_date == py_business_date == expected_date
+        assert Shift(sql_shift) == py_shift == expected_shift
