@@ -371,9 +371,79 @@ Per the confirmed requirements and this reconciliation:
 - **Frontend impact:** None.
 - **Test requirements:** Log-format tests; constraint-violation tests for each new `CHECK`.
 - **Acceptance criteria:** Matches each originating finding's own suggested fix.
-- **Dependencies:** All prior PRs (final PR in the sequence).
+- **Dependencies:** All prior PRs in the original PR1–PR15 sequence. Later
+  approved reporting, legacy migration, cutover, and Go-live work follows
+  below.
 - **Rollback strategy:** Revert; constraints can be dropped independently if they surface unexpected legacy-data violations.
 - **Risk level:** Low-Medium (constraint additions always carry some risk of surfacing previously-silent bad data — mitigated by validating before enforcing, per §9's general rule).
+
+### Group 7 — Reporting and operational metadata
+
+#### PR16 — Reporting foundation
+- **Objective:** Establish reporting foundations and distinguish the actual
+  transaction timestamp, `business_date`, and `shift`.
+- **Data-model boundary:** `shift` is operational/reporting metadata, not an
+  equipment lifecycle state. Day and Night are values in one model; do not
+  create separate tables for them.
+- **Dependencies:** PR15B.
+- **Acceptance criteria:** New reporting data can be filtered by
+  `business_date` and `shift` without losing the actual event timestamp.
+
+#### PR17 — Operational reports
+- **Objective:** Provide Receive, Issue, and Equipment Verify Checklist
+  reports, filterable by date and shift.
+- **Dependencies:** PR16.
+- **Acceptance criteria:** Each report uses the same reporting metadata and
+  presents consistent date/shift filtering.
+
+#### PR18 — Reporting output
+- **Objective:** Add PDF export, Excel export, and print-ready Hard Copy
+  templates for the PR17 reports.
+- **Dependencies:** PR17.
+- **Acceptance criteria:** All three report families can be exported and
+  printed without changing transaction or lifecycle business rules.
+
+### Group 8 — Legacy migration and cutover
+
+#### PR19 — Legacy Import Foundation
+- **Objective:** Provide a staged, validation-first, traceable import framework.
+- **Boundary:** This is separate from PR12's update-only inventory import and
+  must not redesign the hospital QR system.
+- **Dependencies:** Current implementation through PR18.
+
+#### PR20 — Equipment Master Import
+- **Objective:** Import Equipment Master data using BCM and Item Number
+  matching, including equipment attributes and existing hospital QR linkage.
+  Detect equipment duplicates and validate equipment records.
+- **Boundary:** Legacy BME names and Ward values belong to transaction history
+  and are handled by PR21, not this Equipment Master import.
+- **Dependencies:** PR19.
+
+#### PR21 — Legacy Receive and Issue History Import
+- **Objective:** Import the AppSheet equipment receive-data and equipment
+  issue-data sheets; preserve legacy BME names for later user mapping;
+  normalize and map Ward values; detect duplicate transaction rows; and retain
+  transaction source references.
+- **Version 1 boundary:** These are the only transaction-history sheets in the
+  initial migration. Equipment Verify Checklist history is not required unless
+  a later approved decision explicitly adds it.
+- **Dependencies:** PR19, PR20.
+
+#### PR22 — Legacy Data Validation and Reconciliation
+- **Objective:** Perform cross-import validation and reconciliation, verify
+  source traceability, review duplicates, and validate the unified display of
+  legacy and new transaction history before Go-live.
+- **Dependencies:** PR20, PR21.
+
+#### PR23 — Cutover Readiness
+- **Objective:** Rehearse migration, obtain reconciliation sign-off, and close
+  operational readiness gaps.
+- **Dependencies:** PR22.
+
+#### PR24 — Go-live / deployment
+- **Objective:** Perform approved production deployment and cutover.
+- **Dependencies:** PR23. Legacy migration and reconciliation are mandatory
+  before this work begins.
 
 ---
 
@@ -587,6 +657,13 @@ All P0 findings from Part C resolved, specifically:
 - No patient-identifiable fields present anywhere in the workflow (verified by explicit review of every form field and every notes/free-text field's UI guidance).
 
 ### Production Readiness
+- Version 1 legacy migration completed for Equipment Master and the AppSheet
+  equipment receive-data and equipment issue-data sheets.
+- Legacy import reconciliation signed off; old and new transaction history is
+  presented as one unified history.
+- BCM and Item Number matching, existing hospital QR-code preservation,
+  BME-name preservation/later mapping, Ward normalization, duplicate
+  detection, source traceability, and import validation verified.
 - Backup and restore verified (not just documented — actually rehearsed).
 - Secure environment configuration confirmed (production secrets, not defaults, across JWT and any other credentials).
 - Full audit coverage confirmed in production configuration.
@@ -618,13 +695,11 @@ These require hospital/product confirmation before or during implementation; non
 10. **Resolved, no longer open (PR5).** The prior version of this item asked for a best-available reconciliation key to backfill `me_code` against the hospital's spreadsheet. That reconciliation approach is superseded (see PR5's active entry in Part D and Appendix Z) — there is no backfill/reconciliation step; identifiers are populated through ordinary equipment-record maintenance and the future inventory import (Roadmap PR12).
 11. **Daily-reset requirement for transaction numbers (PR4).** This plan explicitly does not assume one was confirmed and proceeds with a globally monotonic sequence instead. If the hospital later confirms an actual operational need for the numeric suffix to restart daily, the fallback per-date-counter design noted in PR4 should be implemented instead — this is not currently planned.
 
-**Note — distinct from the open questions above:** Shift Sessions, Standby
-Snapshots, and the managed-deployment constraint are now **confirmed**
-hospital decisions (not open questions), but are not yet scheduled to a
-specific PR in this plan. They do not change PR1–PR15's scope or order.
-See `AGENTS.md` ("Confirmed Future Workflow Direction"),
-`docs/ROADMAP_STATUS.md` (scheduling status), and
-`docs/ARCHITECTURE_DECISIONS.md` (rationale) — not duplicated here.
+**Note — distinct from the open questions above:** reporting shift metadata is
+now scheduled in PR16–PR18 and legacy migration/cutover in PR19–PR24. Standby
+Snapshots and any richer Shift Session workflow remain separate future work.
+See `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, and
+`docs/ARCHITECTURE_DECISIONS.md`.
 
 ---
 

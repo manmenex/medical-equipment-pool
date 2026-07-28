@@ -1,217 +1,71 @@
 # Roadmap Status
 
-**Superseded by [`ROADMAP.md`](ROADMAP.md),** which reflects the current
-baseline and every merged Roadmap PR through the CI/AI-review-workflow
-infrastructure PR. The per-PR entries below were not kept current past
-Roadmap PR3/PR4 and are retained here only as a historical snapshot — do
-not treat them as current status.
+**Purpose:** Concise live status dashboard.
+**Authority:** Status summary only. [`ROADMAP.md`](ROADMAP.md) and
+[`audits/04-consolidated-implementation-plan.md`](audits/04-consolidated-implementation-plan.md)
+control detailed ordering, scope, dependencies, and acceptance criteria.
+**Update trigger:** A Roadmap item, design, implementation, or baseline changes.
 
-Current status of every Pull Request in the implementation plan
-(`docs/audits/04-consolidated-implementation-plan.md`, Part D — the
-authoritative source for scope, ordering, and acceptance criteria). This
-document tracks **status only**; it does not duplicate the plan itself.
+## Current baseline
 
-Last updated (historical): Roadmap PR3 implementation is in progress as
-Draft GitHub PR #7; its documentation-only scope alignment was merged in
-GitHub PR #8.
+`4b0d422` — GitHub PR #52, the approved documentation-only design for Roadmap
+PR15B Schema Hygiene. PR15A is implemented; PR15B implementation has not
+started.
 
----
+Roadmap numbering and GitHub PR numbering are independent. In particular,
+GitHub PR #18 was the Knowledge & Governance Foundation; it was not Roadmap
+PR18.
 
-PR1
-Status:
-Merged
+## Current and planned sequence
 
-Summary:
-Production Security Foundation — JWT secret startup guard, dashboard SSE
-connection-lifetime fix, Redis failure logging.
+| Order | Roadmap item | Status |
+|---|---|---|
+| 1 | PR15B — Schema Hygiene implementation | Design approved; implementation not started |
+| 2 | PR16 — Reporting Foundation and transaction reporting metadata | Planned |
+| 3 | PR17 — Operational reports | Planned |
+| 4 | PR18 — PDF/Excel export and print-ready Hard Copy templates | Planned |
+| 5 | PR19 — Legacy Import Foundation | Planned |
+| 6 | PR20 — Equipment Master Import | Planned |
+| 7 | PR21 — Legacy Receive and Issue History Import | Planned |
+| 8 | PR22 — Legacy Data Validation and Reconciliation | Planned |
+| 9 | PR23 — Cutover Readiness | Planned |
+| 10 | PR24 — Go-live / deployment | Planned; blocked by PR19–PR23 |
 
-----------------------
+The documentation audit and Roadmap consistency work is an unnumbered
+governance change between the approved PR15B design and subsequent
+implementation. It does not consume or renumber a Roadmap PR.
 
-PR2
-Status:
-Merged
+## Scope guardrails for the planned sequence
 
-Summary:
-Structured Exception Handling — IntegrityError/SQLSTATE classification,
-RequestValidationError and HTTPException envelopes, WWW-Authenticate
-preservation.
+- Reporting distinguishes the actual transaction timestamp, `business_date`,
+  and `shift`. `shift` is operational/reporting metadata, not an equipment
+  lifecycle state. Do not create separate Day and Night transaction tables.
+- Reports cover Receive, Issue, and Equipment Verify Checklist, filterable by
+  date and shift, with PDF, Excel, and print-ready hard-copy output.
+- Version 1 legacy history migration includes only the AppSheet equipment
+  receive-data and equipment issue-data sheets. Equipment Verify Checklist
+  history is excluded unless a later approved decision changes the scope.
+- PR20 Equipment Master Import covers BCM, Item Number, equipment attributes,
+  existing hospital QR linkage, equipment duplicate detection, and
+  equipment-record validation. It does not own transaction BME or Ward data.
+- PR21 Legacy Receive and Issue History Import covers Receive and Issue
+  history, legacy BME-name preservation and user mapping, Ward normalization
+  and mapping, transaction-row duplicate detection, and transaction source
+  references.
+- PR22 Legacy Data Validation and Reconciliation covers cross-import
+  validation, reconciliation, source traceability verification, duplicate
+  review, and unified legacy/new history validation.
+- Legacy migration occurs before Go-live and does not redesign or replace
+  existing hospital QR codes.
+- The only equipment lifecycle states remain `AVAILABLE_AT_POOL`,
+  `ISSUED_TO_WARD`, `UNAVAILABLE_DEFECTIVE`, and `DECOMMISSIONED`. Cleaning is
+  not a state.
 
-----------------------
+## Unscheduled confirmed work
 
-PR3
-Status:
-In progress — Draft implementation PR #7
-
-Summary:
-Audit Logging Framework — canonical audit writes, current auth/user/master/
-equipment coverage, safe request context, additive migration, authorized
-bounded reads, and PostgreSQL-backed evidence.
-
-Governance note:
-GitHub PR #8 merged the documentation-only scope alignment. Its GitHub PR
-number is not a Roadmap PR number and did not create or renumber a roadmap
-item.
-
-----------------------
-
-PR4
-Status:
-Planned
-
-Summary:
-Transaction-Number Generation (global PostgreSQL sequence).
-
-----------------------
-
-PR5
-Status:
-Architecture resolved (Governance PR); implementation not yet merged
-
-Summary:
-Equipment Master identifier model, BCM manual search, and hospital
-Item-No QR identification — see `knowledge/adr/ADR-002`, `ADR-003`,
-`ADR-004`, and `docs/audits/04-consolidated-implementation-plan.md`'s
-PR5 entry for the active contract. Supersedes the earlier "ME Code"
-identifier-separation description.
-
-Governance note:
-An implementation attempt for this PR was opened before this
-architecture was resolved; it needs to be reconciled against the
-resolved architecture (see `knowledge/traceability/README.md`) before
-it can proceed toward merge.
-
-----------------------
-
-PR6
-Status:
-Planned
-
-Summary:
-Equipment State Model Migration (4 states).
-
-----------------------
-
-PR7
-Status:
-Planned
-
-Summary:
-Dispatch Record Model (OPEN/CLOSED, dispatch type, routine round, field
-cleanup).
-
-----------------------
-
-PR8
-Status:
-Planned
-
-Summary:
-Atomic Single-Operation Equipment Receipt with concurrency guard.
-
-----------------------
-
-PR9
-Status:
-Planned
-
-Summary:
-Ward Correction Action (audited).
-
-----------------------
-
-PR10
-Status:
-Planned
-
-Summary:
-Role Model Consolidation (3 roles).
-
-----------------------
-
-PR11
-Status:
-Planned
-
-Summary:
-Frontend Terminology and Workflow UI Pass.
-
-----------------------
-
-PR12
-Status:
-Planned
-
-Summary:
-Inventory Import.
-
-----------------------
-
-PR13
-Status:
-Planned
-
-Summary:
-Search, History, and Reporting Adjustments.
-
-----------------------
-
-PR14
-Status:
-Planned
-
-Summary:
-Reliability and Performance Hardening.
-
-----------------------
-
-PR15
-Status:
-Planned
-
-Summary:
-Observability and Schema Hygiene.
-
----
-
-## Completed Milestones
-
-- **PR1 — Production Security Foundation.** Merged.
-- **PR2 — Structured Exception Handling.** Merged.
-
-## Current Milestone
-
-- **Roadmap PR3 — Audit Logging Framework.** Implementation is in progress
-  as Draft GitHub PR #7. Its governance scope alignment was completed in
-  merged GitHub PR #8. PR3 is not yet approved, merge-ready, or merged.
-
-## Upcoming Milestone
-
-- **Roadmap PR4 — Transaction-Number Generation.** This is the next
-  implementation milestone only after Roadmap PR3 is approved and merged.
-  PR4 starts Group 2 (Concurrency and Data Integrity), followed by PR5 ME
-  Code Identifier Model and PR6 Equipment State Model.
-
-## Known Future Workflow Items
-
-Confirmed hospital decisions for work **beyond** the current 15-PR plan —
-not yet scheduled to a specific PR. Do not implement ahead of a dedicated
-future PR; see `AGENTS.md` ("Confirmed Future Workflow Direction") for the
-guardrail statement and `docs/ARCHITECTURE_DECISIONS.md` for rationale.
-
-- **Shift Sessions** — flexible DAY/NIGHT sessions replacing hard-coded
-  routine-round times; multiple staff per open session; every transaction
-  records its authenticated operator.
-- **Standby Snapshots** — Day/Night department-level equipment-count
-  reports, recorded independently of transaction history.
-- **Managed deployment** — production architecture must not assume direct
-  access to hospital-managed servers; stays deployable to an approved
-  managed platform as a browser/PWA application.
-
-## Related Documents
-
-- `docs/audits/04-consolidated-implementation-plan.md` — authoritative
-  scope, ordering, dependencies, and acceptance criteria for every PR
-  listed above.
-- `AGENTS.md` — permanent repository-wide guardrails and confirmed future
-  direction.
-- `docs/ARCHITECTURE_DECISIONS.md` — confirmed project-level decisions.
+- Standby Snapshots remain separate future work.
+- Broader PR15 observability items (metrics, tracing, dashboards, centralized
+  aggregation, and alerting) remain open until assigned to a focused slice or
+  removed by an explicit governance decision.
+- Create-from-import deferred from PR12 remains separate from the approved
+  legacy migration sequence above.

@@ -177,13 +177,13 @@ status field, no cleaning-confirmation endpoint exists or is planned.
 
 ---
 
-## Shift Session planned
+## Reporting shift metadata planned
 
-**Decision:** Future implementation will support flexible DAY/NIGHT Shift
-Sessions in place of hard-coded routine-round transaction times.
+**Decision:** Roadmap PR16 will distinguish the actual transaction timestamp,
+`business_date`, and `shift`. Day and Night are values in one reporting model;
+they do not use separate tables.
 
-**Status:** Planned — confirmed direction, not yet scheduled to a
-specific Pull Request.
+**Status:** Planned for Roadmap PR16.
 
 **Rationale:** Fixed clock-time rounds (06:00/11:00/15:00/21:00) are an
 intentional MVP simplification (Roadmap PR7). The hospital has since
@@ -192,10 +192,9 @@ multiple staff may operate within one open shift, each transaction
 recording its own authenticated operator rather than relying on the
 round-time enum alone.
 
-**Impact:** PR7 is **not** reworked to anticipate this — see the
-consolidated plan's PR7 entry for the explicit forward-compatibility
-note. A dedicated Shift Session PR will be scheduled once prioritized;
-until then, no Shift Session model, endpoint, or migration exists.
+**Impact:** PR7 is **not** reworked by this documentation change. Shift is
+reporting/operational metadata, not an equipment lifecycle state. Any richer
+Shift Session workflow remains unscheduled and would require separate approval.
 
 ---
 

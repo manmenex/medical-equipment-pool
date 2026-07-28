@@ -55,10 +55,11 @@ Do not introduce any of the above unless a task explicitly asks for it and cites
 
 # Confirmed Future Workflow Direction
 
-Shift Sessions, Standby Snapshots, and a managed-deployment constraint are
-confirmed hospital decisions for future work, not yet scheduled to a
-Roadmap PR. Do not build them ahead of their planned PR; do not design
-current work to contradict or block them. See
+Reporting metadata (`business_date` and `shift`) is planned for Roadmap PR16;
+Day and Night are values in one model, not separate tables. Standby Snapshots,
+any richer Shift Session workflow, and the managed-deployment constraint remain
+separate future work. Do not build them ahead of their planned PR; do not
+design current work to contradict or block them. See
 [`docs/ROADMAP.md`](docs/ROADMAP.md) ("Confirmed future work") and
 [`docs/ARCHITECTURE_DECISIONS.md`](docs/ARCHITECTURE_DECISIONS.md) for rationale.
 

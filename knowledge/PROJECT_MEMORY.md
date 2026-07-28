@@ -1,116 +1,90 @@
 # Project Memory (AI Snapshot)
 
-**Purpose:** Long-term AI memory — a single point-in-time snapshot a new session can read to reconstruct working context without replaying history
-**Authority:** Summary snapshot. Every fact below cites its authoritative source; the source controls if this snapshot drifts out of date. Not the same file as [`../docs/PROJECT_MEMORY.md`](../docs/PROJECT_MEMORY.md) — that file is the dated chronological decision log, this file is a current-state summary. See also [`CONTEXT.md`](CONTEXT.md) for the more volatile "right now" details (current PR, outstanding work, risks).
-**Update trigger:** Any fact below becomes stale — check this file at the start of major work, update it at the end
+**Purpose:** Stable current-state orientation for a new session
+**Authority:** Summary only; linked authorities control if this snapshot drifts
+**Update trigger:** A stable scope, architecture, or Roadmap fact changes
 **Maintainer:** Documentation/Governance Engineer
 
-## Project purpose
+## Project purpose and boundary
 
-The Medical Equipment Pool is a browser/PWA system used by hospital Equipment Pool operators to dispatch pool equipment (primarily infusion pumps and select shared equipment) to a first receiving ward and record its receipt back. It replaces a prior AppSheet-based spreadsheet process. It is not a patient-tracking, cleaning, maintenance, calibration, recall, or hospital-wide asset-lifecycle system.
+Medical Equipment Pool is a browser/PWA system for Equipment Pool operators to
+issue pool equipment to the first receiving ward and record receipt back. It
+replaces an AppSheet spreadsheet process. It is not MEMS, Recall Monitor,
+patient/bed tracking, ward-to-ward location tracking, cleaning, PM,
+calibration, or a hospital-wide asset-lifecycle system.
 
-Source: `docs/PROJECT_PLAYBOOK.md` ("Project purpose and boundary"); `knowledge/adr/ADR-001-equipment-pool-scope.md`.
+Sources: `AGENTS.md`, `docs/BUSINESS_RULES.md`,
+`knowledge/adr/ADR-001-equipment-pool-scope.md`.
 
-## Architecture summary
+## Stable domain rules
 
-- **Backend:** Async FastAPI (`backend/app/`), layered API -> services -> CRUD -> models, SQLAlchemy 2.0 async, Alembic migrations.
-- **Database:** PostgreSQL (`postgres:16-alpine` in CI/dev), accessed via `asyncpg`. SQLite is used only for the fast default test run and is not sufficient evidence for PostgreSQL-specific behavior.
-- **Frontend:** React/TypeScript/Vite single-page app, built as a PWA (`vite-plugin-pwa`).
-- **Deployment:** Must remain portable to a managed platform; no design assumes direct access to hospital-managed servers.
-- **CI:** `.github/workflows/ci.yml` — backend non-PostgreSQL tests, backend PostgreSQL-marked tests (fail-closed preflight gate, see below), standalone Alembic upgrade validation, frontend build, whitespace check. Least-privilege (`contents: read`, `persist-credentials: false`).
+- Equipment states are exactly `AVAILABLE_AT_POOL`, `ISSUED_TO_WARD`,
+  `UNAVAILABLE_DEFECTIVE`, and `DECOMMISSIONED`.
+- Cleaning is a physical activity, not a lifecycle state or workflow.
+- Transactions are `OPEN` or `CLOSED`.
+- Receipt uses a binary `usable` / `defective` outcome; backend services map
+  the outcome to equipment state.
+- BCM Code, Item Number, hospital Asset Number, and internal UUID have distinct
+  roles. Existing hospital Item Number QR codes are preserved.
+- The first receiving ward is recorded; later physical movements are not
+  tracked.
+- The backend is authoritative for business rules and authorization.
 
-Source: `docs/ARCHITECTURE_DECISIONS.md`; `docs/PROJECT_WORKFLOW.md`.
+Sources: `docs/BUSINESS_RULES.md`, `docs/HOSPITAL_DOMAIN_MODEL.md`,
+`knowledge/adr/ADR-002-identifier-model.md`,
+`knowledge/adr/ADR-005-transaction-model.md`,
+`knowledge/adr/ADR-006-receipt-outcome-contract.md`.
 
-## Stable business rules
+## Architecture
 
-See `docs/BUSINESS_RULES.md` for the full list with citations. Summary:
+React/TypeScript PWA frontend, FastAPI backend, PostgreSQL system of record,
+async SQLAlchemy, and Alembic migrations. Audit records use the canonical audit
+writer and validated request/correlation context. Production behavior must not
+depend on SQLite test behavior or direct access to hospital-managed servers.
 
-- Exactly four equipment states: `AVAILABLE_AT_POOL`, `ISSUED_TO_WARD`, `UNAVAILABLE_DEFECTIVE`, `DECOMMISSIONED`.
-- Cleaning is a physical activity that may happen before or after receipt is recorded; it is never represented as a state and never needs a separate workflow. A usable receipt ends at `AVAILABLE_AT_POOL`; a defective receipt ends at `UNAVAILABLE_DEFECTIVE`.
-- Dispatch and receipt (`backend/app/services/borrow_service.py`) are the only paths that move equipment through `ISSUED_TO_WARD`, and the only paths that open/close a transaction (`app.crud.transaction.create()`/`close()`); administrative status maintenance is a separate, narrower path. `BorrowTransaction.status` is exactly `TransactionStatus.OPEN`/`CLOSED` (Roadmap PR7's lifecycle slice) — see `docs/BUSINESS_RULES.md`.
-- Concurrent receipt is guarded at the database level: `app.crud.transaction.close()` decides the sole winner among racing receipt requests solely by the affected-rowcount of a single conditional `UPDATE ... WHERE id = :id AND status = 'open'`, never by an application-level pre-check. Every losing request is rolled back before any business side effect runs (no equipment-status change, no status-history row, no audit row) — only the winner performs side effects, in the same transaction. Proven with deterministic PostgreSQL tests across a matrix of 1, 2, 5, 10, and 50 requests: the 1-request case verifies normal receipt behavior with no concurrency, the 2/5/10 cases synchronize the complete burst to force genuine contention, and the 50-request case synchronizes a bounded subset to prove conditional-`UPDATE` contention without exhausting the connection pool. Implemented as Roadmap PR8A (GitHub PR #26); see `docs/DECISION_LOG.md`.
-- Every new dispatch requires `ward_id` and `dispatch_type` (`routine_round`/`on_demand`, `DispatchType`); `routine_round` (one of the four confirmed fixed times `06:00`/`11:00`/`15:00`/`21:00`) is required exactly for `routine_round` dispatches and forbidden for `on_demand` (Roadmap PR7 7b slice, merged GitHub PR #20). `borrower_name`/`due_at`/`quantity` are rejected outright by `BorrowRequest` (`extra="forbid"`); every existing historical value is preserved — see `docs/BUSINESS_RULES.md`.
-- Decommissioning must pass through `UNAVAILABLE_DEFECTIVE`; `AVAILABLE_AT_POOL` cannot skip directly to `DECOMMISSIONED`.
-- No patient tracking, no ward-to-ward transfer tracking, no MEMS/PM/calibration/recall workflow.
-- A transaction's first recorded receiving ward is immutable except through the dedicated audited correction action (`POST /transactions/{id}/correct-ward`, `app.services.borrow_service.correct_ward`). Correction supports both `open` and `closed` transactions, is not ward-transfer tracking, and never alters equipment or transaction lifecycle state. Authorization is Administrator and Equipment Pool Staff (`app.api.v1.deps.WARD_CORRECTION_ROLES`), per Roadmap PR10's confirmed 3-role matrix — temporarily Administrator-only between PR9A and PR10. Implemented as Roadmap PR9 (PR9A backend, GitHub PR #33; PR9B frontend, GitHub PR #34); role widened by Roadmap PR10 (GitHub PR #36); see `docs/BUSINESS_RULES.md` and `docs/DECISION_LOG.md`.
+Sources: `docs/PROJECT_PLAYBOOK.md`, `docs/ARCHITECTURE_GUARDRAILS.md`,
+`docs/ARCHITECTURE_DECISIONS.md`.
 
-## Stable identifiers
+## Current baseline and Roadmap
 
-Exactly four, each with one fixed role — no substitution, no fifth identifier:
+Current baseline: `4b0d422` (GitHub PR #52, approved PR15B design). PR15A is
+implemented; PR15B implementation is next.
 
-1. **Internal UUID** — relational primary key, never entered manually.
-2. **BCM Code** — primary operator-facing identifier; the only manual-search identifier.
-3. **Item No** — hospital QR-label identifier; QR lookup only; excluded from normal operator responses.
-4. **Asset Number** — inventory metadata only; not searchable or scannable.
+The approved sequence after PR15B is:
 
-**"ME Code" is retired** and must not be used or reintroduced.
+- PR16–PR18: reporting foundation, `business_date`/`shift`, operational
+  reports, PDF/Excel/Hard Copy output;
+- PR19–PR22: legacy import foundation, Equipment Master, AppSheet Receive/Issue
+  history, validation and reconciliation;
+- PR23: cutover readiness;
+- PR24: Go-live / deployment.
 
-Source: `knowledge/adr/ADR-002-identifier-model.md` through `ADR-004`.
+Roadmap numbers and GitHub PR numbers are independent. Legacy migration is
+mandatory before Go-live.
 
-## Current workflow (requirement to merge)
+Sources: `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`,
+`docs/audits/04-consolidated-implementation-plan.md`.
 
-```text
-Requirement -> ChatGPT Architecture Review -> Claude Implementation -> Draft PR
-  -> GitHub Actions CI -> Ready for review -> Codex Independent Review
-  -> ChatGPT Project Governor Review -> Owner Approval -> Squash Merge
-```
+## Reporting and migration boundaries
 
-Claude writes code. Codex reviews code. ChatGPT governs architecture, roadmap, prompts, and review interpretation. The Owner makes business and merge decisions. No automatic merge; no Claude<->Codex repair loop; new commits invalidate prior review.
+Reporting distinguishes actual transaction time, `business_date`, and `shift`
+in one model. Shift is not a lifecycle state and does not create separate
+Day/Night tables.
 
-Source: `docs/PROJECT_WORKFLOW.md`.
+Version 1 legacy migration includes Equipment Master plus only the AppSheet
+equipment receive-data and equipment issue-data history sheets. Equipment
+Verify Checklist history is excluded. PR20 imports BCM, Item Number, equipment
+attributes, and existing hospital QR linkage, with equipment duplicate
+detection and equipment-record validation. PR21 imports Receive and Issue
+history, preserves legacy BME names for later user mapping, normalizes and maps
+Ward values, detects duplicate transaction rows, and retains transaction source
+references. PR22 performs cross-import validation, reconciliation, source
+traceability verification, duplicate review, and unified legacy/new history
+validation before Go-live.
 
-## Current baseline
+## Working references
 
-`e250638db186f8e4dc3358bd475e9cf4eebc0bc8` (branch `claude/medical-equipment-pool-0c7fz0`, squash merge of GitHub PR #50, Roadmap PR15, PR15A slice: Observability), on top of `a43b680a5558aa322a613b3e3eba0eeb45858edf` (documentation-only post-merge governance sync recording Roadmap PR14B's completion, GitHub PR #49), on top of `82e289d40811b413659e7303a1690b66275e9759` (squash merge of GitHub PR #48, Roadmap PR14, PR14B slice: Pagination Performance), on top of `4d891ac8f9f1cc1ada45347d384d06fde705a97a` (documentation-only post-merge governance sync recording Roadmap PR14A's completion, GitHub PR #47), on top of `ddd17b180c06a4fd2421f4886c0568876498abb2` (squash merge of GitHub PR #46, Roadmap PR14, PR14A slice: Reliability Correctness), on top of `8f7ef12e1660b35021df64fc9a529495cca77e49` (squash merge of GitHub PR #45, Roadmap PR13: Search, History, and Reporting Adjustments) as of this snapshot. **Roadmap PR8 (all three slices), Roadmap PR9 (both slices), Roadmap PR10, Roadmap PR11, Roadmap PR12, Roadmap PR13, and Roadmap PR14 (both slices — PR14A, PR14B) are all fully complete.** Roadmap PR15 (Observability and Schema Hygiene) is an Epic split into slices: **PR15A (Observability) is now merged; PR15B (Schema Hygiene) is the next planned item and has not started.** Application metrics, tracing, dashboards, log aggregation, and alerting are not scheduled to either PR15 slice and remain open Roadmap PR15 scope pending a future slice or an explicit governance decision to remove them — **Roadmap PR15 is NOT fully complete.** Always confirm against `knowledge/CONTEXT.md` and `docs/ROADMAP.md`, which are updated more frequently than this file.
-
-## Completed Roadmap
-
-Roadmap PR1-PR6 merged (security/availability foundation, structured exceptions, audit logging framework, transaction-number sequence, equipment identifier model, four-state equipment model), plus the Knowledge Layer v2 governance PR, the CI/AI-review-workflow infrastructure PR, the Knowledge & Governance Foundation PR, and both slices of Roadmap PR7 (transaction lifecycle model `OPEN`/`CLOSED`, GitHub PR #19; dispatch type/routine round/required ward_id/field cleanup, GitHub PR #20). Roadmap PR7 is now fully merged. Since then, five process/documentation-only PRs merged (no Roadmap PR number assigned, no code/business-rule/schema change): post-merge governance sync (GitHub PR #21), Test Infrastructure Cleanup (GitHub PR #22), Developer Documentation (GitHub PR #23), the API & Error Catalog (GitHub PR #24), and a second post-merge governance sync after PR21-PR24 (GitHub PR #25). Roadmap PR8 was then split into three slices, following the same precedent as PR7: PR8A (the database-level concurrency guard) merged as GitHub PR #26; PR8B (condition-to-binary-outcome contract narrowing) merged in two coordinated parts, backend (GitHub PR #28) and frontend (GitHub PR #29), deployed together. A sixth documentation/governance PR, GitHub PR #30 (`4af6a4c623f24718f37241105c90425276e5ce7a`), synchronized documentation after PR8B and closed TD-006 before PR8C merged. PR8C (race-vs-repeat error-code distinction) merged as GitHub PR #31. **Roadmap PR8 (PR8A, PR8B, and PR8C) is now fully complete.** Full table with GitHub PR numbers and squash SHAs: `docs/ROADMAP.md`.
-
-Roadmap PR9 was split into two slices, following the same precedent as PR7 and PR8: PR9A (backend, audited ward-correction endpoint, temporarily Administrator-only authorization) merged as GitHub PR #33; PR9B (frontend, admin-only ward-correction UI consuming PR9A's contract exactly, reachable for both OPEN and CLOSED transactions) merged as GitHub PR #34. **Roadmap PR9 (both slices) is now fully complete.** A documentation-only post-merge governance sync recording PR9's completion then merged as GitHub PR #35 (squash `bc1b163929a4d07290e56add1db8ad99c592e1a2`).
-
-**Roadmap PR10 (Role Model Consolidation) is merged** (GitHub PR #36, squash `53340f6d7d5c8cda685235411b60a57d2d033a7e`), from branch `feature/pr10-role-consolidation`. It replaced the legacy 5-role model with the confirmed 3-role model (`administrator`/`equipment_pool_staff`/`read_only`), including a new Alembic migration (`0009_role_consolidation.py`) with a fail-closed manifest mechanism for the three legacy roles that had no confirmed equivalent. Three iterative Codex review rounds, completed before PR #36 was squash merged, hardened the migration's atomicity/audit/lossless-restoration/ownership guarantees — downgrade restores exact legacy role ids/permissions/user assignments from durable `role_migration_snapshots`/`user_role_migrations` provenance (never `legacy_role_name` alone) and deletes a confirmed-role row only when `confirmed_role_ownership` proves this migration created it. See `docs/DECISION_LOG.md` ("Roadmap PR10") and `docs/BUSINESS_RULES.md` ("Roles and the confirmed 3-role permission matrix") for full detail. A documentation-only governance sync (GitHub PR #37, squash `66bdd547937b7741d53b16a98fe74280dee18273`, mirroring the one after Roadmap PR9, GitHub PR #35) recorded PR10's completion.
-
-**Roadmap PR11 (Frontend Terminology and Workflow UI Pass) is now merged** (GitHub PR #38, squash `7708190ebf08b7212b7a73ba831263b94434d1eb`), from branch `feature/pr11-frontend-terminology`, baseline `66bdd547937b7741d53b16a98fe74280dee18273`. It retired "ยืม"/"คืน" (borrow/return) as user-facing UI terminology everywhere it appeared — navigation, the dispatch/receipt forms, equipment-detail's CTA buttons and transaction history, and the dashboard/reports chart labels — replaced consistently by "เบิก"/"รับคืน" (issue/receive back). The ward field is relabeled with the Workflow Audit §7.1-required caption disclaiming real-time location tracking on the dispatch form, receipt form, and equipment-detail transaction history. Two iterative Codex review rounds, completed before PR #38 was squash merged, closed a test-coverage gap: the first added the previously-missing `BorrowPage.test.tsx` and an end-to-end `DispatchReceiptWorkflow.test.tsx`; the second required that workflow test be rewritten around one shared, mutable mock store so the equipment-status transitions it asserts are actually caused by the mocked `createBorrow`/`createReturn` implementations, not hand-fed per step. No backend, API, database, migration, or RBAC change — frontend-only, exactly as scoped. See `docs/DECISION_LOG.md` ("Roadmap PR11") for full detail. This documentation-only governance sync (mirroring the ones after Roadmap PR9 and Roadmap PR10) records PR11's completion and advances the "Current baseline" above. Roadmap PR12 (Inventory Import) is now the next planned item; PR13 through PR15 remain planned and not yet started — see `docs/ROADMAP.md`. The original, pre-split PR8 design document (`docs/design/PR8_IMPLEMENTATION_PLAN.md`, uncommitted, design-only) is what PR8A implemented Option A from and what PR8C's race-vs-repeat distinction was already anticipated in (Section 6); it remains untracked.
-
-**GitHub PR #40 (unnumbered, not Roadmap PR12) is now merged** (squash SHA `93b6f948a7f6eb60f084fa61966191b5ba13c098`, from branch `feature/pr12-dashboard-status`, baseline Governance PR #41's squash SHA `9de050c04174f0d1be1e82f363db3224e5bfa371`). "Dashboard & Equipment Status" rewrote `DashboardPage.tsx` to show the four confirmed lifecycle-status counts, removed the trend/top-equipment charts and PM/Calibration due-soon widgets from the frontend (the backend summary kept returning `pm_due_soon`/`cal_due_soon` unused until Roadmap PR13 removed them), added loading/empty/error+retry states and a permission-aware quick-actions grid, and added a new `/scan` route (`ScanPage.tsx`) for a neutral QR/BCM equipment lookup. No backend, API, database, migration, or RBAC change — frontend-only. Despite its originating task description's "PR12" label, this is **not** Roadmap PR12: a dedicated Governance PR (GitHub PR #41) classified it as an unnumbered Post-PR11 Frontend Dashboard UX Follow-up, after two independent Codex reviews (review `4781262010` — initial review, identified PR40-H1; review `4781273707` — follow-up review, blocker remained) blocked it from merging under that conflicting identity. The obsolete references in its own title, description, code comments, and test descriptions that incorrectly classified it as "Roadmap PR12" were then corrected before merge, per the Repository Owner's explicit instruction — legitimate historical references documenting the conflict (review IDs, the PR40-H1 finding history) were preserved, not rewritten. See `docs/DECISION_LOG.md` ("Governance — GitHub PR #40 classification") and `docs/ROADMAP.md`'s Completed table (unnumbered "— (frontend)" row).
-
-**Roadmap PR12 (Inventory Import, update-only) is now merged** (GitHub PR #43, squash SHA `94554a3a2ce6812f8fca6ab22455cd04384a29e6`, from branch `feature/pr12-inventory-import`, baseline `0974735f25dc12b71595801a2a32cf97c8c18cb3`). Administrator-only upload → preview → commit workflow, matching rows to existing equipment by canonical BCM Code and updating them; a new Alembic migration (`0010_inventory_import_columns.py`) added `equipment.asset_id` (nullable, non-unique index) and `equipment.raw_source_status` (nullable, verbatim source-cell text), both purely additive. Four independent Codex reviews on Draft PR #43, each on a new exact head before the next began, drove significant architectural change: the originally owner-approved policy of deriving a new row's `asset_number` from its own BCM Code was found to violate ADR-002 ("Not merged with, or inferred from, BCM Code or Item No"); a replacement random-placeholder token was independently found to still be fabricated inventory metadata; resolving this required a fresh Repository Owner decision, and **Roadmap PR12 shipped update-only** — there is no create path at all, import never generates an Asset Number under any circumstance, and a row whose BCM Code has no match fails validation, directing the operator to the standard Equipment Master workflow first. Create-from-import is deferred follow-up scope, not a permanent prohibition. The same review rounds also closed unbounded/synchronous upload-and-XLSX-parsing gaps (bounded reads, `asyncio.to_thread`, bulk `IN(...)` lookups, ZIP-archive decompression bounds), incomplete update-mode identity validation (Item No/Serial Number cross-record checks), missing preview-phase length validation for bounded fields, a PostgreSQL migration test that inadvertently relied on a fresh database's schema rather than genuine migration history, and silent whitespace-stripping of the `raw_source_status` audit column. See `docs/DECISION_LOG.md` ("Roadmap PR12 — Inventory Import (update-only)") for the full four-round review chronology. **Roadmap PR12 is now fully complete.**
-
-**Roadmap PR13 (Search, History, and Reporting Adjustments) is now merged** (GitHub PR #45, squash SHA `8f7ef12e1660b35021df64fc9a529495cca77e49`, from branch `feature/pr13-search-history-reporting`, baseline `94554a3a2ce6812f8fca6ab22455cd04384a29e6`). Verified Roadmap PR5's `search_bcm` already fully satisfies every ADR-003 requirement (partial/prefix-optional matching, exact-match-first ranking, bounded results, minimal-disclosure suggestions) with existing test coverage — no new search code needed. What this PR added: `dispatch_type`/`routine_round`/`from_date`/`to_date` filters on `GET /transactions`; removal of `pm_due_soon`/`cal_due_soon` from `DashboardSummary` (never rendered by `DashboardPage.tsx` since GitHub PR #40); and, on `EquipmentDetailPage.tsx`'s transaction history, new filter controls plus dispatch-type/round distinguishability and a read-only, client-computed "days since dispatch" indicator for OPEN transactions. Two independent Codex reviews on Draft PR #45, each on a new exact head before the next began: the first (review `4783120601`, finding PR13-M1) found the date-range upper-bound arithmetic (`to_date + timedelta(days=1)`) could raise `OverflowError` for `to_date=9999-12-31` and that a reversed range was silently accepted — fixed by computing the bound without incrementing the date (`datetime.combine(to_date, time.max)`, never overflows) and rejecting a reversed range with a structured `400`; the second (review `4783200709`) recorded APPROVE WITH NON-BLOCKING COMMENTS. See `docs/DECISION_LOG.md` ("Roadmap PR13 — Search, history, and reporting adjustments") for the full review chronology. **Roadmap PR13 is now fully complete.**
-
-**Roadmap PR14, PR14A slice (Reliability Correctness) is now merged** (GitHub PR #46, squash SHA `ddd17b180c06a4fd2421f4886c0568876498abb2`, from branch `feature/pr14a-reliability-correctness`, baseline `8f7ef12e1660b35021df64fc9a529495cca77e49`). Treated Roadmap PR14 ("Reliability and Performance Hardening") as an Epic split into focused slices, following the same lettered-slice precedent as PR7/PR8/PR9, rather than one broad PR — Operational Logging deferred to Roadmap PR15, Pagination Performance deferred to a later PR14B gated on EXPLAIN ANALYZE evidence. PR14A shipped exactly three concerns: (1) PATCH nullable-field correctness — `app.crud.equipment.update()`/`app.crud.user.update()` rewritten from a single-pass `if value is not None: setattr(...)` loop (which silently discarded every explicit-null PATCH, on every field) to a two-pass validate-then-mutate that rejects an explicit null on required fields and on `bcm_code`/`item_no` (`NON_CLEARABLE_IDENTITY_FIELDS`, ADR-002 — non-clearable, not immutable) with zero mutation/audit event, then applies every remaining field unconditionally, so nullable business fields can now genuinely be cleared; (2) the scheduler N+1 fix — `app.worker.scheduler.check_pm_cal_due()` now loads the notification recipient list at most once per run, and performs zero recipient queries when nothing is due; (3) a transaction boundary audit (`docs/audits/05-pr14a-transaction-boundary-audit.md`) categorizing every commit site into four buckets (ordinary/scheduler/authentication-best-effort/seed-script), concluding no atomicity drift was found and the existing caller-owned commit architecture is intentionally left unchanged. One Codex review round on Draft PR #46 (substantive decision REQUEST CHANGES, surfaced as `COMMENTED` since the reviewing account owns the PR) found the `User.phone`-clearing test proved only HTTP 200 (insufficient — the pre-fix implementation could also return it), the audit doc had swapped login-success/failure line references and omitted that the success-path commit also updates `last_login_at`, the PR description understated the API/data impact, and `IMMUTABLE_IDENTITY_FIELDS` was misleadingly named — all four fixed on a new exact head before merge; CI (141 tests, zero skips, including PostgreSQL) was green throughout. See `docs/DECISION_LOG.md` ("Roadmap PR14 (PR14A slice) — Reliability Correctness") for the full review chronology and the recorded non-blocking test-hardening follow-ups. **PR14A is now fully complete.**
-
-**Roadmap PR14, PR14B slice (Pagination Performance) is now merged** (GitHub PR #48, squash SHA `82e289d40811b413659e7303a1690b66275e9759`, from branch `feature/pr14b-pagination-ordering-indexes`, baseline `4d891ac8f9f1cc1ada45347d384d06fde705a97a`). Strictly evidence-gated and index-only, per Repository Owner approval: no index/pagination design work began without `EXPLAIN (ANALYZE, BUFFERS)` evidence of a real query-plan problem first (`docs/audits/06-pr14b-pagination-index-evidence.md`, gathered at 200,000 `equipment`/1,000,000 `borrow_transactions` rows with realistic non-clustered timestamps). Shipped two composite `(created_at DESC, id DESC)` btree indexes (`ix_equipment_created_at_id`, `ix_borrow_transactions_created_at_id`, migration `0011_pagination_ordering_indexes.py`) matching the literal `ORDER BY` clause `app.crud.equipment.search()`/`app.crud.transaction.search()` already issue, dropping first-page query latency from 45.5-205.5ms (sequential/parallel scan + sort) to under 1ms (index scan, no sort node) at evidence scale. `CREATE INDEX CONCURRENTLY` was chosen over plain `CREATE INDEX` to avoid blocking writes on live-traffic tables; deliberately not declared on the SQLAlchemy models, so migration `0011` remains the sole source of truth for both indexes on every path (TD-002 — avoids `0001_initial.py` racing it on a fresh install). A measured, honestly-reported limitation is documented, not hidden: deep cursor pagination (~75,000-100,000+ rows past page one) gets *slower* with the index present, because the cursor `WHERE` clause's disjunctive shape isn't sargable against a plain composite index — accepted as unreachable at this system's confirmed real-world scale, not fixed (a pagination-logic redesign, out of scope). Two Codex review rounds on Draft PR #48, each on a new exact head: **Round 1 was merge-blocking** — a bare `CREATE INDEX CONCURRENTLY IF NOT EXISTS` retry cannot distinguish a genuinely completed index from one left `INVALID` by an interrupted build, so a naive retry would let Alembic silently record success while the index stayed unusable; also required real PostgreSQL regression coverage for that failure mode and a lock-semantics documentation correction (a plain `CREATE INDEX`'s `SHARE` lock blocks writes only, not reads, contrary to the original docstring). Fixed by `_ensure_index_concurrently()`, which inspects `pg_indexes.indexdef` and `pg_index.indisvalid`/`indisready` before treating any existing same-named index as done, and **fails closed** — raising a clear `RuntimeError` with the detected state and an explicit recovery step — rather than auto-repairing, per the Repository Owner's explicit direction (automatic drop/rebuild could mask an underlying deployment problem the migration cannot diagnose; failing loudly lets an operator investigate, prioritizing data correctness and auditability over automatic recovery). **Round 2 recorded APPROVE WITH NON-BLOCKING COMMENT** (a stale PR-description metadata correction, fixed before merge), confirming the fail-closed logic, nine PostgreSQL regression tests (interrupted-build fail-closed-with-recovery, mismatched-definition fail-closed, and planner assertions for both tables among them), and CI (617 tests: 467 non-PostgreSQL + 150 PostgreSQL) all green. No API, pagination-logic, or `COUNT(*)` change. See `docs/DECISION_LOG.md` ("Roadmap PR14 (PR14B slice) — Pagination Performance") for the full review chronology. **PR14B is now fully complete — Roadmap PR14 (both slices) is fully complete.** Roadmap PR15 (Observability and Schema Hygiene) is now the next planned item.
-
-**Roadmap PR15, PR15A slice (Observability) is now merged** (GitHub PR #50, squash SHA `e250638db186f8e4dc3358bd475e9cf4eebc0bc8`, from branch `feature/pr15a-observability`, baseline `a43b680a5558aa322a613b3e3eba0eeb45858edf` — the PR14B governance sync, GitHub PR #49). Treated Roadmap PR15 ("Observability and Schema Hygiene," also covering PR14's deferred Operational Logging scope item) as an Epic split into focused slices, per an architecture-approved design revision (`docs/design/PR15_OBSERVABILITY_SCHEMA_HYGIENE_PLAN.md`, Revision 2, uncommitted). PR15A shipped observability only: structured JSON logging (`app.core.logging.JsonFormatter`); async-safe request/correlation-ID propagation via `contextvars` and a `logging.Filter` (`app.core.log_context`), reusing the existing request-context mechanism; exactly one bounded access-log event per request using the route template (not the raw URL); an independent `job_run_id` for scheduler runs; aggregate-only import-commit logging; and `safe_log()`, a fail-safe wrapper guaranteeing no logging call — including its own best-effort fallback report — can ever propagate an exception back into request, job, or import-commit handling. Three independent Codex reviews on Draft PR #50, each on a new exact head before the PR was squash merged: **Review 1** (review ID `4787144983`, head `746732dc2d758286d4340cf4628327e1206b8329`, CI run `30267254839`) was REQUEST CHANGES — `PR15A-H1`, `configure_logging()`'s reliance on `logging.basicConfig()`'s default idempotency meant the JSON formatter could silently never install if the root logger already had a handler (e.g. Uvicorn configuring logging before importing the app); `PR15A-H2`, the new post-commit import-success log could turn an already-committed, successful outcome into an HTTP 500 if it raised. **Review 2** (review ID `4788591587`, head `c32270e01073fb486066d5f95548282056f3b930`, CI run `30277548822`) was REQUEST CHANGES — H1 confirmed resolved; `PR15A-H2R`, the fallback log call inside the round-1 fix's own try/except was itself still unguarded, with the same gap in the access-log fallback and scheduler completion logging. **Review 3** (review ID `4789829543`, head `eeae67542d02e1dc266a15979c2b02857020f872`, CI run `30286421490`, 5/5 jobs green) recorded APPROVE WITH NON-BLOCKING COMMENTS — H2R confirmed resolved by `safe_log()`, applied to every post-success logging path, independently verified by 24/24 passing tests in `backend/tests/test_observability_logging.py`; `PR15A-M1` (non-blocking, deferred) — exception-handler log lines still use the raw request path rather than the route template. No schema or migration change. **No breaking API changes:** the implementation adds backward-compatible response headers only (`X-Request-ID`, `X-Correlation-ID`); existing clients continue to function without modification, and business semantics, response bodies, and status codes remain unchanged. See `docs/DECISION_LOG.md` ("Roadmap PR15 (PR15A slice) — Observability") for the full three-round review chronology. **PR15A is now fully complete. Roadmap PR15 (the Epic) is NOT fully complete** — PR15B (Schema Hygiene) is the next planned item, and application metrics, tracing, dashboards, log aggregation, and alerting remain open Roadmap PR15 scope, not scheduled to any slice, pending a future slice or an explicit governance decision to remove them from scope.
-
-## Current AI responsibilities
-
-| Role | Responsibility |
-|---|---|
-| Claude | Implementation on an assigned, bounded task |
-| Codex | Independent implementation review |
-| ChatGPT | Architecture/roadmap governance, both before implementation and after Codex's review |
-
-See `docs/PROJECT_WORKFLOW.md` for the full pipeline and `docs/REVIEW_CHECKLIST.md` for the shared review checklist.
-
-## Never-change rules (do not implement without an approved Governance PR)
-
-- Do not add a fifth equipment identifier or a fifth equipment state.
-- Do not add a cleaning state, cleaning-complete action, or cleaning workflow.
-- Do not add patient tracking (name, HN/MRN, bed number, named borrower).
-- Do not add ward-to-ward transfer tracking.
-- Do not bypass dispatch/receipt services to change equipment status.
-- Do not edit merged migration history casually.
-- Do not implement a later Roadmap PR ahead of its assigned order.
-- Do not merge automatically, and do not run a Claude<->Codex auto-repair loop.
-
-Full list with rationale: `docs/ARCHITECTURE_GUARDRAILS.md`.
-
-## Current limitations
-
-- The GitHub connector can return `403 Resource not accessible by integration` when submitting a formal Pull Request Review (not a silent downgrade). Preferred fallback: a formal `COMMENTED` review submitted through an authenticated browser session (this does satisfy review evidence). Last resort only: a PR Conversation comment, which is an incomplete status report and never counts as completed review evidence by itself.
-- No branch-protection rule yet requires CI to pass before merge; enforced by process discipline instead.
-
-Full detail and workarounds: `docs/KNOWN_LIMITATIONS.md`.
+- Start with `docs/PROJECT_PLAYBOOK.md`.
+- Use `knowledge/CONTEXT.md` for volatile current state.
+- Use `knowledge/CHANGE_HISTORY.md` and `docs/DECISION_LOG.md` for history.
+- Use `docs/DOCUMENTATION_AUDIT.md` for the documentation inventory.

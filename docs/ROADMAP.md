@@ -1,11 +1,18 @@
 # Roadmap
 
 **Purpose:** Current-state snapshot of the Medical Equipment Pool Roadmap — what is merged, what is next, at the current baseline
-**Authority:** Summary. `docs/audits/04-consolidated-implementation-plan.md` Part D remains authoritative for Roadmap PR scope, order, dependencies, and acceptance criteria. `docs/ROADMAP_STATUS.md` is superseded by this file (see the banner on that file).
+**Authority:** Detailed Roadmap summary. `docs/audits/04-consolidated-implementation-plan.md` Part D remains authoritative for Roadmap PR scope, order, dependencies, and acceptance criteria. `docs/ROADMAP_STATUS.md` is the concise live dashboard and does not redefine scope.
 **Update trigger:** A Roadmap PR merges, is added, is reordered, or the baseline changes
 **Maintainer:** Documentation/Governance Engineer
 
 ## Current baseline
+
+**Current as of this audit:** `4b0d422` — GitHub PR #52, the approved
+documentation-only Roadmap PR15B Schema Hygiene design
+(`docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md`). It is based on `fa570da`, the
+post-PR15A governance sync, and `e250638`, the PR15A implementation. PR15B
+implementation has not started. The older baseline narrative immediately
+below is retained as provenance for PR15A.
 
 `e250638db186f8e4dc3358bd475e9cf4eebc0bc8` — squash commit of GitHub PR #50 (Roadmap PR15, PR15A slice — Observability: structured JSON logging, async-safe request/job correlation IDs, one-per-request access-log event with route templates, fail-closed `safe_log()` post-success logging; see the Completed table below and the PR15 note), on branch `claude/medical-equipment-pool-0c7fz0`. This sits on top of `a43b680a5558aa322a613b3e3eba0eeb45858edf` (documentation-only post-merge governance sync recording Roadmap PR14B's completion, GitHub PR #49 — this is the actual PR15A base, correcting a prior PR49 self-reference gap; see the PR15 note), which sits on top of `82e289d40811b413659e7303a1690b66275e9759` (squash commit of GitHub PR #48, Roadmap PR14, PR14B slice — Pagination Performance: evidence-gated composite ordering indexes, fail-closed PostgreSQL catalog verification for `CREATE INDEX CONCURRENTLY`), which sits on top of `4d891ac8f9f1cc1ada45347d384d06fde705a97a` (documentation-only post-merge governance sync recording Roadmap PR14A's completion, GitHub PR #47), which sits on top of `ddd17b180c06a4fd2421f4886c0568876498abb2` (squash commit of GitHub PR #46, Roadmap PR14, PR14A slice — Reliability Correctness: PATCH nullable-field correctness, scheduler N+1 fix, transaction boundary audit), which sits on top of `8f7ef12e1660b35021df64fc9a529495cca77e49` (squash commit of GitHub PR #45, Roadmap PR13, Search, History, and Reporting Adjustments). **Roadmap PR8 (all three slices), Roadmap PR9 (both slices — PR9A, PR9B), Roadmap PR10, Roadmap PR11, Roadmap PR12, Roadmap PR13, and Roadmap PR14 (both slices — PR14A, PR14B) are now fully complete. Roadmap PR15 (Observability and Schema Hygiene) is an Epic split into focused slices (see the PR15 note): PR15A (Observability) is merged; PR15B (Schema Hygiene) is the next planned item and has not started. Application metrics, tracing, dashboards, log aggregation, and alerting are not scheduled to either PR15A or PR15B and remain open Roadmap PR15 scope, pending a future slice or an explicit governance decision to remove them — Roadmap PR15 is NOT fully complete after PR15A (see the PR15 note).**
 
@@ -78,7 +85,69 @@ Full rationale and review-fix history for PR5 through PR15A: `docs/DECISION_LOG.
 
 **PR15 note:** `docs/audits/04-consolidated-implementation-plan.md` Part D's PR15 entry ("Observability and Schema Hygiene," which also covers PR14's deferred Operational Logging scope item) is treated as an Epic implemented through multiple focused slices, following the same lettered-slice precedent as PR7/PR8/PR9/PR14, per the architecture-approved design revision (`docs/design/PR15_OBSERVABILITY_SCHEMA_HYGIENE_PLAN.md`, Revision 2, uncommitted design doc). **PR15A** (GitHub PR #50, branch `feature/pr15a-observability`, baseline `a43b680a5558aa322a613b3e3eba0eeb45858edf` — the PR14B post-merge governance sync, GitHub PR #49) shipped exactly the observability slice: structured JSON logging (`app.core.logging.JsonFormatter`); async-safe request/correlation-ID propagation via `contextvars` and a `logging.Filter` (`app.core.log_context`), reusing the existing request-context mechanism rather than introducing a parallel one; exactly one bounded access-log event per request using the route *template* (not the raw URL, to keep log cardinality bounded); an independent `job_run_id` for scheduler runs (deliberately not the HTTP request-ID mechanism, since a background job is not a request); aggregate-only import-commit logging (row-count statistics, never filenames or cell contents); and `safe_log()`, a fail-safe wrapper guaranteeing that no logging call — including its own best-effort fallback report — can ever propagate an exception back into request, job, or import-commit handling, so observability can never influence a business outcome. Deliberately excludes schema migrations, timezone migrations, FK `ondelete` policy changes, CHECK constraints, index naming, and any application metrics/tracing/dashboards/log aggregation/alerting (all remain separate, ungoverned-by-this-change Roadmap PR15 scope — see below). Three independent Codex reviews on Draft PR #50, each on a new exact head before the PR was squash merged: **Review 1** (review ID `4787144983`, reviewed head `746732dc2d758286d4340cf4628327e1206b8329`, CI run `30267254839`, 5/5 jobs green) was REQUEST CHANGES with two merge-blocking findings — `PR15A-H1`, `configure_logging()` relied on `logging.basicConfig()`'s default idempotency, which is a silent no-op once the root logger already has any handler (e.g. Uvicorn configuring its own logging before importing the app), so the JSON formatter could silently never install depending on import order; and `PR15A-H2`, the new post-commit import-success log (and the access-log's fallback) could raise and turn an already-committed, successful outcome into an HTTP 500. **Review 2** (review ID `4788591587`, reviewed head `c32270e01073fb486066d5f95548282056f3b930`, CI run `30277548822`, 5/5 jobs green) was REQUEST CHANGES — `PR15A-H1` confirmed resolved (`configure_logging()` now explicitly clears existing root handlers before installing its own, deterministically, regardless of import order); `PR15A-H2R`, the *fallback* log call inside the round-1 fix's own try/except was itself still unguarded, so a broken logging subsystem could still raise past it, with the same gap in the access-log fallback and scheduler completion logging. **Review 3** (review ID `4789829543`, reviewed head `eeae67542d02e1dc266a15979c2b02857020f872`, CI run `30286421490`, 5/5 jobs — Backend tests non-PostgreSQL, Backend tests PostgreSQL, Alembic migration upgrade validation, Frontend build, `git diff --check` — all green) recorded **APPROVE WITH NON-BLOCKING COMMENTS** — `PR15A-H2R` confirmed resolved by `safe_log()` (a helper guaranteeing neither the primary log call nor its own fallback report can ever escape), applied to access logging, scheduler success/failure logging, and import success/failure logging, independently verified by 24/24 passing tests in `backend/tests/test_observability_logging.py` at this exact head; `PR15A-M1` (non-blocking) — the four exception-handler log lines in `app/main.py` still log the raw request path rather than the route template — accepted as a deferred, explicitly tracked follow-up, not a merge blocker. No schema or migration change. **No breaking API changes:** the implementation adds backward-compatible response headers only (`X-Request-ID`, `X-Correlation-ID`); existing clients continue to function without modification, and business semantics, response bodies, and status codes remain unchanged. See `docs/DECISION_LOG.md` ("Roadmap PR15 (PR15A slice) — Observability") for the full three-round review chronology. **PR15A is now fully complete. Roadmap PR15 is NOT fully complete** — PR15B (Schema Hygiene) is the next planned item (see "Planned" below), and application metrics, tracing, dashboards, log aggregation, and alerting are not scheduled to any PR15 slice and remain open Roadmap PR15 scope pending a future slice or an explicit governance decision to remove them from scope.
 
-## Planned (not yet started)
+## Approved forward sequence
+
+The least disruptive numbering keeps the repository's established Roadmap
+PR1–PR15 sequence and assigns the newly approved work as follows. Roadmap
+numbers are not GitHub PR numbers; GitHub PR #18 was a governance PR, not
+Roadmap PR18.
+
+| Roadmap item | Planned scope |
+|---|---|
+| PR15B | Schema Hygiene implementation; design approved in GitHub PR #52 |
+| PR16 | Reporting Foundation; distinguish actual transaction timestamp, `business_date`, and `shift` |
+| PR17 | Date/shift-filtered Receive, Issue, and Equipment Verify Checklist reports |
+| PR18 | PDF export, Excel export, and print-ready Hard Copy templates |
+| PR19 | Legacy Import Foundation |
+| PR20 | Equipment Master Import: BCM, Item Number, equipment attributes, existing hospital QR linkage, equipment duplicate detection, and equipment-record validation |
+| PR21 | Legacy Receive and Issue History Import: Receive/Issue history, legacy BME-name preservation and user mapping, Ward normalization and mapping, transaction-row duplicate detection, and transaction source references |
+| PR22 | Legacy Data Validation and Reconciliation: cross-import validation, reconciliation, source traceability verification, duplicate review, and unified legacy/new history validation |
+| PR23 | Cutover Readiness |
+| PR24 | Go-live / deployment, blocked by PR19–PR23 |
+
+The documentation audit and Roadmap consistency work is an unnumbered
+governance change and does not consume a Roadmap number.
+
+### Reporting and shift contract
+
+Reporting must preserve three distinct concepts: the actual transaction
+timestamp, `business_date`, and `shift`. Shift is reporting and operational
+metadata, not an equipment lifecycle state. Day and Night are values in one
+model; do not create separate Day and Night tables.
+
+Reports must support date-and-shift filtering for Receive, Issue, and Equipment
+Verify Checklist data, followed by PDF, Excel, and print-ready Hard Copy
+output.
+
+### Version 1 legacy migration contract
+
+Legacy migration is mandatory before Go-live. The minimum Version 1 scope is:
+
+- Equipment Master;
+- legacy Receive history from the AppSheet equipment receive-data sheet; and
+- legacy Issue history from the AppSheet equipment issue-data sheet.
+
+Equipment Verify Checklist history is not part of the initial migration. The
+migration scope is divided as follows:
+
+- **PR20 — Equipment Master Import:** BCM, Item Number, equipment attributes,
+  existing hospital QR linkage, equipment duplicate detection, and
+  equipment-record validation.
+- **PR21 — Legacy Receive and Issue History Import:** Receive history, Issue
+  history, legacy BME-name preservation and user mapping, Ward normalization
+  and mapping, transaction-row duplicate detection, and transaction source
+  references.
+- **PR22 — Legacy Data Validation and Reconciliation:** cross-import
+  validation, reconciliation, source traceability verification, duplicate
+  review, and unified legacy/new history validation.
+
+The migration must not redesign or replace the hospital QR system.
+
+## Prior planned note (superseded where inconsistent)
+
+The PR15A-era text below is retained for provenance. Its statement that the
+PR15B design was uncommitted is superseded by GitHub PR #52 and the approved
+sequence above.
 
 Per `docs/audits/04-consolidated-implementation-plan.md` Part D:
 
@@ -92,7 +161,10 @@ Per `docs/audits/04-consolidated-implementation-plan.md` Part D:
 
 ## Confirmed future work (not scheduled to a Roadmap PR)
 
-- **Shift Sessions** — flexible DAY/NIGHT sessions replacing hard-coded routine-round times.
+- **Shift Sessions (superseded terminology)** — the approved PR16 direction is
+  transaction reporting metadata (`business_date` and `shift`) in one model,
+  not separate Day/Night tables or a new equipment lifecycle state. Any future
+  session workflow would require its own approval and must not contradict PR16.
 - **Standby Snapshots** — Day/Night department-level equipment-count reports.
 - **Managed deployment** — production must not assume direct access to hospital-managed servers.
 - **Create-from-import** — Roadmap PR12 (Inventory Import, GitHub PR #43) shipped update-only; creating new equipment from an imported spreadsheet row was deferred, not permanently prohibited, pending a dedicated design for real hospital Asset Number assignment (hospital-assigned values, a nullable-provisional-record model, or another authoritative approach) and, if the identifier model itself needs to change, a governing ADR update. See `docs/ROADMAP.md`'s PR12 note and `docs/DECISION_LOG.md` ("Roadmap PR12").
