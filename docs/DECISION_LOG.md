@@ -5,6 +5,25 @@
 **Update trigger:** Major decision made during a Roadmap or infrastructure PR's implementation or its review-fix rounds
 **Maintainer:** Documentation/Governance Engineer
 
+## 2026-07-28 — Documentation audit and post-PR18 Roadmap alignment
+
+- **Decision:** Keep existing Roadmap PR1–PR15 numbering, use PR16–PR18 for
+  reporting/shift/output, PR19–PR22 for legacy import and reconciliation, PR23
+  for cutover readiness, and PR24 for Go-live/deployment.
+- **Reason:** This preserves repository Roadmap numbering while honoring the
+  required order that legacy migration and reconciliation precede Go-live.
+  GitHub PR numbers remain a separate sequence.
+- **Reporting contract:** Actual transaction timestamp, `business_date`, and
+  `shift` are distinct. Shift is operational/reporting metadata; there are no
+  separate Day/Night tables and shift is not an equipment lifecycle state.
+- **Migration contract:** Version 1 imports Equipment Master plus only the
+  AppSheet equipment receive-data and equipment issue-data history sheets.
+  Equipment Verify Checklist history is excluded. Existing hospital QR codes
+  are preserved.
+- **Source:** `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`,
+  `docs/DOCUMENTATION_AUDIT.md`.
+- **Status:** Approved documentation alignment; implementation not started.
+
 ## Numbering note — read this first
 
 **Roadmap PR number** and **GitHub PR number** are different sequences and must not be conflated:

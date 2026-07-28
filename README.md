@@ -15,13 +15,14 @@ PM, calibration, recalls, or the hospital-wide asset lifecycle. See
   entry point, authority hierarchy, roles, workflow, and task reading sets
 - [`docs/HOSPITAL_DOMAIN_MODEL.md`](docs/HOSPITAL_DOMAIN_MODEL.md) — confirmed
   terminology and current/future workflow boundary
-- [`docs/ROADMAP_STATUS.md`](docs/ROADMAP_STATUS.md) — current Roadmap status
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — authoritative Roadmap detail and ordering
+- [`docs/ROADMAP_STATUS.md`](docs/ROADMAP_STATUS.md) — concise current-status dashboard
 - [`docs/audits/04-consolidated-implementation-plan.md`](docs/audits/04-consolidated-implementation-plan.md)
   — authoritative Roadmap PR scope and order
 
-Legacy design documents under `docs/01-...` through `docs/10-...` are retained
-for reference and history. They may describe proposals superseded by current
-guardrails and are not governance authority.
+Legacy design documents under `docs/01-...` through `docs/09-...` are retained
+as clearly labelled historical evidence. They may describe proposals
+superseded by current guardrails and are not governance authority.
 
 ## Repository layout
 

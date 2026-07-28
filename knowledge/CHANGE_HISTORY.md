@@ -7,6 +7,16 @@
 
 This file tracks *what changed in the shared mental model* over time, one line of context per concept. For the PR-by-PR rationale behind each change, see `docs/DECISION_LOG.md` (from Roadmap PR5 onward) and `docs/PROJECT_MEMORY.md` (Roadmap PR1 through Governance Pack v1.0).
 
+## Reporting and legacy-migration sequence aligned
+
+The Roadmap now distinguishes actual transaction timestamp, `business_date`,
+and `shift` in one reporting model; schedules Receive, Issue, and Equipment
+Verify Checklist reports plus PDF/Excel/hard-copy output as PR16–PR18; and
+places Equipment Master plus AppSheet Receive/Issue history migration,
+validation, reconciliation, and cutover readiness in PR19–PR23 before PR24
+Go-live. Equipment Verify Checklist history is outside the Version 1 migration.
+See `docs/ROADMAP.md` and `docs/DECISION_LOG.md`.
+
 ## Cleaning status removed
 
 A cleaning status/workflow was proposed early (a two-step "Return Received" / "Cleaning Confirmed" process, `docs/audits/03-hospital-equipment-pool-workflow-audit.md` §6.1) and explicitly superseded before implementation: the hospital confirmed receipt is one atomic usable/defective operation, and the system never tracks cleaning. See `docs/ARCHITECTURE_DECISIONS.md` ("No cleaning workflow").

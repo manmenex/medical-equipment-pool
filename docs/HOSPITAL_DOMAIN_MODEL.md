@@ -95,16 +95,18 @@ defined by
 Fixed routine-round values are an MVP simplification until a separately scoped
 future change replaces them.
 
-### Future Shift Sessions
+### Planned reporting shift metadata
 
-Future work will model flexible `DAY` and `NIGHT` Shift Sessions:
+Roadmap PR16 will distinguish:
 
-- opening/closing times are flexible;
-- multiple operators may work during one open session;
-- every transaction still records its actual authenticated operator;
-- a session does not replace operator attribution.
+- the actual transaction timestamp;
+- `business_date`; and
+- `shift`.
 
-Shift Sessions are confirmed direction but not scheduled to an active Roadmap PR.
+Day and Night are values in one model, not separate tables. Shift is
+reporting/operational metadata, not an equipment lifecycle state. Every
+transaction continues to record its authenticated operator. A richer Shift
+Session workflow is not part of PR16 and remains subject to separate approval.
 
 ### Future Standby Snapshots
 
