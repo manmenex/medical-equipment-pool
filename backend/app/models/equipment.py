@@ -1,14 +1,14 @@
 import enum
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
-from sqlalchemy import Date, Enum, ForeignKey, String, Text
+from sqlalchemy import Date, Enum, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
 from app.db.base import Base
-from app.models.mixins import SoftDeleteMixin, TimestampMixin, UUIDPKMixin
+from app.models.mixins import SoftDeleteMixin, TimestampMixin, UTCDateTime, UUIDPKMixin
 
 JSONType = JSONB().with_variant(JSON(), "sqlite")
 
@@ -98,6 +98,14 @@ MANUAL_LIFECYCLE_TRANSITIONS: dict["EquipmentStatus", frozenset["EquipmentStatus
 
 class Equipment(UUIDPKMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "equipment"
+    # serial_number: Roadmap PR15B (docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md
+    # §6.4) -- explicit name converges with migration 0014's
+    # `uq_equipment_serial_number` rename instead of leaving `unique=True`
+    # produce PostgreSQL's unnamed `equipment_serial_number_key`. The other
+    # unique columns below (asset_number, item_no, bcm_code, qr_code_value)
+    # already combine `unique=True` with `index=True`, which gives them
+    # SQLAlchemy's own `ix_<table>_<column>` naming -- not part of this fix.
+    __table_args__ = (UniqueConstraint("serial_number", name="uq_equipment_serial_number"),)
     # updated_at (TimestampMixin) is onupdate=func.now() — server-computed,
     # not known client-side. Without eager_defaults, SQLAlchemy marks it
     # expired after an UPDATE flush instead of fetching it via RETURNING
@@ -110,7 +118,7 @@ class Equipment(UUIDPKMixin, TimestampMixin, SoftDeleteMixin, Base):
     __mapper_args__ = {"eager_defaults": True}
 
     asset_number: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
-    serial_number: Mapped[str | None] = mapped_column(String(100), unique=True)
+    serial_number: Mapped[str | None] = mapped_column(String(100))
     equipment_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     # See ADR-002 (identifier model), ADR-003 (BCM manual search), ADR-004
     # (hospital Item-No QR). Canonicalization: app.services.identifiers.
@@ -138,10 +146,14 @@ class Equipment(UUIDPKMixin, TimestampMixin, SoftDeleteMixin, Base):
     # responsive partial matching.
     item_no: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
     bcm_code: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
-    category_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("equipment_categories.id"))
+    category_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("equipment_categories.id", ondelete="RESTRICT")
+    )
     brand: Mapped[str | None] = mapped_column(String(100))
     model: Mapped[str | None] = mapped_column(String(100))
-    department_owner_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("departments.id"))
+    department_owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("departments.id", ondelete="RESTRICT")
+    )
     status: Mapped[EquipmentStatus] = mapped_column(
         EquipmentStatusType, default=EquipmentStatus.AVAILABLE_AT_POOL, nullable=False, index=True
     )
@@ -152,7 +164,9 @@ class Equipment(UUIDPKMixin, TimestampMixin, SoftDeleteMixin, Base):
     # AGENTS.md's cleaning-retirement guardrail. Left NULL for every row
     # created after that migration.
     legacy_status: Mapped[str | None] = mapped_column(String(30))
-    current_location_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("locations.id"))
+    current_location_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("locations.id", ondelete="RESTRICT")
+    )
     # Legacy self-generated `MEP:{asset_number}` QR value (pre-dates Roadmap
     # PR5). Retired by ADR-004: the hospital's own Item-No QR label is the
     # only supported QR format now, so this column is no longer written on
@@ -194,13 +208,19 @@ class Equipment(UUIDPKMixin, TimestampMixin, SoftDeleteMixin, Base):
 class EquipmentStatusHistory(UUIDPKMixin, Base):
     __tablename__ = "equipment_status_history"
 
-    equipment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("equipment.id"), nullable=False, index=True)
+    equipment_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("equipment.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
     from_status: Mapped[str | None] = mapped_column(String(30))
     to_status: Mapped[str] = mapped_column(String(30), nullable=False)
-    changed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    changed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
     reason: Mapped[str | None] = mapped_column(Text)
+    # See app.models.audit.AuditLog.created_at's identical comment (Roadmap
+    # PR15B, docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md §3.4/§3.5).
     changed_at: Mapped[datetime] = mapped_column(
-        default=datetime.utcnow, nullable=False
+        UTCDateTime, default=lambda: datetime.now(timezone.utc), nullable=False
     )
 
     equipment: Mapped["Equipment"] = relationship(back_populates="status_history")
@@ -209,29 +229,41 @@ class EquipmentStatusHistory(UUIDPKMixin, Base):
 class PMSchedule(UUIDPKMixin, Base):
     __tablename__ = "pm_schedules"
 
-    equipment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("equipment.id"), nullable=False, index=True)
+    equipment_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("equipment.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
     scheduled_date: Mapped[date] = mapped_column(Date, nullable=False)
     completed_date: Mapped[date | None] = mapped_column(Date)
     status: Mapped[str] = mapped_column(String(20), default="scheduled")
-    performed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    performed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
     notes: Mapped[str | None] = mapped_column(Text)
 
 
 class CalibrationSchedule(UUIDPKMixin, Base):
     __tablename__ = "calibration_schedules"
 
-    equipment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("equipment.id"), nullable=False, index=True)
+    equipment_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("equipment.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
     scheduled_date: Mapped[date] = mapped_column(Date, nullable=False)
     completed_date: Mapped[date | None] = mapped_column(Date)
     status: Mapped[str] = mapped_column(String(20), default="scheduled")
     certificate_number: Mapped[str | None] = mapped_column(String(100))
-    performed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    performed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
 
 
 class EquipmentAttachment(UUIDPKMixin, Base):
     __tablename__ = "equipment_attachments"
 
-    equipment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("equipment.id"), nullable=False, index=True)
+    equipment_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("equipment.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
     file_url: Mapped[str] = mapped_column(String(500), nullable=False)
     file_type: Mapped[str | None] = mapped_column(String(50))
-    uploaded_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    uploaded_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )

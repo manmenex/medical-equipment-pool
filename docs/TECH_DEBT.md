@@ -13,25 +13,27 @@ verification passes.
 
 | ID | Title | Severity | Status | First identified | Related work | Owner role | Last reviewed |
 |---|---|---|---|---|---|---|---|
-| TD-001 | Equipment update/status response `MissingGreenlet` | High | Open | PR #7 test-writing | Draft PR #7 known limitation #6 | Backend Engineer | 2026-07-17 |
+| TD-001 | Equipment update/status response `MissingGreenlet` | High | Closed | PR #7 test-writing | `eager_defaults=True`, `app/models/equipment.py:110` | Backend Engineer | 2026-07-28 |
 | TD-002 | `0001_initial.py` uses current ORM metadata | High | Open | PR #7 migration review | `0001_initial.py`; Governance PR #8 | Database Engineer | 2026-07-17 |
 | TD-003 | No required PostgreSQL CI workflow | Medium | Open | PR #7 evidence review | PostgreSQL tests exist; `.github/workflows` absent | Repository Owner | 2026-07-17 |
 | TD-004 | Naive `datetime.utcnow()` usage | Low | Open | Governance Pack inventory | Multiple backend models/services | Backend Engineer | 2026-07-17 |
 | TD-005 | Temporary default/long-lived branch structure | Medium | Open | Repository cleanup assessment | Recall default; `claude/*` active base | Repository Owner | 2026-07-17 |
 | TD-006 | Frontend still submits the retired receipt `condition` field | High | Closed | Roadmap PR8B implementation | `frontend/src/services/borrow.ts`, `types/index.ts`, `pages/ReturnPage.tsx`; `docs/api/receipt.md` | Frontend Engineer | 2026-07-23 |
 
-## TD-001 — Equipment update/status response `MissingGreenlet`
+## TD-001 — Equipment update/status response `MissingGreenlet` (Closed)
 
-- **Description:** Existing equipment update and status-change endpoints can
-  commit successfully and then return HTTP 500 when serialization touches an
+- **Description:** Existing equipment update and status-change endpoints could
+  commit successfully and then return HTTP 500 when serialization touched an
   expired `updated_at` value outside the async greenlet context.
-- **Operational impact:** Clients see failure after a successful mutation and
-  may retry, causing confusion or duplicate user intent.
+- **Operational impact:** Clients saw failure after a successful mutation and
+  could retry, causing confusion or duplicate user intent.
 - **Why deferred:** Discovered while testing audit behavior; unrelated to the
   focused PR3 audit framework and explicitly left out of Draft PR #7.
-- **Resolution trigger:** Focused backend bugfix PR before workflow/UI relies on
-  these responses.
-- **Verification to close:** API tests prove success response, committed row,
+- **Resolution:** `Equipment.__mapper_args__ = {"eager_defaults": True}`
+  (`app/models/equipment.py:110`) makes `UPDATE` use `RETURNING updated_at`,
+  so the value is already loaded and no lazy refresh outside the async
+  context is ever attempted.
+- **Verification (closed):** API tests prove success response, committed row,
   exactly one audit event, and safe retry behavior for update/status endpoints.
 
 ## TD-002 — `0001_initial.py` uses current ORM metadata

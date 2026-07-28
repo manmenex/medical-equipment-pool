@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -59,7 +59,7 @@ async def authenticate(
     if role is None:
         raise InvalidCredentialsError("User has no assigned role")
 
-    user.last_login_at = datetime.utcnow()
+    user.last_login_at = datetime.now(timezone.utc)
     # Best-effort across the whole persistence boundary — both the audit
     # write (record_best_effort_audit_event's own SAVEPOINT) and this
     # commit (commit_best_effort) — must not block a legitimate login. If

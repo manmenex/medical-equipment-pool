@@ -7152,3 +7152,813 @@ async def test_migration_0011_planner_uses_the_new_index_for_first_page_transact
             await engine.dispose()
     finally:
         await _drop_scratch_database()
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR15B (Schema Hygiene) -- migrations 0012_timezone_conversion.py,
+# 0013_fk_ondelete_policy.py, 0014_index_naming_convergence.py.
+# docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md §11's acceptance criteria require:
+# fresh/historical/downgrade/re-upgrade rehearsal for each migration;
+# verify-and-no-op idempotency (a second run performs zero schema changes and
+# does not corrupt already-converted data); the three fail-closed mixed-state
+# scenarios (§8.7c); and the mandatory interrupted-index-build regression
+# test (§8.7d). "0011 -> head" is not a genuinely historical rehearsal on its
+# own here (0001_initial.py reflects *today's* already-PR15B-fixed ORM
+# metadata, TD-002) -- these tests explicitly strip the schema back to
+# pre-PR15B shapes via raw SQL first, mirroring the established
+# `_strip_0010_additions_to_build_historical_0009_schema` precedent above.
+# ---------------------------------------------------------------------------
+
+_PR15B_TIMEZONE_COLUMNS = (
+    ("audit_logs", "created_at"),
+    ("notifications", "created_at"),
+    ("equipment_status_history", "changed_at"),
+    ("borrow_transactions", "borrowed_at"),
+    ("borrow_transactions", "returned_at"),
+)
+
+
+async def _column_data_type(engine, table: str, column: str) -> str | None:
+    async with engine.connect() as conn:
+        return (
+            await conn.execute(
+                text(
+                    "SELECT data_type FROM information_schema.columns "
+                    "WHERE table_schema='public' AND table_name=:table AND column_name=:column"
+                ),
+                {"table": table, "column": column},
+            )
+        ).scalar_one_or_none()
+
+
+async def _fk_confdeltype(engine, conname: str) -> str | None:
+    async with engine.connect() as conn:
+        return (
+            await conn.execute(
+                text("SELECT confdeltype::text FROM pg_constraint WHERE conname=:name AND contype='f'"),
+                {"name": conname},
+            )
+        ).scalar_one_or_none()
+
+
+async def _index_exists(engine, name: str) -> bool:
+    async with engine.connect() as conn:
+        return (
+            await conn.execute(
+                text("SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname=:name"), {"name": name}
+            )
+        ).scalar_one_or_none() is not None
+
+
+async def _constraint_exists(engine, name: str, contype: str) -> bool:
+    async with engine.connect() as conn:
+        return (
+            await conn.execute(
+                text("SELECT 1 FROM pg_constraint WHERE conname=:name AND contype::text=:contype"),
+                {"name": name, "contype": contype},
+            )
+        ).scalar_one_or_none() is not None
+
+
+async def _strip_pr15b_additions_to_build_historical_0011_schema(engine) -> None:
+    """Reverts the live (already-PR15B-fixed, per TD-002) schema back to a
+    genuine pre-PR15B shape: naive timestamps, implicit NO ACTION on two
+    representative FKs, and legacy auto-named unique constraints on two
+    representative columns -- enough surface for the historical-upgrade
+    tests below to exercise the real needs-transformation path (§8.7a
+    outcome 1) for each of the three migrations, not the already-fixed
+    no-op path. The GIN trigram indexes need no stripping here: they are
+    migration-only (no ORM declaration at all, confirmed via grep, §6.4),
+    so 0001_initial.py's raw `op.execute("CREATE INDEX IF NOT EXISTS
+    idx_equipment_..._trgm ...")` always creates them under the legacy
+    name regardless of ORM/PR15B state -- at revision 0011 they are
+    already `idx_equipment_asset_trgm` et al., unlike the ORM-declared
+    objects below."""
+    async with engine.begin() as conn:
+        for table, column in _PR15B_TIMEZONE_COLUMNS:
+            await conn.execute(text(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE timestamp without time zone"))
+        await conn.execute(text("ALTER TABLE equipment DROP CONSTRAINT equipment_category_id_fkey"))
+        await conn.execute(
+            text(
+                "ALTER TABLE equipment ADD CONSTRAINT equipment_category_id_fkey "
+                "FOREIGN KEY (category_id) REFERENCES equipment_categories(id)"
+            )
+        )
+        await conn.execute(text("ALTER TABLE users DROP CONSTRAINT users_role_id_fkey"))
+        await conn.execute(
+            text("ALTER TABLE users ADD CONSTRAINT users_role_id_fkey FOREIGN KEY (role_id) REFERENCES roles(id)")
+        )
+        await conn.execute(
+            text("ALTER TABLE equipment RENAME CONSTRAINT uq_equipment_serial_number TO equipment_serial_number_key")
+        )
+        await conn.execute(text("ALTER TABLE users RENAME CONSTRAINT uq_users_email TO users_email_key"))
+
+
+async def test_migration_0012_fresh_database_upgrade_to_head_converges_on_expected_schema():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            for table, column in _PR15B_TIMEZONE_COLUMNS:
+                data_type = await _column_data_type(engine, table, column)
+                assert data_type == "timestamp with time zone", f"{table}.{column} was {data_type!r}"
+            # due_at is deliberately excluded (§3.4a) -- must remain naive.
+            due_at_type = await _column_data_type(engine, "borrow_transactions", "due_at")
+            assert due_at_type == "timestamp without time zone"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0012_historical_upgrade_preserves_the_exact_instant():
+    """The core correctness claim of Migration A: `AT TIME ZONE 'UTC'`
+    against a genuinely naive, pre-existing row must not shift the stored
+    instant by even one second -- proven by seeding a known naive value
+    before upgrading and reading it back as an aware value afterward."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0011_pagination_ordering_indexes")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            await _strip_pr15b_additions_to_build_historical_0011_schema(engine)
+
+            for table, column in _PR15B_TIMEZONE_COLUMNS:
+                data_type = await _column_data_type(engine, table, column)
+                assert data_type == "timestamp without time zone", f"genuine historical baseline: {table}.{column}"
+
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text("INSERT INTO audit_logs (id, action, entity_type, created_at) "
+                         "VALUES (gen_random_uuid(), 'test', 'test', '2026-03-15 08:30:00')")
+                )
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            data_type = await _column_data_type(engine, "audit_logs", "created_at")
+            assert data_type == "timestamp with time zone"
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(text("SELECT created_at FROM audit_logs WHERE action='test'"))
+                ).scalar_one()
+                assert row.isoformat() == "2026-03-15T08:30:00+00:00", (
+                    f"the naive wall-clock value must convert to the identical UTC instant, got {row!r}"
+                )
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0012_downgrade_re_upgrade_round_trip_is_lossless():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0011_pagination_ordering_indexes")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            await _strip_pr15b_additions_to_build_historical_0011_schema(engine)
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text("INSERT INTO audit_logs (id, action, entity_type, created_at) "
+                         "VALUES (gen_random_uuid(), 'roundtrip', 'test', '2026-05-01 00:00:00')")
+                )
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0011_pagination_ordering_indexes")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            data_type = await _column_data_type(engine, "audit_logs", "created_at")
+            assert data_type == "timestamp without time zone"
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(text("SELECT created_at FROM audit_logs WHERE action='roundtrip'"))
+                ).scalar_one()
+                assert str(row) == "2026-05-01 00:00:00", f"downgrade must be lossless for the stored instant, got {row!r}"
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            data_type = await _column_data_type(engine, "audit_logs", "created_at")
+            assert data_type == "timestamp with time zone"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0012_second_run_is_noop_and_does_not_shift_already_aware_values():
+    """The most severe risk this design identifies (§10): re-running the
+    `AT TIME ZONE 'UTC'` expression against an already-`timestamptz` column
+    would silently re-derive the value via the migration session's
+    effective timezone. Proven here by setting the session timezone to a
+    non-UTC offset before re-running `alembic upgrade head` a second time
+    against an already-converted database -- if the migration incorrectly
+    re-ran the conversion, the stored instant would shift; verify-and-no-op
+    must make this impossible."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text("INSERT INTO audit_logs (id, action, entity_type, created_at) "
+                         "VALUES (gen_random_uuid(), 'noop-check', 'test', '2026-06-01T12:00:00+00:00')")
+                )
+            async with engine.connect() as conn:
+                before = (
+                    await conn.execute(text("SELECT created_at FROM audit_logs WHERE action='noop-check'"))
+                ).scalar_one()
+        finally:
+            await engine.dispose()
+
+        # Re-run against the already-timestamptz column, with the
+        # migration session deliberately set to a non-UTC timezone --
+        # a session-dependent re-conversion bug would surface as a shifted
+        # value under exactly this condition.
+        _run_alembic("upgrade", "head", extra_env={"PGTZ": "America/New_York"})
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                after = (
+                    await conn.execute(text("SELECT created_at FROM audit_logs WHERE action='noop-check'"))
+                ).scalar_one()
+                assert after == before, (
+                    f"a no-op re-run must never alter an already-aware value: before={before!r} after={after!r}"
+                )
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0013_fresh_database_all_25_foreign_keys_are_restrict():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                rows = (
+                    await conn.execute(text("SELECT conname, confdeltype::text FROM pg_constraint WHERE contype='f'"))
+                ).all()
+                assert len(rows) == 25, f"expected exactly 25 foreign keys, found {len(rows)}: {rows}"
+                for conname, confdeltype in rows:
+                    assert confdeltype == "r", f"{conname} has confdeltype={confdeltype!r}, expected 'r' (RESTRICT)"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0013_historical_upgrade_converts_no_action_to_restrict():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0011_pagination_ordering_indexes")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            await _strip_pr15b_additions_to_build_historical_0011_schema(engine)
+            assert await _fk_confdeltype(engine, "equipment_category_id_fkey") == "a"
+            assert await _fk_confdeltype(engine, "users_role_id_fkey") == "a"
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            assert await _fk_confdeltype(engine, "equipment_category_id_fkey") == "r"
+            assert await _fk_confdeltype(engine, "users_role_id_fkey") == "r"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0013_downgrade_re_upgrade_round_trip():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0011_pagination_ordering_indexes")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            assert await _fk_confdeltype(engine, "equipment_category_id_fkey") == "a"
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            assert await _fk_confdeltype(engine, "equipment_category_id_fkey") == "r"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0013_second_run_is_noop():
+    """Verify-and-no-op idempotency: re-running `alembic upgrade head`
+    against an already-RESTRICT database must succeed and leave the
+    catalog snapshot for all 25 FKs byte-identical."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                before = sorted(
+                    (await conn.execute(text("SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint WHERE contype='f'"))).all()
+                )
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                after = sorted(
+                    (await conn.execute(text("SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint WHERE contype='f'"))).all()
+                )
+        finally:
+            await engine.dispose()
+        assert before == after, "a no-op re-run must leave every FK's definition byte-identical"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0013_mismatched_definition_fails_closed():
+    """§8.7c Scenario 2: a constraint under the expected name exists, but
+    points at the wrong referenced table -- must not be silently accepted
+    as 'already RESTRICT' just because confdeltype happens to match."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0011_pagination_ordering_indexes")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            await _strip_pr15b_additions_to_build_historical_0011_schema(engine)
+            async with engine.begin() as conn:
+                # Deliberately wrong: points at departments, not
+                # equipment_categories, but already carries the target
+                # ON DELETE RESTRICT and the expected constraint name.
+                await conn.execute(text("ALTER TABLE equipment DROP CONSTRAINT equipment_category_id_fkey"))
+                await conn.execute(
+                    text(
+                        "ALTER TABLE equipment ADD CONSTRAINT equipment_category_id_fkey "
+                        "FOREIGN KEY (department_owner_id) REFERENCES departments(id) ON DELETE RESTRICT"
+                    )
+                )
+        finally:
+            await engine.dispose()
+
+        result = _run_alembic_allow_failure("upgrade", "head")
+        assert result.returncode != 0, "a mismatched FK definition must fail the migration, not be silently accepted"
+        combined = result.stdout + result.stderr
+        assert "does not match" in combined, f"failure must explain the mismatch:\n{combined}"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0014_fresh_database_converges_on_ix_uq_naming():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            for name in (
+                "ix_equipment_asset_number_trgm",
+                "ix_equipment_bcm_code_trgm",
+                "ix_equipment_equipment_name_trgm",
+                "ix_equipment_serial_number_trgm",
+                "ix_borrow_transactions_one_active_borrow",
+            ):
+                assert await _index_exists(engine, name), f"expected index {name} to exist"
+            for legacy in (
+                "idx_equipment_asset_trgm",
+                "idx_equipment_bcm_trgm",
+                "idx_equipment_name_trgm",
+                "idx_equipment_serial_trgm",
+                "idx_tx_one_active_borrow",
+            ):
+                assert not await _index_exists(engine, legacy), f"legacy name {legacy} must not remain"
+            for name in (
+                "uq_equipment_serial_number",
+                "uq_equipment_categories_name",
+                "uq_departments_code",
+                "uq_wards_code",
+                "uq_roles_name",
+                "uq_users_employee_code",
+                "uq_users_email",
+            ):
+                assert await _constraint_exists(engine, name, "u"), f"expected unique constraint {name} to exist"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0014_historical_upgrade_renames_legacy_names():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0011_pagination_ordering_indexes")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            await _strip_pr15b_additions_to_build_historical_0011_schema(engine)
+            assert await _index_exists(engine, "idx_equipment_asset_trgm")
+            assert await _constraint_exists(engine, "equipment_serial_number_key", "u")
+            assert await _constraint_exists(engine, "users_email_key", "u")
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            assert await _index_exists(engine, "ix_equipment_asset_number_trgm")
+            assert not await _index_exists(engine, "idx_equipment_asset_trgm")
+            assert await _constraint_exists(engine, "uq_equipment_serial_number", "u")
+            assert not await _constraint_exists(engine, "equipment_serial_number_key", "u")
+            assert await _constraint_exists(engine, "uq_users_email", "u")
+            assert not await _constraint_exists(engine, "users_email_key", "u")
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0014_downgrade_re_upgrade_round_trip():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0011_pagination_ordering_indexes")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            assert await _index_exists(engine, "idx_equipment_asset_trgm")
+            assert await _constraint_exists(engine, "equipment_serial_number_key", "u")
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            assert await _index_exists(engine, "ix_equipment_asset_number_trgm")
+            assert await _constraint_exists(engine, "uq_equipment_serial_number", "u")
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0014_both_legacy_and_target_names_present_fails_closed():
+    """§8.7c Scenario 1: a database somehow has both
+    equipment_serial_number_key (legacy) and uq_equipment_serial_number
+    (target) simultaneously -- must raise, naming both, never guess."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0011_pagination_ordering_indexes")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            await _strip_pr15b_additions_to_build_historical_0011_schema(engine)
+            async with engine.begin() as conn:
+                # A second, independent unique constraint on the same
+                # column under the *target* name -- both now present.
+                await conn.execute(
+                    text(
+                        "ALTER TABLE equipment ADD CONSTRAINT uq_equipment_serial_number "
+                        "UNIQUE (serial_number)"
+                    )
+                )
+        finally:
+            await engine.dispose()
+
+        result = _run_alembic_allow_failure("upgrade", "head")
+        assert result.returncode != 0, "both legacy and target names present must fail the migration"
+        combined = result.stdout + result.stderr
+        assert "simultaneously" in combined, f"failure must explain the mixed-state scenario:\n{combined}"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0014_mismatched_target_definition_fails_closed():
+    """§8.7c Scenario 2: an index under the target name exists, but its
+    predicate is wrong -- e.g. `idx_tx_one_active_borrow` never renamed,
+    and something else already created `ix_borrow_transactions_one_active_
+    borrow` with the *pre-PR7* predicate (`status = 'borrowed'`), not the
+    real safety index's `status = 'open'`. Must not be silently accepted."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0011_pagination_ordering_indexes")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            await _strip_pr15b_additions_to_build_historical_0011_schema(engine)
+            async with engine.begin() as conn:
+                # Drop the legacy-named index first -- otherwise both the
+                # legacy name and the (wrong-predicate) target name would
+                # be present simultaneously, exercising Scenario 1, not
+                # the Scenario 2 (target-named-but-mismatched) this test
+                # isolates.
+                await conn.execute(text("DROP INDEX idx_tx_one_active_borrow"))
+                await conn.execute(
+                    text(
+                        "CREATE UNIQUE INDEX ix_borrow_transactions_one_active_borrow "
+                        "ON borrow_transactions (equipment_id) WHERE status = 'borrowed'"
+                    )
+                )
+        finally:
+            await engine.dispose()
+
+        result = _run_alembic_allow_failure("upgrade", "head")
+        assert result.returncode != 0, "a wrong-predicate target-named index must fail the migration"
+        combined = result.stdout + result.stderr
+        assert "does not match" in combined, f"failure must explain the definition mismatch:\n{combined}"
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0014_interrupted_index_build_fails_closed_not_silent_skip():
+    """§8.7d mandatory regression test: an index under the target name
+    that is valid-looking (correct definition) but `indisvalid=false` /
+    `indisready=false` (the exact state an interrupted `CREATE INDEX
+    CONCURRENTLY` leaves behind) must never be treated as outcome 2
+    (no-op) -- proven end to end via the real `alembic` CLI, asserting
+    detection, safe termination, zero partial mutation elsewhere in the
+    same migration run, an actionable error naming indisvalid/indisready,
+    and that a subsequent re-run fails the same way (not a shallower
+    check that only re-confirms name+definition)."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0013_fk_ondelete_policy")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("DROP INDEX IF EXISTS idx_tx_one_active_borrow"))
+                await conn.execute(
+                    text(
+                        "CREATE UNIQUE INDEX ix_borrow_transactions_one_active_borrow "
+                        "ON borrow_transactions (equipment_id) WHERE status = 'open'"
+                    )
+                )
+                await conn.execute(
+                    text(
+                        "UPDATE pg_index SET indisvalid = false, indisready = false "
+                        "WHERE indexrelid = 'ix_borrow_transactions_one_active_borrow'::regclass"
+                    )
+                )
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        text(
+                            "SELECT indisvalid, indisready FROM pg_index "
+                            "WHERE indexrelid = 'ix_borrow_transactions_one_active_borrow'::regclass"
+                        )
+                    )
+                ).one()
+                assert row.indisvalid is False and row.indisready is False, "test setup must produce a genuinely unhealthy index"
+        finally:
+            await engine.dispose()
+
+        result = _run_alembic_allow_failure("upgrade", "head")
+        assert result.returncode != 0, "an unhealthy target-named index must fail the migration, not be silently accepted"
+        combined = result.stdout + result.stderr
+        assert "indisvalid" in combined or "not usable" in combined, f"failure must name the health-state mismatch:\n{combined}"
+
+        # No other object this migration would have touched was mutated --
+        # the whole migration aborts (transactional DDL), not just the one
+        # problem object. The 4 GIN trigram indexes are renamed earlier in
+        # _INDEX_RENAMES than idx_tx_one_active_borrow (the last entry, and
+        # the one this test made unhealthy) -- if the migration's abort
+        # were not fully transactional, those renames would have already
+        # persisted by the time the failure occurred.
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            assert await _index_exists(engine, "idx_equipment_asset_trgm"), (
+                "the trigram index rename must not have persisted past the same migration's later failure"
+            )
+            assert not await _index_exists(engine, "ix_equipment_asset_number_trgm"), (
+                "the whole migration must abort transactionally, not partially apply"
+            )
+        finally:
+            await engine.dispose()
+
+        # Re-run must fail identically, not silently succeed because a
+        # shallower check only re-confirmed name+definition without
+        # re-checking health.
+        result2 = _run_alembic_allow_failure("upgrade", "head")
+        assert result2.returncode != 0, "a second attempt against the still-unhealthy index must fail the same way"
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        text(
+                            "SELECT indexdef FROM pg_indexes WHERE indexname='ix_borrow_transactions_one_active_borrow'"
+                        )
+                    )
+                ).scalar_one()
+            assert "status" in row, "the unhealthy index's definition must remain byte-for-byte unchanged after the failed attempt"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0014_safety_index_still_rejects_duplicate_active_borrow_after_rename():
+    """§6.4/§11: renaming idx_tx_one_active_borrow to
+    ix_borrow_transactions_one_active_borrow must not weaken its role as
+    the real database-level guard against double-dispatching the same
+    equipment -- a second concurrent OPEN transaction for the same
+    equipment must still violate the (renamed) partial unique index."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata) "
+                        "VALUES (gen_random_uuid(), 'SAFETY-IDX-0001', 'Safety Index Device', 'issued_to_ward', '{}')"
+                    )
+                )
+                await conn.execute(
+                    text(
+                        "INSERT INTO borrow_transactions "
+                        "(id, transaction_no, equipment_id, quantity, status, borrowed_at) "
+                        "SELECT gen_random_uuid(), 'SAFETY-TX-0001', id, 1, 'open', now() "
+                        "FROM equipment WHERE asset_number = 'SAFETY-IDX-0001'"
+                    )
+                )
+            with pytest.raises(Exception) as exc_info:
+                async with engine.begin() as conn:
+                    await conn.execute(
+                        text(
+                            "INSERT INTO borrow_transactions "
+                            "(id, transaction_no, equipment_id, quantity, status, borrowed_at) "
+                            "SELECT gen_random_uuid(), 'SAFETY-TX-0002', id, 1, 'open', now() "
+                            "FROM equipment WHERE asset_number = 'SAFETY-IDX-0001'"
+                        )
+                    )
+            assert "ix_borrow_transactions_one_active_borrow" in str(exc_info.value), (
+                f"the duplicate-active-borrow rejection must come from the renamed safety index, got: {exc_info.value}"
+            )
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_pr15b_schema_convergence_fresh_and_historical_paths_are_identical():
+    """§11: a fresh base->head install and a historical 0011->head upgrade
+    (against a database seeded with realistic pre-existing rows) must
+    reach byte-identical information_schema.columns/pg_constraint/
+    pg_indexes snapshots for every object the three migrations touch."""
+
+    async def _snapshot(engine) -> dict:
+        async with engine.connect() as conn:
+            columns = sorted(
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT table_name, column_name, data_type FROM information_schema.columns "
+                            "WHERE table_schema='public' AND (table_name, column_name) IN "
+                            "(('audit_logs','created_at'),('notifications','created_at'),"
+                            "('equipment_status_history','changed_at'),"
+                            "('borrow_transactions','borrowed_at'),('borrow_transactions','returned_at'),"
+                            "('borrow_transactions','due_at'))"
+                        )
+                    )
+                ).all()
+            )
+            fks = sorted(
+                (await conn.execute(text("SELECT conname, confdeltype::text FROM pg_constraint WHERE contype='f'"))).all()
+            )
+            index_names = sorted(
+                r[0]
+                for r in (
+                    await conn.execute(
+                        text(
+                            "SELECT indexname FROM pg_indexes WHERE schemaname='public' "
+                            "AND (indexname LIKE 'ix_%' OR indexname LIKE 'uq_%')"
+                        )
+                    )
+                ).all()
+            )
+        return {"columns": columns, "fks": fks, "index_names": index_names}
+
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            fresh_snapshot = await _snapshot(engine)
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0011_pagination_ordering_indexes")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            await _strip_pr15b_additions_to_build_historical_0011_schema(engine)
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            historical_snapshot = await _snapshot(engine)
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+    assert fresh_snapshot == historical_snapshot, (
+        "fresh-install and historical-upgrade paths must converge on an identical final schema"
+    )
