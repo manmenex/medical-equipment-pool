@@ -11,7 +11,7 @@
 
 Design Roadmap PR17 — the first operational reporting package: **Receive Report**, **Issue Report**, and **Equipment Verify Checklist Report**. PR17 builds directly on the completed Reporting Foundation (Roadmap PR16): `business_date`/`shift` derivation, the `dispatch_business_date`/`dispatch_shift`/`receipt_business_date`/`receipt_shift` computed fields on `TransactionOut`, and `GET /transactions`'s `business_date_from`/`business_date_to`/`shift`/`event` filters. This document treats all of that as authoritative and does not redesign any of it (§8).
 
-These are **operational reports** for hospital staff doing daily work — not BI, not analytics, not a dashboard (§22, Out of Scope).
+These are **operational reports** for hospital staff doing daily work — not BI, not analytics, not a dashboard (§21, Out of Scope).
 
 ---
 
@@ -25,7 +25,7 @@ Documents and implementation areas inspected and treated as authoritative for th
 | Reporting Foundation (must not be redesigned) | `docs/design/PR16_REPORTING_FOUNDATION_PLAN.md`, `backend/app/core/reporting_time.py`, `backend/app/models/transaction.py` (`dispatch_business_date`/`dispatch_shift`/`receipt_business_date`/`receipt_shift` `@property`s), `backend/app/schemas/transaction.py` (`TransactionOut`), `backend/app/api/v1/transactions.py`, `backend/app/crud/transaction.py::search()` | `business_date`/`shift` are computed, never persisted, from `borrowed_at` (dispatch) or `returned_at` (receipt, `None` until received). `GET /transactions` already accepts `business_date_from`/`business_date_to`/`shift`/`event` (`dispatch`\|`receipt`, default `dispatch`) and filters against the *derived* value, not the raw timestamp. An open transaction under `event=receipt` is silently excluded (its `receipt_business_date`/`receipt_shift` are `NULL`) — not an error. This is the exact mechanism §6/§9 below reuse for the Receive and Issue reports. |
 | Roadmap status/dependencies | `docs/ROADMAP.md` (Completed table, PR16 note, "Approved forward sequence"), `docs/ROADMAP_STATUS.md` | PR17 depends on PR16 (merged, `ac19505`/governance-synced at `a572a7a`); PR17 is the next planned item; PR18 (export/print) follows it. |
 | Domain model / transaction lifecycle | `backend/app/models/transaction.py`, `docs/BUSINESS_RULES.md`, `knowledge/adr/ADR-005-transaction-model.md` | `BorrowTransaction.status` is exactly `OPEN`/`CLOSED` — no third state, no cancellation action anywhere in the codebase (confirmed by direct search across `app/models/transaction.py`, `app/services/borrow_service.py`, `app/api/v1/transactions.py`; zero matches for "cancel"). Receipt outcome is exactly `usable`/`defective` (`ReceiptOutcome`, Roadmap PR8B, `knowledge/adr/ADR-006-receipt-outcome-contract.md`). This closes §7's "cancelled operations" question below with a factual, not invented, answer: there is nothing to handle because the concept does not exist in this system. |
-| Equipment master data | `backend/app/models/equipment.py`, `backend/app/models/master_data.py` | Four equipment states (`AVAILABLE_AT_POOL`/`ISSUED_TO_WARD`/`UNAVAILABLE_DEFECTIVE`/`DECOMMISSIONED`); `EquipmentCategory`, `Ward`, `Department`, `Location` master-data tables; `Equipment.brand`/`Equipment.model` (the spec's "manufacturer" maps onto the existing `brand` column — no new column is proposed, see §9); `Equipment.pm_due_date`/`cal_due_date` exist as columns but were deliberately removed from the dashboard summary (Roadmap PR13, `pm_due_soon`/`cal_due_soon`) as "MVP-irrelevant" — this design does **not** reintroduce them into any report (§9, §22) to stay clear of `AGENTS.md`'s "no PM/calibration/recall workflow" guardrail; a raw due-date column is data, but building any report around it risks being read as scheduling/workflow, so it is left out entirely rather than judged case-by-case. |
+| Equipment master data | `backend/app/models/equipment.py`, `backend/app/models/master_data.py` | Four equipment states (`AVAILABLE_AT_POOL`/`ISSUED_TO_WARD`/`UNAVAILABLE_DEFECTIVE`/`DECOMMISSIONED`); `EquipmentCategory`, `Ward`, `Department`, `Location` master-data tables; `Equipment.brand`/`Equipment.model` (the spec's "manufacturer" maps onto the existing `brand` column — no new column is proposed, see §9); `Equipment.pm_due_date`/`cal_due_date` exist as columns but were deliberately removed from the dashboard summary (Roadmap PR13, `pm_due_soon`/`cal_due_soon`) as "MVP-irrelevant" — this design does **not** reintroduce them into any report (§9, §21) to stay clear of `AGENTS.md`'s "no PM/calibration/recall workflow" guardrail; a raw due-date column is data, but building any report around it risks being read as scheduling/workflow, so it is left out entirely rather than judged case-by-case. |
 | Equipment Verify Checklist — **no existing definition anywhere** | Direct search: `docs/audits/03-hospital-equipment-pool-workflow-audit.md` (the original hospital workflow audit), `docs/HOSPITAL_DOMAIN_MODEL.md`, `docs/BUSINESS_RULES.md`, `docs/GLOSSARY.md` — zero matches for "verify" or "checklist" in any of them. The term appears **only** in `docs/audits/04-consolidated-implementation-plan.md`'s Group 7/Group 8 entries (as a report to build and as legacy history explicitly excluded from Version 1 migration) and in documents that simply repeat that plan's wording. No hospital business process behind "Equipment Verify Checklist" — what triggers it, who performs it, what is actually verified, what a completed vs. incomplete verification looks like — has ever been audited or confirmed anywhere in this repository. | This is the single most important finding of this design document. See §7 (Business Workflow), §8 (Canonical Definition), and **Owner Decision #1** (§18) — exactly the same "flag as a blocking Owner Decision rather than guess" discipline PR16 applied to the Day/Night shift boundary. |
 | Authorization | `backend/app/api/v1/deps.py` | `VIEW_AND_REPORT_ROLES` (Administrator, Equipment Pool Staff, Read Only — all three) already gates the existing `/reports/export` endpoint. `GET /transactions` itself only requires `get_current_user` (any authenticated user), no report-specific gate. §14 recommends which of these two precedents PR17's new endpoints should follow. |
 | Existing (pre-PR17) reporting capability | `backend/app/api/v1/reports.py`, `backend/app/services/report_service.py`, `frontend/src/pages/ReportsPage.tsx` (`/reports` route) | An unfiltered CSV/XLSX export of **all** transactions (capped at 50,000 rows, no date/shift/ward filter at all) already exists at `GET /reports/export`, plus a dispatch-trend bar chart on `/reports`. This predates PR16/PR17 and is **not** modified by this design — flagged as existing context PR17's own named reports are additive to, and PR18 (export) will eventually need to reconcile with, not something this design silently duplicates or removes (§9, §22). |
@@ -69,7 +69,7 @@ Every report below reuses, unmodified:
   - **Issue Report reports the dispatch event** (`dispatch_business_date`/`dispatch_shift`, from `borrowed_at`).
   - **Receive Report reports the receipt event** (`receipt_business_date`/`receipt_shift`, from `returned_at`).
   - **Equipment Verify Checklist Report (recommended interpretation) reports neither** — it is not a transaction-event report at all (§8).
-- `GET /transactions`'s existing `event=dispatch|receipt` basis and its NULL-propagation rule for an open transaction — this is precisely how §8's Receive Report canonical definition ("only closed transactions appear") is enforced, with zero new logic: an open transaction's `receipt_business_date`/`receipt_shift` are already `NULL` today, so a receipt-basis filtered query already excludes it (PR16 Slice 3, `backend/app/crud/transaction.py::search()`, confirmed by direct inspection).
+- `GET /transactions`'s existing `event=dispatch|receipt` basis. **Correction (review finding PR17-H1):** the NULL-propagation exclusion of an open transaction only happens *inside* the conditional branch `transaction_crud.search()` already guards with `if business_date_from is not None or business_date_to is not None or shift is not None` (confirmed by direct inspection of `backend/app/crud/transaction.py::search()`) — so a Receive Report request with **no** business-date/shift filter at all (only, say, a `ward_id` or `operator_id` filter, or no filter whatsoever) would never enter that branch and would therefore return OPEN transactions too, violating §7.1's canonical rule. Reusing PR16's `event` basis alone does **not**, by itself, guarantee the Receive Report's exclusion rule. §8/§11 below correct this: the Receive Report's own query composition adds an **unconditional** `BorrowTransaction.returned_at IS NOT NULL` predicate, independent of whether any business-date/shift filter is present.
 
 No alternative semantics, no second date-bucketing implementation, and no business rule already decided by PR16 (the boundary times, `business_date_anchor`, `on_demand` classification) is revisited here.
 
@@ -82,7 +82,7 @@ No alternative semantics, no second date-bucketing implementation, and no busine
 - **Purpose:** Show every equipment item received back into the pool during a selected business day/shift, with its condition, so Equipment Pool staff can confirm what came back and in what state.
 - **Primary users:** Equipment Pool Staff (day-to-day operational review), Administrator (oversight), Read Only (view access) — the confirmed 3-role matrix (`docs/BUSINESS_RULES.md`), unchanged.
 - **Trigger:** End of a shift or business day, or on demand, to review receipts.
-- **Workflow:** Staff selects a business date range and, optionally, a shift, ward, and other filters (§9); the report lists matching receipt events; staff scans the list or prints it for a shift handover record.
+- **Workflow:** Staff selects a business date range and, optionally, a shift, ward, operator, and other filters (§9); the report lists matching receipt events; staff reviews the on-screen list for a shift handover (printing is Roadmap PR18, §13).
 - **Inputs:** Filter selections only (§9) — no data entry, no new write path (§14).
 - **Outputs:** A filtered, ordered list of receive events (§8); on-screen only for PR17 (§12); print/export is PR18.
 - **Completion criteria:** The list reflects exactly the receipt events matching the selected filters, with no omission or duplication, per §8's canonical definition.
@@ -122,6 +122,12 @@ This section is mandatory and precise, per this task's explicit requirement. Eac
 - **Handling of cancelled operations:** Not applicable. This system has no cancellation action anywhere — confirmed by direct search of `app/models/transaction.py`, `app/services/borrow_service.py`, and `app/api/v1/transactions.py` (zero matches for "cancel"); every dispatch, once created, is either `OPEN` (awaiting receipt) or `CLOSED` (received). There is no third outcome to define a rule for.
 - **Handling of defective equipment:** A `CLOSED` transaction with `receipt_outcome = defective` appears in the Receive Report exactly like a `usable` one — `receipt_outcome` is a **displayed column** (§9), never an exclusion criterion. The report's job is to show what came back and in what condition, not to filter out the condition staff most need to see.
 - **Handling of future lifecycle extensions:** If a future Roadmap PR ever adds a third transaction state or a cancellation path, this report's canonical rule ("appears iff `returned_at IS NOT NULL`") is stable as long as `returned_at` remains the sole receipt-timestamp authority — flagged here so a future implementer does not need to re-derive this reasoning from scratch.
+- **Enforcement is unconditional, not filter-dependent (review finding PR17-H1):** The `returned_at IS NOT NULL` predicate above is applied by the Receive Report's own query composition regardless of which other filters are present — it is never contingent on `business_date_from`/`business_date_to`/`shift` being supplied. The following cases must all resolve per this same, single rule (restated as explicit acceptance criteria in §20):
+  1. `event=receipt` with no date/shift filters at all -> only `CLOSED` (`returned_at IS NOT NULL`) transactions appear.
+  2. `event=receipt` with `business_date_from`/`business_date_to` set -> same exclusion, further narrowed by the date range.
+  3. `event=receipt` with `shift` set -> same exclusion, further narrowed by shift.
+  4. An `OPEN` transaction (`returned_at = NULL`) -> never appears, in any of the above three cases.
+  5. A `CLOSED` transaction with a valid `returned_at` -> appears whenever it otherwise matches the active filters, in any of the above three cases.
 
 ### 7.2 Issue Report
 
@@ -129,7 +135,7 @@ This section is mandatory and precise, per this task's explicit requirement. Eac
 - **Exactly which transactions never appear:** None are excluded by lifecycle status. A transaction is excluded only by not matching the selected filters (business date/shift range, ward, etc. — §9), never by its `status`.
 - **How issued-but-not-returned equipment appears:** Normally, with `status = OPEN` and no receipt information — exactly as `TransactionOut` already represents it today (`returned_at`/`receipt_outcome` both `None`). No placeholder or synthetic "pending" row is invented.
 - **How same-day issue/receive behaves:** A transaction dispatched and received on the same calendar day (or even the same shift) appears **once** in the Issue Report (on its dispatch event, if the dispatch date/shift matches the Issue Report's own filter) and, independently, **once** in the Receive Report (on its receipt event, if the receipt date/shift matches the Receive Report's own filter) — this is not double-counting, because the two reports are answering two different questions ("what left" vs. "what came back") against two independently derived date/shift bases, exactly the separation PR16 §8 already established (`event=dispatch` vs. `event=receipt` is "an explicit, closed, two-value basis," never merged).
-- **Ordering rules:** Ascending by `dispatch_business_date`, then `shift` (`DAY` before `NIGHT`, matching the boundary policy's own day-then-night order), then `borrowed_at` — a chronological shift log, matching how staff would read a printed handover sheet (earliest event first). This is a UX/presentation recommendation, not a business rule — reversible without consequence, unlike §7.1/§7.2's inclusion rules above, which are cited facts.
+- **Ordering rules (corrected per review finding PR17-H3):** The existing cursor-pagination contract (`created_at DESC, id DESC`, unchanged from `GET /transactions`) is the report's canonical ordering — **not** an ascending business-date/shift order. Per-page client-side sorting was considered in the prior draft of this document and is rejected: sorting one already-fetched page cannot produce a globally correct order, since each subsequent "load more" page is a different cursor window that would be sorted independently of the pages before it, producing a report whose overall row order does not correspond to any single, consistent sequence. If a future need for chronological (earliest-first) report ordering is confirmed, it must be implemented as a genuine backend `ORDER BY` change with a cursor derived from that same new ordering (its own Slice-1-level query change, its own PostgreSQL evidence, and its own regression tests for duplicate/missing-row safety) — not a frontend sort. This design does not propose that change now, absent a confirmed operational need beyond "would be nicer to read top-to-bottom" (§9's own "reject filters/features that do not improve hospital workflow" standard applies equally here).
 
 ### 7.3 Equipment Verify Checklist
 
@@ -156,7 +162,7 @@ This report has no confirmed source. Two full candidate definitions are given be
 
 Design order followed throughout, mirroring PR16 §6: Business workflow (§6-§7) -> Domain/query model -> API -> Backend -> Frontend.
 
-**Option A — Thin, purpose-named endpoints over the existing `transaction_crud.search()` query engine (recommended for Receive/Issue).** `GET /reports/receive` and `GET /reports/issue` are new, narrowly-scoped endpoints that call the *existing*, unmodified `transaction_crud.search()` with `event` pinned to `receipt`/`dispatch` respectively (never client-settable on these two endpoints — see §10) and return the existing `Page[TransactionOut]` shape. No new query logic, no new schema, no duplicated derivation.
+**Option A — Thin, purpose-named endpoints over the existing `transaction_crud.search()` query engine, with one required addition (recommended for Receive/Issue).** `GET /reports/receive` and `GET /reports/issue` are new, narrowly-scoped endpoints that call `transaction_crud.search()` with `event` pinned to `receipt`/`dispatch` respectively (never client-settable on these two endpoints — see §10) and return the existing `Page[TransactionOut]` shape. **Corrected per review finding PR17-H1:** pinning `event` alone is *not* sufficient for the Receive Report — `search()` must gain one small, additive capability: an internal-only `require_receipt: bool = False` parameter that, when `True` (set only by the Receive Report's own call site, never exposed as a client-settable query parameter), unconditionally appends `BorrowTransaction.returned_at.is_not(None)` to the filter list, independent of whether `business_date_from`/`business_date_to`/`shift` are supplied. This is the smallest possible fix: one new keyword-only parameter and one new unconditional filter append, not a parallel query path, not a change to any existing caller's behavior (`GET /transactions` itself never sets `require_receipt`, so its own behavior is byte-for-byte unchanged).
 *Trade-off:* the response shape carries every `TransactionOut` field (some irrelevant per report, e.g. `dispatch_type` on a Receive Report row), not a report-trimmed subset. Accepted: introducing report-specific slim schemas now would be premature schema proliferation for a shape the frontend can trivially select fields from; can be revisited if PR18's export format needs a narrower shape.
 
 **Option B — One generic `/reports` query endpoint with a `report_type` parameter (considered, rejected).** Directly contradicts this task's explicit instruction ("Reject filters/endpoints that do not improve hospital workflow"; "no single unrestricted report query endpoint" was PR16's own explicit avoidance, §8) and would blur the "each report has one canonical definition" requirement (§7) into a single ambiguous surface.
@@ -180,7 +186,7 @@ Each filter below is justified by an operational need already established in §6
 | `ward_id` | Receive, Issue | Already an existing `transaction_crud.search()` filter (PR13) — which ward received/dispatched equipment is a routine operational question, already answerable today for the unnamed transaction list; naming it onto the Receive/Issue reports is not a new capability. |
 | `equipment_id` | Receive, Issue | Already existing — "show me this one item's receive/issue history" is a routine equipment-detail question. |
 | `dispatch_type` / `routine_round` | Issue only | Already existing, dispatch-only concepts (§7.2) — no equivalent exists for receipt, so these are not offered on the Receive Report. |
-| `operator` (`borrower_user_id` for Issue, `received_by_user_id` for Receive) | Receive, Issue | **New** filter, not previously exposed on `GET /transactions`. Justified directly by `docs/GLOSSARY.md`'s existing "Operator" concept (an authenticated Equipment Pool staff member recording an action) — "who processed this shift's receipts/issues" is a real shift-handover question, and the underlying column (`borrower_user_id`/`received_by_user_id`) already exists on `BorrowTransaction`. This is the one net-new backend filter this design proposes (§10) — everything else on Receive/Issue reuses an existing `search()` parameter unchanged. |
+| `operator_id` (`borrower_user_id` for Issue, `received_by_user_id` for Receive) | Receive, Issue | **New** filter, not previously exposed on `GET /transactions`. Justified directly by `docs/GLOSSARY.md`'s existing "Operator" concept (an authenticated Equipment Pool staff member recording an action) — "who processed this shift's receipts/issues" is a real shift-handover question, and the underlying column already exists on `BorrowTransaction`. **Corrected per review finding PR17-M1:** a filter is only usable if the frontend has an authorized way to obtain valid operator options — the existing `GET /users` is Administrator-only (`backend/app/api/v1/users.py`, `require_roles(ROLE_ADMINISTRATOR)`), which Equipment Pool Staff and Read Only (both allowed to view these reports, §14) cannot call. §10.4 defines a new, minimal, report-scoped lookup endpoint (`GET /report-options/operators`) instead of widening `GET /users` or requiring users to type a raw UUID. |
 | `equipment_category_id` | Receive, Issue, Verify Checklist | **New** filter for Receive/Issue (requires joining `Equipment.category_id`, not currently part of `transaction_crud.search()`'s filter set — §10); already an existing filter for the plain equipment list (`GET /equipment`). "Show me infusion-pump receipts for this shift" is a plausible operational need once a hospital's equipment pool grows past a handful of categories. |
 | `status` (equipment status) | Verify Checklist only | Interpretation A's report is inherently about current equipment status (§7.3); this is the report's primary axis, not a secondary filter. |
 
@@ -202,17 +208,17 @@ Design only — no implementation.
 | **Method/path** | `GET /api/v1/reports/receive` (new) |
 | **Purpose** | Return the Receive Report per §7.1's canonical definition |
 | **Permissions** | `VIEW_AND_REPORT_ROLES` (Administrator, Equipment Pool Staff, Read Only) — following the existing `/reports/export` precedent (`backend/app/api/v1/reports.py`), not the looser `get_current_user`-only gate `GET /transactions` itself uses, since this is a named *report* surface, matching the existing report-role convention exactly (§14). |
-| **Request query params** | `business_date_from: date \| None`, `business_date_to: date \| None`, `shift: Shift \| None`, `ward_id: str \| None`, `equipment_id: str \| None`, `equipment_category_id: str \| None`, `operator_id: str \| None` (maps to `received_by_user_id`), `limit: int = 25 (le=200)`, `cursor: str \| None` — `event` is **not** exposed; internally pinned to `"receipt"` (§8) |
+| **Request query params** | `business_date_from: date \| None`, `business_date_to: date \| None`, `shift: Shift \| None`, `ward_id: str \| None`, `equipment_id: str \| None`, `equipment_category_id: str \| None`, `operator_id: str \| None` (maps to `received_by_user_id`), `limit: int = 25 (le=200)`, `cursor: str \| None` — `event` is **not** exposed; internally pinned to `"receipt"`, and `require_receipt=True` is always set internally (§8, corrected per PR17-H1) — the caller cannot opt out of either |
 | **Validation rules** | `business_date_from > business_date_to` -> `400 INVALID_INPUT`, reusing the exact check already in `app/api/v1/transactions.py::list_transactions` (not a new implementation, a second call site of the same logic) |
 | **Response schema** | `Page[TransactionOut]` — unchanged, reused verbatim (§8, Option A) |
-| **Pagination** | Cursor-based, identical to `GET /transactions` (`(created_at DESC, id DESC)`) |
-| **Sorting** | Per §7.2's recommended ordering (`dispatch_business_date`/`shift`/`borrowed_at` ascending) is a *display* concern the frontend can apply client-side to one already-paginated page, or a future backend `ORDER BY` change — **not** decided in this design as a hard requirement, since the existing cursor-pagination contract (`created_at DESC`) is what guarantees correct "load more" behavior; a conflicting `ORDER BY` would need its own evidence-gated design pass, flagged here as a Slice 2 implementation-time decision, not assumed |
+| **Pagination** | Cursor-based, identical to `GET /transactions` (`(created_at DESC, id DESC)`) — the sole ordering basis (see Sorting row) |
+| **Sorting** | **Corrected per review finding PR17-H3.** Backend-only, identical to `GET /transactions`'s existing `(created_at DESC, id DESC)` contract — no alternative ordering is introduced by this endpoint. The frontend must render pages in the order returned and must never re-sort a fetched page client-side (§7.2, §12); doing so would silently desynchronize the on-screen order from the cursor that produced it across "load more" pages. |
 | **Error responses** | `400 INVALID_INPUT` (reversed range), `401`, `403` (new — this endpoint's role gate), `422` (schema validation) |
 | **Version compatibility** | New endpoint, no existing contract touched |
 
 ### 10.2 `GET /api/v1/reports/issue`
 
-Identical shape to §10.1, with: `event` pinned to `"dispatch"`; `operator_id` maps to `borrower_user_id`; `dispatch_type`/`routine_round` query params added (§9, Issue-only); no `equipment_category_id` gap to fill differently — same new join as §10.1.
+Identical shape to §10.1 (including the corrected Sorting row, §10.1/§7.2/§12), with: `event` pinned to `"dispatch"`; `require_receipt` is not applicable here (`dispatch_business_date` is always present, per §7.2 — there is no equivalent NULL-exclusion gap for dispatch); `operator_id` maps to `borrower_user_id`; `dispatch_type`/`routine_round` query params added (§9, Issue-only); no `equipment_category_id` gap to fill differently — same new join as §10.1.
 
 ### 10.3 `GET /api/v1/reports/equipment-verify-checklist`
 
@@ -223,22 +229,41 @@ Pending §18's Owner Decision. If interpretation A (§7.3) is confirmed:
 | **Method/path** | `GET /api/v1/reports/equipment-verify-checklist` (new) |
 | **Purpose** | Return the current equipment master/status listing per §7.3(A) |
 | **Permissions** | `VIEW_AND_REPORT_ROLES`, same rationale as §10.1 |
-| **Request query params** | `equipment_category_id: str \| None`, `status: EquipmentStatus \| None`, `ward_id`/`department_id: str \| None` (via `Equipment.department_owner_id`), `limit`, `cursor` — deliberately **no** `business_date_from`/`business_date_to`/`shift` (§7.3(A)'s "why this is not a transaction report") |
+| **Request query params** | `equipment_category_id: str \| None`, `status: EquipmentStatus \| None`, `department_id: str \| None` (maps to the existing `Equipment.department_owner_id` FK) — **corrected per review minor finding:** `ward_id` is removed from this endpoint; `Equipment` has no direct Ward relationship (only `Equipment.department_owner_id` -> `Department`, and `Equipment.current_location_id` -> `Location` — neither is a Ward), and inventing a ward-level filter here would misrepresent a fact this system does not track. A future Equipment-to-Ward relationship, if ever confirmed, would need its own design, not a filter added here on an assumption. `limit`, `cursor` |
 | **Response schema** | A **new**, equipment-shaped schema (not `TransactionOut`) — reuses the existing `EquipmentOut`-equivalent response shape already returned by `GET /equipment` (no new fields invented) |
 | **Pagination/Sorting** | Same cursor convention as `GET /equipment`, unchanged |
 | **Error responses** | `401`, `403`, `422` — no reversed-range check applies (no date range on this endpoint) |
 
 If interpretation B is confirmed instead, this endpoint (and everything under it) is void and replaced by whatever the new verification-event workflow's own design specifies — not something this document can specify without the resolved decision (§7.3(B), §18).
 
-Avoided per instruction: no single unrestricted "report query" endpoint (§8, Option B rejected); no export/PDF/Excel/CSV endpoint (PR18 scope, §22).
+### 10.4 `GET /api/v1/report-options/operators` (new, corrected per review finding PR17-M1)
+
+A production-quality lookup path for the `operator_id` filter (§9) — not a widened `GET /users`, not a raw-UUID text field.
+
+| | |
+|---|---|
+| **Method/path** | `GET /api/v1/report-options/operators` (new) |
+| **Purpose** | Return the minimal set of operator options the Receive/Issue report filters (§9) need to populate a `<select>` — a report-scoped lookup, not user management. |
+| **Authorization** | `VIEW_AND_REPORT_ROLES` (Administrator, Equipment Pool Staff, Read Only) — **the same gate as the report endpoints themselves (§10.1/§10.2/§14), deliberately not `ADMINISTRATOR_ONLY_ROLES`** (which gates the existing `GET /users`, `backend/app/api/v1/users.py`). Equipment Pool Staff and Read Only can view these reports but cannot call `GET /users` today — this new endpoint closes exactly that gap, and no wider. |
+| **Response fields** | `id: str` (the stable identifier — `User.id`, never `employee_code`/`email`), `display_name: str` (`User.full_name` — already this hospital's real per-operator name; no separate Thai/English name pair exists on `User` today, so no fallback logic is invented beyond returning the one name field that exists), `is_active: bool` (`User.is_active`). **Deliberately excluded:** `employee_code`, `email`, `phone`, `role`, `password_hash`/any authentication metadata, `last_login_at` — none of which this filter needs, all of which `UserOut` (the Administrator-only shape, `backend/app/schemas/master_data.py`) already includes and this endpoint must not leak. |
+| **Active/inactive behavior** | Both active and inactive users are returned — `User` rows are never deleted, only deactivated (`is_active`, `backend/app/models/user.py`; no `deleted_at`/soft-delete column exists on `User`, confirmed by inspection), so a deactivated operator remains fully resolvable by `id` for filtering historical reports. `is_active` is returned so the frontend can label a deactivated operator distinctly (§12) — the backend does not hide or filter them out. |
+| **Search behavior** | Optional `q: str \| None` (bounded length, e.g. `max_length=100`, mirroring `GET /equipment/search-bcm`'s existing `q` convention), case-insensitive substring match on `full_name`. Not required for correctness — at this system's confirmed scale (`docs/PROJECT_MEMORY.md`), a hospital's Equipment Pool staff roster is small (tens, not thousands, of accounts). |
+| **Pagination** | **None** — returns the full list unpaginated, matching the existing, directly cited precedent of `GET /wards` (`backend/app/api/v1/master_data.py::list_wards`, also unpaginated, also `get_current_user`-gated) for a small, bounded master-data-shaped list. If the operator roster ever grows large enough for this to be a real concern, that is real evidence a future revision can act on — not assumed now. |
+| **Stable identifier** | `User.id` (UUID) — the same identifier `borrower_user_id`/`received_by_user_id` already store; never `employee_code` or `email`, consistent with this system's existing "internal UUID is the only relational reference" convention (`docs/BUSINESS_RULES.md`). |
+| **Historical operators no longer active** | Remain resolvable (see Active/inactive behavior row above) — this preserves historical report readability ("who processed this shift's receipts six months ago" must still show a real name, not a broken/blank reference) without granting a deactivated account any new capability; this endpoint is read-only and grants no action of any kind. |
+| **Error responses** | `401`, `403`, `422` (invalid `q` length) |
+| **Privacy** | No sensitive account data (see Response fields row) — satisfies this task's explicit requirement that the lookup "must not expose sensitive account details." |
+
+Avoided per instruction: no single unrestricted "report query" endpoint (§8, Option B rejected); no export/PDF/Excel/CSV endpoint (PR18 scope, §21); no widening of the existing Administrator-only `GET /users` endpoint.
 
 ---
 
 ## 11. Backend Architecture
 
 - **Service layer:** A new `app/services/report_query_service.py` (or, if the Repository Owner prefers, functions living directly in `app/api/v1/reports.py` mirroring the existing thin-router pattern already used there) composes `transaction_crud.search()` calls for Receive/Issue — it does not reimplement filtering, pagination, or the `business_date`/`shift` derivation. This mirrors `app/services/borrow_service.py`'s existing role (orchestration over CRUD, not a parallel query engine).
-- **Query layer reuse:** `transaction_crud.search()` gains exactly one new capability this design requires: an optional join to `Equipment` for `equipment_category_id` filtering (§9) — everything else it needs (`business_date_from`/`_to`/`shift`/`event`/`ward_id`/`equipment_id`/`dispatch_type`/`routine_round`) already exists unmodified. A second new, small addition: filtering by `borrower_user_id`/`received_by_user_id` (the `operator_id` filter, §9) — also additive to the existing filter-append pattern (`backend/app/crud/transaction.py::search()`'s `filters.append(...)` shape), not a redesign.
-- **Report composition:** Each of the two report endpoints (§10.1/§10.2) is a thin FastAPI route calling one shared, parameterized `transaction_crud.search()` invocation with `event` pinned — no per-report duplicate query building.
+- **Query layer reuse:** `transaction_crud.search()` gains three new, additive capabilities this design requires — none change any existing caller's behavior: (1) an optional join to `Equipment` for `equipment_category_id` filtering (§9); (2) filtering by `borrower_user_id`/`received_by_user_id` (the `operator_id` filter, §9), additive to the existing `filters.append(...)` pattern; (3) **corrected per review finding PR17-H1:** a keyword-only `require_receipt: bool = False` parameter that, when `True`, unconditionally appends `BorrowTransaction.returned_at.is_not(None)` to `filters` — independent of the existing `if business_date_from is not None or business_date_to is not None or shift is not None` guard that gates the `business_date`/`shift` derivation itself. Only the Receive Report's own call site ever sets `require_receipt=True`; `GET /transactions` and the Issue Report never set it, so their behavior is unchanged byte-for-byte.
+- **Report composition:** Each of the two report endpoints (§10.1/§10.2) is a thin FastAPI route calling one shared, parameterized `transaction_crud.search()` invocation with `event` pinned (and, for Receive only, `require_receipt=True`) — no per-report duplicate query building.
+- **Operator lookup (§10.4, corrected per review finding PR17-M1):** A new, narrow `app/crud/user.py`-level query function (e.g. `list_operator_options(...)`) returning exactly `id`/`full_name`/`is_active` for every `User` row — no role/employee_code/email/phone/password fields, unlike the existing Administrator-only `UserOut` (`backend/app/schemas/master_data.py`). Reuses the exact same "small, unpaginated master-data list" shape already established by the existing `GET /wards` endpoint (`backend/app/api/v1/master_data.py::list_wards`, gated only by `get_current_user`, no admin restriction, no pagination) — not a new architectural pattern.
 - **Shared abstractions:** None beyond what already exists (`Page[T]`, `TransactionOut`, `search()`) — no new generic repository layer, per this task's explicit instruction to avoid abstractions that obscure query intent (the same instruction PR16 §9 already followed).
 - **Verify Checklist (interpretation A):** A new, narrow `app/crud/equipment.py`-level query function (e.g. `list_for_verify_checklist(...)`), reusing the existing `Equipment.deleted_at.is_(None)` filter every equipment query already applies — not a new abstraction, an addition to an existing, already-conventional module.
 - **Future extension strategy:** If PR18 needs export/print of these same three reports, it consumes these same endpoints' data (or a shared query function directly) rather than re-deriving report contents independently — flagged here so PR18's own design does not have to re-discover this dependency.
@@ -254,30 +279,26 @@ Design only — no detailed UI.
 - **Thai-first terminology:** Report titles and filter labels follow the existing terminology (เบิก = issue/dispatch, รับคืน = receive, per Roadmap PR11's already-completed terminology pass) — no new English-first surface is introduced.
 - **Mobile-first behaviour:** Reuses the existing responsive filter-row layout (label + `<select>`/date-`<input>`, large touch targets, minimal typing) already shipped in `EquipmentDetailPage.tsx`/Roadmap PR13's filters — not redesigned.
 - **Loading/empty/error states:** Reused verbatim from the existing `isLoading`/`isError` pattern, distinguished from a genuinely empty, zero-row result (matching `EquipmentDetailPage.tsx`'s already-established, tested convention) — no new state machine.
-- **Printing workflow:** See §13.
-- **Future export workflow:** Not in scope (§22); PR18-dependent, exactly as the authoritative source scopes it.
+- **Operator selection (corrected per review finding PR17-M1):** A `<select>` populated from `GET /report-options/operators` (§10.4) — the same label+`<select>` pattern as every other filter on this screen, not a free-text/UUID-entry field. Inactive operators remain selectable/resolvable for historical filtering (§10.4) but are visually distinguished (e.g. an "(ไม่ใช้งานแล้ว)"/"inactive" suffix on the option label) so staff are not confused into thinking a deactivated account is still an active operator.
+- **Order preservation (corrected per review finding PR17-H3):** The frontend renders each fetched page in exactly the order the backend returned it (§10.1's Sorting row) and never re-sorts a page, or the accumulated set of pages, client-side — "load more" strictly appends the next backend-ordered page.
+- **Printing workflow:** Not in PR17 (§13, §21) — deferred to Roadmap PR18 in full.
+- **Future export workflow:** Not in scope (§21); PR18-dependent, exactly as the authoritative source scopes it.
 
-No dashboard-heavy UI, no chart, no new component library (§22). Business logic (the shift/business-date derivation, the receipt-vs-dispatch event basis) is never computed in the frontend — every report screen only displays/filters values the backend already derived, matching PR16's own non-negotiable rule (§5).
+No dashboard-heavy UI, no chart, no new component library (§21). Business logic (the shift/business-date derivation, the receipt-vs-dispatch event basis) is never computed in the frontend — every report screen only displays/filters values the backend already derived, matching PR16's own non-negotiable rule (§5).
 
 ---
 
-## 13. Printing Strategy
+## 13. Printing (Deferred to Roadmap PR18)
 
-Design/recommendation only — no implementation.
+**Corrected per review finding PR17-H2.** The authoritative source (`docs/audits/04-consolidated-implementation-plan.md`, §2) assigns "PDF export, Excel export, and print-ready Hard Copy templates" to Roadmap PR18, not PR17 — and that includes browser-native print styling, not only a PDF library. The prior draft of this document incorrectly proposed a `@media print` stylesheet, a print-specific filter-summary header, and a dedicated implementation slice for PR17 itself; all of that is removed.
 
-- **Screen rendering (in scope for PR17's own eventual implementation):** The report list, as already rendered for on-screen viewing (§12), is the print source — no separate print-specific data fetch or component tree.
-- **Print layout:** A browser-native `@media print` CSS stylesheet applied to the same report screen — hides filter controls/navigation chrome, keeps only the report title, applied filter summary (so a printed page is self-describing — "Receive Report, 2026-07-29, Day shift" — without needing the on-screen context), and the data table/list. This is the cheapest possible print capability (no new library, no server-side rendering), consistent with this task's explicit "recommend architecture, do not implement" instruction and PR16's own precedent of picking the option that adds no new dependency when an existing one suffices.
-- **Future PDF:** Server-side PDF generation (e.g. reusing `openpyxl`'s existing-dependency neighbor pattern — a vetted, already-approved-category library, not proposed by name here) is PR18 scope; this design takes no position on which library beyond noting one is not yet chosen or needed by PR17 itself.
-- **Future Excel:** `openpyxl` already exists as a vetted dependency (`report_service.py`, §2) — PR18 can extend it to these named reports; not implemented here.
-- **Future CSV:** Python's `csv` module, already used identically (`report_service.py`) — same note as Excel.
-
-No PDF, Excel, or CSV implementation is produced by this document (§22).
+PR17's own scope, restated: on-screen operational reports only (§12). This design takes exactly one, minimal position for PR18's benefit, without implementing anything now: **the report definitions (§7) and API responses (§10) do not preclude a future print/export layer** — every report returns already-paginated, already-filtered JSON data (§10) that a future PR18 design can format for print, PDF, Excel, or CSV without requiring PR17's own endpoints, query functions, or on-screen components to change. That is the full extent of what this document says about printing; it defines no print rendering, no browser print workflow, no PDF generation, no print-specific API endpoint, and no print-specific frontend component (§21).
 
 ---
 
 ## 14. Security
 
-- **Authorization:** `VIEW_AND_REPORT_ROLES` for all three new report endpoints (§10) — chosen deliberately over `GET /transactions`'s looser `get_current_user`-only gate, because these are named *report* surfaces analogous to the existing `/reports/export` (which already requires `VIEW_AND_REPORT_ROLES`), not the general-purpose transaction list. This is a **stricter** gate than the data these endpoints expose already sits behind today (any authenticated user can already see the same rows via `GET /transactions`) — so it introduces no new information-exposure risk, only a slightly narrower reporting-surface convention consistent with the existing `/reports/export` precedent.
+- **Authorization:** `VIEW_AND_REPORT_ROLES` for all three new report endpoints (§10) and for the new `GET /report-options/operators` lookup (§10.4, corrected per review finding PR17-M1) — chosen deliberately over `GET /transactions`'s looser `get_current_user`-only gate, because these are named *report* surfaces analogous to the existing `/reports/export` (which already requires `VIEW_AND_REPORT_ROLES`), not the general-purpose transaction list. This is a **stricter** gate than the data these endpoints expose already sits behind today (any authenticated user can already see the same rows via `GET /transactions`) — so it introduces no new information-exposure risk, only a slightly narrower reporting-surface convention consistent with the existing `/reports/export` precedent. `GET /report-options/operators` is deliberately **not** gated by `ADMINISTRATOR_ONLY_ROLES` (unlike `GET /users`) — Equipment Pool Staff and Read Only, both authorized to view these reports, need this lookup to use the `operator_id` filter at all (§9).
 - **Visibility:** No new field is exposed beyond what `TransactionOut` (Receive/Issue) or the existing equipment response shape (Verify Checklist, interpretation A) already expose today — same non-invention-of-new-data principle PR16 §12 established.
 - **Future RBAC compatibility:** No new role or capability tier is introduced; if a future Roadmap PR narrows or widens `VIEW_AND_REPORT_ROLES` itself, these three endpoints inherit that change automatically, having never defined their own bespoke tuple.
 - **Audit considerations:** No new write path exists anywhere in this design (§11) — reads are not audited today (consistent with every existing read endpoint, PR16 §12), and this design does not change that.
@@ -288,7 +309,7 @@ No PDF, Excel, or CSV implementation is produced by this document (§22).
 ## 15. Performance
 
 - **Expected data volume:** Unchanged from PR16's confirmed scale assumption (`docs/PROJECT_MEMORY.md`: "low hundreds of devices, thousands of transactions per year") — these three reports read the same tables PR16 already queries, at the same scale.
-- **Query strategy:** Reuses the existing indexed `borrowed_at`/`returned_at` columns and the PR14B composite `(created_at DESC, id DESC)` pagination index — no new query shape beyond the two additive joins/filters noted in §11 (`Equipment.category_id`, `borrower_user_id`/`received_by_user_id`).
+- **Query strategy:** Reuses the PR14B composite `(created_at DESC, id DESC)` pagination index for ordering (§7.2/§10.1). **Corrected per review minor finding:** `borrowed_at` is indexed (`index=True`, `backend/app/models/transaction.py`); `returned_at` is **not** — the prior draft incorrectly claimed both were. The new `require_receipt` predicate (§8/§11) and the `event=receipt`/`business_date`/`shift` filters read `returned_at` without a dedicated index today. A raw-column index would not necessarily help the derived `business_date`/`shift` expressions in any case (PR16 §13's own point: a derived expression is not automatically served by an index on the underlying raw column) — real `EXPLAIN` evidence, not an assumption, decides whether any index is needed (see Indexes row below).
 - **Pagination:** Unchanged cursor convention, `limit <= 200` per page, bounding response size regardless of filter breadth — identical to every existing paginated endpoint.
 - **Indexes:** No new index is proposed pre-emptively. `borrower_user_id` and `received_by_user_id` are already foreign-key columns without a dedicated index today (confirmed by inspection of `backend/app/models/transaction.py`); whether the new `operator_id` filter needs one is an implementation-time question gated on real `EXPLAIN (ANALYZE, BUFFERS)` evidence, per PR14B's established evidentiary discipline — not assumed or pre-built here.
 - **Future optimization:** Not needed at confirmed scale; flagged for the same future-evidence-gated review PR16 §13 already established for its own derivation expression.
@@ -302,43 +323,46 @@ This design must, and does, support future work without requiring a redesign of 
 - **Dashboard/BI/analytics:** These three reports return plain paginated JSON (§10) — a future dashboard/BI layer can consume the same endpoints or the same underlying `transaction_crud.search()`/equipment-query functions without any contract change here.
 - **Scheduled reports/notifications:** A future scheduled-report job would call these same endpoints' underlying query functions on a timer — no redesign needed, since the query layer (§11) is already decoupled from the HTTP layer.
 - **Export (PR18):** PR18 consumes the same report definitions (§7) and, most likely, the same underlying query functions (§11) to produce PDF/Excel/CSV — this design's endpoints already return exactly the row-level data PR18 would need to format.
+- **Printing (PR18):** Same as Export above — PR18's print/Hard Copy design consumes PR17's report definitions and query functions; PR17 defines no print rendering itself (§13).
 
 ---
 
 ## 17. Suggested Implementation Slices
 
-Each slice is independently reviewable, matching the lettered-slice/numbered-slice precedent already established for PR7/PR8/PR9/PR14/PR15/PR16.
+**Revised per review findings PR17-H2 (no printing slice in PR17) and PR17-M1 (operator lookup path).** Each slice is independently reviewable, matching the lettered-slice/numbered-slice precedent already established for PR7/PR8/PR9/PR14/PR15/PR16.
 
-**Slice 1 — Backend report domain (query layer additions).**
-- Scope: `transaction_crud.search()` gains the `equipment_category_id` join and `operator_id` (`borrower_user_id`/`received_by_user_id`, selected by the same `event` basis already governing which timestamp column is read) filter, per §9/§11. New equipment-domain query function for Verify Checklist (interpretation A only, gated on §18).
-- Dependencies: None beyond the already-merged PR16 baseline; Verify Checklist sub-scope additionally depends on Owner Decision #1 (§18) being resolved, exactly as PR16 Slice 1 depended on its own Owner Decision #1 before it could begin.
-- Why this boundary: isolates all new query logic from any HTTP-layer or frontend change, testable in isolation with PostgreSQL evidence (§15) before any endpoint exists to call it.
+**Slice 1 — Report Domain and Query Semantics.**
+- Scope: `transaction_crud.search()` gains, additively: the `equipment_category_id` join (§9/§11), the `operator_id` filter (§9/§11), and the `require_receipt` unconditional-predicate parameter (§8/§11, corrected per PR17-H1) that enforces §7.1's Receive Report canonical rule regardless of which other filters are present. Canonical Receive Report rules (§7.1) and Issue Report rules (§7.2), including the completed-receipt exclusion logic and the confirmed backend-only deterministic ordering (§7.2/§10.1, corrected per PR17-H3). No shared reporting-query abstraction beyond what already exists (§11).
+- Dependencies: None beyond the already-merged PR16 baseline.
+- Why this boundary: isolates all new query logic from any HTTP-layer or frontend change, testable in isolation with PostgreSQL evidence (§15) before any endpoint exists to call it — including dedicated regression tests for the five PR17-H1 scenarios (§7.1) and for cursor-pagination correctness (no duplicate/missing rows, deterministic tie-break) under the confirmed ordering (§7.2).
 
-**Slice 2 — API.**
-- Scope: `GET /reports/receive`, `GET /reports/issue`, and (if §18 resolves to interpretation A) `GET /reports/equipment-verify-checklist`, per §10. `VIEW_AND_REPORT_ROLES` gate, validation, error responses.
+**Slice 2 — Report APIs and Lookup Options.**
+- Scope: `GET /reports/receive`, `GET /reports/issue` (§10.1/§10.2), and `GET /report-options/operators` (§10.4, corrected per PR17-M1) — `VIEW_AND_REPORT_ROLES` gate on all three, validation, error responses, pagination.
 - Dependencies: Slice 1.
-- Why this boundary: the API contract is independently reviewable against §7's canonical definitions before any frontend consumes it — mirrors PR16 Slice 3's own boundary (query engine before endpoint).
+- Why this boundary: the API contract (including the operator-lookup path the frontend needs before it can offer the `operator_id` filter at all) is independently reviewable against §7's canonical definitions before any frontend consumes it — mirrors PR16 Slice 3's own boundary (query engine before endpoint).
 
-**Slice 3 — Frontend.**
-- Scope: `/reports/receive`, `/reports/issue`, (`/reports/equipment-verify-checklist` if in scope) screens per §12 — filter controls, loading/empty/error states, on-screen table/list rendering. No printing yet.
+**Slice 3 — Frontend Report Controls and Results.**
+- Scope: `/reports/receive`, `/reports/issue` screens per §12 — Thai-first navigation and labels, business-date/shift/ward/category/operator filter controls (operator populated from Slice 2's new lookup endpoint), loading/empty/error states, on-screen result rendering that strictly preserves backend order (§7.2/§10.1/§12, corrected per PR17-H3). No printing (§13).
 - Dependencies: Slice 2.
 - Why this boundary: mirrors PR16 Slice 4's own boundary (frontend strictly after the API contract it consumes is final).
 
-**Slice 4 — Printing foundation.**
-- Scope: The `@media print` stylesheet and filter-summary print header per §13, applied to the Slice 3 screens.
-- Dependencies: Slice 3.
-- Why this boundary: printing is a presentation-only concern layered onto already-working screens — isolating it keeps Slice 3 reviewable without also reviewing print-specific CSS, and keeps this slice trivially revertible if the Repository Owner wants a different print approach later.
+**Slice 4 — Equipment Verify Checklist.**
+- Scope: `GET /reports/equipment-verify-checklist` (§10.3) and its frontend screen, **only** if Owner Decision #1 (§18) has been resolved to interpretation A by then. If Owner Decision #1 remains unresolved when Slices 1-3 are ready to ship, this slice is explicitly **blocked/deferred** — Receive and Issue ship without it, and this slice is picked up as its own separately-approved follow-up once the decision is made. No policy is invented to unblock it early.
+- Dependencies: Slices 1-3 (for the shared report-page pattern) and Owner Decision #1 (§18).
+- Why this boundary: isolates the one genuinely undecided report from the two fully-specified ones, so Owner Decision #1 (§18) blocks only this slice, never Receive/Issue (§18's own "not blocking for Receive/Issue" framing, unchanged).
 
-**Slice 5 — Governance synchronization.**
-- Scope: The standard post-merge governance sync (`docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, `docs/DECISION_LOG.md`, `knowledge/CHANGE_HISTORY.md`) recording Slices 1-4 as merged, advancing the next planned item to Roadmap PR18 — following the exact same pattern used after every prior Roadmap PR in this repository (most recently PR16, GitHub PR #62).
-- Dependencies: Slices 1-4 all merged.
-- Why this boundary: per this repository's own established convention (confirmed by inspecting every prior design document — none touches roadmap/governance files itself; that happens only in the dedicated post-merge sync step, §20).
+**Final Slice — Governance Synchronization.**
+- Scope: The standard post-merge governance sync (`docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, `docs/DECISION_LOG.md`, `knowledge/CONTEXT.md`, `knowledge/PROJECT_MEMORY.md`, `knowledge/CHANGE_HISTORY.md` — all six current-state documents, matching the completed Roadmap PR16 sync's actual final scope, GitHub PR #62) recording every merged Slice 1-4 (or Slices 1-3 alone, if Slice 4 remains blocked) as merged, advancing the next planned item to Roadmap PR18.
+- Dependencies: All approved PR17 slices merged (Slice 4 only if it shipped).
+- Why this boundary: per this repository's own established convention (confirmed by inspecting every prior design document — none touches roadmap/governance files itself; that happens only in the dedicated post-merge sync step, §22).
 
-No slice combines database + broad API + frontend + printing + governance changes — each is a narrow, independently mergeable, independently testable unit.
+No slice combines database + broad API + frontend + governance changes, and **no slice in this plan implements printing** (§13, §21) — printing remains entirely Roadmap PR18.
 
 ---
 
 ## 18. Owner Decisions
+
+**This fix round (review `4804227912`) resolves PR17-H1/H2/H3 and PR17-M1 only. Owner Decision #1 below is explicitly preserved, unresolved, and unaltered by this revision — not addressed, guessed, or narrowed, per this task's explicit instruction.**
 
 **Owner Decision #1 — Equipment Verify Checklist definition (BLOCKING for Verify Checklist only, not for Receive/Issue).**
 
@@ -361,12 +385,14 @@ This document recommends **(A)** as the option that satisfies PR17's literal acc
 | Risk | Category | Mitigation |
 |---|---|---|
 | Equipment Verify Checklist is built on an assumed interpretation that turns out to be wrong | Business | Owner Decision #1 (§18) is a hard blocker for that sub-scope only; Receive/Issue can ship independently and are not blocked by it (§17, Slice boundaries). |
-| `equipment_category_id`/`operator_id` joins on `transaction_crud.search()` degrade query performance at a future, larger scale | Architecture/Performance | Evidence-gated per §15 (PR14B precedent) — not assumed, verified with real `EXPLAIN` output at implementation time before any index is added. |
+| `equipment_category_id`/`operator_id` joins, and the new unconditional `require_receipt` predicate, on `transaction_crud.search()` degrade query performance at a future, larger scale | Architecture/Performance | Evidence-gated per §15 (PR14B precedent) — not assumed, verified with real `EXPLAIN` output at implementation time before any index is added. |
 | A future PR18 export format needs a report-specific response shape `TransactionOut` cannot cleanly provide | Architecture/Future migration | §8/§11 flagged this explicitly as an accepted, revisitable trade-off, not a silent gap — PR18's own design can introduce a slim schema then, informed by real export requirements rather than speculation now. |
 | The existing, unfiltered `/reports/export`/`ReportsPage.tsx` surface (§2) becomes confusing to operate alongside three new named reports | Compatibility | Explicitly left untouched and unrenamed by this design (§8, §12); PR18 is the natural point to reconcile/replace it once it has to add export to the named reports anyway — flagged here, not silently deferred. |
-| Printing via `@media print` renders inconsistently across browsers/devices in a hospital's actual environment | Operational | Deliberately the cheapest, most standard mechanism (§13) rather than a bespoke print renderer — lowest risk option available; a future PDF (PR18) removes browser-print variability entirely if this proves insufficient. |
+| A production-scale operator roster eventually makes the unpaginated `GET /report-options/operators` (§10.4) response too large | Performance | Deliberately not pre-optimized (§10.4) — this system's confirmed scale (§15) gives no evidence of a real problem today; revisit with real evidence if the staff roster ever grows past what an unpaginated `<select>` can reasonably hold. |
 
-**Non-risk, explicitly confirmed by this design's own scope check:** No new lifecycle state, no QR redesign, no MEMS/Recall Monitor coupling, no Analytics/BI surface, no export/PDF/Excel/CSV implementation, and no application/frontend/migration code was introduced by this document (§22, Final Validation).
+**Confirmed resolved by this fix round:** PR17-H1 (Receive Report's `returned_at IS NOT NULL` exclusion is now unconditional, §7.1/§8/§11), PR17-H2 (no printing implementation or slice remains in PR17, §13/§17/§21), PR17-H3 (ordering is backend-only, matching the existing cursor contract, §7.2/§10.1/§12), and PR17-M1 (the `operator_id` filter now has a real, role-appropriate lookup path, §10.4).
+
+**Non-risk, explicitly confirmed by this design's own scope check:** No new lifecycle state, no QR redesign, no MEMS/Recall Monitor coupling, no Analytics/BI surface, no export/PDF/Excel/CSV implementation, no printing implementation, and no application/frontend/migration code was introduced by this document (§23, Final Validation).
 
 ---
 
@@ -376,27 +402,51 @@ This document recommends **(A)** as the option that satisfies PR17's literal acc
 - Each of the three reports' canonical definition (§7) is implemented exactly as specified — no transaction silently included/excluded outside that definition.
 - Restated from the authoritative source: "Each report uses the same reporting metadata and presents consistent date/shift filtering" (`docs/audits/04-consolidated-implementation-plan.md`, PR17 entry) — satisfied by Receive/Issue reusing PR16's `business_date`/`shift` unmodified (§5); Verify Checklist's relationship to this criterion is exactly what Owner Decision #1 (§18) must resolve.
 
+**Receipt semantics (corrected per review finding PR17-H1)**
+- OPEN transactions never appear in the Receive Report, under any combination of filters, including no filter at all.
+- Receipt eligibility (`returned_at IS NOT NULL`) does not depend on the presence of `business_date_from`/`business_date_to`/`shift` — it is enforced unconditionally (§7.1, §8, §11).
+- Only records with a valid, completed receipt event (a non-null `returned_at`) are included; a `CLOSED` transaction with `receipt_outcome = defective` is included exactly like `usable` (§7.1).
+
 **API**
-- `GET /reports/receive`/`GET /reports/issue` match §10's full contract, including the pinned (non-client-settable) `event` basis and the reused `business_date_from > business_date_to` validation.
-- No existing endpoint's contract (`GET /transactions`, `GET /reports/export`) changes in any respect.
+- `GET /reports/receive`/`GET /reports/issue` match §10's full contract, including the pinned (non-client-settable) `event` basis, the always-on `require_receipt` predicate for Receive (§8, §10.1), and the reused `business_date_from > business_date_to` validation.
+- No existing endpoint's contract (`GET /transactions`, `GET /reports/export`, `GET /users`) changes in any respect.
 
 **Backend**
-- `transaction_crud.search()`'s two new filter capabilities (§11) are additive, tested in isolation, and do not alter existing filter behavior.
+- `transaction_crud.search()`'s new filter/predicate capabilities (§11) are additive, tested in isolation, and do not alter existing filter behavior or any existing caller's results.
 - No duplicated business-date/shift derivation logic exists anywhere in the new report query paths (§8, Option A).
 
+**Pagination and sorting (corrected per review finding PR17-H3)**
+- The backend is the only source of report ordering — `(created_at DESC, id DESC)`, identical to `GET /transactions`; no alternative `ORDER BY` is introduced by this design.
+- The frontend preserves and never re-sorts the returned order, on a single page or across accumulated "load more" pages (§12).
+- Cursor pagination produces no duplicate and no missing records across pages, verified by dedicated regression tests (§17, Slice 1).
+- Ordering is deterministic when timestamps are equal, via the existing `id DESC` tie-break — unchanged from `GET /transactions`.
+
+**Operator lookup (corrected per review finding PR17-M1)**
+- Equipment Pool Staff can successfully call `GET /report-options/operators` (§10.4) and populate the `operator_id` filter.
+- Read Only users can do the same.
+- A user with no role at all (unauthenticated, or a role outside `VIEW_AND_REPORT_ROLES`) is rejected with `401`/`403`.
+- The response never includes `employee_code`, `email`, `phone`, `role`, or any authentication-related field.
+- An operator who has since become inactive remains present, correctly labeled `is_active: false`, and resolvable for historical report filtering (§10.4).
+
+**Scope control (corrected per review finding PR17-H2)**
+- No printing implementation exists anywhere in PR17 — no `@media print` stylesheet, no print-specific component, no print-specific endpoint.
+- No PDF, Excel, or CSV implementation is included.
+- Future printing/export is explicitly and only deferred to Roadmap PR18 (§13, §21).
+
 **Frontend**
-- The three new report screens (§12) follow the existing `EquipmentDetailPage.tsx` filter/state pattern exactly — same URL-backed applied-state mechanism, same loading/empty/error distinction.
-- No business logic (date/shift/event-basis computation) exists in any new frontend code.
+- The report screens (§12) follow the existing `EquipmentDetailPage.tsx` filter/state pattern exactly — same URL-backed applied-state mechanism, same loading/empty/error distinction.
+- No business logic (date/shift/event-basis computation, or result ordering) exists in any new frontend code.
 
 **Testing** (restated as a requirement for the eventual implementation PR, not satisfied by this design document itself)
-- Backend: filter-combination tests for each new/reused parameter on each report endpoint; PostgreSQL evidence for the two new joins; the §7 canonical-definition edge cases (open transaction excluded from Receive, same-day issue/receive both appearing exactly once, defective receipt included, empty-result pages).
-- Frontend: component tests per report screen mirroring `EquipmentDetailPage.test.tsx`'s existing coverage pattern (filter application, URL persistence, loading/empty/error states).
+- Backend: filter-combination tests for each new/reused parameter on each report endpoint; PostgreSQL evidence for the new joins/predicate; the §7.1 five explicit Receive Report scenarios (event=receipt with no date filters, with date filters, with shift filter, an OPEN transaction excluded in every case, a completed transaction with valid `returned_at` included in every case); same-day issue/receive both appearing exactly once; defective receipt included; empty-result pages; cursor-pagination duplicate/missing-row and deterministic-tie-break regression tests (§17, Slice 1).
+- Operator lookup: authorized-role success, unauthorized-role rejection, inactive-operator inclusion, no sensitive field present in the response (§10.4).
+- Frontend: component tests per report screen mirroring `EquipmentDetailPage.test.tsx`'s existing coverage pattern (filter application including operator selection, URL persistence, loading/empty/error states, backend-order preservation across "load more").
 
 **Documentation**
-- This design document itself, reviewed and approved, is the Slice 0 deliverable; §17 Slice 5 is the only point at which `docs/ROADMAP.md`/`docs/ROADMAP_STATUS.md`/`docs/DECISION_LOG.md`/`knowledge/CHANGE_HISTORY.md` are touched (§21).
+- This design document itself, reviewed and approved, is the Slice 0 deliverable; §17's Final Slice is the only point at which `docs/ROADMAP.md`/`docs/ROADMAP_STATUS.md`/`docs/DECISION_LOG.md`/`knowledge/CONTEXT.md`/`knowledge/PROJECT_MEMORY.md`/`knowledge/CHANGE_HISTORY.md` are touched (§22).
 
 **Operational acceptance**
-- A shift handover can be conducted using only the Receive/Issue reports' on-screen output (with browser print, §13) without needing to fall back to the unfiltered `/reports/export` CSV/XLSX.
+- A shift handover can be conducted using only the Receive/Issue reports' on-screen output without needing to fall back to the unfiltered `/reports/export` CSV/XLSX. Printing itself is not part of this acceptance criterion (§13) — it is Roadmap PR18 scope.
 
 ---
 
@@ -404,6 +454,7 @@ This document recommends **(A)** as the option that satisfies PR17's literal acc
 
 Explicitly excluded from PR17 (and from this design document):
 
+- **Printing implementation of any kind, including browser-native print styling (`@media print`), a print-specific filter-summary header, or any other print-ready presentation (corrected per review finding PR17-H2)** — Roadmap PR18 owns all of "PDF export, Excel export, and print-ready Hard Copy templates" (`docs/audits/04-consolidated-implementation-plan.md`), and this document defines no part of it, not even a browser-CSS-only version (§13).
 - BI, analytics, dashboards, KPI widgets.
 - Scheduled reports, notifications, email delivery.
 - PDF implementation, Excel implementation, CSV implementation (PR18).
@@ -411,6 +462,8 @@ Explicitly excluded from PR17 (and from this design document):
 - Recall Monitor, MEMS, or any coupling to either.
 - Any change to the existing `/reports/export`/`ReportsPage.tsx` surface.
 - Any change to Roadmap PR16's reporting foundation, derivation logic, or the `GET /transactions` contract.
+- Any change to the existing, Administrator-only `GET /users` endpoint — the new `GET /report-options/operators` (§10.4) is additive, not a widening of it.
+- Any client-side/frontend re-ordering of report results (§7.2, §10.1, §12).
 - A genuine equipment physical-verification event workflow (§7.3(B)) — unless Owner Decision #1 (§18) explicitly assigns it here, in which case it becomes its own, separately scoped Roadmap item, not silently folded into PR17.
 - PM/calibration scheduling or reminder functionality of any kind (`AGENTS.md`'s existing guardrail, §2).
 
@@ -433,34 +486,39 @@ Governance synchronization occurs only after implementation is complete (§17, S
 
 ## 23. Final Validation
 
-Verified before this design document was finalized:
+Verified before this revision was finalized (review `4804227912`, blockers PR17-H1/H2/H3/M1):
 
-- [x] No implementation changed — `git status --short` on this branch shows exactly one new file, this document itself.
-- [x] No migrations created.
-- [x] No APIs modified — every endpoint in `backend/app/api/v1/transactions.py`, `backend/app/api/v1/reports.py`, and every other existing router is untouched; §10's endpoints are proposals only.
-- [x] No frontend implementation changed — `frontend/src/pages/EquipmentDetailPage.tsx`, `ReportsPage.tsx`, `App.tsx`, and every other existing file are untouched; §12's screens are proposals only.
+- [x] Only design documentation changed — `git status --short` on this branch shows exactly one modified file, this document itself; no other file exists in the diff.
+- [x] No source code changed.
+- [x] No test code changed.
+- [x] No migrations changed.
+- [x] No API implementation changed — every endpoint in `backend/app/api/v1/transactions.py`, `backend/app/api/v1/reports.py`, `backend/app/api/v1/users.py`, and every other existing router is untouched; §10's endpoints (including the new §10.4) are proposals only.
+- [x] No governance completion files changed — `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, `docs/DECISION_LOG.md`, `knowledge/CONTEXT.md`, `knowledge/PROJECT_MEMORY.md`, `knowledge/CHANGE_HISTORY.md` are all untouched (§22).
+- [x] All four review blockers explicitly resolved: PR17-H1 (§5, §7.1, §8, §11, §20 — Receive Report exclusion is now unconditional), PR17-H2 (§13, §16, §17, §21 — no printing slice or implementation remains in PR17), PR17-H3 (§7.2, §10.1, §12, §20 — backend-only ordering, no client-side re-sort), PR17-M1 (§9, §10.4, §11, §12, §14, §20 — a real, role-appropriate operator lookup path).
+- [x] Equipment Verify Checklist Owner Decision (§18, Owner Decision #1) remains open — unaltered content, explicitly re-flagged as untouched by this revision.
+- [x] Printing is deferred to PR18 — confirmed in §13, §16, §17 (no Printing slice), §19, §20, and §21.
+- [x] `git diff --check` passes — no whitespace errors.
 - [x] Design documents internally consistent — §7's canonical definitions are the single source every later section (§9 filters, §10 API, §11 backend, §17 slices, §20 acceptance criteria) is derived from, cross-referenced rather than restated independently.
 - [x] PR16 assumptions preserved — §5 states explicitly which PR16 mechanisms are reused unmodified; nothing in this document redefines `business_date`, `shift`, the boundary policy, or the `event` basis.
 - [x] Business workflow precedes architecture — §6/§7 (workflow, canonical definitions) are written and cited before §8 (architecture options) makes any technical recommendation, matching §4's required order.
-- [x] Canonical report definitions exist — §7, for all three reports, including the two full candidate interpretations for Equipment Verify Checklist.
-- [x] Owner decisions minimized — exactly one blocking decision (§18, Owner Decision #1), scoped to Equipment Verify Checklist only; two additional non-blocking decisions are flagged with a recommended default so they do not block Receive/Issue.
-- [x] Implementation slices are independent — §17, each slice's own dependencies and boundary rationale stated explicitly; Verify Checklist's Owner-Decision dependency is isolated to Slice 1's own sub-scope, not the whole Slice 1.
+- [x] Canonical report definitions exist — §7, for all three reports, including the two full candidate interpretations for Equipment Verify Checklist, and the five explicit PR17-H1 test scenarios (§7.1).
+- [x] Owner decisions minimized and unrelated design details not blocked by the open one — exactly one blocking decision (§18, Owner Decision #1), scoped to Equipment Verify Checklist only; Receive/Issue's full design (§7.1, §7.2, §8, §9, §10.1, §10.2, §10.4, §11, §12, §17 Slices 1-3) is complete and independent of it.
+- [x] Implementation slices are independent — §17, each slice's own dependencies and boundary rationale stated explicitly; Verify Checklist is now its own explicit Slice 4, blocked only on Owner Decision #1, never blocking Slices 1-3.
 - [x] No business rules changed — every existing dispatch/receipt/ward-correction/status-transition rule, and every PR16 reporting rule, is restated as reused (§5), never altered.
 
 ---
 
 ## 24. Deliverables
 
-1. **Files changed:** `docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md` (this document) — the only file added or modified by this design PR.
-2. **Design summary:** §1-§5.
-3. **Business workflows:** §6.
-4. **Canonical report definitions:** §7.
-5. **API proposal:** §10.
-6. **Backend architecture:** §11.
-7. **Frontend workflow:** §12.
-8. **Implementation slice plan:** §17.
-9. **Risks:** §19.
-10. **Remaining Owner Decisions:** §18 (one blocking — Equipment Verify Checklist definition; two non-blocking, each with a recommended default).
-11. **Validation checklist:** §23.
+1. **Files changed:** `docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md` (this document) — the only file modified by this incremental fix.
+2. **Blockers resolved, section by section:** PR17-H1 -> §5, §7.1, §8, §11, §20; PR17-H2 -> §13, §16, §17, §19, §20, §21; PR17-H3 -> §7.2, §10.1, §12, §17, §20; PR17-M1 -> §9, §10.4, §11, §12, §14, §17, §20.
+3. **Revised canonical Receive Report inclusion rule:** §7.1 — `returned_at IS NOT NULL` enforced unconditionally via a new `require_receipt` predicate (§8, §11), never contingent on `business_date_from`/`business_date_to`/`shift` being present; five explicit test scenarios listed.
+4. **Revised pagination and sorting contract:** §7.2, §10.1 — backend-only `(created_at DESC, id DESC)`, no client-side re-sort, no per-page ascending business-date order.
+5. **Operator lookup proposal:** §10.4 — new `GET /report-options/operators`, `VIEW_AND_REPORT_ROLES`-gated, minimal `id`/`display_name`/`is_active` response, unpaginated (matching the `GET /wards` precedent), inactive operators remain resolvable.
+6. **Revised PR17 implementation slices:** §17 — Slice 1 (Report Domain and Query Semantics), Slice 2 (Report APIs and Lookup Options), Slice 3 (Frontend Report Controls and Results), Slice 4 (Equipment Verify Checklist, blocked on Owner Decision #1), Final Slice (Governance Synchronization). No Printing slice.
+7. **Printing deferred to PR18:** Confirmed — §13 now states only that PR17 does not preclude a future PR18 print/export layer; no implementation, slice, or acceptance criterion for printing remains anywhere in this document.
+8. **Equipment Verify Checklist Owner Decision remains open:** Confirmed — §18, Owner Decision #1's content is unaltered by this revision.
+9. **Validation results:** §23.
+10. **New head SHA:** recorded in the PR's own commit/push metadata (outside this document's scope to self-report).
 
-*No production code was written or modified to produce this document. No migration was generated. No application file was modified. No reporting library was introduced. Every claim about existing code cites the specific file inspected (§2), not assumption.*
+*No production code was written or modified to produce this revision. No migration was generated. No application file was modified. No reporting library was introduced. Every claim about existing code cites the specific file inspected (§2), and the additional citations in this revision — `backend/app/api/v1/master_data.py::list_wards`, `backend/app/api/v1/users.py`, `backend/app/schemas/master_data.py::UserOut`, `backend/app/models/user.py` — not assumption.*
