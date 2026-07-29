@@ -1,7 +1,11 @@
-from datetime import datetime, timedelta
+import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import select, update
 
+from app.core.reporting_time import business_date_and_shift
+from app.models.transaction import BorrowTransaction
 from app.models.user import ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF
 from tests.conftest import auth_headers as _auth_headers
 from tests.conftest import create_ward as _create_ward
@@ -410,3 +414,368 @@ async def test_reporting_time_fields_present_on_closed_transaction_via_list_and_
     detail = detail_resp.json()
     assert detail["receipt_business_date"] == list_item["receipt_business_date"]
     assert detail["receipt_shift"] == list_item["receipt_shift"]
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR16 Slice 3: business_date_from/business_date_to/shift/event
+# filtering on GET /transactions (docs/design/PR16_REPORTING_FOUNDATION_PLAN.md
+# §8/§9/§11, §16 Slice 3 acceptance criteria). `client`/`db_session` share the
+# same `db_engine` (tests/conftest.py), so a transaction dispatched/received
+# through the API can have its `borrowed_at`/`returned_at` forced to a known
+# UTC instant afterward, to test the filter against known shift-boundary
+# cases -- the API itself has no way to set these timestamps directly.
+# ---------------------------------------------------------------------------
+
+# A representative sample of the same instants test_reporting_time.py's
+# _CASES uses: covers both shift transitions and, crucially, an instant
+# whose Bangkok business_date differs from its raw UTC calendar date (the
+# post-midnight portion of an overnight Night shift, per Owner Decision #1's
+# shift_start_date anchor).
+_NIGHT_POST_MIDNIGHT_UTC = datetime(2026, 7, 28, 0, 30, 0, tzinfo=timezone.utc)  # Bangkok 07:30, business_date 07-27
+_DAY_START_UTC = datetime(2026, 7, 28, 1, 0, 0, tzinfo=timezone.utc)  # Bangkok 08:00:00 exactly, Day start
+_NIGHT_START_UTC = datetime(2026, 7, 28, 13, 0, 0, tzinfo=timezone.utc)  # Bangkok 20:00:00 exactly, Night start
+
+
+async def _force_timestamps(
+    db_session, transaction_id: str, *, borrowed_at: datetime | None = None, returned_at: datetime | None = None
+):
+    values = {}
+    if borrowed_at is not None:
+        values["borrowed_at"] = borrowed_at
+    if returned_at is not None:
+        values["returned_at"] = returned_at
+    await db_session.execute(
+        update(BorrowTransaction).where(BorrowTransaction.id == uuid.UUID(transaction_id)).values(**values)
+    )
+    await db_session.commit()
+
+
+async def test_business_date_from_and_to_are_both_inclusive(client, seeded_users, db_session):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    ward_id = await _create_ward(client, admin, "W-PR16-S3-1")
+
+    equipment = await _create_equipment(client, admin, "AST-PR16-S3-0001")
+    tx = await _dispatch(client, staff, equipment["id"], ward_id, dispatch_type="on_demand")
+    await _force_timestamps(db_session, tx["id"], borrowed_at=_DAY_START_UTC)
+    business_date, _ = business_date_and_shift(_DAY_START_UTC)
+
+    # Exactly on both bounds (a single-day range) -- must match.
+    resp = await client.get(
+        "/api/v1/transactions",
+        headers=admin,
+        params={
+            "equipment_id": equipment["id"],
+            "business_date_from": str(business_date),
+            "business_date_to": str(business_date),
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()["items"]) == 1
+
+    # business_date_from inclusive: the row's own date as the lower bound.
+    resp_from = await client.get(
+        "/api/v1/transactions",
+        headers=admin,
+        params={"equipment_id": equipment["id"], "business_date_from": str(business_date)},
+    )
+    assert len(resp_from.json()["items"]) == 1
+
+    # business_date_to inclusive: the row's own date as the upper bound.
+    resp_to = await client.get(
+        "/api/v1/transactions",
+        headers=admin,
+        params={"equipment_id": equipment["id"], "business_date_to": str(business_date)},
+    )
+    assert len(resp_to.json()["items"]) == 1
+
+    # One day before/after the row's business_date -- must exclude it.
+    resp_excluded = await client.get(
+        "/api/v1/transactions",
+        headers=admin,
+        params={
+            "equipment_id": equipment["id"],
+            "business_date_from": str(business_date + timedelta(days=1)),
+        },
+    )
+    assert resp_excluded.json()["items"] == []
+
+
+async def test_shift_filter_accepted_values_and_omitted_behavior(client, seeded_users, db_session):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    ward_id = await _create_ward(client, admin, "W-PR16-S3-2")
+
+    day_eq = await _create_equipment(client, admin, "AST-PR16-S3-0002")
+    night_eq = await _create_equipment(client, admin, "AST-PR16-S3-0003")
+    day_tx = await _dispatch(client, staff, day_eq["id"], ward_id, dispatch_type="on_demand")
+    night_tx = await _dispatch(client, staff, night_eq["id"], ward_id, dispatch_type="on_demand")
+    await _force_timestamps(db_session, day_tx["id"], borrowed_at=_DAY_START_UTC)
+    await _force_timestamps(db_session, night_tx["id"], borrowed_at=_NIGHT_START_UTC)
+
+    resp_day = await client.get(
+        "/api/v1/transactions", headers=admin, params={"ward_id": ward_id, "shift": "day"}
+    )
+    assert [i["equipment"]["id"] for i in resp_day.json()["items"]] == [day_eq["id"]]
+
+    resp_night = await client.get(
+        "/api/v1/transactions", headers=admin, params={"ward_id": ward_id, "shift": "night"}
+    )
+    assert [i["equipment"]["id"] for i in resp_night.json()["items"]] == [night_eq["id"]]
+
+    # Omitted shift -- both rows returned, matching pre-Slice-3 behavior for
+    # every other optional filter.
+    resp_omitted = await client.get("/api/v1/transactions", headers=admin, params={"ward_id": ward_id})
+    assert len(resp_omitted.json()["items"]) == 2
+
+
+async def test_business_date_filter_uses_derived_business_date_not_raw_utc_timestamp(client, seeded_users, db_session):
+    """PR16-H1 acceptance criterion: business_date_from/_to must never be
+    satisfiable merely by the raw UTC calendar date -- _NIGHT_POST_MIDNIGHT_UTC
+    is 2026-07-28 in UTC but business_date 2026-07-27 in Asia/Bangkok (the
+    shift_start_date rollover), so the two filter bases must disagree here."""
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    ward_id = await _create_ward(client, admin, "W-PR16-S3-4")
+
+    equipment = await _create_equipment(client, admin, "AST-PR16-S3-0004")
+    tx = await _dispatch(client, staff, equipment["id"], ward_id, dispatch_type="on_demand")
+    await _force_timestamps(db_session, tx["id"], borrowed_at=_NIGHT_POST_MIDNIGHT_UTC)
+    business_date, _ = business_date_and_shift(_NIGHT_POST_MIDNIGHT_UTC)
+    assert business_date != _NIGHT_POST_MIDNIGHT_UTC.date()  # sanity: the two bases really do disagree here
+
+    # The derived business_date (2026-07-27) matches via business_date_from/_to.
+    resp_business_date = await client.get(
+        "/api/v1/transactions",
+        headers=admin,
+        params={
+            "equipment_id": equipment["id"],
+            "business_date_from": str(business_date),
+            "business_date_to": str(business_date),
+        },
+    )
+    assert len(resp_business_date.json()["items"]) == 1
+
+    # The raw UTC calendar date (2026-07-28) does NOT match business_date
+    # filtering -- it is a different day under the Bangkok-derived rule.
+    resp_raw_utc_date = await client.get(
+        "/api/v1/transactions",
+        headers=admin,
+        params={
+            "equipment_id": equipment["id"],
+            "business_date_from": str(_NIGHT_POST_MIDNIGHT_UTC.date()),
+            "business_date_to": str(_NIGHT_POST_MIDNIGHT_UTC.date()),
+        },
+    )
+    assert resp_raw_utc_date.json()["items"] == []
+
+    # The existing, separate from_date/to_date raw-timestamp filter, by
+    # contrast, DOES match the raw UTC calendar date -- confirming the two
+    # filter bases are genuinely distinct, not accidentally aliased.
+    resp_raw_filter = await client.get(
+        "/api/v1/transactions",
+        headers=admin,
+        params={
+            "equipment_id": equipment["id"],
+            "from_date": str(_NIGHT_POST_MIDNIGHT_UTC.date()),
+            "to_date": str(_NIGHT_POST_MIDNIGHT_UTC.date()),
+        },
+    )
+    assert len(resp_raw_filter.json()["items"]) == 1
+
+
+async def test_event_dispatch_vs_receipt_selects_the_correct_column_pair(client, seeded_users, db_session):
+    """PR16-H2 acceptance criterion: event=dispatch filters
+    dispatch_business_date/dispatch_shift (borrowed_at); event=receipt
+    filters receipt_business_date/receipt_shift (returned_at) -- the same
+    business_date value must not match both bases when the two timestamps
+    fall on different derived business dates."""
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    ward_id = await _create_ward(client, admin, "W-PR16-S3-5")
+
+    equipment = await _create_equipment(client, admin, "AST-PR16-S3-0005")
+    tx = await _dispatch(client, staff, equipment["id"], ward_id, dispatch_type="on_demand")
+    await _receive(client, staff, tx["id"])
+    await _force_timestamps(db_session, tx["id"], borrowed_at=_DAY_START_UTC, returned_at=_NIGHT_START_UTC)
+    dispatch_business_date, _ = business_date_and_shift(_DAY_START_UTC)
+    receipt_business_date, _ = business_date_and_shift(_NIGHT_START_UTC)
+
+    resp_dispatch = await client.get(
+        "/api/v1/transactions",
+        headers=admin,
+        params={
+            "equipment_id": equipment["id"],
+            "event": "dispatch",
+            "business_date_from": str(dispatch_business_date),
+            "business_date_to": str(dispatch_business_date),
+        },
+    )
+    assert len(resp_dispatch.json()["items"]) == 1
+
+    resp_receipt = await client.get(
+        "/api/v1/transactions",
+        headers=admin,
+        params={
+            "equipment_id": equipment["id"],
+            "event": "receipt",
+            "business_date_from": str(receipt_business_date),
+            "business_date_to": str(receipt_business_date),
+        },
+    )
+    assert len(resp_receipt.json()["items"]) == 1
+
+    # The dispatch business_date does not satisfy an event=receipt filter
+    # when the two derived dates genuinely differ.
+    if dispatch_business_date != receipt_business_date:
+        resp_mismatched = await client.get(
+            "/api/v1/transactions",
+            headers=admin,
+            params={
+                "equipment_id": equipment["id"],
+                "event": "receipt",
+                "business_date_from": str(dispatch_business_date),
+                "business_date_to": str(dispatch_business_date),
+            },
+        )
+        assert resp_mismatched.json()["items"] == []
+
+
+async def test_open_transaction_excluded_from_receipt_event_filter(client, seeded_users, db_session):
+    """§8's confirmed open-transaction rule: a transaction with
+    returned_at IS NULL must never satisfy a non-null event=receipt filter
+    -- silently excluded, not treated as an error."""
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    ward_id = await _create_ward(client, admin, "W-PR16-S3-6")
+
+    equipment = await _create_equipment(client, admin, "AST-PR16-S3-0006")
+    tx = await _dispatch(client, staff, equipment["id"], ward_id, dispatch_type="on_demand")
+    await _force_timestamps(db_session, tx["id"], borrowed_at=_DAY_START_UTC)
+
+    resp_business_date = await client.get(
+        "/api/v1/transactions",
+        headers=admin,
+        params={"equipment_id": equipment["id"], "event": "receipt", "business_date_from": "2000-01-01"},
+    )
+    assert resp_business_date.json()["items"] == []
+
+    resp_shift = await client.get(
+        "/api/v1/transactions",
+        headers=admin,
+        params={"equipment_id": equipment["id"], "event": "receipt", "shift": "day"},
+    )
+    assert resp_shift.json()["items"] == []
+    resp_shift_night = await client.get(
+        "/api/v1/transactions",
+        headers=admin,
+        params={"equipment_id": equipment["id"], "event": "receipt", "shift": "night"},
+    )
+    assert resp_shift_night.json()["items"] == []
+
+    # event=dispatch on the same still-open transaction is unaffected.
+    resp_dispatch = await client.get(
+        "/api/v1/transactions",
+        headers=admin,
+        params={"equipment_id": equipment["id"], "event": "dispatch", "shift": "day"},
+    )
+    assert len(resp_dispatch.json()["items"]) == 1
+
+
+async def test_business_date_range_reversed_rejected_with_structured_400_distinct_from_from_date_check(
+    client, seeded_users
+):
+    """A new, separate check from the existing from_date/to_date one (§8) --
+    confirmed here by sending a valid from_date/to_date pair alongside a
+    reversed business_date_from/business_date_to pair and asserting the
+    business_date fields, not from_date/to_date, are named in the error."""
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await client.get(
+        "/api/v1/transactions",
+        headers=admin,
+        params={
+            "from_date": "2026-01-01",
+            "to_date": "2026-01-02",
+            "business_date_from": "2026-07-31",
+            "business_date_to": "2026-07-01",
+        },
+    )
+    assert resp.status_code == 400, resp.text
+    body = resp.json()
+    assert body["code"] == "INVALID_INPUT"
+    assert "business_date_from" in body["detail"]
+    assert "business_date_to" in body["detail"]
+
+
+async def test_equal_business_date_from_and_to_is_a_valid_single_day_range(client, seeded_users, db_session):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    ward_id = await _create_ward(client, admin, "W-PR16-S3-7")
+
+    equipment = await _create_equipment(client, admin, "AST-PR16-S3-0007")
+    tx = await _dispatch(client, staff, equipment["id"], ward_id, dispatch_type="on_demand")
+    await _force_timestamps(db_session, tx["id"], borrowed_at=_DAY_START_UTC)
+    business_date, _ = business_date_and_shift(_DAY_START_UTC)
+
+    resp = await client.get(
+        "/api/v1/transactions",
+        headers=admin,
+        params={
+            "equipment_id": equipment["id"],
+            "business_date_from": str(business_date),
+            "business_date_to": str(business_date),
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()["items"]) == 1
+
+
+async def test_invalid_shift_value_rejected_not_500(client, seeded_users):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await client.get("/api/v1/transactions", headers=admin, params={"shift": "afternoon"})
+    assert resp.status_code == 422
+
+
+async def test_invalid_event_value_rejected_not_500(client, seeded_users):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await client.get("/api/v1/transactions", headers=admin, params={"event": "cleaning"})
+    assert resp.status_code == 422
+
+
+async def test_business_date_and_shift_filters_leave_pagination_and_ordering_unchanged(
+    client, seeded_users, db_session
+):
+    """Regression guard: adding business_date_from/_to/shift/event must not
+    alter the existing (created_at DESC, id DESC) ordering or cursor
+    pagination shape -- the new filter is additive, appended to the same
+    `filters` list, never touching the ORDER BY/LIMIT clause."""
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    ward_id = await _create_ward(client, admin, "W-PR16-S3-8")
+
+    created_ids = []
+    for i in range(3):
+        equipment = await _create_equipment(client, admin, f"AST-PR16-S3-010{i}")
+        tx = await _dispatch(client, staff, equipment["id"], ward_id, dispatch_type="on_demand")
+        await _force_timestamps(db_session, tx["id"], borrowed_at=_DAY_START_UTC)
+        created_ids.append(tx["id"])
+
+    resp_unfiltered = await client.get("/api/v1/transactions", headers=admin, params={"ward_id": ward_id})
+    resp_filtered = await client.get(
+        "/api/v1/transactions",
+        headers=admin,
+        params={"ward_id": ward_id, "shift": "day", "business_date_from": "2000-01-01"},
+    )
+    assert resp_unfiltered.status_code == resp_filtered.status_code == 200
+    unfiltered_ids = [i["id"] for i in resp_unfiltered.json()["items"]]
+    filtered_ids = [i["id"] for i in resp_filtered.json()["items"]]
+    # Same set (all 3 rows satisfy the new filter) and, crucially, the exact
+    # same order as the unfiltered query -- the (created_at DESC, id DESC)
+    # ordering is untouched by the new filter, whatever it resolves to when
+    # created_at ties (SQLite/PostgreSQL timestamp precision can make
+    # same-millisecond dispatches tie on created_at, in which case id DESC
+    # breaks the tie -- this test asserts the ordering is *unchanged* by the
+    # new filter, not any particular absolute order).
+    assert set(filtered_ids) == set(unfiltered_ids) == set(created_ids)
+    assert filtered_ids == unfiltered_ids
+    assert resp_unfiltered.json()["total"] == resp_filtered.json()["total"] == 3

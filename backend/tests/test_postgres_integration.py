@@ -32,7 +32,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import func, inspect, select, text
+from sqlalchemy import DateTime, cast, func, inspect, literal, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.db_errors import translate_integrity_error
@@ -8583,3 +8583,17 @@ async def test_reporting_time_sql_python_parity_on_postgres(pg_session):
         py_business_date, py_shift = business_date_and_shift(utc_instant)
         assert sql_business_date == py_business_date == expected_date
         assert Shift(sql_shift) == py_shift == expected_shift
+
+
+async def test_reporting_time_sql_twin_null_column_yields_null_on_postgres(pg_session):
+    """Postgres-side counterpart of backend/tests/test_reporting_time.py::
+    test_sql_twin_null_column_yields_null_business_date_and_shift -- the
+    NULL-propagation fix in business_date_and_shift_sql()'s shift_expr CASE
+    (explicit `column.is_(None)` WHEN branch) must hold on both dialects,
+    not just SQLite, since Slice 3 filters BorrowTransaction.returned_at
+    (nullable) directly against PostgreSQL in production."""
+    null_column = cast(literal(None), DateTime())
+    business_date_expr, shift_expr = business_date_and_shift_sql(null_column)
+    row = (await pg_session.execute(select(business_date_expr, shift_expr))).first()
+    assert row[0] is None
+    assert row[1] is None
