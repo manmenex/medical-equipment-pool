@@ -130,6 +130,43 @@ export interface Page<T> {
   total: number;
 }
 
+// Roadmap PR17 Slice 2 (backend/app/schemas/transaction.py's
+// ReportTransactionOut, docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md §8/
+// §10.1/§11): the report-only response DTO for GET /reports/receive and
+// GET /reports/issue -- never used by GET /transactions/GET
+// /transactions/{id}, which continue returning TransactionOut unchanged.
+// Extends TransactionOut with exactly two additional, read-only fields;
+// the frontend must never infer or recompute either from borrowed_at/
+// returned_at/status -- both are backend-derived display strings only.
+//
+// dispatch_business_date/dispatch_shift/receipt_business_date/receipt_shift
+// (Roadmap PR16 Slice 2) already exist on the backend's TransactionOut and
+// are inherited by ReportTransactionOut there, but are declared only here
+// on the frontend (not on the frontend's own TransactionOut interface
+// above, which has never mirrored them) -- scoping this addition to the
+// new report type only, with zero effect on every existing TransactionOut
+// fixture/usage elsewhere in the frontend. Read-only, backend-computed;
+// never derived or recomputed here.
+export interface ReportTransactionOut extends TransactionOut {
+  dispatch_operator_display_name: string | null;
+  receipt_operator_display_name: string | null;
+  dispatch_business_date: string;
+  dispatch_shift: Shift;
+  receipt_business_date: string | null;
+  receipt_shift: Shift | null;
+}
+
+// Roadmap PR17 Slice 2 (backend/app/schemas/report_options.py's
+// ReportOperatorOut): the bounded, report-scoped operator shape returned
+// by GET /report-options/operators. Deliberately excludes employee_code/
+// email/phone/role -- this is not, and must never become, a user-directory
+// lookup (never call GET /users for this purpose).
+export interface ReportOperatorOut {
+  id: string;
+  display_name: string;
+  is_active: boolean;
+}
+
 export interface DashboardSummary {
   total: number;
   available_at_pool: number;

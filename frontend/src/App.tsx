@@ -16,6 +16,12 @@ const BorrowPage = lazy(() => import("@/pages/BorrowPage").then((m) => ({ defaul
 const ReturnPage = lazy(() => import("@/pages/ReturnPage").then((m) => ({ default: m.ReturnPage })));
 const ScanPage = lazy(() => import("@/pages/ScanPage").then((m) => ({ default: m.ScanPage })));
 const ReportsPage = lazy(() => import("@/pages/ReportsPage").then((m) => ({ default: m.ReportsPage })));
+const ReceiveReportPage = lazy(() =>
+  import("@/pages/ReceiveReportPage").then((m) => ({ default: m.ReceiveReportPage }))
+);
+const IssueReportPage = lazy(() =>
+  import("@/pages/IssueReportPage").then((m) => ({ default: m.IssueReportPage }))
+);
 const AdminPage = lazy(() => import("@/pages/AdminPage").then((m) => ({ default: m.AdminPage })));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 const NotFoundPage = lazy(() => import("@/pages/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
@@ -43,6 +49,12 @@ export function App() {
           <Route path="/borrow" element={<BorrowPage />} />
           <Route path="/return" element={<ReturnPage />} />
           <Route path="/reports" element={<ReportsPage />} />
+          {/* Roadmap PR17 Slice 3: new sub-routes under the existing
+              /reports route (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+              §12) -- additional, separate report screens, not a
+              replacement for /reports. */}
+          <Route path="/reports/receive" element={<ReceiveReportPage />} />
+          <Route path="/reports/issue" element={<IssueReportPage />} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
