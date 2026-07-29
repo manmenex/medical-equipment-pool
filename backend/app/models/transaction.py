@@ -239,6 +239,30 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     legacy_status: Mapped[str | None] = mapped_column(String(20))
 
     equipment: Mapped["Equipment"] = relationship()
+    # Roadmap PR17 Slice 2 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+    # §11, corrected per review finding PR17-H5): read-only relationships
+    # via the existing borrower_user_id/received_by_user_id FKs -- neither
+    # existed before this slice. Feed the two operator-display properties
+    # below, which in turn feed `ReportTransactionOut` only (§10.1);
+    # `TransactionOut` itself is not edited by this slice.
+    borrower_user: Mapped["User | None"] = relationship(foreign_keys=[borrower_user_id])
+    received_by_user: Mapped["User | None"] = relationship(foreign_keys=[received_by_user_id])
+
+    @property
+    def dispatch_operator_display_name(self) -> str | None:
+        """Roadmap PR17 Slice 2 (§8, §10.1, §11) -- report-only presentation
+        field, read by `ReportTransactionOut` (`from_attributes`) exactly
+        like `dispatch_business_date`'s existing computed-property pattern.
+        `None` when `borrower_user_id` was never recorded, mirroring that
+        precedent's None-when-absent rule."""
+        return self.borrower_user.full_name if self.borrower_user else None
+
+    @property
+    def receipt_operator_display_name(self) -> str | None:
+        """See `dispatch_operator_display_name` above -- same pattern,
+        `received_by_user_id`/`received_by_user` side. `None` until the
+        transaction is received (no `received_by_user_id` recorded yet)."""
+        return self.received_by_user.full_name if self.received_by_user else None
 
     @property
     def receipt_outcome(self) -> "ReceiptOutcome | None":
