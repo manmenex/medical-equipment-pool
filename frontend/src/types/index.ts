@@ -68,6 +68,19 @@ export interface EquipmentStatusHistoryItem {
 export type DispatchType = "routine_round" | "on_demand";
 export type RoutineRound = "06:00" | "11:00" | "15:00" | "21:00";
 
+// Roadmap PR16 (docs/design/PR16_REPORTING_FOUNDATION_PLAN.md §7/§8):
+// mirrors the backend's `app.core.reporting_time.Shift` enum exactly --
+// `business_date`/`shift` are always backend-computed (never invented or
+// recalculated here); the frontend only ever sends/displays these two
+// values verbatim.
+export type Shift = "day" | "night";
+
+// The closed, two-value `event` basis GET /transactions filters against
+// (Roadmap PR16 Slice 3, §8): `dispatch` reads `borrowed_at`-derived
+// fields, `receipt` reads `returned_at`-derived fields. Matches the
+// backend's `Literal["dispatch", "receipt"]` exactly -- do not widen.
+export type TransactionEventBasis = "dispatch" | "receipt";
+
 // Roadmap PR8B (backend/app/models/transaction.py's ReceiptOutcome,
 // knowledge/adr/ADR-006-receipt-outcome-contract.md): the confirmed binary
 // receipt outcome -- the exact domain vocabulary

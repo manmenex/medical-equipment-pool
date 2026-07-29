@@ -1,5 +1,14 @@
 import { api } from "@/services/api";
-import type { DispatchType, Page, ReceiptOutcome, RoutineRound, TransactionOut, WardCorrectionPayload } from "@/types";
+import type {
+  DispatchType,
+  Page,
+  ReceiptOutcome,
+  RoutineRound,
+  Shift,
+  TransactionEventBasis,
+  TransactionOut,
+  WardCorrectionPayload,
+} from "@/types";
 
 // Roadmap PR7b: borrower_name/due_at/quantity are deliberately absent --
 // no longer accepted by the active BorrowRequest contract (see
@@ -54,6 +63,15 @@ export async function listTransactions(params: {
   routine_round?: RoutineRound;
   from_date?: string;
   to_date?: string;
+  // Roadmap PR16 Slice 3 (backend/app/crud/transaction.py's search()):
+  // a distinct filter basis from from_date/to_date above -- these compare
+  // against the backend-derived business_date/shift, never the raw
+  // borrowed_at/returned_at timestamp. Parameter names match the backend
+  // query contract exactly; no alias or rename.
+  business_date_from?: string;
+  business_date_to?: string;
+  shift?: Shift;
+  event?: TransactionEventBasis;
   cursor?: string | null;
   limit?: number;
 }): Promise<Page<TransactionOut>> {

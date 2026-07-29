@@ -1,13 +1,14 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { StatusBadge } from "@/components/StatusBadge";
 import { WardCorrectionAction } from "@/components/WardCorrectionAction";
+import { apiErrorMessage } from "@/services/api";
 import { listTransactions } from "@/services/borrow";
 import { getEquipment, getEquipmentHistory } from "@/services/equipment";
 import { listWards } from "@/services/masterData";
-import type { DispatchType, RoutineRound, TransactionOut } from "@/types";
+import type { DispatchType, RoutineRound, Shift, TransactionEventBasis, TransactionOut } from "@/types";
 
 // Roadmap PR13 (docs/audits/04-consolidated-implementation-plan.md's PR13
 // entry, Part H acceptance criterion "when viewed in history, [an
@@ -20,6 +21,21 @@ const DISPATCH_TYPE_LABELS: Record<DispatchType, string> = {
 };
 
 const ROUTINE_ROUNDS: RoutineRound[] = ["06:00", "11:00", "15:00", "21:00"];
+
+// Roadmap PR16 Slice 4 (docs/design/PR16_REPORTING_FOUNDATION_PLAN.md §10):
+// ค่ากะ -- กลางวัน / กลางคืน, matching the design's own Thai wording.
+const SHIFT_LABELS: Record<Shift, string> = {
+  day: "กลางวัน",
+  night: "กลางคืน",
+};
+
+// เบิก/รับคืน already used verbatim on this page and BorrowPage/ReturnPage
+// for the dispatch/receipt actions -- reused here for the event basis
+// selector so the same domain term always reads the same way.
+const EVENT_BASIS_LABELS: Record<TransactionEventBasis, string> = {
+  dispatch: "เบิก",
+  receipt: "รับคืน",
+};
 
 function daysSinceDispatch(borrowedAt: string): number {
   const borrowed = new Date(borrowedAt).getTime();
@@ -59,6 +75,63 @@ export function EquipmentDetailPage() {
   const [routineRoundFilter, setRoutineRoundFilter] = useState<RoutineRound | "">("");
   const [fromDateFilter, setFromDateFilter] = useState("");
   const [toDateFilter, setToDateFilter] = useState("");
+
+  // Roadmap PR16 Slice 4 (docs/design/PR16_REPORTING_FOUNDATION_PLAN.md §10):
+  // business_date_from/business_date_to/shift/event -- a distinct filter
+  // basis from the from_date/to_date raw-timestamp pair above, never merged
+  // with or substituted for it (see the design's explicit correction on
+  // this point). URL search params are the single source of truth for the
+  // *applied* filter values (same useSearchParams pattern already
+  // established by EquipmentListPage.tsx), so a page refresh or shared link
+  // reproduces the exact same filtered view; the four draft* fields below
+  // are only the uncommitted form state the pickers/selects are bound to
+  // until "Apply Filters" is pressed.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const appliedBusinessDateFrom = searchParams.get("business_date_from") ?? "";
+  const appliedBusinessDateTo = searchParams.get("business_date_to") ?? "";
+  const appliedShift = (searchParams.get("shift") as Shift | null) ?? "";
+  const appliedEvent = (searchParams.get("event") as TransactionEventBasis | null) ?? "";
+  const [draftBusinessDateFrom, setDraftBusinessDateFrom] = useState(appliedBusinessDateFrom);
+  const [draftBusinessDateTo, setDraftBusinessDateTo] = useState(appliedBusinessDateTo);
+  const [draftShift, setDraftShift] = useState<Shift | "">(appliedShift);
+  const [draftEvent, setDraftEvent] = useState<TransactionEventBasis | "">(appliedEvent);
+  // Frontend validation is limited to the one "obvious UI mistake" the
+  // design calls out (from > to) -- everything else (an unrecognized shift/
+  // event value, etc.) is left to the backend's own validation, surfaced via
+  // apiErrorMessage(transactionsErrorObj) below, never re-implemented here.
+  const [businessDateRangeError, setBusinessDateRangeError] = useState<string | null>(null);
+
+  function applyBusinessDateFilters() {
+    if (draftBusinessDateFrom && draftBusinessDateTo && draftBusinessDateFrom > draftBusinessDateTo) {
+      setBusinessDateRangeError('"วันที่ทำการ ตั้งแต่" ต้องไม่มาหลัง "วันที่ทำการ ถึง"');
+      return;
+    }
+    setBusinessDateRangeError(null);
+    const next = new URLSearchParams(searchParams);
+    if (draftBusinessDateFrom) next.set("business_date_from", draftBusinessDateFrom);
+    else next.delete("business_date_from");
+    if (draftBusinessDateTo) next.set("business_date_to", draftBusinessDateTo);
+    else next.delete("business_date_to");
+    if (draftShift) next.set("shift", draftShift);
+    else next.delete("shift");
+    if (draftEvent) next.set("event", draftEvent);
+    else next.delete("event");
+    setSearchParams(next);
+  }
+
+  function clearBusinessDateFilters() {
+    setDraftBusinessDateFrom("");
+    setDraftBusinessDateTo("");
+    setDraftShift("");
+    setDraftEvent("");
+    setBusinessDateRangeError(null);
+    const next = new URLSearchParams(searchParams);
+    next.delete("business_date_from");
+    next.delete("business_date_to");
+    next.delete("shift");
+    next.delete("event");
+    setSearchParams(next);
+  }
   // Roadmap PR9B review round 2 (Codex incremental review, PR34-R2-M2): a
   // single limit:50 page silently hid every CLOSED transaction beyond the
   // first page for equipment with a long history, and had no distinct
@@ -76,11 +149,16 @@ export function EquipmentDetailPage() {
     routineRoundFilter,
     fromDateFilter,
     toDateFilter,
+    appliedBusinessDateFrom,
+    appliedBusinessDateTo,
+    appliedShift,
+    appliedEvent,
   ];
   const {
     data: transactionPages,
     isLoading: transactionsLoading,
     isError: transactionsError,
+    error: transactionsErrorObj,
     refetch: refetchTransactions,
     fetchNextPage,
     hasNextPage,
@@ -92,6 +170,10 @@ export function EquipmentDetailPage() {
         equipment_id: id,
         dispatch_type: dispatchTypeFilter || undefined,
         routine_round: routineRoundFilter || undefined,
+        business_date_from: appliedBusinessDateFrom || undefined,
+        business_date_to: appliedBusinessDateTo || undefined,
+        shift: appliedShift || undefined,
+        event: appliedEvent || undefined,
         from_date: fromDateFilter || undefined,
         to_date: toDateFilter || undefined,
         limit: 50,
@@ -256,12 +338,102 @@ export function EquipmentDetailPage() {
           </div>
         </div>
 
+        {/* Roadmap PR16 Slice 4 (docs/design/PR16_REPORTING_FOUNDATION_PLAN.md
+            §10): business_date_from/business_date_to/shift/event -- kept as
+            an explicitly separate control group from the from_date/to_date
+            pair above (never merged, never relabeled), since the two
+            represent genuinely different concepts: raw event timestamp vs.
+            backend-derived Asia/Bangkok business day/shift. Draft values are
+            only sent to the API once "นำตัวกรองไปใช้" (Apply) is pressed;
+            business_date/shift are never computed here, only selected. */}
+        <div className="mb-1 flex items-baseline justify-between gap-2">
+          <h3 className="text-xs font-medium text-[var(--text-muted)]">ตัวกรองตามวันที่ทำการและกะ</h3>
+        </div>
+        <p className="mb-2 text-xs text-[var(--text-muted)]">
+          วันที่ทำการและกะคำนวณโดยระบบตามเวลาประเทศไทย แยกจาก &quot;ตั้งแต่วันที่ / ถึงวันที่&quot; ด้านบนซึ่งกรองตามเวลาที่บันทึกจริง
+        </p>
+        <div className="mb-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div>
+            <label htmlFor="tx-filter-business-date-from" className="mb-1 block text-xs text-[var(--text-muted)]">
+              วันที่ทำการ ตั้งแต่
+            </label>
+            <input
+              id="tx-filter-business-date-from"
+              type="date"
+              value={draftBusinessDateFrom}
+              onChange={(e) => setDraftBusinessDateFrom(e.target.value)}
+              className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label htmlFor="tx-filter-business-date-to" className="mb-1 block text-xs text-[var(--text-muted)]">
+              วันที่ทำการ ถึง
+            </label>
+            <input
+              id="tx-filter-business-date-to"
+              type="date"
+              value={draftBusinessDateTo}
+              onChange={(e) => setDraftBusinessDateTo(e.target.value)}
+              className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label htmlFor="tx-filter-shift" className="mb-1 block text-xs text-[var(--text-muted)]">
+              กะ
+            </label>
+            <select
+              id="tx-filter-shift"
+              value={draftShift}
+              onChange={(e) => setDraftShift(e.target.value as Shift | "")}
+              className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
+            >
+              <option value="">ทั้งหมด</option>
+              <option value="day">{SHIFT_LABELS.day}</option>
+              <option value="night">{SHIFT_LABELS.night}</option>
+            </select>
+          </div>
+          <div>
+            <label htmlFor="tx-filter-event" className="mb-1 block text-xs text-[var(--text-muted)]">
+              เหตุการณ์
+            </label>
+            <select
+              id="tx-filter-event"
+              value={draftEvent}
+              onChange={(e) => setDraftEvent(e.target.value as TransactionEventBasis | "")}
+              className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
+            >
+              <option value="">ทั้งหมด</option>
+              <option value="dispatch">{EVENT_BASIS_LABELS.dispatch}</option>
+              <option value="receipt">{EVENT_BASIS_LABELS.receipt}</option>
+            </select>
+          </div>
+        </div>
+        {businessDateRangeError && <p className="mb-2 text-xs text-status-repair">{businessDateRangeError}</p>}
+        <div className="mb-3 flex gap-2">
+          <button
+            type="button"
+            onClick={applyBusinessDateFilters}
+            className="rounded-lg bg-status-borrowed px-4 py-2 text-sm font-medium text-white"
+          >
+            นำตัวกรองไปใช้
+          </button>
+          <button
+            type="button"
+            onClick={clearBusinessDateFilters}
+            className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-medium"
+          >
+            ล้างตัวกรอง
+          </button>
+        </div>
+
         {transactionsLoading && (
           <p className="text-sm text-[var(--text-muted)]">กำลังโหลดประวัติการเบิก-รับคืน...</p>
         )}
         {transactionsError && (
           <div className="flex flex-col items-start gap-2">
-            <p className="text-sm text-status-repair">ไม่สามารถโหลดประวัติการเบิก-รับคืนได้</p>
+            <p className="text-sm text-status-repair">
+              {apiErrorMessage(transactionsErrorObj, "ไม่สามารถโหลดประวัติการเบิก-รับคืนได้")}
+            </p>
             <button
               type="button"
               onClick={() => refetchTransactions()}
