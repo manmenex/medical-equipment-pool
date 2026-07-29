@@ -207,7 +207,16 @@ async def test_new_dispatch_opens_a_transaction_with_status_open(client, seeded_
 
     resp = await client.post("/api/v1/borrow", headers=admin_headers, json=payload)
     assert resp.status_code == 201, resp.text
-    assert resp.json()["status"] == "open"
+    tx = resp.json()
+    assert tx["status"] == "open"
+
+    # Roadmap PR16 Slice 2: dispatch_business_date/dispatch_shift are always
+    # present (every transaction has a borrowed_at); receipt_business_date/
+    # receipt_shift are None until the transaction is received.
+    assert tx["dispatch_business_date"] is not None
+    assert tx["dispatch_shift"] in ("day", "night")
+    assert tx["receipt_business_date"] is None
+    assert tx["receipt_shift"] is None
 
 
 async def test_receipt_closes_the_transaction_and_records_outcome(client, seeded_users):
@@ -225,6 +234,15 @@ async def test_receipt_closes_the_transaction_and_records_outcome(client, seeded
     assert return_resp.status_code == 200, return_resp.text
     tx = return_resp.json()
     assert tx["status"] == "closed"
+
+    # Roadmap PR16 Slice 2: once received, receipt_business_date/
+    # receipt_shift are populated (never None for a closed transaction),
+    # and dispatch_* remains derived from the original borrowed_at,
+    # unaffected by the receipt.
+    assert tx["dispatch_business_date"] is not None
+    assert tx["dispatch_shift"] in ("day", "night")
+    assert tx["receipt_business_date"] is not None
+    assert tx["receipt_shift"] in ("day", "night")
 
 
 async def test_closing_an_already_closed_transaction_is_rejected(client, seeded_users):
