@@ -12,7 +12,7 @@ PR16_REPORTING_FOUNDATION_PLAN.md §15.
 from datetime import date, datetime, timezone
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import DateTime, cast, literal, select
 
 from app.core.reporting_time import Shift, business_date_and_shift, business_date_and_shift_sql
 from app.models.audit import AuditLog
@@ -79,3 +79,19 @@ async def test_sql_python_parity(db_session):
         py_business_date, py_shift = business_date_and_shift(utc_instant)
         assert sql_business_date == py_business_date == expected_date
         assert Shift(sql_shift) == py_shift == expected_shift
+
+
+async def test_sql_twin_null_column_yields_null_business_date_and_shift(db_session):
+    """Roadmap PR16 Slice 3 (business_date_and_shift_sql(BorrowTransaction.
+    returned_at), nullable for an open transaction) exposed a real defect
+    found during implementation-readiness review: standard SQL `CASE`
+    treats "WHEN <NULL comparison>" as never TRUE, so the shift expression
+    silently fell through to its `ELSE` branch and returned `Shift.NIGHT`
+    for a NULL input instead of `NULL` -- matching the pure-Python
+    property's `receipt_shift is None`-until-received rule requires an
+    explicit `column.is_(None)` branch, which this test guards."""
+    null_column = cast(literal(None), DateTime())
+    business_date_expr, shift_expr = business_date_and_shift_sql(null_column)
+    row = (await db_session.execute(select(business_date_expr, shift_expr))).first()
+    assert row[0] is None
+    assert row[1] is None

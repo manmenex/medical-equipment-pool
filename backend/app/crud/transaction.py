@@ -1,10 +1,12 @@
 import uuid
 from datetime import date, datetime, time, timezone
+from typing import Literal
 
 from sqlalchemy import String, and_, cast, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.reporting_time import Shift, business_date_and_shift_sql
 from app.models.transaction import BorrowTransaction, DispatchType, RoutineRound, TransactionStatus
 from app.utils.pagination import decode_cursor, encode_cursor
 
@@ -298,6 +300,10 @@ async def search(
     routine_round: RoutineRound | None = None,
     from_date: date | None = None,
     to_date: date | None = None,
+    business_date_from: date | None = None,
+    business_date_to: date | None = None,
+    shift: Shift | None = None,
+    event: Literal["dispatch", "receipt"] = "dispatch",
     limit: int = 25,
     cursor: str | None = None,
 ) -> tuple[list[BorrowTransaction], str | None, int]:
@@ -316,7 +322,26 @@ async def search(
     valid `date`, so this bound can never raise. from_date/to_date
     ordering is validated by the caller (app/api/v1/transactions.py)
     before this function is ever called -- search() trusts its inputs,
-    consistent with every other filter here."""
+    consistent with every other filter here.
+
+    Roadmap PR16 Slice 3 (docs/design/PR16_REPORTING_FOUNDATION_PLAN.md
+    §8/§9/§11): business_date_from/business_date_to/shift are a distinct
+    filter basis from from_date/to_date above -- they compare against the
+    *derived* business_date/shift expression (app.core.reporting_time's
+    SQL twin), never against datetime.combine-based bounding of the raw
+    timestamp. `event` selects which column pair the derivation reads:
+    `dispatch` (default) uses `borrowed_at`, `receipt` uses `returned_at`.
+    For an open transaction (`returned_at IS NULL`) under `event=receipt`,
+    the derived business_date/shift are both NULL, so any non-null
+    business_date_from/_to/shift filter naturally excludes that row via
+    ordinary SQL NULL-comparison semantics -- no special-case branch is
+    needed here for the open-transaction exclusion rule; it is a direct
+    consequence of the SQL twin's own NULL-propagation (see
+    app.core.reporting_time.business_date_and_shift_sql's docstring/
+    comments for the one place that *does* need an explicit NULL branch,
+    the `shift` CASE expression). business_date_from/_to ordering is
+    validated by the caller before this function is ever called, same as
+    from_date/to_date."""
     filters = []
     if ward_id is not None:
         filters.append(BorrowTransaction.ward_id == ward_id)
@@ -332,6 +357,15 @@ async def search(
         filters.append(BorrowTransaction.borrowed_at >= datetime.combine(from_date, time.min))
     if to_date is not None:
         filters.append(BorrowTransaction.borrowed_at <= datetime.combine(to_date, time.max))
+    if business_date_from is not None or business_date_to is not None or shift is not None:
+        event_column = BorrowTransaction.borrowed_at if event == "dispatch" else BorrowTransaction.returned_at
+        business_date_expr, shift_expr = business_date_and_shift_sql(event_column)
+        if business_date_from is not None:
+            filters.append(business_date_expr >= business_date_from)
+        if business_date_to is not None:
+            filters.append(business_date_expr <= business_date_to)
+        if shift is not None:
+            filters.append(shift_expr == shift.value)
 
     count_stmt = select(func.count()).select_from(BorrowTransaction).where(and_(*filters)) if filters else select(
         func.count()

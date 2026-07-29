@@ -201,7 +201,14 @@ def business_date_and_shift_sql(column) -> tuple[ColumnElement, ColumnElement]:
     tod = _BangkokTimeOfDay(column)
     day_start_str = policy.day_start_local.strftime("%H:%M:%S")
     night_start_str = policy.night_start_local.strftime("%H:%M:%S")
+    # A NULL input column (e.g. BorrowTransaction.returned_at for an open
+    # transaction, Roadmap PR16 Slice 3) must yield a NULL shift, not fall
+    # through the CASE's ELSE branch -- standard SQL CASE semantics treat
+    # "WHEN <NULL comparison>" as never TRUE, which would otherwise
+    # silently return Shift.NIGHT for an unreceived transaction. The
+    # explicit `column.is_(None)` branch closes that gap.
     shift_expr = case(
+        (column.is_(None), literal(None)),
         ((tod >= day_start_str) & (tod < night_start_str), literal(Shift.DAY.value)),
         else_=literal(Shift.NIGHT.value),
     )
