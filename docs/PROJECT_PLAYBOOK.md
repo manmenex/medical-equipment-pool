@@ -169,6 +169,7 @@ secret values, or sensitive screenshots/logs in evidence.
 |---|---|---|---|---|
 | `AGENTS.md` | Permanent repository rules | Mandatory | Guardrail/repository-rule change | Architecture Owner |
 | This Playbook | Entry point and workflow | Mandatory | Governance baseline change | Governance Engineer |
+| `ENGINEERING_WORKFLOW.md` | Standard engineering, review, merge, baseline, and governance-sync workflow | Conditional | Engineering process change | Governance Engineer |
 | `REPOSITORY_STRATEGY.md` | Git/PR/release/cleanup policy | Conditional | Repository policy change | Repository Owner |
 | `DEFINITION_OF_DONE.md` | Risk-based completion standard | Conditional | Quality-gate change | Architecture Owner |
 | `ARCHITECTURE_GUARDRAILS.md` | Prohibitions and invariants | Conditional | Guardrail change | Architecture Owner |
