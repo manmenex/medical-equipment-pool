@@ -205,6 +205,71 @@ async def search(
     return rows, next_cursor, total
 
 
+async def list_for_verify_checklist(
+    db: AsyncSession,
+    *,
+    category_id: uuid.UUID | None = None,
+    status: EquipmentStatus | None = None,
+    department_id: uuid.UUID | None = None,
+    limit: int = 25,
+    cursor: str | None = None,
+) -> tuple[list[Equipment], str | None, int]:
+    """Roadmap PR17 Slice 4 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+    §7.3(A)/§8/§10.3, Owner Decision #1 resolved to interpretation A):
+    Equipment Verify Checklist query -- a read-only, current-state listing
+    of the pool's own equipment master records, not a transaction/event
+    report. Deliberately separate from `search()` above (rather than a
+    shared helper) because the two have different filter sets and no
+    caller needs both at once; the two do, however, intentionally share
+    the same base filter (`deleted_at IS NULL`) and the same cursor
+    convention (`created_at DESC, id DESC`) as every other equipment query
+    in this module, so a checklist row's position is stable across pages
+    exactly like every other equipment list.
+    """
+    base_filters = [Equipment.deleted_at.is_(None)]
+    if category_id is not None:
+        base_filters.append(Equipment.category_id == category_id)
+    if status is not None:
+        base_filters.append(Equipment.status == status)
+    if department_id is not None:
+        base_filters.append(Equipment.department_owner_id == department_id)
+
+    count_stmt = select(func.count()).select_from(Equipment).where(and_(*base_filters))
+    total = (await db.execute(count_stmt)).scalar_one()
+
+    stmt = select(Equipment).where(and_(*base_filters))
+    if cursor:
+        cursor_dt, cursor_id = decode_cursor(cursor)
+        # Compares the native `Uuid`-typed column directly against a parsed
+        # `uuid.UUID` value, not a `cast(..., String)` comparison against
+        # `str(equipment.id)` -- the latter breaks on SQLite, whose `Uuid`
+        # type stores/CASTs without dashes while `str(uuid.UUID(...))`
+        # always includes them, so the two representations never compare
+        # equal and the cursor can never advance past a tie (the same
+        # defect `app.crud.user.list_operators` fixed for its own new
+        # cursor -- see that function's docstring; `search()` above has
+        # this same latent bug in its pre-existing `cast(Equipment.id,
+        # String)` comparison, left unfixed there as pre-existing shared
+        # infrastructure outside this slice's scope, but fixed directly
+        # here since this query is new code introduced by this slice).
+        stmt = stmt.where(
+            or_(
+                Equipment.created_at < cursor_dt,
+                and_(Equipment.created_at == cursor_dt, Equipment.id < uuid.UUID(cursor_id)),
+            )
+        )
+    stmt = stmt.order_by(Equipment.created_at.desc(), Equipment.id.desc()).limit(limit + 1)
+
+    rows = list((await db.execute(stmt)).scalars().all())
+    next_cursor = None
+    if len(rows) > limit:
+        last = rows[limit - 1]
+        next_cursor = encode_cursor(last.created_at, str(last.id))
+        rows = rows[:limit]
+
+    return rows, next_cursor, total
+
+
 async def create(db: AsyncSession, *, data: dict) -> Equipment:
     equipment = Equipment(**data)
     db.add(equipment)

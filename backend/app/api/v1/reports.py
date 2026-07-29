@@ -5,11 +5,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import Response
 
 from app.api.v1.deps import VIEW_AND_REPORT_ROLES, require_roles
+from app.api.v1.equipment import _serialize as _serialize_equipment
 from app.core.exceptions import InvalidInputError
 from app.core.reporting_time import Shift
+from app.crud import equipment as equipment_crud
 from app.db.session import get_db
+from app.models.equipment import EquipmentStatus
 from app.models.transaction import DispatchType, RoutineRound
 from app.schemas.common import Page
+from app.schemas.equipment import EquipmentOut
 from app.schemas.transaction import ReportTransactionOut
 from app.services import report_query_service, report_service
 from app.utils.parsing import parse_uuid
@@ -125,3 +129,36 @@ async def get_issue_report(
         cursor=cursor,
     )
     return Page(items=rows, next_cursor=next_cursor, total=total)
+
+
+@router.get("/equipment-verify-checklist", response_model=Page[EquipmentOut])
+async def get_equipment_verify_checklist(
+    equipment_category_id: str | None = None,
+    status: EquipmentStatus | None = None,
+    department_id: str | None = None,
+    limit: int = Query(default=25, ge=1, le=200),
+    cursor: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    # Roadmap PR17 Slice 4 (§10.3/§14): same VIEW_AND_REPORT_ROLES gate as
+    # the other two report endpoints above.
+    _user=Depends(require_roles(*VIEW_AND_REPORT_ROLES)),
+):
+    """Roadmap PR17 §6.3/§7.3(A)/§8/§10.3 (Owner Decision #1 resolved to
+    interpretation A): a read-only, current-state listing of the pool's own
+    equipment master records and their status -- not a transaction/event
+    report, and not date/shift filterable the way Receive/Issue are (§7.3(A)).
+    `ward_id` is deliberately not a filter here: `Equipment` has no direct
+    Ward relationship, only `department_owner_id` (§10.3's corrected query
+    param set). Response rows are `EquipmentOut` -- the exact same shape
+    `GET /equipment` already returns, no new fields invented (§8/§10.3).
+    """
+    rows, next_cursor, total = await equipment_crud.list_for_verify_checklist(
+        db,
+        category_id=parse_uuid(equipment_category_id, "equipment_category_id"),
+        status=status,
+        department_id=parse_uuid(department_id, "department_id"),
+        limit=limit,
+        cursor=cursor,
+    )
+    items = [EquipmentOut.model_validate(_serialize_equipment(e)) for e in rows]
+    return Page(items=items, next_cursor=next_cursor, total=total)

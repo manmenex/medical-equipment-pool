@@ -396,6 +396,8 @@ No slice combines database + broad API + frontend + governance changes, and **no
 
 **Owner Decision #1 — Equipment Verify Checklist definition (BLOCKING for Verify Checklist only, not for Receive/Issue).**
 
+**Resolved (PR17 Slice 4 kickoff): the Repository Owner has confirmed interpretation (A) — Equipment master-data/status-history checklist.** Slice 4 (`GET /reports/equipment-verify-checklist`, §10.3, and its frontend screen) is implemented on this basis. The original, unresolved framing of this decision is preserved below unaltered, as the record of what was open and why, per this document's own established practice for PR16's analogous Owner Decision #1.
+
 No hospital business process behind "Equipment Verify Checklist" is confirmed anywhere in this repository's authoritative documentation (§2, §7.3). This blocks Slice 1's Verify Checklist sub-scope (and everything downstream of it) exactly the way PR16's Day/Night boundary blocked its own Slice 1 until answered. The Repository Owner needs to choose between:
 
 - **(A) Equipment master-data/status-history checklist** (§7.3(A)) — implementable within PR17's existing reports-only scope, no new workflow, ready to build once confirmed.

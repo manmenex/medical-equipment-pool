@@ -8597,3 +8597,71 @@ async def test_reporting_time_sql_twin_null_column_yields_null_on_postgres(pg_se
     row = (await pg_session.execute(select(business_date_expr, shift_expr))).first()
     assert row[0] is None
     assert row[1] is None
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR17 Slice 4 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+# §7.3(A)/§8/§10.3): real multi-page cursor-pagination evidence for
+# GET /reports/equipment-verify-checklist against PostgreSQL.
+#
+# This is PostgreSQL-only, not merely for thoroughness: SQLite has no
+# native timestamptz type, and `TimestampMixin.created_at`'s
+# `server_default=func.now()` resolves on SQLite to `CURRENT_TIMESTAMP` --
+# a second-precision, offset-less TEXT literal. A cursor's own bind
+# parameter is a tz-aware, microsecond-precision Python datetime, which
+# SQLAlchemy's SQLite dialect renders as TEXT *with* a trailing `+00:00`
+# offset. Comparing these two differently-formatted TEXT values with `<`/
+# `=` is a lexicographic string comparison, not a true instant comparison:
+# a row's own stored value (e.g. '2026-07-29 16:23:55') is a strict
+# *prefix* of its own cursor's bind literal ('2026-07-29 16:23:55+00:00'),
+# so SQLite's `created_at < cursor_dt` incorrectly evaluates True for that
+# row against itself, and the row is never excluded from the next page --
+# an infinite loop under `limit=1`. This is a pre-existing defect in the
+# shared `created_at DESC, id DESC` cursor pattern every equipment/
+# transaction list query in this codebase already uses (confirmed to
+# equally affect the already-merged `equipment_crud.search()` and
+# `transaction_crud.search()`, not something this slice introduces) --
+# fixing `UTCDateTime`/`TimestampMixin` themselves is out of this narrow
+# slice's scope. PostgreSQL's real `timestamptz` type has no such
+# textual-format ambiguity (asyncpg binds/compares the actual instant, not
+# a formatted string), so this test gives genuine multi-page pagination
+# evidence for the new endpoint on the dialect this application actually
+# runs on in production.
+async def test_verify_checklist_cursor_pagination_no_duplicates_no_missing_rows_on_postgres(
+    pg_client, pg_seeded_users
+):
+    headers = await _admin_headers(pg_client)
+    cat_resp = await pg_client.post("/api/v1/categories", headers=headers, json={"name": "PG-Verify-Checklist-Cat"})
+    assert cat_resp.status_code == 201, cat_resp.text
+    category_id = cat_resp.json()["id"]
+
+    created_ids = set()
+    for i in range(5):
+        eq_resp = await pg_client.post(
+            "/api/v1/equipment",
+            headers=headers,
+            json={"asset_number": f"PG-VC-{i:02d}", "equipment_name": "Infusion Pump", "category_id": category_id},
+        )
+        assert eq_resp.status_code == 201, eq_resp.text
+        created_ids.add(eq_resp.json()["id"])
+
+    seen_ids: set[str] = set()
+    cursor = None
+    pages = 0
+    while True:
+        params = {"equipment_category_id": category_id, "limit": 2}
+        if cursor:
+            params["cursor"] = cursor
+        resp = await pg_client.get("/api/v1/reports/equipment-verify-checklist", headers=headers, params=params)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        page_ids = [item["id"] for item in body["items"]]
+        assert len(set(page_ids) & seen_ids) == 0, "a page returned a row already seen on an earlier page"
+        seen_ids.update(page_ids)
+        cursor = body["next_cursor"]
+        pages += 1
+        if not cursor:
+            break
+        assert pages < 10  # guard against an infinite loop on a pagination bug
+
+    assert seen_ids == created_ids
