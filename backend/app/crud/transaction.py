@@ -414,7 +414,17 @@ async def search(
     ).select_from(BorrowTransaction)
     total = (await db.execute(count_stmt)).scalar_one()
 
-    stmt = select(BorrowTransaction).options(selectinload(BorrowTransaction.equipment))
+    stmt = select(BorrowTransaction).options(
+        selectinload(BorrowTransaction.equipment),
+        # Roadmap PR17 Slice 2 (§11): identical eager-loading pattern to
+        # `equipment` above, not a new one. Harmless for every existing
+        # caller (GET /transactions included) -- only `ReportTransactionOut`
+        # (Slice 2) actually reads the resulting
+        # dispatch_operator_display_name/receipt_operator_display_name
+        # properties; `TransactionOut` does not declare either field.
+        selectinload(BorrowTransaction.borrower_user),
+        selectinload(BorrowTransaction.received_by_user),
+    )
     if filters:
         stmt = stmt.where(and_(*filters))
     if cursor:

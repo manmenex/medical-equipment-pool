@@ -196,3 +196,22 @@ class TransactionOut(BaseModel):
     receipt_shift: Shift | None
 
     model_config = {"from_attributes": True}
+
+
+class ReportTransactionOut(TransactionOut):
+    """Roadmap PR17 Slice 2 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+    §8, §10.1, §11 -- corrected per review finding PR17-H5). Report-only
+    response DTO for `GET /reports/receive`/`GET /reports/issue`, never
+    used by `GET /transactions`/`GET /transactions/{id}`. Extends
+    `TransactionOut` unchanged (every field it has today is present here,
+    inherited) and adds exactly two report-only, read-only fields, sourced
+    from `BorrowTransaction.dispatch_operator_display_name`/
+    `.receipt_operator_display_name` (`app/models/transaction.py`).
+
+    `TransactionOut` itself is not modified by this class's existence --
+    it declares no operator field and continues backing the two existing,
+    general-purpose transaction endpoints exactly as before this slice.
+    """
+
+    dispatch_operator_display_name: str | None
+    receipt_operator_display_name: str | None

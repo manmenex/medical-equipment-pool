@@ -10,6 +10,7 @@ from app.api.v1 import (
     inventory_import,
     master_data,
     notifications,
+    report_options,
     reports,
     transactions,
     users,
@@ -23,6 +24,7 @@ api_router.include_router(borrow.router)
 api_router.include_router(transactions.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(reports.router)
+api_router.include_router(report_options.router)
 api_router.include_router(users.router)
 api_router.include_router(master_data.router)
 api_router.include_router(audit.router)
