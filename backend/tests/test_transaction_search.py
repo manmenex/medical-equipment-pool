@@ -346,3 +346,67 @@ async def test_omitted_dates_leave_behavior_unchanged(client, seeded_users):
     )
     assert resp_to_only.status_code == 200, resp_to_only.text
     assert len(resp_to_only.json()["items"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR16 Slice 2: dispatch_business_date/dispatch_shift/
+# receipt_business_date/receipt_shift surface correctly on both GET
+# /transactions and GET /transactions/{id}, for both open and closed
+# transactions (docs/design/PR16_REPORTING_FOUNDATION_PLAN.md §16 Slice 2
+# acceptance criteria).
+# ---------------------------------------------------------------------------
+
+
+async def test_reporting_time_fields_present_on_open_transaction_via_list_and_detail(client, seeded_users):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    ward_id = await _create_ward(client, admin, "W-PR16-1")
+
+    equipment = await _create_equipment(client, admin, "AST-PR16-0001")
+    tx = await _dispatch(client, staff, equipment["id"], ward_id, dispatch_type="on_demand")
+
+    list_resp = await client.get(
+        "/api/v1/transactions", headers=admin, params={"equipment_id": equipment["id"]}
+    )
+    assert list_resp.status_code == 200, list_resp.text
+    (list_item,) = list_resp.json()["items"]
+    assert list_item["dispatch_business_date"] is not None
+    assert list_item["dispatch_shift"] in ("day", "night")
+    assert list_item["receipt_business_date"] is None
+    assert list_item["receipt_shift"] is None
+
+    detail_resp = await client.get(f"/api/v1/transactions/{tx['id']}", headers=admin)
+    assert detail_resp.status_code == 200, detail_resp.text
+    detail = detail_resp.json()
+    assert detail["dispatch_business_date"] == list_item["dispatch_business_date"]
+    assert detail["dispatch_shift"] == list_item["dispatch_shift"]
+    assert detail["receipt_business_date"] is None
+    assert detail["receipt_shift"] is None
+
+
+async def test_reporting_time_fields_present_on_closed_transaction_via_list_and_detail(client, seeded_users):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    ward_id = await _create_ward(client, admin, "W-PR16-2")
+
+    equipment = await _create_equipment(client, admin, "AST-PR16-0002")
+    tx = await _dispatch(client, staff, equipment["id"], ward_id, dispatch_type="on_demand")
+    await _receive(client, staff, tx["id"])
+
+    list_resp = await client.get(
+        "/api/v1/transactions", headers=admin, params={"equipment_id": equipment["id"]}
+    )
+    assert list_resp.status_code == 200, list_resp.text
+    (list_item,) = list_resp.json()["items"]
+    assert list_item["dispatch_business_date"] is not None
+    assert list_item["dispatch_shift"] in ("day", "night")
+    # Once received, receipt_business_date/receipt_shift must be populated
+    # -- never None for a closed transaction.
+    assert list_item["receipt_business_date"] is not None
+    assert list_item["receipt_shift"] in ("day", "night")
+
+    detail_resp = await client.get(f"/api/v1/transactions/{tx['id']}", headers=admin)
+    assert detail_resp.status_code == 200, detail_resp.text
+    detail = detail_resp.json()
+    assert detail["receipt_business_date"] == list_item["receipt_business_date"]
+    assert detail["receipt_shift"] == list_item["receipt_shift"]

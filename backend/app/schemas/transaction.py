@@ -1,8 +1,9 @@
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.core.reporting_time import Shift
 from app.models.transaction import DispatchType, ReceiptOutcome, RoutineRound
 from app.schemas.common import UUIDStr
 
@@ -182,5 +183,16 @@ class TransactionOut(BaseModel):
     legacy_condition_on_return: str | None
     status: str
     notes: str | None
+    # Roadmap PR16 Slice 2 (docs/design/PR16_REPORTING_FOUNDATION_PLAN.md
+    # §9) -- read-only, computed, never accepted as request input.
+    # dispatch_* is always present (every transaction has a `borrowed_at`);
+    # receipt_* is `None` until the transaction is received, mirroring
+    # `receipt_outcome`'s existing None-until-received rule
+    # (BorrowTransaction.dispatch_business_date/.../.receipt_shift's
+    # docstrings).
+    dispatch_business_date: date
+    dispatch_shift: Shift
+    receipt_business_date: date | None
+    receipt_shift: Shift | None
 
     model_config = {"from_attributes": True}

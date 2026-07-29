@@ -1,10 +1,11 @@
 import enum
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import Enum, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.reporting_time import Shift, business_date_and_shift
 from app.db.base import Base
 from app.models.mixins import TimestampMixin, UTCDateTime, UUIDPKMixin
 
@@ -282,6 +283,46 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
         if self.receipt_outcome is not None:
             return None
         return self.condition_on_return
+
+    @property
+    def dispatch_business_date(self) -> "date":
+        """Roadmap PR16 Slice 2 (docs/design/PR16_REPORTING_FOUNDATION_PLAN.md
+        §9) -- computed, never persisted, derived from `borrowed_at` (every
+        transaction has one, open or closed). Read by
+        `app.schemas.transaction.TransactionOut` (`from_attributes`),
+        mirroring the `receipt_outcome`/`legacy_condition_on_return`
+        computed-property pattern above.
+        """
+        business_date, _ = business_date_and_shift(self.borrowed_at)
+        return business_date
+
+    @property
+    def dispatch_shift(self) -> "Shift":
+        """See `dispatch_business_date` above -- same derivation, same
+        source timestamp."""
+        _, shift = business_date_and_shift(self.borrowed_at)
+        return shift
+
+    @property
+    def receipt_business_date(self) -> "date | None":
+        """Roadmap PR16 Slice 2 -- derived from `returned_at`, which is
+        `None` until the transaction is received. `None` here mirrors that
+        exactly: an unreceived transaction has no receipt business_date,
+        not a fabricated one derived from `borrowed_at` or the current
+        time."""
+        if self.returned_at is None:
+            return None
+        business_date, _ = business_date_and_shift(self.returned_at)
+        return business_date
+
+    @property
+    def receipt_shift(self) -> "Shift | None":
+        """See `receipt_business_date` above -- same derivation, same
+        source timestamp, same `None`-until-received rule."""
+        if self.returned_at is None:
+            return None
+        _, shift = business_date_and_shift(self.returned_at)
+        return shift
 
 
 class TransactionAttachment(UUIDPKMixin, Base):
