@@ -13,7 +13,7 @@ router = APIRouter(prefix="/report-options", tags=["report-options"])
 @router.get("/operators", response_model=Page[ReportOperatorOut])
 async def list_report_operators(
     q: str | None = Query(default=None, max_length=100),
-    limit: int = Query(default=100, le=200),
+    limit: int = Query(default=100, ge=1, le=200),
     cursor: str | None = None,
     db: AsyncSession = Depends(get_db),
     # Roadmap PR17 Slice 2 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md

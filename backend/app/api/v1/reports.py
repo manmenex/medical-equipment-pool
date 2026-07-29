@@ -60,7 +60,7 @@ async def get_receive_report(
     equipment_id: str | None = None,
     equipment_category_id: str | None = None,
     operator_id: str | None = None,
-    limit: int = Query(default=25, le=200),
+    limit: int = Query(default=25, ge=1, le=200),
     cursor: str | None = None,
     db: AsyncSession = Depends(get_db),
     # Roadmap PR17 Slice 2 (§10.1/§14): VIEW_AND_REPORT_ROLES, matching the
@@ -101,7 +101,7 @@ async def get_issue_report(
     operator_id: str | None = None,
     dispatch_type: DispatchType | None = None,
     routine_round: RoutineRound | None = None,
-    limit: int = Query(default=25, le=200),
+    limit: int = Query(default=25, ge=1, le=200),
     cursor: str | None = None,
     db: AsyncSession = Depends(get_db),
     _user=Depends(require_roles(*VIEW_AND_REPORT_ROLES)),

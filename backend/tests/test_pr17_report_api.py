@@ -395,3 +395,61 @@ async def test_operator_lookup_response_excludes_sensitive_fields(client, seeded
     assert resp.status_code == 200, resp.text
     (item,) = resp.json()["items"]
     assert set(item.keys()) == {"id", "display_name", "is_active"}
+
+
+# ---------------------------------------------------------------------------
+# PR66-H1 fix: GET /reports/receive, GET /reports/issue, and
+# GET /report-options/operators must reject an invalid page size (limit=0,
+# limit<0) with a 422 before the
+# query layer ever runs, via plain FastAPI/Pydantic query validation
+# (ge=1, le=200) -- not a domain-layer check. The 422 envelope's
+# "code": "VALIDATION_ERROR" (app/main.py's RequestValidationError handler)
+# is emitted only for request validation that never reached the route
+# body/domain layer, distinct from the app's own DomainError envelope
+# (e.g. "code": "INVALID_INPUT") a query-layer rejection would produce --
+# asserting that shape is what proves validation happened before query
+# execution in this black-box API test suite.
+# ---------------------------------------------------------------------------
+
+
+async def _assert_limit_rejected_before_query_layer(resp):
+    assert resp.status_code == 422, resp.text
+    body = resp.json()
+    assert body["code"] == "VALIDATION_ERROR"
+    assert any(err["field"].endswith("limit") for err in body["errors"])
+
+
+async def test_receive_report_limit_zero_rejected_with_422(client, seeded_users):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await client.get("/api/v1/reports/receive", headers=admin, params={"limit": 0})
+    await _assert_limit_rejected_before_query_layer(resp)
+
+
+async def test_receive_report_limit_negative_rejected_with_422(client, seeded_users):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await client.get("/api/v1/reports/receive", headers=admin, params={"limit": -1})
+    await _assert_limit_rejected_before_query_layer(resp)
+
+
+async def test_issue_report_limit_zero_rejected_with_422(client, seeded_users):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await client.get("/api/v1/reports/issue", headers=admin, params={"limit": 0})
+    await _assert_limit_rejected_before_query_layer(resp)
+
+
+async def test_issue_report_limit_negative_rejected_with_422(client, seeded_users):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await client.get("/api/v1/reports/issue", headers=admin, params={"limit": -1})
+    await _assert_limit_rejected_before_query_layer(resp)
+
+
+async def test_operator_lookup_limit_zero_rejected_with_422(client, seeded_users):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await client.get("/api/v1/report-options/operators", headers=admin, params={"limit": 0})
+    await _assert_limit_rejected_before_query_layer(resp)
+
+
+async def test_operator_lookup_limit_negative_rejected_with_422(client, seeded_users):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await client.get("/api/v1/report-options/operators", headers=admin, params={"limit": -1})
+    await _assert_limit_rejected_before_query_layer(resp)
