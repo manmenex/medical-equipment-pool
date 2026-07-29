@@ -91,6 +91,18 @@ export function EquipmentDetailPage() {
   const appliedBusinessDateTo = searchParams.get("business_date_to") ?? "";
   const appliedShift = (searchParams.get("shift") as Shift | null) ?? "";
   const appliedEvent = (searchParams.get("event") as TransactionEventBasis | null) ?? "";
+  // PR61 review fix (H1, merge-blocking): business_date_from/business_date_to/
+  // shift are meaningless without a concrete event basis -- the backend has
+  // no "all events" value for `event` (Literal["dispatch", "receipt"] =
+  // "dispatch"), so omitting it does NOT mean "all events," it silently
+  // means "dispatch." "ทั้งหมด" (event = "") must therefore never be
+  // combined with business_date_from/business_date_to/shift on the wire --
+  // doing so would silently narrow to dispatch-only while the UI claims
+  // "all events." This flag is the single authoritative gate, applied at
+  // the point requests are actually built (not just on Apply), so it holds
+  // regardless of how the URL state was reached (Apply, a shared link,
+  // browser navigation).
+  const appliedEventIsScoped = appliedEvent !== "";
   const [draftBusinessDateFrom, setDraftBusinessDateFrom] = useState(appliedBusinessDateFrom);
   const [draftBusinessDateTo, setDraftBusinessDateTo] = useState(appliedBusinessDateTo);
   const [draftShift, setDraftShift] = useState<Shift | "">(appliedShift);
@@ -102,17 +114,26 @@ export function EquipmentDetailPage() {
   const [businessDateRangeError, setBusinessDateRangeError] = useState<string | null>(null);
 
   function applyBusinessDateFilters() {
-    if (draftBusinessDateFrom && draftBusinessDateTo && draftBusinessDateFrom > draftBusinessDateTo) {
+    // PR61 review fix (H1): business_date_from/business_date_to/shift are
+    // only ever meaningful together with a concrete event basis. When
+    // draftEvent is "" (ทั้งหมด / All), none of the three are sent, even if
+    // the controls happen to hold a stale value -- defense in depth on top
+    // of these controls being disabled (below) whenever no event is picked.
+    const eventIsScoped = draftEvent !== "";
+    const from = eventIsScoped ? draftBusinessDateFrom : "";
+    const to = eventIsScoped ? draftBusinessDateTo : "";
+    const shift = eventIsScoped ? draftShift : "";
+    if (from && to && from > to) {
       setBusinessDateRangeError('"วันที่ทำการ ตั้งแต่" ต้องไม่มาหลัง "วันที่ทำการ ถึง"');
       return;
     }
     setBusinessDateRangeError(null);
     const next = new URLSearchParams(searchParams);
-    if (draftBusinessDateFrom) next.set("business_date_from", draftBusinessDateFrom);
+    if (from) next.set("business_date_from", from);
     else next.delete("business_date_from");
-    if (draftBusinessDateTo) next.set("business_date_to", draftBusinessDateTo);
+    if (to) next.set("business_date_to", to);
     else next.delete("business_date_to");
-    if (draftShift) next.set("shift", draftShift);
+    if (shift) next.set("shift", shift);
     else next.delete("shift");
     if (draftEvent) next.set("event", draftEvent);
     else next.delete("event");
@@ -170,9 +191,9 @@ export function EquipmentDetailPage() {
         equipment_id: id,
         dispatch_type: dispatchTypeFilter || undefined,
         routine_round: routineRoundFilter || undefined,
-        business_date_from: appliedBusinessDateFrom || undefined,
-        business_date_to: appliedBusinessDateTo || undefined,
-        shift: appliedShift || undefined,
+        business_date_from: appliedEventIsScoped ? appliedBusinessDateFrom || undefined : undefined,
+        business_date_to: appliedEventIsScoped ? appliedBusinessDateTo || undefined : undefined,
+        shift: appliedEventIsScoped ? appliedShift || undefined : undefined,
         event: appliedEvent || undefined,
         from_date: fromDateFilter || undefined,
         to_date: toDateFilter || undefined,
@@ -351,6 +372,12 @@ export function EquipmentDetailPage() {
         </div>
         <p className="mb-2 text-xs text-[var(--text-muted)]">
           วันที่ทำการและกะคำนวณโดยระบบตามเวลาประเทศไทย แยกจาก &quot;ตั้งแต่วันที่ / ถึงวันที่&quot; ด้านบนซึ่งกรองตามเวลาที่บันทึกจริง
+          {/* PR61 review fix (H1): business_date/shift are always derived
+              from one concrete event basis (dispatch's borrowed_at or
+              receipt's returned_at) -- the backend has no "all events"
+              value to filter by business_date/shift against, so these two
+              controls only make sense once เบิก/รับคืน is chosen below. */}
+          {" "}เลือก &quot;เบิก&quot; หรือ &quot;รับคืน&quot; ก่อน จึงจะกรองตามวันที่ทำการ/กะได้
         </p>
         <div className="mb-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
           <div>
@@ -362,7 +389,8 @@ export function EquipmentDetailPage() {
               type="date"
               value={draftBusinessDateFrom}
               onChange={(e) => setDraftBusinessDateFrom(e.target.value)}
-              className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
+              disabled={draftEvent === ""}
+              className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm disabled:opacity-50"
             />
           </div>
           <div>
@@ -374,7 +402,8 @@ export function EquipmentDetailPage() {
               type="date"
               value={draftBusinessDateTo}
               onChange={(e) => setDraftBusinessDateTo(e.target.value)}
-              className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
+              disabled={draftEvent === ""}
+              className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm disabled:opacity-50"
             />
           </div>
           <div>
@@ -385,7 +414,8 @@ export function EquipmentDetailPage() {
               id="tx-filter-shift"
               value={draftShift}
               onChange={(e) => setDraftShift(e.target.value as Shift | "")}
-              className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
+              disabled={draftEvent === ""}
+              className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm disabled:opacity-50"
             >
               <option value="">ทั้งหมด</option>
               <option value="day">{SHIFT_LABELS.day}</option>
@@ -399,7 +429,23 @@ export function EquipmentDetailPage() {
             <select
               id="tx-filter-event"
               value={draftEvent}
-              onChange={(e) => setDraftEvent(e.target.value as TransactionEventBasis | "")}
+              onChange={(e) => {
+                // PR61 review fix (H1): "ทั้งหมด" (event = "") means no
+                // event-scoped filter at all -- business_date_from/
+                // business_date_to/shift cannot be meaningfully combined
+                // with it (the backend has no "all events" value for
+                // event), so switching to "ทั้งหมด" clears them, exactly
+                // mirroring the existing dispatch_type -> routine_round
+                // dependency above.
+                const next = e.target.value as TransactionEventBasis | "";
+                setDraftEvent(next);
+                if (next === "") {
+                  setDraftBusinessDateFrom("");
+                  setDraftBusinessDateTo("");
+                  setDraftShift("");
+                  setBusinessDateRangeError(null);
+                }
+              }}
               className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
             >
               <option value="">ทั้งหมด</option>
