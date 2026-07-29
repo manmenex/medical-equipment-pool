@@ -47,16 +47,18 @@ Sources: `docs/PROJECT_PLAYBOOK.md`, `docs/ARCHITECTURE_GUARDRAILS.md`,
 
 ## Current baseline and Roadmap
 
-Current baseline: `6f66d76189ab58b95f307bbb8e28fdad54e734f7`.
-Roadmap PR15B Schema Hygiene completed through GitHub PR #54. GitHub PR #55 is
-the documentation/governance post-merge baseline sync; it is not a Roadmap
-implementation PR.
+Current baseline: `ac19505d9d0a102dcbec7bdfd4d1855554f1cf81`.
+Roadmap PR16 (Reporting Foundation) completed through GitHub PR #61, squash SHA
+`ac19505` (GitHub PR #58 `e8ef4da`, #59 `bd4a02b`, #60 `6a28d73`, #61
+`ac19505`) — all four Implementation Slices are merged. Roadmap PR15B Schema
+Hygiene (GitHub PR #54) remains implemented. GitHub PR #62 is the
+documentation/governance post-merge baseline sync for Roadmap PR16; it is not
+a Roadmap implementation PR.
 
-The next planned work is Roadmap PR16 — Reporting Foundation. The approved
-sequence is:
+The next planned work is Roadmap PR17 — Receive, Issue, and Equipment Verify
+Checklist reports. The approved sequence is:
 
-- PR16–PR18: reporting foundation, `business_date`/`shift`, operational
-  reports, PDF/Excel/Hard Copy output;
+- PR17–PR18: operational reports, PDF/Excel/Hard Copy output;
 - PR19–PR22: legacy import foundation, Equipment Master, AppSheet Receive/Issue
   history, validation and reconciliation;
 - PR23: cutover readiness;

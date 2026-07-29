@@ -8,12 +8,15 @@ control detailed ordering, scope, dependencies, and acceptance criteria.
 
 ## Current baseline
 
-`6f66d76` — squash commit of GitHub PR #54, the Roadmap PR15B Schema Hygiene
-implementation. PR15A and PR15B are both implemented — both of Roadmap
+`ac19505` — squash commit of GitHub PR #61, the Roadmap PR16 (Slice 4)
+Reporting Foundation frontend filter controls implementation, incl. the
+PR61-H1 review fix. PR15A and PR15B are both implemented — both of Roadmap
 PR15's scheduled slices are complete. Application metrics, tracing,
 dashboards, log aggregation, and alerting remain open Roadmap PR15 scope,
 not scheduled to any slice, pending a future slice or an explicit governance
-decision to remove them. PR16 is the next planned item.
+decision to remove them. Roadmap PR16 (Reporting Foundation, all four
+Implementation Slices — GitHub PR #58, #59, #60, #61) is now fully
+complete. PR17 is the next planned item.
 
 Roadmap numbering and GitHub PR numbering are independent. In particular,
 GitHub PR #18 was the Knowledge & Governance Foundation; it was not Roadmap
@@ -23,21 +26,21 @@ PR18.
 
 | Order | Roadmap item | Status |
 |---|---|---|
-| 1 | PR16 — Reporting Foundation and transaction reporting metadata | Planned; next |
-| 2 | PR17 — Operational reports | Planned |
-| 3 | PR18 — PDF/Excel export and print-ready Hard Copy templates | Planned |
-| 4 | PR19 — Legacy Import Foundation | Planned |
-| 5 | PR20 — Equipment Master Import | Planned |
-| 6 | PR21 — Legacy Receive and Issue History Import | Planned |
-| 7 | PR22 — Legacy Data Validation and Reconciliation | Planned |
-| 8 | PR23 — Cutover Readiness | Planned |
-| 9 | PR24 — Go-live / deployment | Planned; blocked by PR19–PR23 |
+| 1 | PR17 — Operational reports | Planned; next |
+| 2 | PR18 — PDF/Excel export and print-ready Hard Copy templates | Planned |
+| 3 | PR19 — Legacy Import Foundation | Planned |
+| 4 | PR20 — Equipment Master Import | Planned |
+| 5 | PR21 — Legacy Receive and Issue History Import | Planned |
+| 6 | PR22 — Legacy Data Validation and Reconciliation | Planned |
+| 7 | PR23 — Cutover Readiness | Planned |
+| 8 | PR24 — Go-live / deployment | Planned; blocked by PR19–PR23 |
 
-Roadmap PR15B (Schema Hygiene implementation, GitHub PR #54) and the
+Roadmap PR15B (Schema Hygiene implementation, GitHub PR #54), the
 documentation audit and Roadmap consistency work that preceded it
-(GitHub PR #53, unnumbered governance change) are both complete and have
-moved off this table — see `docs/ROADMAP.md`'s Completed table for the full
-historical record.
+(GitHub PR #53, unnumbered governance change), and Roadmap PR16 (Reporting
+Foundation, all four Implementation Slices — GitHub PR #58, #59, #60, #61)
+are all complete and have moved off this table — see `docs/ROADMAP.md`'s
+Completed table for the full historical record.
 
 ## Scope guardrails for the planned sequence
 
