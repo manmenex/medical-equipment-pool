@@ -37,11 +37,23 @@ export function ReportFilterBar() {
   const [draftWardId, setDraftWardId] = useState(searchParams.get("ward_id") ?? "");
   const [draftCategoryId, setDraftCategoryId] = useState(searchParams.get("equipment_category_id") ?? "");
   const [draftEquipmentId, setDraftEquipmentId] = useState(searchParams.get("equipment_id") ?? "");
+  // PR67-H1: the applied operator identifier is tracked separately from the
+  // autocomplete's resolved display object. It is seeded from the URL on
+  // mount so that pressing Apply after editing an unrelated filter does not
+  // silently drop an operator_id the user never touched -- draftOperator
+  // (the display object) legitimately stays null on a URL-restored value
+  // (see the known limitation noted below), but draftOperatorId must not.
+  const [draftOperatorId, setDraftOperatorId] = useState(searchParams.get("operator_id") ?? "");
   const [draftOperator, setDraftOperator] = useState<ReportOperatorOut | null>(null);
   const [rangeError, setRangeError] = useState<string | null>(null);
 
   const { data: wards } = useQuery({ queryKey: ["wards"], queryFn: listWards });
   const { data: categories } = useQuery({ queryKey: ["categories"], queryFn: listCategories });
+
+  function handleOperatorChange(operator: ReportOperatorOut | null) {
+    setDraftOperator(operator);
+    setDraftOperatorId(operator?.id ?? "");
+  }
 
   function apply() {
     if (draftBusinessDateFrom && draftBusinessDateTo && draftBusinessDateFrom > draftBusinessDateTo) {
@@ -57,7 +69,7 @@ export function ReportFilterBar() {
     setOrDelete("ward_id", draftWardId);
     setOrDelete("equipment_category_id", draftCategoryId);
     setOrDelete("equipment_id", draftEquipmentId);
-    setOrDelete("operator_id", draftOperator?.id ?? "");
+    setOrDelete("operator_id", draftOperatorId);
     setSearchParams(next);
   }
 
@@ -68,6 +80,7 @@ export function ReportFilterBar() {
     setDraftWardId("");
     setDraftCategoryId("");
     setDraftEquipmentId("");
+    setDraftOperatorId("");
     setDraftOperator(null);
     setRangeError(null);
     const next = new URLSearchParams(searchParams);
@@ -178,7 +191,7 @@ export function ReportFilterBar() {
           />
         </div>
         <div className="col-span-2">
-          <OperatorAutocomplete id="report-filter-operator" value={draftOperator} onChange={setDraftOperator} />
+          <OperatorAutocomplete id="report-filter-operator" value={draftOperator} onChange={handleOperatorChange} />
         </div>
       </div>
       {rangeError && <p className="mt-2 text-xs text-status-repair">{rangeError}</p>}

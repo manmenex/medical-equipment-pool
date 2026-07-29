@@ -13,9 +13,10 @@ import type { Category, Page, ReportTransactionOut, Ward } from "@/types";
 // never called for this page.
 
 const getReceiveReport = vi.fn();
+const getOperatorOptions = vi.fn();
 vi.mock("@/services/reports", () => ({
   getReceiveReport: (...args: unknown[]) => getReceiveReport(...args),
-  getOperatorOptions: () => Promise.resolve({ items: [], next_cursor: null, total: 0 }),
+  getOperatorOptions: (...args: unknown[]) => getOperatorOptions(...args),
 }));
 
 const wards: Ward[] = [{ id: "ward-1", code: "W1", name: "Ward A", department_id: null }];
@@ -60,6 +61,7 @@ function makeRow(overrides: Partial<ReportTransactionOut> = {}): ReportTransacti
 
 beforeEach(() => {
   getReceiveReport.mockResolvedValue(page([makeRow()]));
+  getOperatorOptions.mockResolvedValue({ items: [], next_cursor: null, total: 0 });
 });
 
 afterEach(() => {
@@ -229,5 +231,52 @@ describe("ReceiveReportPage", () => {
     expect(getReceiveReport).toHaveBeenCalledWith(
       expect.objectContaining({ business_date_from: "2026-07-01", shift: "night", ward_id: "ward-1" })
     );
+  });
+
+  // PR67-H1 regression: a URL-restored operator_id must survive an Apply of
+  // an unrelated filter change -- the autocomplete's resolved display
+  // object legitimately starts null (it cannot be resolved back into a
+  // display_name without a second lookup), but that must not be confused
+  // with the user having cleared the operator filter.
+  it("preserves an existing operator_id from the URL when Apply is pressed after changing an unrelated filter", async () => {
+    const user = userEvent.setup();
+    renderPage("/reports/receive?operator_id=op-1");
+    await screen.findByText("TX-1");
+
+    await user.selectOptions(screen.getByLabelText("กะ"), "day");
+    await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
+
+    await waitFor(() =>
+      expect(getReceiveReport).toHaveBeenLastCalledWith(
+        expect.objectContaining({ operator_id: "op-1", shift: "day" })
+      )
+    );
+    const search = screen.getByTestId("location-search").textContent ?? "";
+    expect(search).toContain("operator_id=op-1");
+  });
+
+  it("removes operator_id only when the operator selection is explicitly cleared", async () => {
+    const staff = { id: "op-1", display_name: "สมชาย ใจดี", is_active: true };
+    getOperatorOptions.mockResolvedValue({ items: [staff], next_cursor: null, total: 1 });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("TX-1");
+
+    await user.click(screen.getByLabelText("ผู้ปฏิบัติงาน"));
+    await user.click(await screen.findByRole("button", { name: "สมชาย ใจดี" }));
+    await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
+
+    await waitFor(() =>
+      expect(getReceiveReport).toHaveBeenLastCalledWith(expect.objectContaining({ operator_id: "op-1" }))
+    );
+    expect(screen.getByTestId("location-search").textContent ?? "").toContain("operator_id=op-1");
+
+    await user.click(screen.getByRole("button", { name: "ล้างผู้ปฏิบัติงานที่เลือก" }));
+    await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
+
+    await waitFor(() =>
+      expect(getReceiveReport).toHaveBeenLastCalledWith(expect.objectContaining({ operator_id: undefined }))
+    );
+    expect(screen.getByTestId("location-search").textContent ?? "").not.toContain("operator_id");
   });
 });
