@@ -1,9 +1,26 @@
 # Engineering Workflow
 
+**Purpose:** Normative engineering execution policy for design,
+implementation, review, merge, baseline management, and governance
+synchronization.
+
+**Authority:** This document is subordinate to
+[`PROJECT_PLAYBOOK.md`](PROJECT_PLAYBOOK.md). The Playbook governs roles,
+governance hierarchy, and change control; topic-owning documents govern their
+assigned subjects. If this document conflicts with either, the Playbook or the
+applicable topic-owning document controls.
+
+**Update trigger:** A change to the engineering delivery, review, merge,
+baseline, or governance-synchronization process.
+
+**Maintainer:** Documentation/Governance Engineer with Repository Owner
+approval.
+
 ## 1. Purpose
 
 This document defines the standard engineering, review, merge, and governance
-workflow for the Medical Equipment Pool project.
+workflow for the Medical Equipment Pool project. It operationalizes the
+governance hierarchy and roles defined by `PROJECT_PLAYBOOK.md`.
 
 The Medical Equipment Pool is production software. It is not a prototype.
 Engineering work MUST preserve business correctness, safety, reviewability,
@@ -27,8 +44,10 @@ and Roadmap change authorize it.
 
 ## 3. Roles and Responsibilities
 
-Workflow responsibilities are authoritative. Tool names are current operating
-assignments only and may change.
+The responsibilities below are normative execution rules that operationalize
+the roles defined by `PROJECT_PLAYBOOK.md`; they do not replace or redefine
+that authority. Tool names are current operating assignments only and may
+change.
 
 The current working model is:
 
@@ -115,12 +134,15 @@ Canonical delivery sequence:
 5. Owner Decisions resolved or explicitly left open.
 6. Design merged.
 7. Implementation divided into independently reviewable slices.
-8. Each slice receives independent review.
-9. CI passes on the exact reviewed head.
-10. Slice is squash-merged.
-11. New merge SHA becomes the next baseline.
-12. Governance synchronization occurs only after the complete Roadmap item is
-    finished.
+8. CI passes on the implementation-slice head.
+9. Slice is marked Ready for review.
+10. Each slice receives independent review of that exact CI-green head.
+11. Repository Owner approves the reviewed head and the slice is merged using
+    the approved merge method.
+12. The exact commit placed on the base branch becomes the next implementation
+    baseline.
+13. After all approved implementation slices are merged, a final governance
+    synchronization PR records Roadmap completion and the final baseline.
 
 ```mermaid
 flowchart TD
@@ -132,13 +154,15 @@ flowchart TD
     F --> G["Design squash merge"]
     C -- "No" --> H["Implementation slice"]
     G --> H
-    H --> I["Independent implementation review"]
-    I --> J["CI green on exact reviewed head"]
-    J --> K["Slice squash merge"]
-    K --> L{"Roadmap item complete?"}
-    L -- "No" --> H
-    L -- "Yes" --> M["Governance synchronization PR"]
-    M --> N["New authoritative baseline"]
+    H --> I["CI green on exact head"]
+    I --> J["Ready for review"]
+    J --> K["Independent review of exact CI-green head"]
+    K --> L["Repository Owner approval"]
+    L --> M["Approved slice merge"]
+    M --> N{"All approved implementation slices merged?"}
+    N -- "No" --> H
+    N -- "Yes: implementation complete" --> O["Final governance synchronization PR"]
+    O --> P["Roadmap item done and final baseline recorded"]
 ```
 
 ## 5. Baseline Management
@@ -150,17 +174,25 @@ Reviewed head SHA and merged baseline SHA are different concepts:
 - reviewed head SHA identifies the exact commit reviewed before merge;
 - fixed head SHA identifies a later PR head after requested changes;
 - re-reviewed head SHA identifies the exact commit reviewed after fixes;
-- merge SHA identifies the squash commit that becomes the authoritative
-  baseline.
+- squash SHA identifies the single commit produced by the default squash-merge
+  method;
+- merge commit SHA identifies an actual merge commit only when that merge
+  method is explicitly approved;
+- baseline SHA identifies the exact commit placed on the base branch by the
+  approved merge method and used to start subsequent work.
 
 These values MUST NOT be confused. A pre-merge reviewed head is never the
-post-merge baseline after a squash merge.
+post-merge baseline.
 
 No implementation branch SHOULD start from an unmerged design head. If an
 exception is required, it MUST be documented and Owner-approved.
 
-After squash merge, the squash SHA becomes the authoritative baseline. Stale
-baseline references in current-state documents such as `CONTEXT.md` or
+After an approved merge, the exact resulting base-branch commit becomes the
+authoritative baseline. Under the default squash-merge method, this is the
+squash SHA. For an explicitly approved merge-commit or rebase method, the
+resulting base-branch commit and merge method MUST be recorded precisely.
+`Merge SHA` MUST NOT be used as a generic synonym for these different values.
+Stale baseline references in current-state documents such as `CONTEXT.md` or
 `PROJECT_MEMORY.md` are merge blockers for governance-sync PRs.
 
 ## 6. Design PR Policy
@@ -334,14 +366,23 @@ Before merge, verify:
 
 After merge:
 
-- record the squash SHA as the new baseline;
+- record the exact resulting base-branch commit as the new baseline; under the
+  default squash-merge method, this is the squash SHA;
 - create the next branch only from that baseline;
 - do not refer to a pre-merge reviewed head as the baseline.
 
 ## 14. Governance Synchronization Policy
 
-Governance synchronization is a separate final step after a complete Roadmap
-item.
+Final governance synchronization is a separate step after all approved
+implementation slices for a Roadmap item are merged. At that point,
+implementation is complete, but the Roadmap item is not done until the final
+governance synchronization is merged. That merge records Roadmap completion
+and establishes the final baseline.
+
+This final synchronization requirement does not prohibit focused current-state
+or status corrections after an individual merge when needed to keep
+documentation truthful during multi-slice work. Such corrections MUST NOT
+falsely declare the whole Roadmap item done.
 
 It MUST update all applicable current-state documents consistently:
 
@@ -477,7 +518,9 @@ A Roadmap item is done only when:
 - no known merge blockers remain;
 - documentation matches implementation;
 - governance synchronization is merged;
-- the final governance merge SHA becomes the new baseline.
+- the exact base-branch commit resulting from the final governance merge
+  becomes the new baseline; under the default squash-merge method, this is the
+  squash SHA.
 
 ## 22. Exception Policy
 
