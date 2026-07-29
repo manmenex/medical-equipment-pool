@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.reporting_time import Shift, business_date_and_shift_sql
+from app.models.equipment import Equipment
 from app.models.transaction import BorrowTransaction, DispatchType, RoutineRound, TransactionStatus
 from app.utils.pagination import decode_cursor, encode_cursor
 
@@ -295,6 +296,8 @@ async def search(
     *,
     ward_id: uuid.UUID | None = None,
     equipment_id: uuid.UUID | None = None,
+    equipment_category_id: uuid.UUID | None = None,
+    operator_id: uuid.UUID | None = None,
     status: str | None = None,
     dispatch_type: DispatchType | None = None,
     routine_round: RoutineRound | None = None,
@@ -304,6 +307,7 @@ async def search(
     business_date_to: date | None = None,
     shift: Shift | None = None,
     event: Literal["dispatch", "receipt"] = "dispatch",
+    require_receipt: bool = False,
     limit: int = 25,
     cursor: str | None = None,
 ) -> tuple[list[BorrowTransaction], str | None, int]:
@@ -341,12 +345,50 @@ async def search(
     comments for the one place that *does* need an explicit NULL branch,
     the `shift` CASE expression). business_date_from/_to ordering is
     validated by the caller before this function is ever called, same as
-    from_date/to_date."""
+    from_date/to_date.
+
+    Roadmap PR17 Slice 1 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+    §8/§9/§11): three additive capabilities for the Receive/Issue report
+    query functions (app.services.report_query_service) -- none change any
+    existing caller's behavior, since GET /transactions never sets any of
+    them.
+
+    - `equipment_category_id` filters by `Equipment.category_id` via a
+      subquery against `equipment_id`, not a join on the main SELECT --
+      keeps the base query's shape (and its `selectinload`) unchanged when
+      this filter is not used.
+    - `operator_id` filters `borrower_user_id` (event="dispatch") or
+      `received_by_user_id` (event="receipt") -- the same event-selected
+      column pair the business_date/shift derivation already uses above,
+      reused rather than re-decided here.
+    - `require_receipt`, when True, unconditionally appends
+      `BorrowTransaction.returned_at.is_not(None)` to `filters` --
+      independent of whether business_date_from/business_date_to/shift are
+      supplied. This is the Receive Report's canonical, always-on
+      eligibility predicate (§7.1, corrected per review finding PR17-H1):
+      reusing `event="receipt"` alone is not sufficient, because the
+      NULL-propagation exclusion above only activates inside the
+      business_date/shift branch. Only `search_receive_report()` sets this;
+      `GET /transactions` and `search_issue_report()` never do.
+    """
     filters = []
     if ward_id is not None:
         filters.append(BorrowTransaction.ward_id == ward_id)
     if equipment_id is not None:
         filters.append(BorrowTransaction.equipment_id == equipment_id)
+    if equipment_category_id is not None:
+        filters.append(
+            BorrowTransaction.equipment_id.in_(
+                select(Equipment.id).where(Equipment.category_id == equipment_category_id)
+            )
+        )
+    if operator_id is not None:
+        operator_column = (
+            BorrowTransaction.borrower_user_id if event == "dispatch" else BorrowTransaction.received_by_user_id
+        )
+        filters.append(operator_column == operator_id)
+    if require_receipt:
+        filters.append(BorrowTransaction.returned_at.is_not(None))
     if status is not None:
         filters.append(BorrowTransaction.status == status)
     if dispatch_type is not None:
