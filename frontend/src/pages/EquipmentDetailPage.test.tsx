@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EquipmentDetailPage } from "@/pages/EquipmentDetailPage";
@@ -126,11 +126,22 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function renderPage() {
+// Roadmap PR16 Slice 4: MemoryRouter keeps its own in-memory history, not
+// jsdom's real window.location -- this probe reads the router's current
+// `location.search` via useLocation() (same context useSearchParams() reads
+// from in EquipmentDetailPage) so tests can assert on it without depending
+// on the real browser URL.
+function LocationSearchProbe() {
+  const location = useLocation();
+  return <div data-testid="location-search">{location.search}</div>;
+}
+
+function renderPage(initialPath = "/equipment/eq-1") {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={["/equipment/eq-1"]}>
+      <MemoryRouter initialEntries={[initialPath]}>
+        <LocationSearchProbe />
         <Routes>
           <Route path="/equipment/:id" element={<EquipmentDetailPage />} />
         </Routes>
@@ -459,6 +470,342 @@ describe("EquipmentDetailPage history filters and dispatch-type/days-since displ
     await waitFor(() =>
       expect(listTransactions).toHaveBeenLastCalledWith(
         expect.objectContaining({ from_date: "2026-07-01", to_date: "2026-07-31" })
+      )
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Roadmap PR16 Slice 4 (docs/design/PR16_REPORTING_FOUNDATION_PLAN.md §10):
+// business_date_from/business_date_to/shift/event filter controls. This
+// slice is frontend only -- business_date/shift are never computed here,
+// only selected and sent verbatim to GET /transactions (services/borrow.ts's
+// listTransactions, unchanged contract, extended by the already-merged
+// backend Slice 3). These controls are explicitly separate from the
+// from_date/to_date pair covered above (Roadmap PR13): committed via
+// "นำตัวกรองไปใช้" (Apply)/"ล้างตัวกรอง" (Clear), never live-onChange like
+// the from_date/to_date pair, and backed by URL search params as the single
+// source of truth for what was actually applied.
+// ---------------------------------------------------------------------------
+
+describe("EquipmentDetailPage business-date/shift filter controls (Roadmap PR16 Slice 4)", () => {
+  it("starts with every business-date/shift control empty ('ทั้งหมด' / no date)", async () => {
+    renderPage();
+    await waitForHistoryLoaded();
+
+    expect(screen.getByLabelText("วันที่ทำการ ตั้งแต่")).toHaveValue("");
+    expect(screen.getByLabelText("วันที่ทำการ ถึง")).toHaveValue("");
+    expect(screen.getByLabelText("กะ")).toHaveValue("");
+    expect(screen.getByLabelText("เหตุการณ์")).toHaveValue("");
+    // The initial, unfiltered query must not carry any of the four new
+    // params at all (not even as empty strings) -- same convention as
+    // dispatch_type/routine_round/from_date/to_date already established.
+    expect(listTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        business_date_from: undefined,
+        business_date_to: undefined,
+        shift: undefined,
+        event: undefined,
+      })
+    );
+  });
+
+  it("only sends the new filters to the API after 'นำตัวกรองไปใช้' is pressed, never on every keystroke/select", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitForHistoryLoaded();
+
+    // event must be picked before business_date_from/business_date_to/shift
+    // are enabled (PR61 review fix, H1) -- see the "date/shift controls are
+    // disabled until an event is picked" tests below for that gating itself.
+    await user.selectOptions(screen.getByLabelText("เหตุการณ์"), "receipt");
+    await user.type(screen.getByLabelText("วันที่ทำการ ตั้งแต่"), "2026-07-01");
+    await user.type(screen.getByLabelText("วันที่ทำการ ถึง"), "2026-07-31");
+    await user.selectOptions(screen.getByLabelText("กะ"), "day");
+
+    expect(listTransactions).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
+
+    await waitFor(() =>
+      expect(listTransactions).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          equipment_id: "eq-1",
+          business_date_from: "2026-07-01",
+          business_date_to: "2026-07-31",
+          shift: "day",
+          event: "receipt",
+        })
+      )
+    );
+    // Never merged into, or substituted for, the existing raw-timestamp
+    // from_date/to_date filter (design's explicit correction).
+    expect(listTransactions).toHaveBeenLastCalledWith(
+      expect.objectContaining({ from_date: undefined, to_date: undefined })
+    );
+  });
+
+  it("'ล้างตัวกรอง' resets every business-date/shift/event control and re-queries without them", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitForHistoryLoaded();
+
+    await user.selectOptions(screen.getByLabelText("เหตุการณ์"), "receipt");
+    await user.type(screen.getByLabelText("วันที่ทำการ ตั้งแต่"), "2026-07-01");
+    await user.selectOptions(screen.getByLabelText("กะ"), "night");
+    await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
+    await waitFor(() =>
+      expect(listTransactions).toHaveBeenLastCalledWith(
+        expect.objectContaining({ shift: "night", event: "receipt" })
+      )
+    );
+
+    await user.click(screen.getByRole("button", { name: "ล้างตัวกรอง" }));
+
+    expect(screen.getByLabelText("วันที่ทำการ ตั้งแต่")).toHaveValue("");
+    expect(screen.getByLabelText("กะ")).toHaveValue("");
+    expect(screen.getByLabelText("เหตุการณ์")).toHaveValue("");
+    await waitFor(() =>
+      expect(listTransactions).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          business_date_from: undefined,
+          business_date_to: undefined,
+          shift: undefined,
+          event: undefined,
+        })
+      )
+    );
+  });
+
+  it("serializes applied filters into the URL query string", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitForHistoryLoaded();
+
+    await user.selectOptions(screen.getByLabelText("เหตุการณ์"), "dispatch");
+    await user.type(screen.getByLabelText("วันที่ทำการ ตั้งแต่"), "2026-07-01");
+    await user.selectOptions(screen.getByLabelText("กะ"), "day");
+    await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
+
+    await waitFor(() => {
+      const search = screen.getByTestId("location-search").textContent ?? "";
+      expect(search).toContain("business_date_from=2026-07-01");
+      expect(search).toContain("shift=day");
+      expect(search).toContain("event=dispatch");
+    });
+  });
+
+  it('rejects an obviously reversed range ("ตั้งแต่" after "ถึง") client-side, without ever calling the API', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitForHistoryLoaded();
+
+    expect(listTransactions).toHaveBeenCalledTimes(1);
+
+    await user.selectOptions(screen.getByLabelText("เหตุการณ์"), "dispatch");
+    await user.type(screen.getByLabelText("วันที่ทำการ ตั้งแต่"), "2026-07-31");
+    await user.type(screen.getByLabelText("วันที่ทำการ ถึง"), "2026-07-01");
+    await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
+
+    expect(await screen.findByText(/ต้องไม่มาหลัง/)).toBeInTheDocument();
+    // No second call -- the obviously-invalid range is never sent, matching
+    // "frontend validation only for obvious UI mistakes."
+    expect(listTransactions).toHaveBeenCalledTimes(1);
+  });
+
+  it("an equal business_date_from/business_date_to is a valid single-day range, not rejected client-side", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitForHistoryLoaded();
+
+    await user.selectOptions(screen.getByLabelText("เหตุการณ์"), "dispatch");
+    await user.type(screen.getByLabelText("วันที่ทำการ ตั้งแต่"), "2026-07-15");
+    await user.type(screen.getByLabelText("วันที่ทำการ ถึง"), "2026-07-15");
+    await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
+
+    expect(screen.queryByText(/ต้องไม่มาหลัง/)).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(listTransactions).toHaveBeenLastCalledWith(
+        expect.objectContaining({ business_date_from: "2026-07-15", business_date_to: "2026-07-15" })
+      )
+    );
+  });
+
+  it("displays the backend's validation message (never a generic fallback) when GET /transactions rejects with 400 INVALID_INPUT", async () => {
+    listTransactions.mockRejectedValue({
+      isAxiosError: true,
+      response: {
+        status: 400,
+        data: { code: "INVALID_INPUT", detail: "'business_date_from' must not be after 'business_date_to'" },
+      },
+    });
+    renderPage();
+
+    expect(
+      await screen.findByText("'business_date_from' must not be after 'business_date_to'")
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "ลองใหม่" })).toBeInTheDocument();
+  });
+
+  it("shows the existing loading state while a business-date/shift-filtered query is in flight", async () => {
+    listTransactions.mockReturnValue(new Promise(() => {}));
+    renderPage();
+
+    expect(await screen.findByText("กำลังโหลดประวัติการเบิก-รับคืน...")).toBeInTheDocument();
+  });
+
+  it("shows the existing empty-history state when a business-date/shift filter matches no rows", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitForHistoryLoaded();
+
+    listTransactions.mockResolvedValue(page([]));
+    await user.selectOptions(screen.getByLabelText("เหตุการณ์"), "dispatch");
+    await user.type(screen.getByLabelText("วันที่ทำการ ตั้งแต่"), "2000-01-01");
+    await user.type(screen.getByLabelText("วันที่ทำการ ถึง"), "2000-01-01");
+    await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
+
+    await waitFor(() => expect(screen.getByText("ยังไม่มีประวัติการเบิก-รับคืน")).toBeInTheDocument());
+  });
+
+  it("restores applied filters from the URL on initial render, e.g. after a page refresh or shared link", async () => {
+    renderPage("/equipment/eq-1?business_date_from=2026-07-01&business_date_to=2026-07-31&shift=night&event=receipt");
+    await waitForHistoryLoaded();
+
+    expect(screen.getByLabelText("วันที่ทำการ ตั้งแต่")).toHaveValue("2026-07-01");
+    expect(screen.getByLabelText("วันที่ทำการ ถึง")).toHaveValue("2026-07-31");
+    expect(screen.getByLabelText("กะ")).toHaveValue("night");
+    expect(screen.getByLabelText("เหตุการณ์")).toHaveValue("receipt");
+    expect(listTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        business_date_from: "2026-07-01",
+        business_date_to: "2026-07-31",
+        shift: "night",
+        event: "receipt",
+      })
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PR61 review fix (H1, merge-blocking): the "เหตุการณ์" select's "ทั้งหมด"
+// (All) option previously serialized to `event: undefined`, and the backend
+// (`Literal["dispatch", "receipt"] = "dispatch"`, backend/app/api/v1/
+// transactions.py) treats an omitted `event` as "dispatch," not "all
+// events" -- there is no "all" value in the API contract. So "All" silently
+// behaved as "Dispatch," while the UI promised "all events." Since the
+// backend cannot be changed to add an "all" value (out of scope for this
+// fix) and business_date_from/business_date_to/shift are only meaningful
+// together with one concrete event basis (each of dispatch/receipt has its
+// own, independently derived business_date/shift -- see backend/app/crud/
+// transaction.py::search()), the only way for "All" to honestly produce
+// "actual all-events results" without inventing client-side dispatch/
+// receipt filtering or changing backend semantics is: "All" must never be
+// combined with business_date_from/business_date_to/shift on the wire, and
+// those three controls are disabled until a concrete event is chosen.
+// ---------------------------------------------------------------------------
+
+describe("EquipmentDetailPage event-basis request serialization (PR61 review fix, H1)", () => {
+  it("business_date_from/business_date_to/shift controls are disabled until a concrete event is chosen", async () => {
+    renderPage();
+    await waitForHistoryLoaded();
+
+    expect(screen.getByLabelText("วันที่ทำการ ตั้งแต่")).toBeDisabled();
+    expect(screen.getByLabelText("วันที่ทำการ ถึง")).toBeDisabled();
+    expect(screen.getByLabelText("กะ")).toBeDisabled();
+  });
+
+  it("event = All (ทั้งหมด): never sends business_date_from/business_date_to/shift, producing actual all-events results", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitForHistoryLoaded();
+
+    // Pick a concrete event first (enables the fields), fill them in, then
+    // switch back to "ทั้งหมด" -- this must clear the now-meaningless
+    // business_date/shift selections, not just leave `event` blank while
+    // silently keeping them.
+    await user.selectOptions(screen.getByLabelText("เหตุการณ์"), "dispatch");
+    await user.type(screen.getByLabelText("วันที่ทำการ ตั้งแต่"), "2026-07-01");
+    await user.selectOptions(screen.getByLabelText("กะ"), "day");
+    await user.selectOptions(screen.getByLabelText("เหตุการณ์"), "");
+
+    expect(screen.getByLabelText("วันที่ทำการ ตั้งแต่")).toHaveValue("");
+    expect(screen.getByLabelText("กะ")).toHaveValue("");
+    expect(screen.getByLabelText("วันที่ทำการ ตั้งแต่")).toBeDisabled();
+    expect(screen.getByLabelText("กะ")).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
+
+    await waitFor(() =>
+      expect(listTransactions).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          business_date_from: undefined,
+          business_date_to: undefined,
+          shift: undefined,
+          event: undefined,
+        })
+      )
+    );
+  });
+
+  it("event = Dispatch (เบิก): sends event=dispatch together with business_date_from/business_date_to/shift", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitForHistoryLoaded();
+
+    await user.selectOptions(screen.getByLabelText("เหตุการณ์"), "dispatch");
+    await user.type(screen.getByLabelText("วันที่ทำการ ตั้งแต่"), "2026-07-01");
+    await user.type(screen.getByLabelText("วันที่ทำการ ถึง"), "2026-07-31");
+    await user.selectOptions(screen.getByLabelText("กะ"), "day");
+    await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
+
+    await waitFor(() =>
+      expect(listTransactions).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          business_date_from: "2026-07-01",
+          business_date_to: "2026-07-31",
+          shift: "day",
+          event: "dispatch",
+        })
+      )
+    );
+  });
+
+  it("event = Receipt (รับคืน): sends event=receipt together with business_date_from/business_date_to/shift", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitForHistoryLoaded();
+
+    await user.selectOptions(screen.getByLabelText("เหตุการณ์"), "receipt");
+    await user.type(screen.getByLabelText("วันที่ทำการ ตั้งแต่"), "2026-07-01");
+    await user.type(screen.getByLabelText("วันที่ทำการ ถึง"), "2026-07-31");
+    await user.selectOptions(screen.getByLabelText("กะ"), "night");
+    await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
+
+    await waitFor(() =>
+      expect(listTransactions).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          business_date_from: "2026-07-01",
+          business_date_to: "2026-07-31",
+          shift: "night",
+          event: "receipt",
+        })
+      )
+    );
+  });
+
+  it("a shift/business_date_from/business_date_to already in the URL without a concrete event (e.g. a hand-edited or stale link) is never sent -- the authoritative gate is not just the Apply-time draft state", async () => {
+    renderPage("/equipment/eq-1?shift=night&business_date_from=2026-07-01");
+    await waitForHistoryLoaded();
+
+    await waitFor(() =>
+      expect(listTransactions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          shift: undefined,
+          business_date_from: undefined,
+          business_date_to: undefined,
+          event: undefined,
+        })
       )
     );
   });
