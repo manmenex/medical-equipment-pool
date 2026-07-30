@@ -234,30 +234,47 @@ async def list_for_verify_checklist(
     if department_id is not None:
         base_filters.append(Equipment.department_owner_id == department_id)
 
+    # PR68-Blocker3: the cursor is parsed and validated *before* any query
+    # runs (including the count query below) -- a malformed cursor must
+    # fail fast with InvalidInputError, not after an already-wasted COUNT
+    # against a row set the request will never see.
+    cursor_filter = None
+    if cursor:
+        cursor_dt, cursor_id = decode_cursor(cursor)
+        # decode_cursor already rejects a malformed cursor (bad Base64,
+        # corrupt JSON, missing fields, unparseable timestamp) as
+        # InvalidInputError. The one further parsing step this function
+        # performs itself -- cursor_id must be a valid UUID, since it is
+        # compared against the native `Uuid`-typed id column below, not a
+        # `cast(..., String)` comparison against `str(equipment.id)` (the
+        # latter breaks on SQLite, whose `Uuid` type stores/CASTs without
+        # dashes while `str(uuid.UUID(...))` always includes them, so the
+        # two representations never compare equal and the cursor can never
+        # advance past a tie -- the same defect `app.crud.user.
+        # list_operators` fixed for its own new cursor, see that
+        # function's docstring; `search()` above has this same latent bug
+        # in its pre-existing `cast(Equipment.id, String)` comparison,
+        # left unfixed there as pre-existing shared infrastructure outside
+        # this slice's scope, but fixed directly here since this query is
+        # new code introduced by this slice) -- must be validated here
+        # too, for the same PR68-Blocker3 reason: an otherwise well-formed
+        # cursor whose `id` field is not a real UUID must not escape as an
+        # uncaught exception.
+        try:
+            cursor_uuid = uuid.UUID(cursor_id)
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise InvalidInputError("Invalid or malformed pagination cursor.") from exc
+        cursor_filter = or_(
+            Equipment.created_at < cursor_dt,
+            and_(Equipment.created_at == cursor_dt, Equipment.id < cursor_uuid),
+        )
+
     count_stmt = select(func.count()).select_from(Equipment).where(and_(*base_filters))
     total = (await db.execute(count_stmt)).scalar_one()
 
     stmt = select(Equipment).where(and_(*base_filters))
-    if cursor:
-        cursor_dt, cursor_id = decode_cursor(cursor)
-        # Compares the native `Uuid`-typed column directly against a parsed
-        # `uuid.UUID` value, not a `cast(..., String)` comparison against
-        # `str(equipment.id)` -- the latter breaks on SQLite, whose `Uuid`
-        # type stores/CASTs without dashes while `str(uuid.UUID(...))`
-        # always includes them, so the two representations never compare
-        # equal and the cursor can never advance past a tie (the same
-        # defect `app.crud.user.list_operators` fixed for its own new
-        # cursor -- see that function's docstring; `search()` above has
-        # this same latent bug in its pre-existing `cast(Equipment.id,
-        # String)` comparison, left unfixed there as pre-existing shared
-        # infrastructure outside this slice's scope, but fixed directly
-        # here since this query is new code introduced by this slice).
-        stmt = stmt.where(
-            or_(
-                Equipment.created_at < cursor_dt,
-                and_(Equipment.created_at == cursor_dt, Equipment.id < uuid.UUID(cursor_id)),
-            )
-        )
+    if cursor_filter is not None:
+        stmt = stmt.where(cursor_filter)
     stmt = stmt.order_by(Equipment.created_at.desc(), Equipment.id.desc()).limit(limit + 1)
 
     rows = list((await db.execute(stmt)).scalars().all())

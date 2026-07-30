@@ -99,9 +99,9 @@ No alternative semantics, no second date-bucketing implementation, and no busine
 
 ### 6.3 Equipment Verify Checklist
 
-- **Purpose:** **Not confirmed.** No source in this repository defines what "verifying" equipment means as a hospital process — see §2's finding and §18 Owner Decision #1. Two candidate purposes exist and are evaluated below rather than assumed.
-- **Primary users:** Assumed the same three roles as §6.1/§6.2 unless the Owner Decision resolves otherwise (no evidence exists to assume a narrower audience).
-- **Trigger, Workflow, Inputs, Outputs, Completion criteria, Operational value:** Depend entirely on which candidate interpretation (§8.3, §18) is confirmed. This document does not invent an answer for any of these — inventing a trigger or completion rule for a workflow that was never audited would repeat exactly the mistake PR16's design process was built to avoid.
+- **Purpose:** **Resolved via Owner Decision #1 (§18) as interpretation (A).** No source in this repository ever defined what "verifying" equipment means as a hospital process — see §2's finding — so this document originally evaluated two candidate purposes rather than assuming one; the Repository Owner has since confirmed (A), recorded in `docs/DECISION_LOG.md` ("Roadmap PR17 — Owner Decision #1") and implemented in GitHub PR #68 (Roadmap PR17 Slice 4).
+- **Primary users:** The same three roles as §6.1/§6.2 (`VIEW_AND_REPORT_ROLES` — no evidence exists to assume a narrower audience, and Owner Decision #1's resolution did not narrow it).
+- **Trigger, Workflow, Inputs, Outputs, Completion criteria, Operational value:** Per interpretation (A) (§8.3, confirmed by §18): no trigger, no workflow, no completion criterion — the report is a read-only, realtime snapshot of current `Equipment` rows, not a task with a lifecycle. This document deliberately never invented a trigger or completion rule for interpretation (B) (§7.3(B)) — that remains out of scope, undesigned, and unimplemented.
 
 **Candidate interpretations (both evaluated in full in §8.3):**
 
@@ -112,7 +112,7 @@ No alternative semantics, no second date-bucketing implementation, and no busine
 
 ## 7. Canonical Report Definitions
 
-This section is mandatory and precise, per this task's explicit requirement. Each rule below is either a direct, cited consequence of an already-confirmed system fact, or explicitly marked as depending on the unresolved Owner Decision (§18) — nothing here is a guess presented as a rule.
+This section is mandatory and precise, per this task's explicit requirement. Each rule below is either a direct, cited consequence of an already-confirmed system fact, or explicitly marked as depending on Owner Decision #1 (§18, resolved to interpretation (A)) — nothing here is a guess presented as a rule.
 
 ### 7.1 Receive Report
 
@@ -172,7 +172,7 @@ Pinning `event` alone is *not* sufficient for the Receive Report's own inclusion
 
 **For Equipment Verify Checklist (interpretation A only, §7.3):** a new, separate `equipment_crud`-layer query (not `transaction_crud`, since this report is not transaction-shaped) reusing the existing `Equipment.deleted_at.is_(None)` filter convention already used by every other equipment query (`backend/app/crud/equipment.py`) — see §10.
 
-**Recommendation:** Option A for Receive/Issue; a narrow, equipment-domain-native query for Verify Checklist (interpretation A), pending §18.
+**Recommendation:** Option A for Receive/Issue; a narrow, equipment-domain-native query for Verify Checklist (interpretation A) — implemented as `equipment_crud.list_for_verify_checklist()` in GitHub PR #68, per Owner Decision #1 (§18, resolved to interpretation (A)).
 
 ---
 
@@ -223,7 +223,7 @@ Identical shape to §10.1 (including the corrected Sorting row, §10.1/§7.2/§1
 
 ### 10.3 `GET /api/v1/reports/equipment-verify-checklist`
 
-Pending §18's Owner Decision. If interpretation A (§7.3) is confirmed:
+**Resolved via Owner Decision #1 (§18) to interpretation A (§7.3) — implemented in GitHub PR #68:**
 
 | | |
 |---|---|
@@ -231,11 +231,11 @@ Pending §18's Owner Decision. If interpretation A (§7.3) is confirmed:
 | **Purpose** | Return the current equipment master/status listing per §7.3(A) |
 | **Permissions** | `VIEW_AND_REPORT_ROLES`, same rationale as §10.1 |
 | **Request query params** | `equipment_category_id: str \| None`, `status: EquipmentStatus \| None`, `department_id: str \| None` (maps to the existing `Equipment.department_owner_id` FK) — **corrected per review minor finding:** `ward_id` is removed from this endpoint; `Equipment` has no direct Ward relationship (only `Equipment.department_owner_id` -> `Department`, and `Equipment.current_location_id` -> `Location` — neither is a Ward), and inventing a ward-level filter here would misrepresent a fact this system does not track. A future Equipment-to-Ward relationship, if ever confirmed, would need its own design, not a filter added here on an assumption. `limit`, `cursor` |
-| **Response schema** | A **new**, equipment-shaped schema (not `TransactionOut`) — reuses the existing `EquipmentOut`-equivalent response shape already returned by `GET /equipment` (no new fields invented) |
+| **Response schema** | Reuses the existing `EquipmentOut` response shape already returned by `GET /equipment` (no new fields invented, no new schema class defined — the implementation returns `Page[EquipmentOut]` directly) |
 | **Pagination/Sorting** | Same cursor convention as `GET /equipment`, unchanged |
 | **Error responses** | `401`, `403`, `422` — no reversed-range check applies (no date range on this endpoint) |
 
-If interpretation B is confirmed instead, this endpoint (and everything under it) is void and replaced by whatever the new verification-event workflow's own design specifies — not something this document can specify without the resolved decision (§7.3(B), §18).
+Interpretation B was **not** confirmed and is **not** implemented. Per §7.3(B), a genuine physical-verification event workflow remains its own, separately-numbered future Roadmap item, outside PR17, requiring its own design if the Repository Owner ever wants it.
 
 ### 10.4 `GET /api/v1/report-options/operators` (new; corrected per review findings PR17-M1, then PR17-M1R)
 
@@ -300,7 +300,7 @@ Presentation/reporting-only concerns (the two operator-display fields) are intro
 
 Design only — no detailed UI.
 
-- **Navigation:** New sub-routes under the existing `/reports` route: `/reports/receive`, `/reports/issue`, and (pending §18) `/reports/equipment-verify-checklist`. The existing `/reports` page (`ReportsPage.tsx`'s trend chart + unfiltered export, §2) is left untouched by this design — these are three additional, explicitly separate report screens, not a replacement.
+- **Navigation:** New sub-routes under the existing `/reports` route: `/reports/receive`, `/reports/issue`, and `/reports/equipment-verify-checklist` (implemented in GitHub PR #68, per Owner Decision #1's resolution to interpretation A, §18). The existing `/reports` page (`ReportsPage.tsx`'s trend chart + unfiltered export, §2) is left untouched by this design — these are three additional, explicitly separate report screens, not a replacement.
 - **Workflow:** Each report screen follows the exact `EquipmentDetailPage.tsx` filter pattern already established: `useSearchParams`-backed *applied* filter state (URL is the single source of truth, survives refresh/navigation, per this repository's already-proven pattern), draft-vs-applied separation with an explicit Apply/Clear action (not live-on-keystroke), TanStack Query for data fetching keyed on the applied filter values.
 - **Thai-first terminology:** Report titles and filter labels follow the existing terminology (เบิก = issue/dispatch, รับคืน = receive, per Roadmap PR11's already-completed terminology pass) — no new English-first surface is introduced.
 - **Mobile-first behaviour:** Reuses the existing responsive filter-row layout (label + `<select>`/date-`<input>`, large touch targets, minimal typing) already shipped in `EquipmentDetailPage.tsx`/Roadmap PR13's filters — not redesigned.
@@ -376,6 +376,7 @@ This design must, and does, support future work without requiring a redesign of 
 - Scope: `GET /reports/equipment-verify-checklist` (§10.3) and its frontend screen, **only** if Owner Decision #1 (§18) has been resolved to interpretation A by then. If Owner Decision #1 remains unresolved when Slices 1-3 are ready to ship, this slice is explicitly **blocked/deferred** — Receive and Issue ship without it, and this slice is picked up as its own separately-approved follow-up once the decision is made. No policy is invented to unblock it early.
 - Dependencies: Slices 1-3 (for the shared report-page pattern) and Owner Decision #1 (§18).
 - Why this boundary: isolates the one genuinely undecided report from the two fully-specified ones, so Owner Decision #1 (§18) blocks only this slice, never Receive/Issue (§18's own "not blocking for Receive/Issue" framing, unchanged).
+- **Status update:** Owner Decision #1 has since been resolved to interpretation A (§18, `docs/DECISION_LOG.md` "Roadmap PR17 — Owner Decision #1"), unblocking this slice. It is implemented in GitHub PR #68.
 
 **Final Slice — Governance Synchronization (corrected per review finding PR17-H4).**
 - Scope: The standard post-merge governance sync (`docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, `docs/DECISION_LOG.md`, `knowledge/CONTEXT.md`, `knowledge/PROJECT_MEMORY.md`, `knowledge/CHANGE_HISTORY.md` — all six current-state documents, matching the completed Roadmap PR16 sync's actual final scope, GitHub PR #62) recording Roadmap PR17 as complete, advancing the next planned item to Roadmap PR18.
@@ -384,6 +385,7 @@ This design must, and does, support future work without requiring a redesign of 
   2. Owner Decision #1 (§18) resolves to interpretation B or C, **and** a separate, explicitly Repository-Owner-approved governance decision formally amends Roadmap PR17's active scope to exclude Equipment Verify Checklist, recording the omitted or redirected workflow as its own, distinctly tracked future item (mirroring how Shift Sessions/Standby Snapshots are tracked today, `docs/ROADMAP.md` "Confirmed future work") — not silently dropped.
 - **If neither condition holds:** Slices 1-3 remain individually mergeable on their own usual merits (they do not require Owner Decision #1 to be resolved, §18) — but this Final Slice does not run, no governance-sync PR is opened claiming "Roadmap PR17 complete," and the Roadmap's "next planned item" is **not** advanced to PR18. The Roadmap baseline instead reflects exactly what has actually merged (e.g. "Roadmap PR17 in progress — Receive/Issue slices merged; Equipment Verify Checklist blocked on Owner Decision #1"), never a claim of completion the authoritative scope does not support.
 - Dependencies: All of Receive, Issue, and Equipment Verify Checklist resolved per the two conditions above — not merely "all approved slices merged."
+- **Status update:** Owner Decision #1 is resolved (condition 1, above). Condition 1 also requires Slice 4 to have **merged**, not merely be implemented in an open PR — GitHub PR #68 is still open as of this note. This Final Slice therefore still does not run yet; no governance-sync PR is opened by this change, and the Roadmap's "next planned item" is not advanced to PR18 here.
 - Why this boundary: per this repository's own established convention (confirmed by inspecting every prior design document — none touches roadmap/governance files itself; that happens only in the dedicated post-merge sync step, §22) — and, per this correction, governance completion must track the Roadmap's actual authoritative scope, never a partial subset dressed up as the whole.
 
 No slice combines database + broad API + frontend + governance changes, and **no slice in this plan implements printing** (§13, §21) — printing remains entirely Roadmap PR18.
@@ -416,7 +418,7 @@ This document recommends **(A)** as the option that satisfies PR17's literal acc
 
 | Risk | Category | Mitigation |
 |---|---|---|
-| Equipment Verify Checklist is built on an assumed interpretation that turns out to be wrong | Business | Owner Decision #1 (§18) is a hard blocker for that sub-scope only; Receive/Issue can ship independently and are not blocked by it (§17, Slice boundaries). |
+| Equipment Verify Checklist is built on an assumed interpretation that turns out to be wrong | Business | Not assumed — Owner Decision #1 (§18) required explicit Repository Owner confirmation before Slice 4 could start, and was resolved to interpretation A prior to GitHub PR #68's implementation. Receive/Issue shipped independently and were never blocked by it (§17, Slice boundaries). |
 | `equipment_category_id`/`operator_id` joins, and the new unconditional `require_receipt` predicate, on `transaction_crud.search()` degrade query performance at a future, larger scale | Architecture/Performance | Evidence-gated per §15 (PR14B precedent) — not assumed, verified with real `EXPLAIN` output at implementation time before any index is added. |
 | A future PR18 export format needs a leaner or differently-shaped response than `ReportTransactionOut` provides | Architecture/Future migration | §8/§11 flagged this explicitly as an accepted, revisitable trade-off, not a silent gap — PR18's own design can introduce its own export-specific slim DTO/schema then, informed by real export requirements rather than speculation now. That future schema is a new type, same as `ReportTransactionOut` was for PR17 — PR18 has no need to, and must not, modify the existing `TransactionOut` contract merely because reporting/export needs exist. |
 | The existing, unfiltered `/reports/export`/`ReportsPage.tsx` surface (§2) becomes confusing to operate alongside three new named reports | Compatibility | Explicitly left untouched and unrenamed by this design (§8, §12); PR18 is the natural point to reconcile/replace it once it has to add export to the named reports anyway — flagged here, not silently deferred. |
@@ -435,7 +437,7 @@ This document recommends **(A)** as the option that satisfies PR17's literal acc
 
 **Business**
 - Each of the three reports' canonical definition (§7) is implemented exactly as specified — no transaction silently included/excluded outside that definition.
-- Restated from the authoritative source: "Each report uses the same reporting metadata and presents consistent date/shift filtering" (`docs/audits/04-consolidated-implementation-plan.md`, PR17 entry) — satisfied by Receive/Issue reusing PR16's `business_date`/`shift` unmodified (§5); Verify Checklist's relationship to this criterion is exactly what Owner Decision #1 (§18) must resolve.
+- Restated from the authoritative source: "Each report uses the same reporting metadata and presents consistent date/shift filtering" (`docs/audits/04-consolidated-implementation-plan.md`, PR17 entry) — satisfied by Receive/Issue reusing PR16's `business_date`/`shift` unmodified (§5). Verify Checklist's relationship to this criterion is resolved by Owner Decision #1 (§18, interpretation A): it is not date/shift filterable in the same way as Receive/Issue, since it reports current equipment state, not a historical event (§7.3(A)).
 
 **Receipt semantics (corrected per review finding PR17-H1)**
 - OPEN transactions never appear in the Receive Report, under any combination of filters, including no filter at all.
@@ -477,8 +479,8 @@ This document recommends **(A)** as the option that satisfies PR17's literal acc
 
 **Governance completion (new, per review finding PR17-H4)**
 - The Final Slice (§17) never runs, and no governance-sync PR claiming "Roadmap PR17 complete" is opened, unless every one of Receive, Issue, and Equipment Verify Checklist is resolved per §17's Final Slice's two explicit conditions.
-- Slices 1-3 (Receive/Issue) remain independently mergeable regardless of Owner Decision #1's (§18) status — their mergeability is unaffected by this criterion.
-- If Owner Decision #1 remains unresolved when Slices 1-3 are ready, the Roadmap correctly reflects "PR17 in progress," never "PR17 complete" or "next item is PR18."
+- Slices 1-3 (Receive/Issue) remained independently mergeable regardless of Owner Decision #1's (§18) status, and merged (GitHub PRs #65/#66/#67) before Owner Decision #1 was resolved — their mergeability was unaffected by this criterion.
+- **Status:** Owner Decision #1 is now resolved to interpretation A, and Slice 4 is implemented in GitHub PR #68 — but PR #68 has not yet merged as of this document revision, so the Final Slice's condition 1 (§17) is not yet fully satisfied. The Roadmap correctly still reflects "PR17 in progress," not "PR17 complete" or "next item is PR18," until GitHub PR #68 merges.
 
 **Scope control (corrected per review finding PR17-H2)**
 - No printing implementation exists anywhere in PR17 — no `@media print` stylesheet, no print-specific component, no print-specific endpoint.
@@ -555,7 +557,7 @@ Verified before this third revision was finalized (independent review `480481087
 - [x] Report endpoints expose operator display names through the report schema only — §10.1/§10.2 state `Page[ReportTransactionOut]`, not `Page[TransactionOut]`; §11's new Architecture layering diagram shows the fields introduced strictly at the report-DTO layer, below the shared schema.
 - [x] No reporting presentation field leaks into shared transaction DTOs — confirmed across §8 (Option A), §10.1 (Response schema row), §11 (Operator display bullet + Architecture diagram), §14 (Visibility bullet), §20 (API/schema boundary criteria), and §21 (new Out of Scope bullet); all six now consistently describe `ReportTransactionOut` as the sole location of these fields.
 - [x] Design documents internally consistent — every reference to the operator-display mechanism across the whole document was re-swept (`grep` for `TransactionOut`, `dispatch_operator_display_name`, `receipt_operator_display_name`) and updated to the corrected `ReportTransactionOut` mechanism; no stray sentence still describes extending `TransactionOut` itself.
-- [x] Owner Decision #1 (§18) remains open — unaltered content across all three fix rounds.
+- [x] Owner Decision #1 (§18) remains open — unaltered content across all three fix rounds. **Superseded:** this was true only as of this document's third revision (independent review `4804810876`). Owner Decision #1 has since been resolved to interpretation A — see §18's resolution note and `docs/DECISION_LOG.md` ("Roadmap PR17 — Owner Decision #1"), recorded ahead of GitHub PR #68's implementation.
 - [x] Printing remains deferred to PR18 — unaffected by this round's changes.
 - [x] `git diff --check` passes — no whitespace errors.
 - [x] All prior-round findings (PR17-H1/H2/H3/M1, PR17-M1R/H4, the §7.1 wording contradiction) remain resolved and unregressed by this round's edits.
