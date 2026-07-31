@@ -30,6 +30,34 @@
   `docs/DOCUMENTATION_AUDIT.md`.
 - **Status:** Approved documentation alignment; implementation not started.
 
+## 2026-07-31 — Roadmap PR18A printing/export architecture design
+
+- **Decision:** Approve `docs/design/PR18_PRINTING_EXPORT_PLAN.md` as the
+  architecture design for Roadmap PR18's output layer. PR18 keeps the existing
+  PR17 report semantics as the source of truth and adds output adapters around
+  them: browser print, backend PDF export, and Excel `.xlsx` export. The design
+  establishes an internal output-neutral `ReportDocument` model, a dedicated
+  print-data API shape, backend-owned dataset construction, format-specific
+  adapters, and explicit security/resource-limit review requirements for bulk
+  output.
+- **Open decisions:** PR18A does **not** resolve the Owner Decisions listed in
+  the design: export extent, branding configuration ownership, and maximum
+  synchronous output size. Any implementation behavior depending on those
+  decisions must wait until they are resolved and recorded.
+- **Scope boundary:** GitHub PR #71 is documentation-only. It does not implement
+  browser print, PDF generation, Excel generation, routes, DTOs, dependencies,
+  migrations, API behavior, frontend UI, or business-rule changes.
+- **Review chronology:** PR #71 was reviewed in multiple Codex rounds. The
+  final reviewed head `cdb7672588fa7e76fadcab3669148dbd75786fa8` resolved the
+  original design blockers (browser-print data contract, bulk-export security
+  treatment, PDF dependency/deployment criteria) and the later scope/metadata
+  blockers (PR71-H3/H4). GitHub PR #71 was squash-merged as
+  `6ba2c666a11043d03669abdb65f966061dd02cfa`.
+- **Consequences:** Roadmap PR18A design is complete and merged. Roadmap PR18
+  runtime implementation is **not** complete and has not begun in this entry.
+  PR18B — the shared backend dataset and document model slice — is the next
+  implementation step.
+
 ## Numbering note — read this first
 
 **Roadmap PR number** and **GitHub PR number** are different sequences and must not be conflated:

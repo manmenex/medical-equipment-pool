@@ -8,12 +8,13 @@ control detailed ordering, scope, dependencies, and acceptance criteria.
 
 ## Current baseline
 
-`bc9e43b120aa7d0c4cfa6471be577f92ea910214` — squash commit of GitHub PR
-#70, the focused operator-options cursor-hygiene maintenance fix. GitHub PR
-#69 (`9b2fc1a`) previously completed the post-PR17 governance synchronization.
-The cursor-hygiene technical debt is now fully closed; PR #70 did not begin
-Roadmap PR18 or change valid report semantics, response schemas, or database
-schema. PR15A and PR15B are both implemented — both of Roadmap PR15's
+`6ba2c666a11043d03669abdb65f966061dd02cfa` — squash commit of GitHub PR
+#71, the approved Roadmap PR18A printing/export architecture design. GitHub PR
+#70 (`bc9e43b`) previously closed the operator-options cursor-hygiene
+maintenance gap. GitHub PR #69 (`9b2fc1a`) completed the post-PR17 governance
+synchronization. PR #71 added documentation only: no PR18 route, DTO,
+dependency, PDF, Excel, browser-print UI, API behavior, or database schema was
+implemented. PR15A and PR15B are both implemented — both of Roadmap PR15's
 scheduled slices are complete.
 Application metrics, tracing, dashboards, log aggregation, and alerting
 remain open Roadmap PR15 scope, not scheduled to any slice, pending a
@@ -21,9 +22,9 @@ future slice or an explicit governance decision to remove them. Roadmap
 PR16 (Reporting Foundation, all four Implementation Slices — GitHub PR #58,
 #59, #60, #61) and Roadmap PR17 (Operational Reports, design GitHub PR #63
 plus all four Implementation Slices — GitHub PR #65, #66, #67, #68) are now
-fully complete. Roadmap PR18A printing/export architecture is now in progress
-as documentation-only design work (Draft, pending review and approval). No
-PR18 runtime implementation exists.
+fully complete. Roadmap PR18A printing/export architecture is merged and
+approved as documentation-only design work. No PR18 runtime implementation
+exists yet; PR18B is the next implementation slice.
 
 Roadmap numbering and GitHub PR numbering are independent. In particular,
 GitHub PR #18 was the Knowledge & Governance Foundation; it was not Roadmap
@@ -33,13 +34,17 @@ PR18.
 
 | Order | Roadmap item | Status |
 |---|---|---|
-| 1 | PR18 — Browser print, PDF export, and Excel `.xlsx` export | PR18A — design in progress; no runtime implementation |
-| 2 | PR19 — Legacy Import Foundation | Planned |
-| 3 | PR20 — Equipment Master Import | Planned |
-| 4 | PR21 — Legacy Receive and Issue History Import | Planned |
-| 5 | PR22 — Legacy Data Validation and Reconciliation | Planned |
-| 6 | PR23 — Cutover Readiness | Planned |
-| 7 | PR24 — Go-live / deployment | Planned; blocked by PR19–PR23 |
+| 1 | PR18B — Shared backend dataset and document model | Next implementation; no output format implemented yet |
+| 2 | PR18C — Browser print presentation | Planned; blocked by PR18B |
+| 3 | PR18D — Backend PDF export | Planned; blocked by PR18B |
+| 4 | PR18E — Excel `.xlsx` export | Planned; blocked by PR18B |
+| 5 | PR18F — Post-implementation governance synchronization | Planned after all approved PR18 output slices merge |
+| 6 | PR19 — Legacy Import Foundation | Planned |
+| 7 | PR20 — Equipment Master Import | Planned |
+| 8 | PR21 — Legacy Receive and Issue History Import | Planned |
+| 9 | PR22 — Legacy Data Validation and Reconciliation | Planned |
+| 10 | PR23 — Cutover Readiness | Planned |
+| 11 | PR24 — Go-live / deployment | Planned; blocked by PR19–PR23 |
 
 Roadmap PR15B (Schema Hygiene implementation, GitHub PR #54), the
 documentation audit and Roadmap consistency work that preceded it
@@ -47,8 +52,10 @@ documentation audit and Roadmap consistency work that preceded it
 Foundation, all four Implementation Slices — GitHub PR #58, #59, #60, #61),
 and Roadmap PR17 (Operational Reports, design GitHub PR #63 plus all four
 Implementation Slices — GitHub PR #65, #66, #67, #68) are all complete and
-have moved off this table — see `docs/ROADMAP.md`'s Completed table for the
-full historical record.
+have moved off this table. Roadmap PR18A design (GitHub PR #71) is also
+merged, but Roadmap PR18 implementation remains on this table beginning with
+PR18B — see `docs/ROADMAP.md`'s Completed table for the full historical
+record.
 
 ## Scope guardrails for the planned sequence
 
