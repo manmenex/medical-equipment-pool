@@ -3,7 +3,7 @@
 **Status:** Design only. Nothing in this document has been implemented. No backend code, frontend code, Alembic migration, database schema change, or API modification was written to produce it.
 **Repository:** Medical Equipment Pool. This is **not** MEMS and **not** Recall Monitor — no coupling to either system is introduced or assumed anywhere below.
 **Baseline investigated:** `bc9e43b120aa7d0c4cfa6471be577f92ea910214` — squash commit of GitHub PR #70 (the operator-options cursor-hygiene maintenance fix), on branch `claude/medical-equipment-pool-0c7fz0`. Roadmap PR17 (Operational Reports, design + all four Implementation Slices) is fully merged and closed in governance at this baseline (`docs/DECISION_LOG.md` "Roadmap PR17 — Operational Reports Complete").
-**Governing instruction:** DESIGN ONLY. Produce the minimum design documentation required for an independently reviewable PR18A Design PR. No implementation, no migration, no API change, no existing-file modification, no frontend change.
+**Governing instruction:** DESIGN ONLY. Produce the minimum design documentation required for an independently reviewable PR18A Design PR. No implementation, no migration, no API change, no backend/frontend runtime-file modification. This design PR does modify one existing **documentation** file — `docs/TECH_DEBT.md` gains a new register entry (§18) — which is documentation bookkeeping, not an exception to "design only."
 
 ---
 
@@ -49,37 +49,55 @@ Give Equipment Pool Staff, Administrators, and Read Only users a way to take a R
 
 ## 5. Architecture
 
+**This is the single authoritative architecture for this document.** Every later section (§6–§10) is a detail of one part of this pipeline, not a competing or alternative design — where earlier drafting of this document used inconsistent terms for the same thing, this section fixes the vocabulary the rest of the document now uses uniformly: **Report Document** (the bundle of row data + presentation metadata assembled per export/print request) and its two parts, **rows** (existing DTOs, §7) and **Report Render Context** (new presentation metadata, §7).
+
 ```
-Business Workflow (dispatch/receipt/master-data — unchanged, Roadmap PR6-PR9)
+Business Rules / Business Workflow (dispatch, receipt, master data — unchanged, Roadmap PR6-PR9)
         ↓
-Report Query Functions (transaction_crud / equipment_crud / user_crud — unchanged, Roadmap PR16/PR17)
+Backend Report Service (transaction_crud / equipment_crud / user_crud query functions
+                         — unchanged, Roadmap PR16/PR17)
         ↓
-   ┌────────────────────────────┬─────────────────────────────┐
-   │                            │                              │
- On-screen JSON API          NEW: Export Query               (same functions,
- (GET /reports/receive       (same functions, same filters,   different call
-  etc. — unchanged,           cursor=None, bulk-capped —       shape — §6)
-  Page[T], cursor-paginated)  §6)
-   │                            │
-   ↓                            ↓
-Frontend on-screen table    Report Render Context
-(unchanged, Roadmap PR17)   (title, generated_at, applied-filter
-                             summary, rows — §7, backend-internal,
-                             not a new public API DTO)
-                                │
-                    ┌───────────┼───────────┐
-                    ↓           ↓           ↓
-              HTML/print CSS  Excel writer  PDF renderer
-              template        (openpyxl,    (backend HTML→PDF,
-              (frontend)      §9)           reuses the render
-                    │                        context's structure,
-                    ↓                        §8)
-              Browser Print                  ↓
-              (window.print(),          Downloaded .pdf
-               §10)                     Downloaded .xlsx
+   ┌────────────────────────────┬───────────────────────────────────┐
+   │                            │                                    │
+ On-screen JSON API          NEW: Bulk Report Assembly              (same query functions,
+ (GET /reports/receive       (same functions, same filters,          different call shape,
+  etc. — unchanged,           cursor=None, bulk-capped — §6.1)       feeding one canonical
+  Page[T], cursor-paginated)         │                                model — §6, §6.1, §7)
+   │                                 ↓
+   │                          Report Document
+   │                          (rows: existing DTOs, unchanged
+   │                           + Report Render Context: title,
+   │                           generated_at, filter summary — §7)
+   ↓                                 │
+Frontend on-screen table    ┌────────┼────────────────┐
+(unchanged, Roadmap PR17)   ↓                          ↓
+                     Excel adapter            PDF adapter        Browser Print adapter
+                     (backend, in-process,     (backend,          (frontend, client-side —
+                      openpyxl, §9)             in-process,        the browser's own print
+                            │                    HTML→PDF, §8)     engine, §10)
+                            ↓                    │                       ↑
+                     Downloaded .xlsx            ↓                       │
+                                          Downloaded .pdf      Report Document, serialized
+                                                                as this adapter's request's
+                                                                JSON response body (§6.1,
+                                                                §7) — the only adapter that
+                                                                needs the Report Document
+                                                                to leave the backend process
 ```
 
-The on-screen report screens (Roadmap PR17, unchanged) and the new export/print pipeline both originate from the *same* query functions — they diverge only at the point where a bounded, cursor-paginated JSON page is no longer the right shape for "the whole filtered report as one document" (§6). Nothing upstream of that divergence point is touched by this design.
+The on-screen report screens (Roadmap PR17, unchanged) and the new Report Document pipeline both originate from the *same* query functions — they diverge only at the point where a bounded, cursor-paginated JSON page is no longer the right shape for "the whole filtered report as one document" (§6). Nothing upstream of that divergence point is touched by this design.
+
+All three output formats are **presentation adapters over the same canonical Report Document** — none of them re-derives, re-filters, or re-fetches data independently. They differ only in *where* they execute and, as a direct consequence, whether the Report Document must be serialized to reach them:
+
+- **Excel and PDF adapters run entirely backend-side.** The Report Document is passed to the `openpyxl` writer (§9) or the HTML→PDF renderer (§8) as an in-process Python object — it is never serialized as a message or exposed as an API response for these two adapters. The backend that assembled the Report Document is the same backend that turns it into the downloadable artifact.
+- **Browser Print is the one adapter that runs client-side**, because that is the only way to invoke the browser's own native print engine and produce a physically printed page — no backend process can do that on the user's behalf. For this reason alone, the Report Document's contents (rows + Report Render Context) are serialized as the JSON response body of the same bulk-assembly request (§6.1), and the frontend renders that JSON into the print view (§10). This is the *only* place in this design where the Report Document crosses a process boundary as data — it is not a second, independently-designed data path.
+
+To directly resolve four questions a prior draft of this document answered inconsistently across different sections:
+
+- **Where the print dataset originates:** the same backend query functions every on-screen report endpoint already calls (§2, §6.1) — never a client-side re-fetch of on-screen paginated data, and never a separate query implementation written for printing.
+- **What Browser Print consumes:** the canonical Report Document (rows + Report Render Context) assembled backend-side per request — the identical Report Document an Excel or PDF adapter would receive for the same filtered request, not a bespoke document model of its own and not raw, unprocessed report API output.
+- **How the Report Render Context is produced:** assembled once per bulk-assembly request, backend-side, from the already-validated filter parameters and the current server time (§7) — the same construction regardless of which adapter (Excel, PDF, or Browser Print) ultimately consumes it.
+- **Whether Browser Print is simply another presentation adapter:** yes. It is architecturally the third adapter alongside Excel and PDF, distinguished only by executing client-side and therefore requiring the Report Document to be serialized to reach it — not by consuming different data, a different query path, or a different DTO.
 
 ---
 
@@ -102,7 +120,7 @@ The on-screen report screens (Roadmap PR17, unchanged) and the new export/print 
 
 Each accepts the exact same filter query parameters as its on-screen sibling (`business_date_from`, `business_date_to`, `shift`, `ward_id`, `equipment_category_id`, `operator_id`, etc. for Receive/Issue; `equipment_category_id`, `status`, `department_id` for the checklist) plus one new parameter:
 
-- `format: Literal["xlsx", "pdf"]` — which artifact to generate. Browser Print does **not** go through this endpoint (§10) — it consumes the same bulk data via a dedicated, unauthenticated-by-format JSON fetch described in §6.1, then renders client-side.
+- `format: Literal["xlsx", "pdf"]` — which artifact to generate, returned as a binary file download. Browser Print (§10) uses the *same, identically-authenticated* endpoint with `format` omitted (an `Accept: application/json` request instead of a file download) — not a separate route, and not a lower-authentication path — returning the Report Document (rows + Report Render Context) as JSON instead of a rendered artifact, per §6.1/§7.
 
 Role gate: `require_roles(*VIEW_AND_REPORT_ROLES)` — identical to every existing report endpoint (§11). Business-date range validation reuses the exact same `_validate_business_date_range` helper `reports.py` already defines for the on-screen Receive/Issue endpoints.
 
@@ -110,17 +128,24 @@ Role gate: `require_roles(*VIEW_AND_REPORT_ROLES)` — identical to every existi
 
 Export and Print both need "the complete filtered result set," not one cursor page. The underlying query functions (`transaction_crud.search`-family, `equipment_crud.list_for_verify_checklist`) are called with `cursor=None` and a **hard row cap** distinct from the on-screen page-size limit — per `docs/ARCHITECTURE_GUARDRAILS.md`'s explicit prohibition on "unbounded collection reads." A recommended cap (`MAX_EXPORT_ROWS`, a fixed constant, not client-controlled) is validated against this system's confirmed real-world scale (`docs/KNOWN_LIMITATIONS.md`: "low hundreds of devices, thousands of transactions per year") — the exact number is an implementation-slice detail (§17), not a design blocker, but the *shape* of the guard is fixed here: **if the filtered result set exceeds the cap, the endpoint returns a structured client error (a new `DomainError` subclass, e.g. `ExportTooLargeError`, HTTP 422) asking the operator to narrow their filters — it never silently truncates.** Silent truncation of a hospital operational record would violate the "backend remains source of truth" principle as badly as omitting a filter: a truncated report that looks complete is worse than an explicit refusal.
 
-Browser Print (§10) reuses this same bulk-fetch shape via a JSON-returning sibling of the export endpoints (or the export endpoints themselves with `format` omitted and `Accept: application/json`, an implementation-slice decision) — never the paginated on-screen endpoint — so **the same row-cap guard applies uniformly to Print, PDF, and Excel.**
+Browser Print (§10) reuses this exact same bulk-assembly call — the same export endpoint, `format` omitted, `Accept: application/json` (§6) — never the paginated on-screen endpoint and never a separate query path of its own — so **the same row-cap guard applies uniformly to Print, PDF, and Excel.** The JSON response body in this mode is the serialized Report Document: `{"rows": [...existing ReportTransactionOut/EquipmentOut objects, unchanged...], "render_context": {"title": ..., "generated_at": ..., "filter_summary": ...}}` — the row objects are exactly what `Page[T]`'s `items` already carry today (§7), and `render_context` is the one small, new, metadata-only addition this design introduces to the API surface, present only in this JSON response mode (§7).
 
 ---
 
 ## 7. Print DTO
 
-**Decision: no new public/API-facing DTO for report data. `ReportTransactionOut` and `EquipmentOut` are reused unchanged.** A new, backend-internal (non-API) rendering-context structure is warranted for presentation metadata that is not report business data.
+**Decision: no new DTO for report *data*. `ReportTransactionOut` and `EquipmentOut` are reused unchanged.** A new, small **Report Render Context** structure is introduced for presentation metadata that is not report business data — and its transport (whether it is ever serialized) differs by adapter (§5), which is the precise point this section must state without contradiction.
 
-**Justification.** The three output formats render the *same rows* the on-screen tables already render — introducing a second DTO shaped identically to `ReportTransactionOut`/`EquipmentOut` purely for export would be exactly the kind of parallel structure `docs/ARCHITECTURE_GUARDRAILS.md` warns against, and would create a second place a future field addition could be forgotten. The bulk-export query (§6.1) returns the same Pydantic models the on-screen `Page[T]` responses already use; only the *pagination envelope* (`Page[T]`'s `next_cursor`/cursor semantics) does not apply to a bulk, single-shot export — the bulk response is `list[ReportTransactionOut]` / `list[EquipmentOut]` directly, or `.xlsx`/`.pdf` bytes for the download formats.
+**Justification for reusing the existing row DTOs.** The three output formats render the *same rows* the on-screen tables already render — introducing a second DTO shaped identically to `ReportTransactionOut`/`EquipmentOut` purely for export would be exactly the kind of parallel structure `docs/ARCHITECTURE_GUARDRAILS.md` warns against, and would create a second place a future field addition could be forgotten. The bulk-assembly query (§6.1) returns the same Pydantic models the on-screen `Page[T]` responses already use as its `rows`; only the *pagination envelope* (`Page[T]`'s `next_cursor`/cursor semantics) does not apply to a bulk, single-shot request.
 
-What genuinely does **not** exist in any current DTO, because it is not report business data: the report **title**, the **generated-at timestamp**, and a **human-readable summary of the applied filters** (e.g. "ช่วงวันที่: 1–15 ก.ค. 2569 · กะ: กลางวัน · หอผู้ป่วย: อายุรกรรม 1"). This is presentation/rendering metadata, constructed once per export/print request from the already-validated filter parameters and the current server time — it never needs to be queried, stored, or exposed as a reusable API resource. It is represented as a small backend-internal structure (a plain dataclass or an unexposed Pydantic model, an implementation-slice detail) — call it a **Report Render Context** — consumed directly by the format renderers (§9, §10) and never serialized as a standalone API response. This satisfies the task's "Print DTO" question precisely: existing DTOs are sufficient for *data*; a dedicated (but non-API) structure is required for *rendering metadata*, and the two are kept distinct so the public API surface (§6) never grows a field that exists only to support formatting.
+**What the Report Render Context is.** What genuinely does **not** exist in any current DTO, because it is not report business data: the report **title**, the **generated-at timestamp**, and a **human-readable summary of the applied filters** (e.g. "ช่วงวันที่: 1–15 ก.ค. 2569 · กะ: กลางวัน · หอผู้ป่วย: อายุรกรรม 1"). This is presentation/rendering metadata, constructed once per export/print request from the already-validated filter parameters and the current server time — it never needs to be queried, stored, or independently fetched as a reusable API resource in its own right.
+
+**Where it is serialized, and where it is not (resolves §5's adapter distinction).** The Report Render Context is always assembled backend-side by the same code, regardless of which adapter ultimately consumes it — but only one adapter ever receives it as a message:
+
+- For the **Excel adapter** (§9) and **PDF adapter** (§8) — both backend-only — the Report Render Context is passed directly to the `openpyxl` writer / HTML→PDF renderer as an in-process Python object (a plain dataclass or an unexposed Pydantic model, an implementation-slice detail). It is never serialized, never becomes a response body, and is not part of the public API surface for these two adapters.
+- For the **Browser Print adapter** (§10) — the one adapter that executes client-side — the Report Render Context's fields *are* serialized, as the `render_context` field of the same bulk-assembly endpoint's JSON response mode (§6, §6.1), because the frontend cannot render metadata it never receives. This is still **not** a new standalone API resource: `render_context` is never independently fetchable, queryable, cacheable, or reusable outside the one bulk response it is bundled into — it is a response-shape addition to an existing endpoint's JSON mode, not a new persisted or addressable resource, and it carries no report business data of its own.
+
+This satisfies the task's "Print DTO" question precisely: existing DTOs are sufficient for *data* in every adapter; a dedicated, small metadata structure is required for *rendering context*; and that structure's serialization is scoped to exactly the one adapter (Browser Print) that architecturally requires it to cross a process boundary — not asserted as either universally serialized or universally internal.
 
 ---
 
@@ -135,11 +160,23 @@ What genuinely does **not** exist in any current DTO, because it is not report b
 | Source-of-truth alignment | Matches "backend remains source of truth" directly — the same service that already computed and validated the report content also produces the downloadable, archival artifact. | Requires trusting the client to faithfully reproduce backend-decided content in a downloadable file — a weaker guarantee for an operational/audit record. |
 | Thai text and complex layout | Python HTML→PDF libraries (the recommended class, below) have mature Unicode/Thai shaping support via the same font-embedding mechanism used for any language. | Client-side PDF libraries have historically weaker complex-script (Thai) text shaping, especially for combining vowel/tone marks. |
 
-**Recommendation: backend-rendered PDF, via an HTML→PDF library in the WeasyPrint class** (pure-Python, HTML+CSS input, PDF output, supports CSS Paged Media — page counters, running headers/footers — better than any Chromium print engine does, see §10.3). The backend renders a Jinja2 (or equivalent) HTML template — populated from the same Report Render Context (§7) and the same bulk-fetched rows (§6.1) — into a PDF.
+**Recommendation: backend-rendered PDF, via a pure-Python, HTML+CSS-input PDF rendering library that supports CSS Paged Media** (page counters, running headers/footers — better than any Chromium print engine does, see §10.3). The backend renders a Jinja2 (or equivalent) HTML template — populated from the same Report Render Context (§7) and the same bulk-fetched rows (§6.1) — into a PDF. **No concrete package is recommended here.** No PDF library exists in `backend/requirements.txt` today (§2) — there is no repository evidence to justify naming one over another, and doing so would lock an implementation-slice decision into a design document prematurely. §8.1 below states the architectural category and its trade-offs; the concrete package is a PR18D (§17) implementation-slice decision, made against the actual deployment target and evaluated for license, maintenance activity, and security posture at that time.
 
 **Explicitly rejected alternative: headless-browser rendering (Playwright/Puppeteer navigating the frontend's own print view and exporting to PDF).** This would guarantee pixel-perfect parity between the interactive Browser Print view and the downloaded PDF by construction — a real advantage — but was rejected for this design because it requires running a browser-automation service in production, a materially heavier operational footprint (memory, image size, a new failure mode class) than this system's confirmed scale justifies, and is inconsistent with this repository's own established practice of evidence-gating new infrastructure before adopting it (Roadmap PR14B's `EXPLAIN ANALYZE`-gated indexing decision is the precedent). **Accepted trade-off:** the browser print CSS (frontend, §10) and the backend PDF template (Jinja2, backend) are therefore two separate template implementations, not one — both driven by the same Report Render Context and the same column/title/filter-summary specification (§12, "Future Extension"), but not byte-identical markup. This is stated as a known, bounded duplication, not hidden — implementation slices (§17) must include a visual-parity review between the two as an explicit test step, not an automated byte-comparison.
 
-**Explicitly rejected alternative: a native PDF-drawing library (e.g. ReportLab).** Requires re-implementing table layout, pagination, and text wrapping in Python drawing primitives rather than HTML+CSS — meaningfully more implementation and maintenance cost for the same result, with worse complex-script text support than an HTML-based renderer, and no reuse of any layout knowledge the frontend's print CSS will already encode. Not recommended.
+**Explicitly rejected alternative: a native PDF-drawing library (e.g. ReportLab-class).** Requires re-implementing table layout, pagination, and text wrapping in Python drawing primitives rather than HTML+CSS — meaningfully more implementation and maintenance cost for the same result, with worse complex-script text support than an HTML-based renderer, and no reuse of any layout knowledge the frontend's print CSS will already encode. Not recommended.
+
+### 8.1 PDF Rendering Engine — Deployment Considerations (architectural trade-offs, not a library recommendation)
+
+Whichever concrete pure-Python HTML→PDF library PR18D (§17) selects, the following are real, evidenced trade-offs this category of library carries relative to this repository's current backend footprint (a plain Python/FastAPI process, `backend/requirements.txt` has no system-level native dependencies today) — captured here so the implementation slice inherits them as known considerations, not surprises:
+
+- **Rendering engine options.** Three categories exist: (a) pure-Python HTML→PDF libraries (the recommended category above — some depend on native system libraries for layout/font shaping, some are more fully self-contained in pure Python plus bundled fonts), (b) headless-browser-driven rendering (rejected above), (c) native PDF-drawing libraries (rejected above). Category (a) is recommended at the category level; which specific library within it is an implementation-slice decision.
+- **Native dependencies.** Several libraries in the pure-Python HTML→PDF category depend on system-level native libraries (commonly font-shaping/graphics libraries such as those in the Pango/Cairo/GDK-Pixbuf family) rather than being installable via `pip` alone. This is a new class of dependency this backend does not currently have (`backend/requirements.txt` is pure-Python today) and must be evaluated explicitly, not assumed away, when PR18D selects a concrete package.
+- **Containerization.** If the selected library requires native system libraries, the backend's container image (`docker-compose`/Dockerfile, whichever this repository uses at implementation time) must install them at the OS package-manager layer, growing the image and adding an OS-level dependency the build must pin and keep patched — a materially different maintenance surface than adding a pure pip package.
+- **Fonts.** The same bundled Thai webfont recommended for the browser print stylesheet (§10.2) must also be available to the PDF renderer's font-embedding mechanism — either by bundling the font file into the container image alongside the application code, or by ensuring the rendering library can load a font file path/bytes directly. This is a shared asset between the browser-print and PDF adapters (§5), not a separate font sourcing problem.
+- **Browser dependency.** Unlike the rejected headless-browser alternative, the recommended category has no browser binary to bundle, download, or keep patched for its own security advisories — a materially lighter operational footprint, and part of why that alternative was rejected above.
+- **Deterministic layout.** A pure-Python renderer that does not depend on an evolving browser rendering engine produces the same PDF layout for the same input across library patch versions more predictably than a browser-engine-based approach, where minor browser version changes can silently shift print layout — relevant for hospital operational/audit records that may be regenerated or compared over time.
+- **Maintainability and future upgrades.** Whichever library is selected becomes a dependency this repository must track for security advisories and breaking changes like any other (`backend/requirements.txt` version pinning, per this repository's existing dependency-management practice). A future major-version upgrade of the chosen library should be treated as a change requiring a visual-parity re-check against previously-generated PDFs (extending the visual-parity testing consideration in §15), since layout-affecting regressions are the primary risk of any renderer upgrade — this is a testing-process expectation to inherit, not something this design PR verifies today.
 
 ---
 
@@ -171,10 +208,10 @@ A dedicated print view, built in the frontend from the bulk-fetched rows (§6.1)
 
 ### 10.3 Header, footer, filter summary, timestamp
 
-- **Table column headers** (the data column row, e.g. "เลขที่รายการ", "เครื่องมือ") repeat on every printed page via the table's native `<thead>`/`display: table-header-group` — universally supported by browser print engines and by the WeasyPrint-class PDF renderer (§8); no special handling required beyond correct HTML structure.
+- **Table column headers** (the data column row, e.g. "เลขที่รายการ", "เครื่องมือ") repeat on every printed page via the table's native `<thead>`/`display: table-header-group` — universally supported by browser print engines and by the recommended category of PDF renderer (§8, §8.1); no special handling required beyond correct HTML structure.
 - **Document header/footer** (report title, applied-filter summary, generated-at timestamp) is **not** the same mechanism as the table header. CSS Paged Media's `@page { @top-center {...} }` margin-box content — the technically "correct" way to do this — has inconsistent-to-nonexistent support in Chromium's print engine (Chrome does not render `@page` margin-box content as of current versions). **Recommendation: `position: fixed` elements scoped to `@media print`**, the pragmatic, broadly-compatible technique real-world browser-print implementations use, placing the title/filter-summary/timestamp block at the top and a footer block at the bottom of every printed page.
 - **Page numbering ("Page X of Y") is honestly split by output format, not promised uniformly:**
-  - The **backend-rendered PDF path** (§8) genuinely supports `counter(page)`/`counter(pages)` via CSS Paged Media, since WeasyPrint-class renderers implement that specification — accurate "หน้า X จาก Y" is achievable there.
+  - The **backend-rendered PDF path** (§8) genuinely supports `counter(page)`/`counter(pages)` via CSS Paged Media, since the recommended category of pure-Python HTML→PDF renderer implements that specification — accurate "หน้า X จาก Y" is achievable there.
   - The **interactive Browser Print path** cannot reliably compute a page count from CSS/JS before the browser's own print engine paginates the content — this is a well-known, real browser limitation, not an oversight. **Recommendation: the Browser Print view states "พิมพ์เมื่อ: [timestamp]" and the applied filter summary, but does not attempt a false "Page X of Y"** — if the end user wants a numbered hard copy, the browser's own print dialog page-range/number option remains available outside this application's control, or they use the PDF export path instead. This constraint is stated here explicitly so no implementation slice (§17) is scored against an unachievable acceptance criterion.
 
 ### 10.4 Landscape vs. portrait — summary
@@ -185,17 +222,25 @@ Landscape A4 default (§10.1); no additional decision needed here.
 
 ## 11. Security
 
-**No new permission or capability is introduced.** Every export/print code path (§6, §6.1) is gated by the exact same `VIEW_AND_REPORT_ROLES` (`administrator`, `equipment_pool_staff`, `read_only`) every existing report endpoint already requires — the same three roles that can already view a report on-screen can already export or print it; no role gains a capability it did not already effectively have (viewing the data), and no role is newly excluded. `require_roles(*VIEW_AND_REPORT_ROLES)` is reused verbatim, not reimplemented.
+**No new permission is introduced anywhere in this design.** That said, bulk export/print of an entire filtered dataset is an operationally different action from viewing paginated pages one at a time, and this section states that distinction accurately rather than dismissing it as "no new capability."
 
-**No new data exposure.** Export/print render exactly the fields the reused DTOs (§7) already carry — `EquipmentOut`'s existing exclusion of `item_no` (ADR-002/ADR-003) and `ReportOperatorOut`'s existing exclusion of contact/auth fields are inherited automatically, not something this design must re-implement or could accidentally weaken, because no new DTO is introduced for report data.
+**Authorization parity.** Every export/print code path (§6, §6.1) is gated by the exact same `VIEW_AND_REPORT_ROLES` (`administrator`, `equipment_pool_staff`, `read_only`) every existing report endpoint already requires — the same three roles that can already view a report on-screen can already export or print it; no role gains access to a report family it could not already view, and no role is newly excluded. `require_roles(*VIEW_AND_REPORT_ROLES)` is reused verbatim, not reimplemented.
 
-**Bulk-fetch bounding (§6.1) is itself a security-adjacent guardrail**, not only a performance one — an unbounded export endpoint would be a straightforward resource-exhaustion vector; the hard row cap with an explicit rejection (rather than silent truncation or unbounded computation) closes that.
+**Information-boundary parity.** Export/print render exactly the fields the reused DTOs (§7) already carry — `EquipmentOut`'s existing exclusion of `item_no` (ADR-002/ADR-003) and `ReportOperatorOut`'s existing exclusion of contact/auth fields are inherited automatically, not something this design must re-implement or could accidentally weaken, because no new DTO is introduced for report data. The one new field this design adds to any response, `render_context` (§7), carries only presentation metadata (title, timestamp, filter summary) — never a field excluded elsewhere.
+
+**Bulk-data considerations — the actual operational distinction this section must not understate.** A user authorized to view a report on-screen was always *entitled* to see every row it can return, one paginated page at a time; nothing in this design grants access to a row a role could not already reach. But "entitled to see, one page at a time" and "can retrieve the entire filtered result set in a single request" are not operationally identical, and this design changes the latter:
+
+- **Row-volume implications.** Before this design, obtaining a large filtered result set required repeatedly paging through the on-screen UI (or scripting against the paginated JSON endpoint). After this design, the same result set — up to `MAX_EXPORT_ROWS` (§6.1) — is obtainable in one authenticated request. This does not cross an authorization boundary, but it materially lowers the effort required to remove a large volume of report data from the system in one action, which is a data-handling consideration operational stakeholders should be aware of, distinct from an access-control gap.
+- **Logging/audit considerations.** Bulk export/print/PDF/Excel requests should be distinguishable in this repository's existing audit trail from ordinary on-screen page views — specifically, recording that a bulk export occurred, by whom, with which applied filters, and how many rows were returned — reusing the existing audit framework (`app.core.audit`, already wired into other mutating and sensitive read paths per Roadmap PR3) rather than inventing a new logging mechanism. This is a requirement the implementation slice that adds the bulk endpoints (§17, PR18B) must satisfy; it is stated here as a design expectation, not implemented by this design PR.
+- **Future export limits.** `MAX_EXPORT_ROWS` (§6.1) already bounds the size of any single export as a resource-exhaustion guardrail. If bulk-export *frequency* (rather than single-request size) ever becomes an operational concern — for example, a compromised or misused credential exporting the full dataset repeatedly — a future, separately-approved rate limit on export requests per user is a reasonable extension point. This design does not propose or require one; it is noted here as a future consideration this architecture does not foreclose, not a gap in the current design.
+
+**Bulk-fetch bounding (§6.1) remains a security-adjacent guardrail**, not only a performance one — an unbounded export endpoint would be a straightforward resource-exhaustion vector; the hard row cap with an explicit rejection (rather than silent truncation or unbounded computation) closes that. The row-volume and audit considerations above are additive to this guardrail, not a replacement for it — none of the above changes the recommendation in §6/§6.1, and none of it should be read as identifying a defect in this design; it is the accurate operational picture the design proceeds from.
 
 ---
 
 ## 12. Future Extension
 
-Architecture should support a future report module (e.g., a hypothetical later Roadmap item introducing a new report family) without redesign. This is satisfied by keeping the format renderers (Excel writer, PDF renderer, print-CSS template) **generic over a Report Render Context + row source**, rather than hardcoded per report:
+Architecture should support a future report module (e.g., a hypothetical later Roadmap item introducing a new report family) without redesign. This is satisfied by keeping the format adapters (Excel writer, PDF renderer, print-CSS template — §5) **generic over a Report Document** (rows + Report Render Context, §7), rather than hardcoded per report:
 
 - A backend-internal registration concept — call it a **Report Export Spec** (column definitions, title, the query function to call for bulk fetch, format eligibility) — is the seam a future report registers against. This is purely a backend organizational structure, never exposed via the API, and is an implementation-slice detail (§17), not something this design PR builds.
 - Because the Report Render Context (§7) and the Report Export Spec above are decoupled from any single report's DTO shape, adding a fourth report later means registering its existing query function and column spec, not touching the Excel writer, PDF renderer, or print-CSS shell.
@@ -276,9 +321,9 @@ This design intentionally touches no runtime file. In addition to this document,
 
 ## 20. Deliverables
 
-- Report Render Context concept (§7) and Report Export Spec concept (§12) — internal, non-API structures — as the seam future report modules and future output formats extend against without redesign.
+- Report Render Context concept (§7 — backend-internal for the Excel/PDF adapters, serialized only for the Browser Print adapter's JSON response, never a standalone API resource) and Report Export Spec concept (§12, purely backend-internal) — the seam future report modules and future output formats extend against without redesign.
 - Recommended API shape: three new `.../export` endpoints (§6), reusing existing filters/roles.
-- Recommended PDF strategy: backend HTML→PDF rendering, WeasyPrint-class library (§8).
+- Recommended PDF strategy: backend-rendered HTML→PDF, pure-Python CSS-Paged-Media-capable renderer category, with concrete library deferred to PR18D (§8, §8.1).
 - Recommended Excel strategy: `openpyxl` (already installed), with hospital-appropriate formatting and formula-injection defense (§9).
 - Recommended Browser Print design: landscape A4, bundled Thai webfont, `position: fixed` header/footer, honestly-scoped page-numbering (§10).
 - One flagged, non-blocking confirmation point for the Repository Owner regarding the legacy export endpoint's disposition (§14).
