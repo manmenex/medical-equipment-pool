@@ -10,8 +10,10 @@ control detailed ordering, scope, dependencies, and acceptance criteria.
 
 `d4aaf0f` — squash commit of GitHub PR #68, the Roadmap PR17 (Slice 4)
 Equipment Verify Checklist implementation, incl. its incremental fix round
-(Owner Decision #1 documentation consistency, malformed-checklist-cursor
-handling shared by every cursor-paginated list endpoint). PR15A and PR15B
+(Owner Decision #1 documentation consistency, structured malformed-cursor
+handling for the checklist endpoint and hardened shared cursor decoding for
+common malformed-payload cases — see `docs/ROADMAP.md`'s PR17 note for the
+remaining `list_operators` cursor-hygiene gap this did not close). PR15A and PR15B
 are both implemented — both of Roadmap PR15's scheduled slices are complete.
 Application metrics, tracing, dashboards, log aggregation, and alerting
 remain open Roadmap PR15 scope, not scheduled to any slice, pending a
