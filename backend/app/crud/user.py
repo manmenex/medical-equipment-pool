@@ -125,30 +125,43 @@ async def list_operators(
         escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         filters.append(User.full_name.ilike(f"%{escaped}%", escape="\\"))
 
+    # Maintenance fix (cursor-hygiene technical debt recorded after Roadmap
+    # PR17, GitHub PR #69): the cursor is parsed and validated *before* any
+    # query runs (including the count query below) -- a malformed cursor
+    # must fail fast with InvalidInputError, not after an already-wasted
+    # COUNT against a row set the request will never see. Mirrors
+    # `equipment_crud.list_for_verify_checklist`'s established convention
+    # (PR68-Blocker3).
+    cursor_filter = None
+    if cursor:
+        cursor_name, cursor_id = decode_alpha_cursor(cursor)
+        # decode_alpha_cursor already rejects a malformed cursor (bad
+        # Base64, corrupt JSON, missing "v"/"id" fields) as
+        # InvalidInputError. The one further parsing step this function
+        # performs itself -- cursor_id must be a valid UUID, since it is
+        # compared against the native `Uuid`-typed id column below, not a
+        # `cast(..., String)` comparison against `str(user.id)` (the latter
+        # breaks on SQLite, whose `Uuid` type stores/CASTs without dashes
+        # while `str(uuid.UUID(...))` always includes them, so the two
+        # representations never compare equal and the cursor can never
+        # advance past a tie) -- must be validated here too, for the same
+        # reason: an otherwise well-formed cursor whose `id` field is not a
+        # real UUID must not escape as an uncaught exception.
+        try:
+            cursor_uuid = uuid.UUID(cursor_id)
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise InvalidInputError("Invalid or malformed pagination cursor.") from exc
+        cursor_filter = or_(
+            User.full_name > cursor_name,
+            and_(User.full_name == cursor_name, User.id > cursor_uuid),
+        )
+
     count_stmt = select(func.count()).select_from(User).where(and_(*filters))
     total = (await db.execute(count_stmt)).scalar_one()
 
     stmt = select(User).where(and_(*filters))
-    if cursor:
-        cursor_name, cursor_id = decode_alpha_cursor(cursor)
-        # Compares the native `Uuid`-typed column directly against a
-        # parsed `uuid.UUID` value, not a `cast(..., String)` comparison
-        # against `str(user.id)` -- the latter breaks on SQLite, whose
-        # `Uuid` type stores/CASTs without dashes while `str(uuid.UUID(...))`
-        # always includes them, so the two representations never compare
-        # equal and the cursor can never advance past a tie (discovered
-        # while testing this exact function; see PR17 Slice 1's PR
-        # description for the same defect in the pre-existing
-        # `transaction_crud.search()`/`equipment_crud.search()` cursor,
-        # left unfixed there as pre-existing shared infrastructure outside
-        # that slice's scope -- fixed directly here since this query is
-        # new code introduced by this slice).
-        stmt = stmt.where(
-            or_(
-                User.full_name > cursor_name,
-                and_(User.full_name == cursor_name, User.id > uuid.UUID(cursor_id)),
-            )
-        )
+    if cursor_filter is not None:
+        stmt = stmt.where(cursor_filter)
     stmt = stmt.order_by(User.full_name.asc(), User.id.asc()).limit(limit + 1)
 
     rows = list((await db.execute(stmt)).scalars().all())
