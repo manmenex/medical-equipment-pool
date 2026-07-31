@@ -13,7 +13,8 @@ Equipment Verify Checklist implementation, incl. its incremental fix round
 (Owner Decision #1 documentation consistency, structured malformed-cursor
 handling for the checklist endpoint and hardened shared cursor decoding for
 common malformed-payload cases — see `docs/ROADMAP.md`'s PR17 note for the
-remaining `list_operators` cursor-hygiene gap this did not close). PR15A and PR15B
+`list_operators` cursor-hygiene gap this did not close, since resolved by a
+separate maintenance fix). PR15A and PR15B
 are both implemented — both of Roadmap PR15's scheduled slices are complete.
 Application metrics, tracing, dashboards, log aggregation, and alerting
 remain open Roadmap PR15 scope, not scheduled to any slice, pending a
