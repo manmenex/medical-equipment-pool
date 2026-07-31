@@ -22,7 +22,8 @@ PR16 (Reporting Foundation, all four Implementation Slices — GitHub PR #58,
 #59, #60, #61) and Roadmap PR17 (Operational Reports, design GitHub PR #63
 plus all four Implementation Slices — GitHub PR #65, #66, #67, #68) are now
 fully complete. Roadmap PR18A printing/export architecture is now in progress
-as documentation-only design work. No PR18 runtime implementation exists.
+as documentation-only design work (Draft, pending review and approval). No
+PR18 runtime implementation exists.
 
 Roadmap numbering and GitHub PR numbering are independent. In particular,
 GitHub PR #18 was the Knowledge & Governance Foundation; it was not Roadmap
@@ -32,7 +33,7 @@ PR18.
 
 | Order | Roadmap item | Status |
 |---|---|---|
-| 1 | PR18 — Browser print, PDF export, and Excel `.xlsx` export | Design in progress (PR18A); no runtime implementation |
+| 1 | PR18 — Browser print, PDF export, and Excel `.xlsx` export | PR18A — design in progress; no runtime implementation |
 | 2 | PR19 — Legacy Import Foundation | Planned |
 | 3 | PR20 — Equipment Master Import | Planned |
 | 4 | PR21 — Legacy Receive and Issue History Import | Planned |

@@ -7,19 +7,43 @@
 
 ## Current baseline
 
-**Current baseline:** `bc9e43b120aa7d0c4cfa6471be577f92ea910214` —
-squash commit of GitHub PR #70, the focused operator-options cursor-hygiene
-maintenance fix. It follows GitHub PR #69 (`9b2fc1a`), the documentation-only
-governance synchronization that recorded Roadmap PR17 as fully complete.
-PR #70 closed the remaining caller-specific non-UUID cursor gap without
-changing valid report behavior, response schemas, report semantics, database
-schema, or Roadmap scope.
+**Current as of this audit:** `d4aaf0f` — squash commit of GitHub PR #68,
+the Roadmap PR17 Slice 4 implementation (`GET /reports/equipment-verify-checklist`
+and its frontend screen, per Owner Decision #1 resolved to interpretation A),
+including its incremental fix round (Owner Decision #1 documentation
+consistency, structured malformed-cursor handling for the checklist endpoint
+and hardened shared cursor decoding for common malformed-payload cases —
+see the PR17 note below for the `list_operators` cursor-hygiene gap that
+fix round left open, since closed by a separate maintenance fix). It is
+based on `8a1a280` (GitHub PR #67,
+Slice 3 — frontend Receive and Issue report screens), which is based on
+`aeafb81` (GitHub PR #66, Slice 2 — report APIs, `ReportTransactionOut`, and
+bounded operator options), which is based on `ddb9733` (GitHub PR #65, Slice
+1 — report domain and query foundation), which is based on `ed8530e`
+(GitHub PR #64, the Engineering Workflow governance infrastructure — see the
+Completed table below; this is supporting governance infrastructure, not a
+functional PR17 slice), which is based on `b935ac2` (GitHub PR #63, the
+architecture-approved PR17 design, `docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md`),
+which is based on `a572a7a` (GitHub PR #62, the documentation-only governance
+sync recording Roadmap PR16's completion), which is based on `ac19505`
+(GitHub PR #61, the Roadmap PR16 Slice 4 implementation).
+**All four Roadmap PR17 Implementation Slices are now complete — Roadmap
+PR17 (Operational Reports) is fully complete.** See the PR17 note below.
 
-Roadmap PR18A is now the active **design-only** work:
-`docs/design/PR18_PRINTING_EXPORT_PLAN.md`. No browser-print, PDF, Excel,
-route, DTO, dependency, or other PR18 runtime implementation exists yet.
-The older baseline narrative immediately below is retained as provenance for
-PR17 and earlier.
+**Current baseline (supersedes the paragraph above):** `bc9e43b120aa7d0c4cfa6471be577f92ea910214`
+— squash commit of GitHub PR #70, a focused maintenance fix (operator-options
+cursor-hygiene: reject a well-formed cursor envelope with a non-UUID id as
+`400 INVALID_INPUT`, mirroring `equipment_crud.list_for_verify_checklist`'s
+convention). It is based on `9b2fc1a` (GitHub PR #69, the documentation-only
+governance synchronization that recorded Roadmap PR17 as fully complete and
+PR18 as the next planned item), which is based on `d4aaf0f` (GitHub PR #68,
+described above). **Roadmap PR18A (printing/export architecture) is now in
+progress as documentation-only design work — Draft, pending review and
+approval. No PR18 route, DTO, dependency, or other runtime implementation
+exists.** See `docs/design/PR18_PRINTING_EXPORT_PLAN.md`.
+
+The older baseline narrative immediately below is retained as provenance
+for PR16 and earlier.
 
 `ac19505` — squash commit of GitHub PR #61,
 the Roadmap PR16 Slice 4 implementation (frontend `business_date_from`/
@@ -152,12 +176,14 @@ PR1–PR15 sequence and assigns the newly approved work as follows. Roadmap
 numbers are not GitHub PR numbers; GitHub PR #18 was a governance PR, not
 Roadmap PR18.
 
-Roadmap PR18 is currently in its PR18A architecture/design stage. The design
-PR is documentation-only and does not count as implementation or completion.
+Roadmap PR18 is currently in its **PR18A architecture/design stage**
+(`docs/design/PR18_PRINTING_EXPORT_PLAN.md`, Draft, pending review and
+approval). The design PR is documentation-only and does not count as
+implementation or completion.
 
 | Roadmap item | Planned scope |
 |---|---|
-| PR18 | PDF export, Excel export, and print-ready Hard Copy templates |
+| PR18 | Browser print, PDF export, and Excel `.xlsx` export |
 | PR19 | Legacy Import Foundation |
 | PR20 | Equipment Master Import: BCM, Item Number, equipment attributes, existing hospital QR linkage, equipment duplicate detection, and equipment-record validation |
 | PR21 | Legacy Receive and Issue History Import: Receive/Issue history, legacy BME-name preservation and user mapping, Ward normalization and mapping, transaction-row duplicate detection, and transaction source references |
@@ -213,11 +239,11 @@ Per `docs/audits/04-consolidated-implementation-plan.md` Part D:
 
 | Roadmap PR | Title |
 |---|---|
-| PR15 (PR15B slice) | Schema Hygiene — validate-before-enforce migration slice (timezone policy execution, FK `ondelete` policy follow-through, index naming standardization, etc.), per the architecture-approved design (`docs/design/PR15_OBSERVABILITY_SCHEMA_HYGIENE_PLAN.md`). Historical PR15A-era status: not started; subsequently completed by GitHub PR #54. |
+| PR15 (PR15B slice) | Schema Hygiene — validate-before-enforce migration slice (timezone policy execution, FK `ondelete` policy follow-through, index naming standardization, etc.), per the architecture-approved design (`docs/design/PR15_OBSERVABILITY_SCHEMA_HYGIENE_PLAN.md`). Not started. |
 
-**PR14 above is Reliability and Performance Hardening — it is not related to GitHub PR #14 (which implemented Roadmap PR5).** See the numbering note. Roadmap PR14 (both PR14A Reliability Correctness and PR14B Pagination Performance) is fully complete — see the Completed table and the PR14 note above. The table immediately above is retained as a labelled PR15A-era snapshot; its former next-step language is not current. PR15A (Observability) and PR15B (Schema Hygiene) are both merged. Application metrics, tracing, dashboards, log aggregation, and alerting are **not** scheduled to either PR15 slice and remain open Roadmap PR15 scope, not yet assigned to any Roadmap PR, pending a future slice or an explicit governance decision to remove them from scope — Roadmap PR15 as a whole may not be marked complete until every one of its topics has been implemented, completed by an earlier PR, or explicitly removed through a governance decision.
+**PR14 above is Reliability and Performance Hardening — it is not related to GitHub PR #14 (which implemented Roadmap PR5).** See the numbering note. Roadmap PR14 (both PR14A Reliability Correctness and PR14B Pagination Performance) is now fully complete — see the Completed table and the PR14 note above. **Roadmap PR15 is only partially complete:** PR15A (Observability) is merged — see the Completed table and the PR15 note above; PR15B (Schema Hygiene) is the next planned item. Application metrics, tracing, dashboards, log aggregation, and alerting are **not** scheduled to either PR15 slice and remain open Roadmap PR15 scope, not yet assigned to any Roadmap PR, pending a future slice or an explicit governance decision to remove them from scope — Roadmap PR15 as a whole may not be marked complete until every one of its topics has been implemented, completed by an earlier PR, or explicitly removed through a governance decision.
 
-**GitHub PR #40 note:** GitHub PR #40 ("Dashboard & Equipment Status") is merged and recorded in the Completed table above as an unnumbered "— (frontend)" row. It did **not** implement Roadmap PR12 — its originating task description used "PR12" as an informal label, which conflicted with this file's Roadmap PR12 (Inventory Import). Governance PR #41 (see `docs/DECISION_LOG.md`, "Governance — GitHub PR #40 classification") resolved that conflict by classifying it as an unnumbered Post-PR11 Frontend Dashboard UX Follow-up. Roadmap PR12 was subsequently implemented and merged as GitHub PR #43 (see the PR12 note above), Roadmap PR13 as GitHub PR #45 (see the PR13 note above), Roadmap PR14's PR14A and PR14B slices as GitHub PR #46 and #48 respectively (see the PR14 note above), Roadmap PR15's PR15A slice as GitHub PR #50, and Roadmap PR15's PR15B slice as GitHub PR #54 (see the PR15 note above). Broader Roadmap PR15 scope (metrics, tracing, dashboards, log aggregation, alerting) remains open pending future scheduling or an explicit governance decision.
+**GitHub PR #40 note:** GitHub PR #40 ("Dashboard & Equipment Status") is merged and recorded in the Completed table above as an unnumbered "— (frontend)" row. It did **not** implement Roadmap PR12 — its originating task description used "PR12" as an informal label, which conflicted with this file's Roadmap PR12 (Inventory Import). Governance PR #41 (see `docs/DECISION_LOG.md`, "Governance — GitHub PR #40 classification") resolved that conflict by classifying it as an unnumbered Post-PR11 Frontend Dashboard UX Follow-up. Roadmap PR12 was subsequently implemented and merged as GitHub PR #43 (see the PR12 note above), Roadmap PR13 as GitHub PR #45 (see the PR13 note above), Roadmap PR14's PR14A and PR14B slices as GitHub PR #46 and #48 respectively (see the PR14 note above), and Roadmap PR15's PR15A slice as GitHub PR #50 (see the PR15 note above). **Roadmap PR15's PR15B slice (Schema Hygiene) is the next planned item and has not started; broader Roadmap PR15 scope (metrics, tracing, dashboards, log aggregation, alerting) remains open pending future scheduling or an explicit governance decision.**
 
 ## Confirmed future work (not scheduled to a Roadmap PR)
 

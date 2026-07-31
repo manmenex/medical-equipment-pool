@@ -47,13 +47,15 @@ Sources: `docs/PROJECT_PLAYBOOK.md`, `docs/ARCHITECTURE_GUARDRAILS.md`,
 
 ## Current baseline and Roadmap
 
-Current baseline: `bc9e43b120aa7d0c4cfa6471be577f92ea910214`.
-GitHub PR #69 (`9b2fc1a`) completed the documentation/governance sync after
-Roadmap PR17. GitHub PR #70 (`bc9e43b`) then closed the remaining
-operator-options non-UUID cursor-hygiene gap as focused maintenance; it did not
-begin Roadmap PR18 or change valid report semantics. Roadmap PR17 (design
-GitHub PR #63; implementation PRs #65–#68), Roadmap PR16, and Roadmap PR15B
-remain implemented.
+Current baseline: `d4aaf0f08016b6e63774a06cdade5afe4737d3f7`.
+Roadmap PR17 (Operational Reports) completed through GitHub PR #68, squash SHA
+`d4aaf0f` (design GitHub PR #63 `b935ac2`; #65 `ddb9733`, #66 `aeafb81`, #67
+`8a1a280`, #68 `d4aaf0f`) — the design plus all four Implementation Slices are
+merged. Roadmap PR16 (Reporting Foundation, GitHub PR #58 `e8ef4da`, #59
+`bd4a02b`, #60 `6a28d73`, #61 `ac19505`) and Roadmap PR15B Schema Hygiene
+(GitHub PR #54) remain implemented. GitHub PR #69 is the documentation/
+governance post-merge baseline sync for Roadmap PR17; it is not a Roadmap
+implementation PR.
 
 Equipment Verify Checklist means a read-only, current-state Equipment
 master-data snapshot (Owner Decision #1, resolved to interpretation A) — not
@@ -62,14 +64,11 @@ operator, condition, pass/fail state, or reconciliation outcome, and
 introduces no new equipment lifecycle state. Physical verification remains
 out of scope, unscheduled future work.
 
-Roadmap PR18A printing/export architecture is now in progress as
-documentation-only design. No PR18 runtime implementation exists. The design
-keeps the backend authoritative and proposes a shared output-neutral document
-model feeding browser print, backend-generated PDF, and Excel `.xlsx` adapters
-for all three PR17 reports. The approved sequence is:
+The next planned work is Roadmap PR18 — PDF, Excel, and print-ready Hard
+Copy output for the PR17 reports. The approved sequence is:
 
-- PR18: browser print/PDF/Excel `.xlsx` output for Receive, Issue, and
-  Equipment Verify Checklist reports (design in progress);
+- PR18: PDF/Excel/Hard Copy output for Receive, Issue, and Equipment Verify
+  Checklist reports;
 - PR19–PR22: legacy import foundation, Equipment Master, AppSheet Receive/Issue
   history, validation and reconciliation;
 - PR23: cutover readiness;
