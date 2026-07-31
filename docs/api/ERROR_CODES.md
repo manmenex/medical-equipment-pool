@@ -76,6 +76,7 @@ A `422` validation error additionally includes an `errors` array:
 | `WARD_CORRECTION_NOOP` | 409 | `WardCorrectionNoOpError` | Roadmap PR9A: a ward-correction request's `ward_id` equals the transaction's current `ward_id` at the moment it was read — rejected as a no-op, no audit entry written. Distinct from the receipt-flow codes above (`docs/api/transactions.md`) |
 | `WARD_CORRECTION_CONFLICT` | 409 | `WardCorrectionConflictError` | Roadmap PR9A: a ward-correction request's conditional update affected zero rows because a concurrent correction changed `ward_id` first. Mirrors `RECEIPT_RACE_LOST`'s conditional-UPDATE-loses-the-race shape, applied to a different column, but deliberately a distinct code — never reused between the two flows |
 | `CONFLICT` | 409 | `ConflictError` | Safe fallback for an `IntegrityError` that couldn't be classified into unique/foreign-key/not-null/check |
+| `EXPORT_TOO_LARGE` | 422 | `ExportTooLargeError` | Roadmap PR18B (`GET /reports/{report_id}/print-data`): the full filtered result set exceeds `app.services.report_export_service.MAX_EXPORT_ROWS`. Rejected outright — never a partial/truncated document — asking the caller to narrow the applied filters |
 
 ### FastAPI/Starlette-level errors (`backend/app/main.py`)
 

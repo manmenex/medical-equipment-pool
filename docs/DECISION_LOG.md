@@ -58,6 +58,103 @@
   PR18B — the shared backend dataset and document model slice — is the next
   implementation step.
 
+## 2026-07-31 — Roadmap PR18A Owner Decisions #1 and #3 (Export Extent and Row Limit)
+
+- **Decision:** The Repository Owner confirms, before PR18B implementation began:
+  - **Owner Decision #1 — Export extent:** Interpretation **A** — export/print
+    output covers all rows matching the active report filters, bounded by a
+    synchronous row limit, never only the currently visible cursor page.
+  - **Owner Decision #3 — Maximum synchronous output size:** `5,000` rows,
+    shared across every output format PR18B's own dataset-retrieval/print-data
+    path serves. This is the evidenced, approved value — not the legacy
+    exporter's 50,000-row cap, which the design (§8) explicitly names as
+    precedent only, not pre-approval. It is scaled instead to this system's
+    confirmed real-world operating scale (`docs/KNOWN_LIMITATIONS.md`: "low
+    hundreds of devices, thousands of transactions per year"). A future
+    format-specific slice (PR18D PDF, PR18E Excel) may adopt a stricter,
+    rendering-cost-driven limit of its own; this value is not upgraded to a
+    universal ceiling for those slices by this decision.
+- **Owner Decision #2 — Branding configuration ownership:** Remains **unresolved** by this
+  entry — it is out of scope for PR18B (branding is not part of PR18B's
+  metadata surface) and is deferred to whichever future slice first needs it.
+- **Context:** `docs/design/PR18_PRINTING_EXPORT_PLAN.md` §23 flagged all three
+  Owner Decisions as blocking before any behavior depending on them could be
+  implemented (§22 "PR18B... Dependencies: Owner Decisions #1-#3 resolved
+  before behavior depending on them merges"). Decisions #1 and #3 directly
+  gate PR18B's own full-result dataset builder and row-limit behavior;
+  Decision #2 does not.
+- **Source:** `docs/design/PR18_PRINTING_EXPORT_PLAN.md` §8/§18/§23. Recorded
+  immediately before Roadmap PR18B (branch `feature/pr18b-export-foundation`,
+  baseline `e1b358ac201812be84ce538360f2c2619dac3f0a`, GitHub PR #72's squash
+  merge) began implementation.
+- **Status:** Decided. Implemented by Roadmap PR18B (see the entry below).
+- **Consequences:** PR18B's full-result dataset builder
+  (`app.services.report_export_service._fetch_all_matching_rows`) and its
+  `MAX_EXPORT_ROWS = 5000` constant directly implement these two decisions.
+  Owner Decision #2 (branding) remains open and blocks no part of PR18B.
+
+## Roadmap PR18B — Backend Export Foundation
+
+- **Decision:** Implement the architecture-approved PR18A design's first
+  implementation slice (`docs/design/PR18_PRINTING_EXPORT_PLAN.md` §22 "PR18B
+  — Shared backend dataset and document model"): a backend-only, output-neutral
+  export foundation for the three Roadmap PR17 report families, reusing their
+  existing query functions and response DTOs unchanged. **This slice does not
+  implement browser print, PDF export, or Excel export** — those remain
+  PR18C/PR18D/PR18E, not started here.
+- **What was built:**
+  - `app/schemas/report_export.py`: `ReportIdentity` (the three stable report
+    identities), the internal `ExportDocument`/`ExportMetadata`/`ExportColumn`/
+    `ExportRow` model (design §7.2 — never a public API contract), and the
+    versioned, API-facing `PrintDocumentOut` DTO the future PR18C browser-print
+    adapter will consume, with an explicit `to_print_document_out()` mapping
+    function keeping the two deliberately distinct.
+  - `app/utils/export_filename.py`: the deterministic filename-stem generator
+    (design §15), producing `{report-id}_{date-or-range}_{shift-or-all}_
+    {generated-utc}` with no extension (the future renderer supplies that).
+  - `app/services/report_export_service.py`: the backend-owned, bounded
+    full-result dataset retrieval loop (`_fetch_all_matching_rows`, generic
+    over `report_query_service.search_receive_report`/`search_issue_report`/
+    `equipment_crud.list_for_verify_checklist`, called unchanged with the
+    caller's filters); the three report-document builders (Receive, Issue,
+    Equipment Verify Checklist); Thai-first column definitions matching the
+    existing on-screen tables; master-data name resolution (ward/category/
+    department) via one bounded batch query per lookup, never per row; and
+    `MAX_EXPORT_ROWS = 5000` (Owner Decision #3, above).
+  - `app/core/exceptions.py::ExportTooLargeError` (`EXPORT_TOO_LARGE`, `422`):
+    raised when the full matching-row count exceeds `MAX_EXPORT_ROWS` —
+    rejects outright, never truncates silently (design §8).
+  - `GET /reports/{report_id}/print-data` (`app/api/v1/reports.py`): one typed
+    route dispatching to the three builders, gated by the same
+    `VIEW_AND_REPORT_ROLES` every existing report endpoint uses, accepting no
+    `cursor` parameter and never following a client-supplied one. Returns
+    `PrintDocumentOut`. Logs one safe, structured operational output event per
+    attempt (`report_export_service.log_export_attempt`, extending
+    `app.core.logging._EXTRA_FIELDS`) — document metadata only, never a
+    persistent `audit_logs` row (design §13: PR18 does not introduce a new
+    persistent domain audit record without Owner approval).
+- **Explicit non-goals:** No browser-print UI, print CSS, PDF renderer/library,
+  `.xlsx` renderer/dependency, CSV, asynchronous export jobs, persistent
+  generated-file storage, digital signatures, hospital branding, or new
+  permission — all confirmed absent from this diff.
+- **Testing:** `backend/tests/test_pr18b_report_export.py` (filename
+  generation, output-neutral document/metadata construction, row-limit
+  behavior, authorization parity, filter/eligibility parity with the existing
+  on-screen `GET /reports/receive`/`GET /reports/issue`, item_no exclusion, no
+  persistent audit-log row, no transaction-state mutation);
+  `backend/tests/test_postgres_integration.py` (PostgreSQL-backed proof that
+  the full-result retrieval loop returns every matching row exactly once
+  across real multi-page round trips, authorization parity, and row-limit
+  rejection with no partial document).
+- **Source:** `docs/design/PR18_PRINTING_EXPORT_PLAN.md` §5-§8, §13-§15, §18,
+  §22; the Owner Decision entry immediately above. Branch
+  `feature/pr18b-export-foundation`, baseline
+  `e1b358ac201812be84ce538360f2c2619dac3f0a` (GitHub PR #72's squash merge).
+- **Status:** Implemented in this branch; not yet merged as of this entry.
+- **Consequences:** The backend export foundation exists; no browser print,
+  PDF, or Excel output exists yet. Roadmap PR18 is not complete. PR18C
+  (browser print presentation) is the next planned slice.
+
 ## Numbering note — read this first
 
 **Roadmap PR number** and **GitHub PR number** are different sequences and must not be conflated:

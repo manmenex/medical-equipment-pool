@@ -127,6 +127,20 @@ class WardCorrectionConflictError(DomainError):
     status_code = 409
 
 
+class ExportTooLargeError(DomainError):
+    """Roadmap PR18B (docs/design/PR18_PRINTING_EXPORT_PLAN.md §8/§18/§23,
+    Owner Decision #3): raised when a bulk report export/print request's
+    full matching-row count exceeds the approved synchronous row limit
+    (``app.services.report_export_service.MAX_EXPORT_ROWS``). Deliberately
+    rejects the whole request rather than silently truncating -- a
+    truncated hospital operational report that looks complete would be
+    worse than an explicit refusal (design §8). The caller should narrow
+    the applied filters (date range, ward, category, etc.) and retry."""
+
+    code = "EXPORT_TOO_LARGE"
+    status_code = 422
+
+
 class ConflictError(DomainError):
     """Generic safe fallback for an IntegrityError that could not be classified.
 

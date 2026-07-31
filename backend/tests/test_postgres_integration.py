@@ -46,12 +46,14 @@ from app.main import app
 from app.models.audit import AuditLog
 from app.models.equipment import Equipment, EquipmentStatus, EquipmentStatusHistory
 from app.models.transaction import BorrowTransaction, TransactionStatus
-from app.models.user import ALL_ROLES, ROLE_ADMINISTRATOR, Role, User
+from app.models.user import ALL_ROLES, ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, ROLE_READ_ONLY, Role, User
+from app.services import report_export_service
 # Roadmap PR7b: every dispatch now requires ward_id, so every HTTP-level
 # /api/v1/borrow call in this suite needs a real ward row first --
 # create_ward is the same helper test_borrow.py/test_equipment.py/
 # test_exception_handling.py use (tests/conftest.py, consolidated here to
 # remove a fourth near-duplicate definition).
+from tests.conftest import auth_headers as _auth_headers
 from tests.conftest import create_ward as _create_ward
 
 pytestmark = pytest.mark.postgres
@@ -8665,3 +8667,108 @@ async def test_verify_checklist_cursor_pagination_no_duplicates_no_missing_rows_
         assert pages < 10  # guard against an infinite loop on a pagination bug
 
     assert seen_ids == created_ids
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR18B (docs/design/PR18_PRINTING_EXPORT_PLAN.md §5/§8/§18/§20.2
+# "PR18B -- Shared backend dataset and document model"): PostgreSQL-backed
+# proof that the backend-owned full-result retrieval loop
+# (app.services.report_export_service._fetch_all_matching_rows) returns
+# every matching row exactly once, across real multi-page round trips
+# against a real PostgreSQL database -- mirroring the equipment-verify-
+# checklist pagination-integrity test immediately above.
+# ---------------------------------------------------------------------------
+
+
+async def test_print_data_receive_report_returns_all_rows_across_internal_pages_on_postgres(
+    pg_client, pg_seeded_users
+):
+    headers = await _admin_headers(pg_client)
+    staff_headers = await _auth_headers(pg_client, ROLE_EQUIPMENT_POOL_STAFF)
+    ward_id = await _create_ward(pg_client, headers, "PG-PR18B-1")
+
+    created_transaction_nos = set()
+    for i in range(5):
+        eq_resp = await pg_client.post(
+            "/api/v1/equipment",
+            headers=headers,
+            json={"asset_number": f"PG-PR18B-{i:02d}", "equipment_name": "Infusion Pump"},
+        )
+        assert eq_resp.status_code == 201, eq_resp.text
+        equipment_id = eq_resp.json()["id"]
+        borrow_resp = await pg_client.post(
+            "/api/v1/borrow",
+            headers=staff_headers,
+            json={"equipment_id": equipment_id, "ward_id": ward_id, "dispatch_type": "on_demand"},
+        )
+        assert borrow_resp.status_code == 201, borrow_resp.text
+        tx = borrow_resp.json()
+        receipt_resp = await pg_client.post(
+            f"/api/v1/return/{tx['id']}", headers=staff_headers, json={"receipt_outcome": "usable"}
+        )
+        assert receipt_resp.status_code == 200, receipt_resp.text
+        created_transaction_nos.add(receipt_resp.json()["transaction_no"])
+
+    # Force the internal bulk-fetch loop to actually paginate across several
+    # real round trips (5 rows / page_size 2 = 3 pages) instead of fitting
+    # in one page -- this is the scenario that would silently drop or
+    # duplicate a row if the cursor-chaining logic were wrong.
+    original_page_size = report_export_service._FETCH_PAGE_SIZE
+    report_export_service._FETCH_PAGE_SIZE = 2
+    try:
+        resp = await pg_client.get(
+            "/api/v1/reports/receive-report/print-data", headers=headers, params={"ward_id": ward_id}
+        )
+    finally:
+        report_export_service._FETCH_PAGE_SIZE = original_page_size
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["metadata"]["row_count"] == 5
+    returned_transaction_nos = {row["values"]["transaction_no"] for row in body["rows"]}
+    assert returned_transaction_nos == created_transaction_nos
+
+
+async def test_print_data_authorization_parity_matches_on_screen_report_on_postgres(pg_client, pg_seeded_users):
+    for role in (ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, ROLE_READ_ONLY):
+        headers = await _auth_headers(pg_client, role)
+        on_screen = await pg_client.get("/api/v1/reports/receive", headers=headers)
+        print_data = await pg_client.get("/api/v1/reports/receive-report/print-data", headers=headers)
+        assert on_screen.status_code == print_data.status_code == 200
+
+    resp = await pg_client.get("/api/v1/reports/receive-report/print-data")
+    assert resp.status_code == 401, resp.text
+
+
+async def test_print_data_row_limit_exceeded_on_postgres_no_partial_document(pg_client, pg_seeded_users):
+    headers = await _admin_headers(pg_client)
+    staff_headers = await _auth_headers(pg_client, ROLE_EQUIPMENT_POOL_STAFF)
+    ward_id = await _create_ward(pg_client, headers, "PG-PR18B-2")
+
+    for i in range(3):
+        eq_resp = await pg_client.post(
+            "/api/v1/equipment",
+            headers=headers,
+            json={"asset_number": f"PG-PR18B-LIM-{i:02d}", "equipment_name": "Infusion Pump"},
+        )
+        assert eq_resp.status_code == 201, eq_resp.text
+        borrow_resp = await pg_client.post(
+            "/api/v1/borrow",
+            headers=staff_headers,
+            json={"equipment_id": eq_resp.json()["id"], "ward_id": ward_id, "dispatch_type": "on_demand"},
+        )
+        assert borrow_resp.status_code == 201, borrow_resp.text
+
+    original_limit = report_export_service.MAX_EXPORT_ROWS
+    report_export_service.MAX_EXPORT_ROWS = 2
+    try:
+        resp = await pg_client.get(
+            "/api/v1/reports/issue-report/print-data", headers=headers, params={"ward_id": ward_id}
+        )
+    finally:
+        report_export_service.MAX_EXPORT_ROWS = original_limit
+
+    assert resp.status_code == 422, resp.text
+    body = resp.json()
+    assert body["code"] == "EXPORT_TOO_LARGE"
+    assert "rows" not in body

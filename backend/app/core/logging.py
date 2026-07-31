@@ -25,6 +25,16 @@ _EXTRA_FIELDS = (
     "skipped",
     "attempted_rows",
     "update_existing",
+    # Roadmap PR18B (docs/design/PR18_PRINTING_EXPORT_PLAN.md §13): one safe,
+    # structured operational output event per report export/print attempt --
+    # aggregate outcome/row-count only, never row data, filenames containing
+    # user input, or filter values (see app.services.report_export_service.
+    # log_export_attempt).
+    "report_identity",
+    "output_format",
+    "outcome",
+    "row_count",
+    "actor_user_id",
 )
 
 
