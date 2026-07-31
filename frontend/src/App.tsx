@@ -22,6 +22,9 @@ const ReceiveReportPage = lazy(() =>
 const IssueReportPage = lazy(() =>
   import("@/pages/IssueReportPage").then((m) => ({ default: m.IssueReportPage }))
 );
+const EquipmentVerifyChecklistPage = lazy(() =>
+  import("@/pages/EquipmentVerifyChecklistPage").then((m) => ({ default: m.EquipmentVerifyChecklistPage }))
+);
 const AdminPage = lazy(() => import("@/pages/AdminPage").then((m) => ({ default: m.AdminPage })));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 const NotFoundPage = lazy(() => import("@/pages/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
@@ -55,6 +58,9 @@ export function App() {
               replacement for /reports. */}
           <Route path="/reports/receive" element={<ReceiveReportPage />} />
           <Route path="/reports/issue" element={<IssueReportPage />} />
+          {/* Roadmap PR17 Slice 4: the final PR17 report screen, same
+              /reports sub-route convention as Slice 3's two screens. */}
+          <Route path="/reports/equipment-verify-checklist" element={<EquipmentVerifyChecklistPage />} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>

@@ -70,6 +70,13 @@ export function ReportsPage() {
         >
           รายงานการเบิก
         </Link>
+        {/* Roadmap PR17 Slice 4: final PR17 report entry point. */}
+        <Link
+          to="/reports/equipment-verify-checklist"
+          className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-medium"
+        >
+          รายการตรวจสอบเครื่องมือ
+        </Link>
       </div>
 
       <div className="surface rounded-xl border p-4">

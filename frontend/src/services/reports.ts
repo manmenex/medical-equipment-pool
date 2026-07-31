@@ -1,5 +1,5 @@
 import { api } from "@/services/api";
-import type { Page, ReportOperatorOut, ReportTransactionOut, Shift } from "@/types";
+import type { Equipment, EquipmentStatus, Page, ReportOperatorOut, ReportTransactionOut, Shift } from "@/types";
 
 // Roadmap PR17 Slice 3 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md §10.1/
 // §10.2/§12): the approved filter set for both Receive and Issue reports --
@@ -50,5 +50,29 @@ export interface OperatorOptionsParams {
 // any user-management purpose.
 export async function getOperatorOptions(params: OperatorOptionsParams = {}): Promise<Page<ReportOperatorOut>> {
   const resp = await api.get<Page<ReportOperatorOut>>("/report-options/operators", { params });
+  return resp.data;
+}
+
+// Roadmap PR17 Slice 4 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md §10.3):
+// the Equipment Verify Checklist's own, distinct filter set -- current
+// equipment status, category, and department. Deliberately NOT the
+// Receive/Issue reports' business_date/shift/ward/operator filters: this
+// report is a current-state equipment listing, not a transaction/event
+// report (§7.3(A)), and `ward_id` has no equivalent here (`Equipment` has
+// no direct Ward relationship, only `department_owner_id`, §10.3).
+export interface VerifyChecklistQueryParams {
+  equipment_category_id?: string;
+  status?: EquipmentStatus;
+  department_id?: string;
+  limit?: number;
+  cursor?: string | null;
+}
+
+// GET /reports/equipment-verify-checklist (Roadmap PR17 §7.3(A)/§8/§10.3,
+// Owner Decision #1 resolved to interpretation A): a read-only, current-
+// state equipment master/status listing. Response rows are the same shape
+// GET /equipment already returns (Equipment) -- no new DTO invented.
+export async function getEquipmentVerifyChecklist(params: VerifyChecklistQueryParams): Promise<Page<Equipment>> {
+  const resp = await api.get<Page<Equipment>>("/reports/equipment-verify-checklist", { params });
   return resp.data;
 }

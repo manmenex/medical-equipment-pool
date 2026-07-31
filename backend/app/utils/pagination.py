@@ -3,6 +3,8 @@ import json
 from datetime import datetime
 from typing import Any
 
+from app.core.exceptions import InvalidInputError
+
 
 def encode_cursor(created_at: datetime, id_: str) -> str:
     raw = json.dumps({"t": created_at.isoformat(), "id": id_})
@@ -10,9 +12,22 @@ def encode_cursor(created_at: datetime, id_: str) -> str:
 
 
 def decode_cursor(cursor: str) -> tuple[datetime, str]:
-    raw = base64.urlsafe_b64decode(cursor.encode()).decode()
-    data: dict[str, Any] = json.loads(raw)
-    return datetime.fromisoformat(data["t"]), data["id"]
+    # PR68-Blocker3: a client-supplied cursor is untrusted input -- invalid
+    # Base64, non-UTF8 bytes, malformed JSON, a missing "t"/"id" field, or an
+    # unparseable timestamp must surface as a normal 400 INVALID_INPUT
+    # (the same DomainError this module's callers already raise for their
+    # own input validation, e.g. business_date_from > business_date_to on
+    # the report endpoints), never as an uncaught exception reaching the
+    # generic 500 handler. `binascii.Error`, `UnicodeDecodeError`, and
+    # `json.JSONDecodeError` are all `ValueError` subclasses, so this single
+    # except clause covers every expected parsing failure without a bare
+    # `except Exception` that would also swallow genuine programming bugs.
+    try:
+        raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+        data: dict[str, Any] = json.loads(raw)
+        return datetime.fromisoformat(data["t"]), data["id"]
+    except (ValueError, TypeError, KeyError) as exc:
+        raise InvalidInputError("Invalid or malformed pagination cursor.") from exc
 
 
 def encode_alpha_cursor(sort_value: str, id_: str) -> str:
@@ -26,6 +41,11 @@ def encode_alpha_cursor(sort_value: str, id_: str) -> str:
 
 
 def decode_alpha_cursor(cursor: str) -> tuple[str, str]:
-    raw = base64.urlsafe_b64decode(cursor.encode()).decode()
-    data: dict[str, Any] = json.loads(raw)
-    return data["v"], data["id"]
+    # Same malformed-input handling as decode_cursor above -- see that
+    # function's comment for why this exact except clause is sufficient.
+    try:
+        raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+        data: dict[str, Any] = json.loads(raw)
+        return data["v"], data["id"]
+    except (ValueError, TypeError, KeyError) as exc:
+        raise InvalidInputError("Invalid or malformed pagination cursor.") from exc
