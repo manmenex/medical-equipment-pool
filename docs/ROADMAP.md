@@ -29,6 +29,19 @@ sync recording Roadmap PR16's completion), which is based on `ac19505`
 (GitHub PR #61, the Roadmap PR16 Slice 4 implementation).
 **All four Roadmap PR17 Implementation Slices are now complete — Roadmap
 PR17 (Operational Reports) is fully complete.** See the PR17 note below.
+
+**Current baseline (supersedes the paragraph above):** `bc9e43b120aa7d0c4cfa6471be577f92ea910214`
+— squash commit of GitHub PR #70, a focused maintenance fix (operator-options
+cursor-hygiene: reject a well-formed cursor envelope with a non-UUID id as
+`400 INVALID_INPUT`, mirroring `equipment_crud.list_for_verify_checklist`'s
+convention). It is based on `9b2fc1a` (GitHub PR #69, the documentation-only
+governance synchronization that recorded Roadmap PR17 as fully complete and
+PR18 as the next planned item), which is based on `d4aaf0f` (GitHub PR #68,
+described above). **Roadmap PR18A (printing/export architecture) is now in
+progress as documentation-only design work — Draft, pending review and
+approval. No PR18 route, DTO, dependency, or other runtime implementation
+exists.** See `docs/design/PR18_PRINTING_EXPORT_PLAN.md`.
+
 The older baseline narrative immediately below is retained as provenance
 for PR16 and earlier.
 
@@ -125,6 +138,8 @@ is retained as provenance for PR15A.
 | PR17 (Slice 2) | Operational Reports — `GET /reports/receive`, `GET /reports/issue`, `GET /report-options/operators`; `ReportTransactionOut` schema | #66 | `aeafb81` |
 | PR17 (Slice 3) | Operational Reports — frontend Receive and Issue report screens, URL-state-backed filters | #67 | `8a1a280` |
 | PR17 (Slice 4) | Operational Reports — Equipment Verify Checklist (`GET /reports/equipment-verify-checklist`), per Owner Decision #1 resolved to interpretation A; incl. incremental fix round (Owner Decision #1 documentation consistency, malformed-cursor handling) | #68 | `d4aaf0f` |
+| — (governance) | Post-merge governance sync recording Roadmap PR17 complete and PR18 next | #69 | `9b2fc1a` |
+| — (maintenance) | Operator-options cursor hygiene — reject a well-formed cursor envelope with a non-UUID id as `400 INVALID_INPUT` | #70 | `bc9e43b` |
 
 Full rationale and review-fix history for PR5 through PR17: `docs/DECISION_LOG.md`. PR21, PR22-PR25, PR30/PR32, PR35, PR37, PR47, PR49, PR53, PR62, and PR64 (GitHub PR numbers) are process/documentation-only additions with no code, business-rule, or schema change — no `DECISION_LOG.md` entry was needed for them. PR8A/PR8B/PR8C/PR9A/PR9B/PR10/PR11/PR12/PR13/PR14A/PR14B/PR15A/PR15B/PR16 Slices 1-4/PR17 Slices 1-4 (GitHub PR #26, #28, #29, #31, #33, #34, #36, #38, #43, #45, #46, #48, #50, #54, #58, #59, #60, #61, #65, #66, #67, #68) are different: they are production code changes; PR10, PR11, PR12, PR13, PR14A, PR14B, PR15A, PR15B, PR16 Slices 1-4, PR17 Slices 1-4, and both PR9 entries now have a `docs/DECISION_LOG.md` entry (see the PR9, PR10, PR11, PR12, PR13, PR14, PR15, PR16, and PR17 notes below).
 
@@ -161,9 +176,14 @@ PR1–PR15 sequence and assigns the newly approved work as follows. Roadmap
 numbers are not GitHub PR numbers; GitHub PR #18 was a governance PR, not
 Roadmap PR18.
 
+Roadmap PR18 is currently in its **PR18A architecture/design stage**
+(`docs/design/PR18_PRINTING_EXPORT_PLAN.md`, Draft, pending review and
+approval). The design PR is documentation-only and does not count as
+implementation or completion.
+
 | Roadmap item | Planned scope |
 |---|---|
-| PR18 | PDF export, Excel export, and print-ready Hard Copy templates |
+| PR18 | Browser print, PDF export, and Excel `.xlsx` export |
 | PR19 | Legacy Import Foundation |
 | PR20 | Equipment Master Import: BCM, Item Number, equipment attributes, existing hospital QR linkage, equipment duplicate detection, and equipment-record validation |
 | PR21 | Legacy Receive and Issue History Import: Receive/Issue history, legacy BME-name preservation and user mapping, Ward normalization and mapping, transaction-row duplicate detection, and transaction source references |
