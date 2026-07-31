@@ -47,18 +47,28 @@ Sources: `docs/PROJECT_PLAYBOOK.md`, `docs/ARCHITECTURE_GUARDRAILS.md`,
 
 ## Current baseline and Roadmap
 
-Current baseline: `ac19505d9d0a102dcbec7bdfd4d1855554f1cf81`.
-Roadmap PR16 (Reporting Foundation) completed through GitHub PR #61, squash SHA
-`ac19505` (GitHub PR #58 `e8ef4da`, #59 `bd4a02b`, #60 `6a28d73`, #61
-`ac19505`) — all four Implementation Slices are merged. Roadmap PR15B Schema
-Hygiene (GitHub PR #54) remains implemented. GitHub PR #62 is the
-documentation/governance post-merge baseline sync for Roadmap PR16; it is not
-a Roadmap implementation PR.
+Current baseline: `d4aaf0f08016b6e63774a06cdade5afe4737d3f7`.
+Roadmap PR17 (Operational Reports) completed through GitHub PR #68, squash SHA
+`d4aaf0f` (design GitHub PR #63 `b935ac2`; #65 `ddb9733`, #66 `aeafb81`, #67
+`8a1a280`, #68 `d4aaf0f`) — the design plus all four Implementation Slices are
+merged. Roadmap PR16 (Reporting Foundation, GitHub PR #58 `e8ef4da`, #59
+`bd4a02b`, #60 `6a28d73`, #61 `ac19505`) and Roadmap PR15B Schema Hygiene
+(GitHub PR #54) remain implemented. GitHub PR #69 is the documentation/
+governance post-merge baseline sync for Roadmap PR17; it is not a Roadmap
+implementation PR.
 
-The next planned work is Roadmap PR17 — Receive, Issue, and Equipment Verify
-Checklist reports. The approved sequence is:
+Equipment Verify Checklist means a read-only, current-state Equipment
+master-data snapshot (Owner Decision #1, resolved to interpretation A) — not
+a physical-verification workflow. It records no verification time, result,
+operator, condition, pass/fail state, or reconciliation outcome, and
+introduces no new equipment lifecycle state. Physical verification remains
+out of scope, unscheduled future work.
 
-- PR17–PR18: operational reports, PDF/Excel/Hard Copy output;
+The next planned work is Roadmap PR18 — PDF, Excel, and print-ready Hard
+Copy output for the PR17 reports. The approved sequence is:
+
+- PR18: PDF/Excel/Hard Copy output for Receive, Issue, and Equipment Verify
+  Checklist reports;
 - PR19–PR22: legacy import foundation, Equipment Master, AppSheet Receive/Issue
   history, validation and reconciliation;
 - PR23: cutover readiness;

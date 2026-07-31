@@ -7,7 +7,29 @@
 
 ## Current baseline
 
-**Current as of this audit:** `ac19505` — squash commit of GitHub PR #61,
+**Current as of this audit:** `d4aaf0f` — squash commit of GitHub PR #68,
+the Roadmap PR17 Slice 4 implementation (`GET /reports/equipment-verify-checklist`
+and its frontend screen, per Owner Decision #1 resolved to interpretation A),
+including its incremental fix round (Owner Decision #1 documentation
+consistency, malformed-checklist-cursor handling shared by every
+cursor-paginated list endpoint). It is based on `8a1a280` (GitHub PR #67,
+Slice 3 — frontend Receive and Issue report screens), which is based on
+`aeafb81` (GitHub PR #66, Slice 2 — report APIs, `ReportTransactionOut`, and
+bounded operator options), which is based on `ddb9733` (GitHub PR #65, Slice
+1 — report domain and query foundation), which is based on `ed8530e`
+(GitHub PR #64, the Engineering Workflow governance infrastructure — see the
+Completed table below; this is supporting governance infrastructure, not a
+functional PR17 slice), which is based on `b935ac2` (GitHub PR #63, the
+architecture-approved PR17 design, `docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md`),
+which is based on `a572a7a` (GitHub PR #62, the documentation-only governance
+sync recording Roadmap PR16's completion), which is based on `ac19505`
+(GitHub PR #61, the Roadmap PR16 Slice 4 implementation).
+**All four Roadmap PR17 Implementation Slices are now complete — Roadmap
+PR17 (Operational Reports) is fully complete.** See the PR17 note below.
+The older baseline narrative immediately below is retained as provenance
+for PR16 and earlier.
+
+`ac19505` — squash commit of GitHub PR #61,
 the Roadmap PR16 Slice 4 implementation (frontend `business_date_from`/
 `business_date_to`/`shift`/`event` filter controls on `EquipmentDetailPage.tsx`,
 plus the PR61-H1 merge-blocking review fix — the "ทั้งหมด" (All) `event`
@@ -93,8 +115,15 @@ is retained as provenance for PR15A.
 | PR16 (Slice 2) | Reporting Foundation — `BorrowTransaction` computed business-date/shift properties, `TransactionOut` schema fields | #59 | `bd4a02b` |
 | PR16 (Slice 3) | Reporting Foundation — `GET /transactions` `business_date_from`/`business_date_to`/`shift`/`event` filter extension | #60 | `6a28d73` |
 | PR16 (Slice 4) | Reporting Foundation — frontend `business_date_from`/`business_date_to`/`shift`/`event` filter controls (`EquipmentDetailPage.tsx`), incl. PR61-H1 review fix | #61 | `ac19505` |
+| — (governance) | Post-merge governance sync after Roadmap PR16 | #62 | `a572a7a` |
+| — (design) | Roadmap PR17 — Operational Reports Foundation design (`docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md`) | #63 | `b935ac2` |
+| — (governance) | Engineering Workflow and review governance (`docs/ENGINEERING_WORKFLOW.md`) | #64 | `ed8530e` |
+| PR17 (Slice 1) | Operational Reports — report domain and query foundation (`equipment_category_id`/`operator_id`/`require_receipt` filters on `transaction_crud.search()`) | #65 | `ddb9733` |
+| PR17 (Slice 2) | Operational Reports — `GET /reports/receive`, `GET /reports/issue`, `GET /report-options/operators`; `ReportTransactionOut` schema | #66 | `aeafb81` |
+| PR17 (Slice 3) | Operational Reports — frontend Receive and Issue report screens, URL-state-backed filters | #67 | `8a1a280` |
+| PR17 (Slice 4) | Operational Reports — Equipment Verify Checklist (`GET /reports/equipment-verify-checklist`), per Owner Decision #1 resolved to interpretation A; incl. incremental fix round (Owner Decision #1 documentation consistency, malformed-cursor handling) | #68 | `d4aaf0f` |
 
-Full rationale and review-fix history for PR5 through PR16: `docs/DECISION_LOG.md`. PR21, PR22-PR25, PR30/PR32, PR35, PR37, PR47, PR49, and PR53 (GitHub PR numbers) are process/documentation-only additions with no code, business-rule, or schema change — no `DECISION_LOG.md` entry was needed for them. PR8A/PR8B/PR8C/PR9A/PR9B/PR10/PR11/PR12/PR13/PR14A/PR14B/PR15A/PR15B/PR16 Slices 1-4 (GitHub PR #26, #28, #29, #31, #33, #34, #36, #38, #43, #45, #46, #48, #50, #54, #58, #59, #60, #61) are different: they are production code changes; PR10, PR11, PR12, PR13, PR14A, PR14B, PR15A, PR15B, PR16 Slices 1-4, and both PR9 entries now have a `docs/DECISION_LOG.md` entry (see the PR9, PR10, PR11, PR12, PR13, PR14, PR15, and PR16 notes below).
+Full rationale and review-fix history for PR5 through PR17: `docs/DECISION_LOG.md`. PR21, PR22-PR25, PR30/PR32, PR35, PR37, PR47, PR49, PR53, PR62, and PR64 (GitHub PR numbers) are process/documentation-only additions with no code, business-rule, or schema change — no `DECISION_LOG.md` entry was needed for them. PR8A/PR8B/PR8C/PR9A/PR9B/PR10/PR11/PR12/PR13/PR14A/PR14B/PR15A/PR15B/PR16 Slices 1-4/PR17 Slices 1-4 (GitHub PR #26, #28, #29, #31, #33, #34, #36, #38, #43, #45, #46, #48, #50, #54, #58, #59, #60, #61, #65, #66, #67, #68) are different: they are production code changes; PR10, PR11, PR12, PR13, PR14A, PR14B, PR15A, PR15B, PR16 Slices 1-4, PR17 Slices 1-4, and both PR9 entries now have a `docs/DECISION_LOG.md` entry (see the PR9, PR10, PR11, PR12, PR13, PR14, PR15, PR16, and PR17 notes below).
 
 **PR7 note:** `docs/audits/04-consolidated-implementation-plan.md` Part D's full PR7 entry recommended splitting into a 7a (lifecycle model) and 7b (`dispatch_type`/`routine_round`/ward-required/field-cleanup) slice "if the reviewing team prefers smaller units." PR7 (7a slice) shipped `TransactionStatus` (`OPEN`/`CLOSED`), the `create()`/`close()` mutator split, `legacy_status` preservation, and disabling the deprecated `due_at`-driven overdue-notification scheduler job (Codex PR7a review round 1, BLOCKER — see `docs/DECISION_LOG.md`). PR7 (7b slice) completed PR7's remaining scope: `dispatch_type` (`routine_round`/`on_demand`), `routine_round` (the four confirmed fixed times), a required `ward_id` for every new dispatch (application-layer enforced), and removing `borrower_name`/`due_at`/`quantity` from the active write path while preserving every existing historical value as read-only history — plus, after Codex round 1 review, `BorrowRequest` now rejects unknown request fields outright, an invalid `ward_id` is classified as a distinct 400 `INVALID_INPUT` rather than the equipment-conflict 409, and the migration 0008 test suite was rewritten to exercise a genuinely reconstructed pre-migration production schema. Roadmap PR7 (both slices) is now fully merged. Concurrent-receipt protection (two simultaneous receipts racing on the same OPEN transaction) was **not** part of either slice — that gap is closed by Roadmap PR8A below.
 
@@ -120,6 +149,8 @@ Full rationale and review-fix history for PR5 through PR16: `docs/DECISION_LOG.m
 
 **PR16 note:** Roadmap PR16 (Reporting Foundation) shipped across four Implementation Slices per the architecture-approved design (`docs/design/PR16_REPORTING_FOUNDATION_PLAN.md`, GitHub PR #56) and the Repository Owner's confirmed Day/Night shift boundary policy (Owner Decision #1, GitHub PR #57: 08:00/20:00 Asia/Bangkok, `business_date_anchor = shift_start_date`, `on_demand` classified identically to a routine-round dispatch). **Slice 1** (GitHub PR #58) added `business_date`/`shift` derivation as one pure-Python reference function and one SQLAlchemy-expression twin, tested against each other so they can never silently diverge; both are computed, never persisted. **Slice 2** (GitHub PR #59) added `BorrowTransaction` computed properties (`dispatch_business_date`/`dispatch_shift` from `borrowed_at`; `receipt_business_date`/`receipt_shift` from `returned_at`, `None` until received) and surfaced them on `TransactionOut`. **Slice 3** (GitHub PR #60) added `business_date_from`/`business_date_to`/`shift`/`event` (`dispatch`/`receipt`, default `dispatch`) query parameters to `GET /transactions`, filtering against the derived value directly and leaving the existing `from_date`/`to_date` raw-timestamp filters untouched; one Codex review round recorded APPROVE with no findings. **Slice 4** (GitHub PR #61) added matching frontend filter controls to `EquipmentDetailPage.tsx` — Apply/Clear-committed, URL-state-backed, with loading/empty/backend-validation-error states — plus a merge-blocking review fix (**PR61-H1**): since the backend's `event` parameter has no "all events" value (confirmed directly against both the design and the merged code, not assumed), the UI's "ทั้งหมด" (All) option now never sends `business_date_from`/`business_date_to`/`shift` on the wire, the only way "All" can honestly mean "all events" without a backend contract change or client-side dispatch/receipt merging (both out of scope); the three dependent controls are disabled until a concrete event is chosen, gated by a single authoritative check applied at request-build time so it also holds for a stale or hand-edited URL. See `docs/DECISION_LOG.md` ("Roadmap PR16 — Reporting Foundation Complete") for the full slice-by-slice implementation and review chronology. **Roadmap PR16 (Reporting Foundation) is now fully complete.** The next planned item is Roadmap PR17 (Date/shift-filtered Receive, Issue, and Equipment Verify Checklist reports).
 
+**PR17 note:** Roadmap PR17 (Operational Reports) shipped across four Implementation Slices, per the architecture-approved design (`docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md`, GitHub PR #63) and the Repository Owner's confirmed Equipment Verify Checklist definition (Owner Decision #1: Option A — a read-only, current-state Equipment master-data snapshot, no physical-verification workflow). **Slice 1** (GitHub PR #65) added the report domain and query foundation — `equipment_category_id`/`operator_id` filters and the `require_receipt` unconditional predicate on `transaction_crud.search()`, plus the confirmed backend-only deterministic ordering for the Issue Report. **Slice 2** (GitHub PR #66) added `GET /reports/receive`, `GET /reports/issue`, and the bounded historical-operator lookup `GET /report-options/operators`, backed by a dedicated report-only `ReportTransactionOut` schema kept off the shared `TransactionOut` contract. **Slice 3** (GitHub PR #67) added the Thai-first `/reports/receive` and `/reports/issue` frontend screens, URL-state-backed business-date/shift/ward/category/operator filters. **Slice 4** (GitHub PR #68) added `GET /reports/equipment-verify-checklist` and its frontend screen — a read-only listing of `Equipment` master records reusing the existing `EquipmentOut` response boundary (which excludes `item_no`, per ADR-002/ADR-003), per Owner Decision #1's resolution to interpretation A — plus an incremental fix round that recorded the Owner Decision in `docs/DECISION_LOG.md`, synchronized the design document's wording, and fixed a malformed-cursor handling gap shared by every cursor-paginated list endpoint in the codebase (`app/utils/pagination.py`): a malformed client-supplied cursor now returns the repository-standard structured `400 INVALID_INPUT` client error instead of an uncaught `500`. See `docs/DECISION_LOG.md` ("Roadmap PR17 — Owner Decision #1 (Equipment Verify Checklist Definition)" and "Roadmap PR17 — Operational Reports Complete") for the full slice-by-slice implementation and review chronology. **Roadmap PR17 (Operational Reports) is now fully complete.** No new equipment lifecycle state, no change to `TransactionOut`, no physical-verification workflow, and no database migration were introduced anywhere in Roadmap PR17. The next planned item is Roadmap PR18 (PDF export, Excel export, and print-ready Hard Copy templates for the PR17 reports).
+
 ## Approved forward sequence
 
 The least disruptive numbering keeps the repository's established Roadmap
@@ -129,7 +160,6 @@ Roadmap PR18.
 
 | Roadmap item | Planned scope |
 |---|---|
-| PR17 | Date/shift-filtered Receive, Issue, and Equipment Verify Checklist reports |
 | PR18 | PDF export, Excel export, and print-ready Hard Copy templates |
 | PR19 | Legacy Import Foundation |
 | PR20 | Equipment Master Import: BCM, Item Number, equipment attributes, existing hospital QR linkage, equipment duplicate detection, and equipment-record validation |
