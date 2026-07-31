@@ -19,6 +19,7 @@ verification passes.
 | TD-004 | Naive `datetime.utcnow()` usage | Low | Open | Governance Pack inventory | Multiple backend models/services | Backend Engineer | 2026-07-17 |
 | TD-005 | Temporary default/long-lived branch structure | Medium | Open | Repository cleanup assessment | Recall default; `claude/*` active base | Repository Owner | 2026-07-17 |
 | TD-006 | Frontend still submits the retired receipt `condition` field | High | Closed | Roadmap PR8B implementation | `frontend/src/services/borrow.ts`, `types/index.ts`, `pages/ReturnPage.tsx`; `docs/api/receipt.md` | Frontend Engineer | 2026-07-23 |
+| TD-007 | Legacy `GET /reports/export` has no CSV/XLSX formula-injection defense | Low | Open | Roadmap PR16 design review, formally logged during Roadmap PR18A design | `backend/app/services/report_service.py` | Backend Engineer | 2026-07-31 |
 
 ## TD-001 — Equipment update/status response `MissingGreenlet` (Closed)
 
@@ -150,3 +151,45 @@ verification passes.
   `f923f0aec8aa79fb4c33d2c1b0c05c08a057fe17`) — see `docs/DECISION_LOG.md`
   ("Roadmap PR8 (PR8C slice)") and `docs/ROADMAP.md`. **Roadmap PR8 (PR8A,
   PR8B, and PR8C) is now fully complete.**
+
+## TD-007 — Legacy `GET /reports/export` has no CSV/XLSX formula-injection defense (Open)
+
+- **Description:** The pre-existing `GET /reports/export` endpoint
+  (`backend/app/api/v1/reports.py`, `backend/app/services/report_service.py`)
+  writes free-text `BorrowTransaction` fields (e.g. `borrower_name`) into
+  CSV/XLSX cell values without escaping a leading `=`, `+`, `-`, or `@` — a
+  formula-injection risk if the exported file is later opened in a
+  spreadsheet application that interprets such cells as formulas. This
+  endpoint predates Roadmap PR16/PR17's report family (`GET /reports/receive`,
+  `GET /reports/issue`, `GET /reports/equipment-verify-checklist`) and is
+  unrelated to it — it exports raw `BorrowTransaction` rows using retired
+  fields (`due_at`, `condition_on_return`) with no `business_date`/`shift`
+  filtering.
+- **Operational impact:** Low — requires a malicious or malformed
+  `borrower_name` (or other free-text field reaching this export) to already
+  exist in the database, and requires the recipient to open the exported
+  file in a spreadsheet application vulnerable to formula-cell
+  interpretation. No known exploitation; flagged as a hygiene gap, not an
+  active incident.
+- **Why deferred:** First identified during Roadmap PR16's design review
+  (`docs/design/PR16_REPORTING_FOUNDATION_PLAN.md` §12, "noted for
+  completeness... a latent gap that predates PR16") as context for a future
+  PR18 (export) design, but never formally logged in this register until
+  Roadmap PR18A's design investigation (`docs/design/PR18_PRINTING_EXPORT_ARCHITECTURE_PLAN.md`
+  §2, §19) surfaced it again. Roadmap PR18's new export endpoints
+  (Receive/Issue/Equipment Verify Checklist) are a separate code path from
+  this legacy endpoint and are designed with formula-injection defense from
+  the start (`docs/design/PR18_PRINTING_EXPORT_ARCHITECTURE_PLAN.md` §9) —
+  fixing this endpoint's own pre-existing instance of the gap remains
+  out of that design's scope, since the endpoint itself is a candidate for
+  retirement, not extension (`docs/design/PR18_PRINTING_EXPORT_ARCHITECTURE_PLAN.md`
+  §14).
+- **Resolution trigger:** Either (a) a Repository-Owner-approved
+  implementation slice retires `GET /reports/export` once the new
+  Roadmap PR18 export endpoints ship and no external consumer is found to
+  depend on the legacy endpoint, closing this row as moot, or (b) if a
+  dependency is found and the endpoint must remain, a small, focused fix
+  applying the same escaping convention as the new PR18 export code.
+- **Verification to close:** Either the endpoint no longer exists, or a
+  regression test proves a deliberately formula-shaped free-text input is
+  escaped in both the CSV and XLSX output paths.
