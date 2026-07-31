@@ -517,6 +517,10 @@ an arbitrary URL supplied by an operator.
 - All formats use Unicode end to end.
 - Dates/times display in the approved hospital timezone while retaining typed
   values in `.xlsx`.
+- The current frontend font stack names `Noto Sans Thai` but does not bundle a
+  Thai webfont. PR18C must close that deployment gap with an approved,
+  self-hosted font asset rather than assume it exists on every hospital
+  workstation.
 - PDF must embed a licensed Thai-capable font so output does not depend on
   workstation fonts.
 - Browser print uses a Thai-capable webfont with a documented fallback stack.
