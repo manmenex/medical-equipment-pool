@@ -47,15 +47,14 @@ Sources: `docs/PROJECT_PLAYBOOK.md`, `docs/ARCHITECTURE_GUARDRAILS.md`,
 
 ## Current baseline and Roadmap
 
-Current baseline: `d4aaf0f08016b6e63774a06cdade5afe4737d3f7`.
-Roadmap PR17 (Operational Reports) completed through GitHub PR #68, squash SHA
-`d4aaf0f` (design GitHub PR #63 `b935ac2`; #65 `ddb9733`, #66 `aeafb81`, #67
-`8a1a280`, #68 `d4aaf0f`) — the design plus all four Implementation Slices are
-merged. Roadmap PR16 (Reporting Foundation, GitHub PR #58 `e8ef4da`, #59
-`bd4a02b`, #60 `6a28d73`, #61 `ac19505`) and Roadmap PR15B Schema Hygiene
-(GitHub PR #54) remain implemented. GitHub PR #69 is the documentation/
-governance post-merge baseline sync for Roadmap PR17; it is not a Roadmap
-implementation PR.
+Current baseline: `6ba2c666a11043d03669abdb65f966061dd02cfa`.
+Roadmap PR18A (Printing and Export Architecture design) merged as GitHub PR
+#71, squash SHA `6ba2c66`, on top of GitHub PR #70 (`bc9e43b`, focused
+operator-options cursor-hygiene maintenance) and GitHub PR #69 (`9b2fc1a`,
+post-PR17 governance sync). Roadmap PR18A is a design-only approval: no browser
+print UI, PDF generation, Excel generation, export routes, DTOs, dependencies,
+migrations, API behavior, frontend behavior, or business rules were
+implemented.
 
 Equipment Verify Checklist means a read-only, current-state Equipment
 master-data snapshot (Owner Decision #1, resolved to interpretation A) — not
@@ -64,11 +63,17 @@ operator, condition, pass/fail state, or reconciliation outcome, and
 introduces no new equipment lifecycle state. Physical verification remains
 out of scope, unscheduled future work.
 
-The next planned work is Roadmap PR18 — PDF, Excel, and print-ready Hard
-Copy output for the PR17 reports. The approved sequence is:
+Roadmap PR17 remains complete. The next planned implementation work is PR18B
+— the shared backend dataset and document model slice from the approved PR18A
+design (`docs/design/PR18_PRINTING_EXPORT_PLAN.md`). PDF, Excel, and browser
+print output are **not implemented yet**. The approved sequence is:
 
-- PR18: PDF/Excel/Hard Copy output for Receive, Issue, and Equipment Verify
-  Checklist reports;
+- PR18B: shared backend dataset and document model;
+- PR18C: browser print presentation;
+- PR18D: backend PDF export;
+- PR18E: Excel `.xlsx` export;
+- PR18F: post-implementation governance synchronization after all approved
+  PR18 output slices merge;
 - PR19–PR22: legacy import foundation, Equipment Master, AppSheet Receive/Issue
   history, validation and reconciliation;
 - PR23: cutover readiness;
@@ -76,6 +81,10 @@ Copy output for the PR17 reports. The approved sequence is:
 
 Roadmap numbers and GitHub PR numbers are independent. Legacy migration is
 mandatory before Go-live.
+
+PR18A leaves three Owner Decisions open before dependent implementation can
+merge: export extent, branding configuration ownership, and maximum synchronous
+output size.
 
 Sources: `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`,
 `docs/audits/04-consolidated-implementation-plan.md`.

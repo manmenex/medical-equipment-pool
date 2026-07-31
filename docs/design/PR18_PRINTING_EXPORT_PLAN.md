@@ -1,15 +1,14 @@
 # Roadmap PR18A — Printing and Export Architecture
 
-**Status:** Draft design proposal under review. Not yet approved. No PR18
-runtime implementation exists.
-**Purpose:** Proposed implementation design for Roadmap PR18. This document
-becomes authoritative for PR18 implementation only after architecture review
-and Repository Owner approval — until then, everything below is a
-recommendation, not an approved decision.
+**Status:** Approved architecture design, merged as GitHub PR #71
+(`6ba2c666a11043d03669abdb65f966061dd02cfa`). No PR18 runtime
+implementation exists yet.
+**Purpose:** Implementation design for Roadmap PR18. This document is
+authoritative for the approved PR18A architecture, subject to the unresolved
+Owner Decisions explicitly listed in §23.
 **Authority:** This document is subordinate to `AGENTS.md`,
 `docs/PROJECT_PLAYBOOK.md`, accepted architecture decisions, and the Roadmap
-scope in `docs/audits/04-consolidated-implementation-plan.md`. It does not
-carry authority itself while in Draft.
+scope in `docs/audits/04-consolidated-implementation-plan.md`.
 **Baseline investigated:** `bc9e43b120aa7d0c4cfa6471be577f92ea910214`
 (GitHub PR #70, cursor-hygiene maintenance after Roadmap PR17 completion).
 **Repository:** Medical Equipment Pool. This is not MEMS or Recall Monitor.

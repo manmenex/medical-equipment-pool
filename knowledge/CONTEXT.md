@@ -10,20 +10,21 @@ ordering
 
 ## Current baseline
 
-Current baseline: `d4aaf0f08016b6e63774a06cdade5afe4737d3f7` on
-`claude/medical-equipment-pool-0c7fz0` — Roadmap PR17 (Operational Reports)
-completed through GitHub PR #68, squash SHA `d4aaf0f` (design GitHub PR #63
-`b935ac2`; #65 `ddb9733`, #66 `aeafb81`, #67 `8a1a280`, #68 `d4aaf0f`).
-Roadmap PR16 (Reporting Foundation, GitHub PR #58 `e8ef4da`, #59 `bd4a02b`,
-#60 `6a28d73`, #61 `ac19505`) and Roadmap PR15B Schema Hygiene (GitHub PR
-#54) remain implemented.
+Current baseline: `6ba2c666a11043d03669abdb65f966061dd02cfa` on
+`claude/medical-equipment-pool-0c7fz0` — GitHub PR #71, the merged Roadmap
+PR18A printing/export architecture design. It is based on GitHub PR #70
+(`bc9e43b`, focused operator-options cursor-hygiene maintenance), GitHub PR
+#69 (`9b2fc1a`, post-PR17 governance sync), and GitHub PR #68 (`d4aaf0f`,
+Roadmap PR17 Slice 4). Roadmap PR17 (Operational Reports), Roadmap PR16
+(Reporting Foundation), and Roadmap PR15B Schema Hygiene remain implemented.
 
 ## Current work
 
-GitHub PR #69 is a documentation/governance post-merge baseline sync for
-Roadmap PR17 (design plus all four Implementation Slices). It is not a
-Roadmap implementation PR and changes no application code, migration,
-schema, API behavior, frontend behavior, or business rule.
+Roadmap PR18A is complete as a merged design document:
+`docs/design/PR18_PRINTING_EXPORT_PLAN.md`. It is not runtime implementation.
+No browser print UI, PDF generation, Excel generation, export routes, DTOs,
+dependencies, migrations, API behavior, frontend behavior, or business rules
+were implemented by PR #71.
 
 ## Next sequence
 
@@ -33,22 +34,28 @@ eligibility/semantics/ordering, cursor-paginated, and Thai-first on the
 frontend. Equipment Verify Checklist is a read-only, current-state Equipment
 master-data snapshot (Owner Decision #1, resolved to interpretation A) — no
 physical-verification workflow, no verification-event storage, no new
-equipment lifecycle state. The next planned work is Roadmap PR18 — PDF,
-Excel, and print-ready Hard Copy output for the PR17 reports.
+equipment lifecycle state. Roadmap PR18A design is merged. The next planned
+implementation work is PR18B — the shared backend dataset and document model
+slice for browser print/PDF/Excel output. PDF, Excel, and browser print are
+not implemented yet.
 
-1. PR18 — PDF, Excel, and print-ready Hard Copy output.
-2. PR19 — Legacy Import Foundation.
-3. PR20 — Equipment Master Import: BCM, Item Number, equipment attributes,
+1. PR18B — Shared backend dataset and document model.
+2. PR18C — Browser print presentation.
+3. PR18D — Backend PDF export.
+4. PR18E — Excel `.xlsx` export.
+5. PR18F — Post-implementation governance synchronization.
+6. PR19 — Legacy Import Foundation.
+7. PR20 — Equipment Master Import: BCM, Item Number, equipment attributes,
    existing hospital QR linkage, equipment duplicate detection, and
    equipment-record validation.
-4. PR21 — AppSheet Receive and Issue history import: legacy BME-name
+8. PR21 — AppSheet Receive and Issue history import: legacy BME-name
    preservation and user mapping, Ward normalization and mapping,
    transaction-row duplicate detection, and transaction source references.
-5. PR22 — Validation and reconciliation: cross-import validation,
+9. PR22 — Validation and reconciliation: cross-import validation,
    reconciliation, source traceability verification, duplicate review, and
    unified legacy/new history validation.
-6. PR23 — Cutover readiness.
-7. PR24 — Go-live / deployment.
+10. PR23 — Cutover readiness.
+11. PR24 — Go-live / deployment.
 
 Legacy migration and reconciliation are mandatory before PR24.
 
@@ -70,6 +77,9 @@ Legacy migration and reconciliation are mandatory before PR24.
 - Branch protection is not enabled; required CI remains a documented manual
   merge gate.
 - The default branch still has a temporary `claude/*` name.
+- PR18B must resolve or explicitly gate any behavior depending on PR18A's open
+  Owner Decisions: export extent, branding configuration ownership, and maximum
+  synchronous output size.
 - PR19 must define the import framework and source mappings; PR20 must define
   Equipment Master matching/validation; PR21 must define transaction
   BME-name/user and Ward mappings; PR22 must define cross-import validation

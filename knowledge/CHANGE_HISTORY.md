@@ -21,6 +21,20 @@ transaction duplicates, and source references belong to PR21; cross-import
 validation and reconciliation belong to PR22.
 See `docs/ROADMAP.md` and `docs/DECISION_LOG.md`.
 
+## Printing/export architecture approved (Roadmap PR18A)
+
+Roadmap PR18A merged the architecture design for browser print, backend PDF
+export, and Excel `.xlsx` export for the three PR17 reports. The approved
+direction keeps PR17 report semantics as the backend source of truth and adds
+an output layer around them: a shared backend dataset/document-model slice
+first, then browser print, PDF, Excel, and a final governance sync. The design
+does **not** implement any PR18 runtime behavior yet and leaves three Owner
+Decisions open before dependent implementation can merge: export extent,
+branding configuration ownership, and maximum synchronous output size.
+Merged as GitHub PR #71, squash SHA `6ba2c666a11043d03669abdb65f966061dd02cfa`.
+See `docs/design/PR18_PRINTING_EXPORT_PLAN.md` and `docs/DECISION_LOG.md`
+("Roadmap PR18A printing/export architecture design").
+
 ## Cleaning status removed
 
 A cleaning status/workflow was proposed early (a two-step "Return Received" / "Cleaning Confirmed" process, `docs/audits/03-hospital-equipment-pool-workflow-audit.md` §6.1) and explicitly superseded before implementation: the hospital confirmed receipt is one atomic usable/defective operation, and the system never tracks cleaning. See `docs/ARCHITECTURE_DECISIONS.md` ("No cleaning workflow").
@@ -207,4 +221,4 @@ Roadmap PR17 ships across four Implementation Slices, per the architecture-appro
 
 The `list_operators` gap noted above is resolved: `app/crud/user.py::list_operators` now validates the decoded cursor's UUID before any query executes (mirroring `equipment_crud.list_for_verify_checklist`'s established convention from GitHub PR #68), and raises the existing `InvalidInputError` (`400 INVALID_INPUT`) for a structurally well-formed alpha cursor whose id is not a real UUID, the same as every other cursor-consuming endpoint in the codebase. Covered by `backend/tests/test_operator_options_cursor_validation.py`. This was a narrowly scoped maintenance fix — no runtime contract, response schema, migration, or business semantics changed, and it did not begin Roadmap PR18.
 
-Merged as GitHub PR #68, squash SHA `d4aaf0f08016b6e63774a06cdade5afe4737d3f7`, from branch `feature/pr17-slice4-equipment-verify-checklist`, baseline `8a1a28042e791bd321a67d4dae7a7b46ab0f8f6c` (Slice 3's squash merge). See `docs/DECISION_LOG.md` ("Roadmap PR17 — Owner Decision #1 (Equipment Verify Checklist Definition)" and "Roadmap PR17 — Operational Reports Complete") for the full slice-by-slice implementation and review chronology, and `docs/ROADMAP.md`/`docs/ROADMAP_STATUS.md` for the updated baseline. **Roadmap PR17 is now fully complete.** No new equipment lifecycle state, no change to `TransactionOut`, no physical-verification workflow, and no database migration were introduced anywhere in Roadmap PR17. The next planned item is Roadmap PR18 (PDF export, Excel export, and print-ready Hard Copy templates for the PR17 reports).
+Merged as GitHub PR #68, squash SHA `d4aaf0f08016b6e63774a06cdade5afe4737d3f7`, from branch `feature/pr17-slice4-equipment-verify-checklist`, baseline `8a1a28042e791bd321a67d4dae7a7b46ab0f8f6c` (Slice 3's squash merge). See `docs/DECISION_LOG.md` ("Roadmap PR17 — Owner Decision #1 (Equipment Verify Checklist Definition)" and "Roadmap PR17 — Operational Reports Complete") for the full slice-by-slice implementation and review chronology, and `docs/ROADMAP.md`/`docs/ROADMAP_STATUS.md` for the updated baseline. **Roadmap PR17 is now fully complete.** No new equipment lifecycle state, no change to `TransactionOut`, no physical-verification workflow, and no database migration were introduced anywhere in Roadmap PR17. Roadmap PR18A design has since merged; PR18B is the next implementation step.
