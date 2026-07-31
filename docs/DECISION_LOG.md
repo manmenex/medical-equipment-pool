@@ -380,3 +380,29 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
 - **Source:** `docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md` (GitHub PR #63, architecture-approved); Owner Decision #1 (see the entry above, GitHub PR #68). Slices implemented sequentially, each branched from the previous slice's own squash-merge SHA: Slice 1 baseline `b935ac2`; Slice 2 baseline `ddb9733`; Slice 3 baseline `aeafb81`; Slice 4 baseline `8a1a280`, incrementally fixed (Owner Decision #1 documentation consistency, cursor validation) and merged as squash SHA `d4aaf0f`.
 - **Status:** Merged. GitHub PRs #63 (`b935ac2`), #65 (`ddb9733`), #66 (`aeafb81`), #67 (`8a1a280`), #68 (`d4aaf0f`) — all four Implementation Slices and the design are complete. This entry is the Final Slice per the design's own §17 rule: condition 1 (Owner Decision #1 resolved to interpretation A, and Slice 4 merged) is satisfied.
 - **Consequences:** **Roadmap PR17 (Operational Reports) is now fully complete.** Receive, Issue, and Equipment Verify Checklist reports are all implemented, backend-owned for eligibility/semantics/ordering, cursor-paginated, and Thai-first on the frontend. No new equipment lifecycle state, no change to `TransactionOut`, no physical-verification workflow, and no database migration were introduced anywhere in Roadmap PR17. No changes to any other Roadmap PR's scope, dispatch/receipt/ward-correction/status-transition logic, or business workflow. The next planned item is Roadmap PR18 (PDF export, Excel export, and print-ready Hard Copy templates for the PR17 reports).
+
+## Roadmap PR18A — Open Owner Decisions for Printing and Export
+
+- **Status:** Requested; unresolved. These are not approved decisions.
+- **Source:** `docs/design/PR18_PRINTING_EXPORT_PLAN.md` §23, investigated
+  against baseline `bc9e43b120aa7d0c4cfa6471be577f92ea910214`.
+- **Owner Decision #1 — Export extent:** Confirm whether browser print, PDF,
+  and `.xlsx` contain all rows matching the active PR17 filters (recommended,
+  subject to synchronous limits) or only the currently visible cursor page.
+  Existing Roadmap authority requires exportable reports but does not state the
+  extent explicitly.
+- **Owner Decision #2 — Branding configuration ownership:** Choose
+  deployment/environment-managed hospital branding (recommended for Version
+  1), Administrator-managed application settings, or the neutral no-hospital-
+  identity fallback. No hospital or department identity may be hardcoded.
+- **Owner Decision #3 — Maximum synchronous output size:** Approve per-format
+  row limits and the operator-facing behavior when a limit is exceeded. The
+  legacy 50,000-row exporter is implementation precedent, not approval for
+  PR18. PDF and `.xlsx` may require different limits.
+- **Not an Owner Decision:** Dedicated output routes, an internal
+  output-neutral document model, backend-generated PDF, and the `.xlsx`
+  adapter are architecture recommendations under review, not approved
+  decisions. PDF and Excel both remain committed Roadmap PR18 scope.
+- **Implementation effect:** PR18 implementation must not silently resolve any
+  of the three questions above. No PR18 runtime implementation exists at this
+  entry.

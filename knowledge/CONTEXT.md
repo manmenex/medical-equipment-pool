@@ -10,20 +10,25 @@ ordering
 
 ## Current baseline
 
-Current baseline: `d4aaf0f08016b6e63774a06cdade5afe4737d3f7` on
-`claude/medical-equipment-pool-0c7fz0` — Roadmap PR17 (Operational Reports)
-completed through GitHub PR #68, squash SHA `d4aaf0f` (design GitHub PR #63
-`b935ac2`; #65 `ddb9733`, #66 `aeafb81`, #67 `8a1a280`, #68 `d4aaf0f`).
-Roadmap PR16 (Reporting Foundation, GitHub PR #58 `e8ef4da`, #59 `bd4a02b`,
-#60 `6a28d73`, #61 `ac19505`) and Roadmap PR15B Schema Hygiene (GitHub PR
-#54) remain implemented.
+Current baseline: `bc9e43b120aa7d0c4cfa6471be577f92ea910214` on
+`claude/medical-equipment-pool-0c7fz0` — GitHub PR #70, the focused
+operator-options cursor-hygiene maintenance fix after GitHub PR #69's
+post-PR17 governance synchronization (`9b2fc1a`). Roadmap PR17 remains fully
+complete through design GitHub PR #63 and implementation PRs #65–#68. Roadmap
+PR16 and Roadmap PR15B remain implemented.
 
 ## Current work
 
-GitHub PR #69 is a documentation/governance post-merge baseline sync for
-Roadmap PR17 (design plus all four Implementation Slices). It is not a
-Roadmap implementation PR and changes no application code, migration,
-schema, API behavior, frontend behavior, or business rule.
+Roadmap PR18A is the active work: documentation-only architecture for browser
+print, backend-generated PDF, and Excel `.xlsx` output for the three PR17
+reports. The design is in progress on
+`docs/pr18-printing-export-design` at baseline `bc9e43b`; no PR18 route, DTO,
+renderer, dependency, frontend output control, test, migration, or runtime
+behavior exists yet.
+
+GitHub PR #70 maintenance is merged and the previously recorded
+`list_operators` non-UUID cursor-hygiene gap is fully closed. It did not begin
+Roadmap PR18.
 
 ## Next sequence
 
@@ -33,10 +38,11 @@ eligibility/semantics/ordering, cursor-paginated, and Thai-first on the
 frontend. Equipment Verify Checklist is a read-only, current-state Equipment
 master-data snapshot (Owner Decision #1, resolved to interpretation A) — no
 physical-verification workflow, no verification-event storage, no new
-equipment lifecycle state. The next planned work is Roadmap PR18 — PDF,
-Excel, and print-ready Hard Copy output for the PR17 reports.
+equipment lifecycle state. Roadmap PR18 is now in design; implementation has
+not started.
 
-1. PR18 — PDF, Excel, and print-ready Hard Copy output.
+1. PR18 — Browser print, PDF, and Excel `.xlsx` output (PR18A design in
+   progress; runtime not started).
 2. PR19 — Legacy Import Foundation.
 3. PR20 — Equipment Master Import: BCM, Item Number, equipment attributes,
    existing hospital QR linkage, equipment duplicate detection, and

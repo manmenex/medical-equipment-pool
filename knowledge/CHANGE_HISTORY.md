@@ -207,4 +207,28 @@ Roadmap PR17 ships across four Implementation Slices, per the architecture-appro
 
 The `list_operators` gap noted above is resolved: `app/crud/user.py::list_operators` now validates the decoded cursor's UUID before any query executes (mirroring `equipment_crud.list_for_verify_checklist`'s established convention from GitHub PR #68), and raises the existing `InvalidInputError` (`400 INVALID_INPUT`) for a structurally well-formed alpha cursor whose id is not a real UUID, the same as every other cursor-consuming endpoint in the codebase. Covered by `backend/tests/test_operator_options_cursor_validation.py`. This was a narrowly scoped maintenance fix — no runtime contract, response schema, migration, or business semantics changed, and it did not begin Roadmap PR18.
 
-Merged as GitHub PR #68, squash SHA `d4aaf0f08016b6e63774a06cdade5afe4737d3f7`, from branch `feature/pr17-slice4-equipment-verify-checklist`, baseline `8a1a28042e791bd321a67d4dae7a7b46ab0f8f6c` (Slice 3's squash merge). See `docs/DECISION_LOG.md` ("Roadmap PR17 — Owner Decision #1 (Equipment Verify Checklist Definition)" and "Roadmap PR17 — Operational Reports Complete") for the full slice-by-slice implementation and review chronology, and `docs/ROADMAP.md`/`docs/ROADMAP_STATUS.md` for the updated baseline. **Roadmap PR17 is now fully complete.** No new equipment lifecycle state, no change to `TransactionOut`, no physical-verification workflow, and no database migration were introduced anywhere in Roadmap PR17. The next planned item is Roadmap PR18 (PDF export, Excel export, and print-ready Hard Copy templates for the PR17 reports).
+Roadmap PR17 Slice 4 merged as GitHub PR #68 (`d4aaf0f`), its final
+governance synchronization merged as GitHub PR #69 (`9b2fc1a`), and the
+cursor-hygiene maintenance fix above merged as GitHub PR #70
+(`bc9e43b120aa7d0c4cfa6471be577f92ea910214`). See
+`docs/DECISION_LOG.md` ("Roadmap PR17 — Owner Decision #1 (Equipment Verify
+Checklist Definition)" and "Roadmap PR17 — Operational Reports Complete") for
+the full implementation chronology. Roadmap PR17 remains fully complete. No
+new equipment lifecycle state, physical-verification workflow, or database
+migration was introduced by PR17.
+
+## Printing and export architecture started (Roadmap PR18A)
+
+Roadmap PR18 is now in its documentation-only architecture stage at baseline
+`bc9e43b120aa7d0c4cfa6471be577f92ea910214`. The proposed design keeps PR17
+eligibility, filters, authorization, information boundaries, and ordering in
+the backend and introduces one internal output-neutral document model feeding
+browser print, backend-generated PDF, and Excel `.xlsx` adapters. It does not
+extend the legacy unfiltered `/reports/export` path into a second reporting
+engine.
+
+This is design in progress, not implementation or an approved decision record.
+No PR18 route, DTO, renderer, dependency, frontend behavior, migration, or
+business rule exists yet. Export extent, branding configuration ownership, and
+maximum synchronous row limits remain explicit Owner Decisions in
+`docs/design/PR18_PRINTING_EXPORT_PLAN.md`.
