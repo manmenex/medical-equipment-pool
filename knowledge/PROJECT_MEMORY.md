@@ -42,19 +42,29 @@ async SQLAlchemy, and Alembic migrations. Audit records use the canonical audit
 writer and validated request/correlation context. Production behavior must not
 depend on SQLite test behavior or direct access to hospital-managed servers.
 
+PR18B adds one canonical, output-neutral `ExportDocument` model for all three
+PR17 report families. Stable report identities, export metadata, deterministic
+typed columns/rows, and schema invariants are centralized in that model.
+Receive, Issue, and Equipment Verify Checklist builders reuse the existing
+PR17 report semantics and bounded full-filtered query paths; export is not a
+second reporting engine. Internal `GET /reports/{report_id}/print-data` maps
+the model to a separate API DTO, enforces each report's supported filters, and
+returns human-readable applied-filter metadata. Operator names resolve only
+within the same transaction-referenced historical-operator information
+boundary as `/report-options/operators`. Browser Print, PDF, and Excel remain
+separate output adapters.
+
 Sources: `docs/PROJECT_PLAYBOOK.md`, `docs/ARCHITECTURE_GUARDRAILS.md`,
 `docs/ARCHITECTURE_DECISIONS.md`.
 
 ## Current baseline and Roadmap
 
-Current baseline: `6ba2c666a11043d03669abdb65f966061dd02cfa`.
-Roadmap PR18A (Printing and Export Architecture design) merged as GitHub PR
-#71, squash SHA `6ba2c66`, on top of GitHub PR #70 (`bc9e43b`, focused
-operator-options cursor-hygiene maintenance) and GitHub PR #69 (`9b2fc1a`,
-post-PR17 governance sync). Roadmap PR18A is a design-only approval: no browser
-print UI, PDF generation, Excel generation, export routes, DTOs, dependencies,
-migrations, API behavior, frontend behavior, or business rules were
-implemented.
+Current baseline: `c72929ba4649fd75d1f81e4630b4e4feb3d136be`.
+Roadmap PR18B merged as GitHub PR #73, squash SHA `c72929b`, on top of GitHub
+PR #72 (`e1b358a`, post-PR18A governance synchronization) and GitHub PR #71
+(`6ba2c66`, the approved PR18A architecture design). PR18B implements only the
+backend export foundation. It introduced no migration or equipment lifecycle
+change and does not implement Browser Print, PDF, or Excel output.
 
 Equipment Verify Checklist means a read-only, current-state Equipment
 master-data snapshot (Owner Decision #1, resolved to interpretation A) — not
@@ -63,12 +73,11 @@ operator, condition, pass/fail state, or reconciliation outcome, and
 introduces no new equipment lifecycle state. Physical verification remains
 out of scope, unscheduled future work.
 
-Roadmap PR17 remains complete. The next planned implementation work is PR18B
-— the shared backend dataset and document model slice from the approved PR18A
-design (`docs/design/PR18_PRINTING_EXPORT_PLAN.md`). PDF, Excel, and browser
-print output are **not implemented yet**. The approved sequence is:
+Roadmap PR17 remains complete. Roadmap PR18A design and PR18B backend export
+foundation are merged; Roadmap PR18 remains incomplete. The next planned
+implementation work is PR18C Browser Print. PDF, Excel, and Browser Print
+output are **not implemented yet**. The remaining approved sequence is:
 
-- PR18B: shared backend dataset and document model;
 - PR18C: browser print presentation;
 - PR18D: backend PDF export;
 - PR18E: Excel `.xlsx` export;
@@ -82,9 +91,11 @@ print output are **not implemented yet**. The approved sequence is:
 Roadmap numbers and GitHub PR numbers are independent. Legacy migration is
 mandatory before Go-live.
 
-PR18A leaves three Owner Decisions open before dependent implementation can
-merge: export extent, branding configuration ownership, and maximum synchronous
-output size.
+PR18A Owner Decisions #1 and #3 are resolved and implemented by PR18B: export
+covers every row matching the active filters up to the 5,000-row synchronous
+bound, never only the visible cursor page. Owner Decision #2, branding
+configuration ownership, remains open for the first future slice that depends
+on it.
 
 Sources: `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`,
 `docs/audits/04-consolidated-implementation-plan.md`.
