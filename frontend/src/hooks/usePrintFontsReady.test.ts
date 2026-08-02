@@ -1,33 +1,41 @@
 import { renderHook, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { usePrintFontsReady } from "@/hooks/usePrintFontsReady";
 
-// Roadmap PR18C review (second round, PR18C-H1R): print readiness must be
-// fail-closed (a rejected check must land on "error", never "ready") and
-// tied to the specific document/render currently on screen (a stale
-// check's late completion must never override a newer document's status).
+// Roadmap PR18C review (third round, PR18C-H1R2): print readiness must be
+// fail-closed (a genuine font-load failure must land on "error", never
+// "ready") and tied to the specific document/render currently on screen (a
+// stale check's late completion must never override a newer document's
+// status). This is implemented via `document.fonts.load()`, whose returned
+// promise the CSS Font Loading Module Level 3 spec defines to reject on a
+// network/parse failure -- unlike `document.fonts.ready`, which is
+// specified to never reject and so cannot detect a load failure at all
+// (see the hook's own comment for the full explanation). These tests stub
+// `document.fonts.load` as a controllable promise rather than
+// `document.fonts.ready`.
 
-let installedFontFaceSets: { resolve: () => void; reject: () => void }[] = [];
+let installedFontLoads: { resolve: () => void; reject: () => void }[] = [];
 
-function installControllableFonts(): { resolve: () => void; reject: () => void } {
+function installControllableFonts(): { resolve: () => void; reject: () => void; loadMock: ReturnType<typeof vi.fn> } {
   let resolve!: () => void;
   let reject!: () => void;
   const promise = new Promise<void>((res, rej) => {
     resolve = res;
     reject = rej;
   });
+  const loadMock = vi.fn(() => promise);
   Object.defineProperty(document, "fonts", {
     configurable: true,
-    value: { ready: promise },
+    value: { load: loadMock },
   });
-  const controls = { resolve, reject };
-  installedFontFaceSets.push(controls);
+  const controls = { resolve, reject, loadMock };
+  installedFontLoads.push(controls);
   return controls;
 }
 
 beforeEach(() => {
-  installedFontFaceSets = [];
+  installedFontLoads = [];
 });
 
 afterEach(() => {
@@ -40,7 +48,20 @@ describe("usePrintFontsReady", () => {
     expect(result.current.status).toBe("pending");
   });
 
-  it("becomes ready once the current document's font check resolves", async () => {
+  it("requests document.fonts.load() for both declared weights (400 and 700) of the print font, not document.fonts.ready", async () => {
+    const { loadMock, resolve } = installControllableFonts();
+    renderHook(({ doc }) => usePrintFontsReady(doc), {
+      initialProps: { doc: { id: "doc-a" } as unknown },
+    });
+
+    expect(loadMock).toHaveBeenCalledWith('400 16px "Noto Sans Thai"', expect.any(String));
+    expect(loadMock).toHaveBeenCalledWith('700 16px "Noto Sans Thai"', expect.any(String));
+
+    resolve();
+    await waitFor(() => {});
+  });
+
+  it("becomes ready once the current document's font-load check resolves", async () => {
     const fonts = installControllableFonts();
     const { result } = renderHook(({ doc }) => usePrintFontsReady(doc), {
       initialProps: { doc: { id: "doc-a" } as unknown },
@@ -51,7 +72,11 @@ describe("usePrintFontsReady", () => {
     await waitFor(() => expect(result.current.status).toBe("ready"));
   });
 
-  it("is fail-closed: a rejected font check lands on error, never ready", async () => {
+  // Roadmap PR18C review (third round, PR18C-H1R2): `document.fonts.load()`
+  // is the API that genuinely rejects on a network/parse failure -- this
+  // proves the hook is fail-closed against that real rejection, not a
+  // fabricated one.
+  it("is fail-closed: a rejected document.fonts.load() lands on error, never ready", async () => {
     const fonts = installControllableFonts();
     const { result } = renderHook(({ doc }) => usePrintFontsReady(doc), {
       initialProps: { doc: { id: "doc-a" } as unknown },

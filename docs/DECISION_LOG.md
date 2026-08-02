@@ -185,18 +185,31 @@
     returning a structured `400 INVALID_INPUT` for one that doesn't, surfaced
     here as a visible error rather than silently discarded on the frontend.
     The Print button is enabled only once all of the following hold: the
-    current print-data request succeeded, the current `PrintDocumentOut` has
-    rendered, and that document's own font-readiness check
-    (`frontend/src/hooks/usePrintFontsReady.ts`, subscribing to
-    `document.fonts.ready`) resolved successfully (design §9: "invokes the
-    browser's native print dialog only after data and fonts are ready"). This
-    check is fail-closed — a rejected `document.fonts.ready` lands on an
-    explicit Thai error state with a retry action and never enables Print —
-    and tied to the specific document currently on screen via a monotonically
-    increasing generation token, so a stale check belonging to a
-    since-superseded document can never override a newer document's status.
-    `window.print()` is never auto-invoked, and `handlePrint` itself refuses
-    to call it unless every readiness condition above still holds.
+    current print-data request succeeded, the current `PrintDocumentOut`
+    exists, and that document's own font-readiness check
+    (`frontend/src/hooks/usePrintFontsReady.ts`) resolved successfully
+    (design §9: "invokes the browser's native print dialog only after data
+    and fonts are ready"). **This check is built on `document.fonts.load()`,
+    not `document.fonts.ready`.** Per the CSS Font Loading Module Level 3
+    spec, `FontFaceSet.ready` is defined to only ever fulfill — it "is not
+    rejected" even when an individual font face fails to load — so no
+    `.then(onFulfilled, onRejected)` written against it can ever observe a
+    real font-load failure; an earlier round of this implementation
+    mistakenly relied on that promise's reject branch as a failure detector,
+    which was dead code in every real browser. `FontFaceSet.load(font, text)`
+    is the API the spec defines to reject on a genuine network/parse
+    failure for the specific font(s) requested, so the hook calls it
+    explicitly for both weights (400/700) `print.css` declares. This also
+    removes the original timing concern entirely: because the load is
+    requested directly rather than discovered from rendered content, there
+    is no "before the content has painted" race to guard against. The check
+    is fail-closed — a genuine rejection from `document.fonts.load()` lands
+    on an explicit Thai error state with a retry action and never enables
+    Print — and tied to the specific document currently on screen via a
+    monotonically increasing generation token, so a stale check belonging to
+    a since-superseded document can never override a newer document's
+    status. `window.print()` is never auto-invoked, and `handlePrint` itself
+    refuses to call it unless every readiness condition above still holds.
   - `frontend/src/components/print/PrintDocumentView.tsx`: the purely
     presentational renderer — report title, generation metadata (generated
     time/by/timezone/report identity/template version), the backend-resolved
@@ -245,11 +258,12 @@
   including the fail-closed rejected-font-check path and its retry action,
   `window.print()` never auto-invoked and never reachable while font
   readiness has failed, the on-screen toolbar carrying the `.no-print`
-  class); `frontend/src/hooks/usePrintFontsReady.test.ts` (the fail-closed
-  and stale-result-guard behavior in isolation, including proof that a
-  slow-resolving or slow-rejecting document-A check can never override a
-  newer document-B's status once B has superseded it, and that `retry()`
-  recovers from a failed check); `frontend/src/services/printReports.test.ts`
+  class); `frontend/src/hooks/usePrintFontsReady.test.ts` (proof that
+  `document.fonts.load()`, not `document.fonts.ready`, is what the hook
+  calls; the fail-closed and stale-result-guard behavior in isolation,
+  including proof that a slow-resolving or slow-rejecting document-A check
+  can never override a newer document-B's status once B has superseded it,
+  and that `retry()` recovers from a failed check); `frontend/src/services/printReports.test.ts`
   (exact endpoint/params, `cursor`/`limit` stripped by the service itself
   even when passed directly to it, every other filter — including a
   report-inapplicable or unrecognized one — preserved unchanged); one added
@@ -261,9 +275,19 @@
   §22. Branch `feature/pr18c-browser-print`, baseline
   `c72929ba4649fd75d1f81e4630b4e4feb3d136be` (GitHub PR #73's squash merge).
   Corrected in a second Codex review round (PR18C-H1R/PR18C-H2R) to make
-  print readiness fail-closed and document-identity-aware, and to replace an
-  interim per-report-identity filter allowlist with pagination-only
-  stripping, keeping the backend the sole authority on filter applicability.
+  print readiness document-identity-aware and to replace an interim
+  per-report-identity filter allowlist with pagination-only stripping,
+  keeping the backend the sole authority on filter applicability. Corrected
+  again in a third review round (PR18C-H1R2) after that second round's
+  "fail-closed" font check turned out to rely on `document.fonts.ready`
+  rejecting on font-load failure — which the CSS Font Loading Module Level 3
+  spec defines it to never do (`FontFaceSet.ready` "is not rejected"), so
+  the branch was dead code in every real browser. Replaced with
+  `document.fonts.load()`, the API the spec does define to reject on a
+  genuine network/parse failure, which also removed the original
+  render-timing race entirely since the load is requested explicitly rather
+  than discovered from rendered content. No backend file changed in either
+  correction round; no PR18B behavior affected.
 - **Status:** Implemented in this branch; not yet merged as of this entry.
 - **Consequences:** Receive Report, Issue Report, and Equipment Verify
   Checklist can each now be browser-printed from the merged PR18B foundation.

@@ -52,21 +52,25 @@ function makeDocument(overrides: Partial<PrintDocumentOut> = {}): PrintDocumentO
 }
 
 // jsdom does not implement the Font Loading API -- stubbed here as a
-// controllable promise (resolvable *or* rejectable) so both the "print only
-// after fonts ready" gating and the fail-closed rejection path (design §9;
-// review round 2, PR18C-H1R) can be deterministically observed instead of
-// relying on the component's own environment-detection fallback.
+// controllable promise (resolvable *or* rejectable) returned from
+// `document.fonts.load()`, so both the "print only after fonts ready"
+// gating and the fail-closed rejection path (design §9; review round 3,
+// PR18C-H1R2) can be deterministically observed. `document.fonts.load()`,
+// not `document.fonts.ready`, is stubbed here: per the CSS Font Loading
+// Module Level 3 spec, `document.fonts.ready` never rejects, so it cannot
+// signal a font-load failure -- see hooks/usePrintFontsReady.ts for the
+// full explanation of why this hook uses `load()` instead.
 let resolveFontsReady: () => void;
 let rejectFontsReady: () => void;
 
 function installControllableFonts() {
-  const fontsReadyPromise = new Promise<void>((resolve, reject) => {
+  const fontsLoadPromise = new Promise<void>((resolve, reject) => {
     resolveFontsReady = resolve;
     rejectFontsReady = reject;
   });
   Object.defineProperty(document, "fonts", {
     configurable: true,
-    value: { ready: fontsReadyPromise },
+    value: { load: () => fontsLoadPromise },
   });
 }
 
@@ -202,10 +206,11 @@ describe("ReportPrintPage", () => {
     await waitFor(() => expect(printButton).not.toBeDisabled());
   });
 
-  // Roadmap PR18C review round 2 (PR18C-H1R): readiness is report-loaded AND
-  // rendered AND fonts-ready -- resolving document.fonts.ready early (even
-  // before the report data has arrived) must not enable the Print button by
-  // itself. Proves the fonts.ready subscription is not started at mount.
+  // Roadmap PR18C review round 2 (PR18C-H1R), still true after round 3's
+  // switch to document.fonts.load(): readiness is report-loaded AND
+  // fonts-ready -- resolving the font check early (even before the report
+  // data has arrived) must not enable the Print button by itself. Proves
+  // the font-load check is not started until a document exists.
   it("stays disabled if fonts resolve before the report has loaded, and enables only once the report has also loaded", async () => {
     let resolveReport: (doc: ReturnType<typeof makeDocument>) => void;
     getReportPrintData.mockReturnValue(
@@ -224,8 +229,10 @@ describe("ReportPrintPage", () => {
     await waitFor(() => expect(printButton).not.toBeDisabled());
   });
 
-  // Roadmap PR18C review round 2 (PR18C-H1R): readiness must be fail-closed
-  // -- a rejected font check must never enable Print.
+  // Roadmap PR18C review round 3 (PR18C-H1R2): readiness must be fail-closed
+  // -- a rejected document.fonts.load() check (a real, spec-defined
+  // rejection, not document.fonts.ready which never rejects) must never
+  // enable Print.
   it("is fail-closed: a rejected font readiness check keeps Print disabled and shows a Thai error", async () => {
     renderPage();
     await screen.findByText("รายงานการรับคืน");
@@ -245,8 +252,9 @@ describe("ReportPrintPage", () => {
 
     const fontsRetryButton = await screen.findByRole("button", { name: "ลองใหม่" });
 
-    // A fresh, resolvable fonts.ready promise is what a real browser retry
-    // would observe (e.g. after a transient font-loading failure resolves).
+    // A fresh, resolvable document.fonts.load() promise is what a real
+    // browser retry would observe (e.g. after a transient network failure
+    // resolves on a subsequent attempt).
     installControllableFonts();
     const { default: userEvent } = await import("@testing-library/user-event");
     await userEvent.setup().click(fontsRetryButton);
@@ -283,7 +291,7 @@ describe("ReportPrintPage", () => {
     expect(printSpy).toHaveBeenCalledTimes(1);
   });
 
-  // Roadmap PR18C review round 2 (PR18C-H1R): window.print() must never be
+  // Roadmap PR18C review round 3 (PR18C-H1R2): window.print() must never be
   // reachable while font readiness has failed -- the disabled attribute is
   // the primary guard (a disabled <button> never dispatches a click event),
   // and handlePrint's own `!isReady` check is the defense-in-depth backstop.
