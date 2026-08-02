@@ -229,4 +229,19 @@ describe("EquipmentVerifyChecklistPage", () => {
       })
     );
   });
+
+  // Roadmap PR18C: the print link must carry this page's exact current URL
+  // filters over to the dedicated print view, using the report identity
+  // "equipment-verify-checklist" matches ReportIdentity.
+  it('offers a "พิมพ์รายงาน" link to the print view carrying the current applied filters', async () => {
+    renderPage("/reports/equipment-verify-checklist?status=available_at_pool");
+    await screen.findByText("AST-1");
+
+    const printLink = screen.getByRole("link", { name: "พิมพ์รายงาน" });
+    expect(printLink).toHaveAttribute(
+      "href",
+      "/reports/equipment-verify-checklist/print?status=available_at_pool"
+    );
+    expect(printLink).toHaveAttribute("target", "_blank");
+  });
 });

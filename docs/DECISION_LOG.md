@@ -156,6 +156,166 @@
   PDF, or Excel output exists yet. Roadmap PR18 is not complete. PR18C
   (browser print presentation) is the next planned slice.
 
+## Roadmap PR18C — Browser Print
+
+- **Decision:** Implement the architecture-approved PR18A design's second
+  implementation slice (`docs/design/PR18_PRINTING_EXPORT_PLAN.md` §9/§22
+  "PR18C — Browser print presentation"): a dedicated, Thai-first browser-print
+  view for all three Roadmap PR17 report families, consuming only the merged
+  PR18B `GET /reports/{report_id}/print-data` endpoint. **This slice does not
+  implement PDF or Excel export** — those remain PR18D/PR18E, not started
+  here. No backend file changed; no migration added.
+- **What was built:**
+  - `frontend/src/pages/ReportPrintPage.tsx`: a dedicated print route
+    (`/reports/:reportId/print`), deliberately declared outside the
+    `AppShell`-wrapping route (mirrors `/login`'s own "bare page" shape) so no
+    navigation/dashboard chrome ever appears in the printed output, but still
+    guarded by `ProtectedRoute`. Fetches exactly one `PrintDocumentOut` for the
+    report identity in the URL. The page forwards every query param present
+    on the page that linked here; `frontend/src/services/printReports.ts`'s
+    `getReportPrintData` removes only the two pagination controls (`cursor`,
+    `limit`) that this route never accepts — enforced inside the service
+    itself, not only by page-level preprocessing, so a caller cannot leak
+    pagination parameters through it either way. The print-data endpoint
+    always returns the complete bounded result set for the active filters
+    (Owner Decision #1), never one cursor page. Every other query parameter is
+    forwarded rather than silently removed by frontend logic. What actually
+    happens to a forwarded parameter server-side depends on whether it is one
+    of the eleven filters `GET /reports/{report_id}/print-data`
+    (`backend/app/api/v1/reports.py`) declares in its route signature: a
+    **declared** filter that does not apply to the current report identity is
+    rejected by the already-merged PR18B applicability check
+    (`_reject_inapplicable_print_data_filters`) with a structured
+    `400 INVALID_INPUT`, surfaced here as a visible error rather than
+    silently discarded on the frontend. An **undeclared** query key — one not
+    in that route's parameter list at all — is not bound to anything by
+    FastAPI's request parsing and may currently be ignored server-side
+    without error; this is not the same guarantee as the declared-filter
+    case, and this document does not claim every unknown query parameter
+    produces `400 INVALID_INPUT`. The backend remains authoritative only for
+    the filters actually represented in the endpoint's contract.
+    The Print button is enabled only once all of the following hold: the
+    current print-data request succeeded, the current `PrintDocumentOut`
+    exists, and that document's own font-readiness check
+    (`frontend/src/hooks/usePrintFontsReady.ts`) resolved successfully
+    (design §9: "invokes the browser's native print dialog only after data
+    and fonts are ready"). **This check is built on `document.fonts.load()`,
+    not `document.fonts.ready`.** Per the CSS Font Loading Module Level 3
+    spec, `FontFaceSet.ready` is defined to only ever fulfill — it "is not
+    rejected" even when an individual font face fails to load — so no
+    `.then(onFulfilled, onRejected)` written against it can ever observe a
+    real font-load failure; an earlier round of this implementation
+    mistakenly relied on that promise's reject branch as a failure detector,
+    which was dead code in every real browser. `FontFaceSet.load(font, text)`
+    is the API the spec defines to reject on a genuine network/parse
+    failure for the specific font(s) requested, so the hook calls it
+    explicitly for both weights (400/700) `print.css` declares. This also
+    removes the original timing concern entirely: because the load is
+    requested directly rather than discovered from rendered content, there
+    is no "before the content has painted" race to guard against. The check
+    is fail-closed — a genuine rejection from `document.fonts.load()` lands
+    on an explicit Thai error state with a retry action and never enables
+    Print — and tied to the specific document currently on screen via a
+    monotonically increasing generation token, so a stale check belonging to
+    a since-superseded document can never override a newer document's
+    status. `window.print()` is never auto-invoked, and `handlePrint` itself
+    refuses to call it unless every readiness condition above still holds.
+  - `frontend/src/components/print/PrintDocumentView.tsx`: the purely
+    presentational renderer — report title, generation metadata (generated
+    time/by/timezone/report identity/template version), the backend-resolved
+    human-readable applied-filter summary, row count, and a table using the
+    exact column/row order `PrintDocumentOut` returned. Renders a clear Thai
+    empty-state message for a zero-row document rather than treating it as an
+    error (design §9/§19). No hospital name or logo (Owner Decision #2 remains
+    unresolved) — uses design §16's own explicit interim fallback: a
+    product-neutral Thai title, "Medical Equipment Pool" as a secondary system
+    label, and a neutral footer with report identity/template version/
+    generation time.
+  - `frontend/src/services/printReports.ts` +
+    `frontend/src/types/index.ts` (`PrintDocumentOut`/`PrintColumnOut`/
+    `PrintRowOut`/`PrintMetadataOut`/`PrintFilterSummaryOut`/`ReportIdentity`):
+    the typed client and contract mirroring the backend PR18B DTOs field for
+    field (pagination-stripping behavior described above).
+  - `frontend/src/styles/print.css`: print CSS scoped to the print route's own
+    Vite code-split chunk only (confirmed by build output — the app's global
+    stylesheet is untouched). Defines named CSS pages (`@page portrait-a4`/
+    `@page landscape-a4`) for design §9's per-report orientation (Receive and
+    Issue landscape; Equipment Verify Checklist portrait — no
+    implementation-time clipping evidence to justify the design's own
+    documented exception), repeated `<thead>` via `display:
+    table-header-group`, `break-inside: avoid` on rows, and a documented
+    acknowledgment that page numbers/running headers/margin substitution are
+    not promised (design §9).
+  - `frontend/public/fonts/noto-sans-thai-{400,700}-{thai,latin}.woff2` +
+    `OFL.txt`: closes the deployment gap design §17 explicitly flags (the
+    Tailwind font stack has named `"Noto Sans Thai"` since early in the
+    project without ever bundling it) — a self-hosted, SIL Open Font License
+    1.1 webfont, scoped to the print view's `@font-face` declarations only
+    (not the global app font stack), with its license text committed verbatim
+    alongside it.
+  - Each of `ReceiveReportPage.tsx`/`IssueReportPage.tsx`/
+    `EquipmentVerifyChecklistPage.tsx` gained one "พิมพ์รายงาน" link opening
+    the corresponding print route in a new tab, carrying that page's exact
+    current `location.search` verbatim — no filter re-derivation.
+- **Explicit non-goals:** No PDF generation, no browser-controlled page
+  numbering, no scheduled/automatic printing, no document-verification QR, no
+  digital signature, no hospital logo/name, no backend route or contract
+  change — all confirmed absent from this diff.
+- **Testing:** `frontend/src/pages/ReportPrintPage.test.tsx` (report-identity
+  validation, unmodified filter forwarding including report-inapplicable and
+  unrecognized filters, loading/error/retry, metadata and backend-order
+  column/row rendering, empty-state rendering, Print-button readiness gating
+  including the fail-closed rejected-font-check path and its retry action,
+  `window.print()` never auto-invoked and never reachable while font
+  readiness has failed, the on-screen toolbar carrying the `.no-print`
+  class); `frontend/src/hooks/usePrintFontsReady.test.ts` (proof that
+  `document.fonts.load()`, not `document.fonts.ready`, is what the hook
+  calls; the fail-closed and stale-result-guard behavior in isolation,
+  including proof that a slow-resolving or slow-rejecting document-A check
+  can never override a newer document-B's status once B has superseded it,
+  and that `retry()` recovers from a failed check); `frontend/src/services/printReports.test.ts`
+  (exact endpoint/params, `cursor`/`limit` stripped by the service itself
+  even when passed directly to it, every other filter — including a
+  report-inapplicable or unrecognized one — preserved unchanged); one added
+  test per existing report page (`ReceiveReportPage.test.tsx`/
+  `IssueReportPage.test.tsx`/`EquipmentVerifyChecklistPage.test.tsx`) proving
+  the print link carries the page's current applied filters. Full existing
+  frontend suite re-run with no regression.
+- **Source:** `docs/design/PR18_PRINTING_EXPORT_PLAN.md` §9, §16, §17, §20.3,
+  §22. Branch `feature/pr18c-browser-print`, baseline
+  `c72929ba4649fd75d1f81e4630b4e4feb3d136be` (GitHub PR #73's squash merge).
+  Corrected in a second Codex review round (PR18C-H1R/PR18C-H2R) to make
+  print readiness document-identity-aware and to replace an interim
+  per-report-identity filter allowlist with pagination-only stripping,
+  keeping the backend the sole authority on filter applicability. Corrected
+  again in a third review round (PR18C-H1R2) after that second round's
+  "fail-closed" font check turned out to rely on `document.fonts.ready`
+  rejecting on font-load failure — which the CSS Font Loading Module Level 3
+  spec defines it to never do (`FontFaceSet.ready` "is not rejected"), so
+  the branch was dead code in every real browser. Replaced with
+  `document.fonts.load()`, the API the spec does define to reject on a
+  genuine network/parse failure, which also removed the original
+  render-timing race entirely since the load is requested explicitly rather
+  than discovered from rendered content. Corrected a fourth time
+  (PR18C-H1/PR18C-H2R2/PR18C-H3) to close three remaining gaps: a resolved
+  `document.fonts.load()` was treated as success even when it resolved with
+  an empty FontFace array (no matching face actually loaded); readiness was
+  stored in a plain `status` state variable that could still read a previous
+  document's "ready" result on the very first render after the current
+  document changed, before any effect had run to reset it; and an
+  unavailable Font Loading API (or a missing `.load()` method) fell back to
+  "ready" instead of failing closed. `frontend/src/hooks/usePrintFontsReady.ts`
+  now derives status fresh on every render by comparing the outcome of the
+  most recently completed check against the document identity it belongs
+  to, and adds a distinct `"unsupported"` status for a browser that cannot
+  run the check at all. No backend file changed in any correction round; no
+  PR18B behavior affected.
+- **Status:** Implemented in this branch; not yet merged as of this entry.
+- **Consequences:** Receive Report, Issue Report, and Equipment Verify
+  Checklist can each now be browser-printed from the merged PR18B foundation.
+  No PDF or Excel output exists yet. Roadmap PR18 is not complete. PR18D (PDF
+  export) is the next planned slice.
+
 ## Numbering note — read this first
 
 **Roadmap PR number** and **GitHub PR number** are different sequences and must not be conflated:

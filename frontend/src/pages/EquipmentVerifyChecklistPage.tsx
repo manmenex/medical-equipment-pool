@@ -1,4 +1,5 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
+import { useLocation } from "react-router-dom";
 
 import { EquipmentVerifyChecklistFilterBar } from "@/components/EquipmentVerifyChecklistFilterBar";
 import { EquipmentVerifyChecklistTable } from "@/components/EquipmentVerifyChecklistTable";
@@ -17,6 +18,7 @@ import { getEquipmentVerifyChecklist } from "@/services/reports";
 export function EquipmentVerifyChecklistPage() {
   const appliedFilters = useAppliedVerifyChecklistFilters();
   const queryKey = ["reports", "equipment-verify-checklist", appliedFilters];
+  const location = useLocation();
 
   const {
     data: pages,
@@ -41,11 +43,24 @@ export function EquipmentVerifyChecklistPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <h1 className="text-lg font-semibold">รายการตรวจสอบเครื่องมือ</h1>
-        <p className="text-sm text-[var(--text-muted)]">
-          รายการเครื่องมือและสถานะปัจจุบันในระบบ ตามตัวกรองที่เลือก
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-semibold">รายการตรวจสอบเครื่องมือ</h1>
+          <p className="text-sm text-[var(--text-muted)]">
+            รายการเครื่องมือและสถานะปัจจุบันในระบบ ตามตัวกรองที่เลือก
+          </p>
+        </div>
+        {/* Roadmap PR18C: opens the dedicated print view in a new tab,
+            carrying this page's currently applied URL filters over
+            verbatim -- the print view never re-derives them. */}
+        <a
+          href={`/reports/equipment-verify-checklist/print${location.search}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium"
+        >
+          พิมพ์รายงาน
+        </a>
       </div>
 
       <EquipmentVerifyChecklistFilterBar />

@@ -1,0 +1,157 @@
+/* Roadmap PR18C (docs/design/PR18_PRINTING_EXPORT_PLAN.md §9/§17): browser
+   print presentation styles. Imported only by ReportPrintPage.tsx (a side
+   effect import, matching this file's own Vite code-split chunk) so no
+   other page's bundle or global styling is affected -- this deliberately
+   does not touch frontend/src/index.css or tailwind.config.ts's font
+   stack.
+
+   Fonts: self-hosted Noto Sans Thai (SIL Open Font License 1.1, see
+   public/fonts/OFL.txt), closing the deployment gap design §17 flags --
+   the app's Tailwind font stack previously named "Noto Sans Thai" without
+   ever bundling it. Scoped to .print-root only; no other page gains this
+   webfont as a side effect of this file existing. */
+
+@font-face {
+  font-family: "Noto Sans Thai";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/noto-sans-thai-400-thai.woff2") format("woff2");
+  unicode-range: U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+@font-face {
+  font-family: "Noto Sans Thai";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/noto-sans-thai-400-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+2000-206F;
+}
+@font-face {
+  font-family: "Noto Sans Thai";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/noto-sans-thai-700-thai.woff2") format("woff2");
+  unicode-range: U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+@font-face {
+  font-family: "Noto Sans Thai";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/noto-sans-thai-700-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+2000-206F;
+}
+
+/* Named CSS pages (design §9's per-report orientation). Support for
+   applying a named page via the `page` property varies by browser engine
+   (best supported in Chromium-based browsers) -- where unsupported, the
+   browser falls back to its own print-dialog orientation control instead
+   of silently failing, which is why the print view also states the
+   expected orientation in its on-screen instructions rather than only
+   relying on this rule. Page numbers, running headers/footers, and margin
+   boxes are intentionally not promised here (design §9: "cannot reliably
+   control every browser/driver's page numbers, headers, footers"). */
+@page portrait-a4 {
+  size: A4 portrait;
+  margin: 12mm;
+}
+@page landscape-a4 {
+  size: A4 landscape;
+  margin: 12mm;
+}
+
+.print-root {
+  font-family: "Noto Sans Thai", "-apple-system", "BlinkMacSystemFont", "Segoe UI", sans-serif;
+  color: #0f172a;
+  background: #f5f7fb;
+  min-height: 100%;
+}
+
+.print-root[data-orientation="portrait"] {
+  page: portrait-a4;
+}
+.print-root[data-orientation="landscape"] {
+  page: landscape-a4;
+}
+
+.print-only {
+  display: none;
+}
+
+@media screen {
+  .print-page {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 24px;
+  }
+  .print-sheet {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block;
+  }
+  .print-root {
+    background: #ffffff;
+    color: #000000;
+  }
+  .print-page {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+  }
+  .print-sheet {
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0;
+  }
+  .print-table thead {
+    display: table-header-group;
+  }
+  .print-table tbody tr {
+    break-inside: avoid;
+  }
+  .print-header {
+    break-after: avoid;
+  }
+}
+
+.print-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.print-table th,
+.print-table td {
+  border: 1px solid #cbd5e1;
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.print-table th {
+  background: #eef2f9;
+  font-weight: 700;
+}
+
+@media print {
+  .print-table th {
+    background: #f1f5f9;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

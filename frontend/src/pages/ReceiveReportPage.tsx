@@ -1,4 +1,5 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
+import { useLocation } from "react-router-dom";
 
 import { ReportFilterBar } from "@/components/ReportFilterBar";
 import { ReportResultsTable } from "@/components/ReportResultsTable";
@@ -16,6 +17,7 @@ import { getReceiveReport } from "@/services/reports";
 export function ReceiveReportPage() {
   const appliedFilters = useAppliedReportFilters();
   const queryKey = ["reports", "receive", appliedFilters];
+  const location = useLocation();
 
   const {
     data: pages,
@@ -40,11 +42,24 @@ export function ReceiveReportPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <h1 className="text-lg font-semibold">รายงานการรับคืน</h1>
-        <p className="text-sm text-[var(--text-muted)]">
-          รายการเครื่องมือที่รับคืนเข้า Pool แล้ว ตามช่วงวันที่ทำการและตัวกรองที่เลือก
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-semibold">รายงานการรับคืน</h1>
+          <p className="text-sm text-[var(--text-muted)]">
+            รายการเครื่องมือที่รับคืนเข้า Pool แล้ว ตามช่วงวันที่ทำการและตัวกรองที่เลือก
+          </p>
+        </div>
+        {/* Roadmap PR18C: opens the dedicated print view in a new tab,
+            carrying this page's currently applied URL filters over
+            verbatim -- the print view never re-derives them. */}
+        <a
+          href={`/reports/receive-report/print${location.search}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium"
+        >
+          พิมพ์รายงาน
+        </a>
       </div>
 
       <ReportFilterBar />
