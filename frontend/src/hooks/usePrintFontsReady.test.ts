@@ -12,6 +12,41 @@ import { usePrintFontsReady } from "@/hooks/usePrintFontsReady";
 
 let installedFontLoads: { resolve: (faces?: unknown[]) => void; reject: () => void }[] = [];
 
+// Roadmap PR18C review (fifth round, PR18C-H1R3): each requested weight
+// (400/700) must be controllable independently -- installControllableFonts
+// below shares one promise across both document.fonts.load() calls, which
+// cannot represent "one weight loaded, the other didn't". This helper keys
+// the mock's resolved/rejected promise by which weight the hook actually
+// requested (the font spec string starts with "400 " or "700 ").
+function installPerWeightControllableFonts(): {
+  weight400: { resolve: (faces?: unknown[]) => void; reject: () => void };
+  weight700: { resolve: (faces?: unknown[]) => void; reject: () => void };
+  loadMock: ReturnType<typeof vi.fn>;
+} {
+  let resolve400!: (faces?: unknown[]) => void;
+  let reject400!: () => void;
+  let resolve700!: (faces?: unknown[]) => void;
+  let reject700!: () => void;
+  const promise400 = new Promise<unknown[]>((res, rej) => {
+    resolve400 = (faces = [{}]) => res(faces);
+    reject400 = rej;
+  });
+  const promise700 = new Promise<unknown[]>((res, rej) => {
+    resolve700 = (faces = [{}]) => res(faces);
+    reject700 = rej;
+  });
+  const loadMock = vi.fn((font: string) => (font.startsWith("400 ") ? promise400 : promise700));
+  Object.defineProperty(document, "fonts", {
+    configurable: true,
+    value: { load: loadMock },
+  });
+  return {
+    weight400: { resolve: resolve400, reject: reject400 },
+    weight700: { resolve: resolve700, reject: reject700 },
+    loadMock,
+  };
+}
+
 // Defaults to resolving with one stub FontFace so existing tests that only
 // care about "a real success" don't need to know about the empty-array
 // case; PR18C-H1's own test resolves with `[]` explicitly.
@@ -87,6 +122,64 @@ describe("usePrintFontsReady", () => {
     fonts.resolve([]);
     await waitFor(() => expect(result.current.status).toBe("error"));
     expect(result.current.status).not.toBe("ready");
+  });
+
+  // Roadmap PR18C review (fifth round, PR18C-H1R3): each requested weight
+  // must be checked independently -- flattening the per-weight results
+  // together (the fourth round's bug) let one weight's loaded faces mask
+  // another weight's empty result, so Print could become ready with only
+  // one of the two required weights actually available.
+  describe("PR18C-H1R3: every requested weight must independently load at least one face", () => {
+    it("400 succeeds, 700 empty -> stays error (Print disabled)", async () => {
+      const fonts = installPerWeightControllableFonts();
+      const { result } = renderHook(({ doc }) => usePrintFontsReady(doc), {
+        initialProps: { doc: { id: "doc-a" } as unknown },
+      });
+
+      fonts.weight400.resolve([{ family: "Noto Sans Thai" }]);
+      fonts.weight700.resolve([]);
+
+      await waitFor(() => expect(result.current.status).toBe("error"));
+      expect(result.current.status).not.toBe("ready");
+    });
+
+    it("400 empty, 700 succeeds -> stays error (Print disabled)", async () => {
+      const fonts = installPerWeightControllableFonts();
+      const { result } = renderHook(({ doc }) => usePrintFontsReady(doc), {
+        initialProps: { doc: { id: "doc-a" } as unknown },
+      });
+
+      fonts.weight400.resolve([]);
+      fonts.weight700.resolve([{ family: "Noto Sans Thai" }]);
+
+      await waitFor(() => expect(result.current.status).toBe("error"));
+      expect(result.current.status).not.toBe("ready");
+    });
+
+    it("both weights succeed -> ready (Print enabled)", async () => {
+      const fonts = installPerWeightControllableFonts();
+      const { result } = renderHook(({ doc }) => usePrintFontsReady(doc), {
+        initialProps: { doc: { id: "doc-a" } as unknown },
+      });
+
+      fonts.weight400.resolve([{ family: "Noto Sans Thai" }]);
+      fonts.weight700.resolve([{ family: "Noto Sans Thai" }]);
+
+      await waitFor(() => expect(result.current.status).toBe("ready"));
+    });
+
+    it("both weights resolve empty -> stays error (Print disabled)", async () => {
+      const fonts = installPerWeightControllableFonts();
+      const { result } = renderHook(({ doc }) => usePrintFontsReady(doc), {
+        initialProps: { doc: { id: "doc-a" } as unknown },
+      });
+
+      fonts.weight400.resolve([]);
+      fonts.weight700.resolve([]);
+
+      await waitFor(() => expect(result.current.status).toBe("error"));
+      expect(result.current.status).not.toBe("ready");
+    });
   });
 
   it("is fail-closed: a rejected document.fonts.load() lands on error, never ready", async () => {

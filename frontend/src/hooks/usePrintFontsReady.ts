@@ -85,11 +85,19 @@ export function usePrintFontsReady(currentDocument: unknown): {
       )
     ).then(
       (loadedFaceLists) => {
-        // Roadmap PR18C review (fourth round, PR18C-H1): a resolved promise
-        // is not itself proof a font exists -- an empty result means no
-        // face matching this family/weight/text was ever loaded.
-        const loadedFaces = loadedFaceLists.flat();
-        complete(loadedFaces.length > 0 ? "ready" : "error");
+        // Roadmap PR18C review (fifth round, PR18C-H1R3): a resolved promise
+        // is not itself proof a font exists -- an empty result means no face
+        // matching that family/weight/text was ever loaded. Each requested
+        // weight's result must be checked *independently* -- flattening the
+        // per-weight arrays together before checking length (the fourth
+        // round's bug) let one weight's faces mask another weight's empty
+        // result, so Print could become ready with only 400 or only 700
+        // actually available. `print.css` declares @font-face rules for
+        // both weights and the print table uses both (700 for headers), so
+        // every requested weight must independently resolve at least one
+        // matching face.
+        const everyWeightLoadedAtLeastOneFace = loadedFaceLists.every((faces) => faces.length > 0);
+        complete(everyWeightLoadedAtLeastOneFace ? "ready" : "error");
       },
       () => {
         // A genuine network/parse failure loading either weight.
