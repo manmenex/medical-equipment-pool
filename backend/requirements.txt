@@ -13,8 +13,18 @@ APScheduler>=3.10.4
 python-multipart>=0.0.9
 email-validator>=2.2.0
 
+# Roadmap PR18D (docs/design/PR18_PRINTING_EXPORT_PLAN.md §10): backend
+# HTML/CSS-to-PDF renderer for report PDF export. Requires the native
+# Pango/HarfBuzz packages installed in backend/Dockerfile.
+weasyprint>=69.0
+
 # testing / local sqlite fallback for fast unit tests
 aiosqlite>=0.20.0
 pytest>=8.3.0
 pytest-asyncio>=0.24.0
 httpx>=0.27.0
+
+# Roadmap PR18D: PDF structure/text parser used only by the test suite to
+# validate generated PDF content (embedded fonts, extracted text) -- never
+# imported by application/runtime code.
+pdfplumber>=0.11.10

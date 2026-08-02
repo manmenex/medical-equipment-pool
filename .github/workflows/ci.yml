@@ -56,6 +56,13 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
+      # Roadmap PR18D: WeasyPrint (the backend PDF renderer, exercised by
+      # app.api.v1.reports's PDF export tests) loads Pango/HarfBuzz at
+      # runtime via cffi, not via a pip wheel -- matches the native packages
+      # backend/Dockerfile installs for the production image.
+      - name: Install WeasyPrint native dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
+
       - name: Install backend dependencies
         run: pip install -r requirements.txt
 
@@ -102,6 +109,10 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: backend/requirements.txt
+
+      # Roadmap PR18D: see the matching step in the backend-tests job above.
+      - name: Install WeasyPrint native dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
 
       - name: Install backend dependencies
         run: pip install -r requirements.txt

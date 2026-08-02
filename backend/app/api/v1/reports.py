@@ -1,3 +1,4 @@
+import asyncio
 from datetime import date
 
 from fastapi import APIRouter, Depends, Query
@@ -16,7 +17,7 @@ from app.schemas.common import Page
 from app.schemas.equipment import EquipmentOut
 from app.schemas.report_export import PrintDocumentOut, ReportIdentity, to_print_document_out
 from app.schemas.transaction import ReportTransactionOut
-from app.services import report_export_service, report_query_service, report_service
+from app.services import report_export_service, report_pdf_service, report_query_service, report_service
 from app.utils.parsing import parse_uuid
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -214,6 +215,81 @@ async def get_equipment_verify_checklist(
     return Page(items=items, next_cursor=next_cursor, total=total)
 
 
+# Roadmap PR18D: shared by GET /{report_id}/print-data (PR18B) and
+# GET /{report_id}/pdf (PR18D) so both output adapters dispatch to the exact
+# same three dataset builders through one call site -- neither route
+# re-derives report/eligibility/filter logic, and a future output format
+# (PR18E Excel) has one obvious place to reuse this same dispatch, not a
+# third copy of it.
+async def _build_export_document_for_request(
+    db: AsyncSession,
+    report_id: ReportIdentity,
+    *,
+    business_date_from: date | None,
+    business_date_to: date | None,
+    shift: Shift | None,
+    ward_id: str | None,
+    equipment_id: str | None,
+    equipment_category_id: str | None,
+    operator_id: str | None,
+    dispatch_type: DispatchType | None,
+    routine_round: RoutineRound | None,
+    status: EquipmentStatus | None,
+    department_id: str | None,
+    generated_by,
+):
+    _reject_inapplicable_print_data_filters(
+        report_id,
+        business_date_from=business_date_from,
+        business_date_to=business_date_to,
+        shift=shift,
+        ward_id=ward_id,
+        equipment_id=equipment_id,
+        equipment_category_id=equipment_category_id,
+        operator_id=operator_id,
+        dispatch_type=dispatch_type,
+        routine_round=routine_round,
+        status=status,
+        department_id=department_id,
+    )
+    if report_id in (ReportIdentity.RECEIVE_REPORT, ReportIdentity.ISSUE_REPORT):
+        _validate_business_date_range(business_date_from, business_date_to)
+
+    if report_id == ReportIdentity.RECEIVE_REPORT:
+        return await report_export_service.build_receive_report_document(
+            db,
+            business_date_from=business_date_from,
+            business_date_to=business_date_to,
+            shift=shift,
+            ward_id=parse_uuid(ward_id, "ward_id"),
+            equipment_id=parse_uuid(equipment_id, "equipment_id"),
+            equipment_category_id=parse_uuid(equipment_category_id, "equipment_category_id"),
+            operator_id=parse_uuid(operator_id, "operator_id"),
+            generated_by=generated_by,
+        )
+    if report_id == ReportIdentity.ISSUE_REPORT:
+        return await report_export_service.build_issue_report_document(
+            db,
+            business_date_from=business_date_from,
+            business_date_to=business_date_to,
+            shift=shift,
+            ward_id=parse_uuid(ward_id, "ward_id"),
+            equipment_id=parse_uuid(equipment_id, "equipment_id"),
+            equipment_category_id=parse_uuid(equipment_category_id, "equipment_category_id"),
+            operator_id=parse_uuid(operator_id, "operator_id"),
+            dispatch_type=dispatch_type,
+            routine_round=routine_round,
+            generated_by=generated_by,
+        )
+    return await report_export_service.build_equipment_verify_checklist_document(
+        db,
+        equipment_category_id=parse_uuid(equipment_category_id, "equipment_category_id"),
+        status=status,
+        department_id=parse_uuid(department_id, "department_id"),
+        generated_by=generated_by,
+    )
+
+
 @router.get("/{report_id}/print-data", response_model=PrintDocumentOut)
 async def get_report_print_data(
     report_id: ReportIdentity,
@@ -246,63 +322,28 @@ async def get_report_print_data(
     cursor page -- this route deliberately declares no `cursor` parameter
     and never follows one.
 
-    Browser Print (a future PR18C deliverable), not PDF or Excel, is this
-    route's only consumer -- PDF/Excel export routes are PR18D/PR18E scope,
-    not built here (design §22's own PR18B non-goal list).
+    Browser Print, not PDF or Excel, is this route's only consumer -- PDF
+    (Roadmap PR18D, `GET /{report_id}/pdf` below) and Excel (PR18E) are
+    separate output routes built on the same shared dataset builders.
     """
     timing = report_export_service.ExportTiming()
-    _reject_inapplicable_print_data_filters(
-        report_id,
-        business_date_from=business_date_from,
-        business_date_to=business_date_to,
-        shift=shift,
-        ward_id=ward_id,
-        equipment_id=equipment_id,
-        equipment_category_id=equipment_category_id,
-        operator_id=operator_id,
-        dispatch_type=dispatch_type,
-        routine_round=routine_round,
-        status=status,
-        department_id=department_id,
-    )
-    if report_id in (ReportIdentity.RECEIVE_REPORT, ReportIdentity.ISSUE_REPORT):
-        _validate_business_date_range(business_date_from, business_date_to)
-
     try:
-        if report_id == ReportIdentity.RECEIVE_REPORT:
-            document = await report_export_service.build_receive_report_document(
-                db,
-                business_date_from=business_date_from,
-                business_date_to=business_date_to,
-                shift=shift,
-                ward_id=parse_uuid(ward_id, "ward_id"),
-                equipment_id=parse_uuid(equipment_id, "equipment_id"),
-                equipment_category_id=parse_uuid(equipment_category_id, "equipment_category_id"),
-                operator_id=parse_uuid(operator_id, "operator_id"),
-                generated_by=generated_by,
-            )
-        elif report_id == ReportIdentity.ISSUE_REPORT:
-            document = await report_export_service.build_issue_report_document(
-                db,
-                business_date_from=business_date_from,
-                business_date_to=business_date_to,
-                shift=shift,
-                ward_id=parse_uuid(ward_id, "ward_id"),
-                equipment_id=parse_uuid(equipment_id, "equipment_id"),
-                equipment_category_id=parse_uuid(equipment_category_id, "equipment_category_id"),
-                operator_id=parse_uuid(operator_id, "operator_id"),
-                dispatch_type=dispatch_type,
-                routine_round=routine_round,
-                generated_by=generated_by,
-            )
-        else:
-            document = await report_export_service.build_equipment_verify_checklist_document(
-                db,
-                equipment_category_id=parse_uuid(equipment_category_id, "equipment_category_id"),
-                status=status,
-                department_id=parse_uuid(department_id, "department_id"),
-                generated_by=generated_by,
-            )
+        document = await _build_export_document_for_request(
+            db,
+            report_id,
+            business_date_from=business_date_from,
+            business_date_to=business_date_to,
+            shift=shift,
+            ward_id=ward_id,
+            equipment_id=equipment_id,
+            equipment_category_id=equipment_category_id,
+            operator_id=operator_id,
+            dispatch_type=dispatch_type,
+            routine_round=routine_round,
+            status=status,
+            department_id=department_id,
+            generated_by=generated_by,
+        )
     except ExportTooLargeError:
         report_export_service.log_export_attempt(
             report_identity=report_id,
@@ -323,3 +364,81 @@ async def get_report_print_data(
         duration_ms=timing.elapsed_ms(),
     )
     return to_print_document_out(document)
+
+
+@router.get("/{report_id}/pdf")
+async def get_report_pdf(
+    report_id: ReportIdentity,
+    business_date_from: date | None = None,
+    business_date_to: date | None = None,
+    shift: Shift | None = None,
+    ward_id: str | None = None,
+    equipment_id: str | None = None,
+    equipment_category_id: str | None = None,
+    operator_id: str | None = None,
+    dispatch_type: DispatchType | None = None,
+    routine_round: RoutineRound | None = None,
+    status: EquipmentStatus | None = None,
+    department_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    # Roadmap PR18D (docs/design/PR18_PRINTING_EXPORT_PLAN.md §10/§12): same
+    # report-view authorization as print-data/every other report endpoint --
+    # PDF export introduces no new permission.
+    generated_by=Depends(require_roles(*VIEW_AND_REPORT_ROLES)),
+):
+    """Roadmap PR18D: server-rendered PDF for one of the three PR18
+    reports. Same filter contract, same complete-filtered-result-set
+    semantics (Owner Decision #1), and same
+    `report_export_service.MAX_EXPORT_ROWS` bound as
+    `GET /{report_id}/print-data` above -- built from an identically
+    constructed `ExportDocument` via `_build_export_document_for_request`,
+    never a second query/report engine. Rendering
+    (`app.services.report_pdf_service.render_pdf`) is CPU-bound and runs in
+    a worker thread via `asyncio.to_thread`, the same pattern
+    `app.services.import_service._parse_workbook_sync` already uses, so it
+    never blocks the event loop other concurrent requests share.
+    """
+    timing = report_export_service.ExportTiming()
+    try:
+        document = await _build_export_document_for_request(
+            db,
+            report_id,
+            business_date_from=business_date_from,
+            business_date_to=business_date_to,
+            shift=shift,
+            ward_id=ward_id,
+            equipment_id=equipment_id,
+            equipment_category_id=equipment_category_id,
+            operator_id=operator_id,
+            dispatch_type=dispatch_type,
+            routine_round=routine_round,
+            status=status,
+            department_id=department_id,
+            generated_by=generated_by,
+        )
+    except ExportTooLargeError:
+        report_export_service.log_export_attempt(
+            report_identity=report_id,
+            output_format="pdf",
+            actor_user_id=generated_by.id,
+            outcome="row_limit_exceeded",
+            row_count=None,
+            duration_ms=timing.elapsed_ms(),
+        )
+        raise
+
+    pdf_bytes = await asyncio.to_thread(report_pdf_service.render_pdf, document)
+
+    report_export_service.log_export_attempt(
+        report_identity=report_id,
+        output_format="pdf",
+        actor_user_id=generated_by.id,
+        outcome="success",
+        row_count=document.metadata.row_count,
+        duration_ms=timing.elapsed_ms(),
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{document.metadata.filename_stem}.pdf"'},
+    )
