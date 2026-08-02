@@ -121,6 +121,17 @@ export function ReportPrintPage() {
         </div>
       )}
 
+      {/* Roadmap PR18C review (fourth round, PR18C-H3): the browser cannot
+          verify font availability at all -- no retry offered, since
+          re-attempting cannot change what this browser supports. */}
+      {!isLoading && !isError && printDocument && fontsStatus === "unsupported" && (
+        <div className="no-print flex flex-col items-start gap-2 p-6">
+          <p className="text-sm text-red-600">
+            เบราว์เซอร์นี้ไม่รองรับการตรวจสอบฟอนต์สำหรับพิมพ์ จึงไม่สามารถแสดงตัวอย่างก่อนพิมพ์ได้อย่างปลอดภัย
+          </p>
+        </div>
+      )}
+
       {!isLoading && !isError && printDocument && <PrintDocumentView document={printDocument} />}
     </div>
   );

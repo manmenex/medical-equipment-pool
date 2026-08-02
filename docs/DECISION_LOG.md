@@ -177,13 +177,22 @@
     itself, not only by page-level preprocessing, so a caller cannot leak
     pagination parameters through it either way. The print-data endpoint
     always returns the complete bounded result set for the active filters
-    (Owner Decision #1), never one cursor page. Every other filter — including
-    one inapplicable to the current report identity, or one the backend does
-    not recognize — is preserved and reaches the request unchanged: the
-    already-merged PR18B backend check (`_reject_inapplicable_print_data_filters`)
-    remains the single, authoritative place deciding whether a filter applies,
-    returning a structured `400 INVALID_INPUT` for one that doesn't, surfaced
-    here as a visible error rather than silently discarded on the frontend.
+    (Owner Decision #1), never one cursor page. Every other query parameter is
+    forwarded rather than silently removed by frontend logic. What actually
+    happens to a forwarded parameter server-side depends on whether it is one
+    of the eleven filters `GET /reports/{report_id}/print-data`
+    (`backend/app/api/v1/reports.py`) declares in its route signature: a
+    **declared** filter that does not apply to the current report identity is
+    rejected by the already-merged PR18B applicability check
+    (`_reject_inapplicable_print_data_filters`) with a structured
+    `400 INVALID_INPUT`, surfaced here as a visible error rather than
+    silently discarded on the frontend. An **undeclared** query key — one not
+    in that route's parameter list at all — is not bound to anything by
+    FastAPI's request parsing and may currently be ignored server-side
+    without error; this is not the same guarantee as the declared-filter
+    case, and this document does not claim every unknown query parameter
+    produces `400 INVALID_INPUT`. The backend remains authoritative only for
+    the filters actually represented in the endpoint's contract.
     The Print button is enabled only once all of the following hold: the
     current print-data request succeeded, the current `PrintDocumentOut`
     exists, and that document's own font-readiness check
@@ -286,8 +295,20 @@
   `document.fonts.load()`, the API the spec does define to reject on a
   genuine network/parse failure, which also removed the original
   render-timing race entirely since the load is requested explicitly rather
-  than discovered from rendered content. No backend file changed in either
-  correction round; no PR18B behavior affected.
+  than discovered from rendered content. Corrected a fourth time
+  (PR18C-H1/PR18C-H2R2/PR18C-H3) to close three remaining gaps: a resolved
+  `document.fonts.load()` was treated as success even when it resolved with
+  an empty FontFace array (no matching face actually loaded); readiness was
+  stored in a plain `status` state variable that could still read a previous
+  document's "ready" result on the very first render after the current
+  document changed, before any effect had run to reset it; and an
+  unavailable Font Loading API (or a missing `.load()` method) fell back to
+  "ready" instead of failing closed. `frontend/src/hooks/usePrintFontsReady.ts`
+  now derives status fresh on every render by comparing the outcome of the
+  most recently completed check against the document identity it belongs
+  to, and adds a distinct `"unsupported"` status for a browser that cannot
+  run the check at all. No backend file changed in any correction round; no
+  PR18B behavior affected.
 - **Status:** Implemented in this branch; not yet merged as of this entry.
 - **Consequences:** Receive Report, Issue Report, and Equipment Verify
   Checklist can each now be browser-printed from the merged PR18B foundation.

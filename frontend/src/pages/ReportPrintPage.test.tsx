@@ -53,19 +53,23 @@ function makeDocument(overrides: Partial<PrintDocumentOut> = {}): PrintDocumentO
 
 // jsdom does not implement the Font Loading API -- stubbed here as a
 // controllable promise (resolvable *or* rejectable) returned from
-// `document.fonts.load()`, so both the "print only after fonts ready"
-// gating and the fail-closed rejection path (design §9; review round 3,
-// PR18C-H1R2) can be deterministically observed. `document.fonts.load()`,
-// not `document.fonts.ready`, is stubbed here: per the CSS Font Loading
-// Module Level 3 spec, `document.fonts.ready` never rejects, so it cannot
-// signal a font-load failure -- see hooks/usePrintFontsReady.ts for the
-// full explanation of why this hook uses `load()` instead.
-let resolveFontsReady: () => void;
+// `document.fonts.load()`, so the "print only after fonts ready" gating and
+// the fail-closed rejection path (design §9; review round 4, PR18C-H1R2)
+// can be deterministically observed. `document.fonts.load()`, not
+// `document.fonts.ready`, is stubbed here: per the CSS Font Loading Module
+// Level 3 spec, `document.fonts.ready` never rejects, so it cannot signal a
+// font-load failure -- see hooks/usePrintFontsReady.ts for the full
+// explanation of why this hook uses `load()` instead.
+//
+// Roadmap PR18C review round 4 (PR18C-H1): resolveFontsReady defaults to a
+// single stub FontFace so tests that only care about "a real success" don't
+// need to know about the empty-array case -- pass `[]` explicitly for that.
+let resolveFontsReady: (faces?: unknown[]) => void;
 let rejectFontsReady: () => void;
 
 function installControllableFonts() {
-  const fontsLoadPromise = new Promise<void>((resolve, reject) => {
-    resolveFontsReady = resolve;
+  const fontsLoadPromise = new Promise<unknown[]>((resolve, reject) => {
+    resolveFontsReady = (faces = [{}]) => resolve(faces);
     rejectFontsReady = reject;
   });
   Object.defineProperty(document, "fonts", {
@@ -243,6 +247,56 @@ describe("ReportPrintPage", () => {
 
     expect(await screen.findByText("ไม่สามารถเตรียมฟอนต์สำหรับพิมพ์ได้ กรุณาลองใหม่ก่อนพิมพ์")).toBeInTheDocument();
     expect(printButton).toBeDisabled();
+  });
+
+  // Roadmap PR18C review round 4 (PR18C-H1): a resolved document.fonts.load()
+  // is not itself proof a font exists -- an empty array means nothing
+  // matched, and must fail closed exactly like a rejection.
+  it("fails closed when document.fonts.load() resolves with an empty array", async () => {
+    const printSpy = vi.spyOn(window, "print").mockImplementation(() => {});
+    renderPage();
+    await screen.findByText("รายงานการรับคืน");
+    const printButton = screen.getByRole("button", { name: "พิมพ์" });
+    expect(printButton).toBeDisabled();
+
+    resolveFontsReady([]);
+
+    expect(await screen.findByText("ไม่สามารถเตรียมฟอนต์สำหรับพิมพ์ได้ กรุณาลองใหม่ก่อนพิมพ์")).toBeInTheDocument();
+    expect(printButton).toBeDisabled();
+
+    const { default: userEvent } = await import("@testing-library/user-event");
+    await userEvent.setup().click(printButton);
+    expect(printSpy).not.toHaveBeenCalled();
+  });
+
+  it("becomes ready once document.fonts.load() resolves with at least one matching face", async () => {
+    renderPage();
+    await screen.findByText("รายงานการรับคืน");
+    const printButton = screen.getByRole("button", { name: "พิมพ์" });
+
+    resolveFontsReady([{ family: "Noto Sans Thai" }]);
+    await waitFor(() => expect(printButton).not.toBeDisabled());
+  });
+
+  // Roadmap PR18C review round 4 (PR18C-H3): if the Font Loading API itself
+  // is unavailable, the browser cannot verify font availability at all --
+  // this must fail closed with its own distinct, visible Thai message, not
+  // be treated as "ready".
+  it("fails closed with an unsupported-browser message when document.fonts is unavailable", async () => {
+    delete (document as unknown as { fonts?: unknown }).fonts;
+    const printSpy = vi.spyOn(window, "print").mockImplementation(() => {});
+    renderPage();
+    await screen.findByText("รายงานการรับคืน");
+
+    expect(
+      await screen.findByText("เบราว์เซอร์นี้ไม่รองรับการตรวจสอบฟอนต์สำหรับพิมพ์ จึงไม่สามารถแสดงตัวอย่างก่อนพิมพ์ได้อย่างปลอดภัย")
+    ).toBeInTheDocument();
+    const printButton = screen.getByRole("button", { name: "พิมพ์" });
+    expect(printButton).toBeDisabled();
+
+    const { default: userEvent } = await import("@testing-library/user-event");
+    await userEvent.setup().click(printButton);
+    expect(printSpy).not.toHaveBeenCalled();
   });
 
   it("exposes a retry action for a failed font readiness check, and recovers once retried successfully", async () => {

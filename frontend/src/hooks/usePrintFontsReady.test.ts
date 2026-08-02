@@ -3,25 +3,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { usePrintFontsReady } from "@/hooks/usePrintFontsReady";
 
-// Roadmap PR18C review (third round, PR18C-H1R2): print readiness must be
-// fail-closed (a genuine font-load failure must land on "error", never
-// "ready") and tied to the specific document/render currently on screen (a
-// stale check's late completion must never override a newer document's
-// status). This is implemented via `document.fonts.load()`, whose returned
-// promise the CSS Font Loading Module Level 3 spec defines to reject on a
-// network/parse failure -- unlike `document.fonts.ready`, which is
-// specified to never reject and so cannot detect a load failure at all
-// (see the hook's own comment for the full explanation). These tests stub
-// `document.fonts.load` as a controllable promise rather than
-// `document.fonts.ready`.
+// Roadmap PR18C review (fourth round, PR18C-H1/H2R2/H3): print readiness
+// must be fail-closed in every dimension the Font Loading API actually
+// exposes -- a genuine load rejection, an empty (but resolved) FontFace
+// result, an unsupported browser, and a stale or superseded document -- and
+// none of that may depend on `document.fonts.ready`, which the CSS Font
+// Loading Module Level 3 spec defines to never reject at all.
 
-let installedFontLoads: { resolve: () => void; reject: () => void }[] = [];
+let installedFontLoads: { resolve: (faces?: unknown[]) => void; reject: () => void }[] = [];
 
-function installControllableFonts(): { resolve: () => void; reject: () => void; loadMock: ReturnType<typeof vi.fn> } {
-  let resolve!: () => void;
+// Defaults to resolving with one stub FontFace so existing tests that only
+// care about "a real success" don't need to know about the empty-array
+// case; PR18C-H1's own test resolves with `[]` explicitly.
+function installControllableFonts(): {
+  resolve: (faces?: unknown[]) => void;
+  reject: () => void;
+  loadMock: ReturnType<typeof vi.fn>;
+} {
+  let resolve!: (faces?: unknown[]) => void;
   let reject!: () => void;
-  const promise = new Promise<void>((res, rej) => {
-    resolve = res;
+  const promise = new Promise<unknown[]>((res, rej) => {
+    resolve = (faces = [{}]) => res(faces);
     reject = rej;
   });
   const loadMock = vi.fn(() => promise);
@@ -61,21 +63,32 @@ describe("usePrintFontsReady", () => {
     await waitFor(() => {});
   });
 
-  it("becomes ready once the current document's font-load check resolves", async () => {
+  it("becomes ready once document.fonts.load() resolves with one or more matching faces", async () => {
     const fonts = installControllableFonts();
     const { result } = renderHook(({ doc }) => usePrintFontsReady(doc), {
       initialProps: { doc: { id: "doc-a" } as unknown },
     });
     expect(result.current.status).toBe("pending");
 
-    fonts.resolve();
+    fonts.resolve([{ family: "Noto Sans Thai" }]);
     await waitFor(() => expect(result.current.status).toBe("ready"));
   });
 
-  // Roadmap PR18C review (third round, PR18C-H1R2): `document.fonts.load()`
-  // is the API that genuinely rejects on a network/parse failure -- this
-  // proves the hook is fail-closed against that real rejection, not a
-  // fabricated one.
+  // Roadmap PR18C review (fourth round, PR18C-H1): a resolved promise is not
+  // itself proof a font exists -- document.fonts.load() resolving with an
+  // empty array means nothing matched, and must fail closed exactly like a
+  // genuine rejection.
+  it("fails closed when document.fonts.load() resolves with an empty array (no matching face)", async () => {
+    const fonts = installControllableFonts();
+    const { result } = renderHook(({ doc }) => usePrintFontsReady(doc), {
+      initialProps: { doc: { id: "doc-a" } as unknown },
+    });
+
+    fonts.resolve([]);
+    await waitFor(() => expect(result.current.status).toBe("error"));
+    expect(result.current.status).not.toBe("ready");
+  });
+
   it("is fail-closed: a rejected document.fonts.load() lands on error, never ready", async () => {
     const fonts = installControllableFonts();
     const { result } = renderHook(({ doc }) => usePrintFontsReady(doc), {
@@ -85,6 +98,51 @@ describe("usePrintFontsReady", () => {
     fonts.reject();
     await waitFor(() => expect(result.current.status).toBe("error"));
     expect(result.current.status).not.toBe("ready");
+  });
+
+  // Roadmap PR18C review (fourth round, PR18C-H3): the Font Loading API
+  // itself may be entirely unavailable -- this must fail closed too, with a
+  // distinct status the page renders as an unsupported-browser message
+  // (never silently treated as "ready").
+  it("fails closed as unsupported when document.fonts is absent", async () => {
+    // No installControllableFonts() call -- jsdom's document has no .fonts.
+    const { result } = renderHook(({ doc }) => usePrintFontsReady(doc), {
+      initialProps: { doc: { id: "doc-a" } as unknown },
+    });
+
+    await waitFor(() => expect(result.current.status).toBe("unsupported"));
+  });
+
+  it("fails closed as unsupported when document.fonts.load is absent", async () => {
+    Object.defineProperty(document, "fonts", { configurable: true, value: {} });
+    const { result } = renderHook(({ doc }) => usePrintFontsReady(doc), {
+      initialProps: { doc: { id: "doc-a" } as unknown },
+    });
+
+    await waitFor(() => expect(result.current.status).toBe("unsupported"));
+  });
+
+  // Roadmap PR18C review (fourth round, PR18C-H2R2): a document transition
+  // must fail closed immediately on the new document's first render -- not
+  // only after an effect has had a chance to run. This is the core defect:
+  // a plain `status` state variable, reset only inside useEffect, would
+  // still read "ready" (document A's result) on this very first render.
+  it("does not let document A's ready status leak into document B's very first render", async () => {
+    const fontsForA = installControllableFonts();
+    const { result, rerender } = renderHook(({ doc }) => usePrintFontsReady(doc), {
+      initialProps: { doc: { id: "doc-a" } as unknown },
+    });
+
+    fontsForA.resolve();
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    installControllableFonts();
+    rerender({ doc: { id: "doc-b" } as unknown });
+
+    // No `waitFor`/`act` flush here on purpose: this assertion checks the
+    // synchronous render result immediately after the prop change, before
+    // any effect has run.
+    expect(result.current.status).toBe("pending");
   });
 
   it("does not let a stale document-A completion override a newer document-B's status", async () => {
