@@ -1,11 +1,13 @@
 # Roadmap PR18A — Printing and Export Architecture
 
 **Status:** Approved architecture design, merged as GitHub PR #71
-(`6ba2c666a11043d03669abdb65f966061dd02cfa`). No PR18 runtime
-implementation exists yet.
+(`6ba2c666a11043d03669abdb65f966061dd02cfa`). PR18B's backend export
+foundation subsequently merged as GitHub PR #73
+(`c72929ba4649fd75d1f81e4630b4e4feb3d136be`). PR18C Browser Print is next;
+Browser Print, PDF, and Excel output are not implemented.
 **Purpose:** Implementation design for Roadmap PR18. This document is
-authoritative for the approved PR18A architecture, subject to the unresolved
-Owner Decisions explicitly listed in §23.
+authoritative for the approved PR18A architecture, subject to the remaining
+unresolved Owner Decision explicitly listed in §23.
 **Authority:** This document is subordinate to `AGENTS.md`,
 `docs/PROJECT_PLAYBOOK.md`, accepted architecture decisions, and the Roadmap
 scope in `docs/audits/04-consolidated-implementation-plan.md`.
@@ -208,8 +210,8 @@ second reporting engine.
 ### 6.2 Recommendation
 
 Use dedicated output routes under the existing `/reports` namespace, keyed by
-a stable report identity and one output representation. The recommended route
-shape, subject to final API review during PR18B, is:
+a stable report identity and one output representation. The approved route
+shape is:
 
 ```text
 GET /reports/{report_id}/print-data
@@ -234,7 +236,9 @@ not accept `cursor` or client-controlled ordering. Unsupported report
 identities or formats are rejected through normal typed-route validation or a
 structured repository error.
 
-No exact route is implemented or dependency added by PR18A.
+PR18A added no route or dependency. PR18B subsequently implemented only
+`GET /reports/{report_id}/print-data`; the PDF and Excel routes remain future
+PR18D and PR18E work.
 
 ## 7. Dataset and DTO Strategy
 
@@ -273,6 +277,12 @@ The internal model is not an API contract. The browser-print adapter exposes a
 separate `PrintDocumentOut` API DTO derived from it. PDF and Excel serialize the
 internal model directly.
 
+PR18B implemented this boundary as the output-neutral `ExportDocument` family
+plus the separate `PrintDocumentOut` API DTO and an explicit one-way mapping.
+`ExportDocument` enforces unique column keys, exact row/column key coverage,
+declared semantic value types, metadata row-count consistency, and a
+timezone-aware generation timestamp at construction time.
+
 The dataset builder may reuse existing domain/query functions and shared
 predicate construction, but must not call cursor-paginated HTTP endpoints in a
 loop. It must have a backend-owned full-result path that uses the same
@@ -284,15 +294,13 @@ lookups to construct authoritative export rows.
 
 ## 8. Export Scope, Pagination, and Limits
 
-The recommended behavior is **all rows matching the active filters**, not only
+Owner Decision #1 approved **all rows matching the active filters**, not only
 the currently visible cursor page. The browser preview may remain
-cursor-paginated.
+cursor-paginated. Owner Decision #3 approved a 5,000-row synchronous bound for
+the shared PR18B retrieval/print-data path; a later renderer may adopt a lower
+format-specific bound when its cost requires one.
 
-This behavior is not stated explicitly in existing Roadmap authority and is
-therefore **Open Owner Decision #1** (§23). Implementation must not silently
-choose between current-page and all-matching export.
-
-If approved:
+Accordingly:
 
 - output requests repeat the active report filters;
 - output requests never send a frontend cursor;
@@ -302,11 +310,11 @@ If approved:
 - no adapter silently truncates rows; and
 - the response communicates the structured limit error and safe next action.
 
-The current legacy export's 50,000-row cap is implementation precedent, not
-approval for PR18 limits. Maximum synchronous limits are **Open Owner Decision
-#3** (§23). The implementation design should permit different PDF and `.xlsx`
-limits because rendering costs differ, while keeping one policy module and
-clear user messaging.
+The current legacy export's 50,000-row cap remains precedent only; it is not a
+PR18 limit. PR18B implements the approved 5,000-row bound and rejects excess
+rows with `422 EXPORT_TOO_LARGE`, never a partial document. PDF and `.xlsx`
+may use stricter rendering-cost-driven limits while retaining clear user
+messaging.
 
 ## 9. Browser Print
 
@@ -584,9 +592,9 @@ ordering.
 | Empty result | Valid empty print/PDF/workbook with metadata and headers |
 | Branding/font misconfiguration | Fail closed when output correctness would be compromised; otherwise documented neutral fallback |
 
-The exact new error code for an export limit is an implementation contract to
-be documented in `docs/api/ERROR_CODES.md` when introduced. PR18A does not add
-an error class.
+PR18B introduced and documented `422 EXPORT_TOO_LARGE` for the shared bounded
+dataset/print-data path. It rejects the request without returning a partial
+document. Renderer-specific failures remain future adapter work.
 
 ## 20. Testing Strategy
 
@@ -611,8 +619,7 @@ an error class.
 - Receive eligibility, Issue eligibility, and Verify current-state semantics
   identical to PR17;
 - deterministic ordering and no duplicate/missing rows across chunk boundaries;
-- output ignores frontend cursor and includes all bounded matching rows once
-  Owner Decision #1 is approved;
+- output ignores frontend cursor and includes all bounded matching rows;
 - exact PDF media type, filename, and valid PDF signature/page parsing;
 - valid `.xlsx` workbook, cell types, frozen header, autofilter, widths, Thai
   text, and stable columns;
@@ -657,23 +664,27 @@ Future features must reuse the same report identity, backend semantics, and
 document model. A document-verification QR is not the hospital equipment QR
 system and would require separate design and approval.
 
-## 22. Proposed Implementation Slices
+## 22. Approved Implementation Slices and Status
 
 ### PR18B — Shared backend dataset and document model
+
+**Status:** Merged as GitHub PR #73, squash SHA
+`c72929ba4649fd75d1f81e4630b4e4feb3d136be`.
 
 **Scope**
 
 - stable report identities and template versions;
 - canonical filter input types;
 - full-result dataset builders reusing PR17 predicates/order;
-- internal `ReportDocument` model and metadata;
+- internal `ExportDocument` model and metadata;
 - print-data response DTO;
 - authorization parity and limits policy point.
 
 **Dependencies**
 
 - approved PR18A design;
-- Owner Decisions #1–#3 resolved before behavior depending on them merges.
+- Owner Decisions #1 and #3 resolved for PR18B; Owner Decision #2 remains
+  open and did not block this branding-neutral slice.
 
 **Acceptance criteria**
 
@@ -788,23 +799,21 @@ system and would require separate design and approval.
 
 - implementation fixes or early PR19 work.
 
-## 23. Open Owner Decisions
+## 23. Owner Decisions
 
-Only unresolved business/operational policy is listed here.
+Resolved and unresolved business/operational policy is recorded here so later
+slices do not reopen or silently assume it.
 
 ### Owner Decision #1 — Export extent
 
-Choose:
-
-- **A (recommended):** all rows matching the active report filters, subject to
-  synchronous limits; or
-- **B:** only the currently visible cursor page.
-
-Roadmap authority requires exportable reports but does not explicitly state
-which extent. PR18A recommends A because a retained hospital report should not
-change merely because the operator has or has not clicked “load more.”
+**Resolved before PR18B:** Interpretation A — all rows matching the active
+report filters, subject to the synchronous limit; never only the currently
+visible cursor page. PR18B implements this through its backend-owned bounded
+full-result retrieval path.
 
 ### Owner Decision #2 — Branding configuration ownership
+
+**Open.**
 
 Choose the authoritative source for hospital name, department name, logo, and
 footer:
@@ -817,10 +826,11 @@ No hospital identity may be assumed or hardcoded before this decision.
 
 ### Owner Decision #3 — Maximum synchronous output size
 
-Approve per-format maximum row counts and the operator-facing response when a
-limit is exceeded. PDF and `.xlsx` may have different limits because their
-rendering costs differ. The legacy 50,000-row exporter is precedent only, not
-an approved PR18 value.
+**Resolved before PR18B:** 5,000 rows for the shared full-result
+dataset/print-data path, with `422 EXPORT_TOO_LARGE` and no partial document
+when exceeded. PDF and `.xlsx` may adopt lower format-specific limits because
+their rendering costs differ. The legacy 50,000-row exporter remains precedent
+only, not a PR18 limit.
 
 Not open:
 

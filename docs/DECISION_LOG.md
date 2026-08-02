@@ -150,7 +150,8 @@
   §22; the Owner Decision entry immediately above. Branch
   `feature/pr18b-export-foundation`, baseline
   `e1b358ac201812be84ce538360f2c2619dac3f0a` (GitHub PR #72's squash merge).
-- **Status:** Implemented in this branch; not yet merged as of this entry.
+- **Status:** Merged as GitHub PR #73, squash SHA
+  `c72929ba4649fd75d1f81e4630b4e4feb3d136be`.
 - **Consequences:** The backend export foundation exists; no browser print,
   PDF, or Excel output exists yet. Roadmap PR18 is not complete. PR18C
   (browser print presentation) is the next planned slice.

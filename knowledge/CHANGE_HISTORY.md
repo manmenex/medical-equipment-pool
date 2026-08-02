@@ -35,6 +35,23 @@ Merged as GitHub PR #71, squash SHA `6ba2c666a11043d03669abdb65f966061dd02cfa`.
 See `docs/design/PR18_PRINTING_EXPORT_PLAN.md` and `docs/DECISION_LOG.md`
 ("Roadmap PR18A printing/export architecture design").
 
+## Shared export foundation implemented (Roadmap PR18B)
+
+Roadmap PR18B added one output-neutral export foundation for all three PR17
+report families. Stable report identities, export metadata, deterministic
+typed columns and rows, and centrally enforced `ExportDocument` schema
+invariants now feed Receive, Issue, and Equipment Verify Checklist builders.
+Those builders reuse the existing PR17 query/eligibility/filter/ordering
+semantics rather than creating a second reporting engine. The internal
+`GET /reports/{report_id}/print-data` endpoint returns the complete matching
+dataset within the approved bound and records human-readable applied-filter
+metadata. Report-specific filter applicability is enforced, and operator-name
+resolution stays inside the same transaction-referenced historical-operator
+boundary as `/report-options/operators`. Browser Print, PDF, and Excel remain
+separate future adapters. Merged as GitHub PR #73, squash SHA
+`c72929ba4649fd75d1f81e4630b4e4feb3d136be`. See `docs/DECISION_LOG.md`
+("Roadmap PR18B — Backend Export Foundation").
+
 ## Cleaning status removed
 
 A cleaning status/workflow was proposed early (a two-step "Return Received" / "Cleaning Confirmed" process, `docs/audits/03-hospital-equipment-pool-workflow-audit.md` §6.1) and explicitly superseded before implementation: the hospital confirmed receipt is one atomic usable/defective operation, and the system never tracks cleaning. See `docs/ARCHITECTURE_DECISIONS.md` ("No cleaning workflow").
@@ -221,4 +238,4 @@ Roadmap PR17 ships across four Implementation Slices, per the architecture-appro
 
 The `list_operators` gap noted above is resolved: `app/crud/user.py::list_operators` now validates the decoded cursor's UUID before any query executes (mirroring `equipment_crud.list_for_verify_checklist`'s established convention from GitHub PR #68), and raises the existing `InvalidInputError` (`400 INVALID_INPUT`) for a structurally well-formed alpha cursor whose id is not a real UUID, the same as every other cursor-consuming endpoint in the codebase. Covered by `backend/tests/test_operator_options_cursor_validation.py`. This was a narrowly scoped maintenance fix — no runtime contract, response schema, migration, or business semantics changed, and it did not begin Roadmap PR18.
 
-Merged as GitHub PR #68, squash SHA `d4aaf0f08016b6e63774a06cdade5afe4737d3f7`, from branch `feature/pr17-slice4-equipment-verify-checklist`, baseline `8a1a28042e791bd321a67d4dae7a7b46ab0f8f6c` (Slice 3's squash merge). See `docs/DECISION_LOG.md` ("Roadmap PR17 — Owner Decision #1 (Equipment Verify Checklist Definition)" and "Roadmap PR17 — Operational Reports Complete") for the full slice-by-slice implementation and review chronology, and `docs/ROADMAP.md`/`docs/ROADMAP_STATUS.md` for the updated baseline. **Roadmap PR17 is now fully complete.** No new equipment lifecycle state, no change to `TransactionOut`, no physical-verification workflow, and no database migration were introduced anywhere in Roadmap PR17. Roadmap PR18A design has since merged; PR18B is the next implementation step.
+Merged as GitHub PR #68, squash SHA `d4aaf0f08016b6e63774a06cdade5afe4737d3f7`, from branch `feature/pr17-slice4-equipment-verify-checklist`, baseline `8a1a28042e791bd321a67d4dae7a7b46ab0f8f6c` (Slice 3's squash merge). See `docs/DECISION_LOG.md` ("Roadmap PR17 — Owner Decision #1 (Equipment Verify Checklist Definition)" and "Roadmap PR17 — Operational Reports Complete") for the full slice-by-slice implementation and review chronology, and `docs/ROADMAP.md`/`docs/ROADMAP_STATUS.md` for the updated baseline. **Roadmap PR17 is now fully complete.** No new equipment lifecycle state, no change to `TransactionOut`, no physical-verification workflow, and no database migration were introduced anywhere in Roadmap PR17. See the newer entries above for subsequent PR18 status.
