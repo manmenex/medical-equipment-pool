@@ -78,36 +78,24 @@ async def update(db: AsyncSession, user: User, *, data: dict, role_id: uuid.UUID
     return user
 
 
-async def list_operators(
-    db: AsyncSession,
-    *,
-    q: str | None = None,
-    limit: int = 100,
-    cursor: str | None = None,
-) -> tuple[list[User], str | None, int]:
+def _operator_ids_subquery():
     """Roadmap PR17 Slice 2 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
-    §10.4/§11): the bounded, report-scoped operator lookup behind
-    `GET /report-options/operators`.
-
-    Source / population rule: exactly the distinct `User` rows referenced
+    §10.4/§11), extracted as a shared helper by Roadmap PR18B review
+    4837668805 (PR18B-H2R): the single source of truth for "who counts as
+    a historical operator" -- exactly the distinct `User` rows referenced
     by `BorrowTransaction.borrower_user_id` or `.received_by_user_id`, at
     least once, across all transactions -- a `SELECT DISTINCT` union of
-    both FK columns, filtered as an `IN` subquery against `User`. This is
-    never every `User` row (that remains `list_users` above, reachable
-    only via the Administrator-only `GET /users`) -- a Read Only account,
-    or an Administrator who has never dispatched/received anything, is
-    never returned here, regardless of role. `NULL` FK values contribute
-    nothing to the set.
+    both FK columns. This is never every `User` row (that remains
+    `list_users` above, reachable only via the Administrator-only
+    `GET /users`) -- a Read Only account, or an Administrator who has
+    never dispatched/received anything, is never in this set, regardless
+    of role. `NULL` FK values contribute nothing to the set.
 
-    Both active and inactive operators are returned (§10.4 "Active/inactive
-    behavior") -- `is_active` is left for the caller/schema to surface, not
-    filtered out here; `User` rows are never deleted, only deactivated.
-
-    Ordered `full_name ASC, id ASC` (a stable alphabetical order for a
-    name-driven `<select>`), not `created_at` -- a distinct cursor basis
-    from the reports' own chronological ordering (§10.1/§10.2).
-    """
-    operator_ids = (
+    Used by both `list_operators` (`GET /report-options/operators`) and
+    `get_operator_by_id` (PR18B export filter-summary resolution) so the
+    two call sites share one operator-visibility policy and can never
+    diverge into two different bounded-lookup definitions."""
+    return (
         select(BorrowTransaction.borrower_user_id)
         .where(BorrowTransaction.borrower_user_id.is_not(None))
         .union(
@@ -117,7 +105,41 @@ async def list_operators(
         )
     )
 
-    filters = [User.id.in_(operator_ids)]
+
+async def get_operator_by_id(db: AsyncSession, user_id: uuid.UUID) -> User | None:
+    """Roadmap PR18B review 4837668805 (PR18B-H2R): the same bounded
+    operator population rule as `list_operators` below, applied to a
+    single id. Returns `None` for a `user_id` that has never appeared as
+    a dispatch/receipt operator -- even if it belongs to a real, active
+    `User` row -- so a caller who only knows an arbitrary user UUID can
+    never use this to discover that user's display name. Callers must
+    never fall back to the unrestricted `get_by_id` above when the intent
+    is operator-name resolution."""
+    result = await db.execute(select(User).where(User.id == user_id, User.id.in_(_operator_ids_subquery())))
+    return result.scalar_one_or_none()
+
+
+async def list_operators(
+    db: AsyncSession,
+    *,
+    q: str | None = None,
+    limit: int = 100,
+    cursor: str | None = None,
+) -> tuple[list[User], str | None, int]:
+    """Roadmap PR17 Slice 2 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+    §10.4/§11): the bounded, report-scoped operator lookup behind
+    `GET /report-options/operators`. Source/population rule documented on
+    `_operator_ids_subquery` above.
+
+    Both active and inactive operators are returned (§10.4 "Active/inactive
+    behavior") -- `is_active` is left for the caller/schema to surface, not
+    filtered out here; `User` rows are never deleted, only deactivated.
+
+    Ordered `full_name ASC, id ASC` (a stable alphabetical order for a
+    name-driven `<select>`), not `created_at` -- a distinct cursor basis
+    from the reports' own chronological ordering (§10.1/§10.2).
+    """
+    filters = [User.id.in_(_operator_ids_subquery())]
     if q:
         # Same LIKE-wildcard-escaping technique as
         # app.crud.equipment.search_bcm -- a literal "%"/"_" in the typed
