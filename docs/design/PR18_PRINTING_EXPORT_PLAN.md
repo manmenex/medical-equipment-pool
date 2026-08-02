@@ -3,8 +3,10 @@
 **Status:** Approved architecture design, merged as GitHub PR #71
 (`6ba2c666a11043d03669abdb65f966061dd02cfa`). PR18B's backend export
 foundation subsequently merged as GitHub PR #73
-(`c72929ba4649fd75d1f81e4630b4e4feb3d136be`). PR18C Browser Print is next;
-Browser Print, PDF, and Excel output are not implemented.
+(`c72929ba4649fd75d1f81e4630b4e4feb3d136be`). PR18C Browser Print subsequently
+merged as GitHub PR #75 (`e919a2af8cc7ca11ab72bee274cb70e76c27ce8a`).
+PR18D PDF export is next; PDF and Excel output are not implemented. Roadmap
+PR18 remains incomplete.
 **Purpose:** Implementation design for Roadmap PR18. This document is
 authoritative for the approved PR18A architecture, subject to the remaining
 unresolved Owner Decision explicitly listed in §23.
@@ -700,6 +702,9 @@ system and would require separate design and approval.
 - renderer dependency, workbook generation, print CSS, async jobs.
 
 ### PR18C — Browser print presentation
+
+**Status:** Merged as GitHub PR #75, squash SHA
+`e919a2af8cc7ca11ab72bee274cb70e76c27ce8a`.
 
 **Scope**
 

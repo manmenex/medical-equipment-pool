@@ -52,6 +52,22 @@ separate future adapters. Merged as GitHub PR #73, squash SHA
 `c72929ba4649fd75d1f81e4630b4e4feb3d136be`. See `docs/DECISION_LOG.md`
 ("Roadmap PR18B — Backend Export Foundation").
 
+## Browser Print implemented (Roadmap PR18C)
+
+Roadmap PR18C added a dedicated Thai-first Browser Print adapter for Receive
+Report, Issue Report, and Equipment Verify Checklist. The frontend consumes
+PR18B's bounded `print-data` representation of `ExportDocument` and renders
+the backend-provided report content, filters, columns, ordering, metadata, and
+information boundaries without reconstructing report rules. Print requests
+remove `cursor` and `limit` so pagination never constrains the retained
+document while preserving the other declared filters for backend validation.
+Required Noto Sans Thai weights are loaded and validated independently, and
+font readiness fails closed when a weight or the Font Loading API is
+unavailable; completed readiness is accepted only for the current document
+identity. PDF and Excel remain separate future adapters. Merged as GitHub PR
+#75, squash SHA `e919a2af8cc7ca11ab72bee274cb70e76c27ce8a`. See
+`docs/DECISION_LOG.md` ("Roadmap PR18C — Browser Print").
+
 ## Cleaning status removed
 
 A cleaning status/workflow was proposed early (a two-step "Return Received" / "Cleaning Confirmed" process, `docs/audits/03-hospital-equipment-pool-workflow-audit.md` §6.1) and explicitly superseded before implementation: the hospital confirmed receipt is one atomic usable/defective operation, and the system never tracks cleaning. See `docs/ARCHITECTURE_DECISIONS.md` ("No cleaning workflow").

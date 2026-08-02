@@ -308,9 +308,15 @@
   now derives status fresh on every render by comparing the outcome of the
   most recently completed check against the document identity it belongs
   to, and adds a distinct `"unsupported"` status for a browser that cannot
-  run the check at all. No backend file changed in any correction round; no
-  PR18B behavior affected.
-- **Status:** Implemented in this branch; not yet merged as of this entry.
+  run the check at all. The final review correction requires each declared
+  font weight (400 and 700) to return a non-empty match independently, so one
+  loaded weight cannot mask another missing weight. No backend file changed
+  in any correction round; no PR18B behavior affected. Independent review
+  recorded substantive APPROVE on exact head
+  `9f764bcaf540a7546f0dd166e8628809521d620e` after all prior blockers were
+  resolved.
+- **Status:** Merged as GitHub PR #75, squash SHA
+  `e919a2af8cc7ca11ab72bee274cb70e76c27ce8a`.
 - **Consequences:** Receive Report, Issue Report, and Equipment Verify
   Checklist can each now be browser-printed from the merged PR18B foundation.
   No PDF or Excel output exists yet. Roadmap PR18 is not complete. PR18D (PDF
