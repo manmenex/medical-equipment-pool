@@ -519,6 +519,7 @@ async def test_receive_report_filter_summary_resolves_ward_category_equipment_op
     client, seeded_users, db_session
 ):
     admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    staff_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
     ward_id = await _create_ward(client, admin_headers, "W-PR18B-H2A")
     category = await _create_category(client, admin_headers, "Infusion Devices PR18B-H2")
     equipment = await _create_equipment(
@@ -526,6 +527,13 @@ async def test_receive_report_filter_summary_resolves_ward_category_equipment_op
     )
     admin: User = seeded_users[ROLE_ADMINISTRATOR]
     staff: User = seeded_users[ROLE_EQUIPMENT_POOL_STAFF]
+    # Roadmap PR18B review 4837668805 (PR18B-H2R): operator-name resolution
+    # is now bounded to historical operators, so `staff` must actually have
+    # dispatched/received at least once for `operator_id=staff.id` to
+    # resolve at all.
+    other_ward_id = await _create_ward(client, admin_headers, "W-PR18B-H2A-OP")
+    tx = await _dispatch(client, staff_headers, equipment["id"], other_ward_id)
+    await _receive(client, staff_headers, tx["id"])
 
     document = await report_export_service.build_receive_report_document(
         db_session,
@@ -554,8 +562,16 @@ async def test_receive_report_filter_summary_resolves_ward_category_equipment_op
 async def test_issue_report_filter_summary_resolves_operator_dispatch_type_and_routine_round(
     client, seeded_users, db_session
 ):
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    staff_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
     admin: User = seeded_users[ROLE_ADMINISTRATOR]
     staff: User = seeded_users[ROLE_EQUIPMENT_POOL_STAFF]
+    # Roadmap PR18B review 4837668805 (PR18B-H2R): `staff` must be a real
+    # historical operator (dispatch is enough -- borrower_user_id alone
+    # qualifies) for `operator_id=staff.id` to resolve at all.
+    ward_id = await _create_ward(client, admin_headers, "W-PR18B-H2B")
+    eq = await _create_equipment(client, admin_headers, "AST-PR18B-H2B")
+    await _dispatch(client, staff_headers, eq["id"], ward_id)
 
     document = await report_export_service.build_issue_report_document(
         db_session,
@@ -621,6 +637,102 @@ async def test_filter_summary_falls_back_to_not_found_label_for_deleted_referenc
     by_label = {f.label_th: f.value for f in document.metadata.applied_filters}
     assert by_label["ผู้รับคืน"] == "ไม่พบข้อมูล"
     assert by_label["ผู้รับคืน"] != str(dangling_operator_id)
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: Codex review 4837668805 (PR18B-H2R) -- operator-name
+# resolution for applied_filters metadata must stay bounded to the same
+# historical-operator population rule as GET /report-options/operators
+# (app.crud.user.list_operators / get_operator_by_id), never fall back to
+# the unrestricted app.crud.user.get_by_id.
+# ---------------------------------------------------------------------------
+
+
+async def test_resolve_operator_name_resolves_a_historical_operator(client, seeded_users, db_session):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    staff_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    staff: User = seeded_users[ROLE_EQUIPMENT_POOL_STAFF]
+    ward_id = await _create_ward(client, admin, "W-PR18B-H2R-1")
+    eq = await _create_equipment(client, admin, "AST-PR18B-H2R-1")
+    tx = await _dispatch(client, staff_headers, eq["id"], ward_id)
+    await _receive(client, staff_headers, tx["id"])
+
+    name = await report_export_service._resolve_operator_name(db_session, staff.id)
+    assert name == staff.full_name
+
+
+async def test_resolve_operator_name_returns_none_for_a_non_operator_user(db_session, seeded_users):
+    """A real, active User who has never appeared as a dispatch/receipt
+    operator must not resolve -- this is the exact PR18B-H2R scenario: an
+    arbitrary valid User UUID must not disclose that user's display name
+    through export filter-summary resolution."""
+    never_an_operator: User = seeded_users[ROLE_READ_ONLY]
+    name = await report_export_service._resolve_operator_name(db_session, never_an_operator.id)
+    assert name is None
+
+
+async def test_receive_report_filter_summary_does_not_leak_non_operator_display_name(
+    client, seeded_users, db_session
+):
+    admin: User = seeded_users[ROLE_ADMINISTRATOR]
+    never_an_operator: User = seeded_users[ROLE_READ_ONLY]
+
+    document = await report_export_service.build_receive_report_document(
+        db_session, operator_id=never_an_operator.id, generated_by=admin, generated_at=_FIXED_NOW
+    )
+    by_label = {f.label_th: f.value for f in document.metadata.applied_filters}
+    assert by_label["ผู้รับคืน"] == "ไม่พบข้อมูล"
+    assert by_label["ผู้รับคืน"] != never_an_operator.full_name
+
+
+async def test_print_data_operator_filter_resolves_legitimate_operator_name_in_export_metadata(
+    client, seeded_users
+):
+    """A read-only/report-role caller may legitimately filter/export by a
+    real historical operator, and the resulting export metadata still
+    contains that operator's resolved display name -- H2R narrows operator
+    visibility to *historical operators only*, it does not remove
+    legitimate resolution."""
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    staff_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    read_only = await _auth_headers(client, ROLE_READ_ONLY)
+    staff: User = seeded_users[ROLE_EQUIPMENT_POOL_STAFF]
+    ward_id = await _create_ward(client, admin, "W-PR18B-H2R-2")
+    eq = await _create_equipment(client, admin, "AST-PR18B-H2R-2")
+    tx = await _dispatch(client, staff_headers, eq["id"], ward_id)
+    await _receive(client, staff_headers, tx["id"])
+
+    resp = await client.get(
+        "/api/v1/reports/receive-report/print-data",
+        headers=read_only,
+        params={"operator_id": str(staff.id)},
+    )
+    assert resp.status_code == 200, resp.text
+    by_label = {f["label_th"]: f["value"] for f in resp.json()["metadata"]["applied_filters"]}
+    assert by_label["ผู้รับคืน"] == staff.full_name
+
+
+async def test_print_data_read_only_role_cannot_discover_arbitrary_user_via_operator_filter(
+    client, seeded_users
+):
+    """Roadmap PR18B review 4837668805 (PR18B-H2R): a report-capable role
+    (Read Only here) supplying an arbitrary, never-an-operator User UUID as
+    operator_id must not be able to discover that user's display name via
+    the export/print-data metadata -- the exact information-boundary bypass
+    the review identified (a report-capable user who knows an arbitrary
+    UUID could otherwise resolve any user's display name)."""
+    admin: User = seeded_users[ROLE_ADMINISTRATOR]
+    read_only = await _auth_headers(client, ROLE_READ_ONLY)
+
+    resp = await client.get(
+        "/api/v1/reports/receive-report/print-data",
+        headers=read_only,
+        params={"operator_id": str(admin.id)},
+    )
+    assert resp.status_code == 200, resp.text
+    by_label = {f["label_th"]: f["value"] for f in resp.json()["metadata"]["applied_filters"]}
+    assert by_label["ผู้รับคืน"] == "ไม่พบข้อมูล"
+    assert by_label["ผู้รับคืน"] != admin.full_name
 
 
 # ---------------------------------------------------------------------------

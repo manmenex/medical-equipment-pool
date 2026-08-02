@@ -308,9 +308,17 @@ def _filter_summary(label_th: str, value: uuid.UUID | None, display_name: str | 
 
 
 async def _resolve_operator_name(db: AsyncSession, operator_id: uuid.UUID | None) -> str | None:
+    """Roadmap PR18B review 4837668805 (PR18B-H2R): resolves through
+    `user_crud.get_operator_by_id` -- the same bounded, report-scoped
+    operator population rule as `GET /report-options/operators`
+    (`user_crud.list_operators`) -- never the unrestricted
+    `user_crud.get_by_id`. A `operator_id` that is a real `User` but has
+    never appeared as a dispatch/receipt operator resolves to `None` here
+    exactly as it would be absent from `GET /report-options/operators`,
+    not a name-discovery path for an arbitrary user UUID."""
     if operator_id is None:
         return None
-    operator = await user_crud.get_by_id(db, operator_id)
+    operator = await user_crud.get_operator_by_id(db, operator_id)
     return operator.full_name if operator is not None else None
 
 
