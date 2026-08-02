@@ -14,9 +14,11 @@ import type { PrintDocumentOut } from "@/types";
 // reconstruct a report, and it must render exactly the backend-given
 // column/row order without filtering, sorting, or recomputing anything.
 
-// Only getReportPrintData is mocked -- buildPrintDataFilters (the review
-// 4837997016 H2 whitelist) is the real implementation, so these tests
-// exercise the actual filter-narrowing behavior end to end.
+// Only getReportPrintData is mocked -- buildPrintDataFilters is the real
+// implementation, so these tests exercise the actual request-construction
+// behavior end to end. Pagination stripping (cursor/limit) is enforced
+// inside getReportPrintData itself (review round 2, PR18C-H2R) and is
+// covered separately in printReports.test.ts, since it is mocked away here.
 const getReportPrintData = vi.fn();
 vi.mock("@/services/printReports", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/services/printReports")>();
@@ -50,18 +52,26 @@ function makeDocument(overrides: Partial<PrintDocumentOut> = {}): PrintDocumentO
 }
 
 // jsdom does not implement the Font Loading API -- stubbed here as a
-// controllable, resolvable promise so the "print only after fonts ready"
-// gating (design §9) can be deterministically observed instead of relying
-// on the component's own environment-detection fallback.
+// controllable promise (resolvable *or* rejectable) so both the "print only
+// after fonts ready" gating and the fail-closed rejection path (design §9;
+// review round 2, PR18C-H1R) can be deterministically observed instead of
+// relying on the component's own environment-detection fallback.
 let resolveFontsReady: () => void;
-beforeEach(() => {
-  const fontsReadyPromise = new Promise<void>((resolve) => {
+let rejectFontsReady: () => void;
+
+function installControllableFonts() {
+  const fontsReadyPromise = new Promise<void>((resolve, reject) => {
     resolveFontsReady = resolve;
+    rejectFontsReady = reject;
   });
   Object.defineProperty(document, "fonts", {
     configurable: true,
     value: { ready: fontsReadyPromise },
   });
+}
+
+beforeEach(() => {
+  installControllableFonts();
   getReportPrintData.mockResolvedValue(makeDocument());
 });
 
@@ -91,27 +101,27 @@ describe("ReportPrintPage", () => {
     );
   });
 
-  it("forwards only the whitelisted filter keys for this report identity", async () => {
-    renderPage("/reports/issue-report/print?ward_id=ward-1&shift=day&dispatch_type=on_demand");
-    await waitFor(() =>
-      expect(getReportPrintData).toHaveBeenCalledWith("issue-report", {
-        ward_id: "ward-1",
-        shift: "day",
-        dispatch_type: "on_demand",
-      })
-    );
-  });
-
-  // Roadmap PR18C review 4837997016 (H2): the print page must never forward
-  // the raw URL search params as-is -- cursor/limit and any filter that
-  // does not belong to this report identity must never reach the request.
-  it("strips cursor, limit, and filters that do not apply to this report identity", async () => {
+  // Roadmap PR18C review round 2 (PR18C-H2R): the page must never decide
+  // which filters are applicable to which report identity -- that decision
+  // belongs to the backend's own `_reject_inapplicable_print_data_filters`
+  // alone. Every filter present on the URL -- including one inapplicable to
+  // this report identity, and an entirely unrecognized one -- reaches the
+  // request unchanged, so the backend can validate it and return a
+  // structured 400 INVALID_INPUT rather than the frontend silently
+  // discarding it. `cursor`/`limit` still appear in the object the page
+  // passes to `getReportPrintData` here -- their removal happens inside the
+  // service itself (see printReports.test.ts), not this page.
+  it("forwards every URL filter to the print-data request unmodified, dropping none", async () => {
     renderPage(
-      "/reports/equipment-verify-checklist/print?ward_id=ward-1&shift=day&cursor=abc&limit=25&status=available_at_pool"
+      "/reports/equipment-verify-checklist/print?status=available_at_pool&shift=day&cursor=abc&limit=25&some_unknown_param=x"
     );
     await waitFor(() =>
       expect(getReportPrintData).toHaveBeenCalledWith("equipment-verify-checklist", {
         status: "available_at_pool",
+        shift: "day",
+        cursor: "abc",
+        limit: "25",
+        some_unknown_param: "x",
       })
     );
   });
@@ -192,7 +202,7 @@ describe("ReportPrintPage", () => {
     await waitFor(() => expect(printButton).not.toBeDisabled());
   });
 
-  // Roadmap PR18C review 4837997016 (H1): readiness is report-loaded AND
+  // Roadmap PR18C review round 2 (PR18C-H1R): readiness is report-loaded AND
   // rendered AND fonts-ready -- resolving document.fonts.ready early (even
   // before the report data has arrived) must not enable the Print button by
   // itself. Proves the fonts.ready subscription is not started at mount.
@@ -212,6 +222,37 @@ describe("ReportPrintPage", () => {
 
     resolveReport!(makeDocument());
     await waitFor(() => expect(printButton).not.toBeDisabled());
+  });
+
+  // Roadmap PR18C review round 2 (PR18C-H1R): readiness must be fail-closed
+  // -- a rejected font check must never enable Print.
+  it("is fail-closed: a rejected font readiness check keeps Print disabled and shows a Thai error", async () => {
+    renderPage();
+    await screen.findByText("รายงานการรับคืน");
+    const printButton = screen.getByRole("button", { name: "พิมพ์" });
+    expect(printButton).toBeDisabled();
+
+    rejectFontsReady();
+
+    expect(await screen.findByText("ไม่สามารถเตรียมฟอนต์สำหรับพิมพ์ได้ กรุณาลองใหม่ก่อนพิมพ์")).toBeInTheDocument();
+    expect(printButton).toBeDisabled();
+  });
+
+  it("exposes a retry action for a failed font readiness check, and recovers once retried successfully", async () => {
+    renderPage();
+    await screen.findByText("รายงานการรับคืน");
+    rejectFontsReady();
+
+    const fontsRetryButton = await screen.findByRole("button", { name: "ลองใหม่" });
+
+    // A fresh, resolvable fonts.ready promise is what a real browser retry
+    // would observe (e.g. after a transient font-loading failure resolves).
+    installControllableFonts();
+    const { default: userEvent } = await import("@testing-library/user-event");
+    await userEvent.setup().click(fontsRetryButton);
+
+    resolveFontsReady();
+    await waitFor(() => expect(screen.getByRole("button", { name: "พิมพ์" })).not.toBeDisabled());
   });
 
   it("never calls window.print() automatically before the Print button is clicked", async () => {
@@ -240,6 +281,24 @@ describe("ReportPrintPage", () => {
     await userEvent.setup().click(printButton);
 
     expect(printSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // Roadmap PR18C review round 2 (PR18C-H1R): window.print() must never be
+  // reachable while font readiness has failed -- the disabled attribute is
+  // the primary guard (a disabled <button> never dispatches a click event),
+  // and handlePrint's own `!isReady` check is the defense-in-depth backstop.
+  it("never calls window.print() while font readiness has failed", async () => {
+    const printSpy = vi.spyOn(window, "print").mockImplementation(() => {});
+    renderPage();
+    await screen.findByText("รายงานการรับคืน");
+    rejectFontsReady();
+    await screen.findByText("ไม่สามารถเตรียมฟอนต์สำหรับพิมพ์ได้ กรุณาลองใหม่ก่อนพิมพ์");
+
+    const printButton = screen.getByRole("button", { name: "พิมพ์" });
+    const { default: userEvent } = await import("@testing-library/user-event");
+    await userEvent.setup().click(printButton);
+
+    expect(printSpy).not.toHaveBeenCalled();
   });
 
   it("marks the on-screen preview toolbar as print-hidden (no-print) so it never appears in the printed output", async () => {

@@ -170,14 +170,33 @@
     `AppShell`-wrapping route (mirrors `/login`'s own "bare page" shape) so no
     navigation/dashboard chrome ever appears in the printed output, but still
     guarded by `ProtectedRoute`. Fetches exactly one `PrintDocumentOut` for the
-    report identity in the URL, forwarding every query param present on the
-    page that linked here verbatim — it does not decide which filters are
-    valid for which report identity; an inapplicable filter is rejected by the
-    already-merged PR18B backend check and surfaced here as a visible error.
-    The Print button stays disabled until both the fetched document and
-    `document.fonts.ready` resolve (design §9: "invokes the browser's native
-    print dialog only after data and fonts are ready") — `window.print()` is
-    never auto-invoked.
+    report identity in the URL. The page forwards every query param present
+    on the page that linked here; `frontend/src/services/printReports.ts`'s
+    `getReportPrintData` removes only the two pagination controls (`cursor`,
+    `limit`) that this route never accepts — enforced inside the service
+    itself, not only by page-level preprocessing, so a caller cannot leak
+    pagination parameters through it either way. The print-data endpoint
+    always returns the complete bounded result set for the active filters
+    (Owner Decision #1), never one cursor page. Every other filter — including
+    one inapplicable to the current report identity, or one the backend does
+    not recognize — is preserved and reaches the request unchanged: the
+    already-merged PR18B backend check (`_reject_inapplicable_print_data_filters`)
+    remains the single, authoritative place deciding whether a filter applies,
+    returning a structured `400 INVALID_INPUT` for one that doesn't, surfaced
+    here as a visible error rather than silently discarded on the frontend.
+    The Print button is enabled only once all of the following hold: the
+    current print-data request succeeded, the current `PrintDocumentOut` has
+    rendered, and that document's own font-readiness check
+    (`frontend/src/hooks/usePrintFontsReady.ts`, subscribing to
+    `document.fonts.ready`) resolved successfully (design §9: "invokes the
+    browser's native print dialog only after data and fonts are ready"). This
+    check is fail-closed — a rejected `document.fonts.ready` lands on an
+    explicit Thai error state with a retry action and never enables Print —
+    and tied to the specific document currently on screen via a monotonically
+    increasing generation token, so a stale check belonging to a
+    since-superseded document can never override a newer document's status.
+    `window.print()` is never auto-invoked, and `handlePrint` itself refuses
+    to call it unless every readiness condition above still holds.
   - `frontend/src/components/print/PrintDocumentView.tsx`: the purely
     presentational renderer — report title, generation metadata (generated
     time/by/timezone/report identity/template version), the backend-resolved
@@ -193,9 +212,7 @@
     `frontend/src/types/index.ts` (`PrintDocumentOut`/`PrintColumnOut`/
     `PrintRowOut`/`PrintMetadataOut`/`PrintFilterSummaryOut`/`ReportIdentity`):
     the typed client and contract mirroring the backend PR18B DTOs field for
-    field. Never sends `limit`/`cursor` — the print-data endpoint always
-    returns the complete bounded result set (Owner Decision #1), never one
-    cursor page.
+    field (pagination-stripping behavior described above).
   - `frontend/src/styles/print.css`: print CSS scoped to the print route's own
     Vite code-split chunk only (confirmed by build output — the app's global
     stylesheet is untouched). Defines named CSS pages (`@page portrait-a4`/
@@ -222,19 +239,31 @@
   digital signature, no hospital logo/name, no backend route or contract
   change — all confirmed absent from this diff.
 - **Testing:** `frontend/src/pages/ReportPrintPage.test.tsx` (report-identity
-  validation, filter forwarding, loading/error/retry, metadata and
-  backend-order column/row rendering, empty-state rendering, font/data
-  readiness gating the Print button, `window.print()` never auto-invoked, the
-  on-screen toolbar carrying the `.no-print` class);
-  `frontend/src/services/printReports.test.ts` (exact endpoint/params,
-  `limit`/`cursor` never sent); one added test per existing report page
-  (`ReceiveReportPage.test.tsx`/`IssueReportPage.test.tsx`/
-  `EquipmentVerifyChecklistPage.test.tsx`) proving the print link carries the
-  page's current applied filters. Full existing frontend suite re-run with no
-  regression.
+  validation, unmodified filter forwarding including report-inapplicable and
+  unrecognized filters, loading/error/retry, metadata and backend-order
+  column/row rendering, empty-state rendering, Print-button readiness gating
+  including the fail-closed rejected-font-check path and its retry action,
+  `window.print()` never auto-invoked and never reachable while font
+  readiness has failed, the on-screen toolbar carrying the `.no-print`
+  class); `frontend/src/hooks/usePrintFontsReady.test.ts` (the fail-closed
+  and stale-result-guard behavior in isolation, including proof that a
+  slow-resolving or slow-rejecting document-A check can never override a
+  newer document-B's status once B has superseded it, and that `retry()`
+  recovers from a failed check); `frontend/src/services/printReports.test.ts`
+  (exact endpoint/params, `cursor`/`limit` stripped by the service itself
+  even when passed directly to it, every other filter — including a
+  report-inapplicable or unrecognized one — preserved unchanged); one added
+  test per existing report page (`ReceiveReportPage.test.tsx`/
+  `IssueReportPage.test.tsx`/`EquipmentVerifyChecklistPage.test.tsx`) proving
+  the print link carries the page's current applied filters. Full existing
+  frontend suite re-run with no regression.
 - **Source:** `docs/design/PR18_PRINTING_EXPORT_PLAN.md` §9, §16, §17, §20.3,
   §22. Branch `feature/pr18c-browser-print`, baseline
   `c72929ba4649fd75d1f81e4630b4e4feb3d136be` (GitHub PR #73's squash merge).
+  Corrected in a second Codex review round (PR18C-H1R/PR18C-H2R) to make
+  print readiness fail-closed and document-identity-aware, and to replace an
+  interim per-report-identity filter allowlist with pagination-only
+  stripping, keeping the backend the sole authority on filter applicability.
 - **Status:** Implemented in this branch; not yet merged as of this entry.
 - **Consequences:** Receive Report, Issue Report, and Equipment Verify
   Checklist can each now be browser-printed from the merged PR18B foundation.

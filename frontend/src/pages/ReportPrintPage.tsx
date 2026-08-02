@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
 import { PrintDocumentView } from "@/components/print/PrintDocumentView";
+import { usePrintFontsReady } from "@/hooks/usePrintFontsReady";
 import { apiErrorMessage } from "@/services/api";
 import { buildPrintDataFilters, getReportPrintData } from "@/services/printReports";
 import "@/styles/print.css";
@@ -16,22 +16,21 @@ import { isReportIdentity } from "@/utils/printFormat";
 // filtering, sorting, or recomputing anything. The report page that links
 // here (ReceiveReportPage/IssueReportPage/EquipmentVerifyChecklistPage)
 // carries its own current URL filters over -- this page performs no
-// business logic of its own; it only selects the whitelisted subset of
-// those filters this report identity actually accepts (see
-// services/printReports.ts's buildPrintDataFilters, review 4837997016 H2).
+// business logic of its own; it forwards every filter present on the URL
+// (review round 2, PR18C-H2R) and lets the backend's own
+// `_reject_inapplicable_print_data_filters` decide what applies.
 export function ReportPrintPage() {
   const { reportId } = useParams<{ reportId: string }>();
   const [searchParams] = useSearchParams();
-  const [fontsReady, setFontsReady] = useState(false);
 
   const validReportId = isReportIdentity(reportId) ? reportId : null;
 
-  // Roadmap PR18C review 4837997016 (H2): an explicit, per-report-identity
-  // whitelist -- never the raw `URLSearchParams`/`location.search` forwarded
-  // as-is. Forwarding everything would also drag along `cursor`, `limit`, or
-  // any future UI-only query param the on-screen report page might someday
-  // add, none of which this route accepts or should ever receive.
-  const filters = validReportId ? buildPrintDataFilters(validReportId, searchParams) : {};
+  // Roadmap PR18C review round 2 (PR18C-H2R): every filter present on the
+  // URL is forwarded -- `getReportPrintData` itself strips `cursor`/`limit`
+  // (see services/printReports.ts), and any other, report-inapplicable, or
+  // unrecognized filter reaches the backend so its own validation -- not a
+  // second frontend copy of it -- decides whether to accept or reject it.
+  const filters = validReportId ? buildPrintDataFilters(searchParams) : {};
 
   const {
     data: printDocument,
@@ -45,36 +44,21 @@ export function ReportPrintPage() {
     enabled: validReportId !== null,
   });
 
-  useEffect(() => {
-    // Roadmap PR18C review 4837997016 (H1): readiness is "report loaded AND
-    // rendered AND document.fonts.ready" -- deliberately not
-    // document.fonts.ready alone, started at mount. Subscribing to
-    // document.fonts.ready before the print content (and its "Noto Sans
-    // Thai" font-family) has actually rendered into the DOM would let the
-    // browser resolve "ready" before it has even discovered that this font
-    // is required by anything on the page, defeating the entire point of
-    // this gate (design §9: "invokes the browser's native print dialog only
-    // after data and fonts are ready"). This effect depends on
-    // `printDocument`, so it only starts once that value is set -- which
-    // React guarantees happens after the render that includes
-    // <PrintDocumentView> below has committed to the DOM.
-    if (!printDocument) {
-      return;
-    }
-    if (typeof document === "undefined" || !("fonts" in document)) {
-      setFontsReady(true);
-      return;
-    }
-    let cancelled = false;
-    document.fonts.ready.then(() => {
-      if (!cancelled) setFontsReady(true);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [printDocument]);
+  // Roadmap PR18C review round 2 (PR18C-H1R): readiness is fail-closed and
+  // tied to the specific `printDocument` currently on screen -- see
+  // hooks/usePrintFontsReady.ts for the generation-token guard against a
+  // stale, superseded document's font check overriding a newer one's status.
+  const { status: fontsStatus, retry: retryFontsCheck } = usePrintFontsReady(printDocument);
+
+  const isReady = !isLoading && !isError && !!printDocument && fontsStatus === "ready";
 
   function handlePrint() {
+    // Defense-in-depth: the Print button is already disabled whenever
+    // `!isReady`, but a rejected or stale font check must never be able to
+    // trigger the browser's print dialog even if reached some other way.
+    if (!isReady) {
+      return;
+    }
     window.print();
   }
 
@@ -85,8 +69,6 @@ export function ReportPrintPage() {
       </div>
     );
   }
-
-  const isReady = !isLoading && !isError && !!printDocument && fontsReady;
 
   return (
     <div>
@@ -119,6 +101,19 @@ export function ReportPrintPage() {
           <button
             type="button"
             onClick={() => refetch()}
+            className="rounded-lg border border-[#e2e8f0] px-3 py-2 text-sm font-medium"
+          >
+            ลองใหม่
+          </button>
+        </div>
+      )}
+
+      {!isLoading && !isError && printDocument && fontsStatus === "error" && (
+        <div className="no-print flex flex-col items-start gap-2 p-6">
+          <p className="text-sm text-red-600">ไม่สามารถเตรียมฟอนต์สำหรับพิมพ์ได้ กรุณาลองใหม่ก่อนพิมพ์</p>
+          <button
+            type="button"
+            onClick={retryFontsCheck}
             className="rounded-lg border border-[#e2e8f0] px-3 py-2 text-sm font-medium"
           >
             ลองใหม่

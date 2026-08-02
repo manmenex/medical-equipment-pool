@@ -1,14 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { api } from "@/services/api";
-import { buildPrintDataFilters, getReportPrintData } from "@/services/printReports";
+import { buildPrintDataFilters, getReportPrintData, stripPrintDataPaginationParams } from "@/services/printReports";
 
 // Roadmap PR18C (docs/design/PR18_PRINTING_EXPORT_PLAN.md §6.2/§9): proves
 // the print client calls exactly the merged PR18B endpoint
-// (GET /reports/{report_id}/print-data) with the filters it was given -- no
-// `limit`/`cursor`. The explicit per-report-identity whitelist that decides
-// *which* filters those are lives in `buildPrintDataFilters` (review
-// 4837997016, H2), tested separately below.
+// (GET /reports/{report_id}/print-data) with the filters it was given, with
+// only `cursor`/`limit` ever removed. Review round 2 (PR18C-H2R) requires
+// this removal to be enforced inside `getReportPrintData` itself -- not
+// only by page-level preprocessing -- so a caller cannot leak pagination
+// parameters through this service even if it bypasses ReportPrintPage.
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -37,14 +38,48 @@ describe("getReportPrintData", () => {
     expect(getSpy).toHaveBeenCalledWith("/reports/equipment-verify-checklist/print-data", { params: {} });
   });
 
-  it("never sends limit or cursor -- print-data always returns the complete bounded result set", async () => {
+  // Roadmap PR18C review round 2 (PR18C-H2R): a caller passing `cursor`
+  // and/or `limit` directly to this service -- bypassing any page-level
+  // preprocessing entirely -- must still never have them reach the network
+  // request. This is the defense-in-depth guarantee the review requires.
+  it("strips cursor and limit even when a caller passes them directly to this service, bypassing the page", async () => {
     const getSpy = vi.spyOn(api, "get").mockResolvedValue({ data: { metadata: {}, columns: [], rows: [] } });
 
-    await getReportPrintData("receive-report", { ward_id: "ward-1" });
+    await getReportPrintData("receive-report", { ward_id: "ward-1", cursor: "some-opaque-cursor", limit: "25" });
 
-    const [, config] = getSpy.mock.calls[0];
-    expect((config as { params: Record<string, unknown> }).params).not.toHaveProperty("limit");
-    expect((config as { params: Record<string, unknown> }).params).not.toHaveProperty("cursor");
+    expect(getSpy).toHaveBeenCalledWith("/reports/receive-report/print-data", {
+      params: { ward_id: "ward-1" },
+    });
+  });
+
+  // Roadmap PR18C review round 2 (PR18C-H2R): every other parameter --
+  // including one this report identity does not accept, and one the
+  // backend does not recognize at all -- is preserved untouched, so the
+  // backend's own `_reject_inapplicable_print_data_filters` remains the
+  // single, authoritative place that validates it (returning a structured
+  // 400 INVALID_INPUT) rather than the frontend silently discarding it.
+  it("preserves a report-inapplicable filter and an unrecognized filter, letting the backend validate them", async () => {
+    const getSpy = vi.spyOn(api, "get").mockResolvedValue({ data: { metadata: {}, columns: [], rows: [] } });
+
+    await getReportPrintData("equipment-verify-checklist", {
+      status: "available_at_pool",
+      shift: "day",
+      some_unknown_param: "x",
+    });
+
+    expect(getSpy).toHaveBeenCalledWith("/reports/equipment-verify-checklist/print-data", {
+      params: { status: "available_at_pool", shift: "day", some_unknown_param: "x" },
+    });
+  });
+
+  it("propagates a structured backend error (e.g. 400 INVALID_INPUT) to the caller unchanged", async () => {
+    const backendError = {
+      isAxiosError: true,
+      response: { status: 400, data: { detail: "The following filters are not supported for report_id 'equipment-verify-checklist': shift" } },
+    };
+    vi.spyOn(api, "get").mockRejectedValue(backendError);
+
+    await expect(getReportPrintData("equipment-verify-checklist", { shift: "day" })).rejects.toBe(backendError);
   });
 
   it("never targets GET /transactions or another endpoint", async () => {
@@ -54,63 +89,76 @@ describe("getReportPrintData", () => {
   });
 });
 
-describe("buildPrintDataFilters", () => {
-  it("forwards only the whitelisted keys for receive-report", () => {
-    const params = new URLSearchParams({
-      business_date_from: "2026-07-01",
-      shift: "day",
-      ward_id: "ward-1",
-    });
-    expect(buildPrintDataFilters("receive-report", params)).toEqual({
-      business_date_from: "2026-07-01",
-      shift: "day",
+describe("stripPrintDataPaginationParams", () => {
+  it("removes cursor", () => {
+    expect(stripPrintDataPaginationParams({ ward_id: "ward-1", cursor: "abc" })).toEqual({ ward_id: "ward-1" });
+  });
+
+  it("removes limit", () => {
+    expect(stripPrintDataPaginationParams({ ward_id: "ward-1", limit: "25" })).toEqual({ ward_id: "ward-1" });
+  });
+
+  it("removes both cursor and limit together", () => {
+    expect(stripPrintDataPaginationParams({ ward_id: "ward-1", cursor: "abc", limit: "25" })).toEqual({
       ward_id: "ward-1",
     });
   });
 
-  it("includes dispatch_type/routine_round only for issue-report", () => {
-    const params = new URLSearchParams({ dispatch_type: "on_demand", routine_round: "06:00" });
-    expect(buildPrintDataFilters("issue-report", params)).toEqual({
+  it("preserves every other key and value unchanged, including ones the current report identity may not accept", () => {
+    const input = {
+      business_date_from: "2026-07-01",
+      shift: "day",
+      dispatch_type: "on_demand",
+      some_unknown_param: "x",
+    };
+    expect(stripPrintDataPaginationParams(input)).toEqual(input);
+  });
+
+  it("does not mutate its input", () => {
+    const input = { cursor: "abc", ward_id: "ward-1" };
+    stripPrintDataPaginationParams(input);
+    expect(input).toEqual({ cursor: "abc", ward_id: "ward-1" });
+  });
+
+  it("returns an empty object for an empty input", () => {
+    expect(stripPrintDataPaginationParams({})).toEqual({});
+  });
+});
+
+describe("buildPrintDataFilters", () => {
+  // Roadmap PR18C review round 2 (PR18C-H2R): this function is a plain,
+  // total passthrough of every query param present on the URL -- it must
+  // never re-implement an allowlist of "applicable" filters (the first
+  // review round's now-removed PRINT_DATA_FILTER_KEYS did exactly that, and
+  // was found to silently discard filters the backend should instead
+  // validate and reject with a structured error).
+  it("returns every query param present, unfiltered", () => {
+    const params = new URLSearchParams({
+      business_date_from: "2026-07-01",
+      shift: "day",
+      ward_id: "ward-1",
       dispatch_type: "on_demand",
       routine_round: "06:00",
-    });
-    // Neither key is in receive-report's whitelist, even though both are
-    // present on the URL.
-    expect(buildPrintDataFilters("receive-report", params)).toEqual({});
-  });
-
-  it("restricts equipment-verify-checklist to its own three filters, dropping report-family-specific ones", () => {
-    const params = new URLSearchParams({
       status: "available_at_pool",
-      equipment_category_id: "cat-1",
-      department_id: "dept-1",
-      // Receive/Issue-only filters that must never leak through:
+      some_unknown_param: "x",
+    });
+    expect(buildPrintDataFilters(params)).toEqual({
       business_date_from: "2026-07-01",
       shift: "day",
       ward_id: "ward-1",
-    });
-    expect(buildPrintDataFilters("equipment-verify-checklist", params)).toEqual({
+      dispatch_type: "on_demand",
+      routine_round: "06:00",
       status: "available_at_pool",
-      equipment_category_id: "cat-1",
-      department_id: "dept-1",
+      some_unknown_param: "x",
     });
   });
 
-  // Roadmap PR18C review 4837997016 (H2): the exact bug this whitelist
-  // fixes -- a naive `new URLSearchParams(location.search)` forward would
-  // drag cursor/limit and any future UI-only param along with it.
-  it("never forwards cursor, limit, or an unrecognized param for any report identity", () => {
-    const params = new URLSearchParams({
-      ward_id: "ward-1",
-      cursor: "some-opaque-cursor",
-      limit: "25",
-      some_future_ui_only_param: "x",
-    });
-    expect(buildPrintDataFilters("receive-report", params)).toEqual({ ward_id: "ward-1" });
+  it("still includes cursor/limit if present -- their removal is the service's responsibility, not this function's", () => {
+    const params = new URLSearchParams({ ward_id: "ward-1", cursor: "abc", limit: "25" });
+    expect(buildPrintDataFilters(params)).toEqual({ ward_id: "ward-1", cursor: "abc", limit: "25" });
   });
 
-  it("returns an empty object when no whitelisted key is present", () => {
-    const params = new URLSearchParams({ cursor: "x", limit: "10" });
-    expect(buildPrintDataFilters("equipment-verify-checklist", params)).toEqual({});
+  it("returns an empty object for an empty URL", () => {
+    expect(buildPrintDataFilters(new URLSearchParams())).toEqual({});
   });
 });
