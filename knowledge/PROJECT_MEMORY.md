@@ -54,17 +54,30 @@ within the same transaction-referenced historical-operator information
 boundary as `/report-options/operators`. Browser Print, PDF, and Excel remain
 separate output adapters.
 
+PR18C implements Browser Print as one dedicated Thai-first frontend adapter
+over PR18B's `ExportDocument`/`print-data` foundation for Receive, Issue, and
+Equipment Verify Checklist. It renders the backend-provided bounded full
+filtered dataset, columns, ordering, metadata, and information boundaries
+without reconstructing report rules on the frontend. Print requests remove
+only pagination keys (`cursor` and `limit`); other declared filter parameters
+remain available for backend validation. Required Noto Sans Thai weights 400
+and 700 are checked independently and fail closed when a weight or the Font
+Loading API is unavailable. A completed readiness result is accepted only for
+the current document identity, preventing an asynchronous result from a stale
+document from enabling Print. PDF and Excel remain separate adapters.
+
 Sources: `docs/PROJECT_PLAYBOOK.md`, `docs/ARCHITECTURE_GUARDRAILS.md`,
 `docs/ARCHITECTURE_DECISIONS.md`.
 
 ## Current baseline and Roadmap
 
-Current baseline: `c72929ba4649fd75d1f81e4630b4e4feb3d136be`.
-Roadmap PR18B merged as GitHub PR #73, squash SHA `c72929b`, on top of GitHub
-PR #72 (`e1b358a`, post-PR18A governance synchronization) and GitHub PR #71
-(`6ba2c66`, the approved PR18A architecture design). PR18B implements only the
-backend export foundation. It introduced no migration or equipment lifecycle
-change and does not implement Browser Print, PDF, or Excel output.
+Current baseline: `e919a2af8cc7ca11ab72bee274cb70e76c27ce8a`.
+Roadmap PR18C merged as GitHub PR #75, squash SHA `e919a2a`, on top of GitHub
+PR #73 (`c72929b`, PR18B backend export foundation), GitHub PR #72 (`e1b358a`,
+post-PR18A governance synchronization), and GitHub PR #71 (`6ba2c66`, the
+approved PR18A architecture design). PR18C implements Browser Print only. It
+introduced no migration or equipment lifecycle change and does not implement
+PDF or Excel output.
 
 Equipment Verify Checklist means a read-only, current-state Equipment
 master-data snapshot (Owner Decision #1, resolved to interpretation A) — not
@@ -73,12 +86,12 @@ operator, condition, pass/fail state, or reconciliation outcome, and
 introduces no new equipment lifecycle state. Physical verification remains
 out of scope, unscheduled future work.
 
-Roadmap PR17 remains complete. Roadmap PR18A design and PR18B backend export
-foundation are merged; Roadmap PR18 remains incomplete. The next planned
-implementation work is PR18C Browser Print. PDF, Excel, and Browser Print
-output are **not implemented yet**. The remaining approved sequence is:
+Roadmap PR17 remains complete. Roadmap PR18A design, PR18B backend export
+foundation, and PR18C Browser Print are merged; Roadmap PR18 remains
+incomplete. The next planned implementation work is PR18D Backend PDF Export.
+PDF and Excel output are **not implemented yet**. The remaining approved
+sequence is:
 
-- PR18C: browser print presentation;
 - PR18D: backend PDF export;
 - PR18E: Excel `.xlsx` export;
 - PR18F: post-implementation governance synchronization after all approved
