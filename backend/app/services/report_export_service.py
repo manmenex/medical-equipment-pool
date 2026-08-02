@@ -27,6 +27,7 @@ from app.core.logging import safe_log
 from app.core.reporting_time import Shift
 from app.crud import equipment as equipment_crud
 from app.crud import master_data as master_data_crud
+from app.crud import user as user_crud
 from app.models.equipment import EquipmentStatus
 from app.models.transaction import DispatchType, RoutineRound
 from app.models.user import User
@@ -80,6 +81,19 @@ _EQUIPMENT_STATUS_LABELS_TH = {
     EquipmentStatus.UNAVAILABLE_DEFECTIVE.value: "ไม่พร้อมใช้งาน",
     EquipmentStatus.DECOMMISSIONED.value: "ปลดระวางถาวร",
 }
+# Roadmap PR18B review 4837529462 (PR18B-H2): reused verbatim from the
+# existing frontend label map (frontend/src/pages/EquipmentDetailPage.tsx's
+# DISPATCH_TYPE_LABELS) -- not a new translation.
+_DISPATCH_TYPE_LABELS_TH = {
+    DispatchType.ON_DEMAND.value: "เบิกตามคำขอ (On-Demand)",
+    DispatchType.ROUTINE_ROUND.value: "รอบเวลาปกติ (Routine Round)",
+}
+
+# Fallback shown in applied-filter metadata when a filter's UUID no longer
+# resolves to a live master-data/user/equipment row (e.g. deleted after the
+# filter was applied) -- never a raw UUID (design §7.2 "resolved on the
+# backend for output").
+_FILTER_VALUE_NOT_FOUND_TH = "ไม่พบข้อมูล"
 
 _ROW = TypeVar("_ROW")
 
@@ -280,10 +294,33 @@ def _shift_filter_summary(shift: Shift | None) -> ExportFilterSummary | None:
     return ExportFilterSummary(label_th="กะ", value=_SHIFT_LABELS_TH[shift.value])
 
 
-def _uuid_filter_summary(label_th: str, value: uuid.UUID | None) -> ExportFilterSummary | None:
+def _filter_summary(label_th: str, value: uuid.UUID | None, display_name: str | None) -> ExportFilterSummary | None:
+    """Roadmap PR18B review 4837529462 (PR18B-H2): renders the caller's
+    already-resolved, human-readable `display_name` -- never the raw
+    `value` UUID (design §7.2 "Display values ... are resolved on the
+    backend for output"). `display_name` is `None` only when the filtered-on
+    row no longer exists (e.g. deleted since); that still produces a
+    filter-summary line (the filter *was* applied) rather than silently
+    omitting it, using an explicit not-found label instead of a UUID."""
     if value is None:
         return None
-    return ExportFilterSummary(label_th=label_th, value=str(value))
+    return ExportFilterSummary(label_th=label_th, value=display_name if display_name is not None else _FILTER_VALUE_NOT_FOUND_TH)
+
+
+async def _resolve_operator_name(db: AsyncSession, operator_id: uuid.UUID | None) -> str | None:
+    if operator_id is None:
+        return None
+    operator = await user_crud.get_by_id(db, operator_id)
+    return operator.full_name if operator is not None else None
+
+
+async def _resolve_equipment_label(db: AsyncSession, equipment_id: uuid.UUID | None) -> str | None:
+    if equipment_id is None:
+        return None
+    equipment = await equipment_crud.get_by_id(db, equipment_id)
+    if equipment is None:
+        return None
+    return f"{equipment.asset_number} - {equipment.equipment_name}"
 
 
 def _status_filter_summary(status: EquipmentStatus | None) -> ExportFilterSummary | None:
@@ -295,13 +332,19 @@ def _status_filter_summary(status: EquipmentStatus | None) -> ExportFilterSummar
 def _dispatch_type_filter_summary(dispatch_type: DispatchType | None) -> ExportFilterSummary | None:
     if dispatch_type is None:
         return None
-    return ExportFilterSummary(label_th="ประเภทการเบิก", value=dispatch_type.value)
+    return ExportFilterSummary(label_th="ประเภทการเบิก", value=_DISPATCH_TYPE_LABELS_TH[dispatch_type.value])
 
 
 def _routine_round_filter_summary(routine_round: RoutineRound | None) -> ExportFilterSummary | None:
     if routine_round is None:
         return None
-    return ExportFilterSummary(label_th="รอบเวร", value=routine_round.value)
+    # Roadmap PR18B review 4837529462 (PR18B-H2): "รอบ {time}" reused
+    # verbatim from the existing on-screen convention
+    # (frontend/src/pages/EquipmentDetailPage.tsx's `` `รอบ ${tx.routine_round}` ``)
+    # -- the clock-time value itself is already business-readable, so this
+    # only adds the same Thai prefix the frontend already uses, not a new
+    # translation.
+    return ExportFilterSummary(label_th="รอบเวร", value=f"รอบ {routine_round.value}")
 
 
 # ---------------------------------------------------------------------------
@@ -340,14 +383,25 @@ async def build_receive_report_document(
     export_rows = [
         _transaction_report_row(ReportTransactionOut.model_validate(row), ward_names=ward_names) for row in rows
     ]
+    # Roadmap PR18B review 4837529462 (PR18B-H2): category/operator/equipment
+    # display names resolved only when the corresponding filter is actually
+    # supplied -- no per-request query for a lookup no filter needs.
+    category_names = await _category_name_lookup(db) if equipment_category_id is not None else {}
+    operator_name = await _resolve_operator_name(db, operator_id)
+    equipment_label = await _resolve_equipment_label(db, equipment_id)
     applied_filters = [
         f
         for f in (
             _date_filter_summary(business_date_from, business_date_to),
             _shift_filter_summary(shift),
-            _uuid_filter_summary("หอผู้ป่วย", ward_id),
-            _uuid_filter_summary("หมวดหมู่เครื่องมือ", equipment_category_id),
-            _uuid_filter_summary("ผู้รับคืน", operator_id),
+            _filter_summary("หอผู้ป่วย", ward_id, ward_names.get(str(ward_id)) if ward_id else None),
+            _filter_summary(
+                "หมวดหมู่เครื่องมือ",
+                equipment_category_id,
+                category_names.get(str(equipment_category_id)) if equipment_category_id else None,
+            ),
+            _filter_summary("เครื่องมือ", equipment_id, equipment_label),
+            _filter_summary("ผู้รับคืน", operator_id, operator_name),
         )
         if f is not None
     ]
@@ -398,14 +452,22 @@ async def build_issue_report_document(
     export_rows = [
         _transaction_report_row(ReportTransactionOut.model_validate(row), ward_names=ward_names) for row in rows
     ]
+    category_names = await _category_name_lookup(db) if equipment_category_id is not None else {}
+    operator_name = await _resolve_operator_name(db, operator_id)
+    equipment_label = await _resolve_equipment_label(db, equipment_id)
     applied_filters = [
         f
         for f in (
             _date_filter_summary(business_date_from, business_date_to),
             _shift_filter_summary(shift),
-            _uuid_filter_summary("หอผู้ป่วย", ward_id),
-            _uuid_filter_summary("หมวดหมู่เครื่องมือ", equipment_category_id),
-            _uuid_filter_summary("ผู้เบิก", operator_id),
+            _filter_summary("หอผู้ป่วย", ward_id, ward_names.get(str(ward_id)) if ward_id else None),
+            _filter_summary(
+                "หมวดหมู่เครื่องมือ",
+                equipment_category_id,
+                category_names.get(str(equipment_category_id)) if equipment_category_id else None,
+            ),
+            _filter_summary("เครื่องมือ", equipment_id, equipment_label),
+            _filter_summary("ผู้เบิก", operator_id, operator_name),
             _dispatch_type_filter_summary(dispatch_type),
             _routine_round_filter_summary(routine_round),
         )
@@ -455,9 +517,15 @@ async def build_equipment_verify_checklist_document(
     applied_filters = [
         f
         for f in (
-            _uuid_filter_summary("หมวดหมู่เครื่องมือ", equipment_category_id),
+            _filter_summary(
+                "หมวดหมู่เครื่องมือ",
+                equipment_category_id,
+                category_names.get(str(equipment_category_id)) if equipment_category_id else None,
+            ),
             _status_filter_summary(status),
-            _uuid_filter_summary("หน่วยงานเจ้าของ", department_id),
+            _filter_summary(
+                "หน่วยงานเจ้าของ", department_id, department_names.get(str(department_id)) if department_id else None
+            ),
         )
         if f is not None
     ]

@@ -2,13 +2,14 @@ import uuid
 from datetime import date, datetime, timezone
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import func, select
 
 from app.core.exceptions import ExportTooLargeError
 from app.models.audit import AuditLog
 from app.models.transaction import BorrowTransaction
 from app.models.user import ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, ROLE_READ_ONLY, User
-from app.schemas.report_export import ReportIdentity
+from app.schemas.report_export import ExportColumn, ExportDocument, ExportMetadata, ExportRow, ReportIdentity
 from app.services import report_export_service
 from app.utils.export_filename import build_filename_stem, date_range_segment, shift_segment
 from tests.conftest import auth_headers as _auth_headers
@@ -56,6 +57,18 @@ async def _receive(client, headers, transaction_id: str, *, receipt_outcome: str
         f"/api/v1/return/{transaction_id}", headers=headers, json={"receipt_outcome": receipt_outcome}
     )
     assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+async def _create_category(client, headers, name: str) -> dict:
+    resp = await client.post("/api/v1/categories", headers=headers, json={"name": name})
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+async def _create_department(client, headers, code: str, name: str) -> dict:
+    resp = await client.post("/api/v1/departments", headers=headers, json={"code": code, "name": name})
+    assert resp.status_code == 201, resp.text
     return resp.json()
 
 
@@ -413,3 +426,353 @@ async def test_print_data_does_not_mutate_transaction_state(client, seeded_users
         await db_session.execute(select(BorrowTransaction).where(BorrowTransaction.id == uuid.UUID(tx["id"])))
     ).scalar_one()
     assert row.returned_at is None
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: Codex review 4837529462 (PR18B-H1) -- each report_id's
+# filter contract is enforced explicitly; an inapplicable filter is rejected
+# with the structured INVALID_INPUT error, never silently dropped.
+# ---------------------------------------------------------------------------
+
+# One row per (report_id, inapplicable filter) pair, covering every filter
+# the print-data route declares that does not belong to that report_id
+# (app.api.v1.reports._PRINT_DATA_APPLICABLE_FILTERS).
+_INAPPLICABLE_FILTER_CASES = [
+    ("receive-report", {"dispatch_type": "on_demand"}),
+    ("receive-report", {"routine_round": "06:00"}),
+    ("receive-report", {"status": "available_at_pool"}),
+    ("receive-report", {"department_id": str(uuid.uuid4())}),
+    ("issue-report", {"status": "available_at_pool"}),
+    ("issue-report", {"department_id": str(uuid.uuid4())}),
+    ("equipment-verify-checklist", {"business_date_from": "2026-07-01"}),
+    ("equipment-verify-checklist", {"business_date_to": "2026-07-01"}),
+    ("equipment-verify-checklist", {"shift": "day"}),
+    ("equipment-verify-checklist", {"ward_id": str(uuid.uuid4())}),
+    ("equipment-verify-checklist", {"equipment_id": str(uuid.uuid4())}),
+    ("equipment-verify-checklist", {"operator_id": str(uuid.uuid4())}),
+    ("equipment-verify-checklist", {"dispatch_type": "on_demand"}),
+    ("equipment-verify-checklist", {"routine_round": "06:00"}),
+]
+
+
+@pytest.mark.parametrize("report_id,params", _INAPPLICABLE_FILTER_CASES)
+async def test_print_data_rejects_inapplicable_filter(client, seeded_users, report_id, params):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await client.get(f"/api/v1/reports/{report_id}/print-data", headers=admin, params=params)
+    assert resp.status_code == 400, f"{report_id} {params}: {resp.text}"
+    assert resp.json()["code"] == "INVALID_INPUT"
+
+
+_APPLICABLE_FILTER_SMOKE_CASES = [
+    ("receive-report", {"shift": "day"}),
+    ("issue-report", {"dispatch_type": "on_demand"}),
+    ("equipment-verify-checklist", {"status": "available_at_pool"}),
+]
+
+
+@pytest.mark.parametrize("report_id,params", _APPLICABLE_FILTER_SMOKE_CASES)
+async def test_print_data_accepts_applicable_filter(client, seeded_users, report_id, params):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await client.get(f"/api/v1/reports/{report_id}/print-data", headers=admin, params=params)
+    assert resp.status_code == 200, f"{report_id} {params}: {resp.text}"
+
+
+async def test_print_data_malformed_uuid_filter_rejected(client, seeded_users):
+    """A filter that *is* applicable to the report still fails deterministic
+    validation when malformed -- reuses the existing `parse_uuid` behavior,
+    not a new error path."""
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await client.get(
+        "/api/v1/reports/receive-report/print-data", headers=admin, params={"ward_id": "not-a-uuid"}
+    )
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["code"] == "INVALID_INPUT"
+
+
+async def test_print_data_rejects_inapplicable_filter_before_query_execution(client, seeded_users, monkeypatch):
+    """Proves rejection happens before any report builder (and therefore
+    before any database query) runs, not merely that the final HTTP status
+    happens to be 400."""
+
+    async def _fail_if_called(*args, **kwargs):
+        raise AssertionError("report builder must not be called when an inapplicable filter is rejected")
+
+    monkeypatch.setattr(report_export_service, "build_equipment_verify_checklist_document", _fail_if_called)
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await client.get(
+        "/api/v1/reports/equipment-verify-checklist/print-data",
+        headers=admin,
+        params={"ward_id": str(uuid.uuid4())},
+    )
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["code"] == "INVALID_INPUT"
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: Codex review 4837529462 (PR18B-H2) -- applied_filters
+# metadata is complete (includes equipment_id) and every value is resolved
+# to its business-readable display form, never a raw UUID or enum token.
+# ---------------------------------------------------------------------------
+
+
+async def test_receive_report_filter_summary_resolves_ward_category_equipment_operator_names(
+    client, seeded_users, db_session
+):
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    ward_id = await _create_ward(client, admin_headers, "W-PR18B-H2A")
+    category = await _create_category(client, admin_headers, "Infusion Devices PR18B-H2")
+    equipment = await _create_equipment(
+        client, admin_headers, "AST-PR18B-H2A", category_id=category["id"]
+    )
+    admin: User = seeded_users[ROLE_ADMINISTRATOR]
+    staff: User = seeded_users[ROLE_EQUIPMENT_POOL_STAFF]
+
+    document = await report_export_service.build_receive_report_document(
+        db_session,
+        ward_id=uuid.UUID(ward_id),
+        equipment_id=uuid.UUID(equipment["id"]),
+        equipment_category_id=uuid.UUID(category["id"]),
+        operator_id=staff.id,
+        generated_by=admin,
+        generated_at=_FIXED_NOW,
+    )
+    by_label = {f.label_th: f.value for f in document.metadata.applied_filters}
+
+    assert by_label["หอผู้ป่วย"] == "W-PR18B-H2A"
+    assert by_label["หอผู้ป่วย"] != ward_id
+
+    assert by_label["หมวดหมู่เครื่องมือ"] == "Infusion Devices PR18B-H2"
+    assert by_label["หมวดหมู่เครื่องมือ"] != category["id"]
+
+    assert by_label["เครื่องมือ"] == "AST-PR18B-H2A - Infusion Pump"
+    assert by_label["เครื่องมือ"] != equipment["id"]
+
+    assert by_label["ผู้รับคืน"] == staff.full_name
+    assert by_label["ผู้รับคืน"] != str(staff.id)
+
+
+async def test_issue_report_filter_summary_resolves_operator_dispatch_type_and_routine_round(
+    client, seeded_users, db_session
+):
+    admin: User = seeded_users[ROLE_ADMINISTRATOR]
+    staff: User = seeded_users[ROLE_EQUIPMENT_POOL_STAFF]
+
+    document = await report_export_service.build_issue_report_document(
+        db_session,
+        operator_id=staff.id,
+        dispatch_type=None,
+        routine_round=None,
+        generated_by=admin,
+        generated_at=_FIXED_NOW,
+    )
+    by_label = {f.label_th: f.value for f in document.metadata.applied_filters}
+    assert by_label["ผู้เบิก"] == staff.full_name
+
+    from app.models.transaction import DispatchType, RoutineRound
+
+    document_routine = await report_export_service.build_issue_report_document(
+        db_session,
+        dispatch_type=DispatchType.ROUTINE_ROUND,
+        routine_round=RoutineRound.ROUND_0600,
+        generated_by=admin,
+        generated_at=_FIXED_NOW,
+    )
+    by_label_routine = {f.label_th: f.value for f in document_routine.metadata.applied_filters}
+    assert by_label_routine["ประเภทการเบิก"] == "รอบเวลาปกติ (Routine Round)"
+    assert by_label_routine["ประเภทการเบิก"] != "routine_round"
+    assert by_label_routine["รอบเวร"] == "รอบ 06:00"
+
+
+async def test_equipment_verify_checklist_filter_summary_resolves_category_and_department_names(
+    client, seeded_users, db_session
+):
+    admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    category = await _create_category(client, admin_headers, "Ventilators PR18B-H2")
+    department = await _create_department(client, admin_headers, "DPT-PR18B-H2", "ICU PR18B-H2")
+    admin: User = seeded_users[ROLE_ADMINISTRATOR]
+
+    document = await report_export_service.build_equipment_verify_checklist_document(
+        db_session,
+        equipment_category_id=uuid.UUID(category["id"]),
+        department_id=uuid.UUID(department["id"]),
+        generated_by=admin,
+        generated_at=_FIXED_NOW,
+    )
+    by_label = {f.label_th: f.value for f in document.metadata.applied_filters}
+    assert by_label["หมวดหมู่เครื่องมือ"] == "Ventilators PR18B-H2"
+    assert by_label["หน่วยงานเจ้าของ"] == "ICU PR18B-H2"
+    assert by_label["หน่วยงานเจ้าของ"] != department["id"]
+
+
+async def test_filter_summary_falls_back_to_not_found_label_for_deleted_reference(db_session, seeded_users):
+    """A filter value that no longer resolves (e.g. the row was deleted
+    after the filter was chosen) still produces a filter-summary line -- the
+    filter *was* applied -- using an explicit not-found label, never a raw
+    UUID and never silently omitted, even though the result set is empty."""
+    admin: User = seeded_users[ROLE_ADMINISTRATOR]
+    dangling_operator_id = uuid.uuid4()
+    document = await report_export_service.build_receive_report_document(
+        db_session,
+        operator_id=dangling_operator_id,
+        generated_by=admin,
+        generated_at=_FIXED_NOW,
+    )
+    assert document.rows == []
+    by_label = {f.label_th: f.value for f in document.metadata.applied_filters}
+    assert by_label["ผู้รับคืน"] == "ไม่พบข้อมูล"
+    assert by_label["ผู้รับคืน"] != str(dangling_operator_id)
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: Codex review 4837529462 (PR18B-H3) -- ExportDocument
+# enforces its own schema invariants at construction time.
+# ---------------------------------------------------------------------------
+
+
+def _valid_metadata(**overrides) -> ExportMetadata:
+    fields = dict(
+        report_identity=ReportIdentity.RECEIVE_REPORT,
+        display_name_th="รายงานการรับคืน",
+        template_version="1",
+        generated_at=_FIXED_NOW,
+        generated_by_display_name="Tester",
+        generated_by_user_id=str(uuid.uuid4()),
+        timezone="Asia/Bangkok",
+        applied_filters=[],
+        row_count=1,
+        filename_stem="receive-report_all_all_20260731T031500Z",
+    )
+    fields.update(overrides)
+    return ExportMetadata(**fields)
+
+
+def test_export_document_accepts_a_valid_document():
+    document = ExportDocument(
+        metadata=_valid_metadata(row_count=1),
+        columns=[ExportColumn(key="a", label_th="A", value_type="integer")],
+        rows=[ExportRow(values={"a": 1})],
+    )
+    assert document.rows[0].values["a"] == 1
+
+
+def test_export_document_rejects_duplicate_column_keys():
+    with pytest.raises(ValidationError, match="duplicate column keys"):
+        ExportDocument(
+            metadata=_valid_metadata(row_count=0),
+            columns=[
+                ExportColumn(key="a", label_th="A", value_type="string"),
+                ExportColumn(key="a", label_th="A2", value_type="string"),
+            ],
+            rows=[],
+        )
+
+
+def test_export_document_rejects_row_missing_a_declared_column_key():
+    with pytest.raises(ValidationError, match="keys do not match declared columns"):
+        ExportDocument(
+            metadata=_valid_metadata(row_count=1),
+            columns=[
+                ExportColumn(key="a", label_th="A", value_type="string"),
+                ExportColumn(key="b", label_th="B", value_type="string"),
+            ],
+            rows=[ExportRow(values={"a": "x"})],
+        )
+
+
+def test_export_document_rejects_row_with_an_unexpected_key():
+    with pytest.raises(ValidationError, match="keys do not match declared columns"):
+        ExportDocument(
+            metadata=_valid_metadata(row_count=1),
+            columns=[ExportColumn(key="a", label_th="A", value_type="string")],
+            rows=[ExportRow(values={"a": "x", "unexpected": "y"})],
+        )
+
+
+def test_export_document_rejects_value_type_mismatch():
+    # This is the exact scenario Codex independently reproduced in review
+    # 4837529462: a column declared "integer" but the row supplies a string.
+    with pytest.raises(ValidationError, match="does not match column"):
+        ExportDocument(
+            metadata=_valid_metadata(row_count=1),
+            columns=[ExportColumn(key="a", label_th="A", value_type="integer")],
+            rows=[ExportRow(values={"a": "wrong"})],
+        )
+
+
+def test_export_document_rejects_bool_for_an_integer_column():
+    # bool is an int subclass in Python -- must not silently satisfy an
+    # "integer" column.
+    with pytest.raises(ValidationError, match="does not match column"):
+        ExportDocument(
+            metadata=_valid_metadata(row_count=1),
+            columns=[ExportColumn(key="a", label_th="A", value_type="integer")],
+            rows=[ExportRow(values={"a": True})],
+        )
+
+
+def test_export_document_rejects_datetime_for_a_date_column():
+    with pytest.raises(ValidationError, match="does not match column"):
+        ExportDocument(
+            metadata=_valid_metadata(row_count=1),
+            columns=[ExportColumn(key="a", label_th="A", value_type="date")],
+            rows=[ExportRow(values={"a": _FIXED_NOW})],
+        )
+
+
+def test_export_document_accepts_null_for_any_column_type():
+    document = ExportDocument(
+        metadata=_valid_metadata(row_count=1),
+        columns=[ExportColumn(key="a", label_th="A", value_type="integer")],
+        rows=[ExportRow(values={"a": None})],
+    )
+    assert document.rows[0].values["a"] is None
+
+
+def test_export_document_rejects_row_count_mismatch():
+    with pytest.raises(ValidationError, match="row_count"):
+        ExportDocument(
+            metadata=_valid_metadata(row_count=5),
+            columns=[ExportColumn(key="a", label_th="A", value_type="string")],
+            rows=[ExportRow(values={"a": "x"})],
+        )
+
+
+def test_export_metadata_rejects_naive_generated_at():
+    with pytest.raises(ValidationError, match="timezone-aware"):
+        _valid_metadata(generated_at=datetime(2026, 7, 31, 3, 15, 0))
+
+
+def test_export_metadata_rejects_empty_template_version():
+    with pytest.raises(ValidationError):
+        _valid_metadata(template_version="")
+
+
+def test_export_metadata_rejects_empty_filename_stem():
+    with pytest.raises(ValidationError):
+        _valid_metadata(filename_stem="")
+
+
+def test_export_metadata_rejects_negative_row_count():
+    with pytest.raises(ValidationError):
+        _valid_metadata(row_count=-1)
+
+
+async def test_every_report_builder_produces_a_schema_valid_document(db_session, seeded_users):
+    """Each of the three PR18B report builders' output must already satisfy
+    `ExportDocument`'s own invariants -- if it did not, construction inside
+    the builder itself would have raised before this test even ran. This
+    test documents that guarantee explicitly for all three builders,
+    including the empty-result path."""
+    admin: User = seeded_users[ROLE_ADMINISTRATOR]
+    receive_doc = await report_export_service.build_receive_report_document(
+        db_session, generated_by=admin, generated_at=_FIXED_NOW
+    )
+    issue_doc = await report_export_service.build_issue_report_document(
+        db_session, generated_by=admin, generated_at=_FIXED_NOW
+    )
+    checklist_doc = await report_export_service.build_equipment_verify_checklist_document(
+        db_session, generated_by=admin, generated_at=_FIXED_NOW
+    )
+    for document in (receive_doc, issue_doc, checklist_doc):
+        assert document.metadata.row_count == len(document.rows) == 0
+        assert document.metadata.generated_at.tzinfo is not None

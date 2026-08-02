@@ -2,7 +2,7 @@ import enum
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.common import UUIDStr
 
@@ -28,6 +28,32 @@ class ReportIdentity(str, enum.Enum):
 ExportValue = str | int | float | bool | date | datetime | None
 
 ExportValueType = Literal["string", "integer", "decimal", "date", "datetime", "boolean"]
+
+
+def _semantic_type_matches(value_type: ExportValueType, value: ExportValue) -> bool:
+    """Roadmap PR18B review 4837529462 (PR18B-H3): exact semantic-type
+    match for one `ExportRow` value against its column's declared
+    `value_type`. `None` always matches (design §7.2 "Values" -- every
+    column is nullable). `bool` is deliberately excluded from
+    integer/decimal (Python's `bool` is an `int` subclass) and `datetime`
+    is excluded from `date` (a `datetime` is-a `date`, but a `date` column
+    must not silently accept a `datetime`) -- both would otherwise let a
+    builder regression cross the type boundary undetected."""
+    if value is None:
+        return True
+    if value_type == "string":
+        return isinstance(value, str)
+    if value_type == "boolean":
+        return isinstance(value, bool)
+    if value_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if value_type == "decimal":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if value_type == "datetime":
+        return isinstance(value, datetime)
+    if value_type == "date":
+        return isinstance(value, date) and not isinstance(value, datetime)
+    return False
 
 
 class ExportColumn(BaseModel):
@@ -68,14 +94,24 @@ class ExportMetadata(BaseModel):
 
     report_identity: ReportIdentity
     display_name_th: str
-    template_version: str
+    template_version: str = Field(min_length=1)
     generated_at: datetime
     generated_by_display_name: str
     generated_by_user_id: UUIDStr
     timezone: str
     applied_filters: list[ExportFilterSummary]
-    row_count: int
-    filename_stem: str
+    row_count: int = Field(ge=0)
+    filename_stem: str = Field(min_length=1)
+
+    @field_validator("generated_at")
+    @classmethod
+    def _generated_at_must_be_timezone_aware(cls, value: datetime) -> datetime:
+        # Roadmap PR18B review 4837529462 (PR18B-H3): a naive `generated_at`
+        # is ambiguous to every future PDF/Excel adapter -- fail closed here
+        # instead of letting an unqualified timestamp reach one of them.
+        if value.tzinfo is None:
+            raise ValueError("ExportMetadata.generated_at must be timezone-aware")
+        return value
 
 
 class ExportDocument(BaseModel):
@@ -90,6 +126,47 @@ class ExportDocument(BaseModel):
     metadata: ExportMetadata
     columns: list[ExportColumn]
     rows: list[ExportRow]
+
+    @model_validator(mode="after")
+    def _validate_schema_invariants(self) -> "ExportDocument":
+        # Roadmap PR18B review 4837529462 (PR18B-H3): this model is the
+        # shared foundation every future PR18C/PR18D/PR18E adapter builds
+        # on, so it must protect its own invariants rather than trust every
+        # report builder to construct it correctly -- a duplicate column key,
+        # a row with a missing/unexpected key, a row value whose type
+        # conflicts with its column's declared `value_type`, or a
+        # `row_count` that disagrees with `len(rows)` all fail closed here,
+        # at construction time, in every one of the three report builders,
+        # instead of silently reaching an output adapter later.
+        column_keys = [c.key for c in self.columns]
+        if len(column_keys) != len(set(column_keys)):
+            duplicates = sorted({k for k in column_keys if column_keys.count(k) > 1})
+            raise ValueError(f"ExportDocument.columns contains duplicate column keys: {duplicates}")
+
+        column_key_set = set(column_keys)
+        value_types = {c.key: c.value_type for c in self.columns}
+        for index, row in enumerate(self.rows):
+            row_key_set = set(row.values.keys())
+            if row_key_set != column_key_set:
+                missing = sorted(column_key_set - row_key_set)
+                unexpected = sorted(row_key_set - column_key_set)
+                raise ValueError(
+                    f"ExportDocument.rows[{index}] keys do not match declared columns "
+                    f"(missing={missing}, unexpected={unexpected})"
+                )
+            for key, value in row.values.items():
+                if not _semantic_type_matches(value_types[key], value):
+                    raise ValueError(
+                        f"ExportDocument.rows[{index}]['{key}'] value {value!r} does not match "
+                        f"column '{key}' declared value_type '{value_types[key]}'"
+                    )
+
+        if self.metadata.row_count != len(self.rows):
+            raise ValueError(
+                f"ExportMetadata.row_count ({self.metadata.row_count}) does not match "
+                f"len(rows) ({len(self.rows)})"
+            )
+        return self
 
 
 # ---------------------------------------------------------------------------

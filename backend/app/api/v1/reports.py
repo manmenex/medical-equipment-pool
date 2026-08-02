@@ -31,6 +31,55 @@ def _validate_business_date_range(business_date_from: date | None, business_date
         raise InvalidInputError("'business_date_from' must not be after 'business_date_to'")
 
 
+# Roadmap PR18B review 4837529462 (PR18B-H1): `get_report_print_data` below
+# declares the union of all three PR17 reports' filters (one route family
+# per design §6.2), but each report's underlying query function only
+# accepts its own subset -- e.g. `equipment_crud.list_for_verify_checklist`
+# has no `ward_id` parameter at all. Silently accepting and dropping an
+# inapplicable filter would let a caller believe a returned document was
+# filtered when the extra parameter was never forwarded to any query. This
+# table is each report identity's *exact* accepted filter set, matching the
+# parameters `GET /reports/receive`, `GET /reports/issue`, and
+# `GET /reports/equipment-verify-checklist` above already accept -- not a
+# new, independently invented filter contract.
+_PRINT_DATA_APPLICABLE_FILTERS: dict[ReportIdentity, frozenset[str]] = {
+    ReportIdentity.RECEIVE_REPORT: frozenset(
+        {
+            "business_date_from",
+            "business_date_to",
+            "shift",
+            "ward_id",
+            "equipment_id",
+            "equipment_category_id",
+            "operator_id",
+        }
+    ),
+    ReportIdentity.ISSUE_REPORT: frozenset(
+        {
+            "business_date_from",
+            "business_date_to",
+            "shift",
+            "ward_id",
+            "equipment_id",
+            "equipment_category_id",
+            "operator_id",
+            "dispatch_type",
+            "routine_round",
+        }
+    ),
+    ReportIdentity.EQUIPMENT_VERIFY_CHECKLIST: frozenset({"equipment_category_id", "status", "department_id"}),
+}
+
+
+def _reject_inapplicable_print_data_filters(report_id: ReportIdentity, **filters: object) -> None:
+    applicable = _PRINT_DATA_APPLICABLE_FILTERS[report_id]
+    rejected = sorted(name for name, value in filters.items() if value is not None and name not in applicable)
+    if rejected:
+        raise InvalidInputError(
+            f"The following filters are not supported for report_id '{report_id.value}': {', '.join(rejected)}"
+        )
+
+
 @router.get("/export")
 async def export_report(
     format: str = Query(default="xlsx", pattern="^(xlsx|csv)$"),
@@ -202,6 +251,20 @@ async def get_report_print_data(
     not built here (design §22's own PR18B non-goal list).
     """
     timing = report_export_service.ExportTiming()
+    _reject_inapplicable_print_data_filters(
+        report_id,
+        business_date_from=business_date_from,
+        business_date_to=business_date_to,
+        shift=shift,
+        ward_id=ward_id,
+        equipment_id=equipment_id,
+        equipment_category_id=equipment_category_id,
+        operator_id=operator_id,
+        dispatch_type=dispatch_type,
+        routine_round=routine_round,
+        status=status,
+        department_id=department_id,
+    )
     if report_id in (ReportIdentity.RECEIVE_REPORT, ReportIdentity.ISSUE_REPORT):
         _validate_business_date_range(business_date_from, business_date_to)
 
