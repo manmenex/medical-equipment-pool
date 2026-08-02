@@ -155,6 +155,92 @@
   PDF, or Excel output exists yet. Roadmap PR18 is not complete. PR18C
   (browser print presentation) is the next planned slice.
 
+## Roadmap PR18C — Browser Print
+
+- **Decision:** Implement the architecture-approved PR18A design's second
+  implementation slice (`docs/design/PR18_PRINTING_EXPORT_PLAN.md` §9/§22
+  "PR18C — Browser print presentation"): a dedicated, Thai-first browser-print
+  view for all three Roadmap PR17 report families, consuming only the merged
+  PR18B `GET /reports/{report_id}/print-data` endpoint. **This slice does not
+  implement PDF or Excel export** — those remain PR18D/PR18E, not started
+  here. No backend file changed; no migration added.
+- **What was built:**
+  - `frontend/src/pages/ReportPrintPage.tsx`: a dedicated print route
+    (`/reports/:reportId/print`), deliberately declared outside the
+    `AppShell`-wrapping route (mirrors `/login`'s own "bare page" shape) so no
+    navigation/dashboard chrome ever appears in the printed output, but still
+    guarded by `ProtectedRoute`. Fetches exactly one `PrintDocumentOut` for the
+    report identity in the URL, forwarding every query param present on the
+    page that linked here verbatim — it does not decide which filters are
+    valid for which report identity; an inapplicable filter is rejected by the
+    already-merged PR18B backend check and surfaced here as a visible error.
+    The Print button stays disabled until both the fetched document and
+    `document.fonts.ready` resolve (design §9: "invokes the browser's native
+    print dialog only after data and fonts are ready") — `window.print()` is
+    never auto-invoked.
+  - `frontend/src/components/print/PrintDocumentView.tsx`: the purely
+    presentational renderer — report title, generation metadata (generated
+    time/by/timezone/report identity/template version), the backend-resolved
+    human-readable applied-filter summary, row count, and a table using the
+    exact column/row order `PrintDocumentOut` returned. Renders a clear Thai
+    empty-state message for a zero-row document rather than treating it as an
+    error (design §9/§19). No hospital name or logo (Owner Decision #2 remains
+    unresolved) — uses design §16's own explicit interim fallback: a
+    product-neutral Thai title, "Medical Equipment Pool" as a secondary system
+    label, and a neutral footer with report identity/template version/
+    generation time.
+  - `frontend/src/services/printReports.ts` +
+    `frontend/src/types/index.ts` (`PrintDocumentOut`/`PrintColumnOut`/
+    `PrintRowOut`/`PrintMetadataOut`/`PrintFilterSummaryOut`/`ReportIdentity`):
+    the typed client and contract mirroring the backend PR18B DTOs field for
+    field. Never sends `limit`/`cursor` — the print-data endpoint always
+    returns the complete bounded result set (Owner Decision #1), never one
+    cursor page.
+  - `frontend/src/styles/print.css`: print CSS scoped to the print route's own
+    Vite code-split chunk only (confirmed by build output — the app's global
+    stylesheet is untouched). Defines named CSS pages (`@page portrait-a4`/
+    `@page landscape-a4`) for design §9's per-report orientation (Receive and
+    Issue landscape; Equipment Verify Checklist portrait — no
+    implementation-time clipping evidence to justify the design's own
+    documented exception), repeated `<thead>` via `display:
+    table-header-group`, `break-inside: avoid` on rows, and a documented
+    acknowledgment that page numbers/running headers/margin substitution are
+    not promised (design §9).
+  - `frontend/public/fonts/noto-sans-thai-{400,700}-{thai,latin}.woff2` +
+    `OFL.txt`: closes the deployment gap design §17 explicitly flags (the
+    Tailwind font stack has named `"Noto Sans Thai"` since early in the
+    project without ever bundling it) — a self-hosted, SIL Open Font License
+    1.1 webfont, scoped to the print view's `@font-face` declarations only
+    (not the global app font stack), with its license text committed verbatim
+    alongside it.
+  - Each of `ReceiveReportPage.tsx`/`IssueReportPage.tsx`/
+    `EquipmentVerifyChecklistPage.tsx` gained one "พิมพ์รายงาน" link opening
+    the corresponding print route in a new tab, carrying that page's exact
+    current `location.search` verbatim — no filter re-derivation.
+- **Explicit non-goals:** No PDF generation, no browser-controlled page
+  numbering, no scheduled/automatic printing, no document-verification QR, no
+  digital signature, no hospital logo/name, no backend route or contract
+  change — all confirmed absent from this diff.
+- **Testing:** `frontend/src/pages/ReportPrintPage.test.tsx` (report-identity
+  validation, filter forwarding, loading/error/retry, metadata and
+  backend-order column/row rendering, empty-state rendering, font/data
+  readiness gating the Print button, `window.print()` never auto-invoked, the
+  on-screen toolbar carrying the `.no-print` class);
+  `frontend/src/services/printReports.test.ts` (exact endpoint/params,
+  `limit`/`cursor` never sent); one added test per existing report page
+  (`ReceiveReportPage.test.tsx`/`IssueReportPage.test.tsx`/
+  `EquipmentVerifyChecklistPage.test.tsx`) proving the print link carries the
+  page's current applied filters. Full existing frontend suite re-run with no
+  regression.
+- **Source:** `docs/design/PR18_PRINTING_EXPORT_PLAN.md` §9, §16, §17, §20.3,
+  §22. Branch `feature/pr18c-browser-print`, baseline
+  `c72929ba4649fd75d1f81e4630b4e4feb3d136be` (GitHub PR #73's squash merge).
+- **Status:** Implemented in this branch; not yet merged as of this entry.
+- **Consequences:** Receive Report, Issue Report, and Equipment Verify
+  Checklist can each now be browser-printed from the merged PR18B foundation.
+  No PDF or Excel output exists yet. Roadmap PR18 is not complete. PR18D (PDF
+  export) is the next planned slice.
+
 ## Numbering note — read this first
 
 **Roadmap PR number** and **GitHub PR number** are different sequences and must not be conflated:

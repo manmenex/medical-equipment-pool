@@ -279,3 +279,54 @@ export interface ImportPreviewResponse {
 export interface ImportCommitResponse extends ImportPreviewResponse {
   audit_log_id: string | null;
 }
+
+// Roadmap PR18B (backend/app/schemas/report_export.py's ReportIdentity):
+// the three stable, closed report identities every PR18 output (print-data
+// today; PDF/Excel in PR18D/PR18E) is keyed by. Not derived from a
+// filename or localized title -- mirrors the backend enum's values exactly.
+export type ReportIdentity = "receive-report" | "issue-report" | "equipment-verify-checklist";
+
+// Roadmap PR18C (docs/design/PR18_PRINTING_EXPORT_PLAN.md §7.2, backend
+// PrintColumnOut/PrintRowOut/PrintFilterSummaryOut/PrintMetadataOut/
+// PrintDocumentOut): the versioned print/export API contract returned by
+// GET /reports/{report_id}/print-data. Mirrors the backend DTOs field for
+// field -- the frontend must render this document as-is (stable column
+// order, backend-resolved row values and filter summary) and must never
+// recompute, re-sort, or re-filter any of it.
+export type PrintValueType = "string" | "integer" | "decimal" | "date" | "datetime" | "boolean";
+
+export type PrintValue = string | number | boolean | null;
+
+export interface PrintColumnOut {
+  key: string;
+  label_th: string;
+  value_type: PrintValueType;
+}
+
+export interface PrintRowOut {
+  values: Record<string, PrintValue>;
+}
+
+export interface PrintFilterSummaryOut {
+  label_th: string;
+  value: string;
+}
+
+export interface PrintMetadataOut {
+  report_identity: ReportIdentity;
+  display_name_th: string;
+  template_version: string;
+  generated_at: string;
+  generated_by_display_name: string;
+  generated_by_user_id: string;
+  timezone: string;
+  applied_filters: PrintFilterSummaryOut[];
+  row_count: number;
+  filename_stem: string;
+}
+
+export interface PrintDocumentOut {
+  metadata: PrintMetadataOut;
+  columns: PrintColumnOut[];
+  rows: PrintRowOut[];
+}

@@ -241,4 +241,16 @@ describe("IssueReportPage", () => {
       expect.objectContaining({ business_date_from: "2026-07-01", shift: "night", ward_id: "ward-1" })
     );
   });
+
+  // Roadmap PR18C: the print link must carry this page's exact current URL
+  // filters over to the dedicated print view, using report identity
+  // "issue-report".
+  it('offers a "พิมพ์รายงาน" link to the print view carrying the current applied filters', async () => {
+    renderPage("/reports/issue?ward_id=ward-1&shift=day");
+    await screen.findByText("TX-1");
+
+    const printLink = screen.getByRole("link", { name: "พิมพ์รายงาน" });
+    expect(printLink).toHaveAttribute("href", "/reports/issue-report/print?ward_id=ward-1&shift=day");
+    expect(printLink).toHaveAttribute("target", "_blank");
+  });
 });

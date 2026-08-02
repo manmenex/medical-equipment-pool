@@ -25,6 +25,7 @@ const IssueReportPage = lazy(() =>
 const EquipmentVerifyChecklistPage = lazy(() =>
   import("@/pages/EquipmentVerifyChecklistPage").then((m) => ({ default: m.EquipmentVerifyChecklistPage }))
 );
+const ReportPrintPage = lazy(() => import("@/pages/ReportPrintPage").then((m) => ({ default: m.ReportPrintPage })));
 const AdminPage = lazy(() => import("@/pages/AdminPage").then((m) => ({ default: m.AdminPage })));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 const NotFoundPage = lazy(() => import("@/pages/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
@@ -38,6 +39,20 @@ export function App() {
     <Suspense fallback={<PageFallback />}>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        {/* Roadmap PR18C (docs/design/PR18_PRINTING_EXPORT_PLAN.md §9/§22):
+            a bare print view, deliberately outside the AppShell-wrapping
+            route below so no navigation/dashboard chrome renders in the
+            printed output -- guarded by the same ProtectedRoute as every
+            authenticated page, just not the shell. Mirrors /login's own
+            "outside AppShell" route shape. */}
+        <Route
+          path="/reports/:reportId/print"
+          element={
+            <ProtectedRoute>
+              <ReportPrintPage />
+            </ProtectedRoute>
+          }
+        />
         <Route
           element={
             <ProtectedRoute>
