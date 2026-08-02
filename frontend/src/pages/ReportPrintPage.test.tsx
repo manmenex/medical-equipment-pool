@@ -14,10 +14,17 @@ import type { PrintDocumentOut } from "@/types";
 // reconstruct a report, and it must render exactly the backend-given
 // column/row order without filtering, sorting, or recomputing anything.
 
+// Only getReportPrintData is mocked -- buildPrintDataFilters (the review
+// 4837997016 H2 whitelist) is the real implementation, so these tests
+// exercise the actual filter-narrowing behavior end to end.
 const getReportPrintData = vi.fn();
-vi.mock("@/services/printReports", () => ({
-  getReportPrintData: (...args: unknown[]) => getReportPrintData(...args),
-}));
+vi.mock("@/services/printReports", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/services/printReports")>();
+  return {
+    ...actual,
+    getReportPrintData: (...args: unknown[]) => getReportPrintData(...args),
+  };
+});
 
 function makeDocument(overrides: Partial<PrintDocumentOut> = {}): PrintDocumentOut {
   return {
@@ -84,13 +91,27 @@ describe("ReportPrintPage", () => {
     );
   });
 
-  it("forwards every URL query param as a filter, unmodified", async () => {
+  it("forwards only the whitelisted filter keys for this report identity", async () => {
     renderPage("/reports/issue-report/print?ward_id=ward-1&shift=day&dispatch_type=on_demand");
     await waitFor(() =>
       expect(getReportPrintData).toHaveBeenCalledWith("issue-report", {
         ward_id: "ward-1",
         shift: "day",
         dispatch_type: "on_demand",
+      })
+    );
+  });
+
+  // Roadmap PR18C review 4837997016 (H2): the print page must never forward
+  // the raw URL search params as-is -- cursor/limit and any filter that
+  // does not belong to this report identity must never reach the request.
+  it("strips cursor, limit, and filters that do not apply to this report identity", async () => {
+    renderPage(
+      "/reports/equipment-verify-checklist/print?ward_id=ward-1&shift=day&cursor=abc&limit=25&status=available_at_pool"
+    );
+    await waitFor(() =>
+      expect(getReportPrintData).toHaveBeenCalledWith("equipment-verify-checklist", {
+        status: "available_at_pool",
       })
     );
   });
@@ -168,6 +189,28 @@ describe("ReportPrintPage", () => {
     expect(printButton).toBeDisabled();
 
     resolveFontsReady();
+    await waitFor(() => expect(printButton).not.toBeDisabled());
+  });
+
+  // Roadmap PR18C review 4837997016 (H1): readiness is report-loaded AND
+  // rendered AND fonts-ready -- resolving document.fonts.ready early (even
+  // before the report data has arrived) must not enable the Print button by
+  // itself. Proves the fonts.ready subscription is not started at mount.
+  it("stays disabled if fonts resolve before the report has loaded, and enables only once the report has also loaded", async () => {
+    let resolveReport: (doc: ReturnType<typeof makeDocument>) => void;
+    getReportPrintData.mockReturnValue(
+      new Promise((resolve) => {
+        resolveReport = resolve;
+      })
+    );
+    renderPage();
+
+    // Fonts resolve immediately -- before the report document exists at all.
+    resolveFontsReady();
+    const printButton = await screen.findByRole("button", { name: "พิมพ์" });
+    expect(printButton).toBeDisabled();
+
+    resolveReport!(makeDocument());
     await waitFor(() => expect(printButton).not.toBeDisabled());
   });
 

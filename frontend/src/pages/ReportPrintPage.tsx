@@ -4,7 +4,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 
 import { PrintDocumentView } from "@/components/print/PrintDocumentView";
 import { apiErrorMessage } from "@/services/api";
-import { getReportPrintData } from "@/services/printReports";
+import { buildPrintDataFilters, getReportPrintData } from "@/services/printReports";
 import "@/styles/print.css";
 import { isReportIdentity } from "@/utils/printFormat";
 
@@ -15,45 +15,23 @@ import { isReportIdentity } from "@/utils/printFormat";
 // PrintDocumentOut from the merged PR18B endpoint and renders it without
 // filtering, sorting, or recomputing anything. The report page that links
 // here (ReceiveReportPage/IssueReportPage/EquipmentVerifyChecklistPage)
-// carries its own current URL filters over verbatim -- this page performs
-// no business logic of its own.
+// carries its own current URL filters over -- this page performs no
+// business logic of its own; it only selects the whitelisted subset of
+// those filters this report identity actually accepts (see
+// services/printReports.ts's buildPrintDataFilters, review 4837997016 H2).
 export function ReportPrintPage() {
   const { reportId } = useParams<{ reportId: string }>();
   const [searchParams] = useSearchParams();
   const [fontsReady, setFontsReady] = useState(false);
 
-  useEffect(() => {
-    // Roadmap PR18C (design §9: "invokes the browser's native print dialog
-    // only after data and fonts are ready"): document.fonts.ready resolves
-    // once every @font-face declared in print.css (including the
-    // self-hosted Noto Sans Thai) has either loaded or failed -- the Print
-    // button stays disabled until then so a print never starts mid-swap
-    // with a fallback font. Environments without the Font Loading API
-    // (older browsers, some test environments) fall back to "ready
-    // immediately" rather than blocking forever.
-    if (typeof document === "undefined" || !("fonts" in document)) {
-      setFontsReady(true);
-      return;
-    }
-    let cancelled = false;
-    document.fonts.ready.then(() => {
-      if (!cancelled) setFontsReady(true);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const validReportId = isReportIdentity(reportId) ? reportId : null;
 
-  // Roadmap PR18C: forwarded verbatim to GET /reports/{report_id}/print-data
-  // (services/printReports.ts) -- this page does not decide which filter
-  // keys are valid for which report identity. A filter that does not apply
-  // to this report_id is rejected by the backend with a structured
-  // INVALID_INPUT error (app.api.v1.reports._reject_inapplicable_print_data_filters),
-  // surfaced below as a visible error rather than silently dropped or
-  // producing a misleading document.
-  const filters = Object.fromEntries(searchParams.entries());
+  // Roadmap PR18C review 4837997016 (H2): an explicit, per-report-identity
+  // whitelist -- never the raw `URLSearchParams`/`location.search` forwarded
+  // as-is. Forwarding everything would also drag along `cursor`, `limit`, or
+  // any future UI-only query param the on-screen report page might someday
+  // add, none of which this route accepts or should ever receive.
+  const filters = validReportId ? buildPrintDataFilters(validReportId, searchParams) : {};
 
   const {
     data: printDocument,
@@ -67,6 +45,35 @@ export function ReportPrintPage() {
     enabled: validReportId !== null,
   });
 
+  useEffect(() => {
+    // Roadmap PR18C review 4837997016 (H1): readiness is "report loaded AND
+    // rendered AND document.fonts.ready" -- deliberately not
+    // document.fonts.ready alone, started at mount. Subscribing to
+    // document.fonts.ready before the print content (and its "Noto Sans
+    // Thai" font-family) has actually rendered into the DOM would let the
+    // browser resolve "ready" before it has even discovered that this font
+    // is required by anything on the page, defeating the entire point of
+    // this gate (design §9: "invokes the browser's native print dialog only
+    // after data and fonts are ready"). This effect depends on
+    // `printDocument`, so it only starts once that value is set -- which
+    // React guarantees happens after the render that includes
+    // <PrintDocumentView> below has committed to the DOM.
+    if (!printDocument) {
+      return;
+    }
+    if (typeof document === "undefined" || !("fonts" in document)) {
+      setFontsReady(true);
+      return;
+    }
+    let cancelled = false;
+    document.fonts.ready.then(() => {
+      if (!cancelled) setFontsReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [printDocument]);
+
   function handlePrint() {
     window.print();
   }
@@ -79,6 +86,8 @@ export function ReportPrintPage() {
     );
   }
 
+  const isReady = !isLoading && !isError && !!printDocument && fontsReady;
+
   return (
     <div>
       <div className="no-print sticky top-0 z-10 flex items-center justify-between border-b border-[#e2e8f0] bg-white p-3">
@@ -87,7 +96,7 @@ export function ReportPrintPage() {
           <button
             type="button"
             onClick={handlePrint}
-            disabled={isLoading || isError || !fontsReady}
+            disabled={!isReady}
             className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
           >
             พิมพ์
