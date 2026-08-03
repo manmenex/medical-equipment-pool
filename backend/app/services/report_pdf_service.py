@@ -23,6 +23,7 @@ files are embedded into the generated HTML as base64 `data:` URIs (not
 at request time and can never silently fall back to a system font.
 """
 
+import asyncio
 import base64
 import html
 from datetime import date, datetime, timezone as _timezone
@@ -31,7 +32,21 @@ from zoneinfo import ZoneInfo
 
 import weasyprint
 
+from app.core.exceptions import PdfRenderTimeoutError
 from app.schemas.report_export import ExportDocument, ExportValue, ExportValueType, ReportIdentity
+
+# Roadmap PR18D review 4838921407 (H1): design §18 "Rendering has explicit
+# time, memory, and concurrency bounds." `RENDER_TIMEOUT_SECONDS` bounds any
+# single render; `MAX_CONCURRENT_RENDERS` bounds how many WeasyPrint renders
+# this worker process admits at once, so a burst of large-report requests
+# cannot pile up unboundedly many simultaneous CPU/memory-heavy renders.
+# Both are deliberately generous-but-finite constants, not derived from
+# MAX_EXPORT_ROWS -- layout/shaping cost is not a simple linear function of
+# row count (design §18: "PDF rendering may require a smaller limit because
+# layout cost scales with pages and font shaping").
+RENDER_TIMEOUT_SECONDS = 30
+MAX_CONCURRENT_RENDERS = 4
+_render_semaphore = asyncio.Semaphore(MAX_CONCURRENT_RENDERS)
 
 # Roadmap PR18C (design §9): "Receive and Issue default to landscape because
 # of their wider transaction columns; Equipment Verify Checklist defaults to
@@ -249,3 +264,44 @@ def render_pdf(document: ExportDocument) -> bytes:
     """
     html_document = _render_html(document)
     return weasyprint.HTML(string=html_document).write_pdf()
+
+
+async def render_pdf_bounded(document: ExportDocument) -> bytes:
+    """Roadmap PR18D review 4838921407 (H1): the one, single call site that
+    enforces design §18's time and concurrency bounds around `render_pdf` --
+    `render_pdf` itself stays a plain, directly-unit-testable synchronous
+    function; callers (the API route) must call this wrapper, never
+    `asyncio.to_thread(render_pdf, ...)` directly, so no call site can
+    accidentally run an unbounded render.
+
+    Deterministic timeout handling: a render that has not completed within
+    `RENDER_TIMEOUT_SECONDS` raises `PdfRenderTimeoutError` (a `DomainError`
+    -> structured `503` response) rather than hanging the request
+    indefinitely. `asyncio.wait_for`'s cancellation cannot forcibly stop a
+    thread already running in the default executor (a `ThreadPoolExecutor`
+    thread cannot be killed from the outside in Python) -- the render
+    already in flight finishes on its own rather than being interrupted
+    mid-render. This is the accepted, explicitly documented bound for this
+    thread-based renderer, consistent with this repository's existing
+    CPU-bound-work pattern (`app.services.import_service`); a hard,
+    immediate kill would require a subprocess-based renderer, which is not
+    introduced here.
+
+    Bounded concurrency: the module-level `_render_semaphore` limits how
+    many renders this worker process admits at once, covering both the
+    wait for a free slot and the render itself. The semaphore is released
+    in a `finally` block, so a timeout or any other render failure always
+    frees the slot for the next request -- `render_pdf` holds no external
+    resource of its own (no temp file, no open connection or socket; the
+    HTML document it builds is one self-contained in-memory string with
+    both fonts already embedded), so releasing this slot is this render's
+    entire cleanup obligation on failure.
+    """
+    async with _render_semaphore:
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(render_pdf, document), timeout=RENDER_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError as exc:
+            raise PdfRenderTimeoutError(
+                f"PDF rendering did not complete within {RENDER_TIMEOUT_SECONDS} seconds. "
+                "Narrow the applied filters and try again."
+            ) from exc

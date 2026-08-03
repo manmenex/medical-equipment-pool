@@ -1,4 +1,7 @@
+import asyncio
 import io
+import threading
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -6,6 +9,7 @@ import pdfplumber
 import pytest
 from sqlalchemy import func, select
 
+from app.core.exceptions import PdfRenderTimeoutError
 from app.models.audit import AuditLog
 from app.models.transaction import BorrowTransaction
 from app.models.user import ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, ROLE_READ_ONLY
@@ -209,26 +213,122 @@ def test_render_pdf_neutral_branding_no_hospital_name_or_logo():
     pdf_bytes = report_pdf_service.render_pdf(document)
     with _open(pdf_bytes) as pdf:
         text = pdf.pages[0].extract_text() or ""
+        chars_found = {ch["text"] for ch in pdf.pages[0].chars}
     assert "Medical Equipment Pool" in text
-    assert document.metadata.display_name_th in text.replace(" ", "").replace("\n", "") or True  # see note below
-    # (pdfplumber may reorder Thai combining marks in extracted text -- see
-    # the per-glyph corruption test above for the authoritative check. This
-    # assertion only confirms the neutral secondary label is present.)
+    # Per-character presence, not an ordered substring match -- pdfplumber's
+    # `extract_text()` can reorder Thai combining marks relative to their
+    # base consonant, which would make an ordered substring assertion flaky
+    # independent of whether rendering itself is correct (see the per-glyph
+    # corruption test above for the authoritative ordered check).
+    assert set(document.metadata.display_name_th) <= chars_found
 
 
 def test_render_pdf_escapes_html_special_characters_in_values():
     """A master-data-resolved display value is administrator-entered free
     text, not developer-authored markup -- it must never be interpreted as
-    HTML."""
+    HTML. Proven two ways: (1) the literal special characters themselves are
+    drawn as glyphs (if `<b>` had been parsed as a real tag, no literal '<'
+    or '>' glyph would ever reach the page), and (2) the cell's full text,
+    reassembled in content-stream order, is byte-for-byte the original
+    input -- if any of it had been interpreted as markup, the two closing
+    tag characters and the wrapped word would not appear together in that
+    exact form."""
+    raw_value = "<b>ทดสอบ</b> & \"quoted\""
     document = _document(
         columns=[ExportColumn(key="note", label_th="หมายเหตุ", value_type="string")],
-        rows=[ExportRow(values={"note": "<b>ทดสอบ</b> & \"quoted\""})],
+        rows=[ExportRow(values={"note": raw_value})],
     )
     pdf_bytes = report_pdf_service.render_pdf(document)
     with _open(pdf_bytes) as pdf:
-        text = pdf.pages[0].extract_text() or ""
-    assert "<b>" in text or "b" in text  # the literal angle-bracket text was drawn, not parsed as a tag
-    assert "&" in text
+        cell_chars = _data_row_cell_chars(pdf)
+
+    reassembled = "".join(ch["text"] for ch in cell_chars)
+    assert reassembled == raw_value
+
+    literal_special_chars_found = {ch["text"] for ch in cell_chars if ch["text"] in "<>&\""}
+    assert literal_special_chars_found == {"<", ">", "&", '"'}
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: app.services.report_pdf_service.render_pdf_bounded -- design
+# §18's explicit time/concurrency bounds (Roadmap PR18D review 4838921407,
+# H1).
+# ---------------------------------------------------------------------------
+
+
+async def test_render_pdf_bounded_raises_structured_timeout_error(monkeypatch):
+    """A render that does not complete within RENDER_TIMEOUT_SECONDS must
+    fail deterministically with the dedicated domain error, not hang the
+    request indefinitely."""
+
+    def _slow_render(document):
+        time.sleep(0.2)
+        return b"%PDF-1.4 fake"
+
+    monkeypatch.setattr(report_pdf_service, "render_pdf", _slow_render)
+    monkeypatch.setattr(report_pdf_service, "RENDER_TIMEOUT_SECONDS", 0.05)
+
+    with pytest.raises(PdfRenderTimeoutError):
+        await report_pdf_service.render_pdf_bounded(_document())
+
+
+async def test_render_pdf_bounded_succeeds_within_timeout(monkeypatch):
+    monkeypatch.setattr(report_pdf_service, "RENDER_TIMEOUT_SECONDS", 30)
+    pdf_bytes = await report_pdf_service.render_pdf_bounded(_document(rows=[ExportRow(values={"note": "x"})]))
+    assert pdf_bytes.startswith(b"%PDF")
+
+
+async def test_render_pdf_bounded_limits_concurrent_renders(monkeypatch):
+    """The module-level semaphore must cap how many renders run at once --
+    proven by tracking the actual number of simultaneously-running renders
+    across a burst of concurrent calls."""
+    active = 0
+    max_active = 0
+    count_lock = threading.Lock()
+
+    def _tracking_render(document):
+        nonlocal active, max_active
+        with count_lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.1)
+        with count_lock:
+            active -= 1
+        return b"%PDF-1.4 fake"
+
+    monkeypatch.setattr(report_pdf_service, "render_pdf", _tracking_render)
+    monkeypatch.setattr(report_pdf_service, "_render_semaphore", asyncio.Semaphore(2))
+
+    document = _document()
+    await asyncio.gather(*[report_pdf_service.render_pdf_bounded(document) for _ in range(6)])
+
+    assert max_active <= 2
+
+
+async def test_render_pdf_bounded_releases_semaphore_slot_after_timeout(monkeypatch):
+    """H1 "cleanup after timeout/failure": a timed-out render must not
+    permanently consume its concurrency slot -- the next render must still
+    be admitted."""
+    call_count = 0
+
+    def _slow_render(document):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            time.sleep(0.2)
+        return b"%PDF-1.4 fake"
+
+    monkeypatch.setattr(report_pdf_service, "render_pdf", _slow_render)
+    monkeypatch.setattr(report_pdf_service, "RENDER_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(report_pdf_service, "_render_semaphore", asyncio.Semaphore(1))
+
+    document = _document()
+    with pytest.raises(PdfRenderTimeoutError):
+        await report_pdf_service.render_pdf_bounded(document)
+
+    monkeypatch.setattr(report_pdf_service, "RENDER_TIMEOUT_SECONDS", 30)
+    pdf_bytes = await report_pdf_service.render_pdf_bounded(document)
+    assert pdf_bytes.startswith(b"%PDF")
 
 
 # ---------------------------------------------------------------------------
@@ -404,3 +504,117 @@ async def test_pdf_page_orientation_matches_report_identity(client, seeded_users
         box = pdf.pages[0].mediabox
     width, height = box[2] - box[0], box[3] - box[1]
     assert (width > height) is orientation_wider
+
+
+# ---------------------------------------------------------------------------
+# API tests: render-failure handling (Roadmap PR18D review 4838921407,
+# H1/H3) -- a timeout or other renderer failure must surface as a
+# structured error response, and must log its own distinguishable
+# export-attempt event rather than the "success" event above.
+# ---------------------------------------------------------------------------
+
+
+async def test_pdf_render_timeout_returns_structured_503_not_partial_pdf(monkeypatch, client, seeded_users):
+    async def _timeout(document):
+        raise PdfRenderTimeoutError("simulated render timeout")
+
+    monkeypatch.setattr(report_pdf_service, "render_pdf_bounded", _timeout)
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+
+    resp = await client.get("/api/v1/reports/receive-report/pdf", headers=admin)
+    assert resp.status_code == 503, resp.text
+    assert resp.headers["content-type"].startswith("application/json")
+    body = resp.json()
+    assert body["code"] == "PDF_RENDER_TIMEOUT"
+
+
+async def test_pdf_render_timeout_logs_a_distinguishable_export_attempt_event(monkeypatch, client, seeded_users):
+    logged_calls = []
+
+    def _capture(**kwargs):
+        logged_calls.append(kwargs)
+
+    async def _timeout(document):
+        raise PdfRenderTimeoutError("simulated render timeout")
+
+    monkeypatch.setattr(report_pdf_service, "render_pdf_bounded", _timeout)
+    monkeypatch.setattr(report_export_service, "log_export_attempt", _capture)
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+
+    resp = await client.get("/api/v1/reports/receive-report/pdf", headers=admin)
+    assert resp.status_code == 503, resp.text
+
+    assert len(logged_calls) == 1
+    assert logged_calls[0]["output_format"] == "pdf"
+    assert logged_calls[0]["outcome"] == "render_timeout"
+    assert logged_calls[0]["outcome"] != "success"
+
+
+async def _raw_client():
+    """A second client for the same app, sharing whatever
+    dependency_overrides the `client` fixture already installed, but with
+    `raise_app_exceptions=False`. Starlette's ServerErrorMiddleware always
+    re-raises after sending a 500 response (so real ASGI servers can log
+    it); httpx's ASGITransport re-raises that into the caller by default,
+    which would make this test fail on the exception itself instead of
+    letting us inspect the response the app already sent. Matches the
+    established pattern in tests/test_exception_handling.py's own
+    `_raw_client` helper for exactly this scenario -- production servers
+    (uvicorn etc.) don't have this re-raise behavior; it's a
+    test-transport-only quirk."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app as fastapi_app
+
+    transport = ASGITransport(app=fastapi_app, raise_app_exceptions=False)
+    return AsyncClient(transport=transport, base_url="http://test")
+
+
+async def test_pdf_unexpected_render_error_returns_500_and_logs_distinguishable_event(monkeypatch, client, seeded_users):
+    logged_calls = []
+
+    def _capture(**kwargs):
+        logged_calls.append(kwargs)
+
+    async def _boom(document):
+        raise RuntimeError("simulated unexpected WeasyPrint failure")
+
+    monkeypatch.setattr(report_pdf_service, "render_pdf_bounded", _boom)
+    monkeypatch.setattr(report_export_service, "log_export_attempt", _capture)
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+
+    async with await _raw_client() as raw_client:
+        resp = await raw_client.get("/api/v1/reports/receive-report/pdf", headers=admin)
+    assert resp.status_code == 500, resp.text
+
+    assert len(logged_calls) == 1
+    assert logged_calls[0]["outcome"] == "render_error"
+    assert logged_calls[0]["outcome"] != "success"
+
+
+async def test_pdf_success_and_render_failure_outcomes_are_distinguishable(monkeypatch, client, seeded_users):
+    """Direct proof of design §18/H3's requirement: a success and a render
+    failure for the otherwise-identical request must never share the same
+    logged outcome."""
+    logged_calls = []
+
+    def _capture(**kwargs):
+        logged_calls.append(kwargs)
+
+    monkeypatch.setattr(report_export_service, "log_export_attempt", _capture)
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+
+    ok_resp = await client.get("/api/v1/reports/receive-report/pdf", headers=admin)
+    assert ok_resp.status_code == 200, ok_resp.text
+
+    async def _timeout(document):
+        raise PdfRenderTimeoutError("simulated render timeout")
+
+    monkeypatch.setattr(report_pdf_service, "render_pdf_bounded", _timeout)
+    failed_resp = await client.get("/api/v1/reports/receive-report/pdf", headers=admin)
+    assert failed_resp.status_code == 503, failed_resp.text
+
+    assert len(logged_calls) == 2
+    assert logged_calls[0]["outcome"] == "success"
+    assert logged_calls[1]["outcome"] == "render_timeout"
+    assert logged_calls[0]["outcome"] != logged_calls[1]["outcome"]

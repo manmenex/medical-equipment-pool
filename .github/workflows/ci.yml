@@ -192,6 +192,26 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://mep_test:mep_test_password@localhost:5432/mep_migration_ci
         run: python -m alembic upgrade head
 
+  backend-docker-build:
+    name: Backend production Docker image (smoke build)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Roadmap PR18D review 4838921407 (H4): the production image (which
+      # now installs the WeasyPrint native Pango/HarfBuzz packages, see
+      # backend/Dockerfile) was previously never actually built anywhere in
+      # CI -- backend-tests/backend-postgres-tests install
+      # requirements.txt directly on the runner, not via the Dockerfile.
+      # This is a smoke build only: it proves the image builds successfully
+      # end to end (apt layer, pip install, non-root user setup); it does
+      # not run or deploy the resulting container.
+      - name: Build production image
+        run: docker build -t mep-backend:ci ./backend
+
   frontend:
     name: Frontend build
     runs-on: ubuntu-latest

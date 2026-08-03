@@ -1,4 +1,3 @@
-import asyncio
 from datetime import date
 
 from fastapi import APIRouter, Depends, Query
@@ -7,7 +6,7 @@ from starlette.responses import Response
 
 from app.api.v1.deps import VIEW_AND_REPORT_ROLES, require_roles
 from app.api.v1.equipment import _serialize as _serialize_equipment
-from app.core.exceptions import ExportTooLargeError, InvalidInputError
+from app.core.exceptions import ExportTooLargeError, InvalidInputError, PdfRenderTimeoutError
 from app.core.reporting_time import Shift
 from app.crud import equipment as equipment_crud
 from app.db.session import get_db
@@ -393,10 +392,9 @@ async def get_report_pdf(
     `GET /{report_id}/print-data` above -- built from an identically
     constructed `ExportDocument` via `_build_export_document_for_request`,
     never a second query/report engine. Rendering
-    (`app.services.report_pdf_service.render_pdf`) is CPU-bound and runs in
-    a worker thread via `asyncio.to_thread`, the same pattern
-    `app.services.import_service._parse_workbook_sync` already uses, so it
-    never blocks the event loop other concurrent requests share.
+    (`app.services.report_pdf_service.render_pdf_bounded`) is CPU-bound and
+    runs in a worker thread, bounded by an explicit timeout and a
+    concurrency limit (design §18) -- see that function's docstring.
     """
     timing = report_export_service.ExportTiming()
     try:
@@ -427,7 +425,33 @@ async def get_report_pdf(
         )
         raise
 
-    pdf_bytes = await asyncio.to_thread(report_pdf_service.render_pdf, document)
+    # Roadmap PR18D review 4838921407 (H3): a renderer failure -- a timeout
+    # (PdfRenderTimeoutError) or any other unexpected WeasyPrint error --
+    # must produce its own distinguishable operational export-attempt event,
+    # exactly like the row-limit and success paths above/below, reusing the
+    # same `log_export_attempt` call site rather than a second event system.
+    try:
+        pdf_bytes = await report_pdf_service.render_pdf_bounded(document)
+    except PdfRenderTimeoutError:
+        report_export_service.log_export_attempt(
+            report_identity=report_id,
+            output_format="pdf",
+            actor_user_id=generated_by.id,
+            outcome="render_timeout",
+            row_count=document.metadata.row_count,
+            duration_ms=timing.elapsed_ms(),
+        )
+        raise
+    except Exception:
+        report_export_service.log_export_attempt(
+            report_identity=report_id,
+            output_format="pdf",
+            actor_user_id=generated_by.id,
+            outcome="render_error",
+            row_count=document.metadata.row_count,
+            duration_ms=timing.elapsed_ms(),
+        )
+        raise
 
     report_export_service.log_export_attempt(
         report_identity=report_id,
