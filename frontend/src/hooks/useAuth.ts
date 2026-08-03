@@ -102,3 +102,16 @@ export function canImportInventory(user: RoleLike): boolean {
 export function canDispatchOrReceiveEquipment(user: RoleLike): boolean {
   return hasRole(user, "administrator", "equipment_pool_staff");
 }
+
+// Roadmap PR19B (Legacy Import Frontend Skeleton): no PR19A backend
+// contract exists yet, so the real authorization boundary for legacy
+// import is unresolved (see types/legacyImport.ts's file-level note). Per
+// the PR19B task brief's "Permissions" section, this isolates the skeleton
+// behind the most conservative existing approved capability tier
+// (ADMINISTRATOR_ONLY_ROLES -- the same tier as canImportInventory's PR12
+// precedent) rather than guessing a narrower or broader one. This is a
+// documented assumption, not a confirmed PR19A role decision, and must be
+// revisited once PR19A's real authorization contract is approved.
+export function canManageLegacyImport(user: RoleLike): boolean {
+  return hasRole(user, "administrator");
+}
