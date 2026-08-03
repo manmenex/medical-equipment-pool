@@ -1,4 +1,3 @@
-import asyncio
 from datetime import date
 
 from fastapi import APIRouter, Depends, Query
@@ -7,7 +6,7 @@ from starlette.responses import Response
 
 from app.api.v1.deps import VIEW_AND_REPORT_ROLES, require_roles
 from app.api.v1.equipment import _serialize as _serialize_equipment
-from app.core.exceptions import ExportTooLargeError, InvalidInputError, PdfRenderTimeoutError
+from app.core.exceptions import ExportTooLargeError, InvalidInputError, PdfRenderTimeoutError, XlsxRenderTimeoutError
 from app.core.reporting_time import Shift
 from app.crud import equipment as equipment_crud
 from app.db.session import get_db
@@ -502,16 +501,12 @@ async def get_report_xlsx(
     `GET /{report_id}/print-data` and `GET /{report_id}/pdf` above -- built
     from an identically constructed `ExportDocument` via
     `_build_export_document_for_request`, never a second query/report
-    engine. Workbook generation (`app.services.report_xlsx_service.
-    build_workbook_sync`) is CPU-bound and runs in a worker thread via
-    `asyncio.to_thread` so it never blocks the event loop, matching
-    `report_pdf_service.render_pdf`'s own pattern -- no dedicated timeout/
-    concurrency bound is layered on top of it the way PDF's
-    `render_pdf_bounded` needs, because `openpyxl` at the approved
-    `MAX_EXPORT_ROWS = 5000` row bound has none of the native-library
-    layout/font-shaping cost that motivated PDF's bound (design §18: "PDF
-    rendering may require a smaller limit because layout cost scales with
-    pages and font shaping" -- Excel generation does not).
+    engine. Workbook generation
+    (`app.services.report_xlsx_service.build_workbook_bounded`) is bounded
+    by design §18's time/concurrency limits -- review round 1 (H2) --
+    reusing the exact same admission-control model
+    `report_pdf_service.render_pdf_bounded` already implements for PDF; see
+    that function's docstring for the full protection model.
     """
     timing = report_export_service.ExportTiming()
     try:
@@ -542,13 +537,24 @@ async def get_report_xlsx(
         )
         raise
 
-    # Roadmap PR18E: mirrors PR18D's H3 review fix (4838921407) -- a
-    # renderer failure must produce its own distinguishable operational
-    # export-attempt event, exactly like the row-limit and success paths
-    # above/below, reusing the same `log_export_attempt` call site rather
-    # than a second event system.
+    # Roadmap PR18E review round 1 (H2), mirroring PR18D's H3 review fix
+    # (4838921407): a timeout or any other unexpected generation failure
+    # must produce its own distinguishable operational export-attempt
+    # event, exactly like the row-limit and success paths above/below,
+    # reusing the same `log_export_attempt` call site rather than a second
+    # event system.
     try:
-        xlsx_bytes = await asyncio.to_thread(report_xlsx_service.build_workbook_sync, document)
+        xlsx_bytes = await report_xlsx_service.build_workbook_bounded(document)
+    except XlsxRenderTimeoutError:
+        report_export_service.log_export_attempt(
+            report_identity=report_id,
+            output_format="xlsx",
+            actor_user_id=generated_by.id,
+            outcome="render_timeout",
+            row_count=document.metadata.row_count,
+            duration_ms=timing.elapsed_ms(),
+        )
+        raise
     except Exception:
         report_export_service.log_export_attempt(
             report_identity=report_id,
