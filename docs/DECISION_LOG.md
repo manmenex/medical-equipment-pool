@@ -818,6 +818,66 @@
   `knowledge/CONTEXT.md`, and `knowledge/PROJECT_MEMORY.md` are updated
   alongside this entry to reflect the same completion and baseline.
 
+## 2026-08-03 — Roadmap PR19 approved split: PR19A (backend) / PR19B (frontend skeleton)
+
+- **Decision:** Approve splitting Roadmap PR19 ("Legacy Import Foundation")
+  into two parallel implementation slices, both starting from the same
+  merged baseline (`729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52`, GitHub PR
+  #79, the PR18F governance synchronization):
+  - **PR19A — Legacy Import Foundation (backend):** the staged,
+    validation-first, traceable import framework itself — API contract,
+    session/document model, validation and dry-run mechanics. Not started
+    at the time of this entry; no branch, PR, or design document exists yet.
+  - **PR19B — Legacy Import Frontend Skeleton:** a frontend-only, mock-data
+    UI prototype of the future import workflow, for early hospital-user
+    workflow review ahead of PR19A's real contract. Implemented on branch
+    `feature/pr19b-import-frontend-skeleton`, Draft PR **#80** — not yet
+    independently reviewed or merged at the time of this entry.
+- **Reason / exception basis:** This repository's established precedent
+  (Roadmap PR7/PR8/PR9/PR14/PR15/PR16/PR17/PR18) only splits a Roadmap item
+  into lettered slices after an architecture-approved design document
+  defines that split. No such design document exists for Roadmap PR19. This
+  is therefore an explicit, Owner-approved exception to that normal sequence
+  (`docs/PROJECT_PLAYBOOK.md` "Exception workflows"; `docs/
+  ENGINEERING_WORKFLOW.md` §22, Exception Policy), made so PR19B could begin
+  immediately as a hospital-facing workflow-review artifact without waiting
+  for PR19A's backend contract to finalize. The conflict between this
+  exception and the then-current Roadmap text (Roadmap PR19 as one
+  unsplit item, with Equipment Master/Receive/Issue History categories
+  belonging to the separate, dependent PR20/PR21) was identified and raised
+  before any PR19B code was written — see Draft PR #80's own
+  "Repository-Owner-confirmed scope decision" section — and the Repository
+  Owner confirmed the split directly. This entry is the formal governance
+  record required by that confirmation; it does not retroactively invent a
+  design document neither slice actually had.
+- **PR19B scope statement (binding on PR19B and any later PR19B follow-up):**
+  frontend-only; mock/skeleton UI; intended for hospital-user workflow
+  review; no file upload to any backend; no Excel/CSV parsing; no
+  validation execution; no dry-run execution; no import execution; no
+  database or migration change. Its import-category labels (Equipment
+  Master / Receive History / Issue History) are preview labels aligned to
+  future Roadmap PR20/PR21 scope, pulled forward for workflow-review
+  purposes only — they are not an implemented capability and must not be
+  read as approving or finalizing PR20 or PR21's own design.
+- **PR20/PR21/PR22/PR23/PR24 unchanged:** Verified against
+  `docs/audits/04-consolidated-implementation-plan.md` Part D, Group 8, and
+  this log's own 2026-07-28 entry above — their objectives, boundaries, and
+  dependencies (PR20 depends on PR19; PR21 depends on PR19 and PR20; PR22
+  depends on PR19–PR21; PR24 is blocked by PR19–PR23) already matched this
+  decision and required no renumbering or reconciliation.
+- **Source:** Draft PR #80 (`feature/pr19b-import-frontend-skeleton`) and
+  this governance PR (branch `docs/pr19-import-roadmap-split-governance`,
+  same baseline as PR19B).
+- **Status:** Approved governance decision, documentation-only. **Neither
+  PR19A nor PR19B is complete or implemented by this entry.** Roadmap PR19
+  remains not done; PR19B's own implementation review is tracked
+  separately on Draft PR #80.
+- **Consequences:** `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`,
+  `docs/audits/04-consolidated-implementation-plan.md` (Group 8),
+  `knowledge/CHANGE_HISTORY.md`, `knowledge/CONTEXT.md`, and
+  `knowledge/PROJECT_MEMORY.md` are updated alongside this entry to record
+  the approved split without claiming either slice is complete.
+
 ## Numbering note — read this first
 
 **Roadmap PR number** and **GitHub PR number** are different sequences and must not be conflated:

@@ -405,11 +405,35 @@ Per the confirmed requirements and this reconciliation:
 
 ### Group 8 — Legacy migration and cutover
 
-#### PR19 — Legacy Import Foundation
+**Roadmap PR19 split (approved 2026-08-03, see `docs/DECISION_LOG.md`
+"Roadmap PR19 approved split: PR19A (backend) / PR19B (frontend
+skeleton)"):** PR19 is delivered as two parallel implementation slices from
+the same merged baseline, both governed by the shared objective/boundary
+below. This is an explicit, Owner-approved exception to this repository's
+usual design-document-first slice precedent — no PR19 design document
+exists. Neither slice is complete or implemented as of the split decision.
+
+#### PR19A — Legacy Import Foundation (backend)
 - **Objective:** Provide a staged, validation-first, traceable import framework.
 - **Boundary:** This is separate from PR12's update-only inventory import and
   must not redesign the hospital QR system.
 - **Dependencies:** Current implementation through PR18.
+
+#### PR19B — Legacy Import Frontend Skeleton
+- **Objective:** Provide a frontend-only, mock-data UI prototype of the
+  future import workflow (session list, create flow, validation summary,
+  row-level issues, dry-run summary, disabled confirm, result summary) for
+  early hospital-user workflow, terminology, navigation, and responsive-
+  layout review, ahead of PR19A's real backend contract.
+- **Boundary:** No file upload to a backend, no Excel/CSV parsing, no
+  validation or dry-run execution, no import execution, no database or
+  migration change. Its Equipment Master / Receive History / Issue History
+  category labels are preview labels pulled forward from PR20/PR21 scope
+  for review purposes only — not an implemented capability, and not an
+  approval of PR20 or PR21's own design.
+- **Dependencies:** Current implementation through PR18 (developed in
+  parallel with PR19A, not stacked on it; contracts are realigned once
+  PR19A's real API is approved).
 
 #### PR20 — Equipment Master Import
 - **Objective:** Import Equipment Master data using BCM and Item Number
@@ -417,7 +441,8 @@ Per the confirmed requirements and this reconciliation:
   Detect equipment duplicates and validate equipment records.
 - **Boundary:** Legacy BME names and Ward values belong to transaction history
   and are handled by PR21, not this Equipment Master import.
-- **Dependencies:** PR19.
+- **Dependencies:** PR19A (the backend import framework; PR19B is a frontend
+  preview only and is not a dependency).
 
 #### PR21 — Legacy Receive and Issue History Import
 - **Objective:** Import the AppSheet equipment receive-data and equipment
@@ -427,7 +452,7 @@ Per the confirmed requirements and this reconciliation:
 - **Version 1 boundary:** These are the only transaction-history sheets in the
   initial migration. Equipment Verify Checklist history is not required unless
   a later approved decision explicitly adds it.
-- **Dependencies:** PR19, PR20.
+- **Dependencies:** PR19A, PR20.
 
 #### PR22 — Legacy Data Validation and Reconciliation
 - **Objective:** Perform cross-import validation and reconciliation, verify

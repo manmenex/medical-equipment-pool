@@ -46,7 +46,9 @@ governance synchronization) and `6ba2c66` (GitHub PR #71, the approved
 PR18A printing/export architecture design). **Roadmap PR18 (PR18A design,
 PR18B backend foundation, PR18C Browser Print, PR18D backend PDF export, and
 PR18E Excel `.xlsx` export) is now fully complete.** See the PR18F note
-below. The next planned item is Roadmap PR19 (Legacy Import Foundation).
+below. The next planned item is Roadmap PR19, approved as a parallel
+PR19A (backend) / PR19B (frontend skeleton) split — see "Approved forward
+sequence" below and `docs/DECISION_LOG.md`.
 
 The older baseline narrative immediately below is retained as provenance
 for PR16 and earlier.
@@ -187,7 +189,7 @@ Full rationale and review-fix history for PR5 through PR18E: `docs/DECISION_LOG.
 
 **PR18D note:** Roadmap PR18D (backend PDF export, `GET /reports/{report_id}/pdf`) is merged, built from the PR18C governance-sync baseline (`beedc4d32c8d3ae6b6a418f36aa49b3177209b3f`, GitHub PR #76 — itself built directly on PR18C's own squash merge, `e919a2af8cc7ca11ab72bee274cb70e76c27ce8a`, GitHub PR #75). It reuses the PR18B `ExportDocument`/dataset builders unchanged (no second report/query engine), renders via WeasyPrint (BSD-3-Clause) with pdfplumber (MIT) as a test-only PDF parser, and uses the existing neutral branding fallback (design §16) — **Owner Decision #2 (branding configuration ownership) remains open and is not decided by PR18D.** Three Codex review rounds hardened bounded concurrency/timeout behavior (renderer-lifetime accounting, a total deadline covering queue wait) and completed the production Docker image smoke test before merge. See `docs/DECISION_LOG.md` ("Roadmap PR18D — Backend PDF Export") for the renderer/font engineering-comparison record and full review chronology. Merged as GitHub PR #77, squash SHA `bc274e6176f225518db4ebaf0b5ed643c653aaa7`.
 
-**PR18E note:** Roadmap PR18E (backend Excel `.xlsx` export, `GET /reports/{report_id}/xlsx`) is merged, built from the PR18D baseline (`bc274e6176f225518db4ebaf0b5ed643c653aaa7`, GitHub PR #77). It reuses the PR18B `ExportDocument`/dataset builders unchanged, renders via `openpyxl` (already a vetted dependency — no new dependency added), and uses the same neutral branding fallback as PR18C/PR18D — **Owner Decision #2 remains open and is not decided by PR18E.** One Codex review round required workbook-wide formula-injection sanitization (a single centralized write helper, not only report rows) and Excel export admission control (reusing PR18D's bounded-semaphore/total-deadline model), both fixed before merge. See `docs/DECISION_LOG.md` ("Roadmap PR18E — Excel `.xlsx` Export") for the library comparison and full review chronology. Merged as GitHub PR #78, squash SHA `5d8cf7d8f378f6231d43e330310f664f6c19560f`. **With PR18B, PR18C, PR18D, and PR18E all merged, Roadmap PR18 (Printing and Export) is now fully complete** — see `docs/DECISION_LOG.md` ("Roadmap PR18 — Printing and Export Complete") for the final governance record. The next planned item is Roadmap PR19 (Legacy Import Foundation).
+**PR18E note:** Roadmap PR18E (backend Excel `.xlsx` export, `GET /reports/{report_id}/xlsx`) is merged, built from the PR18D baseline (`bc274e6176f225518db4ebaf0b5ed643c653aaa7`, GitHub PR #77). It reuses the PR18B `ExportDocument`/dataset builders unchanged, renders via `openpyxl` (already a vetted dependency — no new dependency added), and uses the same neutral branding fallback as PR18C/PR18D — **Owner Decision #2 remains open and is not decided by PR18E.** One Codex review round required workbook-wide formula-injection sanitization (a single centralized write helper, not only report rows) and Excel export admission control (reusing PR18D's bounded-semaphore/total-deadline model), both fixed before merge. See `docs/DECISION_LOG.md` ("Roadmap PR18E — Excel `.xlsx` Export") for the library comparison and full review chronology. Merged as GitHub PR #78, squash SHA `5d8cf7d8f378f6231d43e330310f664f6c19560f`. **With PR18B, PR18C, PR18D, and PR18E all merged, Roadmap PR18 (Printing and Export) is now fully complete** — see `docs/DECISION_LOG.md` ("Roadmap PR18 — Printing and Export Complete") for the final governance record. The next planned item is Roadmap PR19, approved as a parallel PR19A (backend) / PR19B (frontend skeleton) split — see `docs/DECISION_LOG.md` ("Roadmap PR19 approved split: PR19A (backend) / PR19B (frontend skeleton)") and the "Approved forward sequence" section above.
 
 ## Approved forward sequence
 
@@ -200,11 +202,27 @@ Roadmap PR18A (`docs/design/PR18_PRINTING_EXPORT_PLAN.md`) is merged as the
 approved architecture design, and PR18B (shared backend export foundation),
 PR18C (Browser Print), PR18D (backend PDF export), and PR18E (Excel `.xlsx`
 export) are all merged. **Roadmap PR18 (Printing and Export) is now fully
-complete.** The next planned item is Roadmap PR19 (Legacy Import Foundation).
+complete.** The next planned item is Roadmap PR19.
+
+**Roadmap PR19 split (approved 2026-08-03):** Roadmap PR19 is delivered as
+two parallel implementation slices from the same merged baseline, per
+`docs/DECISION_LOG.md` ("Roadmap PR19 approved split: PR19A (backend) /
+PR19B (frontend skeleton)") — an explicit, Owner-approved exception to this
+repository's usual design-document-first slice precedent, since no PR19
+design document exists. **PR19A** is the backend import framework itself;
+**PR19B** is a frontend-only, mock-data workflow-review prototype (no
+upload, parsing, validation, dry-run, or import execution; its Equipment
+Master/Receive/Issue History category labels are preview labels pulled
+forward from PR20/PR21, not an implemented capability). PR19B is
+implemented on Draft PR #80 (`feature/pr19b-import-frontend-skeleton`),
+open and pending independent review at the time of this entry. PR19A has
+not started — no branch, PR, or design document exists yet. **Neither slice
+is complete; Roadmap PR19 is not done.**
 
 | Roadmap item | Planned scope |
 |---|---|
-| PR19 | Legacy Import Foundation |
+| PR19A | Legacy Import Foundation (backend) |
+| PR19B | Legacy Import Frontend Skeleton (workflow-review prototype only; no real import) |
 | PR20 | Equipment Master Import: BCM, Item Number, equipment attributes, existing hospital QR linkage, equipment duplicate detection, and equipment-record validation |
 | PR21 | Legacy Receive and Issue History Import: Receive/Issue history, legacy BME-name preservation and user mapping, Ward normalization and mapping, transaction-row duplicate detection, and transaction source references |
 | PR22 | Legacy Data Validation and Reconciliation: cross-import validation, reconciliation, source traceability verification, duplicate review, and unified legacy/new history validation |

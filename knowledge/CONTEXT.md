@@ -47,21 +47,28 @@ master-data snapshot (Owner Decision #1, resolved to interpretation A) — no
 physical-verification workflow, no verification-event storage, no new
 equipment lifecycle state. **Roadmap PR18 (design, backend foundation,
 Browser Print, backend PDF export, and Excel `.xlsx` export) is fully
-complete.** The next planned implementation work is Roadmap PR19 (Legacy
-Import Foundation); no PR19 implementation has started.
+complete.** The next planned implementation work is Roadmap PR19, approved
+(2026-08-03, `docs/DECISION_LOG.md`) as a parallel split: **PR19A**
+(Legacy Import Foundation, backend) and **PR19B** (Legacy Import Frontend
+Skeleton, a frontend-only workflow-review prototype with no real upload,
+parsing, validation, dry-run, or import execution). PR19B is Draft PR #80
+(`feature/pr19b-import-frontend-skeleton`), open and pending independent
+review; PR19A has not started. **Neither slice is implemented yet.**
 
-1. PR19 — Legacy Import Foundation.
-2. PR20 — Equipment Master Import: BCM, Item Number, equipment attributes,
+1. PR19A — Legacy Import Foundation (backend).
+2. PR19B — Legacy Import Frontend Skeleton (workflow-review prototype only;
+   developed in parallel with PR19A, not stacked on it).
+3. PR20 — Equipment Master Import: BCM, Item Number, equipment attributes,
    existing hospital QR linkage, equipment duplicate detection, and
    equipment-record validation.
-3. PR21 — AppSheet Receive and Issue history import: legacy BME-name
+4. PR21 — AppSheet Receive and Issue history import: legacy BME-name
    preservation and user mapping, Ward normalization and mapping,
    transaction-row duplicate detection, and transaction source references.
-4. PR22 — Validation and reconciliation: cross-import validation,
+5. PR22 — Validation and reconciliation: cross-import validation,
    reconciliation, source traceability verification, duplicate review, and
    unified legacy/new history validation.
-5. PR23 — Cutover readiness.
-6. PR24 — Go-live / deployment.
+6. PR23 — Cutover readiness.
+7. PR24 — Go-live / deployment.
 
 Legacy migration and reconciliation are mandatory before PR24.
 
@@ -89,10 +96,17 @@ Legacy migration and reconciliation are mandatory before PR24.
   PR18 output format (Browser Print, PDF, or Excel) resolved it; every format
   uses the same interim neutral fallback, and it must be resolved before any
   future work depends on real hospital branding.
-- PR19 must define the import framework and source mappings; PR20 must define
+- PR19A must define the import framework and source mappings; PR20 must define
   Equipment Master matching/validation; PR21 must define transaction
   BME-name/user and Ward mappings; PR22 must define cross-import validation
-  and reconciliation ownership; PR23 must define cutover evidence.
+  and reconciliation ownership; PR23 must define cutover evidence. PR19B's
+  category labels are a UI preview only and do not resolve any of this.
+- PR19's approved PR19A/PR19B split (`docs/DECISION_LOG.md`, 2026-08-03) is an
+  explicit Owner-approved exception to this repository's usual
+  design-document-first slice precedent — no PR19 design document exists.
+  PR19A's real API/authorization contract remains undefined until PR19A is
+  designed and implemented; PR19B's types/mock client are provisional and
+  must be realigned once that contract exists.
 - Broader PR15 metrics/tracing/dashboards/aggregation/alerting work is still
   unscheduled.
 

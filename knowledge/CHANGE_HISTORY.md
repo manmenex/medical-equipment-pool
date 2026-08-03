@@ -7,6 +7,25 @@
 
 This file tracks *what changed in the shared mental model* over time, one line of context per concept. For the PR-by-PR rationale behind each change, see `docs/DECISION_LOG.md` (from Roadmap PR5 onward) and `docs/PROJECT_MEMORY.md` (Roadmap PR1 through Governance Pack v1.0).
 
+## Roadmap PR19 split into PR19A (backend) and PR19B (frontend skeleton)
+
+Roadmap PR19 ("Legacy Import Foundation") was previously one unsplit Roadmap
+item, with no PR19A/PR19B naming anywhere in governance material. The
+Repository Owner explicitly approved splitting it into two parallel
+implementation slices from the same merged baseline: **PR19A**, the backend
+import framework itself, and **PR19B**, a frontend-only, mock-data UI
+prototype of the future import workflow for early hospital-user workflow
+review, ahead of PR19A's real contract. This is an explicit exception to
+this repository's usual pattern of splitting a Roadmap item into lettered
+slices only after an architecture-approved design document — no PR19 design
+document exists. PR19B's import-category labels (Equipment Master / Receive
+History / Issue History) are preview labels pulled forward from PR20/PR21
+scope for review purposes only, not an implemented capability or an approval
+of PR20/PR21's own design. Neither PR19A nor PR19B is implemented by this
+change; PR19B's own implementation is tracked on Draft PR #80. See
+`docs/DECISION_LOG.md` ("Roadmap PR19 approved split: PR19A (backend) /
+PR19B (frontend skeleton)").
+
 ## Printing and Export complete; Roadmap PR18 closed (Roadmap PR18E / PR18F)
 
 Roadmap PR18E added the backend Excel `.xlsx` adapter (`report_xlsx_service`,

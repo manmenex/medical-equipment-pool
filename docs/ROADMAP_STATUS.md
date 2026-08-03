@@ -34,6 +34,15 @@ PR #71, #73, #75, #77, #78, with governance-sync PRs #72, #74, #76 interleaved
 between them) is now fully complete.** Owner Decision #2 (branding
 configuration ownership) remains open.
 
+**Roadmap PR19 split (approved 2026-08-03):** Roadmap PR19 is delivered as a
+parallel **PR19A** (backend import framework) / **PR19B** (frontend-only
+workflow-review skeleton, no real import) slice pair from this same
+baseline, per `docs/DECISION_LOG.md` ("Roadmap PR19 approved split: PR19A
+(backend) / PR19B (frontend skeleton)") — an explicit, Owner-approved
+exception, since no PR19 design document exists. PR19B is Draft PR #80
+(`feature/pr19b-import-frontend-skeleton`), open and pending independent
+review. PR19A has not started. **Neither slice is complete.**
+
 Roadmap numbering and GitHub PR numbering are independent. In particular,
 GitHub PR #18 was the Knowledge & Governance Foundation; it was not Roadmap
 PR18.
@@ -42,12 +51,13 @@ PR18.
 
 | Order | Roadmap item | Status |
 |---|---|---|
-| 1 | PR19 — Legacy Import Foundation | Planned |
-| 2 | PR20 — Equipment Master Import | Planned |
-| 3 | PR21 — Legacy Receive and Issue History Import | Planned |
-| 4 | PR22 — Legacy Data Validation and Reconciliation | Planned |
-| 5 | PR23 — Cutover Readiness | Planned |
-| 6 | PR24 — Go-live / deployment | Planned; blocked by PR19–PR23 |
+| 1 | PR19A — Legacy Import Foundation (backend) | Planned; not started |
+| 2 | PR19B — Legacy Import Frontend Skeleton (workflow-review prototype, no real import) | Draft PR #80 open, pending independent review |
+| 3 | PR20 — Equipment Master Import | Planned |
+| 4 | PR21 — Legacy Receive and Issue History Import | Planned |
+| 5 | PR22 — Legacy Data Validation and Reconciliation | Planned |
+| 6 | PR23 — Cutover Readiness | Planned |
+| 7 | PR24 — Go-live / deployment | Planned; blocked by PR19–PR23 |
 
 Roadmap PR15B (Schema Hygiene implementation, GitHub PR #54), the
 documentation audit and Roadmap consistency work that preceded it
@@ -63,7 +73,7 @@ PR18C Browser Print (GitHub PR #75), a governance sync recording PR18C's
 completion (GitHub PR #76), PR18D backend PDF export (GitHub PR #77), and
 PR18E Excel `.xlsx` export (GitHub PR #78) are all merged — see
 `docs/ROADMAP.md`'s Completed table for the full historical record. This
-table now begins with Roadmap PR19.
+table now begins with the split Roadmap PR19A/PR19B.
 
 ## Scope guardrails for the planned sequence
 
@@ -75,6 +85,10 @@ table now begins with Roadmap PR19.
 - Version 1 legacy history migration includes only the AppSheet equipment
   receive-data and equipment issue-data sheets. Equipment Verify Checklist
   history is excluded unless a later approved decision changes the scope.
+- PR19B is a frontend-only workflow-review skeleton: no file upload, no
+  parsing, no validation/dry-run/import execution, no database change. Its
+  Equipment Master/Receive/Issue History category labels preview PR20/PR21
+  scope and are not an implemented capability.
 - PR20 Equipment Master Import covers BCM, Item Number, equipment attributes,
   existing hospital QR linkage, equipment duplicate detection, and
   equipment-record validation. It does not own transaction BME or Ward data.

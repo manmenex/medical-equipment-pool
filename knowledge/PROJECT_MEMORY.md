@@ -115,11 +115,20 @@ Roadmap PR17 remains complete. **Roadmap PR18 (PR18A design, PR18B backend
 export foundation, PR18C Browser Print, PR18D backend PDF export, and PR18E
 Excel `.xlsx` export) is now fully complete** — Browser Print, PDF, and Excel
 are all implemented for all three PR17 report families. The next planned
-implementation work is Roadmap PR19; no PR19 implementation has started. The
-remaining approved sequence is:
+implementation work is Roadmap PR19, approved (2026-08-03,
+`docs/DECISION_LOG.md`) as a parallel split: **PR19A** (backend import
+framework) and **PR19B** (frontend-only workflow-review skeleton — no real
+upload, parsing, validation, dry-run, or import execution; its category
+labels preview PR20/PR21 scope only). PR19B is Draft PR #80, open and
+pending independent review; PR19A has not started. **Neither slice is
+implemented.** This split is an explicit, Owner-approved exception to this
+repository's usual design-document-first slice precedent, since no PR19
+design document exists. The remaining approved sequence is:
 
-- PR19–PR22: legacy import foundation, Equipment Master, AppSheet Receive/Issue
-  history, validation and reconciliation;
+- PR19A/PR19B: legacy import foundation and its frontend workflow-review
+  skeleton;
+- PR20–PR22: Equipment Master, AppSheet Receive/Issue history, validation and
+  reconciliation;
 - PR23: cutover readiness;
 - PR24: Go-live / deployment.
 
