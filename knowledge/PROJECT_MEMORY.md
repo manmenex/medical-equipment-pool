@@ -64,20 +64,45 @@ remain available for backend validation. Required Noto Sans Thai weights 400
 and 700 are checked independently and fail closed when a weight or the Font
 Loading API is unavailable. A completed readiness result is accepted only for
 the current document identity, preventing an asynchronous result from a stale
-document from enabling Print. PDF and Excel remain separate adapters.
+document from enabling Print.
+
+PR18D implements backend PDF export as a synchronous WeasyPrint adapter
+(`report_pdf_service.render_pdf`), consuming the same `ExportDocument` and
+its own merged, backend-only Noto Sans Thai TTF assets (WeasyPrint 69.0 does
+not reliably render the frontend's split `.woff2` unicode-range files, so the
+backend renderer uses a separate merged font, approved by the Repository
+Owner). PDF generation is bounded: `render_pdf_bounded` enforces a
+concurrency limit and one total timeout covering both queue wait and active
+rendering, with renderer-lifetime (not request-lifetime) concurrency
+accounting, and the production Docker image is smoke-tested in CI. PR18E
+implements backend Excel `.xlsx` export as a synchronous `openpyxl` adapter
+(`report_xlsx_service.build_workbook_sync`, no new dependency — `openpyxl`
+was already used for `.xlsx` import parsing and the legacy exporter), with
+the same bounded-admission-control shape as PDF (`build_workbook_bounded`,
+lighter constants than PDF since `openpyxl` has none of WeasyPrint's native
+font-shaping/layout cost) and formula-injection protection centralized
+through one write helper (`_write_cell`) that every worksheet string —
+report rows and the metadata/filter block alike — passes through
+unconditionally. Browser Print, PDF, and Excel are independent adapters over
+the same `ExportDocument`; none reconstructs report rules, and none
+introduced a database migration.
 
 Sources: `docs/PROJECT_PLAYBOOK.md`, `docs/ARCHITECTURE_GUARDRAILS.md`,
 `docs/ARCHITECTURE_DECISIONS.md`.
 
 ## Current baseline and Roadmap
 
-Current baseline: `e919a2af8cc7ca11ab72bee274cb70e76c27ce8a`.
-Roadmap PR18C merged as GitHub PR #75, squash SHA `e919a2a`, on top of GitHub
-PR #73 (`c72929b`, PR18B backend export foundation), GitHub PR #72 (`e1b358a`,
-post-PR18A governance synchronization), and GitHub PR #71 (`6ba2c66`, the
-approved PR18A architecture design). PR18C implements Browser Print only. It
-introduced no migration or equipment lifecycle change and does not implement
-PDF or Excel output.
+Current baseline: `5d8cf7d8f378f6231d43e330310f664f6c19560f`.
+Roadmap PR18E merged as GitHub PR #78, squash SHA `5d8cf7d`, on top of GitHub
+PR #77 (`bc274e6`, PR18D backend PDF export), GitHub PR #76 (`beedc4d`, the
+documentation-only governance sync after PR18C), GitHub PR #75 (`e919a2a`,
+PR18C Browser Print), GitHub PR #74 (`4da1ebc`, the documentation-only
+governance sync after PR18B), GitHub PR #73 (`c72929b`, PR18B backend export
+foundation), GitHub PR #72 (`e1b358a`, post-PR18A governance
+synchronization), and GitHub PR #71 (`6ba2c66`, the approved PR18A
+architecture design). None of PR18C, PR18D, PR18E, or the interleaved
+governance-sync PRs (#72, #74, #76) introduced a migration or equipment
+lifecycle change.
 
 Equipment Verify Checklist means a read-only, current-state Equipment
 master-data snapshot (Owner Decision #1, resolved to interpretation A) — not
@@ -86,16 +111,13 @@ operator, condition, pass/fail state, or reconciliation outcome, and
 introduces no new equipment lifecycle state. Physical verification remains
 out of scope, unscheduled future work.
 
-Roadmap PR17 remains complete. Roadmap PR18A design, PR18B backend export
-foundation, and PR18C Browser Print are merged; Roadmap PR18 remains
-incomplete. The next planned implementation work is PR18D Backend PDF Export.
-PDF and Excel output are **not implemented yet**. The remaining approved
-sequence is:
+Roadmap PR17 remains complete. **Roadmap PR18 (PR18A design, PR18B backend
+export foundation, PR18C Browser Print, PR18D backend PDF export, and PR18E
+Excel `.xlsx` export) is now fully complete** — Browser Print, PDF, and Excel
+are all implemented for all three PR17 report families. The next planned
+implementation work is Roadmap PR19; no PR19 implementation has started. The
+remaining approved sequence is:
 
-- PR18D: backend PDF export;
-- PR18E: Excel `.xlsx` export;
-- PR18F: post-implementation governance synchronization after all approved
-  PR18 output slices merge;
 - PR19–PR22: legacy import foundation, Equipment Master, AppSheet Receive/Issue
   history, validation and reconciliation;
 - PR23: cutover readiness;

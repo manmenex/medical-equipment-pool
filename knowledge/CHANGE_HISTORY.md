@@ -7,6 +7,53 @@
 
 This file tracks *what changed in the shared mental model* over time, one line of context per concept. For the PR-by-PR rationale behind each change, see `docs/DECISION_LOG.md` (from Roadmap PR5 onward) and `docs/PROJECT_MEMORY.md` (Roadmap PR1 through Governance Pack v1.0).
 
+## Printing and Export complete; Roadmap PR18 closed (Roadmap PR18E / PR18F)
+
+Roadmap PR18E added the backend Excel `.xlsx` adapter (`report_xlsx_service`,
+`GET /reports/{report_id}/xlsx`) for Receive Report, Issue Report, and
+Equipment Verify Checklist, over the same PR18B `ExportDocument` foundation
+Browser Print and PDF already use — `openpyxl` was reused with no new
+dependency (it already parsed `.xlsx` imports and drove the legacy exporter).
+Codex review required two fixes before merge: every worksheet string write —
+report rows and the metadata/applied-filter block alike — now passes through
+one centralized helper (`_write_cell`) that applies the Excel
+formula-injection guard unconditionally, closing a gap where administrator-
+editable display names (generated-by, resolved ward/category/operator filter
+values) could reach the workbook unsanitized; and Excel generation gained the
+same bounded-admission-control shape already established for PDF
+(`build_workbook_bounded`: a concurrency semaphore, one total timeout
+covering queue wait and active generation, renderer-lifetime concurrency
+accounting), with lighter constants than PDF's own given `openpyxl`'s smaller
+resource footprint at the approved row bound. Merged as GitHub PR #78, squash
+SHA `5d8cf7d8f378f6231d43e330310f664f6c19560f`.
+
+With PR18B (shared export foundation), PR18C (Browser Print), PR18D (backend
+PDF export), and PR18E (Excel `.xlsx` export) all merged, **one shared,
+output-neutral export model now drives all three output adapters** for every
+PR17 report family — no adapter duplicates report/query logic or
+reconstructs eligibility, ordering, or filter rules. Every bulk export is
+bounded (the shared `MAX_EXPORT_ROWS = 5000` synchronous limit, rejecting
+outright rather than truncating silently); PDF and Excel each additionally
+enforce explicit concurrency/admission control with a total timeout that
+covers queue wait. Field- and operator-information boundaries established by
+PR17 (e.g. `item_no` excluded from the Equipment Verify Checklist) carry
+through unchanged to every output format. All three formats use the same
+interim neutral branding fallback approved in the PR18A design (no hospital
+name, no department name, no logo) — **Owner Decision #2 (branding
+configuration ownership) remains unresolved**; no deployment/environment- or
+Administrator-managed branding configuration exists anywhere in the
+repository.
+
+**Roadmap PR18 (Printing and Export) is now fully complete.** This is
+recorded by Roadmap PR18F, a documentation-only governance synchronization
+(branch `docs/pr18f-governance-sync`, baseline
+`5d8cf7d8f378f6231d43e330310f664f6c19560f`) that changes no runtime behavior.
+See `docs/DECISION_LOG.md` ("Roadmap PR18E — Excel `.xlsx` Export" and
+"Roadmap PR18 — Printing and Export Complete") for the full review
+chronology and final governance record, and `docs/ROADMAP.md`/
+`docs/ROADMAP_STATUS.md` for the updated baseline. The next planned item is
+Roadmap PR19 (Legacy Import Foundation); no PR19 implementation has started.
+
 ## Reporting and legacy-migration sequence aligned
 
 The Roadmap now distinguishes actual transaction timestamp, `business_date`,

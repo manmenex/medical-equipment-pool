@@ -283,7 +283,10 @@
   frontend suite re-run with no regression.
 - **Source:** `docs/design/PR18_PRINTING_EXPORT_PLAN.md` §9, §16, §17, §20.3,
   §22. Branch `feature/pr18c-browser-print`, baseline
-  `c72929ba4649fd75d1f81e4630b4e4feb3d136be` (GitHub PR #73's squash merge).
+  `4da1ebc016d48b2dece9362e029ecd15eb9dd31b` (GitHub PR #74's squash merge,
+  the documentation-only governance sync recording Roadmap PR18B's
+  completion — itself built directly on GitHub PR #73's own squash merge,
+  `c72929ba4649fd75d1f81e4630b4e4feb3d136be`).
   Corrected in a second Codex review round (PR18C-H1R/PR18C-H2R) to make
   print readiness document-identity-aware and to replace an interim
   per-report-identity filter allowlist with pagination-only stripping,
@@ -383,7 +386,10 @@
     by this bug. This is an implementation-correctness decision about a
     third-party renderer's font-subsetting behavior, not a branding or
     typography decision.
-- **What was built:**
+- **Initial implementation (superseded — see "Review round 1/2/3 fixes" and
+  "Final merged implementation" below for what actually shipped and merged;
+  kept here verbatim as historical context, not the current production
+  behavior):**
   - `backend/app/services/report_pdf_service.py`: `render_pdf(document:
     ExportDocument) -> bytes`, a synchronous, CPU-bound function. Builds a
     complete, self-contained HTML document (both fonts embedded as base64
@@ -395,7 +401,9 @@
     mutates the `ExportDocument` it is given. Per-report-identity page
     orientation (landscape for Receive/Issue, portrait for Equipment
     Verify Checklist) matches Browser Print's own
-    `frontend/src/utils/printFormat.ts` `PRINT_ORIENTATION` mapping.
+    `frontend/src/utils/printFormat.ts` `PRINT_ORIENTATION` mapping. (This
+    function itself, and its HTML/font-embedding approach, is unchanged by
+    every later review round — only how it is *called* changed; see below.)
   - `backend/app/api/v1/reports.py`: `GET /reports/{report_id}/pdf`,
     reusing `_build_export_document_for_request` — a new helper factored
     out of the existing `print-data` route so both routes dispatch through
@@ -405,22 +413,134 @@
     `MAX_EXPORT_ROWS` bound (design §8/§18: PR18D adopts, not
     re-derives, PR18B's approved synchronous row limit) and
     `ExportTooLargeError` → structured `422 EXPORT_TOO_LARGE` handling as
-    `print-data`. `render_pdf` runs via `asyncio.to_thread` (the same
-    pattern `app.services.import_service._parse_workbook_sync` already
-    uses for CPU-bound work), so it never blocks the event loop other
-    concurrent requests share. Response is `application/pdf` with
+    `print-data`. At this stage, `render_pdf` ran via a bare
+    `asyncio.to_thread` call with **no timeout or concurrency bound of its
+    own** (superseded by review round 1's H1, below). Response is
+    `application/pdf` with
     `Content-Disposition: attachment; filename="{filename_stem}.pdf"`,
     reusing the existing `ExportMetadata.filename_stem` (PR18B) with only
     the `.pdf` extension appended — no new filename logic.
   - `backend/requirements.txt`: `weasyprint>=69.0` (runtime) and
     `pdfplumber>=0.11.10` (test-only), added to the existing single,
-    floor-pinned manifest — no new dependency-file hierarchy introduced.
+    floor-pinned manifest — **floor-pinned with `>=`, not yet exact-pinned**
+    (superseded by review round 1's H2, below).
   - `backend/Dockerfile`: adds `libpango-1.0-0 libpangoft2-1.0-0
     libharfbuzz-subset0` to the existing `apt-get install` line.
     `.github/workflows/ci.yml`: adds the same three packages to both
     pytest-running jobs (`backend-tests`, `backend-postgres-tests`), since
     neither job builds the Docker image and WeasyPrint loads Pango/HarfBuzz
-    at runtime via `cffi`, not via a pip wheel.
+    at runtime via `cffi`, not via a pip wheel. **No job actually built the
+    Docker image at this stage** (superseded by review round 1's H4 and
+    round 2's H2, below).
+- **Review round 1 fixes (Codex review `4838921407` on PR #77, reviewed head
+  `0f3b66e`; findings H1–H8):**
+  - H1: bounded PDF rendering with an explicit timeout
+    (`RENDER_TIMEOUT_SECONDS = 30`) and concurrency limit
+    (`MAX_CONCURRENT_RENDERS = 4`) via the new
+    `report_pdf_service.render_pdf_bounded`, an async wrapper around the
+    existing synchronous `render_pdf`. A timeout raises the new
+    `PdfRenderTimeoutError` (503); the semaphore is released in a `finally`
+    block so a timeout or failure always frees its concurrency slot.
+  - H2: exact-pinned `weasyprint==69.0` and `pdfplumber==0.11.10` (were
+    `>=`), since the approved engineering comparison and the
+    font-corruption finding are both specific to these exact tested
+    versions.
+  - H3: renderer failures (timeout or any other exception) now log their
+    own distinguishable export-attempt event (`render_timeout`/
+    `render_error`), reusing the existing `log_export_attempt`/outcome
+    mechanism — no second event system.
+  - H4: added a `backend-docker-build` CI job that smoke-builds the
+    production Docker image (previously never built anywhere in CI).
+  - H5/H6: rebased onto the latest governance baseline (`beedc4d`, GitHub
+    PR #76) and corrected a baseline SHA typo (`e919a2af7...` →
+    `e919a2af8...`) across `docs/DECISION_LOG.md`, `docs/ROADMAP.md`, and
+    code comments.
+  - H7: removed a vacuous `... or True` test assertion and a similarly weak
+    `"<b>" in text or "b" in text` check; replaced both with real,
+    content-stream-order-based per-character/per-cell assertions.
+  - H8: stripped trailing whitespace from
+    `backend/app/assets/fonts/OFL.txt` (now byte-identical to the frontend
+    copy).
+- **Review round 2 fixes (H1–H3):**
+  - H1: `render_pdf_bounded` now ties semaphore release to actual renderer
+    *completion* (a `Task` done-callback plus `asyncio.shield`) instead of
+    the caller's request lifetime, so a client-facing timeout no longer
+    frees a concurrency slot while the WeasyPrint worker thread is still
+    running. Three new deterministic regression tests prove the bound
+    holds under timeout and concurrent load.
+  - H2: replaced the round-1 build-only Docker CI job with a production
+    image smoke test that boots the container, migrates, seeds, logs in,
+    and requests a real PDF export, asserting HTTP 200/`application/pdf`/
+    `%PDF`.
+  - H3: the Dockerfile now installs from a grep-filtered
+    `requirements.runtime.txt` so `pdfplumber` and other test-only
+    packages never ship in the production image; `requirements.txt` itself
+    is unchanged (still one file, per the approved PR18D plan).
+- **Review round 3 fixes (H1–H2):**
+  - H1: `render_pdf_bounded` now uses **one total deadline**
+    (`RENDER_TIMEOUT_SECONDS`) covering both the wait for renderer capacity
+    *and* the active render, not a budget that only started once a slot
+    was acquired — a request stuck behind other renders can no longer
+    queue indefinitely and only then receive a full render timeout on top
+    of that wait; if the deadline passes while still queued, the renderer
+    is never started at all. Six new regression tests cover queue-only
+    timeouts, queue-plus-render total-budget bounding, and that round 2's
+    renderer-lifetime concurrency accounting still holds.
+  - H2: fixed the Docker smoke test's seed step, which was failing because
+    migration `0009_role_consolidation` already creates the confirmed
+    roles (including `administrator`) as part of a plain
+    `alembic upgrade head` on a fresh database, and `app/scripts/seed.py`
+    unconditionally re-inserted them. `seed_reference_data` now reuses any
+    pre-existing role/admin row instead of assuming an empty table — the
+    fix that actually makes the documented `alembic upgrade head` +
+    `python -m app.scripts.seed` deployment sequence
+    (`docs/06-deployment-guide.md`) work at all, not only this smoke test.
+    The smoke test's PDF assertions now also check the full `%PDF-` header
+    and a non-trivial response body size.
+- **Final merged implementation (what actually shipped in GitHub PR #77;
+  this — not "Initial implementation" above — is the current production
+  behavior):**
+  - `GET /reports/{report_id}/pdf` calls
+    `report_pdf_service.render_pdf_bounded`, not a bare synchronous
+    `render_pdf`/`asyncio.to_thread` pairing. `render_pdf_bounded` enforces
+    `MAX_CONCURRENT_RENDERS = 4` via a semaphore and
+    `RENDER_TIMEOUT_SECONDS = 30` as **one total deadline covering both
+    queue wait and active rendering** — a request that never obtains a
+    renderer slot within the deadline is rejected with
+    `PdfRenderTimeoutError` (503) without ever starting a render.
+  - **Renderer-lifetime concurrency accounting:** the semaphore slot is
+    released only when the renderer `Task` itself completes (via
+    `Task.add_done_callback` plus `asyncio.shield`), never merely when the
+    caller's request times out — so a client-facing timeout can never free
+    a slot while WeasyPrint is still actively rendering in the background.
+  - **Exact-pinned dependencies:** `backend/requirements.txt` declares
+    `weasyprint==69.0` and `pdfplumber==0.11.10` (not `>=`), since the
+    approved renderer comparison and the font-corruption finding are both
+    specific to these exact tested versions.
+  - **Dependency isolation:** the production Docker image installs from a
+    grep-filtered `requirements.runtime.txt`, so `pdfplumber` and other
+    test-only packages are never present in the production image;
+    `requirements.txt` remains the single source-of-truth manifest file.
+  - **Production Docker PDF smoke validation:** CI boots the production
+    image, runs `alembic upgrade head`, runs the seed script, logs in, and
+    requests a real PDF export end to end, asserting HTTP 200,
+    `Content-Type: application/pdf`, the full `%PDF-` header, and a
+    non-trivial response body size — not merely that the image builds.
+  - **Seed-idempotency correction:** `app.scripts.seed.seed_reference_data`
+    reuses any pre-existing role/admin row instead of assuming an empty
+    table, since migration `0009_role_consolidation` already creates the
+    confirmed roles on a fresh install — a real deployment-sequence
+    correction (`docs/06-deployment-guide.md`), not only a test-fixture
+    fix.
+  - Distinguishable `render_timeout`/`render_error` export-attempt log
+    outcomes (via the existing `log_export_attempt` mechanism) and
+    content-stream-order-based (not substring/vacuous) PDF text-extraction
+    test assertions are both part of the merged state.
+  - Everything else described under "Initial implementation" above — the
+    renderer/font selection, the HTML-document construction inside
+    `render_pdf` itself, the route's authorization/filter/row-limit
+    handling, and the response headers/filename — is unchanged by the
+    review rounds and remains accurate for the merged state.
 - **Explicit non-goals:** No Excel export, no async/background export job,
   no persisted generated file, no external resource fetch during
   rendering, no new synchronous row limit (reuses PR18B's), no change to
@@ -441,22 +561,36 @@
   — never partial PDF bytes, ASCII-safe `Content-Disposition` filename, no
   persistent audit-log write, no transaction-state mutation, and seeded
   end-to-end content checks for both a transaction report and the
-  Equipment Verify Checklist's Thai status label).
+  Equipment Verify Checklist's Thai status label). Added across the three
+  review rounds, on top of the above: renderer-lifetime concurrency-bound
+  regression tests against `render_pdf_bounded` (round 2, 3 tests);
+  queue-only-timeout and queue-plus-render total-budget regression tests
+  against `render_pdf_bounded` (round 3, 6 tests); and a dedicated
+  production Docker-image smoke test (`.github/workflows/ci.yml`) that
+  boots the actual production image and performs one full end-to-end PDF
+  export request, asserting the `%PDF-` header and a non-trivial response
+  body size (round 2 introduced the job; round 3 completed its assertions
+  and fixed the seed-step dependency it relies on).
 - **Source:** `docs/design/PR18_PRINTING_EXPORT_PLAN.md` §8, §10, §16, §18,
   §22. Branch `feature/pr18d-pdf-export`, baseline
-  `e919a2af8cc7ca11ab72bee274cb70e76c27ce8a` (GitHub PR #75's squash
-  merge, Roadmap PR18C). Renderer/font decisions above were presented to,
+  `beedc4d32c8d3ae6b6a418f36aa49b3177209b3f` (GitHub PR #76's squash merge,
+  the documentation-only governance sync recording Roadmap PR18C's
+  completion — itself built directly on GitHub PR #75's own squash merge,
+  `e919a2af8cc7ca11ab72bee274cb70e76c27ce8a`, Roadmap PR18C). Renderer/font
+  decisions above were presented to,
   and explicitly approved by, the Repository Owner before implementation
   proceeded (renderer comparison and recommendation approved first; the
   font-asset correction approved separately after the empirical finding
   above).
-- **Status:** Implemented in this branch; not yet merged as of this entry.
+- **Status:** Merged as GitHub PR #77, squash SHA
+  `bc274e6176f225518db4ebaf0b5ed643c653aaa7`.
 - **Consequences:** Receive Report, Issue Report, and Equipment Verify
   Checklist can each now be exported as a backend-rendered PDF, reusing the
   PR18B foundation and PR18C's neutral branding. Owner Decision #2
   (branding configuration ownership) remains open — this entry does not
   resolve it. Excel output remains PR18E; Roadmap PR18 is not yet
-  complete.
+  complete as of this entry — see "Roadmap PR18E" and "Roadmap PR18 —
+  Printing and Export Complete" below for its subsequent completion.
 
 ## Roadmap PR18E — Excel `.xlsx` Export
 
@@ -540,10 +674,13 @@
     runs via `asyncio.to_thread` (the same pattern
     `report_pdf_service.render_pdf` and
     `import_service._parse_workbook_sync` already use for CPU-bound work),
-    so it never blocks the event loop — no dedicated timeout/concurrency
-    bound is layered on top the way PDF's `render_pdf_bounded` needs,
-    because `openpyxl` at the approved row bound has none of the native-
-    library layout/font-shaping cost that motivated PDF's bound. Response
+    so it never blocks the event loop. **Superseded by the round 1 review
+    fix below:** the route now calls the bounded wrapper
+    `build_workbook_bounded`, which layers its own timeout/concurrency
+    bound on top (a lighter one than PDF's, since `openpyxl` at the
+    approved row bound has none of the native-library layout/font-shaping
+    cost that motivated PDF's bound) — see "Round 1 review fixes" below.
+    Response
     is `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
     with `Content-Disposition: attachment; filename="{filename_stem}.xlsx"`,
     reusing the existing `ExportMetadata.filename_stem` (PR18B) with only
@@ -584,17 +721,102 @@
   this PR's own description and this entry, per the task's explicit
   requirement to document the recommendation before adding any
   dependency — no new dependency was added.
-- **Status:** Implemented in this branch; not yet merged as of this entry;
-  pending independent Codex review and Owner approval.
+- **Status:** Merged as GitHub PR #78, squash SHA
+  `5d8cf7d8f378f6231d43e330310f664f6c19560f`.
+- **Round 1 review fixes (reviewed head
+  `cd524e5ffd87ad7cb40487031207354cf92e2e1d`, fixed in `8aea062`):**
+  Codex's independent review found two gaps not covered by the description
+  above. **H1 — workbook-wide formula-injection protection:** the
+  as-implemented adapter sanitized report *row* values but not the
+  metadata block; `generated_by_display_name` (a user's editable
+  `full_name`) and applied-filter values (backend-resolved ward/category/
+  equipment/operator display names — administrator-editable free text via
+  `report_export_service._filter_summary`) could reach the workbook
+  unsanitized. Fixed by introducing `report_xlsx_service._write_cell`, the
+  single call site every string write in the module now goes through
+  (report rows, report title, secondary label, every metadata line,
+  applied-filter labels/values, header row) — `_cell_value_for` no longer
+  sanitizes independently. **H2 — Excel export admission control:** the
+  as-implemented adapter bounded only row count, not concurrent or queued
+  generation. Fixed by adding `report_xlsx_service.build_workbook_bounded`,
+  reusing PR18D's `render_pdf_bounded` protection model unchanged in
+  structure (bounded semaphore, one total deadline covering queue wait and
+  active generation, renderer-lifetime concurrency accounting via a
+  `Task.add_done_callback` release) with Excel-specific constants
+  (`MAX_CONCURRENT_RENDERS = 8`, `RENDER_TIMEOUT_SECONDS = 15`, both looser
+  than PDF's 4/30s given `openpyxl`'s lighter resource profile at the
+  approved row bound). A new `XlsxRenderTimeoutError` (503,
+  `XLSX_RENDER_TIMEOUT`) mirrors `PdfRenderTimeoutError`. 21 new tests (14
+  for H1, 7 for H2) were added to `backend/tests/test_pr18e_excel_export.py`
+  (65 tests total).
 - **Consequences:** Receive Report, Issue Report, and Equipment Verify
   Checklist can each now be exported as a backend-generated `.xlsx`
   workbook, reusing the PR18B foundation and the PR18C/PR18D neutral
   branding fallback. Owner Decision #2 (branding configuration ownership)
   remains open — this entry does not resolve it. **All three committed
-  PR18 output formats (browser print, PDF, Excel) now have an
-  implementation** — Roadmap PR18 is not marked complete by this entry;
-  that final governance synchronization (recording the actual merged
-  baseline for every slice) is PR18F's job, not started here.
+  PR18 output formats (browser print, PDF, Excel) are now merged.** Roadmap
+  PR18 is not marked complete by this entry; that final governance
+  synchronization (recording the actual merged baseline for every slice)
+  is PR18F's job — see "Roadmap PR18 — Printing and Export Complete"
+  below.
+
+## Roadmap PR18 — Printing and Export Complete (PR18F governance synchronization)
+
+- **Decision:** Record Roadmap PR18 (Printing and Export) as complete, now
+  that every committed output-format implementation slice —
+  PR18B (backend export foundation), PR18C (Browser Print), PR18D (backend
+  PDF export), and PR18E (Excel `.xlsx` export) — is merged. This is a
+  documentation-only governance synchronization (`docs/design/PR18_
+  PRINTING_EXPORT_PLAN.md` §22 "PR18F"); it changes no runtime behavior,
+  route, schema, or business rule.
+- **What PR18 delivered, end to end:**
+  - a shared, output-neutral `ExportDocument` backend foundation (stable
+    report identities, metadata, deterministic typed columns/rows,
+    schema-invariant validation, bounded full-result retrieval, filter
+    applicability enforcement, human-readable applied-filter metadata,
+    bounded historical operator lookup, internal `print-data` endpoint) —
+    PR18B;
+  - Browser Print for Receive Report, Issue Report, and Equipment Verify
+    Checklist, entirely backend-driven, with fail-closed font readiness
+    bound to the current document identity — PR18C;
+  - backend PDF export (WeasyPrint, embedded backend-only Thai font
+    assets, neutral branding fallback, deterministic filenames, bounded
+    concurrency/admission control with a total timeout covering queue
+    wait, renderer-lifetime concurrency accounting, production Docker
+    image validation and PDF smoke test, no generated-file persistence) —
+    PR18D;
+  - backend Excel `.xlsx` export for the same three reports (workbook
+    metadata, Thai headers, frozen header row, autofilter, deterministic
+    columns/order, workbook-wide formula-injection protection through one
+    centralized write helper, bounded concurrency/admission control with a
+    total timeout covering queue wait and active generation,
+    renderer-lifetime concurrency accounting, no silent truncation, no
+    migration) — PR18E.
+  - Across all three output adapters, report semantics, eligibility,
+    ordering, and filtering remain exactly PR17's — no adapter reconstructs
+    or duplicates reporting logic, and no adapter introduced a database
+    migration.
+- **Unresolved:** **Owner Decision #2 (branding configuration ownership)
+  remains open.** Every PR18 output format uses the same interim neutral
+  fallback approved in the PR18A design (no hospital name, no department
+  name, no logo, a Thai product-neutral report title, "Medical Equipment
+  Pool" as the secondary label, a neutral footer) — this entry does not
+  resolve Owner Decision #2, and no deployment/environment-managed or
+  Administrator-managed branding configuration exists anywhere in the
+  repository.
+- **Source:** `docs/design/PR18_PRINTING_EXPORT_PLAN.md` §22–§25. Branch
+  `docs/pr18f-governance-sync`, baseline
+  `5d8cf7d8f378f6231d43e330310f664f6c19560f` (GitHub PR #78's squash merge,
+  Roadmap PR18E).
+- **Status:** Roadmap PR18 marked complete by this entry, on the strength
+  of PR18B/PR18C/PR18D/PR18E all being merged. PR19 (Legacy Import
+  Foundation) is the next planned Roadmap item and is **not** implemented
+  by this entry.
+- **Consequences:** Receive Report, Issue Report, and Equipment Verify
+  Checklist can each be viewed, browser-printed, PDF-exported, and
+  Excel-exported. `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`,
+  `knowledge/CONTEXT.md`, and `knowledge/PROJECT_MEMORY.md` are updated
+  alongside this entry to reflect the same completion and baseline.
 
 ## Numbering note — read this first
 
