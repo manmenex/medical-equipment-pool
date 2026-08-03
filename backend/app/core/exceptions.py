@@ -156,6 +156,21 @@ class PdfRenderTimeoutError(DomainError):
     status_code = 503
 
 
+class XlsxRenderTimeoutError(DomainError):
+    """Roadmap PR18E review round 1 (H2): mirrors `PdfRenderTimeoutError`'s
+    rationale for the Excel adapter -- design §18 requires "explicit time,
+    memory, and concurrency bounds" for every renderer, not only PDF.
+    Raised by ``app.services.report_xlsx_service.build_workbook_bounded``
+    when a single `.xlsx` generation (including time spent queued for
+    renderer capacity) does not complete within
+    ``RENDER_TIMEOUT_SECONDS``. `503` (not a `4xx`) because the request
+    itself was well-formed -- generation capacity is a transient resource
+    condition the caller can retry, not a client input problem."""
+
+    code = "XLSX_RENDER_TIMEOUT"
+    status_code = 503
+
+
 class ConflictError(DomainError):
     """Generic safe fallback for an IntegrityError that could not be classified.
 
