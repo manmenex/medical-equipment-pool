@@ -7424,7 +7424,14 @@ async def test_migration_0012_second_run_is_noop_and_does_not_shift_already_awar
         await _drop_scratch_database()
 
 
-async def test_migration_0013_fresh_database_all_25_foreign_keys_are_restrict():
+async def test_migration_0013_fresh_database_all_foreign_keys_are_restrict():
+    # Migration 0013 made all 25 foreign keys existing at that revision
+    # explicit ON DELETE RESTRICT (Roadmap PR15B). Roadmap PR19A's migration
+    # 0015_import_foundation added 3 more (import_sessions.
+    # created_by_user_id, import_jobs.import_session_id, import_row_errors.
+    # import_session_id), all RESTRICT per that same policy -- so at head
+    # the invariant this test checks ("every foreign key is RESTRICT") still
+    # holds, just over 28 foreign keys, not 25.
     try:
         await _recreate_scratch_database()
     except Exception as exc:
@@ -7438,7 +7445,7 @@ async def test_migration_0013_fresh_database_all_25_foreign_keys_are_restrict():
                 rows = (
                     await conn.execute(text("SELECT conname, confdeltype::text FROM pg_constraint WHERE contype='f'"))
                 ).all()
-                assert len(rows) == 25, f"expected exactly 25 foreign keys, found {len(rows)}: {rows}"
+                assert len(rows) == 28, f"expected exactly 28 foreign keys, found {len(rows)}: {rows}"
                 for conname, confdeltype in rows:
                     assert confdeltype == "r", f"{conname} has confdeltype={confdeltype!r}, expected 'r' (RESTRICT)"
         finally:

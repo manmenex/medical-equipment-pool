@@ -64,6 +64,14 @@ AUDIT_ENTITY_AUTH = "auth"
 # three transaction-domain audit actions (borrow/return/ward_correction)
 # group under one entity_type in audit_logs queries.
 AUDIT_ENTITY_BORROW_TRANSACTION = "borrow_transaction"
+# Roadmap PR19A (Legacy Import Foundation): one audit_logs entry per
+# executed import session, written only when app.services.import_foundation
+# .run_execute's write-phase transaction actually commits -- never for
+# validate or dry-run, which have no side effect to audit. Reuses
+# AUDIT_ACTION_IMPORT rather than a new action string (same "batch import
+# commit" concept PR12 established); this entity-type constant is what
+# distinguishes it from PR12's inventory-import audit rows in queries.
+AUDIT_ENTITY_IMPORT_SESSION = "import_session"
 
 # Substrings matched case-insensitively against JSON keys in before/after
 # payloads. Deliberately broad (e.g. "token" covers access_token,

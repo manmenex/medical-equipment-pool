@@ -7,6 +7,7 @@ from app.api.v1 import (
     dashboard,
     equipment,
     health,
+    import_foundation,
     inventory_import,
     master_data,
     notifications,
@@ -30,3 +31,4 @@ api_router.include_router(master_data.router)
 api_router.include_router(audit.router)
 api_router.include_router(notifications.router)
 api_router.include_router(inventory_import.router)
+api_router.include_router(import_foundation.router)

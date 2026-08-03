@@ -171,6 +171,71 @@ class XlsxRenderTimeoutError(DomainError):
     status_code = 503
 
 
+class ImportSessionNotFoundError(DomainError):
+    """Roadmap PR19A (Legacy Import Foundation): raised when an
+    ``import_session_id`` in a request path does not resolve to an existing
+    `app.models.import_session.ImportSession` row."""
+
+    code = "IMPORT_SESSION_NOT_FOUND"
+    status_code = 404
+
+
+class ImportAdapterNotRegisteredError(DomainError):
+    """Roadmap PR19A: raised when a session's ``dataset_type`` has no
+    `app.services.import_foundation.ImportAdapter` registered for it.
+    Every dataset type this foundation slice's own tests use is
+    intentionally unregistered in production — the concrete adapters for
+    real legacy datasets (Equipment Master, Receive history, Issue history)
+    are Roadmap PR20/PR21 scope, not this slice's. A caller reaching this
+    error against a real dataset type is the expected, honest outcome until
+    that future slice registers its adapter."""
+
+    code = "IMPORT_ADAPTER_NOT_REGISTERED"
+    status_code = 422
+
+
+class ImportSessionStateError(DomainError):
+    """Roadmap PR19A: raised when a request would move an
+    `ImportSession` through a transition its current
+    `app.models.import_session.ImportSessionStatus` does not allow (e.g.
+    dry-run before validation has completed, or any state-changing call
+    against an already-terminal session). Mirrors this codebase's existing
+    conditional-state-machine-guard convention (e.g.
+    ``WardCorrectionConflictError``) applied to import sessions instead of
+    a transaction/ward."""
+
+    code = "IMPORT_SESSION_INVALID_STATE"
+    status_code = 409
+
+
+class ImportAdapterNotImplementedError(DomainError):
+    """Roadmap PR19A: raised by `app.services.import_foundation.
+    ImportAdapter`'s base `plan_dry_run`/`execute` hooks. This is the
+    explicit, structural proof that dry-run and execution are wired
+    end-to-end (state checks, `ImportJob` bookkeeping, transaction
+    boundaries) without any concrete dataset import being implemented in
+    this slice — every registered adapter must override these hooks to do
+    real work; the foundation itself never can. ``501`` (not a `4xx`)
+    because the request was well-formed and the session was in the right
+    state; the server genuinely does not implement this operation for this
+    dataset type yet."""
+
+    code = "IMPORT_ADAPTER_NOT_IMPLEMENTED"
+    status_code = 501
+
+
+class ImportExecutionFailedError(DomainError):
+    """Roadmap PR19A: raised when an adapter's ``execute()`` hook fails
+    after dry-run has already succeeded. The entire execution transaction
+    is rolled back before this is raised (see
+    `app.services.import_foundation.run_execute`) — never a partial write,
+    mirroring Roadmap PR12's ``ImportCommitFailedError`` precedent for the
+    same "no partial silent import" invariant applied to this framework."""
+
+    code = "IMPORT_EXECUTION_FAILED"
+    status_code = 500
+
+
 class ConflictError(DomainError):
     """Generic safe fallback for an IntegrityError that could not be classified.
 
