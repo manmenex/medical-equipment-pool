@@ -458,6 +458,144 @@
   resolve it. Excel output remains PR18E; Roadmap PR18 is not yet
   complete.
 
+## Roadmap PR18E — Excel `.xlsx` Export
+
+- **Decision:** Implement the architecture-approved PR18A design's fourth
+  implementation slice (`docs/design/PR18_PRINTING_EXPORT_PLAN.md` §11/§22
+  "PR18E"): a backend Excel `.xlsx` adapter for all three Roadmap PR17
+  report families, built on the merged PR18B `ExportDocument`/dataset
+  builders — no new report/query logic, no second reporting engine. Same
+  interim neutral branding fallback (design §16) already used by PR18C
+  Browser Print and PR18D PDF; **this slice does not resolve Owner
+  Decision #2** (branding configuration ownership), which remains open.
+- **Excel library selection (task requirement: compare at least `openpyxl`
+  and `xlsxwriter` before adding any dependency):**
+
+  | Criterion | `openpyxl` | `xlsxwriter` |
+  |---|---|---|
+  | Maintenance | Actively maintained, widely adopted | Actively maintained, widely adopted |
+  | License | MIT | BSD-2-Clause |
+  | Memory usage at this bound (≤5,000 rows) | Low; standard mode is fast/low-memory at this scale | Low; comparable at this scale |
+  | Streaming capability | Has its own write-only/streaming mode | Has a "constant memory" streaming mode |
+  | Formatting support | Fonts, fills, alignment, number formats, freeze panes, autofilter, column widths — all present | Same feature set for these requirements |
+  | Read capability | Can read/parse an existing `.xlsx` (already used by `app.services.import_service` for the PR12 Excel import path) | Write-only by design — cannot read a workbook at all |
+  | Testing | This adapter's own tests can open and assert on the generated workbook with `openpyxl.load_workbook`, zero new test dependency | Would still need `openpyxl` (or another reader) as a *new test-only dependency*, since `xlsxwriter` cannot read back what it wrote |
+  | Deployment impact | Already an existing, vetted runtime dependency (`backend/requirements.txt`, unpinned floor `>=3.1.5`) used by both `app.services.import_service` (`.xlsx` import parsing) and the legacy `app.services.report_service.export_xlsx` | Would be an entirely new runtime dependency with its own license/security-update surface |
+
+  **Recommendation: `openpyxl`.** It is already a vetted, actively-used
+  dependency in this exact codebase for both reading (Roadmap PR12 import)
+  and writing (the legacy exporter) `.xlsx` files, so reusing it adds zero
+  net-new dependency surface, license review, or CVE-monitoring burden.
+  `xlsxwriter`'s headline strength — a very large streaming export — is not
+  a real differentiator at the approved `MAX_EXPORT_ROWS = 5000` row bound,
+  and adding it *alongside* `openpyxl` (which import parsing would still
+  require regardless, since `xlsxwriter` cannot read a workbook at all)
+  would mean carrying two Excel-writing libraries for the same job — the
+  task's own instruction ("Do not add dependencies until the recommendation
+  is documented") is satisfied by adding none. No change to
+  `backend/requirements.txt`.
+- **Streaming/write-only mode was deliberately not adopted:** design §11/§18
+  say `.xlsx` "should use write-only/streaming generation where compatible
+  with the required formatting." `openpyxl`'s write-only mode cannot
+  reliably combine a metadata block, a frozen header row, an autofilter
+  range, per-cell number formats, and formula-injection-safe text in one
+  worksheet the way this adapter requires. At the approved 5,000-row bound,
+  standard (buffered) `openpyxl` generation is fast and low-memory in
+  practice — the same reasoning the pre-existing legacy
+  `report_service.export_xlsx` already relies on for up to 50,000 rows.
+- **Formula-injection mitigation (design §11/security):** cells whose
+  string value begins with `=`, `+`, `-`, or `@` are written with a leading
+  single quote (`'`) prefix — the standard, portable OWASP-documented
+  CSV/Excel formula-injection defense — so the cell is always stored and
+  displayed as literal text, never interpreted as a formula, in Excel or
+  any other spreadsheet tool that might import the file. Only
+  `value_type == "string"` cells are ever checked; `ExportDocument`'s own
+  construction-time invariant guarantees no other declared value type can
+  hold a `str` at all.
+- **What was built:**
+  - `backend/app/services/report_xlsx_service.py`: `build_workbook_sync
+    (document: ExportDocument) -> bytes`, a synchronous, CPU-bound
+    function. Writes a single worksheet (design §22 PR18E non-goal: "no
+    multiple worksheets unless approved by design") containing a metadata
+    block (secondary label, Thai report title, generation timestamp/
+    timezone/generated-by/template-version/row-count, applied-filter
+    summary), then a table with the document's declared columns in order —
+    frozen header row, autofilter scoped to the header+data range only,
+    bounded column widths, wrapped cell text, native Excel date/datetime
+    cell types (timezone-converted to the document's own declared display
+    timezone and stripped of `tzinfo`, since `openpyxl`/Excel's datetime
+    cell type has no timezone concept), native numeric cells for
+    integer/decimal columns, Thai-labeled text for boolean columns
+    (matching `report_pdf_service._format_value`'s own convention), and
+    genuinely blank cells for `None` (not a "-" placeholder, so
+    spreadsheet features like `COUNTBLANK`/filtering behave correctly).
+    Never mutates the `ExportDocument` it is given.
+  - `backend/app/api/v1/reports.py`: `GET /reports/{report_id}/xlsx`,
+    reusing the existing `_build_export_document_for_request` helper (the
+    same one `print-data` and `pdf` already share) — no third, divergent
+    dataset-building call site. Same `VIEW_AND_REPORT_ROLES` authorization,
+    same filter-applicability/date-range validation, same
+    `MAX_EXPORT_ROWS` bound and `ExportTooLargeError` → structured `422
+    EXPORT_TOO_LARGE` handling as `print-data`/`pdf`. `build_workbook_sync`
+    runs via `asyncio.to_thread` (the same pattern
+    `report_pdf_service.render_pdf` and
+    `import_service._parse_workbook_sync` already use for CPU-bound work),
+    so it never blocks the event loop — no dedicated timeout/concurrency
+    bound is layered on top the way PDF's `render_pdf_bounded` needs,
+    because `openpyxl` at the approved row bound has none of the native-
+    library layout/font-shaping cost that motivated PDF's bound. Response
+    is `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+    with `Content-Disposition: attachment; filename="{filename_stem}.xlsx"`,
+    reusing the existing `ExportMetadata.filename_stem` (PR18B) with only
+    the `.xlsx` extension appended — no new filename logic. A renderer
+    failure logs its own distinguishable `render_error` operational
+    export-attempt event before re-raising, mirroring PR18D review
+    `4838921407`'s H3 fix for the PDF route.
+- **Explicit non-goals:** No CSV, no charts, no formulas derived from
+  document content, no macros, no pivot tables, no multiple worksheets, no
+  async/background export job, no persisted generated file, no new
+  synchronous row limit (reuses PR18B's), no change to Browser Print, PDF
+  export, `ExportDocument`, or PR17 report business semantics — all
+  confirmed absent from this diff.
+- **Testing:** `backend/tests/test_pr18e_excel_export.py` — unit tests
+  against `report_xlsx_service.build_workbook_sync` directly (valid
+  `.xlsx` structure; per-report-identity worksheet title; metadata-block
+  content; header row matches declared columns in order; empty-result-set
+  handling; native date/datetime cell types with correct timezone
+  conversion, not preformatted text; genuinely blank cells for `None`;
+  native numeric cells; Thai-labeled boolean cells; frozen header row and
+  scoped autofilter; bounded column widths; single-worksheet-only;
+  formula-injection escaping for all four prefix characters, parametrized,
+  plus a matching "safe value is not escaped" counter-test) and API tests
+  against `GET /{report_id}/xlsx` (authorized-role success, unauthenticated
+  401, unsupported `report_id` 422, reversed date-range and
+  inapplicable-filter 400s, row-limit-exceeded 422 with a JSON error body
+  — never a partial workbook, ASCII-safe `Content-Disposition` filename, no
+  persistent audit-log write, no transaction-state mutation, seeded
+  end-to-end content checks for both a transaction report and the
+  Equipment Verify Checklist's Thai status label, `item_no` absence from
+  Equipment Verify Checklist output, unexpected-generation-error 500 with
+  a distinguishable logged outcome distinct from `"success"`) plus
+  regression tests proving `print-data` and `pdf` are unaffected.
+- **Source:** `docs/design/PR18_PRINTING_EXPORT_PLAN.md` §11, §12, §16,
+  §18, §22. Branch `feature/pr18e-excel-export`, baseline
+  `bc274e6176f225518db4ebaf0b5ed643c653aaa7` (GitHub PR #77's squash
+  merge, Roadmap PR18D). The library comparison above is documented in
+  this PR's own description and this entry, per the task's explicit
+  requirement to document the recommendation before adding any
+  dependency — no new dependency was added.
+- **Status:** Implemented in this branch; not yet merged as of this entry;
+  pending independent Codex review and Owner approval.
+- **Consequences:** Receive Report, Issue Report, and Equipment Verify
+  Checklist can each now be exported as a backend-generated `.xlsx`
+  workbook, reusing the PR18B foundation and the PR18C/PR18D neutral
+  branding fallback. Owner Decision #2 (branding configuration ownership)
+  remains open — this entry does not resolve it. **All three committed
+  PR18 output formats (browser print, PDF, Excel) now have an
+  implementation** — Roadmap PR18 is not marked complete by this entry;
+  that final governance synchronization (recording the actual merged
+  baseline for every slice) is PR18F's job, not started here.
+
 ## Numbering note — read this first
 
 **Roadmap PR number** and **GitHub PR number** are different sequences and must not be conflated:

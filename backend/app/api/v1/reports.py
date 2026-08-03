@@ -1,3 +1,4 @@
+import asyncio
 from datetime import date
 
 from fastapi import APIRouter, Depends, Query
@@ -16,7 +17,13 @@ from app.schemas.common import Page
 from app.schemas.equipment import EquipmentOut
 from app.schemas.report_export import PrintDocumentOut, ReportIdentity, to_print_document_out
 from app.schemas.transaction import ReportTransactionOut
-from app.services import report_export_service, report_pdf_service, report_query_service, report_service
+from app.services import (
+    report_export_service,
+    report_pdf_service,
+    report_query_service,
+    report_service,
+    report_xlsx_service,
+)
 from app.utils.parsing import parse_uuid
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -465,4 +472,104 @@ async def get_report_pdf(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{document.metadata.filename_stem}.pdf"'},
+    )
+
+
+@router.get("/{report_id}/xlsx")
+async def get_report_xlsx(
+    report_id: ReportIdentity,
+    business_date_from: date | None = None,
+    business_date_to: date | None = None,
+    shift: Shift | None = None,
+    ward_id: str | None = None,
+    equipment_id: str | None = None,
+    equipment_category_id: str | None = None,
+    operator_id: str | None = None,
+    dispatch_type: DispatchType | None = None,
+    routine_round: RoutineRound | None = None,
+    status: EquipmentStatus | None = None,
+    department_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    # Roadmap PR18E (docs/design/PR18_PRINTING_EXPORT_PLAN.md §11/§12): same
+    # report-view authorization as print-data/pdf/every other report
+    # endpoint -- Excel export introduces no new permission.
+    generated_by=Depends(require_roles(*VIEW_AND_REPORT_ROLES)),
+):
+    """Roadmap PR18E: server-generated `.xlsx` workbook for one of the three
+    PR18 reports. Same filter contract, same complete-filtered-result-set
+    semantics (Owner Decision #1), and same
+    `report_export_service.MAX_EXPORT_ROWS` bound as
+    `GET /{report_id}/print-data` and `GET /{report_id}/pdf` above -- built
+    from an identically constructed `ExportDocument` via
+    `_build_export_document_for_request`, never a second query/report
+    engine. Workbook generation (`app.services.report_xlsx_service.
+    build_workbook_sync`) is CPU-bound and runs in a worker thread via
+    `asyncio.to_thread` so it never blocks the event loop, matching
+    `report_pdf_service.render_pdf`'s own pattern -- no dedicated timeout/
+    concurrency bound is layered on top of it the way PDF's
+    `render_pdf_bounded` needs, because `openpyxl` at the approved
+    `MAX_EXPORT_ROWS = 5000` row bound has none of the native-library
+    layout/font-shaping cost that motivated PDF's bound (design §18: "PDF
+    rendering may require a smaller limit because layout cost scales with
+    pages and font shaping" -- Excel generation does not).
+    """
+    timing = report_export_service.ExportTiming()
+    try:
+        document = await _build_export_document_for_request(
+            db,
+            report_id,
+            business_date_from=business_date_from,
+            business_date_to=business_date_to,
+            shift=shift,
+            ward_id=ward_id,
+            equipment_id=equipment_id,
+            equipment_category_id=equipment_category_id,
+            operator_id=operator_id,
+            dispatch_type=dispatch_type,
+            routine_round=routine_round,
+            status=status,
+            department_id=department_id,
+            generated_by=generated_by,
+        )
+    except ExportTooLargeError:
+        report_export_service.log_export_attempt(
+            report_identity=report_id,
+            output_format="xlsx",
+            actor_user_id=generated_by.id,
+            outcome="row_limit_exceeded",
+            row_count=None,
+            duration_ms=timing.elapsed_ms(),
+        )
+        raise
+
+    # Roadmap PR18E: mirrors PR18D's H3 review fix (4838921407) -- a
+    # renderer failure must produce its own distinguishable operational
+    # export-attempt event, exactly like the row-limit and success paths
+    # above/below, reusing the same `log_export_attempt` call site rather
+    # than a second event system.
+    try:
+        xlsx_bytes = await asyncio.to_thread(report_xlsx_service.build_workbook_sync, document)
+    except Exception:
+        report_export_service.log_export_attempt(
+            report_identity=report_id,
+            output_format="xlsx",
+            actor_user_id=generated_by.id,
+            outcome="render_error",
+            row_count=document.metadata.row_count,
+            duration_ms=timing.elapsed_ms(),
+        )
+        raise
+
+    report_export_service.log_export_attempt(
+        report_identity=report_id,
+        output_format="xlsx",
+        actor_user_id=generated_by.id,
+        outcome="success",
+        row_count=document.metadata.row_count,
+        duration_ms=timing.elapsed_ms(),
+    )
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{document.metadata.filename_stem}.xlsx"'},
     )

@@ -760,6 +760,13 @@ system and would require separate design and approval.
 
 ### PR18E — Excel `.xlsx` export
 
+**Status:** Implementation in `feature/pr18e-excel-export`, pending
+independent Codex review and Owner approval before merge. Built from the
+PR18D baseline (`bc274e6176f225518db4ebaf0b5ed643c653aaa7`, GitHub PR #77).
+**Roadmap PR18 is not complete until this and every other PR18 slice are
+merged** -- recording that final state, and the actual merged squash SHA,
+is PR18F's job, not this entry.
+
 **Scope**
 
 - backend Excel adapter using existing `openpyxl`;
