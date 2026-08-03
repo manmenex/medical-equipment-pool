@@ -386,7 +386,10 @@
     by this bug. This is an implementation-correctness decision about a
     third-party renderer's font-subsetting behavior, not a branding or
     typography decision.
-- **What was built:**
+- **Initial implementation (superseded — see "Review round 1/2/3 fixes" and
+  "Final merged implementation" below for what actually shipped and merged;
+  kept here verbatim as historical context, not the current production
+  behavior):**
   - `backend/app/services/report_pdf_service.py`: `render_pdf(document:
     ExportDocument) -> bytes`, a synchronous, CPU-bound function. Builds a
     complete, self-contained HTML document (both fonts embedded as base64
@@ -398,7 +401,9 @@
     mutates the `ExportDocument` it is given. Per-report-identity page
     orientation (landscape for Receive/Issue, portrait for Equipment
     Verify Checklist) matches Browser Print's own
-    `frontend/src/utils/printFormat.ts` `PRINT_ORIENTATION` mapping.
+    `frontend/src/utils/printFormat.ts` `PRINT_ORIENTATION` mapping. (This
+    function itself, and its HTML/font-embedding approach, is unchanged by
+    every later review round — only how it is *called* changed; see below.)
   - `backend/app/api/v1/reports.py`: `GET /reports/{report_id}/pdf`,
     reusing `_build_export_document_for_request` — a new helper factored
     out of the existing `print-data` route so both routes dispatch through
@@ -408,22 +413,134 @@
     `MAX_EXPORT_ROWS` bound (design §8/§18: PR18D adopts, not
     re-derives, PR18B's approved synchronous row limit) and
     `ExportTooLargeError` → structured `422 EXPORT_TOO_LARGE` handling as
-    `print-data`. `render_pdf` runs via `asyncio.to_thread` (the same
-    pattern `app.services.import_service._parse_workbook_sync` already
-    uses for CPU-bound work), so it never blocks the event loop other
-    concurrent requests share. Response is `application/pdf` with
+    `print-data`. At this stage, `render_pdf` ran via a bare
+    `asyncio.to_thread` call with **no timeout or concurrency bound of its
+    own** (superseded by review round 1's H1, below). Response is
+    `application/pdf` with
     `Content-Disposition: attachment; filename="{filename_stem}.pdf"`,
     reusing the existing `ExportMetadata.filename_stem` (PR18B) with only
     the `.pdf` extension appended — no new filename logic.
   - `backend/requirements.txt`: `weasyprint>=69.0` (runtime) and
     `pdfplumber>=0.11.10` (test-only), added to the existing single,
-    floor-pinned manifest — no new dependency-file hierarchy introduced.
+    floor-pinned manifest — **floor-pinned with `>=`, not yet exact-pinned**
+    (superseded by review round 1's H2, below).
   - `backend/Dockerfile`: adds `libpango-1.0-0 libpangoft2-1.0-0
     libharfbuzz-subset0` to the existing `apt-get install` line.
     `.github/workflows/ci.yml`: adds the same three packages to both
     pytest-running jobs (`backend-tests`, `backend-postgres-tests`), since
     neither job builds the Docker image and WeasyPrint loads Pango/HarfBuzz
-    at runtime via `cffi`, not via a pip wheel.
+    at runtime via `cffi`, not via a pip wheel. **No job actually built the
+    Docker image at this stage** (superseded by review round 1's H4 and
+    round 2's H2, below).
+- **Review round 1 fixes (Codex review `4838921407` on PR #77, reviewed head
+  `0f3b66e`; findings H1–H8):**
+  - H1: bounded PDF rendering with an explicit timeout
+    (`RENDER_TIMEOUT_SECONDS = 30`) and concurrency limit
+    (`MAX_CONCURRENT_RENDERS = 4`) via the new
+    `report_pdf_service.render_pdf_bounded`, an async wrapper around the
+    existing synchronous `render_pdf`. A timeout raises the new
+    `PdfRenderTimeoutError` (503); the semaphore is released in a `finally`
+    block so a timeout or failure always frees its concurrency slot.
+  - H2: exact-pinned `weasyprint==69.0` and `pdfplumber==0.11.10` (were
+    `>=`), since the approved engineering comparison and the
+    font-corruption finding are both specific to these exact tested
+    versions.
+  - H3: renderer failures (timeout or any other exception) now log their
+    own distinguishable export-attempt event (`render_timeout`/
+    `render_error`), reusing the existing `log_export_attempt`/outcome
+    mechanism — no second event system.
+  - H4: added a `backend-docker-build` CI job that smoke-builds the
+    production Docker image (previously never built anywhere in CI).
+  - H5/H6: rebased onto the latest governance baseline (`beedc4d`, GitHub
+    PR #76) and corrected a baseline SHA typo (`e919a2af7...` →
+    `e919a2af8...`) across `docs/DECISION_LOG.md`, `docs/ROADMAP.md`, and
+    code comments.
+  - H7: removed a vacuous `... or True` test assertion and a similarly weak
+    `"<b>" in text or "b" in text` check; replaced both with real,
+    content-stream-order-based per-character/per-cell assertions.
+  - H8: stripped trailing whitespace from
+    `backend/app/assets/fonts/OFL.txt` (now byte-identical to the frontend
+    copy).
+- **Review round 2 fixes (H1–H3):**
+  - H1: `render_pdf_bounded` now ties semaphore release to actual renderer
+    *completion* (a `Task` done-callback plus `asyncio.shield`) instead of
+    the caller's request lifetime, so a client-facing timeout no longer
+    frees a concurrency slot while the WeasyPrint worker thread is still
+    running. Three new deterministic regression tests prove the bound
+    holds under timeout and concurrent load.
+  - H2: replaced the round-1 build-only Docker CI job with a production
+    image smoke test that boots the container, migrates, seeds, logs in,
+    and requests a real PDF export, asserting HTTP 200/`application/pdf`/
+    `%PDF`.
+  - H3: the Dockerfile now installs from a grep-filtered
+    `requirements.runtime.txt` so `pdfplumber` and other test-only
+    packages never ship in the production image; `requirements.txt` itself
+    is unchanged (still one file, per the approved PR18D plan).
+- **Review round 3 fixes (H1–H2):**
+  - H1: `render_pdf_bounded` now uses **one total deadline**
+    (`RENDER_TIMEOUT_SECONDS`) covering both the wait for renderer capacity
+    *and* the active render, not a budget that only started once a slot
+    was acquired — a request stuck behind other renders can no longer
+    queue indefinitely and only then receive a full render timeout on top
+    of that wait; if the deadline passes while still queued, the renderer
+    is never started at all. Six new regression tests cover queue-only
+    timeouts, queue-plus-render total-budget bounding, and that round 2's
+    renderer-lifetime concurrency accounting still holds.
+  - H2: fixed the Docker smoke test's seed step, which was failing because
+    migration `0009_role_consolidation` already creates the confirmed
+    roles (including `administrator`) as part of a plain
+    `alembic upgrade head` on a fresh database, and `app/scripts/seed.py`
+    unconditionally re-inserted them. `seed_reference_data` now reuses any
+    pre-existing role/admin row instead of assuming an empty table — the
+    fix that actually makes the documented `alembic upgrade head` +
+    `python -m app.scripts.seed` deployment sequence
+    (`docs/06-deployment-guide.md`) work at all, not only this smoke test.
+    The smoke test's PDF assertions now also check the full `%PDF-` header
+    and a non-trivial response body size.
+- **Final merged implementation (what actually shipped in GitHub PR #77;
+  this — not "Initial implementation" above — is the current production
+  behavior):**
+  - `GET /reports/{report_id}/pdf` calls
+    `report_pdf_service.render_pdf_bounded`, not a bare synchronous
+    `render_pdf`/`asyncio.to_thread` pairing. `render_pdf_bounded` enforces
+    `MAX_CONCURRENT_RENDERS = 4` via a semaphore and
+    `RENDER_TIMEOUT_SECONDS = 30` as **one total deadline covering both
+    queue wait and active rendering** — a request that never obtains a
+    renderer slot within the deadline is rejected with
+    `PdfRenderTimeoutError` (503) without ever starting a render.
+  - **Renderer-lifetime concurrency accounting:** the semaphore slot is
+    released only when the renderer `Task` itself completes (via
+    `Task.add_done_callback` plus `asyncio.shield`), never merely when the
+    caller's request times out — so a client-facing timeout can never free
+    a slot while WeasyPrint is still actively rendering in the background.
+  - **Exact-pinned dependencies:** `backend/requirements.txt` declares
+    `weasyprint==69.0` and `pdfplumber==0.11.10` (not `>=`), since the
+    approved renderer comparison and the font-corruption finding are both
+    specific to these exact tested versions.
+  - **Dependency isolation:** the production Docker image installs from a
+    grep-filtered `requirements.runtime.txt`, so `pdfplumber` and other
+    test-only packages are never present in the production image;
+    `requirements.txt` remains the single source-of-truth manifest file.
+  - **Production Docker PDF smoke validation:** CI boots the production
+    image, runs `alembic upgrade head`, runs the seed script, logs in, and
+    requests a real PDF export end to end, asserting HTTP 200,
+    `Content-Type: application/pdf`, the full `%PDF-` header, and a
+    non-trivial response body size — not merely that the image builds.
+  - **Seed-idempotency correction:** `app.scripts.seed.seed_reference_data`
+    reuses any pre-existing role/admin row instead of assuming an empty
+    table, since migration `0009_role_consolidation` already creates the
+    confirmed roles on a fresh install — a real deployment-sequence
+    correction (`docs/06-deployment-guide.md`), not only a test-fixture
+    fix.
+  - Distinguishable `render_timeout`/`render_error` export-attempt log
+    outcomes (via the existing `log_export_attempt` mechanism) and
+    content-stream-order-based (not substring/vacuous) PDF text-extraction
+    test assertions are both part of the merged state.
+  - Everything else described under "Initial implementation" above — the
+    renderer/font selection, the HTML-document construction inside
+    `render_pdf` itself, the route's authorization/filter/row-limit
+    handling, and the response headers/filename — is unchanged by the
+    review rounds and remains accurate for the merged state.
 - **Explicit non-goals:** No Excel export, no async/background export job,
   no persisted generated file, no external resource fetch during
   rendering, no new synchronous row limit (reuses PR18B's), no change to
@@ -444,7 +561,16 @@
   — never partial PDF bytes, ASCII-safe `Content-Disposition` filename, no
   persistent audit-log write, no transaction-state mutation, and seeded
   end-to-end content checks for both a transaction report and the
-  Equipment Verify Checklist's Thai status label).
+  Equipment Verify Checklist's Thai status label). Added across the three
+  review rounds, on top of the above: renderer-lifetime concurrency-bound
+  regression tests against `render_pdf_bounded` (round 2, 3 tests);
+  queue-only-timeout and queue-plus-render total-budget regression tests
+  against `render_pdf_bounded` (round 3, 6 tests); and a dedicated
+  production Docker-image smoke test (`.github/workflows/ci.yml`) that
+  boots the actual production image and performs one full end-to-end PDF
+  export request, asserting the `%PDF-` header and a non-trivial response
+  body size (round 2 introduced the job; round 3 completed its assertions
+  and fixed the seed-step dependency it relies on).
 - **Source:** `docs/design/PR18_PRINTING_EXPORT_PLAN.md` §8, §10, §16, §18,
   §22. Branch `feature/pr18d-pdf-export`, baseline
   `beedc4d32c8d3ae6b6a418f36aa49b3177209b3f` (GitHub PR #76's squash merge,
