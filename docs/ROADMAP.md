@@ -31,14 +31,18 @@ sync recording Roadmap PR16's completion), which is based on `ac19505`
 PR17 (Operational Reports) is fully complete.** See the PR17 note below.
 
 **Current baseline (supersedes the paragraph above):**
-`e919a2af8cc7ca11ab72bee274cb70e76c27ce8a` — squash commit of GitHub PR
-#75, the Roadmap PR18C Browser Print implementation. It is based on `c72929b`
-(GitHub PR #73, the PR18B backend export foundation), which follows `e1b358a`
-(GitHub PR #72, the post-PR18A governance synchronization) and `6ba2c66`
-(GitHub PR #71, the approved PR18A printing/export architecture design).
-**Roadmap PR18A design, PR18B backend foundation, and PR18C Browser Print are
-merged. Roadmap PR18 remains in progress: PR18D PDF export is next, while
-PR18E Excel remains a future slice.**
+`5d8cf7d8f378f6231d43e330310f664f6c19560f` — squash commit of GitHub PR
+#78, the Roadmap PR18E Excel `.xlsx` export implementation. It is based on
+`bc274e6176f225518db4ebaf0b5ed643c653aaa7` (GitHub PR #77, the Roadmap PR18D
+backend PDF export implementation), which is based on `e919a2af8cc7ca11ab72bee274cb70e76c27ce8a`
+(GitHub PR #75, the Roadmap PR18C Browser Print implementation), which is based
+on `c72929b` (GitHub PR #73, the PR18B backend export foundation), which
+follows `e1b358a` (GitHub PR #72, the post-PR18A governance synchronization)
+and `6ba2c66` (GitHub PR #71, the approved PR18A printing/export architecture
+design). **Roadmap PR18 (PR18A design, PR18B backend foundation, PR18C
+Browser Print, PR18D backend PDF export, and PR18E Excel `.xlsx` export) is
+now fully complete.** See the PR18F note below. The next planned item is
+Roadmap PR19 (Legacy Import Foundation).
 
 The older baseline narrative immediately below is retained as provenance
 for PR16 and earlier.
@@ -142,8 +146,10 @@ is retained as provenance for PR15A.
 | — (governance) | Post-merge governance sync after Roadmap PR18A | #72 | `e1b358a` |
 | PR18B | Backend Export Foundation — output-neutral export document model, bounded builders for all three PR17 reports, and internal `GET /reports/{report_id}/print-data` endpoint | #73 | `c72929b` |
 | PR18C | Browser Print — dedicated Thai-first print presentation for Receive, Issue, and Equipment Verify Checklist over the PR18B export foundation | #75 | `e919a2a` |
+| PR18D | Backend PDF Export — WeasyPrint-based server-rendered PDF for Receive, Issue, and Equipment Verify Checklist, embedded backend Thai font assets, bounded concurrency/admission control | #77 | `bc274e6` |
+| PR18E | Excel `.xlsx` Export — openpyxl-based server-generated workbook for the same three reports, workbook-wide formula-injection protection, bounded concurrency/admission control | #78 | `5d8cf7d` |
 
-Full rationale and review-fix history for PR5 through PR18C: `docs/DECISION_LOG.md`. PR21, PR22-PR25, PR30/PR32, PR35, PR37, PR47, PR49, PR53, PR62, PR64, and PR72 (GitHub PR numbers) are process/documentation-only additions with no code, business-rule, or schema change. PR8A/PR8B/PR8C/PR9A/PR9B/PR10/PR11/PR12/PR13/PR14A/PR14B/PR15A/PR15B/PR16 Slices 1-4/PR17 Slices 1-4/PR18B/PR18C (GitHub PR #26, #28, #29, #31, #33, #34, #36, #38, #43, #45, #46, #48, #50, #54, #58, #59, #60, #61, #65, #66, #67, #68, #73, #75) are production code changes. PR18A (GitHub PR #71) is an approved design/documentation change, not runtime implementation. PR10, PR11, PR12, PR13, PR14A, PR14B, PR15A, PR15B, PR16 Slices 1-4, PR17 Slices 1-4, PR18A, PR18B, PR18C, and both PR9 entries now have a `docs/DECISION_LOG.md` entry (see the PR9, PR10, PR11, PR12, PR13, PR14, PR15, PR16, PR17, PR18A, PR18B, and PR18C notes below).
+Full rationale and review-fix history for PR5 through PR18E: `docs/DECISION_LOG.md`. PR21, PR22-PR25, PR30/PR32, PR35, PR37, PR47, PR49, PR53, PR62, PR64, and PR72 (GitHub PR numbers) are process/documentation-only additions with no code, business-rule, or schema change. PR8A/PR8B/PR8C/PR9A/PR9B/PR10/PR11/PR12/PR13/PR14A/PR14B/PR15A/PR15B/PR16 Slices 1-4/PR17 Slices 1-4/PR18B/PR18C/PR18D/PR18E (GitHub PR #26, #28, #29, #31, #33, #34, #36, #38, #43, #45, #46, #48, #50, #54, #58, #59, #60, #61, #65, #66, #67, #68, #73, #75, #77, #78) are production code changes. PR18A (GitHub PR #71) is an approved design/documentation change, not runtime implementation. PR10, PR11, PR12, PR13, PR14A, PR14B, PR15A, PR15B, PR16 Slices 1-4, PR17 Slices 1-4, PR18A, PR18B, PR18C, PR18D, PR18E, and both PR9 entries now have a `docs/DECISION_LOG.md` entry (see the PR9, PR10, PR11, PR12, PR13, PR14, PR15, PR16, PR17, PR18A, PR18B, PR18C, PR18D, and PR18E notes below).
 
 **PR7 note:** `docs/audits/04-consolidated-implementation-plan.md` Part D's full PR7 entry recommended splitting into a 7a (lifecycle model) and 7b (`dispatch_type`/`routine_round`/ward-required/field-cleanup) slice "if the reviewing team prefers smaller units." PR7 (7a slice) shipped `TransactionStatus` (`OPEN`/`CLOSED`), the `create()`/`close()` mutator split, `legacy_status` preservation, and disabling the deprecated `due_at`-driven overdue-notification scheduler job (Codex PR7a review round 1, BLOCKER — see `docs/DECISION_LOG.md`). PR7 (7b slice) completed PR7's remaining scope: `dispatch_type` (`routine_round`/`on_demand`), `routine_round` (the four confirmed fixed times), a required `ward_id` for every new dispatch (application-layer enforced), and removing `borrower_name`/`due_at`/`quantity` from the active write path while preserving every existing historical value as read-only history — plus, after Codex round 1 review, `BorrowRequest` now rejects unknown request fields outright, an invalid `ward_id` is classified as a distinct 400 `INVALID_INPUT` rather than the equipment-conflict 409, and the migration 0008 test suite was rewritten to exercise a genuinely reconstructed pre-migration production schema. Roadmap PR7 (both slices) is now fully merged. Concurrent-receipt protection (two simultaneous receipts racing on the same OPEN transaction) was **not** part of either slice — that gap is closed by Roadmap PR8A below.
 
@@ -173,7 +179,9 @@ Full rationale and review-fix history for PR5 through PR18C: `docs/DECISION_LOG.
 
 **PR18A/PR18B/PR18C note:** GitHub PR #71 merged the approved Roadmap PR18A design (`docs/design/PR18_PRINTING_EXPORT_PLAN.md`) for Browser Print, backend PDF export, and Excel `.xlsx` export over the PR17 reports. GitHub PR #73 then merged PR18B's shared, output-neutral backend export document model; stable report identities and metadata; deterministic typed columns/rows; centrally enforced schema invariants; bounded full-filtered dataset builders for Receive, Issue, and Equipment Verify Checklist; human-readable applied-filter metadata; report-specific filter applicability enforcement; and internal `GET /reports/{report_id}/print-data`. GitHub PR #75 added the dedicated Thai-first Browser Print adapter for all three reports over that same foundation, with backend-controlled content/order/metadata, pagination keys removed from print requests, and fail-closed per-weight font readiness bound to the current document identity. PR18B and PR18C introduced no migration or lifecycle change.
 
-**PR18D note:** Roadmap PR18D (backend PDF export, `GET /reports/{report_id}/pdf`) is in review as a Draft PR, built from the PR18C baseline (`e919a2af8cc7ca11ab72bee274cb70e76c27ce8a`, GitHub PR #75). It reuses the PR18B `ExportDocument`/dataset builders unchanged (no second report/query engine), renders via WeasyPrint (BSD-3-Clause) with pdfplumber (MIT) as a test-only PDF parser, and uses the existing neutral branding fallback (design §16) — **Owner Decision #2 (branding configuration ownership) remains open and is not decided by PR18D.** See `docs/DECISION_LOG.md` for the renderer/font engineering-comparison record. **Browser Print (PR18C) is merged; PDF (PR18D) is in review; Excel (PR18E) remains a future slice, so Roadmap PR18 is not yet complete.**
+**PR18D note:** Roadmap PR18D (backend PDF export, `GET /reports/{report_id}/pdf`) is merged, built from the PR18C baseline (`e919a2af8cc7ca11ab72bee274cb70e76c27ce8a`, GitHub PR #75). It reuses the PR18B `ExportDocument`/dataset builders unchanged (no second report/query engine), renders via WeasyPrint (BSD-3-Clause) with pdfplumber (MIT) as a test-only PDF parser, and uses the existing neutral branding fallback (design §16) — **Owner Decision #2 (branding configuration ownership) remains open and is not decided by PR18D.** Three Codex review rounds hardened bounded concurrency/timeout behavior (renderer-lifetime accounting, a total deadline covering queue wait) and completed the production Docker image smoke test before merge. See `docs/DECISION_LOG.md` ("Roadmap PR18D — Backend PDF Export") for the renderer/font engineering-comparison record and full review chronology. Merged as GitHub PR #77, squash SHA `bc274e6176f225518db4ebaf0b5ed643c653aaa7`.
+
+**PR18E note:** Roadmap PR18E (backend Excel `.xlsx` export, `GET /reports/{report_id}/xlsx`) is merged, built from the PR18D baseline (`bc274e6176f225518db4ebaf0b5ed643c653aaa7`, GitHub PR #77). It reuses the PR18B `ExportDocument`/dataset builders unchanged, renders via `openpyxl` (already a vetted dependency — no new dependency added), and uses the same neutral branding fallback as PR18C/PR18D — **Owner Decision #2 remains open and is not decided by PR18E.** One Codex review round required workbook-wide formula-injection sanitization (a single centralized write helper, not only report rows) and Excel export admission control (reusing PR18D's bounded-semaphore/total-deadline model), both fixed before merge. See `docs/DECISION_LOG.md` ("Roadmap PR18E — Excel `.xlsx` Export") for the library comparison and full review chronology. Merged as GitHub PR #78, squash SHA `5d8cf7d8f378f6231d43e330310f664f6c19560f`. **With PR18B, PR18C, PR18D, and PR18E all merged, Roadmap PR18 (Printing and Export) is now fully complete** — see `docs/DECISION_LOG.md` ("Roadmap PR18 — Printing and Export Complete") for the final governance record. The next planned item is Roadmap PR19 (Legacy Import Foundation).
 
 ## Approved forward sequence
 
@@ -183,14 +191,13 @@ numbers are not GitHub PR numbers; GitHub PR #18 was a governance PR, not
 Roadmap PR18.
 
 Roadmap PR18A (`docs/design/PR18_PRINTING_EXPORT_PLAN.md`) is merged as the
-approved architecture design, PR18B is merged as the shared backend export
-foundation, and PR18C Browser Print is merged. **PR18D (backend PDF export)
-is in review as a Draft PR. PR18E Excel remains future work, so Roadmap PR18
-is not complete.**
+approved architecture design, and PR18B (shared backend export foundation),
+PR18C (Browser Print), PR18D (backend PDF export), and PR18E (Excel `.xlsx`
+export) are all merged. **Roadmap PR18 (Printing and Export) is now fully
+complete.** The next planned item is Roadmap PR19 (Legacy Import Foundation).
 
 | Roadmap item | Planned scope |
 |---|---|
-| PR18 | Browser print, PDF export, and Excel `.xlsx` export |
 | PR19 | Legacy Import Foundation |
 | PR20 | Equipment Master Import: BCM, Item Number, equipment attributes, existing hospital QR linkage, equipment duplicate detection, and equipment-record validation |
 | PR21 | Legacy Receive and Issue History Import: Receive/Issue history, legacy BME-name preservation and user mapping, Ward normalization and mapping, transaction-row duplicate detection, and transaction source references |

@@ -450,13 +450,15 @@
   proceeded (renderer comparison and recommendation approved first; the
   font-asset correction approved separately after the empirical finding
   above).
-- **Status:** Implemented in this branch; not yet merged as of this entry.
+- **Status:** Merged as GitHub PR #77, squash SHA
+  `bc274e6176f225518db4ebaf0b5ed643c653aaa7`.
 - **Consequences:** Receive Report, Issue Report, and Equipment Verify
   Checklist can each now be exported as a backend-rendered PDF, reusing the
   PR18B foundation and PR18C's neutral branding. Owner Decision #2
   (branding configuration ownership) remains open — this entry does not
   resolve it. Excel output remains PR18E; Roadmap PR18 is not yet
-  complete.
+  complete as of this entry — see "Roadmap PR18E" and "Roadmap PR18 —
+  Printing and Export Complete" below for its subsequent completion.
 
 ## Roadmap PR18E — Excel `.xlsx` Export
 
@@ -540,10 +542,13 @@
     runs via `asyncio.to_thread` (the same pattern
     `report_pdf_service.render_pdf` and
     `import_service._parse_workbook_sync` already use for CPU-bound work),
-    so it never blocks the event loop — no dedicated timeout/concurrency
-    bound is layered on top the way PDF's `render_pdf_bounded` needs,
-    because `openpyxl` at the approved row bound has none of the native-
-    library layout/font-shaping cost that motivated PDF's bound. Response
+    so it never blocks the event loop. **Superseded by the round 1 review
+    fix below:** the route now calls the bounded wrapper
+    `build_workbook_bounded`, which layers its own timeout/concurrency
+    bound on top (a lighter one than PDF's, since `openpyxl` at the
+    approved row bound has none of the native-library layout/font-shaping
+    cost that motivated PDF's bound) — see "Round 1 review fixes" below.
+    Response
     is `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
     with `Content-Disposition: attachment; filename="{filename_stem}.xlsx"`,
     reusing the existing `ExportMetadata.filename_stem` (PR18B) with only
@@ -584,17 +589,102 @@
   this PR's own description and this entry, per the task's explicit
   requirement to document the recommendation before adding any
   dependency — no new dependency was added.
-- **Status:** Implemented in this branch; not yet merged as of this entry;
-  pending independent Codex review and Owner approval.
+- **Status:** Merged as GitHub PR #78, squash SHA
+  `5d8cf7d8f378f6231d43e330310f664f6c19560f`.
+- **Round 1 review fixes (reviewed head
+  `cd524e5ffd87ad7cb40487031207354cf92e2e1d`, fixed in `8aea062`):**
+  Codex's independent review found two gaps not covered by the description
+  above. **H1 — workbook-wide formula-injection protection:** the
+  as-implemented adapter sanitized report *row* values but not the
+  metadata block; `generated_by_display_name` (a user's editable
+  `full_name`) and applied-filter values (backend-resolved ward/category/
+  equipment/operator display names — administrator-editable free text via
+  `report_export_service._filter_summary`) could reach the workbook
+  unsanitized. Fixed by introducing `report_xlsx_service._write_cell`, the
+  single call site every string write in the module now goes through
+  (report rows, report title, secondary label, every metadata line,
+  applied-filter labels/values, header row) — `_cell_value_for` no longer
+  sanitizes independently. **H2 — Excel export admission control:** the
+  as-implemented adapter bounded only row count, not concurrent or queued
+  generation. Fixed by adding `report_xlsx_service.build_workbook_bounded`,
+  reusing PR18D's `render_pdf_bounded` protection model unchanged in
+  structure (bounded semaphore, one total deadline covering queue wait and
+  active generation, renderer-lifetime concurrency accounting via a
+  `Task.add_done_callback` release) with Excel-specific constants
+  (`MAX_CONCURRENT_RENDERS = 8`, `RENDER_TIMEOUT_SECONDS = 15`, both looser
+  than PDF's 4/30s given `openpyxl`'s lighter resource profile at the
+  approved row bound). A new `XlsxRenderTimeoutError` (503,
+  `XLSX_RENDER_TIMEOUT`) mirrors `PdfRenderTimeoutError`. 21 new tests (14
+  for H1, 7 for H2) were added to `backend/tests/test_pr18e_excel_export.py`
+  (65 tests total).
 - **Consequences:** Receive Report, Issue Report, and Equipment Verify
   Checklist can each now be exported as a backend-generated `.xlsx`
   workbook, reusing the PR18B foundation and the PR18C/PR18D neutral
   branding fallback. Owner Decision #2 (branding configuration ownership)
   remains open — this entry does not resolve it. **All three committed
-  PR18 output formats (browser print, PDF, Excel) now have an
-  implementation** — Roadmap PR18 is not marked complete by this entry;
-  that final governance synchronization (recording the actual merged
-  baseline for every slice) is PR18F's job, not started here.
+  PR18 output formats (browser print, PDF, Excel) are now merged.** Roadmap
+  PR18 is not marked complete by this entry; that final governance
+  synchronization (recording the actual merged baseline for every slice)
+  is PR18F's job — see "Roadmap PR18 — Printing and Export Complete"
+  below.
+
+## Roadmap PR18 — Printing and Export Complete (PR18F governance synchronization)
+
+- **Decision:** Record Roadmap PR18 (Printing and Export) as complete, now
+  that every committed output-format implementation slice —
+  PR18B (backend export foundation), PR18C (Browser Print), PR18D (backend
+  PDF export), and PR18E (Excel `.xlsx` export) — is merged. This is a
+  documentation-only governance synchronization (`docs/design/PR18_
+  PRINTING_EXPORT_PLAN.md` §22 "PR18F"); it changes no runtime behavior,
+  route, schema, or business rule.
+- **What PR18 delivered, end to end:**
+  - a shared, output-neutral `ExportDocument` backend foundation (stable
+    report identities, metadata, deterministic typed columns/rows,
+    schema-invariant validation, bounded full-result retrieval, filter
+    applicability enforcement, human-readable applied-filter metadata,
+    bounded historical operator lookup, internal `print-data` endpoint) —
+    PR18B;
+  - Browser Print for Receive Report, Issue Report, and Equipment Verify
+    Checklist, entirely backend-driven, with fail-closed font readiness
+    bound to the current document identity — PR18C;
+  - backend PDF export (WeasyPrint, embedded backend-only Thai font
+    assets, neutral branding fallback, deterministic filenames, bounded
+    concurrency/admission control with a total timeout covering queue
+    wait, renderer-lifetime concurrency accounting, production Docker
+    image validation and PDF smoke test, no generated-file persistence) —
+    PR18D;
+  - backend Excel `.xlsx` export for the same three reports (workbook
+    metadata, Thai headers, frozen header row, autofilter, deterministic
+    columns/order, workbook-wide formula-injection protection through one
+    centralized write helper, bounded concurrency/admission control with a
+    total timeout covering queue wait and active generation,
+    renderer-lifetime concurrency accounting, no silent truncation, no
+    migration) — PR18E.
+  - Across all three output adapters, report semantics, eligibility,
+    ordering, and filtering remain exactly PR17's — no adapter reconstructs
+    or duplicates reporting logic, and no adapter introduced a database
+    migration.
+- **Unresolved:** **Owner Decision #2 (branding configuration ownership)
+  remains open.** Every PR18 output format uses the same interim neutral
+  fallback approved in the PR18A design (no hospital name, no department
+  name, no logo, a Thai product-neutral report title, "Medical Equipment
+  Pool" as the secondary label, a neutral footer) — this entry does not
+  resolve Owner Decision #2, and no deployment/environment-managed or
+  Administrator-managed branding configuration exists anywhere in the
+  repository.
+- **Source:** `docs/design/PR18_PRINTING_EXPORT_PLAN.md` §22–§25. Branch
+  `docs/pr18f-governance-sync`, baseline
+  `5d8cf7d8f378f6231d43e330310f664f6c19560f` (GitHub PR #78's squash merge,
+  Roadmap PR18E).
+- **Status:** Roadmap PR18 marked complete by this entry, on the strength
+  of PR18B/PR18C/PR18D/PR18E all being merged. PR19 (Legacy Import
+  Foundation) is the next planned Roadmap item and is **not** implemented
+  by this entry.
+- **Consequences:** Receive Report, Issue Report, and Equipment Verify
+  Checklist can each be viewed, browser-printed, PDF-exported, and
+  Excel-exported. `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`,
+  `knowledge/CONTEXT.md`, and `knowledge/PROJECT_MEMORY.md` are updated
+  alongside this entry to reflect the same completion and baseline.
 
 ## Numbering note — read this first
 

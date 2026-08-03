@@ -4,9 +4,13 @@
 (`6ba2c666a11043d03669abdb65f966061dd02cfa`). PR18B's backend export
 foundation subsequently merged as GitHub PR #73
 (`c72929ba4649fd75d1f81e4630b4e4feb3d136be`). PR18C Browser Print subsequently
-merged as GitHub PR #75 (`e919a2af8cc7ca11ab72bee274cb70e76c27ce8a`).
-PR18D PDF export is next; PDF and Excel output are not implemented. Roadmap
-PR18 remains incomplete.
+merged as GitHub PR #75 (`e919a2af8cc7ca11ab72bee274cb70e76c27ce8a`). PR18D
+backend PDF export subsequently merged as GitHub PR #77
+(`bc274e6176f225518db4ebaf0b5ed643c653aaa7`). PR18E Excel `.xlsx` export
+subsequently merged as GitHub PR #78
+(`5d8cf7d8f378f6231d43e330310f664f6c19560f`). **Roadmap PR18 is now fully
+complete** — see §22 and `docs/DECISION_LOG.md` ("Roadmap PR18 — Printing
+and Export Complete").
 **Purpose:** Implementation design for Roadmap PR18. This document is
 authoritative for the approved PR18A architecture, subject to the remaining
 unresolved Owner Decision explicitly listed in §23.
@@ -730,6 +734,9 @@ system and would require separate design and approval.
 
 ### PR18D — Backend PDF export
 
+**Status:** Merged as GitHub PR #77, squash SHA
+`bc274e6176f225518db4ebaf0b5ed643c653aaa7`.
+
 **Scope**
 
 - renderer evaluation and pinned dependency;
@@ -760,12 +767,17 @@ system and would require separate design and approval.
 
 ### PR18E — Excel `.xlsx` export
 
-**Status:** Implementation in `feature/pr18e-excel-export`, pending
-independent Codex review and Owner approval before merge. Built from the
-PR18D baseline (`bc274e6176f225518db4ebaf0b5ed643c653aaa7`, GitHub PR #77).
-**Roadmap PR18 is not complete until this and every other PR18 slice are
-merged** -- recording that final state, and the actual merged squash SHA,
-is PR18F's job, not this entry.
+**Status:** Merged as GitHub PR #78, squash SHA
+`5d8cf7d8f378f6231d43e330310f664f6c19560f`. One Codex review round
+(reviewed head `cd524e5ffd87ad7cb40487031207354cf92e2e1d`) required
+workbook-wide formula-injection sanitization (a single centralized
+`_write_cell` helper covering the metadata block, not only report rows)
+and Excel export admission control (`build_workbook_bounded`, reusing
+PR18D's bounded-semaphore/total-deadline model); both were fixed before
+merge. **All three committed PR18 output formats — Browser Print, PDF, and
+Excel — are now merged.** Roadmap PR18's own completion, and the final
+governance record of the actual merged baseline, is recorded by PR18F (see
+below), not this entry.
 
 **Scope**
 
@@ -789,6 +801,13 @@ is PR18F's job, not this entry.
 - import changes, macros, scheduled exports, BI workbook features.
 
 ### PR18F — Post-implementation governance synchronization
+
+**Status:** Implementation in `docs/pr18f-governance-sync`, pending Owner
+approval before merge. Built from the PR18E baseline
+(`5d8cf7d8f378f6231d43e330310f664f6c19560f`, GitHub PR #78). This slice is
+documentation-only; it records Roadmap PR18 as complete because every
+committed output-format slice (PR18B–PR18E) is merged, and does not itself
+change any runtime behavior.
 
 **Scope**
 
