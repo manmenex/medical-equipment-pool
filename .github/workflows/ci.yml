@@ -56,6 +56,13 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
+      # Roadmap PR18D: WeasyPrint (the backend PDF renderer, exercised by
+      # app.api.v1.reports's PDF export tests) loads Pango/HarfBuzz at
+      # runtime via cffi, not via a pip wheel -- matches the native packages
+      # backend/Dockerfile installs for the production image.
+      - name: Install WeasyPrint native dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
+
       - name: Install backend dependencies
         run: pip install -r requirements.txt
 
@@ -102,6 +109,10 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: backend/requirements.txt
+
+      # Roadmap PR18D: see the matching step in the backend-tests job above.
+      - name: Install WeasyPrint native dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
 
       - name: Install backend dependencies
         run: pip install -r requirements.txt
@@ -180,6 +191,136 @@ jobs:
         env:
           DATABASE_URL: postgresql+asyncpg://mep_test:mep_test_password@localhost:5432/mep_migration_ci
         run: python -m alembic upgrade head
+
+  backend-docker-smoke-test:
+    name: Backend production Docker image (build + runtime smoke test)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: mep_smoke_db
+          POSTGRES_USER: mep_smoke
+          POSTGRES_PASSWORD: mep_smoke_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mep_smoke -d mep_smoke_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Roadmap PR18D review 4838921407 round 1 (H4): the production image
+      # (which installs the WeasyPrint native Pango/HarfBuzz packages, see
+      # backend/Dockerfile) was previously never actually built anywhere in
+      # CI -- backend-tests/backend-postgres-tests install
+      # requirements.txt directly on the runner, not via the Dockerfile.
+      - name: Build production image
+        run: docker build -t mep-backend:ci ./backend
+
+      # Round 2 (H2): a build-only smoke test cannot prove the native
+      # runtime dependencies and embedded fonts actually work -- only
+      # running the real image and exercising the PDF path can. `--network
+      # host` (Linux runners only) puts this container directly on the
+      # runner's network namespace, so it reaches the `postgres` service
+      # container on `localhost:5432` the same way every other job's steps
+      # do, with no extra Docker network to define.
+      - name: Start production container
+        run: |
+          docker run -d --name mep-backend-smoke --network host \
+            -e DATABASE_URL=postgresql+asyncpg://mep_smoke:mep_smoke_password@localhost:5432/mep_smoke_db \
+            -e CACHE_ENABLED=false \
+            mep-backend:ci
+
+      # Proves the container actually boots and serves HTTP -- if
+      # WeasyPrint's native Pango/HarfBuzz libraries or the embedded font
+      # files (both loaded at module-import time by
+      # app.services.report_pdf_service) were missing or broken in this
+      # image, the app would fail to import and never reach this endpoint
+      # at all. /api/v1/health itself tolerates a not-yet-migrated database
+      # (it catches its own DB check's exception), so this only proves the
+      # process is up, not yet that the schema exists.
+      - name: Wait for the container to serve HTTP
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/api/v1/health > /dev/null; then
+              echo "Container is serving HTTP after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Container did not become ready in time"
+          docker logs mep-backend-smoke
+          exit 1
+
+      # Same image, same entrypoint's own dependencies (alembic, the app's
+      # models) -- run as a one-off command inside the already-running
+      # container rather than a second container, so this exercises the
+      # exact filesystem/packages the running server itself has.
+      - name: Apply migrations inside the container
+        run: docker exec mep-backend-smoke python -m alembic upgrade head
+
+      # app.scripts.seed (already used for local/demo setup, per
+      # docs/06-deployment-guide.md's own documented deployment sequence)
+      # creates the ADMIN001 user this smoke test logs in as, plus enough
+      # equipment rows that the Equipment Verify Checklist PDF below has
+      # real, non-empty Thai content to render -- not just an empty-result
+      # PDF. Roadmap PR18D review round 3 (H2): this step used to fail here
+      # because migration 0009 (role_consolidation) already creates the
+      # confirmed roles -- including "administrator" -- as part of a plain
+      # `alembic upgrade head` on a fresh database, and this script
+      # unconditionally re-inserted them; `seed_reference_data` now reuses
+      # any pre-existing role/admin row instead (see
+      # backend/app/scripts/seed.py and
+      # backend/tests/test_seed_idempotency.py), which is what actually
+      # makes this exact, documented alembic-then-seed sequence work at
+      # all, not just this smoke test.
+      - name: Seed minimal data inside the container
+        run: docker exec mep-backend-smoke python -m app.scripts.seed
+
+      - name: Log in and request a PDF export end to end
+        run: |
+          token=$(curl -sf -X POST http://localhost:8000/api/v1/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"identifier": "ADMIN001", "password": "Admin@12345"}' | jq -r '.access_token')
+          if [ -z "$token" ] || [ "$token" = "null" ]; then
+            echo "Login did not return an access token"
+            docker logs mep-backend-smoke
+            exit 1
+          fi
+
+          http_status=$(curl -sf -o smoke.pdf -D smoke-headers.txt -w "%{http_code}" \
+            http://localhost:8000/api/v1/reports/equipment-verify-checklist/pdf \
+            -H "Authorization: Bearer $token")
+
+          echo "HTTP status: $http_status"
+          test "$http_status" = "200"
+
+          grep -qi '^content-type: application/pdf' smoke-headers.txt
+
+          header_bytes=$(head -c 5 smoke.pdf)
+          test "$header_bytes" = "%PDF-"
+
+          body_size=$(wc -c < smoke.pdf)
+          echo "Response body size: ${body_size} bytes"
+          test "$body_size" -gt 1000
+
+          echo "Production image PDF smoke test passed: HTTP 200, application/pdf, valid %PDF- header, non-trivial body (${body_size} bytes)"
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker logs mep-backend-smoke
+
+      # Cleanup runs even if an earlier step failed, so a failed smoke test
+      # never leaves a container running on the runner.
+      - name: Stop and remove the container
+        if: always()
+        run: docker rm -f mep-backend-smoke || true
 
   frontend:
     name: Frontend build

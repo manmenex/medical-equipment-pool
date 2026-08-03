@@ -141,6 +141,21 @@ class ExportTooLargeError(DomainError):
     status_code = 422
 
 
+class PdfRenderTimeoutError(DomainError):
+    """Roadmap PR18D review 4838921407 (H1): design §18 requires PDF
+    rendering to have "explicit time, memory, and concurrency bounds" and
+    for a request exceeding a configured limit to "fail before rendering
+    [completes]; it is never silently truncated." Raised by
+    ``app.services.report_pdf_service.render_pdf_bounded`` when a single
+    render does not complete within ``RENDER_TIMEOUT_SECONDS``. `503`
+    (not a `4xx`) because the request itself was well-formed -- rendering
+    is a transient resource condition the caller can retry, not a client
+    input problem."""
+
+    code = "PDF_RENDER_TIMEOUT"
+    status_code = 503
+
+
 class ConflictError(DomainError):
     """Generic safe fallback for an IntegrityError that could not be classified.
 

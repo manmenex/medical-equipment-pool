@@ -49,6 +49,7 @@ A `422` validation error additionally includes an `errors` array:
 | `409` | Conflict with current state | Equipment not available for dispatch, transaction already returned, lost a concurrent receipt race, a ward-correction request matches the already-current ward (no-op) or lost a concurrent ward-correction race, duplicate unique key, disallowed status transition, unclassifiable integrity violation |
 | `422` | Request body/query failed schema validation | Missing required field, wrong type, an unrecognized enum value (e.g. `receipt_outcome` not one of `usable`/`defective`, Roadmap PR8B), a `model_validator` rule (e.g. `routine_round` required exactly when `dispatch_type == "routine_round"`), or an unrecognized field on a schema using `extra: "forbid"` (e.g. the retired `condition` on `ReturnRequest`) |
 | `500` | Unexpected server error | Any exception not otherwise handled |
+| `503` | Transient resource/timeout condition | Roadmap PR18D: `GET /reports/{report_id}/pdf` rendering did not complete within `app.services.report_pdf_service.RENDER_TIMEOUT_SECONDS` |
 
 ## Application error codes (`code` field)
 
@@ -77,6 +78,7 @@ A `422` validation error additionally includes an `errors` array:
 | `WARD_CORRECTION_CONFLICT` | 409 | `WardCorrectionConflictError` | Roadmap PR9A: a ward-correction request's conditional update affected zero rows because a concurrent correction changed `ward_id` first. Mirrors `RECEIPT_RACE_LOST`'s conditional-UPDATE-loses-the-race shape, applied to a different column, but deliberately a distinct code — never reused between the two flows |
 | `CONFLICT` | 409 | `ConflictError` | Safe fallback for an `IntegrityError` that couldn't be classified into unique/foreign-key/not-null/check |
 | `EXPORT_TOO_LARGE` | 422 | `ExportTooLargeError` | Roadmap PR18B (`GET /reports/{report_id}/print-data`): the full filtered result set exceeds `app.services.report_export_service.MAX_EXPORT_ROWS`. Rejected outright — never a partial/truncated document — asking the caller to narrow the applied filters |
+| `PDF_RENDER_TIMEOUT` | 503 | `PdfRenderTimeoutError` | Roadmap PR18D (`GET /reports/{report_id}/pdf`): a single render did not complete within `app.services.report_pdf_service.RENDER_TIMEOUT_SECONDS` (design §18's explicit rendering time bound). The request itself was well-formed — a transient/retryable condition, not a client input problem — so this is `503`, not a `4xx` |
 
 ### FastAPI/Starlette-level errors (`backend/app/main.py`)
 

@@ -319,8 +319,144 @@
   `e919a2af8cc7ca11ab72bee274cb70e76c27ce8a`.
 - **Consequences:** Receive Report, Issue Report, and Equipment Verify
   Checklist can each now be browser-printed from the merged PR18B foundation.
-  No PDF or Excel output exists yet. Roadmap PR18 is not complete. PR18D (PDF
-  export) is the next planned slice.
+  Roadmap PR18D (backend PDF export) is built on this baseline — see the
+  entry below. No Excel output exists yet.
+
+## Roadmap PR18D — Backend PDF Export
+
+- **Decision:** Implement the architecture-approved PR18A design's third
+  implementation slice (`docs/design/PR18_PRINTING_EXPORT_PLAN.md` §10/§22
+  "PR18D"): server-rendered PDF export for all three Roadmap PR17 report
+  families, built on the merged PR18B `ExportDocument`/dataset builders —
+  no new report/query logic. **This slice does not resolve Owner Decision
+  #2 (branding configuration ownership)**, which remains open; PDF uses the
+  same interim neutral branding fallback (design §16) already used by
+  PR18C Browser Print. No Excel export; that remains PR18E.
+- **Renderer selection (design §10.2 requires this comparison before any
+  PDF dependency is pinned):** WeasyPrint (BSD-3-Clause) was compared
+  against alternatives on Thai shaping/glyph coverage, font embedding,
+  deterministic rendering, license compatibility, native/system
+  dependencies, container/deployment impact, security update path,
+  concurrency/memory behavior, and testing support, and selected as the
+  server-controlled HTML/CSS-to-PDF renderer. Tested version: WeasyPrint
+  69.0 (latest on PyPI at implementation time), requiring the Debian 12
+  runtime packages `libpango-1.0-0`, `libpangoft2-1.0-0`,
+  `libharfbuzz-subset0` (added to `backend/Dockerfile` and, for CI, to both
+  pytest-running jobs in `.github/workflows/ci.yml`). pdfplumber (MIT,
+  tested version 0.11.10) is used only by the test suite to parse and
+  validate generated PDF content (embedded fonts, extracted text,
+  per-character glyph data) — it is never imported by application/runtime
+  code.
+- **Font-asset finding and correction (design §10.2's own required
+  pre-implementation font verification):** The existing
+  `frontend/public/fonts/noto-sans-thai-{400,700}-{thai,latin}.woff2`
+  assets — split by `unicode-range` into a Thai-glyph file and a
+  Latin-glyph file per weight, exactly how Browser Print (PR18C) loads
+  them — were verified empirically against WeasyPrint 69.0 before any
+  rendering code was written, per the design's requirement. WeasyPrint
+  69.0 does not reliably render that two-file/`unicode-range` split: once
+  the rendered text contains enough distinct Thai glyphs, it silently
+  subsets/merges the two files incorrectly and draws the wrong glyph for
+  some Latin characters (reproduced and confirmed via two independent PDF
+  text-extraction libraries, pdfplumber and PyMuPDF, and by visually
+  inspecting a rasterized page). A single, non-split font file per weight
+  — covering both Thai and Latin glyphs together — does not trigger this
+  bug. This finding was reported to, and the correction below was
+  explicitly approved by, the Repository Owner before any font asset was
+  added, per the design's own stop condition for an unreliable font.
+  - **Correction:** `backend/app/assets/fonts/NotoSansThai-{Regular,Bold}.ttf`
+    — the same Noto Sans Thai typeface (no font-family change), repackaged
+    as one merged static TTF per weight (400/700), sourced from the
+    official upstream [notofonts/thai](https://github.com/notofonts/thai)
+    GitHub Releases (release `NotoSansThai-v2.002`, the release's own
+    "full" static TTF build, which merges in Latin/Latin-1 coverage — the
+    release's "unhinted"/"hinted" static builds contain Thai-script glyphs
+    only and are not usable alone for report content that mixes Thai and
+    Latin/numeric text). SIL Open Font License 1.1 (`OFL.txt`, the license
+    file from the same release archive), the same license already accepted
+    for the `frontend/public/fonts/` copy. See
+    `backend/app/assets/fonts/NOTICE.md` for the full provenance record.
+    `frontend/public/fonts/` and `frontend/src/styles/print.css` are
+    unchanged — Browser Print continues to use the split `.woff2` assets
+    exactly as PR18C shipped them; only the backend PDF renderer uses the
+    merged TTF assets, because only the backend PDF renderer is affected
+    by this bug. This is an implementation-correctness decision about a
+    third-party renderer's font-subsetting behavior, not a branding or
+    typography decision.
+- **What was built:**
+  - `backend/app/services/report_pdf_service.py`: `render_pdf(document:
+    ExportDocument) -> bytes`, a synchronous, CPU-bound function. Builds a
+    complete, self-contained HTML document (both fonts embedded as base64
+    `data:` URIs, not `file://` paths or a `url_fetcher`) mirroring
+    `PrintDocumentView.tsx`'s presentational structure (neutral secondary
+    label, Thai report title, generation metadata, applied-filter summary,
+    row count, column/row table or empty-state message, neutral footer),
+    then renders it via `weasyprint.HTML(string=...).write_pdf()`. Never
+    mutates the `ExportDocument` it is given. Per-report-identity page
+    orientation (landscape for Receive/Issue, portrait for Equipment
+    Verify Checklist) matches Browser Print's own
+    `frontend/src/utils/printFormat.ts` `PRINT_ORIENTATION` mapping.
+  - `backend/app/api/v1/reports.py`: `GET /reports/{report_id}/pdf`,
+    reusing `_build_export_document_for_request` — a new helper factored
+    out of the existing `print-data` route so both routes dispatch through
+    the exact same filter-validation and dataset-builder call sites, never
+    a duplicated or divergent one. Same `VIEW_AND_REPORT_ROLES`
+    authorization, same filter-applicability/date-range validation, same
+    `MAX_EXPORT_ROWS` bound (design §8/§18: PR18D adopts, not
+    re-derives, PR18B's approved synchronous row limit) and
+    `ExportTooLargeError` → structured `422 EXPORT_TOO_LARGE` handling as
+    `print-data`. `render_pdf` runs via `asyncio.to_thread` (the same
+    pattern `app.services.import_service._parse_workbook_sync` already
+    uses for CPU-bound work), so it never blocks the event loop other
+    concurrent requests share. Response is `application/pdf` with
+    `Content-Disposition: attachment; filename="{filename_stem}.pdf"`,
+    reusing the existing `ExportMetadata.filename_stem` (PR18B) with only
+    the `.pdf` extension appended — no new filename logic.
+  - `backend/requirements.txt`: `weasyprint>=69.0` (runtime) and
+    `pdfplumber>=0.11.10` (test-only), added to the existing single,
+    floor-pinned manifest — no new dependency-file hierarchy introduced.
+  - `backend/Dockerfile`: adds `libpango-1.0-0 libpangoft2-1.0-0
+    libharfbuzz-subset0` to the existing `apt-get install` line.
+    `.github/workflows/ci.yml`: adds the same three packages to both
+    pytest-running jobs (`backend-tests`, `backend-postgres-tests`), since
+    neither job builds the Docker image and WeasyPrint loads Pango/HarfBuzz
+    at runtime via `cffi`, not via a pip wheel.
+- **Explicit non-goals:** No Excel export, no async/background export job,
+  no persisted generated file, no external resource fetch during
+  rendering, no new synchronous row limit (reuses PR18B's), no change to
+  Browser Print or PR17 report business semantics — all confirmed absent
+  from this diff.
+- **Testing:** `backend/tests/test_pr18d_pdf_export.py` — unit tests
+  against `report_pdf_service.render_pdf` directly (valid PDF structure;
+  both font weights embedded under a genuine subset tag, never a system
+  fallback; a regression test reproducing the exact realistic mixed
+  Thai/Latin sentence that triggered the pre-implementation corruption
+  finding, verified via per-glyph, content-stream-order character
+  inspection scoped to one table cell — not merely "starts with `%PDF`";
+  per-report-identity page orientation; empty-result-set handling;
+  neutral-branding presence; HTML-special-character escaping) and API
+  tests against `GET /{report_id}/pdf` (authorized-role success,
+  unauthenticated 401, unsupported `report_id` 422, reversed date-range and
+  inapplicable-filter 400s, row-limit-exceeded 422 with a JSON error body
+  — never partial PDF bytes, ASCII-safe `Content-Disposition` filename, no
+  persistent audit-log write, no transaction-state mutation, and seeded
+  end-to-end content checks for both a transaction report and the
+  Equipment Verify Checklist's Thai status label).
+- **Source:** `docs/design/PR18_PRINTING_EXPORT_PLAN.md` §8, §10, §16, §18,
+  §22. Branch `feature/pr18d-pdf-export`, baseline
+  `e919a2af8cc7ca11ab72bee274cb70e76c27ce8a` (GitHub PR #75's squash
+  merge, Roadmap PR18C). Renderer/font decisions above were presented to,
+  and explicitly approved by, the Repository Owner before implementation
+  proceeded (renderer comparison and recommendation approved first; the
+  font-asset correction approved separately after the empirical finding
+  above).
+- **Status:** Implemented in this branch; not yet merged as of this entry.
+- **Consequences:** Receive Report, Issue Report, and Equipment Verify
+  Checklist can each now be exported as a backend-rendered PDF, reusing the
+  PR18B foundation and PR18C's neutral branding. Owner Decision #2
+  (branding configuration ownership) remains open — this entry does not
+  resolve it. Excel output remains PR18E; Roadmap PR18 is not yet
+  complete.
 
 ## Numbering note — read this first
 
