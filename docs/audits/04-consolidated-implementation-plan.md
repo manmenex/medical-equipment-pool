@@ -407,11 +407,16 @@ Per the confirmed requirements and this reconciliation:
 
 **Roadmap PR19 split (approved 2026-08-03, see `docs/DECISION_LOG.md`
 "Roadmap PR19 approved split: PR19A (backend) / PR19B (frontend
-skeleton)"):** PR19 is delivered as two parallel implementation slices from
-the same merged baseline, both governed by the shared objective/boundary
-below. This is an explicit, Owner-approved exception to this repository's
-usual design-document-first slice precedent — no PR19 design document
-exists. Neither slice is complete or implemented as of the split decision.
+skeleton)"):** PR19 is delivered as two independent-scope implementation
+slices — PR19A and PR19B. "Parallel" describes their scope/dependency
+independence only (neither is stacked on, or blocked by, the other's
+unmerged branch); it does not mean they share one implementation baseline
+commit — each slice starts from whatever is the latest approved base-branch
+baseline at the time its own branch is created. This is an explicit,
+Owner-approved exception to this repository's usual design-document-first
+slice precedent — no PR19 design document exists. Neither slice is complete
+or implemented as of the split decision; PR19A has no branch, PR, or
+baseline yet.
 
 #### PR19A — Legacy Import Foundation (backend)
 - **Objective:** Provide a staged, validation-first, traceable import framework.

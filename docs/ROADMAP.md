@@ -31,6 +31,23 @@ sync recording Roadmap PR16's completion), which is based on `ac19505`
 PR17 (Operational Reports) is fully complete.** See the PR17 note below.
 
 **Current baseline (supersedes the paragraph above):**
+`729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` — squash commit of GitHub PR #79,
+the documentation-only PR18F governance synchronization recording Roadmap
+PR18's completion. It is based on `5d8cf7d8f378f6231d43e330310f664f6c19560f`
+(GitHub PR #78, the Roadmap PR18E Excel `.xlsx` export implementation) and
+the PR18A–PR18D chain described in the paragraph immediately below.
+**Roadmap PR18 (PR18A design, PR18B backend foundation, PR18C Browser
+Print, PR18D backend PDF export, and PR18E Excel `.xlsx` export) is fully
+complete.** The next planned item is Roadmap PR19, approved
+(`docs/DECISION_LOG.md`, 2026-08-03 entry) as an independent-scope
+**PR19A** (backend) / **PR19B** (frontend skeleton) split — see "Approved
+forward sequence" below. PR19B is Draft PR #80
+(`feature/pr19b-import-frontend-skeleton`), branched from this baseline
+(`729d1aa...`); PR19A has not started and has no branch or baseline of its
+own yet — when it begins, it must start from the latest approved
+base-branch baseline at that time, not necessarily this one.
+
+**Current baseline (supersedes the paragraph above):**
 `5d8cf7d8f378f6231d43e330310f664f6c19560f` — squash commit of GitHub PR
 #78, the Roadmap PR18E Excel `.xlsx` export implementation. It is based on
 `bc274e6176f225518db4ebaf0b5ed643c653aaa7` (GitHub PR #77, the Roadmap PR18D
@@ -45,10 +62,8 @@ foundation), which follows `e1b358a` (GitHub PR #72, the post-PR18A
 governance synchronization) and `6ba2c66` (GitHub PR #71, the approved
 PR18A printing/export architecture design). **Roadmap PR18 (PR18A design,
 PR18B backend foundation, PR18C Browser Print, PR18D backend PDF export, and
-PR18E Excel `.xlsx` export) is now fully complete.** See the PR18F note
-below. The next planned item is Roadmap PR19, approved as a parallel
-PR19A (backend) / PR19B (frontend skeleton) split — see "Approved forward
-sequence" below and `docs/DECISION_LOG.md`.
+PR18E Excel `.xlsx` export) is now fully complete.** The next planned item
+is Roadmap PR19.
 
 The older baseline narrative immediately below is retained as provenance
 for PR16 and earlier.
@@ -205,19 +220,26 @@ export) are all merged. **Roadmap PR18 (Printing and Export) is now fully
 complete.** The next planned item is Roadmap PR19.
 
 **Roadmap PR19 split (approved 2026-08-03):** Roadmap PR19 is delivered as
-two parallel implementation slices from the same merged baseline, per
-`docs/DECISION_LOG.md` ("Roadmap PR19 approved split: PR19A (backend) /
-PR19B (frontend skeleton)") — an explicit, Owner-approved exception to this
-repository's usual design-document-first slice precedent, since no PR19
-design document exists. **PR19A** is the backend import framework itself;
-**PR19B** is a frontend-only, mock-data workflow-review prototype (no
-upload, parsing, validation, dry-run, or import execution; its Equipment
-Master/Receive/Issue History category labels are preview labels pulled
-forward from PR20/PR21, not an implemented capability). PR19B is
-implemented on Draft PR #80 (`feature/pr19b-import-frontend-skeleton`),
-open and pending independent review at the time of this entry. PR19A has
-not started — no branch, PR, or design document exists yet. **Neither slice
-is complete; Roadmap PR19 is not done.**
+two independent-scope implementation slices, per `docs/DECISION_LOG.md`
+("Roadmap PR19 approved split: PR19A (backend) / PR19B (frontend
+skeleton)") — an explicit, Owner-approved exception to this repository's
+usual design-document-first slice precedent, since no PR19 design document
+exists. "Parallel" describes scope/dependency independence only (neither
+slice is stacked on, or blocked by, the other's unmerged branch) — it does
+**not** mean the two slices share one implementation baseline commit.
+**PR19A** is the backend import framework itself; **PR19B** is a
+frontend-only, mock-data workflow-review prototype (no upload, parsing,
+validation, dry-run, or import execution; its Equipment Master/Receive/Issue
+History category labels are preview labels pulled forward from PR20/PR21,
+not an implemented capability). PR19B is implemented on Draft PR #80
+(`feature/pr19b-import-frontend-skeleton`), branched from
+`729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` (the latest approved baseline
+when its branch was created), open and pending independent review at the
+time of this entry. PR19A has not started — no branch, PR, design document,
+or baseline exists yet; when it begins, it must start from whatever is the
+latest approved base-branch baseline at that time, not
+`729d1aa...` specifically. **Neither slice is complete; Roadmap PR19 is not
+done.**
 
 | Roadmap item | Planned scope |
 |---|---|

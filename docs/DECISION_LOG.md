@@ -821,28 +821,41 @@
 ## 2026-08-03 — Roadmap PR19 approved split: PR19A (backend) / PR19B (frontend skeleton)
 
 - **Decision:** Approve splitting Roadmap PR19 ("Legacy Import Foundation")
-  into two parallel implementation slices, both starting from the same
-  merged baseline (`729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52`, GitHub PR
-  #79, the PR18F governance synchronization):
+  into two independent-scope implementation slices — **PR19A** (backend)
+  and **PR19B** (frontend skeleton). "Parallel" describes their scope and
+  dependency relationship only — neither is stacked on, nor blocked by, the
+  other's unmerged branch. It does **not** mean the two slices share one
+  frozen implementation baseline commit:
   - **PR19A — Legacy Import Foundation (backend):** the staged,
     validation-first, traceable import framework itself — API contract,
-    session/document model, validation and dry-run mechanics. Not started
-    at the time of this entry; no branch, PR, or design document exists yet.
+    session/document model, validation and dry-run mechanics. **Not started**
+    at the time of this entry: no branch, PR, design document, or
+    implementation baseline exists yet. When PR19A work begins, it MUST
+    start from the latest approved squash-merge baseline on the base branch
+    *at that time* — after this governance PR (#82) merges, that is this
+    PR's own resulting squash SHA, **not**
+    `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52`. This entry does not set
+    PR19A's baseline; only PR19A's own branch-creation event does that.
   - **PR19B — Legacy Import Frontend Skeleton:** a frontend-only, mock-data
     UI prototype of the future import workflow, for early hospital-user
-    workflow review ahead of PR19A's real contract. Implemented on branch
+    workflow review ahead of PR19A's real contract. Branched from
+    `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` (GitHub PR #79, the PR18F
+    governance synchronization) — the latest approved baseline at the time
+    PR19B's branch was created. Implemented on branch
     `feature/pr19b-import-frontend-skeleton`, Draft PR **#80** — not yet
     independently reviewed or merged at the time of this entry.
-- **Reason / exception basis:** This repository's established precedent
+
+### Exception Record (per `docs/ENGINEERING_WORKFLOW.md` §22, Exception Policy)
+
+- **Reason:** This repository's established precedent
   (Roadmap PR7/PR8/PR9/PR14/PR15/PR16/PR17/PR18) only splits a Roadmap item
   into lettered slices after an architecture-approved design document
   defines that split. No such design document exists for Roadmap PR19. This
   is therefore an explicit, Owner-approved exception to that normal sequence
-  (`docs/PROJECT_PLAYBOOK.md` "Exception workflows"; `docs/
-  ENGINEERING_WORKFLOW.md` §22, Exception Policy), made so PR19B could begin
-  immediately as a hospital-facing workflow-review artifact without waiting
-  for PR19A's backend contract to finalize. The conflict between this
-  exception and the then-current Roadmap text (Roadmap PR19 as one
+  (`docs/PROJECT_PLAYBOOK.md` "Exception workflows"), made so PR19B could
+  begin immediately as a hospital-facing workflow-review artifact without
+  waiting for PR19A's backend contract to finalize. The conflict between
+  this exception and the then-current Roadmap text (Roadmap PR19 as one
   unsplit item, with Equipment Master/Receive/Issue History categories
   belonging to the separate, dependent PR20/PR21) was identified and raised
   before any PR19B code was written — see Draft PR #80's own
@@ -850,6 +863,45 @@
   Owner confirmed the split directly. This entry is the formal governance
   record required by that confirmation; it does not retroactively invent a
   design document neither slice actually had.
+- **Scope:** This exception covers only: (1) permitting PR19B to be
+  implemented and reviewed as a frontend-only mock skeleton ahead of an
+  approved PR19 design document and ahead of PR19A; and (2) recording
+  PR19A/PR19B as the approved Roadmap PR19 slice names. It does not exempt
+  either slice from ordinary independent review, exact-head CI, or Owner
+  merge approval, and it does not pre-approve PR19A's eventual design or
+  API contract.
+- **Risks:**
+  - PR19B's provisional frontend contract (`frontend/src/types/
+    legacyImport.ts`, `legacyImportClient.ts`) may drift from PR19A's real
+    contract once PR19A is designed.
+  - PR19B's preview category labels (Equipment Master / Receive History /
+    Issue History) may be misread as evidence that PR20/PR21 are already
+    implemented or approved.
+  - PR19B's mock/provisional contract or `MockImportClient` may be mistaken
+    for, or reused as, real production behavior.
+- **Mitigations:**
+  - PR19B isolates every mock/provisional contract behind a single named
+    seam (`LegacyImportClient`/`MockImportClient`, `types/legacyImport.ts`),
+    never scattered inline.
+  - PR19B disables real execution outright — no upload, parsing, validation,
+    dry-run, or import-confirm action can run.
+  - PR19B renders a persistent, visible skeleton banner
+    ("ต้นแบบหน้าจอ — ยังไม่มีการนำเข้าข้อมูลจริง") on every screen.
+  - Contract realignment between PR19B and PR19A's real API is mandatory
+    once PR19A is approved, before PR19B (or any follow-up) can be
+    considered aligned with production behavior.
+  - An exact-head re-review is required after that realignment, the same as
+    any other post-fix incremental review.
+- **Expiration / Follow-up:**
+  - This exception ends once PR19A's contract (API, session/document model)
+    is approved and merged.
+  - PR19B must realign its provisional contract to PR19A's approved API
+    before any later PR19B-derived work can merge as production-aligned.
+  - Roadmap PR19 must not be declared complete until every slice (PR19A,
+    PR19B, and the realignment/governance-sync work that follows PR19A) is
+    merged — mirroring the PR18F-style final governance synchronization
+    already used for Roadmap PR18.
+
 - **PR19B scope statement (binding on PR19B and any later PR19B follow-up):**
   frontend-only; mock/skeleton UI; intended for hospital-user workflow
   review; no file upload to any backend; no Excel/CSV parsing; no
@@ -865,9 +917,13 @@
   dependencies (PR20 depends on PR19; PR21 depends on PR19 and PR20; PR22
   depends on PR19–PR21; PR24 is blocked by PR19–PR23) already matched this
   decision and required no renumbering or reconciliation.
-- **Source:** Draft PR #80 (`feature/pr19b-import-frontend-skeleton`) and
-  this governance PR (branch `docs/pr19-import-roadmap-split-governance`,
-  same baseline as PR19B).
+- **Source:** Draft PR #80 (`feature/pr19b-import-frontend-skeleton`,
+  branched from `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52`) and this
+  governance PR (branch `docs/pr19-import-roadmap-split-governance`, also
+  branched from `729d1aa...` since no newer approved baseline existed when
+  this branch was created). This governance PR's own resulting squash SHA
+  becomes the next approved base-branch baseline once merged; it is the
+  baseline any future PR19A branch must start from, not `729d1aa...`.
 - **Status:** Approved governance decision, documentation-only. **Neither
   PR19A nor PR19B is complete or implemented by this entry.** Roadmap PR19
   remains not done; PR19B's own implementation review is tracked

@@ -8,9 +8,11 @@ control detailed ordering, scope, dependencies, and acceptance criteria.
 
 ## Current baseline
 
-`5d8cf7d8f378f6231d43e330310f664f6c19560f` — squash commit of GitHub PR
-#78, the merged Roadmap PR18E Excel `.xlsx` export implementation. It follows
-GitHub PR #77 (`bc274e6`, PR18D backend PDF export), GitHub PR #76 (`beedc4d`,
+`729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` — squash commit of GitHub PR #79,
+the documentation-only PR18F governance synchronization recording Roadmap
+PR18's completion. It follows GitHub PR #78 (`5d8cf7d`, the merged Roadmap
+PR18E Excel `.xlsx` export implementation), GitHub PR #77 (`bc274e6`, PR18D
+backend PDF export), GitHub PR #76 (`beedc4d`,
 the documentation-only governance sync after PR18C), GitHub PR #75
 (`e919a2a`, PR18C Browser Print), GitHub PR #74 (`4da1ebc`, the
 documentation-only governance sync after PR18B), GitHub PR #73 (`c72929b`,
@@ -30,18 +32,22 @@ PR16 (Reporting Foundation, all four Implementation Slices — GitHub PR #58,
 plus all four Implementation Slices — GitHub PR #65, #66, #67, #68) are now
 fully complete. **Roadmap PR18 (printing/export architecture, backend export
 foundation, Browser Print, backend PDF export, and Excel `.xlsx` export — GitHub
-PR #71, #73, #75, #77, #78, with governance-sync PRs #72, #74, #76 interleaved
-between them) is now fully complete.** Owner Decision #2 (branding
+PR #71, #73, #75, #77, #78, with governance-sync PRs #72, #74, #76, #79 interleaved
+between/after them) is now fully complete.** Owner Decision #2 (branding
 configuration ownership) remains open.
 
-**Roadmap PR19 split (approved 2026-08-03):** Roadmap PR19 is delivered as a
-parallel **PR19A** (backend import framework) / **PR19B** (frontend-only
-workflow-review skeleton, no real import) slice pair from this same
-baseline, per `docs/DECISION_LOG.md` ("Roadmap PR19 approved split: PR19A
-(backend) / PR19B (frontend skeleton)") — an explicit, Owner-approved
-exception, since no PR19 design document exists. PR19B is Draft PR #80
-(`feature/pr19b-import-frontend-skeleton`), open and pending independent
-review. PR19A has not started. **Neither slice is complete.**
+**Roadmap PR19 split (approved 2026-08-03):** Roadmap PR19 is delivered as
+two independent-scope slices — **PR19A** (backend import framework) and
+**PR19B** (frontend-only workflow-review skeleton, no real import) — per
+`docs/DECISION_LOG.md` ("Roadmap PR19 approved split: PR19A (backend) /
+PR19B (frontend skeleton)") — an explicit, Owner-approved exception, since
+no PR19 design document exists. "Parallel" describes scope/dependency
+independence only, not a shared implementation baseline. PR19B is Draft PR
+#80 (`feature/pr19b-import-frontend-skeleton`), branched from
+`729d1aa...` (the latest approved baseline at the time), open and pending
+independent review. PR19A has not started — it has no branch or baseline of
+its own and, when it begins, must start from whatever is the latest
+approved base-branch baseline at that time. **Neither slice is complete.**
 
 Roadmap numbering and GitHub PR numbering are independent. In particular,
 GitHub PR #18 was the Knowledge & Governance Foundation; it was not Roadmap

@@ -92,8 +92,10 @@ Sources: `docs/PROJECT_PLAYBOOK.md`, `docs/ARCHITECTURE_GUARDRAILS.md`,
 
 ## Current baseline and Roadmap
 
-Current baseline: `5d8cf7d8f378f6231d43e330310f664f6c19560f`.
-Roadmap PR18E merged as GitHub PR #78, squash SHA `5d8cf7d`, on top of GitHub
+Current baseline: `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` — GitHub PR #79,
+the documentation-only PR18F governance synchronization recording Roadmap
+PR18's completion, squash SHA `729d1aa`, on top of GitHub PR #78 (`5d8cf7d`,
+Roadmap PR18E Excel `.xlsx` export), GitHub
 PR #77 (`bc274e6`, PR18D backend PDF export), GitHub PR #76 (`beedc4d`, the
 documentation-only governance sync after PR18C), GitHub PR #75 (`e919a2a`,
 PR18C Browser Print), GitHub PR #74 (`4da1ebc`, the documentation-only
@@ -101,7 +103,7 @@ governance sync after PR18B), GitHub PR #73 (`c72929b`, PR18B backend export
 foundation), GitHub PR #72 (`e1b358a`, post-PR18A governance
 synchronization), and GitHub PR #71 (`6ba2c66`, the approved PR18A
 architecture design). None of PR18C, PR18D, PR18E, or the interleaved
-governance-sync PRs (#72, #74, #76) introduced a migration or equipment
+governance-sync PRs (#72, #74, #76, #79) introduced a migration or equipment
 lifecycle change.
 
 Equipment Verify Checklist means a read-only, current-state Equipment
@@ -116,14 +118,19 @@ export foundation, PR18C Browser Print, PR18D backend PDF export, and PR18E
 Excel `.xlsx` export) is now fully complete** — Browser Print, PDF, and Excel
 are all implemented for all three PR17 report families. The next planned
 implementation work is Roadmap PR19, approved (2026-08-03,
-`docs/DECISION_LOG.md`) as a parallel split: **PR19A** (backend import
-framework) and **PR19B** (frontend-only workflow-review skeleton — no real
-upload, parsing, validation, dry-run, or import execution; its category
-labels preview PR20/PR21 scope only). PR19B is Draft PR #80, open and
-pending independent review; PR19A has not started. **Neither slice is
-implemented.** This split is an explicit, Owner-approved exception to this
-repository's usual design-document-first slice precedent, since no PR19
-design document exists. The remaining approved sequence is:
+`docs/DECISION_LOG.md`) as an independent-scope split: **PR19A** (backend
+import framework) and **PR19B** (frontend-only workflow-review skeleton — no
+real upload, parsing, validation, dry-run, or import execution; its category
+labels preview PR20/PR21 scope only). "Independent-scope" means neither
+slice is stacked on, or blocked by, the other's unmerged branch — it does
+not mean they share one implementation baseline. PR19B is Draft PR #80,
+branched from this baseline (`729d1aa...`), open and pending independent
+review; PR19A has not started and has no baseline of its own — when it
+begins, it must start from whatever is the latest approved base-branch
+baseline at that time. **Neither slice is implemented.** This split is an
+explicit, Owner-approved exception to this repository's usual
+design-document-first slice precedent, since no PR19 design document
+exists. The remaining approved sequence is:
 
 - PR19A/PR19B: legacy import foundation and its frontend workflow-review
   skeleton;

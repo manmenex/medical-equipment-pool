@@ -10,9 +10,11 @@ ordering
 
 ## Current baseline
 
-Current baseline: `5d8cf7d8f378f6231d43e330310f664f6c19560f` on
-`claude/medical-equipment-pool-0c7fz0` — GitHub PR #78, the merged Roadmap
-PR18E Excel `.xlsx` export implementation. It follows GitHub PR #77
+Current baseline: `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` on
+`claude/medical-equipment-pool-0c7fz0` — GitHub PR #79, the documentation-only
+PR18F governance synchronization recording Roadmap PR18's completion. It
+follows GitHub PR #78 (`5d8cf7d`, the merged Roadmap PR18E Excel `.xlsx`
+export implementation), GitHub PR #77
 (`bc274e6`, the PR18D backend PDF export), GitHub PR #76 (`beedc4d`, the
 documentation-only governance sync after PR18C), GitHub PR #75 (`e919a2a`,
 the PR18C Browser Print implementation), GitHub PR #74 (`4da1ebc`, the
@@ -22,6 +24,13 @@ post-PR18A governance synchronization), and GitHub PR #71 (`6ba2c66`, the
 approved PR18A architecture design). Roadmap PR17 (Operational Reports),
 Roadmap PR16 (Reporting Foundation), and Roadmap PR15B Schema Hygiene remain
 implemented.
+
+Roadmap PR19 is approved (`docs/DECISION_LOG.md`, 2026-08-03 entry) as an
+independent-scope **PR19A** (backend) / **PR19B** (frontend skeleton)
+split — not a shared implementation baseline. PR19B is Draft PR #80,
+branched from this baseline (`729d1aa...`); PR19A has not started and, when
+it begins, must start from whatever is the latest approved base-branch
+baseline at that time.
 
 ## Current work
 

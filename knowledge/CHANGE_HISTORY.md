@@ -11,12 +11,18 @@ This file tracks *what changed in the shared mental model* over time, one line o
 
 Roadmap PR19 ("Legacy Import Foundation") was previously one unsplit Roadmap
 item, with no PR19A/PR19B naming anywhere in governance material. The
-Repository Owner explicitly approved splitting it into two parallel
-implementation slices from the same merged baseline: **PR19A**, the backend
-import framework itself, and **PR19B**, a frontend-only, mock-data UI
-prototype of the future import workflow for early hospital-user workflow
-review, ahead of PR19A's real contract. This is an explicit exception to
-this repository's usual pattern of splitting a Roadmap item into lettered
+Repository Owner explicitly approved splitting it into two independent-scope
+implementation slices: **PR19A**, the backend import framework itself, and
+**PR19B**, a frontend-only, mock-data UI prototype of the future import
+workflow for early hospital-user workflow review, ahead of PR19A's real
+contract. "Independent-scope" (parallel) describes dependency independence
+only — neither slice is stacked on, or blocked by, the other's unmerged
+branch — it does not mean the two slices share one implementation baseline
+commit: PR19B branched from `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52`
+(GitHub PR #79); PR19A has not started and has no baseline of its own, and
+must start from whatever is the latest approved base-branch baseline
+whenever it begins. This split is an explicit exception to this
+repository's usual pattern of splitting a Roadmap item into lettered
 slices only after an architecture-approved design document — no PR19 design
 document exists. PR19B's import-category labels (Equipment Master / Receive
 History / Issue History) are preview labels pulled forward from PR20/PR21
@@ -24,7 +30,7 @@ scope for review purposes only, not an implemented capability or an approval
 of PR20/PR21's own design. Neither PR19A nor PR19B is implemented by this
 change; PR19B's own implementation is tracked on Draft PR #80. See
 `docs/DECISION_LOG.md` ("Roadmap PR19 approved split: PR19A (backend) /
-PR19B (frontend skeleton)").
+PR19B (frontend skeleton)") for the full Exception Record.
 
 ## Printing and Export complete; Roadmap PR18 closed (Roadmap PR18E / PR18F)
 
