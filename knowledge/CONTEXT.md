@@ -13,12 +13,15 @@ ordering
 Current baseline: `5d8cf7d8f378f6231d43e330310f664f6c19560f` on
 `claude/medical-equipment-pool-0c7fz0` — GitHub PR #78, the merged Roadmap
 PR18E Excel `.xlsx` export implementation. It follows GitHub PR #77
-(`bc274e6`, the PR18D backend PDF export), GitHub PR #75 (`e919a2a`, the PR18C
-Browser Print implementation), GitHub PR #73 (`c72929b`, the PR18B backend
-export foundation), GitHub PR #72 (`e1b358a`, the post-PR18A governance
-synchronization), and GitHub PR #71 (`6ba2c66`, the approved PR18A
-architecture design). Roadmap PR17 (Operational Reports), Roadmap PR16
-(Reporting Foundation), and Roadmap PR15B Schema Hygiene remain implemented.
+(`bc274e6`, the PR18D backend PDF export), GitHub PR #76 (`beedc4d`, the
+documentation-only governance sync after PR18C), GitHub PR #75 (`e919a2a`,
+the PR18C Browser Print implementation), GitHub PR #74 (`4da1ebc`, the
+documentation-only governance sync after PR18B), GitHub PR #73 (`c72929b`,
+the PR18B backend export foundation), GitHub PR #72 (`e1b358a`, the
+post-PR18A governance synchronization), and GitHub PR #71 (`6ba2c66`, the
+approved PR18A architecture design). Roadmap PR17 (Operational Reports),
+Roadmap PR16 (Reporting Foundation), and Roadmap PR15B Schema Hygiene remain
+implemented.
 
 ## Current work
 

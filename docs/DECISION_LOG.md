@@ -283,7 +283,10 @@
   frontend suite re-run with no regression.
 - **Source:** `docs/design/PR18_PRINTING_EXPORT_PLAN.md` §9, §16, §17, §20.3,
   §22. Branch `feature/pr18c-browser-print`, baseline
-  `c72929ba4649fd75d1f81e4630b4e4feb3d136be` (GitHub PR #73's squash merge).
+  `4da1ebc016d48b2dece9362e029ecd15eb9dd31b` (GitHub PR #74's squash merge,
+  the documentation-only governance sync recording Roadmap PR18B's
+  completion — itself built directly on GitHub PR #73's own squash merge,
+  `c72929ba4649fd75d1f81e4630b4e4feb3d136be`).
   Corrected in a second Codex review round (PR18C-H1R/PR18C-H2R) to make
   print readiness document-identity-aware and to replace an interim
   per-report-identity filter allowlist with pagination-only stripping,
@@ -444,8 +447,11 @@
   Equipment Verify Checklist's Thai status label).
 - **Source:** `docs/design/PR18_PRINTING_EXPORT_PLAN.md` §8, §10, §16, §18,
   §22. Branch `feature/pr18d-pdf-export`, baseline
-  `e919a2af8cc7ca11ab72bee274cb70e76c27ce8a` (GitHub PR #75's squash
-  merge, Roadmap PR18C). Renderer/font decisions above were presented to,
+  `beedc4d32c8d3ae6b6a418f36aa49b3177209b3f` (GitHub PR #76's squash merge,
+  the documentation-only governance sync recording Roadmap PR18C's
+  completion — itself built directly on GitHub PR #75's own squash merge,
+  `e919a2af8cc7ca11ab72bee274cb70e76c27ce8a`, Roadmap PR18C). Renderer/font
+  decisions above were presented to,
   and explicitly approved by, the Repository Owner before implementation
   proceeded (renderer comparison and recommendation approved first; the
   font-asset correction approved separately after the empirical finding

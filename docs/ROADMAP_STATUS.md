@@ -10,14 +10,17 @@ control detailed ordering, scope, dependencies, and acceptance criteria.
 
 `5d8cf7d8f378f6231d43e330310f664f6c19560f` — squash commit of GitHub PR
 #78, the merged Roadmap PR18E Excel `.xlsx` export implementation. It follows
-GitHub PR #77 (`bc274e6`, PR18D backend PDF export), GitHub PR #75 (`e919a2a`,
-PR18C Browser Print), GitHub PR #73 (`c72929b`, PR18B backend export
-foundation), GitHub PR #72 (`e1b358a`, post-PR18A governance synchronization),
-and GitHub PR #71 (`6ba2c66`, approved PR18A architecture design). PR18E added
-the backend Excel adapter (openpyxl, no new dependency) for all three PR17
-reports over PR18B's bounded foundation, with workbook-wide formula-injection
-protection and bounded concurrency/admission control. It added no migration or
-equipment lifecycle change. PR15A and PR15B are both implemented
+GitHub PR #77 (`bc274e6`, PR18D backend PDF export), GitHub PR #76 (`beedc4d`,
+the documentation-only governance sync after PR18C), GitHub PR #75
+(`e919a2a`, PR18C Browser Print), GitHub PR #74 (`4da1ebc`, the
+documentation-only governance sync after PR18B), GitHub PR #73 (`c72929b`,
+PR18B backend export foundation), GitHub PR #72 (`e1b358a`, post-PR18A
+governance synchronization), and GitHub PR #71 (`6ba2c66`, approved PR18A
+architecture design). PR18E added the backend Excel adapter (openpyxl, no new
+dependency) for all three PR17 reports over PR18B's bounded foundation, with
+workbook-wide formula-injection protection and bounded concurrency/admission
+control. It added no migration or equipment lifecycle change. PR15A and PR15B
+are both implemented
 — both of Roadmap PR15's scheduled slices are complete.
 Application metrics, tracing, dashboards, log aggregation, and alerting
 remain open Roadmap PR15 scope, not scheduled to any slice, pending a
@@ -27,8 +30,9 @@ PR16 (Reporting Foundation, all four Implementation Slices — GitHub PR #58,
 plus all four Implementation Slices — GitHub PR #65, #66, #67, #68) are now
 fully complete. **Roadmap PR18 (printing/export architecture, backend export
 foundation, Browser Print, backend PDF export, and Excel `.xlsx` export — GitHub
-PR #71, #73, #75, #77, #78) is now fully complete.** Owner Decision #2
-(branding configuration ownership) remains open.
+PR #71, #73, #75, #77, #78, with governance-sync PRs #72, #74, #76 interleaved
+between them) is now fully complete.** Owner Decision #2 (branding
+configuration ownership) remains open.
 
 Roadmap numbering and GitHub PR numbering are independent. In particular,
 GitHub PR #18 was the Knowledge & Governance Foundation; it was not Roadmap
@@ -54,10 +58,12 @@ Implementation Slices — GitHub PR #65, #66, #67, #68) are all complete and
 have moved off this table. **Roadmap PR18 (Printing and Export) is also now
 fully complete and has moved off this table:** PR18A design (GitHub PR #71),
 its governance sync (GitHub PR #72), PR18B backend export foundation (GitHub
-PR #73), PR18C Browser Print (GitHub PR #75), PR18D backend PDF export
-(GitHub PR #77), and PR18E Excel `.xlsx` export (GitHub PR #78) are all
-merged — see `docs/ROADMAP.md`'s Completed table for the full historical
-record. This table now begins with Roadmap PR19.
+PR #73), a governance sync recording PR18B's completion (GitHub PR #74),
+PR18C Browser Print (GitHub PR #75), a governance sync recording PR18C's
+completion (GitHub PR #76), PR18D backend PDF export (GitHub PR #77), and
+PR18E Excel `.xlsx` export (GitHub PR #78) are all merged — see
+`docs/ROADMAP.md`'s Completed table for the full historical record. This
+table now begins with Roadmap PR19.
 
 ## Scope guardrails for the planned sequence
 

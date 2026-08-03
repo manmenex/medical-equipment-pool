@@ -94,11 +94,15 @@ Sources: `docs/PROJECT_PLAYBOOK.md`, `docs/ARCHITECTURE_GUARDRAILS.md`,
 
 Current baseline: `5d8cf7d8f378f6231d43e330310f664f6c19560f`.
 Roadmap PR18E merged as GitHub PR #78, squash SHA `5d8cf7d`, on top of GitHub
-PR #77 (`bc274e6`, PR18D backend PDF export), GitHub PR #75 (`e919a2a`, PR18C
-Browser Print), GitHub PR #73 (`c72929b`, PR18B backend export foundation),
-GitHub PR #72 (`e1b358a`, post-PR18A governance synchronization), and GitHub
-PR #71 (`6ba2c66`, the approved PR18A architecture design). None of PR18C,
-PR18D, or PR18E introduced a migration or equipment lifecycle change.
+PR #77 (`bc274e6`, PR18D backend PDF export), GitHub PR #76 (`beedc4d`, the
+documentation-only governance sync after PR18C), GitHub PR #75 (`e919a2a`,
+PR18C Browser Print), GitHub PR #74 (`4da1ebc`, the documentation-only
+governance sync after PR18B), GitHub PR #73 (`c72929b`, PR18B backend export
+foundation), GitHub PR #72 (`e1b358a`, post-PR18A governance
+synchronization), and GitHub PR #71 (`6ba2c66`, the approved PR18A
+architecture design). None of PR18C, PR18D, PR18E, or the interleaved
+governance-sync PRs (#72, #74, #76) introduced a migration or equipment
+lifecycle change.
 
 Equipment Verify Checklist means a read-only, current-state Equipment
 master-data snapshot (Owner Decision #1, resolved to interpretation A) — not
