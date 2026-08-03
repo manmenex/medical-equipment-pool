@@ -308,7 +308,7 @@ async def test_render_pdf_bounded_limits_concurrent_renders(monkeypatch):
 async def test_render_pdf_bounded_releases_semaphore_slot_after_timeout(monkeypatch):
     """H1 "cleanup after timeout/failure": a timed-out render must not
     permanently consume its concurrency slot -- the next render must still
-    be admitted."""
+    be admitted, once the original render actually finishes."""
     call_count = 0
 
     def _slow_render(document):
@@ -329,6 +329,139 @@ async def test_render_pdf_bounded_releases_semaphore_slot_after_timeout(monkeypa
     monkeypatch.setattr(report_pdf_service, "RENDER_TIMEOUT_SECONDS", 30)
     pdf_bytes = await report_pdf_service.render_pdf_bounded(document)
     assert pdf_bytes.startswith(b"%PDF")
+
+
+async def _wait_until(predicate, *, timeout: float = 5.0, interval: float = 0.01) -> None:
+    """Polls `predicate` until it is true or `timeout` elapses. Used instead
+    of a fixed `asyncio.sleep` wherever a test needs to observe an
+    asyncio-scheduled side effect (like a `Task` done-callback) without
+    racing a hardcoded delay."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        await asyncio.sleep(interval)
+    raise AssertionError(f"condition not met within {timeout}s")
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR18D review 4838921407 round 2 (H1): the concurrency limit must
+# reflect *actual renderer execution*, never request lifetime -- releasing
+# a semaphore slot the moment a caller's `wait_for` times out (the round 1
+# bug) lets a "timed out" render keep consuming a real OS thread/CPU/memory
+# in the background while a brand-new render is admitted on top of it,
+# silently exceeding the configured bound. These tests use a
+# `threading.Event` gate instead of `time.sleep` so the underlying render
+# is provably still running (not just "probably still running due to
+# timing") at the moment each assertion executes.
+# ---------------------------------------------------------------------------
+
+
+async def test_render_pdf_bounded_timeout_does_not_release_capacity_early(monkeypatch):
+    """Direct proof of the round 2 correction: immediately after a render
+    times out from the caller's perspective, the semaphore must still show
+    the slot as held -- not freed -- because the underlying render has not
+    actually finished yet."""
+    release_gate = threading.Event()
+    started = threading.Event()
+
+    def _blocking_render(document):
+        started.set()
+        release_gate.wait(timeout=5)
+        return b"%PDF-1.4 fake"
+
+    monkeypatch.setattr(report_pdf_service, "render_pdf", _blocking_render)
+    monkeypatch.setattr(report_pdf_service, "RENDER_TIMEOUT_SECONDS", 0.05)
+    test_semaphore = asyncio.Semaphore(2)
+    monkeypatch.setattr(report_pdf_service, "_render_semaphore", test_semaphore)
+
+    with pytest.raises(PdfRenderTimeoutError):
+        await report_pdf_service.render_pdf_bounded(_document())
+
+    assert started.is_set(), "the render should have actually started before the timeout fired"
+    # Started with 2 slots; exactly one must still be held by the
+    # still-running (from the renderer's perspective) render.
+    assert test_semaphore._value == 1, "the slot must remain held after a caller-facing timeout, not be freed early"
+
+    # Only once the render is allowed to actually finish does the slot free up.
+    release_gate.set()
+    await _wait_until(lambda: test_semaphore._value == 2)
+
+
+async def test_render_pdf_bounded_timeout_does_not_increase_effective_concurrency(monkeypatch):
+    """A burst of requests that all time out from the caller's perspective
+    must not be able to start more simultaneous renders than
+    `_render_semaphore` allows -- proven by tracking the real number of
+    concurrently-running (not-yet-returned-from-`render_pdf`) renders while
+    every one of them "times out" for its own caller almost immediately."""
+    active = 0
+    max_active = 0
+    count_lock = threading.Lock()
+    release_gate = threading.Event()
+
+    def _tracking_blocking_render(document):
+        nonlocal active, max_active
+        with count_lock:
+            active += 1
+            max_active = max(max_active, active)
+        release_gate.wait(timeout=5)
+        with count_lock:
+            active -= 1
+        return b"%PDF-1.4 fake"
+
+    monkeypatch.setattr(report_pdf_service, "render_pdf", _tracking_blocking_render)
+    monkeypatch.setattr(report_pdf_service, "RENDER_TIMEOUT_SECONDS", 0.02)
+    monkeypatch.setattr(report_pdf_service, "_render_semaphore", asyncio.Semaphore(2))
+
+    document = _document()
+
+    async def _one_timed_out_call():
+        with pytest.raises(PdfRenderTimeoutError):
+            await report_pdf_service.render_pdf_bounded(document)
+
+    # 6 requests "arrive" close together; each one times out for its own
+    # caller almost immediately (0.02s), but the underlying renders they
+    # started keep running (blocked on release_gate) until explicitly
+    # released below.
+    await asyncio.gather(*[_one_timed_out_call() for _ in range(6)])
+
+    release_gate.set()
+    await _wait_until(lambda: active == 0)
+
+    assert max_active <= 2, (
+        f"effective concurrent renders ({max_active}) exceeded the configured limit (2) -- "
+        "a caller-facing timeout must never let a new render start on top of one still running"
+    )
+
+
+async def test_render_pdf_bounded_concurrent_requests_never_exceed_configured_limit(monkeypatch):
+    """End-to-end proof combining normal completions and timeouts in the
+    same burst: whatever the individual outcome, the real number of
+    simultaneously-executing renders must never exceed the configured
+    limit."""
+    active = 0
+    max_active = 0
+    count_lock = threading.Lock()
+
+    def _tracking_render(document):
+        nonlocal active, max_active
+        with count_lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.08)
+        with count_lock:
+            active -= 1
+        return b"%PDF-1.4 fake"
+
+    monkeypatch.setattr(report_pdf_service, "render_pdf", _tracking_render)
+    monkeypatch.setattr(report_pdf_service, "RENDER_TIMEOUT_SECONDS", 30)
+    monkeypatch.setattr(report_pdf_service, "_render_semaphore", asyncio.Semaphore(3))
+
+    document = _document()
+    results = await asyncio.gather(*[report_pdf_service.render_pdf_bounded(document) for _ in range(9)])
+
+    assert all(r.startswith(b"%PDF") for r in results)
+    assert max_active <= 3
 
 
 # ---------------------------------------------------------------------------

@@ -266,13 +266,29 @@ def render_pdf(document: ExportDocument) -> bytes:
     return weasyprint.HTML(string=html_document).write_pdf()
 
 
+def _release_render_slot_when_done(task: "asyncio.Task[bytes]") -> None:
+    """Roadmap PR18D review 4838921407 round 2 (H1): the semaphore models
+    *renderer* concurrency, not *request* concurrency -- this callback is
+    the only place `_render_semaphore` is released, and it only ever runs
+    once the underlying `asyncio.to_thread(render_pdf, ...)` task has
+    actually finished (successfully, or with an exception), never merely
+    because a caller's `wait_for` gave up waiting on it. Retrieving the
+    task's exception (if any) here, even though nothing further is done
+    with it, prevents asyncio's "Task exception was never retrieved"
+    warning for a render that finishes after its caller already received
+    `PdfRenderTimeoutError`."""
+    if not task.cancelled():
+        task.exception()
+    _render_semaphore.release()
+
+
 async def render_pdf_bounded(document: ExportDocument) -> bytes:
-    """Roadmap PR18D review 4838921407 (H1): the one, single call site that
-    enforces design §18's time and concurrency bounds around `render_pdf` --
-    `render_pdf` itself stays a plain, directly-unit-testable synchronous
-    function; callers (the API route) must call this wrapper, never
-    `asyncio.to_thread(render_pdf, ...)` directly, so no call site can
-    accidentally run an unbounded render.
+    """Roadmap PR18D review 4838921407 (H1, corrected in round 2): the one,
+    single call site that enforces design §18's time and concurrency
+    bounds around `render_pdf` -- `render_pdf` itself stays a plain,
+    directly-unit-testable synchronous function; callers (the API route)
+    must call this wrapper, never `asyncio.to_thread(render_pdf, ...)`
+    directly, so no call site can accidentally run an unbounded render.
 
     Deterministic timeout handling: a render that has not completed within
     `RENDER_TIMEOUT_SECONDS` raises `PdfRenderTimeoutError` (a `DomainError`
@@ -280,28 +296,47 @@ async def render_pdf_bounded(document: ExportDocument) -> bytes:
     indefinitely. `asyncio.wait_for`'s cancellation cannot forcibly stop a
     thread already running in the default executor (a `ThreadPoolExecutor`
     thread cannot be killed from the outside in Python) -- the render
-    already in flight finishes on its own rather than being interrupted
-    mid-render. This is the accepted, explicitly documented bound for this
-    thread-based renderer, consistent with this repository's existing
-    CPU-bound-work pattern (`app.services.import_service`); a hard,
-    immediate kill would require a subprocess-based renderer, which is not
-    introduced here.
+    already in flight keeps running to completion on its own rather than
+    being interrupted mid-render. This is the accepted, explicitly
+    documented bound for this thread-based renderer, consistent with this
+    repository's existing CPU-bound-work pattern
+    (`app.services.import_service`); a hard, immediate kill would require a
+    subprocess-based renderer, which is not introduced here.
 
-    Bounded concurrency: the module-level `_render_semaphore` limits how
-    many renders this worker process admits at once, covering both the
-    wait for a free slot and the render itself. The semaphore is released
-    in a `finally` block, so a timeout or any other render failure always
-    frees the slot for the next request -- `render_pdf` holds no external
-    resource of its own (no temp file, no open connection or socket; the
-    HTML document it builds is one self-contained in-memory string with
-    both fonts already embedded), so releasing this slot is this render's
-    entire cleanup obligation on failure.
+    Bounded concurrency that reflects *actual renderer execution*, not
+    request lifetime (review round 2's correction): the render itself runs
+    as its own `asyncio.Task` (`render_task` below), started only after
+    `_render_semaphore` is acquired. `asyncio.wait_for` wraps
+    `asyncio.shield(render_task)`, so when the timeout elapses,
+    `wait_for` only cancels its own internal wrapper -- `render_task`
+    itself is shielded and keeps running in the background exactly as it
+    would have without the timeout. The semaphore is released solely by
+    `render_task`'s own done-callback (`_release_render_slot_when_done`),
+    so a request that times out from the *caller's* perspective does not
+    free the slot until the renderer has *actually* finished -- a 5th
+    concurrent request genuinely waits behind 4 slow-but-still-running
+    renders, never just behind 4 requests that already returned an error
+    to their callers. `render_pdf` holds no external resource of its own
+    (no temp file, no open connection or socket; the HTML document it
+    builds is one self-contained in-memory string with both fonts already
+    embedded), so accounting for the slot correctly is the entire cleanup
+    obligation here -- there is nothing else to tear down.
     """
-    async with _render_semaphore:
-        try:
-            return await asyncio.wait_for(asyncio.to_thread(render_pdf, document), timeout=RENDER_TIMEOUT_SECONDS)
-        except asyncio.TimeoutError as exc:
-            raise PdfRenderTimeoutError(
-                f"PDF rendering did not complete within {RENDER_TIMEOUT_SECONDS} seconds. "
-                "Narrow the applied filters and try again."
-            ) from exc
+    await _render_semaphore.acquire()
+    try:
+        render_task: "asyncio.Task[bytes]" = asyncio.ensure_future(asyncio.to_thread(render_pdf, document))
+    except BaseException:
+        # Task creation itself failed before any renderer work could start
+        # -- nothing for the done-callback to ever fire for, so release the
+        # slot directly here instead of leaking it.
+        _render_semaphore.release()
+        raise
+    render_task.add_done_callback(_release_render_slot_when_done)
+
+    try:
+        return await asyncio.wait_for(asyncio.shield(render_task), timeout=RENDER_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError as exc:
+        raise PdfRenderTimeoutError(
+            f"PDF rendering did not complete within {RENDER_TIMEOUT_SECONDS} seconds. "
+            "Narrow the applied filters and try again."
+        ) from exc
