@@ -9,6 +9,8 @@ import asyncio
 import random
 import uuid
 
+from sqlalchemy import select
+
 from app.core.security import hash_password
 from app.db.session import AsyncSessionLocal
 from app.models.equipment import Equipment, EquipmentStatus
@@ -28,21 +30,39 @@ LOCATIONS = [("Ward 5A", "ward"), ("Ward 5B", "ward"), ("ICU-1", "icu"), ("Centr
 
 
 async def seed_reference_data(db) -> dict:
+    """Roadmap PR18D review round 3 (H2): idempotent for the confirmed
+    roles and the administrator account. `docs/06-deployment-guide.md`
+    documents `alembic upgrade head` followed by this script as the
+    deployment sequence -- but migration 0009 (`role_consolidation`)
+    already creates the three confirmed roles (`administrator`,
+    `equipment_pool_staff`, `read_only`) as part of a plain
+    `alembic upgrade head` on a fresh database, so blindly inserting them
+    again here always violated `roles.name`'s uniqueness on that exact,
+    documented, first-deployment sequence. Reusing an existing row (get-
+    or-create by name/employee_code) instead of assuming an empty table
+    is what makes this script actually safe to run as documented, not a
+    smoke-test-only workaround."""
     roles = {}
     for role_name in ALL_ROLES:
+        existing_role = (await db.execute(select(Role).where(Role.name == role_name))).scalar_one_or_none()
+        if existing_role is not None:
+            roles[role_name] = existing_role
+            continue
         role = Role(name=role_name, permissions={})
         db.add(role)
         roles[role_name] = role
     await db.flush()
 
-    admin = User(
-        employee_code="ADMIN001",
-        full_name="System Administrator",
-        email="admin@hospital.local",
-        password_hash=hash_password("Admin@12345"),
-        role_id=roles[ROLE_ADMINISTRATOR].id,
-    )
-    db.add(admin)
+    existing_admin = (await db.execute(select(User).where(User.employee_code == "ADMIN001"))).scalar_one_or_none()
+    if existing_admin is None:
+        admin = User(
+            employee_code="ADMIN001",
+            full_name="System Administrator",
+            email="admin@hospital.local",
+            password_hash=hash_password("Admin@12345"),
+            role_id=roles[ROLE_ADMINISTRATOR].id,
+        )
+        db.add(admin)
 
     departments = []
     for code, name in DEPARTMENTS:

@@ -434,6 +434,105 @@ async def test_render_pdf_bounded_timeout_does_not_increase_effective_concurrenc
     )
 
 
+# ---------------------------------------------------------------------------
+# Roadmap PR18D review round 3: `RENDER_TIMEOUT_SECONDS` must be one total
+# budget covering *both* the wait for renderer capacity and the active
+# render, not a budget that only starts once a slot is acquired -- a
+# request stuck behind other renders must not be able to queue
+# indefinitely and only then get its own full render timeout on top.
+# ---------------------------------------------------------------------------
+
+
+async def test_render_pdf_bounded_times_out_while_queued_for_capacity_without_starting_renderer(monkeypatch):
+    """Requirements 1 and 2: a request that never gets a chance to acquire
+    the renderer semaphore before its total timeout budget elapses must
+    still raise the structured timeout error -- and `render_pdf` must never
+    have been invoked on its behalf, because it never got a slot."""
+    render_call_count = 0
+    hold_gate = threading.Event()
+    occupier_started = threading.Event()
+
+    def _holding_render(document):
+        nonlocal render_call_count
+        render_call_count += 1
+        occupier_started.set()
+        hold_gate.wait(timeout=5)
+        return b"%PDF-1.4 fake"
+
+    monkeypatch.setattr(report_pdf_service, "render_pdf", _holding_render)
+    monkeypatch.setattr(report_pdf_service, "RENDER_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(report_pdf_service, "_render_semaphore", asyncio.Semaphore(1))
+
+    document = _document()
+
+    # Occupies the single slot for far longer than the timeout budget, so
+    # a second request has no capacity available for the whole time it's
+    # allowed to wait.
+    occupier_task = asyncio.ensure_future(report_pdf_service.render_pdf_bounded(document))
+    await _wait_until(lambda: occupier_started.is_set())
+
+    with pytest.raises(PdfRenderTimeoutError):
+        await report_pdf_service.render_pdf_bounded(document)
+
+    assert render_call_count == 1, "the queue-timeout request's renderer must never have been started"
+
+    hold_gate.set()
+    with pytest.raises(PdfRenderTimeoutError):
+        await occupier_task
+
+
+async def test_render_pdf_bounded_queue_wait_plus_render_never_exceeds_total_budget(monkeypatch):
+    """Requirement 3: however long a request spends queued, the point at
+    which it fails (or succeeds) must never be later than
+    `RENDER_TIMEOUT_SECONDS` after the request began -- queue wait and
+    active render share one clock, they do not each get their own."""
+    hold_gate = threading.Event()
+    occupier_started = threading.Event()
+    timeout_budget = 0.1
+
+    def _holding_render(document):
+        occupier_started.set()
+        hold_gate.wait(timeout=5)
+        return b"%PDF-1.4 fake"
+
+    monkeypatch.setattr(report_pdf_service, "render_pdf", _holding_render)
+    monkeypatch.setattr(report_pdf_service, "RENDER_TIMEOUT_SECONDS", timeout_budget)
+    monkeypatch.setattr(report_pdf_service, "_render_semaphore", asyncio.Semaphore(1))
+
+    document = _document()
+    occupier_task = asyncio.ensure_future(report_pdf_service.render_pdf_bounded(document))
+    await _wait_until(lambda: occupier_started.is_set())
+
+    started_at = time.monotonic()
+    with pytest.raises(PdfRenderTimeoutError):
+        await report_pdf_service.render_pdf_bounded(document)
+    elapsed = time.monotonic() - started_at
+
+    # Generous scheduling slack for a shared test-runner CPU -- the point
+    # is that this is bounded by the configured budget, not that it never
+    # completed at all (which an unbounded queue wait would also satisfy).
+    assert elapsed <= timeout_budget + 0.3, (
+        f"queue wait + render took {elapsed:.3f}s, exceeding the {timeout_budget}s total timeout budget"
+    )
+
+    hold_gate.set()
+    with pytest.raises(PdfRenderTimeoutError):
+        await occupier_task
+
+
+async def test_render_pdf_bounded_acquires_capacity_and_renders_within_deadline_succeeds(monkeypatch):
+    """Requirement 6: a request that acquires renderer capacity well within
+    its total budget, and whose render also finishes in time, must succeed
+    normally -- the total-deadline accounting must not make an otherwise
+    healthy request fail."""
+    monkeypatch.setattr(report_pdf_service, "RENDER_TIMEOUT_SECONDS", 5)
+    monkeypatch.setattr(report_pdf_service, "_render_semaphore", asyncio.Semaphore(2))
+
+    document = _document(rows=[ExportRow(values={"note": "x"})])
+    pdf_bytes = await report_pdf_service.render_pdf_bounded(document)
+    assert pdf_bytes.startswith(b"%PDF")
+
+
 async def test_render_pdf_bounded_concurrent_requests_never_exceed_configured_limit(monkeypatch):
     """End-to-end proof combining normal completions and timeouts in the
     same burst: whatever the individual outcome, the real number of

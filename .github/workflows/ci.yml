@@ -265,10 +265,21 @@ jobs:
       - name: Apply migrations inside the container
         run: docker exec mep-backend-smoke python -m alembic upgrade head
 
-      # app.scripts.seed (already used for local/demo setup) creates the
-      # ADMIN001 user this smoke test logs in as, plus enough equipment
-      # rows that the Equipment Verify Checklist PDF below has real,
-      # non-empty Thai content to render -- not just an empty-result PDF.
+      # app.scripts.seed (already used for local/demo setup, per
+      # docs/06-deployment-guide.md's own documented deployment sequence)
+      # creates the ADMIN001 user this smoke test logs in as, plus enough
+      # equipment rows that the Equipment Verify Checklist PDF below has
+      # real, non-empty Thai content to render -- not just an empty-result
+      # PDF. Roadmap PR18D review round 3 (H2): this step used to fail here
+      # because migration 0009 (role_consolidation) already creates the
+      # confirmed roles -- including "administrator" -- as part of a plain
+      # `alembic upgrade head` on a fresh database, and this script
+      # unconditionally re-inserted them; `seed_reference_data` now reuses
+      # any pre-existing role/admin row instead (see
+      # backend/app/scripts/seed.py and
+      # backend/tests/test_seed_idempotency.py), which is what actually
+      # makes this exact, documented alembic-then-seed sequence work at
+      # all, not just this smoke test.
       - name: Seed minimal data inside the container
         run: docker exec mep-backend-smoke python -m app.scripts.seed
 
@@ -292,10 +303,14 @@ jobs:
 
           grep -qi '^content-type: application/pdf' smoke-headers.txt
 
-          header_bytes=$(head -c 4 smoke.pdf)
-          test "$header_bytes" = "%PDF"
+          header_bytes=$(head -c 5 smoke.pdf)
+          test "$header_bytes" = "%PDF-"
 
-          echo "Production image PDF smoke test passed: HTTP 200, application/pdf, valid %PDF header"
+          body_size=$(wc -c < smoke.pdf)
+          echo "Response body size: ${body_size} bytes"
+          test "$body_size" -gt 1000
+
+          echo "Production image PDF smoke test passed: HTTP 200, application/pdf, valid %PDF- header, non-trivial body (${body_size} bytes)"
 
       - name: Dump container logs on failure
         if: failure()
