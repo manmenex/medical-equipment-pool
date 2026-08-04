@@ -1,21 +1,17 @@
-# Roadmap PR19A — Legacy Import Foundation: Design (Governance)
+# Roadmap PR19A — Legacy Import Foundation: Design Specification
 
 **Status:** Design only. No runtime code, migration, API, or test file is part of this PR. Nothing in this document has been implemented.
 **Repository:** Medical Equipment Pool. Not MEMS, not Recall Monitor.
-**Baseline:** `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` (`docs(governance): close Roadmap PR18 printing and export (#79)`) — Roadmap PR18 is fully merged and governance-synced at this commit. This design branches directly from that commit.
+**Baseline:** `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` — Roadmap PR18 is fully merged and governance-synced at this commit. This design branches directly from that commit.
 **Scope authority:** `docs/audits/04-consolidated-implementation-plan.md` Part D, Group 8, "PR19 — Legacy Import Foundation."
-**Supersedes:** PR #81 (`feature/pr19a-legacy-import-foundation`, head `c3813bc93f2100dcb06f02ab9e3098faa61e1706`), which bundled this design with runtime implementation in a single commit — flagged merge-blocking by independent review. **PR #81 has already been closed, unmerged**; its branch is retained temporarily.
-**Revision history:**
-- Rev 1 (head `b142f4d`) resolved PR #81's original findings.
-- Rev 2 (head `3c0c8d9`) resolved review comment `5165925838` (D1–D5/M1).
-- Rev 3 (head `a152617`) resolved review round 2 (H1–H5/M1) and recorded Owner Decision: Data Retention Policy.
-- **Rev 4 (this revision)** resolves review round 3 (REQUEST CHANGES against head `a152617138f528b5acfea5e9ea10fe23a0080a24`): (1) the lease had no renewal and no completion fencing tied to `lease_owner`, so a job presumed dead could still be recovered while its original worker was genuinely still running, risking a late commit after recovery; (2) session-creation idempotency and `ImportSource` binding were two separate identity mechanisms that could disagree; (3) the approved 180-day retention policy had no enforcement mechanism shipping with any implementation slice; (4) PR19A2/PR19A3 ownership of the lease/recovery mechanism did not match which slice actually owns the `dry-run` endpoint. All four are resolved below, with two sequence diagrams (§8.3) illustrating the exact race the review identified and how it is now prevented.
+**Supersedes:** PR #81, already closed unmerged (bundled this design with implementation, a process violation).
+**Provenance (for audit trail only — every section below is self-contained and does not require reading any of this history to implement):** four prior revisions on this same PR resolved successive independent-review rounds. This document is the complete, authoritative specification as of the current revision; an implementer needs nothing beyond what follows.
 
 ---
 
 ## 1. Objective
 
-Design the complete backend architecture required to eventually import historical AppSheet data into this system, such that an implementer can answer every question in §24 (Acceptance Criteria) without guessing. No parser, no legacy data import, and no UI are in scope for the resulting implementation slices (§22).
+Specify the complete backend architecture for eventually importing historical AppSheet data (Equipment master, Receive history, Issue history) into this system, such that PR19A1–PR19A3 can be implemented without consulting any prior document, review comment, or revision. No parser, no legacy data import, and no UI are in scope (§26).
 
 ---
 
@@ -23,52 +19,53 @@ Design the complete backend architecture required to eventually import historica
 
 | Area | Source | What it established |
 |---|---|---|
-| Roadmap scope | `docs/audits/04-consolidated-implementation-plan.md` Part D, Group 8 | PR19 is "Legacy Import Foundation" — architecture only. |
-| Engineering process | `docs/ENGINEERING_WORKFLOW.md` §6 | A Design PR must precede implementation and define the API proposal, data-model direction, security/information boundaries, performance, risks, acceptance criteria, and slices. |
-| PR #81 review | GitHub PR #81 comment `5164590001` | Resolved in §6–§7, §10–§11, §18, §21 (unchanged since Rev 1). |
-| PR #83 Rev 1 review | Comment `5165925838` (D1–D5/M1) | Resolved in Rev 2 — domain model, API/RBAC, security/risk, source-persistence scope boundary, validation-snapshot pointer, dry-run read-only transaction. |
-| PR #83 Rev 2 review | Round 2, H1–H5/M1 | Resolved in Rev 3 — lease/heartbeat schema, database-enforced source-registration concurrency, composite ownership FK, physical schema contract, retention Owner Decision. |
-| **PR #83 Rev 3 review** | **Round 3, this revision's findings** | **Lease renewal + completion fencing (§8.2–§8.3). Unified source/checksum/fingerprint contract (§14). Retention cleanup moved into PR19A3 (§9, §19, §22). A2/A3 ownership reconciled against the actual endpoint-ownership table (§22).** |
-| Owner Decision | Rev 3 | Data retention policy (§9), recorded in `docs/DECISION_LOG.md`. |
-| Prior import precedent | Roadmap PR12 | Bounded row count, bulk-lookup validation, safe generic error wrapping, Administrator-only gate, `ge=1` pagination, bounded decompressed-archive size. |
+| Roadmap scope | `docs/audits/04-consolidated-implementation-plan.md` Part D, Group 8 | PR19 is architecture only. |
+| Engineering process | `docs/ENGINEERING_WORKFLOW.md` §6 | A Design PR must define API proposal, data model, security boundaries, risks, acceptance criteria, and slices before implementation. |
+| Prior import precedent | Roadmap PR12 | Bounded row count, bulk-lookup validation, safe generic error wrapping, Administrator-only gate, `ge=1` pagination, bounded decompressed-archive size — reused directly. |
 | Schema-hygiene precedent | Migrations `0013`/`0014` | "Verify → classify → transform/no-op/fail-closed"; explicit `ON DELETE RESTRICT` everywhere. |
 | Timestamp policy precedent | Roadmap PR15B (migration `0012`) | Every persisted timestamp is `TIMESTAMPTZ`, UTC-stored. |
+| Cross-cutting reliability-slice precedent | Roadmap PR15B | A dedicated hygiene/reliability slice touching code multiple earlier slices had already shipped, for one cross-cutting concern, is an established pattern in this repository (§25 cites this directly for PR19A3's relationship to PR19A2's `validate` endpoint). |
+| RBAC precedent | `backend/app/api/v1/deps.py`, `docs/BUSINESS_RULES.md` | Confirmed 3-role model: Administrator, Equipment Pool Staff, Read Only. `ADMINISTRATOR_ONLY_ROLES` reused, no new role. |
+| PostgreSQL claim pattern | `SELECT ... FOR UPDATE SKIP LOCKED` | Standard idiom for safe concurrent batch-claiming without inventing a bespoke locking protocol — used by retention cleanup (§18). |
+| Owner Decision | Recorded in `docs/DECISION_LOG.md` | Data retention policy: 180 days post-terminal, redact-in-place, deployment-configurable period, no V1 Administrator UI. |
 
 ---
 
-## 3. Domain Model Contract (Conceptual)
+## 3. Domain Model Contract
 
-Conceptual entity model — purpose, ownership, relationships, information sensitivity. The literal physical schema is §4; the public API vocabulary is §19. This section deliberately does not repeat either.
+Conceptual entity model. The literal physical schema is §4; the public API vocabulary is §21.
 
 ### 3.1 ImportSession
 
-*(persisted as `import_sessions`)* — one staged import attempt for one dataset type; the root aggregate. Owned by `created_by_user_id`. Relationships: 1:1 `ImportSource` (§3.2); 1:N `ImportJob` (§3.3). Sensitive fields: `notes`, `failure_reason`. Retention: §9, anchored on `terminal_at`.
+*(persisted as `import_sessions`)* — one staged import attempt for one dataset type; the root aggregate of the pipeline. Owned by `created_by_user_id` (the Administrator who created it). Carries the session's own lifecycle status (§5), an optimistic-concurrency `version` counter (§7), and retention bookkeeping (§18). Relationships: 1:1 `ImportSource` (§3.2); 1:N `ImportJob` (§3.3). Sensitive fields: `notes` (operator free text), `failure_reason` (bounded, generic). Retention: §18, anchored on `terminal_at`.
 
 ### 3.2 ImportSource
 
-*(persisted as `import_sources`)* — **the single source-of-truth identity/checksum record for a session's data** (§14 — unified in this revision; session creation itself carries no identity field of its own). Does not store raw bytes in this foundation (§8.1). Sensitive fields: `filename` (§20). Retention: §9 — descriptive fields redacted; `checksum` retained.
+*(persisted as `import_sources`)* — the single source-of-truth identity/checksum record for a session's data. Carries its own two-state lifecycle (`registered`/`frozen`, §6) that gates when validation may begin. Does not store raw bytes in this foundation (§9.1's forward-reference note — no code in PR19A1–A3 stores or re-reads source bytes; deferred to a future concrete-adapter slice). Sensitive fields: `filename`. Retention: descriptive fields redacted post-retention; `checksum` retained (§18).
 
 ### 3.3 ImportJob — backing entity for ValidationAttempt / DryRunAttempt / ExecutionAttempt
 
-*(persisted as `import_jobs`; public API concept names: `ValidationAttempt`, `DryRunAttempt`, `ExecutionAttempt` — one table, discriminated by `job_type`)* — one execution record of one phase, now also the **fencing token holder** (`lease_owner`, §8.2). Sensitive fields: `error_message`. Retention: retained (system-outcome text, §9).
+*(persisted as `import_jobs`; public API concept names: `ValidationAttempt`, `DryRunAttempt`, `ExecutionAttempt` — one physical table, discriminated by `job_type`)* — one execution record of one phase. Carries the fencing token set (`lease_owner`, `lease_generation`, §9) that protects its completion write from a late/superseded commit. Sensitive fields: `error_message` (bounded, generic, retained post-retention).
+
+**Why one table, not three:** the three domain concepts share an identical shape and lifecycle. Splitting them adds schema surface with no behavioral difference, contrary to this slice's foundation-only scope.
 
 ### 3.4 ValidationFinding
 
-*(persisted as `import_row_errors`)* — one collected finding, attributed to a `ValidationAttempt` via `import_job_id`. Sensitive fields: `message`/`field` (§20). Retention: redacted post-retention; structural fields retained (§9).
+*(persisted as `import_row_errors`)* — one collected finding, attributed to a `ValidationAttempt` via `import_job_id`. Sensitive fields: `message`/`field` (may echo raw legacy source values). Retention: redacted post-retention; structural fields (`error_code`/`severity`/`row_number`) retained so aggregate counts stay reconcilable.
 
 ### 3.5 ImportAuditEvent — integration with the existing audit log
 
-Not a new table. Four action constants: `AUDIT_ACTION_IMPORT` (execute success, existing), `AUDIT_ACTION_IMPORT_RECOVERY` (lease-expiry recovery, §8.2), **`AUDIT_ACTION_IMPORT_FENCE_LOST`** (new, Rev 4 — a late worker's commit was correctly discarded after recovery already claimed its job, §8.3), `AUDIT_ACTION_IMPORT_RETENTION_CLEANUP` (§9, now a PR19A3 deliverable). No schema change to `audit_logs` itself.
+Not a new table. Four action constants on the existing `audit_logs` table (`entity_type = AUDIT_ENTITY_IMPORT_SESSION`): `AUDIT_ACTION_IMPORT` (execute success), `AUDIT_ACTION_IMPORT_RECOVERY` (lease-expiry recovery claim, §9), `AUDIT_ACTION_IMPORT_FENCE_LOST` (a superseded worker's commit — either a job completion or a retention-cleanup completion — was correctly discarded, §9/§18; one constant, reused across both contexts since they are the same event conceptually), `AUDIT_ACTION_IMPORT_RETENTION_CLEANUP` (one entry per session purged, §18). No schema change to `audit_logs` itself.
 
 ### 3.6 No source-storage reference table
 
-Unchanged — explicitly not part of this foundation's schema (§8.1).
+Not part of this foundation's schema. No code in PR19A1–A3 stores or re-reads raw source bytes; a future concrete-adapter slice introduces its own storage-reference schema when it needs one.
 
 ---
 
 ## 4. Physical Schema Contract
 
-Every table this feature introduces. Internal persistence only — never exposed directly as API fields (§19 is the public vocabulary). Conventions: enum columns are `VARCHAR` + named `CHECK` (`create_constraint=True` on the ORM side, §7); every timestamp is `TIMESTAMPTZ`; every FK is `ON DELETE RESTRICT`; UUIDs are application-generated.
+Every table this feature introduces, exact and complete. Internal persistence only — §21 is the public API vocabulary. Conventions applied uniformly: every enum-shaped column is a plain `VARCHAR` with a named `CHECK` constraint (`native_enum=False`, `create_constraint=True` on the ORM side, §8); every timestamp is `TIMESTAMPTZ`; every foreign key is `ON DELETE RESTRICT`; UUIDs are application-generated.
 
 ### 4.1 `import_sessions`
 
@@ -76,35 +73,40 @@ Every table this feature introduces. Internal persistence only — never exposed
 |---|---|---|---|---|
 | `id` | UUID | NOT NULL | app-generated | PK |
 | `dataset_type` | VARCHAR(100) | NOT NULL | — | |
-| `status` | VARCHAR(30) | NOT NULL | `'created'` | `CHECK` (§5) |
+| `status` | VARCHAR(30) | NOT NULL | `'created'` | `CHECK` — 11 values, §5 |
+| `version` | INTEGER | NOT NULL | `0` | Optimistic-concurrency counter — incremented by exactly 1 on every CAS-guarded `UPDATE` to this row (§7). Not a substitute for the `status`-based CAS predicate; an additional, independent check |
 | `created_by_user_id` | UUID | NOT NULL | — | FK → `users.id` RESTRICT |
 | `idempotency_key` | VARCHAR(200) | NULL | — | |
 | `notes` | TEXT | NULL | — | `CHECK char_length(notes) <= 4000`; redacted post-retention |
-| `current_validation_job_id` | UUID | NULL | — | Composite FK, §4.5/§12 |
+| `current_validation_job_id` | UUID | NULL | — | Composite FK → `import_jobs (import_session_id, id)`, §4.5 |
 | `validated_at`, `dry_run_completed_at`, `executed_at` | TIMESTAMPTZ | NULL | — | |
-| `terminal_at` | TIMESTAMPTZ | NULL | — | Retention-clock anchor (§9); set only for `COMPLETED`/`FAILED`/`CANCELLED` |
-| `retention_purged_at` | TIMESTAMPTZ | NULL | — | Cleanup idempotency guard (§9) |
+| `terminal_at` | TIMESTAMPTZ | NULL | — | Retention-clock anchor (§18); set only for `COMPLETED`/`FAILED`/`CANCELLED` |
+| `retention_purged_at` | TIMESTAMPTZ | NULL | — | Retention-cleanup idempotency guard (§18) |
+| `retention_cleanup_claimed_by` | UUID | NULL | — | Retention-cleanup claim token (§18) |
+| `retention_cleanup_claim_expires_at` | TIMESTAMPTZ | NULL | — | Retention-cleanup claim staleness bound (§18) |
 | `total_rows`, `valid_rows`, `invalid_rows`, `warning_rows`, `imported_rows` | INTEGER | NULL | — | |
 | `failure_reason` | TEXT | NULL | — | `CHECK char_length(failure_reason) <= 2000`; retained post-retention |
 | `created_at`, `updated_at` | TIMESTAMPTZ | NOT NULL | `now()` | |
 
-**Removed in Rev 4:** `idempotency_fingerprint`. Session creation no longer carries any identity-bearing field beyond `(dataset_type, idempotency_key)` itself (§14.1) — the field it used to hash (`source_checksum`) has moved exclusively to `import_sources` (§14.2), so there is nothing left to fingerprint at creation time; the existing `UNIQUE(dataset_type, idempotency_key)` constraint is now sufficient on its own.
+**Keys/constraints:** PK `id`. `UNIQUE (dataset_type, idempotency_key)`. Composite FK `(id, current_validation_job_id)` → `import_jobs (import_session_id, id)`, `MATCH SIMPLE`, `ON DELETE RESTRICT` (§4.5). `INDEX (dataset_type, status)`. `INDEX (created_by_user_id)`. `INDEX (terminal_at)`. `INDEX (retention_cleanup_claim_expires_at) WHERE retention_purged_at IS NULL` (supports the cleanup claim query, §18).
 
-**Keys/constraints:** PK `id`. `UNIQUE (dataset_type, idempotency_key)`. Composite FK `(id, current_validation_job_id)` → `import_jobs (import_session_id, id)`, `MATCH SIMPLE`, `ON DELETE RESTRICT` (§4.5). `INDEX (dataset_type, status)`. `INDEX (created_by_user_id)`. `INDEX (terminal_at)`.
+**Session creation carries no identity/checksum field** — `POST /import-sessions` accepts only `{dataset_type, idempotency_key?, notes?}` (§15). No `idempotency_fingerprint`-style column exists on this table; `(dataset_type, idempotency_key)` uniqueness is sufficient on its own, since there is no other identity-bearing field at creation time.
 
-### 4.2 `import_sources` — the single identity/checksum record (§14, unchanged from Rev 3)
+### 4.2 `import_sources`
 
 | Column | Type | Null | Default | Notes |
 |---|---|---|---|---|
 | `id` | UUID | NOT NULL | app-generated | PK |
 | `import_session_id` | UUID | NOT NULL | — | FK → `import_sessions.id` RESTRICT, `UNIQUE` |
-| `checksum` | VARCHAR(128) | NOT NULL | — | `CHECK char_length(checksum) >= 32`; immutable once set; retained post-retention |
-| `byte_size` | BIGINT | NOT NULL | — | Part of the identity fingerprint |
+| `status` | VARCHAR(20) | NOT NULL | `'registered'` | `CHECK status IN ('registered', 'frozen')` — the source lifecycle, §6 |
+| `frozen_at` | TIMESTAMPTZ | NULL | — | Set exactly once, atomically with the session's first `CREATED → VALIDATING` transition (§6, §7) |
+| `checksum` | VARCHAR(128) | NOT NULL | — | `CHECK char_length(checksum) >= 32`; correctable while `status='registered'`, immutable once `status='frozen'` (§6, §15); retained post-retention |
+| `byte_size` | BIGINT | NOT NULL | — | Part of the identity fingerprint (§15) |
 | `content_type` | VARCHAR(255) | NULL | — | Redacted post-retention |
-| `filename` | VARCHAR(255) | NULL | — | Redacted post-retention (§20) |
-| `source_version` | VARCHAR(100) | NULL | — | |
-| `options_fingerprint` | VARCHAR(64) | NOT NULL | — | SHA-256 hex of normalized options; defaults to hash of `{}` |
-| `source_fingerprint` | VARCHAR(64) | NOT NULL | — | Full composite identity hash, §14.2 |
+| `filename` | VARCHAR(255) | NULL | — | Redacted post-retention |
+| `source_version` | VARCHAR(100) | NULL | — | Caller-supplied source "vintage" marker |
+| `options_fingerprint` | VARCHAR(64) | NOT NULL | — | SHA-256 hex of normalized options; defaults to the hash of `{}` (this foundation has no options fields yet) |
+| `source_fingerprint` | VARCHAR(64) | NOT NULL | — | Full composite identity hash, §15 |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | |
 
 **Keys/constraints:** PK `id`. `UNIQUE (import_session_id)`. `INDEX (checksum)`. FK `import_session_id` → `import_sessions.id` RESTRICT.
@@ -116,23 +118,34 @@ Every table this feature introduces. Internal persistence only — never exposed
 | `id` | UUID | NOT NULL | app-generated | PK |
 | `import_session_id` | UUID | NOT NULL | — | FK → `import_sessions.id` RESTRICT |
 | `job_type` | VARCHAR(20) | NOT NULL | — | `CHECK job_type IN ('validate','dry_run','execute')` |
-| `status` | VARCHAR(20) | NOT NULL | `'pending'` | `CHECK status IN ('pending','running','succeeded','failed','abandoned')` |
+| `status` | VARCHAR(20) | NOT NULL | `'pending'` | `CHECK status IN ('pending','running','succeeded','failed','abandoned')` — `'abandoned'` marks a lease-expiry recovery, distinct from a genuine `'failed'` outcome |
 | `attempt_number` | INTEGER | NOT NULL | — | Monotonic per `(import_session_id, job_type)` |
-| `lease_owner` | UUID | NULL | — | **The fencing token (§8.2).** Set fresh at lease acquisition; every completion write (success or failure) must present this same token or be discarded |
-| `lease_expires_at` | TIMESTAMPTZ | NULL | — | `now() + IMPORT_JOB_LEASE_DURATION_SECONDS` (default 300s) at acquisition, **and at every successful renewal** (§8.2 — Rev 4: renewal is now real, not merely reserved schema) |
-| `heartbeat_at` | TIMESTAMPTZ | NULL | — | Last successful renewal timestamp — observability ("when did we last hear from this worker"), distinct from the forward-looking `lease_expires_at` |
+| `lease_owner` | UUID | NULL | — | Fencing token, part 1: identifies which acquisition holds the lease (§9) |
+| `lease_generation` | INTEGER | NOT NULL | `1` | Fencing token, part 2: a monotonically increasing counter, forward-compatible with a hypothetical future in-place lease re-acquisition. **In this foundation it is always `1`** — a new attempt is always a new `import_jobs` row (never a re-lease of an existing row), so this column has no observable variation yet; it exists so a completion-fencing check never needs to change shape if that assumption is ever revisited (§9) |
+| `lease_expires_at` | TIMESTAMPTZ | NULL | — | `now() + IMPORT_JOB_LEASE_DURATION_SECONDS` (default 300s) at acquisition and at every successful renewal (§9) |
+| `heartbeat_at` | TIMESTAMPTZ | NULL | — | Last successful renewal timestamp (observability) |
 | `started_at`, `finished_at` | TIMESTAMPTZ | NULL | — | |
 | `error_message` | TEXT | NULL | — | `CHECK char_length(error_message) <= 2000`; retained post-retention |
-| `ruleset_version` | VARCHAR(50) | NULL | — | VALIDATE jobs only |
+| `ruleset_version` | VARCHAR(50) | NULL | — | VALIDATE jobs only, §13 |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | |
 
-**Keys/constraints:** PK `id`. FK `import_session_id` → `import_sessions.id` RESTRICT. `UNIQUE (import_session_id, id)` (composite-FK target, §4.5). `UNIQUE (import_session_id, job_type, attempt_number)`. `INDEX (import_session_id, job_type)`. `INDEX (lease_expires_at) WHERE status = 'running'` (partial index, supports both the recovery scan and — new in Rev 4 — is also useful for operational monitoring of renewal health).
+**Keys/constraints:** PK `id`. FK `import_session_id` → `import_sessions.id` RESTRICT. `UNIQUE (import_session_id, id)` (composite-FK target, §4.5). `UNIQUE (import_session_id, job_type, attempt_number)`. `INDEX (import_session_id, job_type)`. `INDEX (lease_expires_at) WHERE status = 'running'` (recovery-claim scan, §9).
 
 ### 4.4 `import_row_errors` (ValidationFinding)
 
-Unchanged from Rev 3: `id`, `import_job_id` (FK RESTRICT), `row_number`, `field` (redacted post-retention), `error_code` (retained), `message` NOT NULL (redacted post-retention via placeholder, never a real `NULL`), `severity` (`CHECK IN ('error','warning')`). PK `id`. `INDEX (import_job_id, row_number)`.
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `id` | UUID | NOT NULL | app-generated | PK |
+| `import_job_id` | UUID | NOT NULL | — | FK → `import_jobs.id` RESTRICT |
+| `row_number` | INTEGER | NULL | — | |
+| `field` | VARCHAR(100) | NULL | — | Redacted post-retention |
+| `error_code` | VARCHAR(100) | NOT NULL | — | Retained post-retention |
+| `message` | TEXT | NOT NULL | — | Redacted post-retention (replaced with a fixed placeholder — `NOT NULL` is preserved, never a real `NULL`) |
+| `severity` | VARCHAR(10) | NOT NULL | `'error'` | `CHECK severity IN ('error','warning')` |
 
-### 4.5 The composite ownership foreign key (unchanged from Rev 3)
+**Keys/constraints:** PK `id`. FK `import_job_id` → `import_jobs.id` RESTRICT. `INDEX (import_job_id, row_number)`.
+
+### 4.5 The composite validation-ownership foreign key
 
 ```sql
 ALTER TABLE import_jobs
@@ -145,17 +158,34 @@ ALTER TABLE import_sessions
   ON DELETE RESTRICT;
 ```
 
-`MATCH SIMPLE` — not evaluated while `current_validation_job_id IS NULL`. Enforced by the database, not only application code. See Rev 3 for the full rationale (unchanged).
+**Why:** a plain single-column `FOREIGN KEY (current_validation_job_id) REFERENCES import_jobs(id)` only proves the referenced job exists somewhere — nothing stops it from pointing at a job belonging to a *different* session. The composite FK requires the tuple `(session.id, session.current_validation_job_id)` to match a row where `import_jobs.import_session_id = session.id` **and** `import_jobs.id = session.current_validation_job_id` simultaneously — ownership enforced by the database, not only by application code.
+
+**Null behavior:** `MATCH SIMPLE` (PostgreSQL's default) — the constraint is not evaluated while `current_validation_job_id IS NULL` (a session with no successful validation attempt yet).
+
+**Downgrade order:** drop `fk_import_sessions_current_validation_job` first, then `uq_import_jobs_session_id`.
 
 ### 4.6 Schema-convergence matrix
 
-Unchanged objects from Rev 3 (`ck_import_sessions_status`, `ck_import_jobs_status`, `ck_import_jobs_job_type`, `ck_import_row_errors_severity`, `uq_import_jobs_session_id`, `fk_import_sessions_current_validation_job`, `uq_import_jobs_session_job_type_attempt`, `ix_import_jobs_lease_expires_at`). **All schema convergence testing, for every table and every column regardless of which slice later populates or reads it, is entirely PR19A1's testing responsibility** (§22) — a column a later slice merely *uses* (e.g. `lease_owner`, `ruleset_version`) was still *created* by PR19A1's migration, and PR19A1's own convergence tests must cover it.
+The objects most likely to diverge between the ORM fresh-install path and the Alembic historical-upgrade path if not carefully implemented — §8's PostgreSQL tests must assert convergence for each:
+
+| Object | ORM fresh-create source | Migration historical-upgrade source | Convergence requirement |
+|---|---|---|---|
+| `ck_import_sessions_status` | `_StrEnum(..., create_constraint=True)` | Raw SQL `CHECK` in `CREATE TABLE` | Identical `pg_get_constraintdef()` |
+| `ck_import_sources_status` | Same | Same | Identical |
+| `ck_import_jobs_status` (incl. `'abandoned'`) | Same | Same | Identical |
+| `ck_import_jobs_job_type` | Same | Same | Identical |
+| `ck_import_row_errors_severity` | Same | Same | Identical |
+| `uq_import_jobs_session_id` `(import_session_id, id)` | `UniqueConstraint` in `__table_args__` | Raw SQL `ADD CONSTRAINT ... UNIQUE` | Identical column order |
+| `fk_import_sessions_current_validation_job` (composite) | `ForeignKeyConstraint` in `__table_args__` | Raw SQL `ADD CONSTRAINT ... FOREIGN KEY` | Identical referenced columns, `MATCH SIMPLE`, `ON DELETE RESTRICT` |
+| `uq_import_jobs_session_job_type_attempt` | `UniqueConstraint` | Raw SQL | Identical |
+| `ix_import_jobs_lease_expires_at` (partial, `WHERE status='running'`) | `Index(..., postgresql_where=...)` | Raw SQL partial index | Identical predicate text |
+| `ix_import_sessions_retention_cleanup_claim` (partial, §4.1) | Same pattern | Same | Identical predicate text |
+
+All schema convergence testing, for every table and every column regardless of which slice later reads or writes it, is entirely **PR19A1's** testing responsibility (§25) — a column a later slice merely *uses* (e.g. `lease_owner`, `version`) was still *created* by PR19A1's migration.
 
 ---
 
-## 5. Import Session Lifecycle and Allowed Transitions
-
-Unchanged from Rev 3.
+## 5. Import Session Lifecycle
 
 ```
 CREATED
@@ -171,9 +201,11 @@ FAILED
 CANCELLED
 ```
 
+Deliberately **not** related to equipment lifecycle states, a separate domain.
+
 | From | Trigger | To |
 |---|---|---|
-| `CREATED` | validate | `VALIDATING` |
+| `CREATED` | validate (requires `SOURCE_FROZEN`, §6) | `VALIDATING` |
 | `VALIDATING` | (internal) | `VALIDATED` \| `VALIDATION_FAILED` |
 | `VALIDATED` | re-validate | `VALIDATING` |
 | `VALIDATION_FAILED` | re-validate | `VALIDATING` |
@@ -185,78 +217,224 @@ CANCELLED
 | `EXECUTING` | (internal) | `COMPLETED` \| `FAILED` |
 | `{CREATED, VALIDATED, VALIDATION_FAILED, DRY_RUN_COMPLETED, DRY_RUN_FAILED}` | cancel | `CANCELLED` |
 
-Terminal: `COMPLETED`/`FAILED`/`CANCELLED` (set `terminal_at`, §9). `VALIDATION_FAILED`/`DRY_RUN_FAILED` are not terminal.
+**Terminal states:** `COMPLETED`/`FAILED`/`CANCELLED` — the only three that set `terminal_at` (§18). `VALIDATION_FAILED`/`DRY_RUN_FAILED` are **not** terminal (re-validate/re-dry-run remain possible). A `FAILED` execution never auto-retries — a fresh dry-run is required first.
 
 ---
 
-## 6. Atomic Transition and Concurrency Policy
+## 6. Source Lifecycle
 
-Unchanged: atomic conditional `UPDATE ... WHERE status = ANY(:allowed) RETURNING id`, executed via SQLAlchemy Core, never load-then-mutate-then-commit.
+**Required invariant:** validation may only begin against a source that can never again change. This is enforced as an explicit, immutable two-state lifecycle on `ImportSource` (§4.2), gating the session's own `CREATED → VALIDATING` transition.
 
----
-
-## 7. Fresh-Install / Historical-Upgrade Schema Convergence
-
-Unchanged: `_StrEnum(create_constraint=True)`; verify → classify → transform/no-op/fail-closed for every table; PR19A1 acceptance criteria cover fresh-install vs. historical-upgrade convergence for every object in §4.6.
-
----
-
-## 8. Source Persistence and Crash Recovery
-
-### 8.1 Source persistence — explicit scope boundary (unchanged)
-
-No code in PR19A1–A3 stores or re-reads source bytes. Deferred to PR19B.
-
-### 8.2 Lease, renewal, and completion fencing (rewritten, Rev 4)
-
-**What was missing:** Rev 3 defined lease acquisition (`lease_owner`/`lease_expires_at`/`heartbeat_at` set once) and a recovery claim, but never renewed the lease during real work, and never checked the lease at *completion* time. Two consequences the review correctly identified: (1) a legitimately-still-running worker whose lease merely expired (not crashed — e.g., slow processing, transient DB latency, brief network partition) could be wrongly recovered while genuinely alive; (2) that same worker, unaware it had been recovered, could finish and commit its result afterward — a **late commit**, potentially duplicating a write `/recover` had already resolved.
-
-**Lease renewal — a background task within the same request, not a separate scheduler:**
-
-This foundation's phases run synchronously within one HTTP request. Renewal is implemented as an `asyncio.create_task` started immediately after lease acquisition, running concurrently with the phase's main work (the `asyncio.to_thread`-offloaded parse, the per-record validation loop, `plan_dry_run`, or `execute`), and cancelled in a `finally` block once that work completes:
-
-```python
-async def _renew_lease_loop(session_factory, job_id, lease_owner):
-    while True:
-        await asyncio.sleep(IMPORT_JOB_HEARTBEAT_INTERVAL_SECONDS)
-        async with session_factory() as db:  # a session of its OWN — never shared
-            result = await db.execute(         # with the main work's session/transaction
-                update(ImportJob)
-                .where(ImportJob.id == job_id,
-                       ImportJob.lease_owner == lease_owner,
-                       ImportJob.status == "running")
-                .values(lease_expires_at=func.now() + IMPORT_JOB_LEASE_DURATION,
-                        heartbeat_at=func.now())
-                .returning(ImportJob.id)
-            )
-            await db.commit()
-            if result.first() is None:
-                return  # lost the lease -- stop renewing; the completion fence (below)
-                        # is what actually prevents a bad commit, not this early exit
+```mermaid
+stateDiagram-v2
+    [*] --> NEW: session created, no ImportSource row yet
+    NEW --> SOURCE_REGISTERED: POST /{id}/source (first call)
+    SOURCE_REGISTERED --> SOURCE_REGISTERED: POST /{id}/source (correction — a differing fingerprint overwrites; identical is a no-op)
+    SOURCE_REGISTERED --> SOURCE_FROZEN: first successful POST /{id}/validate — system-performed, atomic with the session's CREATED to VALIDATING transition
+    SOURCE_FROZEN --> SOURCE_FROZEN: further POST /{id}/source — 200 no-op if identical, 409 IMPORT_SOURCE_MISMATCH if differing; never mutates
+    note right of SOURCE_FROZEN
+        Irreversible. No transition ever leaves this state
+        for the life of the session. Every subsequent
+        validate / dry-run / execute attempt, and every
+        re-validate / re-dry-run, operates against this
+        exact, unchanging ImportSource row.
+    end note
 ```
 
-**The renewal task uses its own `AsyncSession`, never the phase's main session** — `AsyncSession` is not safe for concurrent use from two coroutines, and the renewal write must commit promptly and independently of however long the main work's own transaction stays open. `IMPORT_JOB_HEARTBEAT_INTERVAL_SECONDS` (default 60s) is deliberately well under `IMPORT_JOB_LEASE_DURATION_SECONDS` (default 300s, unchanged) — a 5× margin so one missed renewal (transient latency) does not immediately produce a false-positive stale recovery.
+**States:**
+- **`NEW`** — implicit (no `ImportSource` row exists). Not a stored value.
+- **`SOURCE_REGISTERED`** (`import_sources.status = 'registered'`) — a source has been registered via `POST /{id}/source`, but no validation has ever started. **Corrections are allowed** in this state: a subsequent registration call with a *differing* identity fingerprint (§15) **overwrites** the row (an operator may fix a mistaken registration before committing to it) — an identical fingerprint is an idempotent no-op, as always.
+- **`SOURCE_FROZEN`** (`import_sources.status = 'frozen'`, `frozen_at` set) — set exactly once, **who:** the system, automatically, never a distinct manual action or endpoint; **when:** atomically with the session's *first* successful `CREATED → VALIDATING` transition (one transaction, §7); **reversible:** no, never, for the life of the session.
 
-**Completion fencing — the actual safety guarantee, independent of whether the worker ever notices it lost the lease:**
+**Validation gate:** `POST /{id}/validate` first checks that an `ImportSource` row exists at all — if none, the endpoint fails immediately with `409 IMPORT_SOURCE_NOT_REGISTERED` (§23), before any CAS transition is attempted. If a row exists (in either `registered` or `frozen` state), the freeze-and-transition step below runs.
 
-Every completion write (§6's "step 2" success *or* failure path) is now conditioned on presenting the same `lease_owner` token acquired at the start, in the **same transaction** as any real data writes:
+**Freeze-and-transition (one transaction):**
 
 ```sql
+-- Idempotent no-op once already frozen; only takes effect the first time.
+UPDATE import_sources
+SET status = 'frozen', frozen_at = now()
+WHERE import_session_id = :session_id AND status = 'registered';
+
+-- The session's own CAS transition, §7, in the SAME transaction.
+UPDATE import_sessions
+SET status = 'validating', version = version + 1, updated_at = now()
+WHERE id = :session_id AND status = ANY(:allowed_from_statuses) AND version = :expected_version
+RETURNING id, version;
+```
+
+Both statements commit or roll back together. On re-validate (the second, third, ... call), the first statement affects zero rows (already `'frozen'`) — harmless, not an error; the session's own CAS still governs whether the re-validate itself is permitted.
+
+**Forbidden transitions:** registering a source (`POST /{id}/source`) after `SOURCE_FROZEN` with a differing fingerprint is rejected using the same `409 IMPORT_SOURCE_MISMATCH` error code defined in §15 — the row is never mutated once frozen, regardless of whether the differing attempt is well-intentioned. There is no endpoint or mechanism anywhere in this design that un-freezes a source.
+
+**Why execution necessarily uses the identical frozen source that produced the accepted validation snapshot:** `ImportSource` is 1:1 with its session and, once frozen, immutable for that session's entire remaining lifetime. Since dry-run and execute can only be reached after a session has passed through `VALIDATING` at least once (§5), and freezing is an unconditional, irreversible side effect of that first `VALIDATING` transition, every later phase transaction necessarily observes the exact same `ImportSource` row — there is no code path, in this design, by which a session could ever have two different "versions" of its source across its lifetime.
+
+---
+
+## 7. Atomic Transition and Concurrency Policy
+
+Every state-changing operation on `import_sessions` is a single, atomic conditional `UPDATE`, never a load-then-mutate-then-commit sequence:
+
+```sql
+UPDATE import_sessions
+SET status = :new_status, version = version + 1, updated_at = now()
+WHERE id = :session_id AND status = ANY(:allowed_from_statuses) AND version = :expected_version
+RETURNING id, version;
+```
+
+executed via SQLAlchemy Core. `:expected_version` is the value the caller most recently observed for this session (read via `RETURNING version` from whichever prior call last touched it — session creation, the previous phase's own transition, etc.). Every guarded `UPDATE` increments `version` by exactly 1 and returns the new value.
+
+**Two independent guards, not one:** `status = ANY(:allowed_from_statuses)` (the finite-state-machine guard, §5) and `version = :expected_version` (a general-purpose optimistic-concurrency guard, independent of what changed). The `status` guard alone is normally sufficient for the transitions §5 defines, since every transition names its exact required source states; `version` is an additional, independent safety net that does not rely on interpreting `status` correctly, and is required by completion fencing (§9) as a second, session-level fence alongside the job-level `lease_owner`/`lease_generation` fence.
+
+Zero rows affected on any such `UPDATE` means the caller lost a race, or the session is genuinely in the wrong state — it must re-fetch and respond per §9 (fencing/recovery) or §23 (error codes), never proceed as if it had won.
+
+**Why compare-and-set, not `SELECT ... FOR UPDATE`:** the two-step-commit strategy (§9) commits durably after step 1 ("phase started") before step 2 ("do the work") begins; a row lock taken in step 1 releases at that commit and provides no protection for the gap before step 2. Compare-and-set needs no cross-step lock.
+
+**Session creation's own race-safety:** `get_or_create_session()`'s `INSERT`-then-possible-`UNIQUE`-violation is resolved by catching the `IntegrityError`, rolling back, and re-querying by `(dataset_type, idempotency_key)` — unrelated to the `version` counter, since a not-yet-created row has none.
+
+---
+
+## 8. Fresh-Install / Historical-Upgrade Schema Convergence
+
+1. `_StrEnum()` passes `create_constraint=True` so the ORM-driven fresh-install path (`Base.metadata.create_all()`) emits a named `CHECK` constraint identical to the migration's.
+2. The migration applies a **verify → classify → transform / no-op / fail-closed** pattern (the same one migrations `0013`/`0014` established) to every table this feature introduces, comparing full catalog definitions (`pg_get_constraintdef()`, index definitions, column defaults/nullability) — never ORM metadata alone, and never treating "a table with this name already exists" as success without verification.
+
+**Acceptance criteria (PR19A1 must prove with PostgreSQL tests):** a fresh empty database upgraded directly to head, and a database upgraded historically through the pre-existing migration chain then to head, produce byte-identical definitions for every object in §4.6. Downgrade → re-upgrade round-trip reproduces the same converged state. A deliberately mismatched pre-existing table causes the migration to fail closed.
+
+---
+
+## 9. Recovery Contract
+
+This section is authoritative for lease acquisition, heartbeat renewal, expiry, the recovery claim, completion fencing on both the success and failure paths, and every failure mode this design accounts for.
+
+### 9.1 Lease acquisition
+
+Every phase-starting transition into a `*_RUNNING` status (`VALIDATING`, `DRY_RUN_RUNNING`, `EXECUTING`) creates a new `import_jobs` row and, in the same transaction as §7's session CAS, sets:
+
+```sql
+INSERT INTO import_jobs (
+  id, import_session_id, job_type, status, attempt_number,
+  lease_owner, lease_generation, lease_expires_at, heartbeat_at, started_at
+) VALUES (
+  :job_id, :session_id, :job_type, 'running',
+  (SELECT COALESCE(MAX(attempt_number), 0) + 1 FROM import_jobs
+     WHERE import_session_id = :session_id AND job_type = :job_type),
+  :fresh_lease_owner_uuid, 1, now() + :lease_duration, now(), now()
+);
+```
+
+`attempt_number`'s computation is race-safe because only the caller that already won the session's own CAS (§7) ever reaches this `INSERT` — there is exactly one winner per phase attempt.
+
+### 9.2 Heartbeat and renewal
+
+This foundation's phases run synchronously within one HTTP request. Renewal is a background `asyncio.create_task`, started immediately after lease acquisition, running concurrently with the phase's real work (the off-thread parse, the validation loop, `plan_dry_run`, or `execute`), and cancelled in a `finally` block once that work completes:
+
+```python
+async def _renew_lease_loop(session_factory, job_id, lease_owner, lease_generation):
+    consecutive_transient_failures = 0
+    while True:
+        await asyncio.sleep(IMPORT_JOB_HEARTBEAT_INTERVAL_SECONDS)
+        try:
+            async with session_factory() as db:   # a session of its OWN — never
+                result = await db.execute(          # shared with the main work's session;
+                    update(ImportJob)                # AsyncSession is not safe for concurrent
+                    .where(ImportJob.id == job_id,    # use from two coroutines
+                           ImportJob.lease_owner == lease_owner,
+                           ImportJob.lease_generation == lease_generation,
+                           ImportJob.status == "running")
+                    .values(lease_expires_at=func.now() + IMPORT_JOB_LEASE_DURATION,
+                            heartbeat_at=func.now())
+                    .returning(ImportJob.id)
+                )
+                await db.commit()
+        except (OSError, DBAPIError):
+            # transient: cannot distinguish "DB unreachable" from "lease reassigned"
+            consecutive_transient_failures += 1
+            if consecutive_transient_failures >= 3:
+                return  # give up; completion fencing (§9.4) is the real backstop
+            continue
+        consecutive_transient_failures = 0
+        if result.first() is None:
+            return  # clean 0-row response: definitely lost the lease -- stop immediately,
+                     # no retry (unlike the transient-exception case above)
+```
+
+`IMPORT_JOB_HEARTBEAT_INTERVAL_SECONDS` defaults to 60s, `IMPORT_JOB_LEASE_DURATION_SECONDS` to 300s (both deployment-configurable) — a 5× safety margin so a single missed renewal does not immediately produce a false-positive recovery. A **clean** zero-row result (the `UPDATE`'s `WHERE` clause matched no row) is treated as an immediate, unambiguous "lease lost" signal — stop retrying. A **raised exception** (network/DB error) is treated as transient and retried up to two more times before giving up, because a raised exception alone cannot distinguish "the database is temporarily unreachable" from "the lease has been reassigned."
+
+The renewal loop's own success or failure to notice it lost the lease is **only ever an early-warning / best-effort signal**. The actual safety guarantee against a late commit is completion fencing (§9.4), which works correctly even if the renewal loop never detects anything wrong.
+
+### 9.3 Lease expiry and the recovery claim
+
+A job is *stale-running* when `status = 'running'` and `lease_expires_at < now()`. Recovery is a dedicated, mutating, Administrator-only operation — **never** a side effect of any `GET` request, and never silently performed by any other mutating endpoint either (§21):
+
+```sql
+-- Step 1: atomically claim the expired lease.
 UPDATE import_jobs
-SET status = 'succeeded', finished_at = now(), ...
-WHERE id = :job_id AND lease_owner = :my_lease_owner AND status = 'running'
+SET status = 'abandoned', finished_at = now(),
+    error_message = 'stale: lease expired, process interruption presumed'
+WHERE id = :job_id AND status = 'running' AND lease_expires_at < now()
+RETURNING id;
+
+-- Step 2 (same transaction, only if step 1 affected a row): transition the owning session.
+UPDATE import_sessions
+SET status = :failure_status_for_this_phase, version = version + 1,
+    failure_reason = 'recovered: prior attempt abandoned after lease expiry',
+    terminal_at = CASE WHEN :failure_status_for_this_phase = 'failed' THEN now() ELSE terminal_at END,
+    updated_at = now()
+WHERE id = :session_id AND status = :running_status_for_this_phase
 RETURNING id;
 ```
 
-(the failure path is identical, `status = 'failed'`). If this affects **zero rows**, the worker has been fenced out — `/recover` already claimed this job while this worker was still running. The entire transaction is rolled back — **including any real writes `adapter.execute()` performed**, since the fencing check and the data write share one transaction/commit boundary — nothing this worker did survives. A separate, small transaction then writes one `AUDIT_ACTION_IMPORT_FENCE_LOST` entry (§3.5), and the endpoint returns `409 IMPORT_RECOVERY_REQUIRED` to the caller (reusing the existing code — "the ground moved under you; re-examine current state" is exactly its meaning), never a success response for work that was actually discarded.
+If either statement affects zero rows, the **entire transaction rolls back** — recovery is a safe no-op, not an error (someone else already resolved it, or the session moved on for another reason). `terminal_at` is set only when the phase's failure status is itself terminal (`EXECUTING → FAILED`); `VALIDATION_FAILED`/`DRY_RUN_FAILED` are not terminal (§5), so recovering `VALIDATING`/`DRY_RUN_RUNNING` never sets it. One `AUDIT_ACTION_IMPORT_RECOVERY` entry is written in the same transaction (§3.5).
 
-**This is the completion-fencing guarantee the review required:** a job can be safely recovered the instant its lease appears expired, *without* first proving the original process is truly dead, because even if that process is only slow (not dead) and eventually finishes, its own completion write is structurally incapable of committing once superseded — the fencing check and the commit are the same atomic operation.
+**No automatic retry, ever.** Per §5, `*_FAILED` never auto-retries. An operator must explicitly trigger the next phase, creating a genuinely new `import_jobs` row with an incremented `attempt_number` — recovery only closes out the abandoned attempt honestly, never opens a new one.
 
-**Recovery's claim itself is unchanged from Rev 3** (§6-style CAS: `UPDATE import_jobs SET status='abandoned' ... WHERE status='running' AND lease_expires_at < now() RETURNING id`, then the owning session's CAS, both in one transaction, rolled back together if either affects zero rows) — renewal simply makes `lease_expires_at` a moving target that correctly resists premature recovery of genuinely-live work, and fencing is the new, independent backstop for the case renewal alone cannot cover (a renewal that itself races a recovery claim, or a worker that stops renewing but is still finishing its last unit of work).
+**Response contract:** a genuine recovery returns the now-`*_FAILED` session, `200`. Nothing to recover (session already terminal, or its lease has not expired) returns `409 IMPORT_SESSION_INVALID_STATE`.
 
-### 8.3 Sequence diagrams
+**Other mutating endpoints never silently recover.** If `validate`/`dry-run`/`execute`/`cancel` is called against a stale-running session, the endpoint performs no mutation of its own and returns `409 IMPORT_RECOVERY_REQUIRED` — the caller must call `/recover` first.
 
-**Diagram 1 — genuine crash, clean recovery (no fencing conflict):**
+### 9.4 Completion fencing — success and failure paths, both
+
+Every completion write — whether the phase succeeded or failed on its own terms — is conditioned on presenting the **same** fencing tokens acquired at §9.1, in the **same transaction** as any real data write:
+
+```sql
+-- Job-level fence (identical shape for success and for a genuine failure;
+-- only the target status/error_message differ):
+UPDATE import_jobs
+SET status = :succeeded_or_failed, finished_at = now(), error_message = :error_message_or_null
+WHERE id = :job_id
+  AND lease_owner = :my_lease_owner
+  AND lease_generation = :my_lease_generation
+  AND status = 'running'
+RETURNING id;
+
+-- Session-level fence, same transaction:
+UPDATE import_sessions
+SET status = :new_status, version = version + 1, updated_at = now(), ...
+WHERE id = :session_id AND status = :running_status AND version = :my_observed_version
+RETURNING id;
+```
+
+`:my_observed_version` is the `version` value captured from §9.1's own `INSERT`/CAS `RETURNING` at lease-acquisition time. **If either `UPDATE` affects zero rows, the worker has been fenced out** — recovery already claimed this job while this worker was still running (§9.3), or some other interleaving change occurred. The entire transaction is rolled back, **including any real writes `adapter.execute()` performed**, since the fencing checks and the data write share one commit boundary. A separate, small transaction then writes one `AUDIT_ACTION_IMPORT_FENCE_LOST` entry (§3.5), and the endpoint returns `409 IMPORT_RECOVERY_REQUIRED` to the caller — never a success response for work that was actually discarded.
+
+**This is the completion-fencing guarantee:** a job can be safely recovered the instant its lease appears expired, without first proving the original process is truly dead, because even a merely-slow (not dead) process's own completion write is structurally incapable of committing once superseded — the fencing check and the commit are the same atomic operation. This holds identically whether the phase's own outcome was success or failure.
+
+### 9.5 Failure-mode table
+
+| Failure mode | Heartbeat lifetime | Lease release | CAS/version handling | Session state after | Audit event | Retry eligibility |
+|---|---|---|---|---|---|---|
+| PostgreSQL transaction abort (mid-work) | Renewal loop keeps renewing independently (own session/transaction) until cancelled | Not explicit — expires naturally at `lease_expires_at` since the aborted work's own commit never happens | Completion `UPDATE` never runs; job stays `'running'` until recovery | Stays `*_RUNNING` until `/recover` | `AUDIT_ACTION_IMPORT_RECOVERY` once recovered | New attempt after recovery, per §5 |
+| Serialization failure | Same | Same | Application must catch and retry the whole phase transaction; if it cannot, identical to transaction-abort above | Same | Same | Same |
+| Deadlock | Same | Same | PostgreSQL aborts one of the two deadlocked transactions; the aborted one behaves exactly like transaction-abort above | Same | Same | Same |
+| Timeout (statement/request) | Renewal loop may still be running if the process itself survives; stops once the task/process is torn down | Not explicit — expires naturally | Completion never reached | Same | Same | Same |
+| Worker crash (process death) | Renewal loop dies with the process — no further renewals | Not explicit — expires naturally | Completion never attempted | Same | Same | Same |
+| Heartbeat loss (renewal `UPDATE` raises, worker process still alive) | Bounded retry — up to 3 consecutive transient failures (§9.2) before giving up | Not explicit unless the underlying cause is an actual lease reassignment, detected via a clean 0-row response | If the worker later attempts completion after being recovered: `AUDIT_ACTION_IMPORT_FENCE_LOST` (§9.4) | Depends on whether recovery fires before the work finishes | `AUDIT_ACTION_IMPORT_RECOVERY` if recovered; `AUDIT_ACTION_IMPORT_FENCE_LOST` if the original worker later attempts to complete | Same |
+| Lease expiration (worker unaware, or aware but unable to renew) | N/A | Not actively released — recovery's claim (§9.3) treats an expired, still-`'running'` lease as claimable | Recovery's CAS | Transitions via `/recover` | `AUDIT_ACTION_IMPORT_RECOVERY` | New attempt after recovery |
+| Application restart (deployment restart, rolling update) | All in-flight renewal loops die with the process — identical to worker crash | Same as worker crash | Same | Same | Same | Same |
+
+### 9.6 Sequence diagrams
+
+**Diagram 1 — genuine crash, clean recovery:**
 
 ```mermaid
 sequenceDiagram
@@ -265,11 +443,11 @@ sequenceDiagram
     participant DB as Database (import_jobs / import_sessions)
     participant Op as Operator (later)
 
-    W->>DB: CAS session CREATED -> VALIDATING
-    W->>DB: INSERT import_jobs (lease_owner=A, lease_expires_at=now+300s)
+    W->>DB: CAS session CREATED -> VALIDATING; freeze source (same transaction, §6/§7)
+    W->>DB: INSERT import_jobs (lease_owner=A, lease_generation=1, lease_expires_at=now+300s)
     DB-->>W: lease acquired
     par Renewal loop (every 60s)
-        W->>DB: UPDATE import_jobs SET lease_expires_at=now+300s WHERE lease_owner=A AND status='running'
+        W->>DB: UPDATE lease_expires_at WHERE lease_owner=A AND lease_generation=1 AND status='running'
         DB-->>W: 1 row (renewed)
     and Main work
         Note over W: parsing / validating rows
@@ -278,7 +456,7 @@ sequenceDiagram
     Note over DB: lease_expires_at passes, job still 'running'
     Op->>DB: POST /{id}/recover
     DB->>DB: UPDATE import_jobs SET status='abandoned' WHERE status='running' AND lease_expires_at<now() (1 row)
-    DB->>DB: UPDATE import_sessions SET status='validation_failed' WHERE status='validating' (1 row)
+    DB->>DB: UPDATE import_sessions SET status='validation_failed', version=version+1 WHERE status='validating' (1 row)
     DB->>DB: INSERT audit_logs (AUDIT_ACTION_IMPORT_RECOVERY)
     DB-->>Op: 200 session=VALIDATION_FAILED (recovered)
 ```
@@ -292,218 +470,409 @@ sequenceDiagram
     participant DB as Database
     participant Op as Operator
 
-    W->>DB: CAS session -> VALIDATING; acquire lease (lease_owner=A)
+    W->>DB: CAS session -> VALIDATING; acquire lease (lease_owner=A, lease_generation=1)
     Note over W: renewal loop starts; network partition begins shortly after
-    W--xDB: renewal UPDATE cannot reach DB (partition)
+    W--xDB: renewal UPDATE cannot reach DB (partition) -- retried up to 3x, then gives up (§9.2)
     Note over DB: lease_expires_at passes while W is still genuinely working
     Op->>DB: POST /{id}/recover
     DB->>DB: UPDATE import_jobs SET status='abandoned' WHERE status='running' AND lease_expires_at<now() (1 row - claims it)
-    DB->>DB: UPDATE import_sessions -> VALIDATION_FAILED
+    DB->>DB: UPDATE import_sessions -> VALIDATION_FAILED, version+1
     DB-->>Op: 200 recovered
     Note over W: network restored; W finishes real work, attempts to commit
-    W->>DB: UPDATE import_jobs SET status='succeeded' WHERE id=job AND lease_owner=A AND status='running'
+    W->>DB: UPDATE import_jobs SET status='succeeded' WHERE id=job AND lease_owner=A AND lease_generation=1 AND status='running'
     DB-->>W: 0 rows affected (fenced out -- status is now 'abandoned')
     W->>DB: ROLLBACK (discards every write this attempt made, including any adapter writes)
     W->>DB: INSERT audit_logs (AUDIT_ACTION_IMPORT_FENCE_LOST) [separate transaction]
     W-->>W: return 409 IMPORT_RECOVERY_REQUIRED to the original caller
 ```
 
-**Slice ownership (§22):** the generic renewal-loop helper, the completion-fencing check, and the `/recover` endpoint mechanism are all **PR19A1** deliverables (schema- and CAS-adjacent, phase-agnostic). **PR19A2** wires lease acquisition + renewal + fencing into `VALIDATING` (its only owned running-triggering endpoint, §19). **PR19A3** wires the identical mechanism into `DRY_RUN_RUNNING` **and** `EXECUTING` — both are PR19A3-owned endpoints (§19), correcting Rev 3's inconsistent split that assigned `DRY_RUN_RUNNING` to A2 while the `dry-run` endpoint itself was assigned to A3.
+**Diagram 3 — heartbeat loss with bounded retry, then eventual recovery:**
 
----
+```mermaid
+sequenceDiagram
+    autonumber
+    participant W as Worker A
+    participant DB as Database
+    participant Op as Operator
 
-## 9. Data Retention
+    W->>DB: acquire lease (lease_owner=A, lease_generation=1)
+    loop renewal attempt (up to 3 tries)
+        W->>DB: UPDATE lease_expires_at WHERE lease_owner=A AND status='running'
+        DB--xW: transient error (connection reset)
+    end
+    Note over W: 3 consecutive renewal attempts raised an exception (not a clean\n0-row response) -- cannot tell "DB unavailable" from "lease reassigned";\nstop renewing per §9.2
+    Note over DB: lease_expires_at eventually passes
+    Op->>DB: POST /{id}/recover
+    DB->>DB: claim (status='running' AND lease_expires_at<now()) -> abandoned
+    DB-->>Op: 200 recovered
+    Note over W: connectivity restored too late; W's own completion write\nnow fails the fencing check exactly as in Diagram 2
+```
 
-**Owner Decision (recorded in `docs/DECISION_LOG.md`):** unchanged policy from Rev 3 — retention clock starts at `terminal_at`; 180-day default, deployment-configurable; redact-in-place for source/finding content; retain structural/summary/audit fields indefinitely; auditable and idempotent cleanup; no V1 Administrator UI; no legal hold in V1.
+### 9.7 Recovery matrix
 
-**Enforcement mechanism — moved into PR19A3 in this revision (was an unscheduled slice in Rev 3):** the review correctly noted that leaving cleanup as an unscheduled slice would let PR19A1–A3 be considered complete without any way to actually enforce the approved policy. Rev 4 resolves this by shipping the cleanup **logic and endpoint** with PR19A3 — while still not building a background scheduler *inside this codebase* (schedulers/workers remain a non-goal, §23): an external trigger (a deployment-level cron job, or a manual Administrator call) invokes the endpoint; this codebase supplies the safe, bounded, idempotent operation the trigger calls, not the trigger itself.
-
-**`POST /import-sessions/retention/cleanup`** (Administrator-only, new endpoint, PR19A3, §19):
-- Request: `{limit?: int}` (default 100, max 500 — bounded per call, same discipline as `MAX_IMPORT_ROWS`).
-- Selects up to `limit` sessions matching `retention_purged_at IS NULL AND terminal_at IS NOT NULL AND terminal_at < now() - IMPORT_RETENTION_DAYS`, ordered `terminal_at ASC` (oldest first, deterministic and fair).
-- Each selected session is redacted in its **own** all-or-nothing transaction (§9's existing per-session contract, unchanged: `ImportSource`/`ValidationFinding`/`ImportSession.notes` fields redacted, `retention_purged_at` set, one `AUDIT_ACTION_IMPORT_RETENTION_CLEANUP` entry written) — one session's failure is caught, counted, and skipped without aborting the batch.
-- Response: `{purged_count, skipped_count, has_more}` — `has_more: true` signals additional eligible sessions remain beyond this batch; the caller (cron or operator) is expected to call again.
-- Idempotent and interruption-safe exactly as specified in Rev 3: re-running always skips already-purged sessions via the `retention_purged_at IS NULL` filter.
-
-Source-byte deletion ordering (a PR19B-forward requirement, since no bytes exist yet in PR19A1–A3) is unchanged from Rev 3.
+| Current State | Failure | Recovery Owner | Retry | Audit | Final State |
+|---|---|---|---|---|---|
+| `VALIDATING` | Worker crash / lease expiry | Operator via `/recover` | New `validate` call after recovery | `AUDIT_ACTION_IMPORT_RECOVERY` | `VALIDATION_FAILED` (job `abandoned`) |
+| `DRY_RUN_RUNNING` | Worker crash / lease expiry | Operator via `/recover` | New `dry-run` call after recovery | `AUDIT_ACTION_IMPORT_RECOVERY` | `DRY_RUN_FAILED` (job `abandoned`) |
+| `EXECUTING` | Worker crash / lease expiry | Operator via `/recover` | New `execute` call after recovery (requires a fresh dry-run first, §5) | `AUDIT_ACTION_IMPORT_RECOVERY` | `FAILED` (job `abandoned`) |
+| `EXECUTING` | Late-arriving completion after recovery already fired (fencing loss) | The late worker itself (self-detected via a failed fencing `UPDATE`) | No automatic retry; caller must inspect the already-recovered state | `AUDIT_ACTION_IMPORT_FENCE_LOST` | Unchanged — already recovered to `FAILED` |
+| `RETENTION_CLEANUP` (§18) | Cleanup worker crashes mid-batch (some sessions claimed, not purged) | Next cleanup invocation, via claim-expiry re-claim | Yes — an unclaimed or expired-claim session is naturally re-eligible | None until actually purged | Unchanged (still eligible) until re-claimed and purged |
+| `RETENTION_CLEANUP` | Two concurrent cleanup calls race for the same session | `FOR UPDATE SKIP LOCKED` ensures only one claims it | The loser simply processes its other claimed sessions — no error | `AUDIT_ACTION_IMPORT_RETENTION_CLEANUP` (once, by the winner) | Session purged exactly once |
+| `RECOVERING` (mid-`/recover` transaction) | Recovery's own process crashes mid-commit | Next `/recover` call (any caller) | Yes, safe — nothing committed to retry against | None (nothing committed) | Unchanged — still `*_RUNNING` with an expired lease, awaiting a retried claim |
 
 ---
 
 ## 10. Parser Adapter and Off-Thread Execution Contract
 
-Unchanged.
+`ImportAdapter.parse()` remains synchronous (real parsers are inherently sync/CPU-bound libraries). The foundation itself — not a documented aspiration for "a future adapter's own call site" — invokes it via `await asyncio.to_thread(adapter.parse, raw_input)` inside the same service function that would otherwise call it directly. The `MAX_IMPORT_ROWS` bound (5000, unchanged from Roadmap PR12's precedent) is checked immediately after `parse()` returns, before any further work.
 
 ---
 
 ## 11. Batch Validation and N+1 Prevention
 
-Unchanged.
+The business-validation hook is split in two:
+
+1. `async def preload_business_context(self, db, records: list[RawImportRecord]) -> object` — called **once** per validation pass, before the per-record loop. Default: returns `None`. A concrete adapter performs its bulk lookups here (mirroring Roadmap PR12's bulk-lookup precedent) and returns an adapter-defined context object.
+2. `def validate_business_rules(self, record: RawImportRecord, context: object) -> list[FieldError]` — **synchronous**, receives only the record and the preloaded context, **no database session parameter** — a structural guarantee against per-record queries, not a convention.
+
+PR19A2 must provide a test double proving `preload_business_context` is called exactly once per pass and no per-record query occurs.
 
 ---
 
 ## 12. Validation Snapshot Invariant
 
-Unchanged from Rev 3 (atomic `current_validation_job_id` pointer, database-enforced ownership via §4.5's composite FK, promotion only on job `SUCCEEDED`, distinct-row counting for `invalid_rows`/`warning_rows`).
+**Required invariant:** a validation response references exactly one completed `ValidationAttempt`, and the following belong to that same attempt, atomically: the frozen source's checksum (§6 — immutable and identical for every attempt on a session, so it never needs its own promotion), a `ruleset_version` string (an adapter may declare `ruleset_version: str = "1"` as a class attribute, recorded on the job at run time), `total_rows`/`valid_rows`/`invalid_rows`/`warning_rows`, the `ValidationFinding` rows themselves, and `started_at`/`finished_at`.
+
+**Mechanism:** `import_sessions.current_validation_job_id`, promoted **only** in the same transaction that marks a `VALIDATE` job `SUCCEEDED` — never inferred from `ORDER BY created_at`. Database-enforced via §4.5's composite foreign key, not merely application-maintained.
+
+**Promotion rule:** moves only when `ImportJob.status` reaches `SUCCEEDED`, regardless of whether the session's own resulting status is `VALIDATED` or `VALIDATION_FAILED` (a completed pass that finds blocking errors is still a legitimate "current" result). A crashed job (`status = FAILED` or `ABANDONED`, §9) is never promoted.
+
+**In-progress representation:** while `status = VALIDATING`, the pointer still shows the previous successful attempt, never a half-written one.
+
+**Distinct-row counting:** `invalid_rows = COUNT(DISTINCT row_number WHERE severity='ERROR')`; `warning_rows = COUNT(DISTINCT row_number WHERE severity='WARNING')` — independent projections; one row may legitimately appear in both.
+
+**Current vs. historical API contract:** `GET /{id}/errors` defaults to `current_validation_job_id`; `?attempt_id=<uuid>` returns a historical attempt's findings instead. Public field name: `validation_attempt_id`.
 
 ---
 
 ## 13. Warning vs. Error Semantics
 
-Unchanged.
+Every validation pass partitions its findings by severity: `blocking_errors` (severity `ERROR`) and `warnings` (severity `WARNING`). A session reaches `VALIDATED` **if and only if** `blocking_errors` is empty, regardless of how many `warnings` exist — warning never blocks, error always blocks. Both are persisted as `ValidationFinding` rows and both are visible via `GET /errors`, but only `blocking_errors`' distinct-row count feeds `invalid_rows` (§12). Dry-run and execute remain gated on `status == VALIDATED`.
 
 ---
 
-## 14. Session and Source Identity — Unified Contract (rewritten, Rev 4)
+## 14. Public Error Codes (Cross-Reference Preview)
 
-**What was wrong:** Rev 3 defined two *separate* identity mechanisms — an optional `source_checksum` at session creation (hashed into `idempotency_fingerprint`, then discarded — the raw value was never persisted), and a fuller identity fingerprint at `/source` registration (§14.2's old content). Nothing connected them: a caller could create a session with `source_checksum=X`, then register a source with `checksum=Y`, and nothing would ever notice the two disagreed — exactly the conflict the review identified.
+*(Full table in §23. Referenced here because §15's identity contract, §16's dry-run enforcement, and §17's execution both depend on codes defined there — this preview exists purely to avoid a forward-reference-only reading experience; §23 remains the single authoritative table.)*
 
-**Fix — one identity mechanism, one place it lives:** `POST /import-sessions` no longer accepts any source-identity field at all. Session creation carries **only** `{dataset_type, idempotency_key?, notes?}` — its idempotency is `(dataset_type, idempotency_key)` alone (§4.1 drops `idempotency_fingerprint` entirely, since there is no longer any other field to fold into a hash). **`ImportSource` (§4.2) is the single, sole place any checksum or identity information is ever recorded**, exactly once per session, immutably, via `POST /{id}/source`.
-
-### 14.1 Session-creation idempotency (simplified)
-
-- No `idempotency_key` → always create a new session.
-- Key present, no existing `(dataset_type, idempotency_key)` row → create, `201`.
-- Key present, existing row → return it, `200` — **always** an idempotent replay now; there is nothing else that could disagree, so `IMPORT_IDEMPOTENCY_CONFLICT` no longer exists as a distinct code (§21). The unique constraint's `IntegrityError`-then-re-query race-safety pattern is unchanged.
-
-### 14.2 Source registration — the only identity/checksum contract (mechanism unchanged from Rev 3, now the sole one)
-
-`POST /{id}/source`: `{checksum, byte_size, content_type?, filename?, source_version?}`. Identity fingerprint: `SHA-256(canonical_json({checksum, byte_size, dataset_type (from the owning session), normalized filename, source_version, options_fingerprint}))`, stored as `import_sources.source_fingerprint`.
-
-- Database-enforced via `INSERT` + `UNIQUE(import_session_id)` (not check-then-insert): the INSERT either succeeds (first source for this session, `201`) or fails on the constraint, in which case the caller catches the `IntegrityError`, rolls back, re-`SELECT`s the existing row, and compares `source_fingerprint` — matching → `200` idempotent no-op; differing → `409 IMPORT_SOURCE_MISMATCH` (the **one** identity-conflict code in this design now, covering every case: replay, concurrent registration, and what Rev 3 additionally used `IMPORT_IDEMPOTENCY_CONFLICT` for).
-- Once set, `checksum`/`byte_size`/`source_fingerprint` are immutable for the life of the session.
-- Two concurrent identical registrations converge on one authoritative row; two concurrent differing registrations produce exactly one winner and one `409` — both by construction of the unique constraint, unchanged from Rev 3.
-- Checksum trust boundary and storage-write/DB-commit ordering (PR19B-forward requirements): unchanged from Rev 3.
-
-**Why this removes the review's conflict structurally, not just procedurally:** there is now exactly one column (`import_sources.checksum`) and one moment (`/source`'s first successful call) where a session's data identity is ever established. There is no second value anywhere in the system that could ever disagree with it.
+The codes introduced by this design: `IMPORT_SESSION_NOT_FOUND`, `IMPORT_SESSION_INVALID_STATE`, `IMPORT_SOURCE_NOT_REGISTERED` (§6), `IMPORT_SOURCE_MISMATCH` (§15), `IMPORT_RECOVERY_REQUIRED` (§9), `IMPORT_ATTEMPT_IN_PROGRESS` (§7, §17), `IMPORT_ADAPTER_NOT_REGISTERED`, `IMPORT_ADAPTER_NOT_IMPLEMENTED`, `IMPORT_EXECUTION_FAILED`, `INVALID_INPUT` (reused, repository-wide).
 
 ---
 
-## 15. Dry-Run Enforcement
+## 15. Session and Source Identity — Unified Contract
 
-Unchanged from Rev 3 (PostgreSQL read-only transaction is the enforced mechanism; a caught write attempt is an internal invariant-violation log/audit marker, not a public error code).
+**Required invariant:** a session references exactly one immutable source identity, and there is exactly one place in the entire system where that identity is ever recorded.
+
+### 15.1 Session-creation idempotency
+
+`POST /import-sessions` accepts **only** `{dataset_type, idempotency_key?, notes?}` — no checksum or source-identity field of any kind. Idempotency is `(dataset_type, idempotency_key)` alone (§4.1's unique constraint):
+
+- No `idempotency_key` → always create a new session (server-generated identity; no accidental deduplication).
+- Key present, no existing row → create, `201`.
+- Key present, existing row → return it, `200` — **always** an idempotent replay; there is no other field that could ever disagree, so no conflict code exists for session creation.
+
+### 15.2 Source registration — the sole identity/checksum contract
+
+`POST /{id}/source`: `{checksum, byte_size, content_type?, filename?, source_version?}`. Identity fingerprint: `SHA-256(canonical_json({checksum, byte_size, dataset_type (from the owning session), normalized filename, source_version, options_fingerprint}))`, stored as `import_sources.source_fingerprint` (§4.2).
+
+**Database-enforced, not check-then-insert:** the endpoint performs a plain `INSERT` (never a `SELECT` first). `UNIQUE(import_session_id)` is the arbiter:
+- **INSERT succeeds** → first source for this session, `status='registered'`, `201`.
+- **INSERT fails on the constraint** → catch the `IntegrityError`, roll back, `SELECT` the existing row:
+  - `status = 'registered'` and the new fingerprint **differs** → **overwrite** the row (§6 — pre-freeze correction is allowed), `200`.
+  - `status = 'registered'` and the new fingerprint **matches** → idempotent no-op, `200`.
+  - `status = 'frozen'` and the new fingerprint **matches** → idempotent no-op, `200`.
+  - `status = 'frozen'` and the new fingerprint **differs** → `409 IMPORT_SOURCE_MISMATCH` — never mutated.
+
+This single mechanism resolves every required concurrency scenario:
+- **Two concurrent identical registrations:** both attempt the `INSERT`; exactly one wins; the loser's re-query finds a matching fingerprint and converges via the idempotent-`200` branch.
+- **Two concurrent differing registrations (pre-freeze):** same race, same single winner; the loser's re-query finds a differing fingerprint against a `'registered'` (not yet frozen) row and **overwrites** it — the *last writer* before freeze determines the bound identity, which is correct since nothing has consumed it yet.
+- **A registration racing a freeze:** if `/validate`'s freeze transaction (§6) commits between a registration's `INSERT`-failure and its re-query, the re-query observes `status='frozen'` and the differing-fingerprint case above applies — `409`, never mutated.
+
+**Checksum trust boundary:** this foundation trusts the caller-supplied checksum; it never sees raw bytes to verify independently. A future concrete-adapter slice that adds byte storage must independently recompute and verify the checksum once bytes exist.
+
+**Why this removes any possibility of session-creation and source-registration disagreeing:** there is exactly one column (`import_sources.checksum`) and one moment (registration, subject to the freeze gate) where a session's data identity is ever established. Session creation carries no competing value anywhere.
 
 ---
 
-## 16. Execute Idempotency and Single-Winner Execution Claim
+## 16. Dry-Run Enforcement
 
-Unchanged from Rev 3, and now explicitly composed with §8.2's completion fencing: the single-winner CAS on `DRY_RUN_COMPLETED → EXECUTING` decides who *starts* executing; completion fencing (§8.2) additionally guarantees that even the legitimate winner's own completion write can be superseded by a recovery that fires mid-execution, and is discarded rather than committed if so. Execute idempotency's `COMPLETED → 200 replay` / `EXECUTING → 409 IMPORT_ATTEMPT_IN_PROGRESS` / `FAILED → 409 IMPORT_SESSION_INVALID_STATE` table is unchanged.
+**Primary mechanism: a PostgreSQL read-only transaction**, not developer convention. The call to `adapter.plan_dry_run(...)` runs against a **separate** `AsyncSession`, opened with `SET TRANSACTION READ ONLY` — not the outer request's normal read-write session. Any write attempt inside raises `asyncpg.ReadOnlySqlTransactionError` immediately, propagating through the existing rollback + `DRY_RUN_FAILED` path (§7, §9.4).
 
----
+**Classification of a caught write attempt:** not a distinct public API error code. From the client's perspective, a dry-run that fails because an adapter attempted a write looks identical to a dry-run that failed for any other adapter-raised reason: `200`, session `status = DRY_RUN_FAILED`, a generic `failure_reason`. Internally, the raw exception is recorded as a distinct, security-relevant log/audit marker (`import.dry_run.write_attempt_detected`, a structured log tag, not an HTTP error code), so operators can specifically search for this anomaly without exposing the distinction to API consumers.
 
-## 17. Audit Transaction Boundaries
+**Defense in depth (secondary):** `plan_dry_run()`'s signature is narrowed to a read-only-typed interface (no `add()`/`delete()`/`commit()`/`flush()`) — a discoverability improvement, not the safety-critical layer (the database enforcement is).
 
-Unchanged from Rev 3, plus: exactly one `AUDIT_ACTION_IMPORT_FENCE_LOST` entry (§3.5, §8.2) when a completion write loses its fence — written in a separate small transaction from the (rolled-back) main one, since the main transaction that would have carried it never commits.
+**Result persistence:** the `DryRunPlan` is computed entirely within the read-only transaction; `session.dry_run_completed_at`/`status` is persisted via the outer, normal read-write session strictly after the read-only evaluation completes.
 
----
-
-## 18. Cursor and Pagination Validation
-
-Unchanged.
+**Required PostgreSQL tests (PR19A3):** a test adapter that deliberately attempts a write and asserts it raises and the phase fails; a normal no-op adapter proving success.
 
 ---
 
-## 19. API and RBAC Contract
+## 17. Execute Idempotency and Single-Winner Execution Claim
 
-**Twelve** endpoints (one more than Rev 3 — the retention-cleanup endpoint, §9), all **Administrator-only**.
+**Single-winner claim:** the §7 atomic conditional `UPDATE`, applied to `DRY_RUN_COMPLETED → EXECUTING`. Exactly one of two concurrent `execute` requests affects a row and proceeds to create the `EXECUTE` job (§9.1) and call `adapter.execute()` (via the normal read-write session — execute, unlike dry-run, must actually write).
+
+**Execute idempotency (a repeat call, not a request-payload comparison — contrast §15):**
+- `COMPLETED` → repeat call returns the existing session, `200`, not re-executed.
+- `EXECUTING` (another request holds the claim) → `409 IMPORT_ATTEMPT_IN_PROGRESS`.
+- `FAILED` → `409 IMPORT_SESSION_INVALID_STATE` (a fresh dry-run is required first, §5).
+- Any other state → `409 IMPORT_SESSION_INVALID_STATE`.
+
+**Composed with completion fencing (§9.4):** the single-winner claim decides who *starts* executing; completion fencing additionally guarantees that even the legitimate winner's own completion write can be superseded by a recovery firing mid-execution, and is discarded — never committed — if so.
+
+**Required PostgreSQL test (PR19A3):** a genuine two-connection concurrency test proving exactly one execution, one `EXECUTE` job, one audit entry, and a deterministic response for the loser.
+
+---
+
+## 18. Retention Cleanup Concurrency
+
+**Owner Decision (recorded in `docs/DECISION_LOG.md`):** 180-day post-terminal retention; redact-in-place for source/finding content; retain structural/summary/audit fields indefinitely; deployment-configurable period (`IMPORT_RETENTION_DAYS`); no V1 Administrator UI to change it; no legal/manual hold in V1.
+
+**Enforcement — `POST /import-sessions/retention/cleanup`** (Administrator-only, PR19A3, §21): a bounded, idempotent batch operation. **This endpoint, a scheduler, or a manual operator call are merely invocation mechanisms — correctness comes entirely from the claim/fencing protocol below, regardless of who or what invokes it, how often, or how many callers overlap.**
+
+**Atomic claim — `SELECT ... FOR UPDATE SKIP LOCKED`:**
+
+```sql
+WITH claimed AS (
+  SELECT id FROM import_sessions
+  WHERE retention_purged_at IS NULL
+    AND terminal_at IS NOT NULL
+    AND terminal_at < now() - :retention_period
+    AND (retention_cleanup_claimed_by IS NULL
+         OR retention_cleanup_claim_expires_at < now())
+  ORDER BY terminal_at ASC
+  LIMIT :limit
+  FOR UPDATE SKIP LOCKED
+)
+UPDATE import_sessions
+SET retention_cleanup_claimed_by = :worker_id,
+    retention_cleanup_claim_expires_at = now() + :claim_timeout
+FROM claimed
+WHERE import_sessions.id = claimed.id
+RETURNING import_sessions.id;
+```
+
+`FOR UPDATE SKIP LOCKED` is PostgreSQL's standard job-queue-claiming idiom: **two concurrent cleanup invocations can never claim the same session** — a session another transaction currently holds a row lock on is silently skipped, not waited on or double-claimed. `:claim_timeout` (e.g. 5 minutes — a single session's redaction is fast) bounds how long a claim survives a crashed cleanup worker before another invocation may re-claim it.
+
+**Per-session redaction, one all-or-nothing transaction, fenced on the claim:**
+
+```sql
+UPDATE import_sources
+SET filename = NULL, content_type = NULL
+WHERE import_session_id = :session_id;
+
+UPDATE import_row_errors
+SET message = '[redacted]', field = NULL
+WHERE import_job_id IN (SELECT id FROM import_jobs WHERE import_session_id = :session_id);
+
+UPDATE import_sessions
+SET notes = NULL, retention_purged_at = now()
+WHERE id = :session_id AND retention_cleanup_claimed_by = :worker_id
+RETURNING id;
+```
+
+The first two `UPDATE`s redact descriptive/sensitive fields (`import_sources.filename`/`content_type`, `import_row_errors.message`/`field`) per the field-level retention table in §3–§4; `checksum`, `error_code`, `severity`, and `row_number` are never touched, so aggregate counts and identity remain reconcilable after redaction. The third `UPDATE` both clears `import_sessions.notes` and — in the same statement — sets `retention_purged_at`, which is the actual fencing check: it only succeeds `WHERE retention_cleanup_claimed_by = :worker_id`.
+
+The final `retention_purged_at`-setting `UPDATE` is itself fenced on `retention_cleanup_claimed_by` — the same principle as job completion fencing (§9.4): if this worker's claim was reclaimed by another (its `:claim_timeout` expired and a different worker won it), this `UPDATE` affects zero rows, the whole redaction transaction rolls back, and one `AUDIT_ACTION_IMPORT_FENCE_LOST` entry records it (§3.5 — the same constant reused, since this is the identical class of event as job-completion fencing).
+
+**Retry and recovery:** a session whose redaction transaction fails for any reason (or whose claim simply expires because the worker crashed) is skipped, counted, and remains eligible (`retention_purged_at IS NULL`) — the next invocation's claim query naturally picks it up again. No separate "abandoned" concept is needed for cleanup (unlike job recovery, §9) since a session's redaction either completes atomically or leaves no partial trace at all.
+
+**Response:** `{purged_count, skipped_count, has_more}` — `has_more: true` signals more eligible sessions exist beyond this batch (`limit`, default 100, max 500).
+
+**Audit:** one `AUDIT_ACTION_IMPORT_RETENTION_CLEANUP` entry per session actually purged.
+
+Source-byte deletion ordering (a forward requirement for a future concrete-adapter slice, since no bytes exist in this foundation): storage-layer bytes are deleted only **after** the database transaction marking the session purged commits — never speculatively before.
+
+---
+
+## 19. Audit Transaction Boundaries
+
+Exactly one `AUDIT_ACTION_IMPORT` entry is written by the winning `execute` request, only on `adapter.execute()`'s success, in the **same** transaction/commit as the adapter's writes and the session's `COMPLETED` update. Exactly one `AUDIT_ACTION_IMPORT_RECOVERY` entry per successful recovery claim (§9.3). Exactly one `AUDIT_ACTION_IMPORT_FENCE_LOST` entry per lost fence, whether from a job completion (§9.4) or a retention-cleanup completion (§18) — a separate, small transaction, since the main (rolled-back) transaction that would have carried it never commits. Exactly one `AUDIT_ACTION_IMPORT_RETENTION_CLEANUP` entry per session purged (§18). No audit entry for validate, dry-run, cancel, or a losing/idempotent-replay execute call.
+
+---
+
+## 20. Cursor and Pagination Validation
+
+`limit: int = Query(default=25, ge=1, le=200)` on every list endpoint (`GET /import-sessions`, `GET /{id}/errors`). Every cursor subfield parse (`uuid.UUID(...)`, `int(...)`) is wrapped and re-raised as `InvalidInputError` (→ `400 INVALID_INPUT`) on any `ValueError`, applied uniformly in the CRUD-layer decoders, fail-fast with no query executed first.
+
+---
+
+## 21. API and RBAC Contract
+
+**Twelve** endpoints, all **Administrator-only** (`ADMINISTRATOR_ONLY_ROLES`, the existing 3-role model — no new role introduced). No other role may view any import-session data in this foundation, since `ValidationFinding.message`/`ImportSource.filename`/`ImportSession.notes` may echo raw legacy source content; broadening read access is an explicit future Owner Decision, not assumed here.
 
 | # | Method & route | Purpose | Slice |
 |---|---|---|---|
-| 1 | `POST /import-sessions` | Create (or idempotently return) a session — **no source-identity field** (§14.1) | A1 |
+| 1 | `POST /import-sessions` | Create (or idempotently return) a session — no source-identity field (§15.1) | A1 |
 | 2 | `GET /import-sessions` | Cursor-paginated list (side-effect free) | A1 |
 | 3 | `GET /import-sessions/{id}` | Summary (side-effect free) | A1 core; extended additively by A2/A3 |
-| 4 | `GET /import-sessions/{id}/status` | Lightweight status, may report computed `is_stale` (side-effect free) | A1 |
-| 5 | `POST /import-sessions/{id}/source` | Register the session's **sole** identity/checksum record (§14.2) | A1 |
+| 4 | `GET /import-sessions/{id}/status` | Lightweight status, may report a computed, non-persisted `is_stale` field (side-effect free) | A1 |
+| 5 | `POST /import-sessions/{id}/source` | Register/correct the session's sole identity record (§6, §15.2) | A1 |
 | 6 | `POST /import-sessions/{id}/cancel` | Cancel a cancellable session | A1 |
-| 7 | `POST /import-sessions/{id}/recover` | Dedicated, mutating lease-recovery claim (§8.2) | A1 (mechanism); **A2 wires `VALIDATING`; A3 wires `DRY_RUN_RUNNING` and `EXECUTING`** (corrected split) |
-| 8 | `POST /import-sessions/{id}/validate` | Run the validate phase | A2 |
+| 7 | `POST /import-sessions/{id}/recover` | Dedicated, mutating lease-recovery claim (§9.3) | A3 |
+| 8 | `POST /import-sessions/{id}/validate` | Run the validate phase (requires `SOURCE_FROZEN`, §6) | A2 |
 | 9 | `GET /import-sessions/{id}/errors` | Paginated `ValidationFinding`s (side-effect free) | A2 |
-| 10 | `POST /import-sessions/{id}/dry-run` | Run the dry-run phase, read-only enforced | **A3** |
+| 10 | `POST /import-sessions/{id}/dry-run` | Run the dry-run phase, read-only enforced | A3 |
 | 11 | `POST /import-sessions/{id}/execute` | Run the execute phase, single-winner claim + completion fencing | A3 |
-| 12 | **`POST /import-sessions/retention/cleanup`** | **New (§9).** Bounded, idempotent batch redaction of eligible terminal sessions | **A3** |
+| 12 | `POST /import-sessions/retention/cleanup` | Bounded, idempotent batch redaction of eligible terminal sessions (§18) | A3 |
 
-**Per-endpoint contract (changes from Rev 3 only):**
+**Per-endpoint contract:**
 
-- **1. `POST /import-sessions`** — Request: `{dataset_type, idempotency_key?, notes?}` (source fields removed). Codes: `201`, `200` idempotent replay. `IMPORT_IDEMPOTENCY_CONFLICT` removed (§14.1, §21).
-- **5. `POST /import-sessions/{id}/source`** — Request: `{checksum, byte_size, content_type?, filename?, source_version?}` (`byte_size` now required, matching §4.2). Codes: `201`, `200` idempotent no-op, `404`, `409 IMPORT_SOURCE_MISMATCH`, `409 IMPORT_RECOVERY_REQUIRED`.
-- **8, 10, 11 (mutating phase endpoints):** in addition to Rev 3's `409 IMPORT_RECOVERY_REQUIRED` (stale lease, call `/recover` first), a **new** possible outcome: the endpoint's own completion write loses its fence (§8.2) → `409 IMPORT_RECOVERY_REQUIRED` as well (same code — "the ground moved, re-examine state" covers both the pre-check and the post-completion case).
-- **12. `POST /import-sessions/retention/cleanup`** — Request: `{limit?}`. Response: `{purged_count, skipped_count, has_more}`. Codes: `200` always (a batch operation over eligible sessions, not scoped to one session id — no `404`). Audit: one `AUDIT_ACTION_IMPORT_RETENTION_CLEANUP` entry per session purged (§17).
+1. **`POST /import-sessions`** — Request: `{dataset_type, idempotency_key?, notes?}`. Response: `ImportSessionOut`. Codes: `201`, `200` idempotent replay.
+2. **`GET /import-sessions`** — Request: `dataset_type?`, `limit` (`ge=1,le=200`), `cursor?`. Response: `Page[ImportSessionOut]`. Codes: `200`, `400 INVALID_INPUT`.
+3. **`GET /import-sessions/{id}`** — Response: `ImportSessionSummaryOut` (session + jobs + finding count + `validation_attempt_id`). Codes: `200`, `404 IMPORT_SESSION_NOT_FOUND`.
+4. **`GET /import-sessions/{id}/status`** — Response: `ImportSessionStatusOut`. Same codes as #3.
+5. **`POST /import-sessions/{id}/source`** — Request: `{checksum, byte_size, content_type?, filename?, source_version?}`. Response: `ImportSourceOut`. Codes: `201`, `200` (idempotent no-op or pre-freeze correction), `404`, `409 IMPORT_SOURCE_MISMATCH`.
+6. **`POST /import-sessions/{id}/cancel`** — Response: `ImportSessionOut`. Codes: `200`, `404`, `409 IMPORT_SESSION_INVALID_STATE`, `409 IMPORT_RECOVERY_REQUIRED`.
+7. **`POST /import-sessions/{id}/recover`** — No request body. Response: `ImportSessionOut`. Codes: `200` (recovered), `404`, `409 IMPORT_SESSION_INVALID_STATE` (nothing to recover). Audit: one `AUDIT_ACTION_IMPORT_RECOVERY` on success.
+8. **`POST /import-sessions/{id}/validate`** — No request body (no parser exists in this foundation). Response: `ImportSessionOut`. Codes: `200`, `404`, `409 IMPORT_SOURCE_NOT_REGISTERED` (§6), `409 IMPORT_SESSION_INVALID_STATE`, `409 IMPORT_ATTEMPT_IN_PROGRESS`, `409 IMPORT_RECOVERY_REQUIRED`, `422 IMPORT_ADAPTER_NOT_REGISTERED`.
+9. **`GET /import-sessions/{id}/errors`** — Request: `limit` (`ge=1,le=200`), `cursor?`, `attempt_id?`. Response: `Page[ValidationFindingOut]`. Codes: `200`, `404`, `400 INVALID_INPUT`.
+10. **`POST /import-sessions/{id}/dry-run`** — Response: `ImportSessionOut`. Codes: `200`, `404`, `409 IMPORT_SESSION_INVALID_STATE`, `409 IMPORT_ATTEMPT_IN_PROGRESS`, `409 IMPORT_RECOVERY_REQUIRED`, `501 IMPORT_ADAPTER_NOT_IMPLEMENTED`.
+11. **`POST /import-sessions/{id}/execute`** — Response: `ImportSessionOut`. Codes: `200` (fresh success or idempotent replay), `404`, `409 IMPORT_SESSION_INVALID_STATE`, `409 IMPORT_ATTEMPT_IN_PROGRESS`, `409 IMPORT_RECOVERY_REQUIRED` (pre-check *or* post-completion fencing loss, §9.4), `501 IMPORT_ADAPTER_NOT_IMPLEMENTED`, `500 IMPORT_EXECUTION_FAILED`. Audit: one `AUDIT_ACTION_IMPORT` entry on fresh success only.
+12. **`POST /import-sessions/retention/cleanup`** — Request: `{limit?}`. Response: `{purged_count, skipped_count, has_more}`. Codes: `200` always (batch operation, not scoped to one session id). Audit: one `AUDIT_ACTION_IMPORT_RETENTION_CLEANUP` per session purged.
 
 ---
 
-## 20. Security, Privacy, Retention, and Risk Contract
+## 22. Security, Privacy, Retention, and Risk Contract
 
-Unchanged table structure from Rev 3, with these rows updated:
+**Do not assume legacy files contain no sensitive data** — every piece of source-derived text (filenames, row-error messages, field values) is treated as potentially containing names or other identifying information, throughout.
 
 | Concern | Status | Requirement |
 |---|---|---|
-| **Source retention** | §9 — 180 days post-terminal, redact-in-place | **Enforcement endpoint ships with PR19A3** (moved from an unscheduled slice, Rev 4); the periodic *trigger* (cron/manual) remains a deployment concern, not code in this repository |
-| **Session/source identity** | §14 — one unified mechanism | No second identity value exists anywhere to disagree with `import_sources.checksum` |
-| **Fencing / late-commit prevention** | §8.2, §8.3 | Every completion write is conditioned on presenting its original `lease_owner`; a superseded worker's writes never commit, verified by the same transaction boundary as the write itself |
+| Accepted file types | Not applicable — no upload endpoint exists | A future concrete-adapter slice: adapter-declared allow-list, enforced before parsing |
+| Maximum source size | Not applicable — `byte_size` is metadata only | Reuse Roadmap PR12's bounded-decompressed-size precedent |
+| Filename handling | Opaque metadata only, never a filesystem path | A storage backend generates its own opaque key, never derived from the caller-supplied filename |
+| Checksum trust boundary | Client-supplied, unverified — this foundation never sees bytes | Independently recompute and verify server-side once byte storage exists (§15.2) |
+| Malware/content scanning | Out of scope — no bytes handled | A scanning boundary is a future slice's decision, not selected here |
+| Path traversal | Not reachable — no paths derived from user input | Same as filename handling |
+| Formula/macro handling | Not applicable — no parser exists | A future Excel adapter disables macro execution |
+| Storage encryption | Not applicable — no bytes stored | Match the deployment's existing at-rest posture when storage exists |
+| Source retention | 180 days post-terminal, redact-in-place, enforcement endpoint ships with PR19A3 (§18) | The periodic *trigger* (cron/manual) is a deployment concern, not code in this repository |
+| Finding/error retention | Structural fields retained; `message`/`field` redacted post-retention (§18) | |
+| PII / employee-name handling | `ValidationFinding.message`/`field`, `ImportSource.filename`, `ImportSession.notes` may contain legacy names/identifying text | Administrator-only everywhere; never in `audit_logs.after`; redacted per §18 |
+| Log redaction | Structural facts only in logs (ids, counts, error *codes*) | Never the *contents* of `message`/`notes`/any adapter-reported field value |
+| Session/source identity | One unified mechanism (§15) | No second identity value exists anywhere to disagree with `import_sources.checksum` |
+| Fencing / late-commit prevention | Every completion write is fenced on `lease_owner`+`lease_generation`+`session.version` (§9.4) | A superseded worker's writes never commit, verified by the same transaction boundary as the write itself |
+| Audit requirements | §19 | Execute success, recovery, fence-lost, retention cleanup only |
+| Unauthorized access | Administrator-only, all twelve endpoints | No broadening without an explicit Owner Decision |
+| Duplicate execution | §17 | Primary concurrency risk this design targets, fully addressed |
+| Denial of service | `MAX_IMPORT_ROWS`, `limit≤200`, no endpoint accepts a file body | No upload-size DoS surface exists in PR19A1–A3 |
+| Parser bombs / oversized workbooks | Not reachable — no parser exists | A future adapter slice: bounded decompressed size |
+| Corrupted files | Not reachable | A future adapter slice: catch format-specific exceptions, never leak a raw 500 |
+| Temporary file cleanup | Not applicable — nothing written to disk | A future adapter slice: `finally`-block cleanup |
+| External network access | No outbound calls anywhere in this foundation | `preload_business_context`/`validate_business_rules` (§11) are database-only hooks |
 
-**Risk table (rows changed from Rev 3):**
+**Risk table:**
 
 | Risk | Impact | Mitigation | Owner/slice | Residual risk |
 |---|---|---|---|---|
-| **A live-but-lease-expired worker is wrongly recovered, then commits anyway (late commit)** | Duplicate or contradictory write after recovery already resolved the session | Completion fencing on `lease_owner` (§8.2) — the late commit cannot pass its own gating `UPDATE`, so it never happens, regardless of renewal timing | A1 (mechanism), A2 (`VALIDATING`), A3 (`DRY_RUN_RUNNING`/`EXECUTING`) | Low — enforced by the database transaction boundary itself, not by timely detection |
-| **Renewal never happens, so any transient slowness triggers false-positive recovery** | Legitimate work recovered prematurely | Real periodic renewal (§8.2, Rev 4), 5× safety margin between heartbeat interval and lease duration | Same as above | Low-medium — still bounded by network/DB availability during the renewal window |
-| Session-creation checksum disagrees with later-registered source | Wrong data silently accepted | **Eliminated structurally** — session creation no longer carries a checksum at all (§14.1); only `import_sources.checksum` (§14.2) is ever compared against | A1 | Eliminated by design |
-| **Retention approved but unenforceable** | Compliance gap — PR19A could ship "complete" without any way to purge | Cleanup endpoint ships with PR19A3 (§9, §19), not deferred | A3 | Low — the capability exists; an operator or deployment cron must still actually call it, which remains a documented operational obligation, not a code gap |
-| Adapter writes during dry-run | Data corruption during planning | Read-only PostgreSQL transaction (§15) | A3 | Low |
-| Duplicate write from concurrent execute (distinct from the late-commit risk above — this is two *simultaneous* requests, not a recovered-then-late-arriving one) | Data corruption | Single-winner CAS (§16) | A3 | Low |
-
-All other rows unchanged from Rev 3.
+| A live-but-lease-expired worker is wrongly recovered, then commits anyway (late commit) | Duplicate or contradictory write after recovery already resolved the session | Completion fencing on `lease_owner`+`lease_generation`+`session.version` (§9.4) — the late commit structurally cannot pass its own gating `UPDATE` | A3 (mechanism, applied to all three running phases) | Low — enforced by the database transaction boundary itself |
+| Renewal fails to happen at all, so any transient slowness triggers false-positive recovery | Legitimate work recovered prematurely | Real periodic renewal with bounded transient-failure tolerance (§9.2), 5× safety margin | A3 | Low-medium — still bounded by network/DB availability during the renewal window |
+| Session-creation checksum disagrees with a later-registered source | Wrong data silently accepted | Eliminated structurally — session creation carries no checksum field at all (§15.1) | A1 | Eliminated by design |
+| Validation begins against a source that could still change | Validated data and executed data diverge | Explicit freeze gate, atomic with the first validate transition (§6) | A1 (mechanism), A2 (enforced by `validate`) | Low |
+| Retention approved but unenforceable | Compliance gap | Cleanup endpoint ships with PR19A3, using the claim/fencing protocol (§18), not deferred | A3 | Low — the capability exists; the operational trigger remains a documented obligation |
+| Two retention-cleanup workers redact the same session concurrently | Double-processing, wasted audit entries, or a race on the final commit | `FOR UPDATE SKIP LOCKED` claim + completion fencing (§18) | A3 | Low |
+| Adapter writes during dry-run | Data corruption during planning | Read-only PostgreSQL transaction (§16) | A3 | Low |
+| Adapter N+1 per-record queries | Performance/availability | `preload_business_context` contract (§11) | A2 | Medium — relies on future adapters actually using the batch hook |
+| Re-validation exposes stale findings as current | Operator acts on an outdated error list | Atomic `current_validation_job_id` promotion (§12) | A2 | Low |
+| Malformed cursor/pagination input causes a 500 | Availability / stack-trace leak | Fail-fast `INVALID_INPUT` (§20) | A1, A2 | Low |
+| Adapter writes outside the provided session | Partial/duplicate write survives a crash | Documented adapter contract obligation | A3 documents it; enforced by future adapter code review | Medium — this foundation cannot force a misbehaving adapter to comply |
 
 ---
 
-## 21. Public Error Codes
+## 23. Public Error Codes
 
 | Code | HTTP | Meaning | Owning slice | Notes |
 |---|---|---|---|---|
 | `IMPORT_SESSION_NOT_FOUND` | 404 | Session id doesn't exist | A1 | |
-| `IMPORT_SESSION_INVALID_STATE` | 409 | Requested operation invalid from current state | A1 | |
-| `IMPORT_SOURCE_MISMATCH` | 409 | Source identity fingerprint differs from what's already bound to this session | A1 | §14.2 — **the single identity-conflict code**; `IMPORT_IDEMPOTENCY_CONFLICT` (Rev 3) is removed, its former purpose now impossible by construction (§14.1) |
-| `IMPORT_RECOVERY_REQUIRED` | 409 | A mutating call hit a stale lease (pre-check), **or a completion write lost its fence (post-check, new in Rev 4)** — call `/recover` and re-examine current state | A1 (mechanism); reachable via A2/A3 | §8.2 |
-| `IMPORT_ATTEMPT_IN_PROGRESS` | 409 | A concurrent request currently holds the running claim | A1 (mechanism); reachable via A2/A3 | §6, §16 |
+| `IMPORT_SESSION_INVALID_STATE` | 409 | Requested operation invalid from the session's current state | A1 | Consolidated — one code per class of problem; the `detail` string carries specifics |
+| `IMPORT_SOURCE_NOT_REGISTERED` | 409 | `validate` called with no `ImportSource` row registered at all | A2 (reachable via `validate`, which A2 owns) | §6 |
+| `IMPORT_SOURCE_MISMATCH` | 409 | Source identity fingerprint differs from what's already frozen (or, pre-freeze, a rejected edge case does not exist — pre-freeze differing fingerprints overwrite instead, §15.2) | A1 | The single identity-conflict code |
+| `IMPORT_RECOVERY_REQUIRED` | 409 | A mutating call hit a stale lease (pre-check), or a completion write lost its fence (post-check) | A3 | §9 |
+| `IMPORT_ATTEMPT_IN_PROGRESS` | 409 | A concurrent request currently holds the running claim for this phase | A1 (the underlying CAS primitive is A1's); reachable via A2/A3's endpoints | §7, §17 |
 | `IMPORT_ADAPTER_NOT_REGISTERED` | 422 | No adapter registered for this `dataset_type` | A2 | |
 | `IMPORT_ADAPTER_NOT_IMPLEMENTED` | 501 | Adapter doesn't implement dry-run/execute | A3 | |
 | `IMPORT_EXECUTION_FAILED` | 500 | Adapter's `execute()` raised unexpectedly | A3 | |
 | `INVALID_INPUT` | 400 | Malformed pagination/cursor input | A1, A2 | Reused existing repository-wide code |
 
-**Removed in Rev 4:** `IMPORT_IDEMPOTENCY_CONFLICT` (§14.1 — session creation can no longer conflict, having no identity field left to disagree on). `IMPORT_DRY_RUN_WRITE_ATTEMPT` remains not public (§15, unchanged from Rev 3).
-
 Each code must be added to `docs/api/ERROR_CODES.md` in the implementation PR that first makes it reachable.
 
 ---
 
-## 22. Implementation Slices (Approved Sequence)
+## 24. Implementation Invariants
 
-1. **PR19A1 — Core physical schema; session/source persistence; lifecycle; CAS mechanism; the generic lease/renewal/fencing/recovery mechanism and `/recover` endpoint skeleton (phase-agnostic — no `*_RUNNING` state is wired to it yet); the unified source-identity contract (§14); the composite ownership FK; retention schema columns (`terminal_at`/`retention_purged_at`); session pagination and cursor validation; migration convergence tests covering every table and column in §4, regardless of which later slice populates it.** Owns endpoints #1–#7 and error codes `IMPORT_SESSION_NOT_FOUND`/`IMPORT_SESSION_INVALID_STATE`/`IMPORT_SOURCE_MISMATCH`/(mechanism for) `IMPORT_RECOVERY_REQUIRED`/`IMPORT_ATTEMPT_IN_PROGRESS`.
-2. **PR19A2 — Adapter contract; off-thread parsing; batch validation; validation attempts/findings; warning semantics; atomic validation-snapshot publication.** Owns endpoints #8–#9, error code `IMPORT_ADAPTER_NOT_REGISTERED`, and **wires lease acquisition + renewal + completion fencing + recovery into `VALIDATING` only** — the single running state its own endpoint (`validate`) triggers. Does **not** touch `DRY_RUN_RUNNING` (corrected from Rev 3's inconsistent assignment — that state's endpoint, `dry-run`, belongs to A3, per §19's own table).
-3. **PR19A3 — Read-only dry run; execution claim; single-winner execution; completion fencing for `DRY_RUN_RUNNING` and `EXECUTING`; audit (including fence-lost); retention-cleanup endpoint and logic.** Owns endpoints #10–#12, error codes `IMPORT_ADAPTER_NOT_IMPLEMENTED`/`IMPORT_EXECUTION_FAILED`, and wires lease acquisition + renewal + completion fencing + recovery into **both** `DRY_RUN_RUNNING` and `EXECUTING` — both endpoints it owns. Retention cleanup (§9) is bundled here rather than a separate/unscheduled slice, so PR19A as a whole ships with a working enforcement mechanism, not merely an approved policy.
-4. **Governance sync** — after PR19A1–A3 merge: `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, `docs/DECISION_LOG.md`, `knowledge/*`; final `docs/api/ERROR_CODES.md` cross-check.
+Normative rules every implementation PR must uphold, restated concisely as the authoritative checklist:
 
-**No separate/unscheduled maintenance slice remains** (Rev 3 had one for retention cleanup; Rev 4 removes it by folding that work into PR19A3, per the review's explicit instruction).
+1. `GET` endpoints never mutate state, claim a job, recover a job, or emit an audit event — always, without exception (§9.3).
+2. Validation requires a frozen source (`SOURCE_FROZEN`); it is unreachable otherwise (§6).
+3. A source becomes immutable the instant the first `validate` call freezes it, atomically with that same transaction — never before, never reversibly after (§6).
+4. Every execution uses exactly one immutable source identity for the life of a session (§6, §15).
+5. Counters and findings belong to exactly one `ValidationAttempt`, promoted atomically and only on job success (§12).
+6. Every phase completion — success or failure — is fenced on `lease_owner`, `lease_generation`, and `session.version` before publishing a terminal state (§9.4).
+7. Retention cleanup is fenced identically to job completion — a claim can be lost, and a superseded cleanup commit is discarded the same way a superseded job commit is (§18).
+8. Every session state transition is guarded by an atomic compare-and-set on both `status` and `version` (§7).
+9. Validation-snapshot publication (`current_validation_job_id`) is atomic with the job reaching `SUCCEEDED`, database-enforced via a composite foreign key (§4.5, §12).
+10. A `WARNING` finding never blocks validation, dry-run, or execute.
+11. An `ERROR` finding always blocks validation from reaching `VALIDATED` (§13).
+12. Dry-run never performs a domain write — enforced by a PostgreSQL read-only transaction, not by convention (§16).
+13. Every replay (session creation, source registration, execute) uses persisted identity/state, never a client-supplied assumption about what "should" already be true (§9.4, §15, §17).
+14. A lease's effective lifetime for renewal purposes is bounded by `IMPORT_JOB_HEARTBEAT_INTERVAL_SECONDS`, itself bounded well under `IMPORT_JOB_LEASE_DURATION_SECONDS` (§9.2).
+15. Recovery is single-winner — the atomic claim in §9.3 guarantees exactly one caller ever successfully abandons a given stale job.
+16. No implementation PR introduces a background scheduler or worker process inside this codebase (§26) — every mutating endpoint is invoked by an external caller (operator or deployment trigger).
+17. Every foreign key in this feature is `ON DELETE RESTRICT` — no cascading delete exists anywhere in this schema (§4).
+18. No endpoint in this foundation accepts a request body containing raw file bytes (§22).
+
+---
+
+## 25. Implementation Slices (Approved Sequence)
+
+Each slice branches from the design's merged baseline. **No responsibility below is claimed by more than one slice.**
+
+### PR19A1
+Core physical schema (§4, all four tables, every column including ones only a later slice populates or reads — e.g. `lease_owner`, `version`, `retention_cleanup_claimed_by`); the session and source lifecycle state machines (§5, §6) and the plain CAS transition primitive (§7) — a phase-agnostic building block with no lease/renewal/fencing complexity of its own, since none of PR19A1's own endpoints (create, list, status, source, cancel) ever enter a `*_RUNNING` state; source registration and the freeze mechanism (§6, invoked by `validate` in PR19A2 but authored here); the composite ownership foreign key (§4.5); session pagination and cursor validation (§20); migration convergence tests covering every object in §4.6 regardless of which later slice populates it. Owns endpoints #1–#6 and error codes `IMPORT_SESSION_NOT_FOUND`/`IMPORT_SESSION_INVALID_STATE`/`IMPORT_SOURCE_MISMATCH`/(the underlying primitive behind) `IMPORT_ATTEMPT_IN_PROGRESS`.
+
+### PR19A2
+Parser adapter contract; off-thread parsing (§10); batch validation (§11); validation attempts/findings/snapshots (§12); warning semantics (§13); replay and checksum verification against the frozen source (§6, §15.2). Owns endpoints #8–#9 and error codes `IMPORT_SOURCE_NOT_REGISTERED`/`IMPORT_ADAPTER_NOT_REGISTERED`. **PR19A2's `validate` endpoint, as it ships, performs the plain state transition into `VALIDATING` (§7's primitive) and the freeze gate (§6), but does not itself implement lease acquisition, renewal, or completion fencing** — those are PR19A3's deliverable (below), applied uniformly across all three running phases as one cross-cutting reliability pass, mirroring Roadmap PR15B's own precedent of a dedicated hygiene/reliability slice touching code multiple earlier slices had already shipped. This is a documented, intentional sequencing choice, not an oversight: PR19A2 alone is functionally complete (an operator can validate a session) but not yet crash-safe; PR19A3 completes that guarantee.
+
+### PR19A3
+Read-only dry-run enforcement (§16); execution claim and single-winner execution (§17); **the complete heartbeat/lease-renewal/recovery/completion-fencing/failure-fencing mechanism (§9), designed, implemented, and applied uniformly to `VALIDATING` (retrofitting PR19A2's endpoint), `DRY_RUN_RUNNING`, and `EXECUTING` alike**; the dedicated `/recover` endpoint; retention-cleanup concurrency and its endpoint (§18); all recovery/fencing/cleanup audit events (§19). Owns endpoints #7, #10, #11, #12 and error codes `IMPORT_RECOVERY_REQUIRED`/`IMPORT_ADAPTER_NOT_IMPLEMENTED`/`IMPORT_EXECUTION_FAILED`.
+
+### Governance sync
+After PR19A1–A3 merge: `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, `docs/DECISION_LOG.md`, `knowledge/*`; final `docs/api/ERROR_CODES.md` cross-check.
+
+**No separate or unscheduled maintenance slice exists.** Retention cleanup is fully a PR19A3 deliverable.
 
 Each implementation PR must register any new public error code it introduces and must not implement a concrete parser, legacy data import, or UI.
 
 ---
 
-## 23. Non-Goals
+## 26. Non-Goals
 
-No implementation slice may include: an Excel/CSV parser; Legacy Equipment/Receive/Issue import; **a background scheduler or worker process inside this codebase** (the retention-cleanup *endpoint* ships in PR19A3, §9, but nothing in this codebase periodically calls it — that trigger is a deployment/operational concern); an import wizard or progress UI; a cutover process; raw source-byte storage (§8.1); malware scanning, macro/formula handling (§20); legal/manual hold (§9).
+No implementation slice may include: an Excel/CSV parser; Legacy Equipment/Receive/Issue import; a background scheduler or worker process inside this codebase (the retention-cleanup *endpoint* ships in PR19A3, but nothing in this codebase periodically calls it — that trigger is a deployment concern); an import wizard or progress UI; a cutover process; raw source-byte storage; malware scanning, macro/formula handling; legal/manual hold.
 
 ---
 
-## 24. Acceptance Criteria
+## 27. Acceptance Criteria
 
-- How a running worker proves liveness, and how that liveness claim is actually trustworthy → §8.2 (lease + real renewal)
-- **Why a recovered-but-still-alive worker cannot corrupt state by committing late** → §8.2/§8.3 (completion fencing, sequence diagrams)
-- Who is allowed to recover an expired lease → §8.2 (`/recover`, Administrator-only)
-- Why GET cannot mutate state → §8.2
-- What tables/entities exist, full physical schema → §3, §4
-- **How session identity and source checksum can never disagree** → §14 (one mechanism, one place)
-- How the database prevents cross-session current-validation references → §4.5
-- What each endpoint returns, which role may call it → §19
-- How dry-run writes are technically prevented → §15
-- **How retention is actually enforced, not merely approved** → §9, §19 (endpoint ships with PR19A3)
-- Which slice owns every requirement, consistently with the endpoint-ownership table → §19, §22
+An implementer can answer each of the following without guessing, and without consulting anything beyond this document:
+
+- When does a source become immutable → §6 (atomically with the first `validate` transition)
+- Who may recover abandoned work → §9.3 (`/recover`, Administrator-only, dedicated endpoint, never a side effect)
+- Why does `GET` never mutate → §9.3, §24 rule 1
+- How does heartbeat/renewal work → §9.2 (background task, own session, bounded transient-failure retry)
+- How are late workers rejected → §9.4, illustrated in §9.6 Diagrams 2–3
+- How does a PostgreSQL transaction abort affect the lease → §9.5 (failure-mode table, row 1)
+- How does cleanup avoid concurrent execution on the same session → §18 (`FOR UPDATE SKIP LOCKED` + completion fencing)
+- How do validation and execution bind to the same source → §6 (freeze), §12 (snapshot invariant)
+- How do retries behave → §9.5 (per failure mode), §5 (no auto-retry from any `*_FAILED` state)
+- Where is every responsibility implemented → §21 (per-endpoint), §25 (per-slice), with no overlapping ownership
