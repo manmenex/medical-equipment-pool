@@ -7424,7 +7424,7 @@ async def test_migration_0012_second_run_is_noop_and_does_not_shift_already_awar
         await _drop_scratch_database()
 
 
-async def test_migration_0013_fresh_database_all_25_foreign_keys_are_restrict():
+async def test_migration_0013_fresh_database_all_foreign_keys_are_restrict():
     try:
         await _recreate_scratch_database()
     except Exception as exc:
@@ -7438,7 +7438,14 @@ async def test_migration_0013_fresh_database_all_25_foreign_keys_are_restrict():
                 rows = (
                     await conn.execute(text("SELECT conname, confdeltype::text FROM pg_constraint WHERE contype='f'"))
                 ).all()
-                assert len(rows) == 25, f"expected exactly 25 foreign keys, found {len(rows)}: {rows}"
+                # 25 as of migration 0013 (Roadmap PR15B) + 5 added by
+                # migration 0015 (Roadmap PR19A1): import_sessions.
+                # created_by_user_id -> users, import_sources.
+                # import_session_id -> import_sessions, import_jobs.
+                # import_session_id -> import_sessions, import_row_errors.
+                # import_job_id -> import_jobs, and the composite
+                # fk_import_sessions_current_validation_job -> import_jobs.
+                assert len(rows) == 30, f"expected exactly 30 foreign keys, found {len(rows)}: {rows}"
                 for conname, confdeltype in rows:
                     assert confdeltype == "r", f"{conname} has confdeltype={confdeltype!r}, expected 'r' (RESTRICT)"
         finally:

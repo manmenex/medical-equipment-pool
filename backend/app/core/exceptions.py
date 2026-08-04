@@ -181,3 +181,30 @@ class ConflictError(DomainError):
 
     code = "CONFLICT"
     status_code = 409
+
+
+class ImportSessionNotFoundError(DomainError):
+    """Roadmap PR19A1 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md
+    §23) — the session id in the path does not exist."""
+
+    code = "IMPORT_SESSION_NOT_FOUND"
+    status_code = 404
+
+
+class ImportSessionInvalidStateError(DomainError):
+    """§23 — the requested operation is invalid from the session's current
+    status. One consolidated code per class of problem, per §23 — the
+    `detail` string carries the specifics (e.g. which status was expected)."""
+
+    code = "IMPORT_SESSION_INVALID_STATE"
+    status_code = 409
+
+
+class ImportSourceMismatchError(DomainError):
+    """§15.2 — a source registration/correction's identity fingerprint
+    differs from what is already frozen for this session, or a CAS
+    correction attempt lost the race to a concurrent freeze. The row is
+    never mutated in either case."""
+
+    code = "IMPORT_SOURCE_MISMATCH"
+    status_code = 409
