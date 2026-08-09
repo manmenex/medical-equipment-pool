@@ -405,11 +405,49 @@ Per the confirmed requirements and this reconciliation:
 
 ### Group 8 — Legacy migration and cutover
 
-#### PR19 — Legacy Import Foundation
+**Roadmap PR19 split (approved 2026-08-03, see `docs/DECISION_LOG.md`
+"Roadmap PR19 approved split: PR19A (backend) / PR19B (frontend
+skeleton)"):** PR19 is delivered as two independent-scope implementation
+slices — PR19A and PR19B. "Parallel" describes their scope/dependency
+independence only (neither is stacked on, or blocked by, the other's
+unmerged branch); it does not mean they share one implementation baseline
+commit — each slice starts from whatever is the latest approved base-branch
+baseline at the time its own branch is created. This is an explicit,
+Owner-approved exception to this repository's usual design-document-first
+slice precedent, since at the time of approval no PR19 design document
+existed. Neither PR19A's implementation nor PR19B is complete as of this
+entry. **PR19A's architecture design has since merged as GitHub PR #83**
+(squash SHA `38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`, `docs/design/
+PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`), branched directly from
+`729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` in parallel with PR19B and the
+governance PR that approved this split — confirming in practice that the
+split never required a shared baseline. That design decomposes PR19A's own
+implementation into slices PR19A1/PR19A2/PR19A3 (design §25); see that
+design document for their scope, not this entry. **PR19A1** (schema,
+session/source lifecycle, CAS) is in progress on Draft PR #84, open and not
+merged or complete; **PR19A2** and **PR19A3** have not started.
+
+#### PR19A — Legacy Import Foundation (backend)
 - **Objective:** Provide a staged, validation-first, traceable import framework.
 - **Boundary:** This is separate from PR12's update-only inventory import and
   must not redesign the hospital QR system.
 - **Dependencies:** Current implementation through PR18.
+
+#### PR19B — Legacy Import Frontend Skeleton
+- **Objective:** Provide a frontend-only, mock-data UI prototype of the
+  future import workflow (session list, create flow, validation summary,
+  row-level issues, dry-run summary, disabled confirm, result summary) for
+  early hospital-user workflow, terminology, navigation, and responsive-
+  layout review, ahead of PR19A's real backend contract.
+- **Boundary:** No file upload to a backend, no Excel/CSV parsing, no
+  validation or dry-run execution, no import execution, no database or
+  migration change. Its Equipment Master / Receive History / Issue History
+  category labels are preview labels pulled forward from PR20/PR21 scope
+  for review purposes only — not an implemented capability, and not an
+  approval of PR20 or PR21's own design.
+- **Dependencies:** Current implementation through PR18 (developed in
+  parallel with PR19A, not stacked on it; contracts are realigned once
+  PR19A's real API is approved).
 
 #### PR20 — Equipment Master Import
 - **Objective:** Import Equipment Master data using BCM and Item Number
@@ -417,7 +455,8 @@ Per the confirmed requirements and this reconciliation:
   Detect equipment duplicates and validate equipment records.
 - **Boundary:** Legacy BME names and Ward values belong to transaction history
   and are handled by PR21, not this Equipment Master import.
-- **Dependencies:** PR19.
+- **Dependencies:** PR19A (the backend import framework; PR19B is a frontend
+  preview only and is not a dependency).
 
 #### PR21 — Legacy Receive and Issue History Import
 - **Objective:** Import the AppSheet equipment receive-data and equipment
@@ -427,7 +466,7 @@ Per the confirmed requirements and this reconciliation:
 - **Version 1 boundary:** These are the only transaction-history sheets in the
   initial migration. Equipment Verify Checklist history is not required unless
   a later approved decision explicitly adds it.
-- **Dependencies:** PR19, PR20.
+- **Dependencies:** PR19A, PR20.
 
 #### PR22 — Legacy Data Validation and Reconciliation
 - **Objective:** Perform cross-import validation and reconciliation, verify
