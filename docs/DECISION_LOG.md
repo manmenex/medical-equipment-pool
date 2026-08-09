@@ -862,23 +862,49 @@
   "Repository-Owner-confirmed scope decision" section — and the Repository
   Owner confirmed the split directly. This entry is the formal governance
   record required by that confirmation; it does not retroactively invent a
-  design document neither slice actually had.
-- **Scope:** This exception covers only: (1) permitting PR19B to be
-  implemented and reviewed as a frontend-only mock skeleton ahead of an
+  design document neither slice actually had. The purpose of this exception
+  is early hospital-user/UX review of a frontend workflow concept ahead of
+  PR19A's backend contract — it exists solely to let that review happen
+  sooner, not to authorize advancing PR20 or PR21 business implementation,
+  and it must never be cited as permission to do so.
+- **Scope:** This exception permits only: (1) implementing and reviewing
+  PR19B as a **provisional, frontend-only mock skeleton** ahead of an
   approved PR19 design document and ahead of PR19A; and (2) recording
-  PR19A/PR19B as the approved Roadmap PR19 slice names. It does not exempt
-  either slice from ordinary independent review, exact-head CI, or Owner
-  merge approval, and it does not pre-approve PR19A's eventual design or
-  API contract.
+  PR19A/PR19B as the approved Roadmap PR19 slice names. It authorizes
+  nothing beyond that. In particular, this exception does **not**
+  authorize, and must never be read as authorizing:
+  - PR20 (Equipment Master Import) business implementation;
+  - PR21 (Legacy Receive and Issue History Import) business implementation;
+  - any production legacy-import API implementation;
+  - any database schema change;
+  - any migration;
+  - any backend business-rule change;
+  - claiming that the Equipment Master, Receive, or Issue import workflows
+    are implemented.
+
+  PR19B's frontend skeleton may represent planned import categories and
+  workflow concepts for UX review purposes only; it remains
+  **non-authoritative** until reconciled with PR19A's merged, approved
+  contract. It does not exempt either slice from ordinary independent
+  review, exact-head CI, or Owner merge approval, and it does not
+  pre-approve PR19A's eventual design or API contract.
 - **Risks:**
-  - PR19B's provisional frontend contract (`frontend/src/types/
-    legacyImport.ts`, `legacyImportClient.ts`) may drift from PR19A's real
-    contract once PR19A is designed.
-  - PR19B's preview category labels (Equipment Master / Receive History /
-    Issue History) may be misread as evidence that PR20/PR21 are already
-    implemented or approved.
-  - PR19B's mock/provisional contract or `MockImportClient` may be mistaken
-    for, or reused as, real production behavior.
+  - **Contract divergence risk:** PR19B may be developed against
+    provisional assumptions (`frontend/src/types/legacyImport.ts`,
+    `legacyImportClient.ts`) that later differ from PR19A's authoritative
+    API/domain contract once PR19A is designed.
+  - **Branch divergence / integration risk:** because PR19B may progress in
+    parallel with PR19A, its branch can diverge from the eventual PR19A
+    baseline and require rebase, conflict resolution, or implementation
+    changes before it can be considered aligned.
+  - **Rework risk:** UI assumptions, mock data shapes, or workflow
+    sequencing built into PR19B may need to be modified or discarded
+    outright once PR19A's contracts become authoritative.
+  - **Premature-completion risk:** the existence of PR19B's UI screens and
+    preview category labels (Equipment Master / Receive History / Issue
+    History) may be incorrectly interpreted as evidence that Roadmap PR19,
+    PR20, PR21, or production legacy-import functionality is complete or
+    implemented, when none of it is.
 - **Mitigations:**
   - PR19B isolates every mock/provisional contract behind a single named
     seam (`LegacyImportClient`/`MockImportClient`, `types/legacyImport.ts`),
@@ -887,16 +913,58 @@
     dry-run, or import-confirm action can run.
   - PR19B renders a persistent, visible skeleton banner
     ("ต้นแบบหน้าจอ — ยังไม่มีการนำเข้าข้อมูลจริง") on every screen.
+  - PR19B must not claim, in code, tests, comments, or its own PR
+    description, that PR20 is complete.
+  - PR19B must not claim that PR21 is complete.
+  - PR19B must not claim that production legacy-import functionality is
+    complete.
+  - Mock/provisional behavior must remain clearly and unambiguously
+    identifiable as such everywhere it appears (banner, naming, seam
+    isolation above) — never silently indistinguishable from real behavior.
+  - No production API assumption introduced by PR19B becomes authoritative
+    merely by existing in PR19B's code; only PR19A's merged contract is
+    authoritative.
+  - No backend business rule may be enforced solely by PR19B's frontend
+    code — client-side checks in PR19B are UX affordances only, never a
+    substitute for server-side enforcement.
   - Contract realignment between PR19B and PR19A's real API is mandatory
     once PR19A is approved, before PR19B (or any follow-up) can be
-    considered aligned with production behavior.
-  - An exact-head re-review is required after that realignment, the same as
-    any other post-fix incremental review.
+    considered aligned with production behavior; PR19B must be reconciled
+    against the merged PR19A contract before it can be considered complete.
+  - Contract/integration tests verifying frontend/backend agreement must be
+    added and passing before any production implementation built on PR19B's
+    UI is considered ready.
+  - Rebase/integration of PR19B against the correct merged PR19A baseline is
+    required before PR19B can be finally accepted.
+  - Any provisional PR19B behavior found to conflict with PR19A's approved
+    contract must be changed or removed in PR19B — PR19A must never be
+    distorted or constrained to preserve an obsolete PR19B assumption.
+  - An exact-head re-review is required after realignment, the same as any
+    other post-fix incremental review.
 - **Expiration / Follow-up:**
   - This exception ends once PR19A's contract (API, session/document model)
     is approved and merged.
-  - PR19B must realign its provisional contract to PR19A's approved API
-    before any later PR19B-derived work can merge as production-aligned.
+  - **PR19B MUST NOT be considered complete or merge-ready while its
+    contract differs from the authoritative merged PR19A contract.** After
+    PR19A becomes authoritative, before PR19B can be considered complete:
+    1. compare PR19B's provisional assumptions against PR19A's approved
+       API/domain contracts;
+    2. rebase/integrate PR19B against the correct merged PR19A baseline;
+    3. update PR19B's provisional frontend contracts
+       (`types/legacyImport.ts`, `legacyImportClient.ts`) as necessary to
+       match;
+    4. add and execute the contract/integration tests required by the
+       Mitigations above;
+    5. remove or replace any provisional assumption found incompatible with
+       the approved contract.
+  - If PR19A materially changes semantics that provisional PR19B work
+    assumed, the affected PR19B implementation must be modified to match,
+    or that provisional work discarded if reconciliation is not practical —
+    PR19A must never be distorted merely to preserve obsolete provisional
+    PR19B behavior.
+  - This exception itself expires once PR19B has been reconciled with the
+    authoritative PR19A contracts and the verification required above has
+    passed.
   - Roadmap PR19 must not be declared complete until every slice (PR19A,
     PR19B, and the realignment/governance-sync work that follows PR19A) is
     merged — mirroring the PR18F-style final governance synchronization
