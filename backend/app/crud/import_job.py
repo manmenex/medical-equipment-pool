@@ -28,76 +28,7 @@ PHASE_STATUS_MAP: dict[str, dict[str, str]] = {
 _ALLOWED_VALIDATE_ADMISSION_STATUSES = ("created", "validated", "validation_failed")
 
 
-async def admit_validate_job(
-    db: AsyncSession,
-    *,
-    session_id: uuid.UUID,
-    expected_version: int,
-    lease_owner: uuid.UUID,
-    lease_duration_seconds: int,
-) -> tuple[bool, ImportSession | None, ImportJob | None]:
-    """§6's freeze-and-transition plus §9.1's lease acquisition, fused into
-    one transaction -- design §9.1 requires the job INSERT to share the
-    same transaction as the session's own CAS, which PR19A1's
-    `freeze_source_and_transition_to_validating` (which commits on its
-    own) cannot compose with a third statement. This function performs
-    the identical freeze + CAS logic inline, then the job INSERT, and
-    commits once, all three together.
-
-    Returns (source_row_existed, session_row_or_None, job_row_or_None).
-    `session_row is None` means the session's own CAS did not match (wrong
-    state or stale version, or the source did not exist at all) -- the
-    caller must re-fetch and decide how to respond (§23's error codes),
-    never proceed as if it had won.
-    """
-    now = datetime.now(timezone.utc)
-
-    freeze_result = await db.execute(
-        update(ImportSource)
-        .where(ImportSource.import_session_id == session_id, ImportSource.status == "registered")
-        .values(status="frozen", frozen_at=now)
-        .returning(ImportSource.id)
-    )
-    source_existed = freeze_result.first() is not None
-
-    session_result = await db.execute(
-        update(ImportSession)
-        .where(
-            ImportSession.id == session_id,
-            ImportSession.status.in_(_ALLOWED_VALIDATE_ADMISSION_STATUSES),
-            ImportSession.version == expected_version,
-        )
-        .values(status="validating", version=ImportSession.version + 1)
-        .returning(ImportSession)
-    )
-    session_row = session_result.scalar_one_or_none()
-    if session_row is None:
-        await db.rollback()
-        return source_existed, None, None
-
-    attempt_number_subq = select(func.coalesce(func.max(ImportJob.attempt_number), 0) + 1).where(
-        ImportJob.import_session_id == session_id, ImportJob.job_type == "validate"
-    )
-    attempt_number = (await db.execute(attempt_number_subq)).scalar_one()
-
-    job = ImportJob(
-        import_session_id=session_id,
-        job_type="validate",
-        status="running",
-        attempt_number=attempt_number,
-        lease_owner=lease_owner,
-        lease_generation=1,
-        lease_expires_at=now + timedelta(seconds=lease_duration_seconds),
-        heartbeat_at=now,
-        started_at=now,
-    )
-    db.add(job)
-    await db.flush()
-    await db.commit()
-    return source_existed, session_row, job
-
-
-async def admit_phase_job(
+async def _claim_session_and_insert_job(
     db: AsyncSession,
     *,
     session_id: uuid.UUID,
@@ -107,18 +38,21 @@ async def admit_phase_job(
     expected_version: int,
     lease_owner: uuid.UUID,
     lease_duration_seconds: int,
+    now: datetime,
 ) -> tuple[ImportSession | None, ImportJob | None]:
-    """Roadmap PR19A3 (design §9.1, §25): the generic phase-admission
-    primitive dry-run/execute both use -- the identical session-CAS +
-    lease-acquisition shape `admit_validate_job` already established for
-    validate, without validate's own source-freeze step (the source is
-    already frozen by the time a session can ever reach `validated`,
-    §6 -- there is nothing left to freeze for a later phase). Returns
-    `(session_row_or_None, job_row_or_None)`; `None` means the CAS did not
-    match (wrong state or stale version) -- the caller must re-fetch and
-    decide how to respond (§23), never proceed as if it had won."""
-    now = datetime.now(timezone.utc)
-
+    """§9.1/§25's single, shared session-CAS + lease-acquisition primitive.
+    Every phase (`validate`, `dry_run`, `execute`) admits through this one
+    implementation -- there is exactly one algorithm for "atomically move
+    the session into its RUNNING status and open a leased job row",
+    parameterized only by the per-phase policy values callers already
+    have (allowed source statuses, the RUNNING status, the job_type).
+    Never commits or rolls back -- the caller owns the transaction
+    boundary (validate's admission additionally freezes the source in the
+    same transaction; a later phase has nothing left to freeze, §6).
+    Returns `(session_row_or_None, job_row_or_None)`; `None` means the CAS
+    did not match (wrong state or stale version) -- the caller must
+    re-fetch and decide how to respond (§23), never proceed as if it had
+    won."""
     session_result = await db.execute(
         update(ImportSession)
         .where(
@@ -131,7 +65,6 @@ async def admit_phase_job(
     )
     session_row = session_result.scalar_one_or_none()
     if session_row is None:
-        await db.rollback()
         return None, None
 
     attempt_number_subq = select(func.coalesce(func.max(ImportJob.attempt_number), 0) + 1).where(
@@ -152,6 +85,96 @@ async def admit_phase_job(
     )
     db.add(job)
     await db.flush()
+    return session_row, job
+
+
+async def admit_validate_job(
+    db: AsyncSession,
+    *,
+    session_id: uuid.UUID,
+    expected_version: int,
+    lease_owner: uuid.UUID,
+    lease_duration_seconds: int,
+) -> tuple[bool, ImportSession | None, ImportJob | None]:
+    """§6's freeze-and-transition plus §9.1's lease acquisition (via
+    `_claim_session_and_insert_job`), fused into one transaction -- design
+    §9.1 requires the job INSERT to share the same transaction as the
+    session's own CAS, which PR19A1's
+    `freeze_source_and_transition_to_validating` (which commits on its
+    own) cannot compose with a third statement. This function performs
+    the freeze, then the shared CAS + job-insert primitive, then commits
+    once, all three together.
+
+    Returns (source_row_existed, session_row_or_None, job_row_or_None).
+    `session_row is None` means the session's own CAS did not match (wrong
+    state or stale version, or the source did not exist at all) -- the
+    caller must re-fetch and decide how to respond (§23's error codes),
+    never proceed as if it had won.
+    """
+    now = datetime.now(timezone.utc)
+
+    freeze_result = await db.execute(
+        update(ImportSource)
+        .where(ImportSource.import_session_id == session_id, ImportSource.status == "registered")
+        .values(status="frozen", frozen_at=now)
+        .returning(ImportSource.id)
+    )
+    source_existed = freeze_result.first() is not None
+
+    session_row, job = await _claim_session_and_insert_job(
+        db,
+        session_id=session_id,
+        job_type="validate",
+        allowed_from_statuses=_ALLOWED_VALIDATE_ADMISSION_STATUSES,
+        running_status="validating",
+        expected_version=expected_version,
+        lease_owner=lease_owner,
+        lease_duration_seconds=lease_duration_seconds,
+        now=now,
+    )
+    if session_row is None:
+        await db.rollback()
+        return source_existed, None, None
+
+    await db.commit()
+    return source_existed, session_row, job
+
+
+async def admit_phase_job(
+    db: AsyncSession,
+    *,
+    session_id: uuid.UUID,
+    job_type: str,
+    allowed_from_statuses: tuple[str, ...],
+    running_status: str,
+    expected_version: int,
+    lease_owner: uuid.UUID,
+    lease_duration_seconds: int,
+) -> tuple[ImportSession | None, ImportJob | None]:
+    """Roadmap PR19A3 (design §9.1, §25): dry-run/execute admission,
+    through the same `_claim_session_and_insert_job` primitive
+    `admit_validate_job` uses above -- without validate's own
+    source-freeze step (the source is already frozen by the time a
+    session can ever reach `validated`, §6 -- there is nothing left to
+    freeze for a later phase). Returns `(session_row_or_None,
+    job_row_or_None)`; `None` means the CAS did not match (wrong state or
+    stale version) -- the caller must re-fetch and decide how to respond
+    (§23), never proceed as if it had won."""
+    session_row, job = await _claim_session_and_insert_job(
+        db,
+        session_id=session_id,
+        job_type=job_type,
+        allowed_from_statuses=allowed_from_statuses,
+        running_status=running_status,
+        expected_version=expected_version,
+        lease_owner=lease_owner,
+        lease_duration_seconds=lease_duration_seconds,
+        now=datetime.now(timezone.utc),
+    )
+    if session_row is None:
+        await db.rollback()
+        return None, None
+
     await db.commit()
     return session_row, job
 
@@ -194,29 +217,22 @@ async def renew_lease(
     return renewed
 
 
-async def fenced_success(
+async def _fence_job_terminal(
     db: AsyncSession,
     *,
     job_id: uuid.UUID,
     lease_owner: uuid.UUID,
     lease_generation: int,
-    session_id: uuid.UUID,
-    expected_version: int,
-    new_session_status: str,
-    total_rows: int,
-    valid_rows: int,
-    invalid_rows: int,
-    warning_rows: int,
-) -> ImportSession | None:
-    """§9.4.1's fenced success publication -- both UPDATEs, no commit (the
-    caller's TX1 already added the domain writes and owns the commit
-    boundary). §12: `current_validation_job_id` is promoted unconditionally
-    whenever the job reaches `succeeded`, regardless of whether
-    `new_session_status` is `validated` or `validation_failed` -- a
-    completed pass that finds blocking errors is still a legitimate
-    "current" result. Returns `None` if either fencing UPDATE affected
-    zero rows -- the caller must roll back the entire transaction and
-    follow the failure path (§9.4.2), never commit a partial result."""
+    new_status: str,
+    error_message: str | None,
+) -> bool:
+    """§9.4.1/§9.4.2's single, shared job-fencing predicate: the exact
+    same `WHERE id/lease_owner/lease_generation/status='running'` CAS,
+    whether the outcome being published is success or failure, for every
+    phase. Returns whether the fenced row was found -- a `False` result
+    (zero rows matched) is the unambiguous "this worker was fenced out"
+    signal every caller must interpret identically (§9.4.1 step 6 /
+    §9.4.2 step 5)."""
     job_result = await db.execute(
         update(ImportJob)
         .where(
@@ -225,72 +241,25 @@ async def fenced_success(
             ImportJob.lease_generation == lease_generation,
             ImportJob.status == "running",
         )
-        .values(status="succeeded", finished_at=datetime.now(timezone.utc), error_message=None)
+        .values(status=new_status, finished_at=datetime.now(timezone.utc), error_message=error_message)
         .returning(ImportJob.id)
     )
-    if job_result.first() is None:
-        return None
-
-    now = datetime.now(timezone.utc)
-    session_result = await db.execute(
-        update(ImportSession)
-        .where(ImportSession.id == session_id, ImportSession.status == "validating", ImportSession.version == expected_version)
-        .values(
-            status=new_session_status,
-            version=ImportSession.version + 1,
-            updated_at=now,
-            validated_at=now,
-            current_validation_job_id=job_id,
-            total_rows=total_rows,
-            valid_rows=valid_rows,
-            invalid_rows=invalid_rows,
-            warning_rows=warning_rows,
-        )
-        .returning(ImportSession)
-    )
-    return session_result.scalar_one_or_none()
+    return job_result.first() is not None
 
 
-async def fenced_failure(
-    db: AsyncSession,
-    *,
-    job_id: uuid.UUID,
-    lease_owner: uuid.UUID,
-    lease_generation: int,
-    session_id: uuid.UUID,
-    expected_version: int,
-    failure_status: str,
-    bounded_error_message: str,
+async def _fence_session_terminal(
+    db: AsyncSession, *, session_id: uuid.UUID, running_status: str, expected_version: int, values: dict
 ) -> ImportSession | None:
-    """§9.4.2 steps 3-4's best-effort fenced failure publication -- both
-    UPDATEs, no commit (the caller's TX2 owns the commit boundary). Returns
-    `None` if either fencing UPDATE affected zero rows -- this worker has
-    also been fenced out on its own failure publication (§9.4.2 step 5);
-    the caller must roll back TX2 and write a fence-lost audit entry in a
-    separate TX3, never overwrite whatever the new owner already wrote."""
-    job_result = await db.execute(
-        update(ImportJob)
-        .where(
-            ImportJob.id == job_id,
-            ImportJob.lease_owner == lease_owner,
-            ImportJob.lease_generation == lease_generation,
-            ImportJob.status == "running",
-        )
-        .values(status="failed", finished_at=datetime.now(timezone.utc), error_message=bounded_error_message)
-        .returning(ImportJob.id)
-    )
-    if job_result.first() is None:
-        return None
-
+    """§9.4.1/§9.4.2's single, shared session-fencing predicate: the exact
+    same `WHERE id/status=running_status/version=expected_version` CAS for
+    every phase's terminal publication, success or failure. `values` is
+    the only thing that varies per call -- per-phase result columns, or
+    the shared status/version/updated_at/failure_reason base every caller
+    already supplies."""
     session_result = await db.execute(
         update(ImportSession)
-        .where(ImportSession.id == session_id, ImportSession.status == "validating", ImportSession.version == expected_version)
-        .values(
-            status=failure_status,
-            version=ImportSession.version + 1,
-            updated_at=datetime.now(timezone.utc),
-            failure_reason=bounded_error_message,
-        )
+        .where(ImportSession.id == session_id, ImportSession.status == running_status, ImportSession.version == expected_version)
+        .values(**values)
         .returning(ImportSession)
     )
     return session_result.scalar_one_or_none()
@@ -308,28 +277,22 @@ async def fenced_phase_success(
     new_session_status: str,
     extra_session_values: dict | None = None,
 ) -> ImportSession | None:
-    """Roadmap PR19A3 (design §9.4.1, §25): the generic fenced-success
-    primitive dry-run/execute both use -- the identical shape as
-    `fenced_success` above, parameterized by `running_status` (each phase
-    has its own `*_RUNNING` value) and `extra_session_values` (each phase
-    persists different completion columns: `dry_run_completed_at` for
-    dry-run; `executed_at`/`imported_rows`/`terminal_at` for execute).
-    `fenced_success` itself is untouched -- validate's own narrower,
-    already-merged function -- since neither of its own two extra columns
-    (`current_validation_job_id`, the four row-count columns) applies to
-    dry-run/execute. No commit (the caller's TX1 owns the boundary)."""
-    job_result = await db.execute(
-        update(ImportJob)
-        .where(
-            ImportJob.id == job_id,
-            ImportJob.lease_owner == lease_owner,
-            ImportJob.lease_generation == lease_generation,
-            ImportJob.status == "running",
-        )
-        .values(status="succeeded", finished_at=datetime.now(timezone.utc), error_message=None)
-        .returning(ImportJob.id)
-    )
-    if job_result.first() is None:
+    """§9.4.1/§25's single, shared fenced-success primitive -- validate,
+    dry-run, and execute all publish success through this one
+    implementation of the job/session fencing mechanics
+    (`_fence_job_terminal`/`_fence_session_terminal`), parameterized by
+    `running_status` (each phase has its own `*_RUNNING` value) and
+    `extra_session_values` (each phase persists different completion
+    columns: validate's `current_validation_job_id`/row-count columns;
+    dry-run's `dry_run_completed_at`; execute's
+    `executed_at`/`imported_rows`/`terminal_at`). No commit (the caller's
+    TX1 owns the boundary). Returns `None` if either fencing UPDATE
+    affected zero rows -- the caller must roll back the entire
+    transaction and follow the failure path (§9.4.2), never commit a
+    partial result."""
+    if not await _fence_job_terminal(
+        db, job_id=job_id, lease_owner=lease_owner, lease_generation=lease_generation, new_status="succeeded", error_message=None
+    ):
         return None
 
     values: dict = {
@@ -339,14 +302,9 @@ async def fenced_phase_success(
     }
     if extra_session_values:
         values.update(extra_session_values)
-
-    session_result = await db.execute(
-        update(ImportSession)
-        .where(ImportSession.id == session_id, ImportSession.status == running_status, ImportSession.version == expected_version)
-        .values(**values)
-        .returning(ImportSession)
+    return await _fence_session_terminal(
+        db, session_id=session_id, running_status=running_status, expected_version=expected_version, values=values
     )
-    return session_result.scalar_one_or_none()
 
 
 async def fenced_phase_failure(
@@ -362,23 +320,25 @@ async def fenced_phase_failure(
     bounded_error_message: str,
     extra_session_values: dict | None = None,
 ) -> ImportSession | None:
-    """Roadmap PR19A3 -- the generic fenced-failure counterpart to
-    `fenced_phase_success` above, mirroring `fenced_failure`'s shape.
-    `extra_session_values` lets execute set `terminal_at` (FAILED is
-    terminal, §5) while dry-run leaves it untouched (DRY_RUN_FAILED is
-    not terminal). No commit (the caller's TX2 owns the boundary)."""
-    job_result = await db.execute(
-        update(ImportJob)
-        .where(
-            ImportJob.id == job_id,
-            ImportJob.lease_owner == lease_owner,
-            ImportJob.lease_generation == lease_generation,
-            ImportJob.status == "running",
-        )
-        .values(status="failed", finished_at=datetime.now(timezone.utc), error_message=bounded_error_message)
-        .returning(ImportJob.id)
-    )
-    if job_result.first() is None:
+    """§9.4.2/§25's single, shared fenced-failure primitive -- the
+    failure-path counterpart to `fenced_phase_success` above, through the
+    same shared `_fence_job_terminal`/`_fence_session_terminal`
+    mechanics. `extra_session_values` lets execute set `terminal_at`
+    (FAILED is terminal, §5) while dry-run leaves it untouched
+    (DRY_RUN_FAILED is not terminal). No commit (the caller's TX2 owns
+    the boundary). Returns `None` if either fencing UPDATE affected zero
+    rows -- this worker has also been fenced out on its own failure
+    publication (§9.4.2 step 5); the caller must roll back TX2 and write
+    a fence-lost audit entry in a separate TX3, never overwrite whatever
+    the new owner already wrote."""
+    if not await _fence_job_terminal(
+        db,
+        job_id=job_id,
+        lease_owner=lease_owner,
+        lease_generation=lease_generation,
+        new_status="failed",
+        error_message=bounded_error_message,
+    ):
         return None
 
     values: dict = {
@@ -389,14 +349,88 @@ async def fenced_phase_failure(
     }
     if extra_session_values:
         values.update(extra_session_values)
-
-    session_result = await db.execute(
-        update(ImportSession)
-        .where(ImportSession.id == session_id, ImportSession.status == running_status, ImportSession.version == expected_version)
-        .values(**values)
-        .returning(ImportSession)
+    return await _fence_session_terminal(
+        db, session_id=session_id, running_status=running_status, expected_version=expected_version, values=values
     )
-    return session_result.scalar_one_or_none()
+
+
+async def fenced_success(
+    db: AsyncSession,
+    *,
+    job_id: uuid.UUID,
+    lease_owner: uuid.UUID,
+    lease_generation: int,
+    session_id: uuid.UUID,
+    expected_version: int,
+    new_session_status: str,
+    total_rows: int,
+    valid_rows: int,
+    invalid_rows: int,
+    warning_rows: int,
+) -> ImportSession | None:
+    """§9.4.1's fenced success publication for `validate` -- a thin,
+    validate-specific wrapper over the shared `fenced_phase_success`
+    primitive above (§25: validate, dry-run, and execute share one
+    fencing implementation; only the per-phase result columns differ).
+    §12: `current_validation_job_id` is promoted unconditionally whenever
+    the job reaches `succeeded`, regardless of whether `new_session_status`
+    is `validated` or `validation_failed` -- a completed pass that finds
+    blocking errors is still a legitimate "current" result. `updated_at`
+    and `validated_at` are pinned to the same instant, matching this
+    function's pre-refactor behavior exactly. No commit (the caller's TX1
+    owns the boundary)."""
+    now = datetime.now(timezone.utc)
+    return await fenced_phase_success(
+        db,
+        job_id=job_id,
+        lease_owner=lease_owner,
+        lease_generation=lease_generation,
+        session_id=session_id,
+        expected_version=expected_version,
+        running_status="validating",
+        new_session_status=new_session_status,
+        extra_session_values={
+            "updated_at": now,
+            "validated_at": now,
+            "current_validation_job_id": job_id,
+            "total_rows": total_rows,
+            "valid_rows": valid_rows,
+            "invalid_rows": invalid_rows,
+            "warning_rows": warning_rows,
+        },
+    )
+
+
+async def fenced_failure(
+    db: AsyncSession,
+    *,
+    job_id: uuid.UUID,
+    lease_owner: uuid.UUID,
+    lease_generation: int,
+    session_id: uuid.UUID,
+    expected_version: int,
+    failure_status: str,
+    bounded_error_message: str,
+) -> ImportSession | None:
+    """§9.4.2 steps 3-4's best-effort fenced failure publication for
+    `validate` -- a thin, validate-specific wrapper over the shared
+    `fenced_phase_failure` primitive above (§25). No commit (the caller's
+    TX2 owns the boundary). Returns `None` if either fencing UPDATE
+    affected zero rows -- this worker has also been fenced out on its own
+    failure publication (§9.4.2 step 5); the caller must roll back TX2
+    and write a fence-lost audit entry in a separate TX3, never overwrite
+    whatever the new owner already wrote."""
+    return await fenced_phase_failure(
+        db,
+        job_id=job_id,
+        lease_owner=lease_owner,
+        lease_generation=lease_generation,
+        session_id=session_id,
+        expected_version=expected_version,
+        running_status="validating",
+        failure_status=failure_status,
+        bounded_error_message=bounded_error_message,
+    )
 
 
 async def claim_stale_job(db: AsyncSession, *, session_id: uuid.UUID) -> ImportJob | None:

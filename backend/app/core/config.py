@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import AnyUrl, field_validator
+from pydantic import AnyUrl, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Minimum accepted length for JWT_SECRET_KEY in production. HS256 signing
@@ -82,6 +82,51 @@ class Settings(BaseSettings):
     @property
     def allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",") if origin.strip()]
+
+    @field_validator(
+        "IMPORT_JOB_LEASE_DURATION_SECONDS",
+        "IMPORT_JOB_HEARTBEAT_INTERVAL_SECONDS",
+        "IMPORT_RETENTION_DAYS",
+        "IMPORT_RETENTION_CLEANUP_CLAIM_TIMEOUT_SECONDS",
+    )
+    @classmethod
+    def _positive_import_timing(cls, value: int, info) -> int:
+        """Roadmap PR19 (§9.1/§9.2/§18): every one of these values gates a
+        safety-critical durability or retention window -- a non-positive
+        value is never a valid degenerate case, it is a misconfiguration
+        that must fail application startup, not silently produce
+        immediately-expiring leases/claims or immediately-eligible
+        retention data. Checked here (Settings construction, i.e. process
+        startup, see `get_settings` below) rather than deferred to the
+        first request that touches it."""
+        if value <= 0:
+            raise ValueError(
+                f"{info.field_name} must be a positive number of seconds/days, got {value}. "
+                "A non-positive value would make leases/claims expire immediately or make data "
+                "immediately eligible for retention action -- refusing to start with this configuration."
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _heartbeat_bounded_under_lease_duration(self) -> "Settings":
+        """§9.2: "a lease's effective lifetime for renewal purposes is
+        bounded by `IMPORT_JOB_HEARTBEAT_INTERVAL_SECONDS`, itself bounded
+        well under `IMPORT_JOB_LEASE_DURATION_SECONDS`" -- the renewal
+        loop can never keep a lease alive if it fires no more often than
+        the lease's own expiry. Enforced as a strict `<` relationship
+        (the minimum the mechanism requires to function at all); the
+        shipped defaults (60s / 300s) already satisfy this with the
+        design's own 5x safety margin, so this never constrains a
+        deployment that follows the documented defaults."""
+        if self.IMPORT_JOB_HEARTBEAT_INTERVAL_SECONDS >= self.IMPORT_JOB_LEASE_DURATION_SECONDS:
+            raise ValueError(
+                "IMPORT_JOB_HEARTBEAT_INTERVAL_SECONDS "
+                f"({self.IMPORT_JOB_HEARTBEAT_INTERVAL_SECONDS}) must be strictly less than "
+                f"IMPORT_JOB_LEASE_DURATION_SECONDS ({self.IMPORT_JOB_LEASE_DURATION_SECONDS}) -- otherwise "
+                "the renewal loop can never renew a lease before it expires. Refusing to start with this "
+                "configuration."
+            )
+        return self
 
     @field_validator("ENVIRONMENT")
     @classmethod

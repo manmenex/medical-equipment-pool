@@ -16,7 +16,7 @@ from app.models.import_session import ImportJob, ImportRowError, ImportSession, 
 
 async def claim_sessions_for_cleanup(
     db: AsyncSession, *, worker_id: uuid.UUID, retention_days: int, claim_timeout_seconds: int, limit: int
-) -> list[uuid.UUID]:
+) -> tuple[list[uuid.UUID], bool]:
     """§18's atomic batch claim. On PostgreSQL, `SELECT ... FOR UPDATE
     SKIP LOCKED` takes a row lock on each eligible session before the
     fenced claim `UPDATE` that follows in the same transaction --
@@ -27,6 +27,16 @@ async def claim_sessions_for_cleanup(
     `app.crud.transaction`'s own SQLite fallback), `skip_locked` is
     unsupported and simply omitted; the claim `UPDATE`'s own re-checked
     `WHERE` clause is still a correct, if non-concurrent-safe, guard.
+
+    Selects up to `limit + 1` candidates so `has_more` can be determined
+    without a separate `COUNT` query and without the boundary bug of
+    treating "exactly `limit` eligible rows exist" as "more remain"
+    (limit-plus-one pagination, matching this codebase's other cursor
+    helpers, e.g. `app.crud.import_job.list_findings`): only the first
+    `limit` candidates are ever claimed; the possible `limit + 1`th
+    candidate's lock (taken only to prove its existence) is released
+    unclaimed at this transaction's own commit, leaving it untouched and
+    still eligible for a future call. Returns `(claimed_ids, has_more)`.
     """
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=retention_days)
@@ -42,14 +52,16 @@ async def claim_sessions_for_cleanup(
         ),
     )
 
-    select_stmt = select(ImportSession.id).where(*eligible).order_by(ImportSession.terminal_at.asc()).limit(limit)
+    select_stmt = select(ImportSession.id).where(*eligible).order_by(ImportSession.terminal_at.asc()).limit(limit + 1)
     if dialect_name == "postgresql":
         select_stmt = select_stmt.with_for_update(skip_locked=True)
 
-    candidate_ids = [row[0] for row in (await db.execute(select_stmt)).all()]
+    fetched_ids = [row[0] for row in (await db.execute(select_stmt)).all()]
+    has_more = len(fetched_ids) > limit
+    candidate_ids = fetched_ids[:limit]
     if not candidate_ids:
         await db.commit()
-        return []
+        return [], has_more
 
     result = await db.execute(
         update(ImportSession)
@@ -62,7 +74,7 @@ async def claim_sessions_for_cleanup(
     )
     claimed_ids = [row[0] for row in result.all()]
     await db.commit()
-    return claimed_ids
+    return claimed_ids, has_more
 
 
 async def redact_session(db: AsyncSession, *, session_id: uuid.UUID, worker_id: uuid.UUID) -> ImportSession | None:

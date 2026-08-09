@@ -34,7 +34,7 @@ async def run_retention_cleanup(
     skipped and remains eligible for the next invocation (§18's "Retry
     and recovery") -- never retried inline within this same call."""
     worker_id = uuid.uuid4()
-    session_ids = await import_retention_crud.claim_sessions_for_cleanup(
+    session_ids, has_more = await import_retention_crud.claim_sessions_for_cleanup(
         db,
         worker_id=worker_id,
         retention_days=settings.IMPORT_RETENTION_DAYS,
@@ -76,9 +76,12 @@ async def run_retention_cleanup(
         purged_count += 1
 
     # §21: "has_more: true signals more eligible sessions exist beyond
-    # this batch" -- a full-batch claim is the only honest signal this
-    # single call can give; a partial claim means the eligible set was
-    # exhausted (skipped sessions remain eligible for a *future*
-    # invocation, not this one).
-    has_more = len(session_ids) >= limit
+    # this batch" -- determined by `claim_sessions_for_cleanup`'s own
+    # limit-plus-one probe (whether an eligible row existed beyond the
+    # `limit` actually claimed), not by comparing the claimed count to
+    # `limit` -- the latter is wrong exactly when the eligible set has
+    # precisely `limit` rows (§M1: that must report `has_more=False`).
+    # A session skipped in the loop above (redaction failure or fence
+    # loss) remains eligible for a *future* invocation, not this one, and
+    # does not change `has_more`'s meaning for this batch.
     return {"purged_count": purged_count, "skipped_count": skipped_count, "has_more": has_more}

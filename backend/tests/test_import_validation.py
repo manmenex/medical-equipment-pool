@@ -22,7 +22,7 @@ from app.crud import import_session as import_crud
 from app.models.audit import AuditLog
 from app.models.import_session import ImportJob, ImportRowError, ImportSession, ImportSource
 from app.models.user import User
-from app.services import import_validation_service
+from app.services import import_lease, import_validation_service
 from app.services.import_adapter import FieldError, ImportAdapter, RawImportRecord, get_adapter, register_adapter, unregister_adapter
 from tests.conftest import auth_headers
 
@@ -68,16 +68,22 @@ class FakeAdapter(ImportAdapter):
 
 @pytest_asyncio.fixture(autouse=True)
 async def _patch_validation_service_session_factory(db_engine, monkeypatch):
-    """`import_validation_service` imports `AsyncSessionLocal` from
-    `app.db.session` at module level, bound to `settings.DATABASE_URL`'s
-    own engine -- a different, never-migrated in-memory SQLite database
-    than this test module's `db_engine` fixture. The heartbeat renewal
-    loop and TX2/TX3 all open their own session via that name, so it must
-    be repointed at this test's own engine (the same convention
-    `tests/test_dashboard_stream.py` already established for
-    `app.api.v1.dashboard`'s own direct `AsyncSessionLocal` usage)."""
+    """`import_validation_service` uses `app.services.import_lease`'s
+    shared renewal-loop/fence-lost-audit helpers, which import
+    `AsyncSessionLocal` from `app.db.session` at module level, bound to
+    `settings.DATABASE_URL`'s own engine -- a different, never-migrated
+    in-memory SQLite database than this test module's `db_engine`
+    fixture. The heartbeat renewal loop and TX2/TX3 all open their own
+    session via that name, so it must be repointed at this test's own
+    engine (the same convention `tests/test_dashboard_stream.py` already
+    established for `app.api.v1.dashboard`'s own direct
+    `AsyncSessionLocal` usage). Patched on `import_lease`, not
+    `import_validation_service`, since PR19A3's H1 fix moved these
+    mechanics into the one shared module every phase (validate, dry-run,
+    execute) now calls -- see `test_import_execution.py`'s identical
+    `_patch_execution_session_factories` fixture."""
     session_maker = async_sessionmaker(db_engine, expire_on_commit=False, class_=AsyncSession)
-    monkeypatch.setattr(import_validation_service, "AsyncSessionLocal", session_maker)
+    monkeypatch.setattr(import_lease, "AsyncSessionLocal", session_maker)
 
 
 @pytest_asyncio.fixture
@@ -686,7 +692,10 @@ async def test_heartbeat_renews_lease(monkeypatch):
     `test_renew_lease_returns_false_once_lease_reassigned`): each tick
     calls `import_job_crud.renew_lease` using the loop's own session
     (`AsyncSessionLocal`, never the caller's), and keeps looping while
-    renewal keeps succeeding."""
+    renewal keeps succeeding. Exercises `app.services.import_lease`'s
+    shared implementation -- the one `validate` itself calls (§25/H1: no
+    private per-phase copy of this mechanism exists any more; see
+    `tests/test_import_lease.py` for the shared-primitive-level suite)."""
     calls = []
 
     async def fake_renew_lease(db, *, job_id, lease_owner, lease_generation, lease_duration_seconds):
@@ -700,12 +709,12 @@ async def test_heartbeat_renews_lease(monkeypatch):
         async def __aexit__(self, *exc):
             return False
 
-    monkeypatch.setattr(import_validation_service, "AsyncSessionLocal", lambda: _NullSession())
+    monkeypatch.setattr(import_lease, "AsyncSessionLocal", lambda: _NullSession())
     monkeypatch.setattr(import_job_crud, "renew_lease", fake_renew_lease)
 
     job_id, owner = uuid.uuid4(), uuid.uuid4()
     await asyncio.wait_for(
-        import_validation_service._renew_lease_loop(
+        import_lease.renew_lease_loop(
             job_id=job_id, lease_owner=owner, lease_generation=1, lease_duration_seconds=300, heartbeat_interval_seconds=0
         ),
         timeout=2,

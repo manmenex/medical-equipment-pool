@@ -874,14 +874,16 @@ async def test_retention_concurrent_cleanup_single_winner(client: AsyncClient, s
 
     worker_a = uuid.uuid4()
     worker_b = uuid.uuid4()
-    claimed_a = await import_retention_crud.claim_sessions_for_cleanup(
+    claimed_a, has_more_a = await import_retention_crud.claim_sessions_for_cleanup(
         db_session, worker_id=worker_a, retention_days=180, claim_timeout_seconds=300, limit=10
     )
-    claimed_b = await import_retention_crud.claim_sessions_for_cleanup(
+    claimed_b, has_more_b = await import_retention_crud.claim_sessions_for_cleanup(
         db_session, worker_id=worker_b, retention_days=180, claim_timeout_seconds=300, limit=10
     )
     assert claimed_a == [session.id]
     assert claimed_b == [], "a session already claimed (claim not yet expired) must not be claimable by a second worker"
+    assert has_more_a is False
+    assert has_more_b is False
 
 
 async def test_retention_fence_lost_when_claim_reclaimed(client: AsyncClient, seeded_users, db_session):
@@ -975,6 +977,79 @@ async def test_retention_has_more_true_on_full_batch(client: AsyncClient, seeded
     body = r.json()
     assert body["purged_count"] == 1
     assert body["has_more"] is True
+
+
+async def test_retention_has_more_false_when_zero_eligible(client: AsyncClient, seeded_users, db_session):
+    headers = await auth_headers(client)
+    r = await client.post("/api/v1/import-sessions/retention/cleanup", headers=headers, json={"limit": 10})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["purged_count"] == 0
+    assert body["has_more"] is False
+
+
+async def test_retention_has_more_false_when_fewer_than_limit(client: AsyncClient, seeded_users, db_session):
+    actor_id = await _get_user_id(db_session)
+    await _make_terminal_session(db_session, actor_id=actor_id, status="completed", terminal_at=datetime.now(timezone.utc) - timedelta(days=200))
+
+    headers = await auth_headers(client)
+    r = await client.post("/api/v1/import-sessions/retention/cleanup", headers=headers, json={"limit": 10})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["purged_count"] == 1
+    assert body["has_more"] is False
+
+
+async def test_retention_has_more_false_when_exactly_limit_eligible(client: AsyncClient, seeded_users, db_session):
+    """PR19A3 review fix round 1 (M1): exactly `limit` eligible sessions
+    must report `has_more=False` -- the old `len(claimed) >= limit`
+    comparison wrongly reported `True` here, advertising a phantom next
+    page that does not exist."""
+    actor_id = await _get_user_id(db_session)
+    for _ in range(3):
+        await _make_terminal_session(db_session, actor_id=actor_id, status="completed", terminal_at=datetime.now(timezone.utc) - timedelta(days=200))
+
+    headers = await auth_headers(client)
+    r = await client.post("/api/v1/import-sessions/retention/cleanup", headers=headers, json={"limit": 3})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["purged_count"] == 3
+    assert body["has_more"] is False
+
+
+async def test_retention_has_more_true_when_limit_plus_one_eligible(client: AsyncClient, seeded_users, db_session):
+    actor_id = await _get_user_id(db_session)
+    for _ in range(4):
+        await _make_terminal_session(db_session, actor_id=actor_id, status="completed", terminal_at=datetime.now(timezone.utc) - timedelta(days=200))
+
+    headers = await auth_headers(client)
+    r = await client.post("/api/v1/import-sessions/retention/cleanup", headers=headers, json={"limit": 3})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["purged_count"] == 3
+    assert body["has_more"] is True
+
+
+async def test_retention_multiple_pages_final_page_exactly_fills_reports_no_phantom_next(client: AsyncClient, seeded_users, db_session):
+    """Drains a 6-session backlog in pages of 3: the first page reports
+    `has_more=True` (3 more remain), the second (final) page reports
+    `has_more=False` even though it too claims exactly `limit` sessions
+    -- because zero eligible sessions remain after it, not because of
+    the claimed count alone."""
+    actor_id = await _get_user_id(db_session)
+    for _ in range(6):
+        await _make_terminal_session(db_session, actor_id=actor_id, status="completed", terminal_at=datetime.now(timezone.utc) - timedelta(days=200))
+
+    headers = await auth_headers(client)
+    first = await client.post("/api/v1/import-sessions/retention/cleanup", headers=headers, json={"limit": 3})
+    assert first.status_code == 200, first.text
+    assert first.json()["purged_count"] == 3
+    assert first.json()["has_more"] is True
+
+    second = await client.post("/api/v1/import-sessions/retention/cleanup", headers=headers, json={"limit": 3})
+    assert second.status_code == 200, second.text
+    assert second.json()["purged_count"] == 3
+    assert second.json()["has_more"] is False, "no phantom next page once the eligible set is exhausted"
 
 
 async def test_retention_no_limit_defaults_to_100(client: AsyncClient, seeded_users, db_session):

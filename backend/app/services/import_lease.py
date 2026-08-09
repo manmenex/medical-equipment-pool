@@ -1,13 +1,16 @@
 """Shared, job-type-generic lease-renewal and fencing-audit helpers.
 
-Roadmap PR19A3 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §9.2,
-§9.4.2, §19). Roadmap PR19A2's own `app.services.import_validation_service`
-predates this module and keeps its own private, structurally-identical
-copies of the renewal loop and the fence-lost-audit helper -- deliberately
-left untouched here so that already-merged, independently-reviewed slice
-is not modified by PR19A3's addition. This module exists so PR19A3's three
-new call sites (dry-run, execute, retention cleanup) share one
-implementation instead of a third and fourth private copy.
+Roadmap PR19A2/PR19A3 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md
+§9.2, §9.4.2, §19, §25). The single, safety-critical implementation of
+the renewal loop, bounded failure-message formatting, and the
+fence-lost-audit helper -- design §25's "PR19A3 adds no new lease,
+heartbeat, fencing, or recovery code" requires exactly one such
+implementation shared by `validate` (PR19A2), `dry_run`/`execute`
+(PR19A3), and retention cleanup (PR19A3), not structurally-identical
+copies kept per module. `app.services.import_validation_service`,
+`app.services.import_execution_service`, and
+`app.services.import_retention_service` all call into this module rather
+than maintaining their own copy of these mechanics.
 """
 
 import asyncio
@@ -29,8 +32,8 @@ _MAX_FAILURE_MESSAGE_LENGTH = 2000
 async def renew_lease_loop(
     *, job_id: uuid.UUID, lease_owner: uuid.UUID, lease_generation: int, lease_duration_seconds: int, heartbeat_interval_seconds: int
 ) -> None:
-    """§9.2, generic across `job_type` -- identical mechanism to
-    `app.services.import_validation_service._renew_lease_loop`. Its own
+    """§9.2, generic across `job_type` -- the single renewal-loop
+    implementation `validate`, `dry_run`, and `execute` all use. Its own
     session, never the main work's. A clean 0-row renewal result is an
     unambiguous "lease lost" signal (stop immediately, no retry); a raised
     exception is treated as transient and retried up to two more times.
