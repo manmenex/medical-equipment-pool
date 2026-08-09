@@ -79,6 +79,24 @@ ones PostgreSQL auto-creates to back a PRIMARY KEY/UNIQUE constraint --
 special-casing is needed to tell them apart from "real" indexes. No
 PostgreSQL-internal or TOAST object is ever part of this comparison.
 
+**PR84-H1R3: constraint lookups are relation-scoped by construction.**
+Unlike index names (schema-unique in PostgreSQL, so `_INDEX_ROW_SQL`'s
+`schemaname = 'public' AND indexname = :name` is already unambiguous),
+constraint names are only unique *within* a relation -- the same name can
+legitimately exist on two different tables. Every constraint lookup here
+therefore requires `conrelid = (:t)::regclass` alongside `conname = :name`
+(`_CONSTRAINT_DEF_SQL`, `_classify_constraint()`'s `table` parameter, and
+the composite-FK existence pre-check in `upgrade()`); `_classify_
+constraint()` has no signature that accepts a bare name, so an unscoped
+lookup is impossible by construction, not merely a convention callers must
+remember. Without this, a same-named constraint on an unrelated table (or
+`fk_import_sessions_current_validation_job` existing anywhere except
+`import_sessions`) could satisfy an unscoped `WHERE conname = ...` and
+falsely classify the *target* table as already having a constraint it
+never had. The lookup also fetches `pg_constraint.convalidated`, rejecting
+a same-named-and-defined-but-`NOT VALID` constraint exactly as the index
+health gate above rejects an `indisvalid = false` index.
+
 The regression-test suite (`tests/test_postgres_integration.py`) exercises
 this migration's own classification logic directly (via the real `alembic`
 CLI against deliberately-mutated pre-existing schemas), not a separate
@@ -438,7 +456,22 @@ _COLUMN_SQL = sa.text(
     "SELECT data_type, udt_name, character_maximum_length, is_nullable, column_default "
     "FROM information_schema.columns WHERE table_schema = 'public' AND table_name = :t AND column_name = :c"
 )
-_CONSTRAINT_DEF_SQL = sa.text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = :name")
+# PR84-H1R3: relation-scoped by construction -- PostgreSQL constraint names
+# are unique only *within* a relation, not schema- or database-wide (unlike
+# index names, which `_INDEX_ROW_SQL` below correctly scopes only by
+# schema+name for exactly that reason). A bare `WHERE conname = :name`
+# would match a same-named constraint on any other table, silently
+# classifying the *target* table as compatible even when it never had this
+# constraint at all. `conrelid = (:t)::regclass` makes an unscoped lookup
+# impossible by construction -- every caller must supply the owning table.
+# Also fetches `convalidated`: a CHECK/FK constraint can exist, matching
+# name and definition, and still be `NOT VALID` (e.g. an interrupted
+# `ADD CONSTRAINT ... NOT VALID` + deferred `VALIDATE CONSTRAINT`) -- never
+# classified as compatible in that state, mirroring the index health gate.
+_CONSTRAINT_DEF_SQL = sa.text(
+    "SELECT pg_get_constraintdef(oid), convalidated FROM pg_constraint "
+    "WHERE conrelid = (:t)::regclass AND conname = :name"
+)
 # Mirrors migration 0014's `_INDEX_ROW_SQL` -- the same join pattern this
 # codebase already established for "index definition + health in one query".
 _INDEX_ROW_SQL = sa.text(
@@ -495,12 +528,19 @@ def _classify_column(bind, table: str, column: str, expected: tuple) -> tuple[st
     return (_COMPATIBLE if actual == expected else _INCOMPATIBLE_DEFINITION), actual
 
 
-def _classify_constraint(bind, name: str, expected_def: str) -> tuple[str, str | None]:
-    row = bind.execute(_CONSTRAINT_DEF_SQL, {"name": name}).one_or_none()
+def _classify_constraint(bind, table: str, name: str, expected_def: str) -> tuple[str, tuple[str, bool] | None]:
+    """`table` is required, not optional -- there is no code path in this
+    module that can look up a constraint without naming the relation it
+    must belong to (PR84-H1R3)."""
+    row = bind.execute(_CONSTRAINT_DEF_SQL, {"t": table, "name": name}).one_or_none()
     if row is None:
         return _MISSING, None
-    actual = row[0]
-    return (_COMPATIBLE if actual == expected_def else _INCOMPATIBLE_DEFINITION), actual
+    condef, convalidated = row
+    if condef != expected_def:
+        return _INCOMPATIBLE_DEFINITION, (condef, convalidated)
+    if not convalidated:
+        return _INCOMPATIBLE_HEALTH, (condef, convalidated)
+    return _COMPATIBLE, (condef, convalidated)
 
 
 def _classify_index(bind, name: str, expected_def: str) -> tuple[str, tuple[str, bool, bool] | None]:
@@ -607,18 +647,37 @@ def _verify_schema_convergence(bind) -> None:
 
     for table, constraints in _EXPECTED_CONSTRAINTS.items():
         for name, expected_def in constraints.items():
-            kind, actual = _classify_constraint(bind, name, expected_def)
+            # PR84-H1R3: `expected_constraint_names - actual_constraint_names`
+            # for this table, computed one name at a time -- `_classify_
+            # constraint` looks up `name` scoped to exactly `table` via
+            # `conrelid`, so MISSING here can only mean "not owned by this
+            # relation", never "exists somewhere else in the database under
+            # the same name." A same-named constraint on another table (or
+            # in another schema) never satisfies this lookup and is
+            # therefore correctly invisible to it.
+            kind, actual = _classify_constraint(bind, table, name, expected_def)
             if kind == _MISSING:
                 problems.append(
-                    f"{table}: constraint '{name}' does not exist even after this migration's own DDL "
-                    "ran -- this indicates an internal migration bug, not a pre-existing incompatible "
-                    "schema."
+                    f"{table}: constraint '{name}' does not exist on this table even after this "
+                    "migration's own DDL ran -- this indicates an internal migration bug, not a "
+                    "pre-existing incompatible schema. (A same-named constraint on a different table "
+                    "would never satisfy this relation-scoped check.)"
                 )
             elif kind == _INCOMPATIBLE_DEFINITION:
+                actual_def, _validated = actual
                 problems.append(
-                    f"{table}: constraint '{name}' exists but its definition diverges.\n"
+                    f"{table}: constraint '{name}' exists on this table but its definition diverges.\n"
                     f"    Expected: {expected_def}\n"
-                    f"    Actual:   {actual}"
+                    f"    Actual:   {actual_def}"
+                )
+            elif kind == _INCOMPATIBLE_HEALTH:
+                actual_def, validated = actual
+                problems.append(
+                    f"{table}: constraint '{name}' matches its expected definition but is not "
+                    f"validated (pg_constraint.convalidated={validated}). This usually means a "
+                    "previous `ADD CONSTRAINT ... NOT VALID` was never followed by `VALIDATE "
+                    "CONSTRAINT`. A same-named, same-definition constraint is never classified as "
+                    "compatible while unvalidated."
                 )
 
     for table, indexes in _EXPECTED_INDEXES.items():
@@ -672,8 +731,14 @@ def upgrade() -> None:
 
     # Idempotent: only add the composite FK if it does not already exist
     # (the fresh-install path already created it via ORM metadata).
+    # PR84-H1R3: scoped by conrelid -- a same-named constraint elsewhere
+    # must never be mistaken for import_sessions already having its own
+    # composite ownership FK (which would wrongly skip creating it here).
     existing_fk = bind.execute(
-        sa.text("SELECT 1 FROM pg_constraint WHERE conname = 'fk_import_sessions_current_validation_job'")
+        sa.text(
+            "SELECT 1 FROM pg_constraint WHERE conrelid = 'import_sessions'::regclass "
+            "AND conname = 'fk_import_sessions_current_validation_job'"
+        )
     ).one_or_none()
     if existing_fk is None:
         op.execute(sa.text(_ADD_COMPOSITE_FK))

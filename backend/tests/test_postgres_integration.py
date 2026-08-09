@@ -9198,26 +9198,66 @@ _CATALOG_MISMATCH_SCENARIOS = (
         ("CREATE INDEX ix_import_sessions_extra ON import_sessions (dataset_type)",),
         "ix_import_sessions_extra",
     ),
+    # PR84-H1R3: a same-named constraint on a *different* relation must
+    # never satisfy `import_sessions`'s own constraint lookup. Both cases
+    # drop the real constraint from `import_sessions` and then create a
+    # decoy elsewhere carrying the identical name and an equivalent
+    # definition -- an unscoped `WHERE conname = ...` lookup would find the
+    # decoy and wrongly classify `import_sessions` as compatible; the
+    # relation-scoped lookup must instead report `import_sessions` as
+    # genuinely missing the constraint. Deliberately targets the CHECK
+    # constraint `ck_import_sessions_notes_length`, not the UNIQUE
+    # constraint `uq_import_sessions_dataset_idempotency` -- a UNIQUE
+    # constraint has an auto-created backing index, so dropping it and
+    # creating a same-named decoy elsewhere would also be caught by the
+    # pre-existing (H1R) index-scoping check via that index's `indexdef`,
+    # making the scenario ambiguous about which check actually caught it.
+    # A plain CHECK constraint has no backing index, so only the
+    # constraint-lookup relation-scoping fix (this round) can catch it.
+    (
+        "same_name_constraint_on_another_table",
+        (
+            "ALTER TABLE import_sessions DROP CONSTRAINT ck_import_sessions_notes_length",
+            "CREATE TABLE _h1r3_decoy_same_schema ("
+            "notes TEXT, "
+            "CONSTRAINT ck_import_sessions_notes_length CHECK (LENGTH(notes) <= 4000))",
+        ),
+        "import_sessions: constraint 'ck_import_sessions_notes_length' does not exist on this table",
+    ),
+    (
+        "same_name_constraint_in_another_schema",
+        (
+            "ALTER TABLE import_sessions DROP CONSTRAINT ck_import_sessions_notes_length",
+            "CREATE SCHEMA _h1r3_decoy_schema",
+            "CREATE TABLE _h1r3_decoy_schema._h1r3_decoy ("
+            "notes TEXT, "
+            "CONSTRAINT ck_import_sessions_notes_length CHECK (LENGTH(notes) <= 4000))",
+        ),
+        "import_sessions: constraint 'ck_import_sessions_notes_length' does not exist on this table",
+    ),
 )
 
 
 @pytest.mark.parametrize("scenario_name,mutations,expected_substring", _CATALOG_MISMATCH_SCENARIOS, ids=lambda v: v if isinstance(v, str) else "")
 async def test_migration_0015_catalog_mismatches_fail_closed(scenario_name, mutations, expected_substring):
-    """Regression scenarios #3-#10 (H1R) plus the H1R2 unexpected-object
-    scenarios: an otherwise fully-correct pre-existing historical schema
-    with exactly one deliberate divergence -- a same-named index pointing
-    at the wrong column, a same-named-and-defined but unhealthy index, a
-    wrong column type, wrong nullability, a wrong server default, a
-    same-named FK pointing at the wrong table, a same-named UNIQUE
-    constraint over the wrong columns, a same-named index missing its
-    partial predicate, or (H1R2) an *extra* UNIQUE/CHECK constraint, an
-    extra application column, or an extra application index that coexists
-    with every correctly-defined expected object -- must fail `upgrade
-    head` closed, naming the specific object. `CREATE TABLE/INDEX IF NOT
-    EXISTS` would silently no-op against every wrong-definition scenario,
-    and an `expected ⊆ actual` check alone would silently pass every
-    extra-object scenario; only migration 0015's own
-    `_verify_schema_convergence()` catches all of them."""
+    """Regression scenarios #3-#10 (H1R), the H1R2 unexpected-object
+    scenarios, and the H1R3 relation-scoping scenarios: an otherwise
+    fully-correct pre-existing historical schema with exactly one
+    deliberate divergence -- a same-named index pointing at the wrong
+    column, a same-named-and-defined but unhealthy index, a wrong column
+    type, wrong nullability, a wrong server default, a same-named FK
+    pointing at the wrong table, a same-named UNIQUE constraint over the
+    wrong columns, a same-named index missing its partial predicate,
+    (H1R2) an *extra* UNIQUE/CHECK constraint, an extra application column,
+    an extra application index, or (H1R3) `import_sessions` genuinely
+    missing its UNIQUE constraint while a same-named, equivalently-defined
+    decoy exists on another table or in another schema -- must fail
+    `upgrade head` closed, naming the specific object. `CREATE TABLE/INDEX
+    IF NOT EXISTS` would silently no-op against every wrong-definition
+    scenario, an `expected ⊆ actual` check alone would silently pass every
+    extra-object scenario, and an unscoped `WHERE conname = ...` lookup
+    would silently pass every same-name-elsewhere scenario; only migration
+    0015's own `_verify_schema_convergence()` catches all of them."""
     try:
         await _recreate_scratch_database()
     except Exception as exc:
