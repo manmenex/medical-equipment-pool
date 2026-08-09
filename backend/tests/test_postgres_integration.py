@@ -21,6 +21,7 @@ Default connection target if POSTGRES_TEST_DATABASE_URL is unset:
 """
 
 import asyncio
+import importlib.util
 import json
 import os
 import subprocess
@@ -8963,6 +8964,252 @@ async def test_migration_0015_mismatched_check_definition_fails_closed():
         assert result.returncode != 0, "a mismatched CHECK definition must fail the migration, not be silently accepted"
         combined = result.stdout + result.stderr
         assert "diverges" in combined, f"failure must explain the mismatch:\n{combined}"
+    finally:
+        await _drop_scratch_database()
+
+
+# ---------------------------------------------------------------------------
+# PR84-H1R: migration 0015's own production catalog-classification logic
+# (`_verify_schema_convergence()` in alembic/versions/0015_import_foundation.py)
+# must be exercised directly, not re-verified only by an independent test-side
+# comparison. These tests load the migration module itself (avoiding a
+# second, hand-maintained copy of its DDL constants and expected-schema
+# dicts -- the migration is the single place compatibility is enforced;
+# these tests verify its behavior), build a fully correct pre-existing
+# import-foundation schema via that same DDL, apply exactly one deliberate
+# mutation per scenario, and confirm the real `alembic` CLI's `upgrade head`
+# fails closed with an actionable message identifying the mismatched object
+# -- or, for the "missing object"/"already correct" scenarios, succeeds.
+# ---------------------------------------------------------------------------
+
+
+def _load_migration_0015_module():
+    spec = importlib.util.spec_from_file_location(
+        "_migration_0015_import_foundation", _BACKEND_DIR / "alembic" / "versions" / "0015_import_foundation.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_migration_0015 = _load_migration_0015_module()
+
+
+async def _build_correct_historical_baseline(engine, *, skip_index_names: frozenset = frozenset(), mutations=()) -> None:
+    """Builds a fully correct pre-existing import-foundation schema using
+    migration 0015's own DDL constants (never a hand-copied duplicate),
+    simulating 'these tables already existed historically, exactly as the
+    design specifies, before this migration ever ran' -- the only state
+    that exercises `_verify_schema_convergence()`'s classification logic
+    rather than its CREATE ... IF NOT EXISTS creation branch. Callers pass
+    `skip_index_names` to simulate a missing object, or `mutations` (extra
+    raw SQL run after the correct baseline) to simulate a same-named but
+    incompatible historical object. The caller is responsible for having
+    already brought the database to the `0014_index_naming_convergence`
+    baseline (import_sessions/sources/jobs/row_errors genuinely absent)
+    before calling this."""
+    async with engine.begin() as conn:
+        await conn.execute(text(_migration_0015._CREATE_IMPORT_SESSIONS))
+        await conn.execute(text(_migration_0015._CREATE_IMPORT_SOURCES))
+        await conn.execute(text(_migration_0015._CREATE_IMPORT_JOBS))
+        await conn.execute(text(_migration_0015._CREATE_IMPORT_ROW_ERRORS))
+        await conn.execute(text(_migration_0015._ADD_COMPOSITE_FK))
+        for stmt in _migration_0015._INDEXES:
+            if any(f"IF NOT EXISTS {name} " in stmt for name in skip_index_names):
+                continue
+            await conn.execute(text(stmt))
+        for stmt in mutations:
+            await conn.execute(text(stmt))
+
+
+async def test_migration_0015_correct_historical_schema_converges_and_succeeds():
+    """Regression scenarios #1 and #11: a historically pre-existing schema
+    that already matches the design exactly must let `upgrade head` succeed
+    (§8's fail-closed contract only rejects genuine incompatibility, never a
+    correct pre-existing object), and the resulting catalog must be fully
+    convergent with a fresh install -- not just CHECK constraints, but
+    columns, server defaults, every constraint kind, and every index."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0014_index_naming_convergence")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            await _build_correct_historical_baseline(engine)
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            historical_snapshot = await _import_foundation_catalog_snapshot(engine)
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+    try:
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            fresh_snapshot = await _import_foundation_catalog_snapshot(engine)
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+    diffs = _diff_catalog_snapshots(fresh_snapshot, historical_snapshot)
+    assert not diffs, "a correct pre-existing historical schema must converge with fresh install:\n" + "\n".join(diffs)
+
+
+async def test_migration_0015_missing_index_is_created_by_migration():
+    """Regression scenario #2: an otherwise-correct pre-existing schema
+    that is simply missing the checksum index (never created historically)
+    must have it created by this migration's `CREATE INDEX IF NOT EXISTS`,
+    not rejected as incompatible -- MISSING and INCOMPATIBLE are distinct
+    classifications, and only the latter fails closed."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0014_index_naming_convergence")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            await _build_correct_historical_baseline(engine, skip_index_names=frozenset({"ix_import_sources_checksum"}))
+            async with engine.connect() as conn:
+                exists = (
+                    await conn.execute(text("SELECT to_regclass('ix_import_sources_checksum') IS NOT NULL"))
+                ).scalar_one()
+                assert not exists, "test setup must produce a genuinely missing index before proceeding"
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        text("SELECT indexdef FROM pg_indexes WHERE schemaname='public' AND indexname=:n"),
+                        {"n": "ix_import_sources_checksum"},
+                    )
+                ).one_or_none()
+                assert row is not None, "the missing index must be created by this migration"
+                assert row[0] == _migration_0015._EXPECTED_INDEXES["import_sources"]["ix_import_sources_checksum"]
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+_CATALOG_MISMATCH_SCENARIOS = (
+    (
+        "wrong_index_column",
+        (
+            "DROP INDEX ix_import_sources_checksum",
+            "CREATE INDEX ix_import_sources_checksum ON import_sources (source_fingerprint)",
+        ),
+        "ix_import_sources_checksum",
+    ),
+    (
+        "unhealthy_index",
+        (
+            "UPDATE pg_index SET indisvalid = false, indisready = false "
+            "WHERE indexrelid = 'ix_import_sources_checksum'::regclass",
+        ),
+        "indisvalid",
+    ),
+    (
+        "wrong_column_type",
+        ("ALTER TABLE import_jobs ALTER COLUMN attempt_number TYPE BIGINT",),
+        "import_jobs.attempt_number",
+    ),
+    (
+        "wrong_nullability",
+        ("ALTER TABLE import_sources ALTER COLUMN content_type SET NOT NULL",),
+        "import_sources.content_type",
+    ),
+    (
+        "wrong_server_default",
+        ("ALTER TABLE import_jobs ALTER COLUMN status SET DEFAULT 'succeeded'",),
+        "import_jobs.status",
+    ),
+    (
+        "wrong_fk_target",
+        (
+            "ALTER TABLE import_sources DROP CONSTRAINT import_sources_import_session_id_fkey",
+            "ALTER TABLE import_sources ADD CONSTRAINT import_sources_import_session_id_fkey "
+            "FOREIGN KEY (import_session_id) REFERENCES import_jobs(id) ON DELETE RESTRICT",
+        ),
+        "import_sources_import_session_id_fkey",
+    ),
+    (
+        "wrong_unique_columns",
+        (
+            "ALTER TABLE import_sessions DROP CONSTRAINT uq_import_sessions_dataset_idempotency",
+            "ALTER TABLE import_sessions ADD CONSTRAINT uq_import_sessions_dataset_idempotency UNIQUE (dataset_type)",
+        ),
+        "uq_import_sessions_dataset_idempotency",
+    ),
+    (
+        "wrong_index_predicate",
+        (
+            "DROP INDEX ix_import_jobs_lease_expires_at",
+            "CREATE INDEX ix_import_jobs_lease_expires_at ON import_jobs (lease_expires_at)",
+        ),
+        "ix_import_jobs_lease_expires_at",
+    ),
+)
+
+
+@pytest.mark.parametrize("scenario_name,mutations,expected_substring", _CATALOG_MISMATCH_SCENARIOS, ids=lambda v: v if isinstance(v, str) else "")
+async def test_migration_0015_catalog_mismatches_fail_closed(scenario_name, mutations, expected_substring):
+    """Regression scenarios #3-#10: an otherwise fully-correct pre-existing
+    historical schema with exactly one deliberate divergence -- a same-named
+    index pointing at the wrong column, a same-named-and-defined but
+    unhealthy index, a wrong column type, wrong nullability, a wrong server
+    default, a same-named FK pointing at the wrong table, a same-named
+    UNIQUE constraint over the wrong columns, or a same-named index missing
+    its partial predicate -- must fail `upgrade head` closed, naming the
+    specific mismatched object. `CREATE TABLE/INDEX IF NOT EXISTS` would
+    silently no-op against every one of these (H1R); only migration 0015's
+    own `_verify_schema_convergence()` catches them."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0014_index_naming_convergence")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            await _build_correct_historical_baseline(engine, mutations=mutations)
+        finally:
+            await engine.dispose()
+
+        result = _run_alembic_allow_failure("upgrade", "head")
+        assert result.returncode != 0, (
+            f"scenario '{scenario_name}': a catalog mismatch must fail the migration, not be silently accepted"
+        )
+        combined = result.stdout + result.stderr
+        assert expected_substring in combined, (
+            f"scenario '{scenario_name}': failure must name the specific mismatched object "
+            f"('{expected_substring}'):\n{combined}"
+        )
     finally:
         await _drop_scratch_database()
 

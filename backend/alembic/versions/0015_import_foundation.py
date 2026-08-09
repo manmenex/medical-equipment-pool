@@ -15,20 +15,55 @@ and freeze, the composite ownership FK, and cursor pagination only.
 **Fresh-install vs. historical-upgrade convergence (§8).** `app.models.
 import_session` is now registered in `app/db/base.py`, so
 `0001_initial.py`'s `Base.metadata.create_all(bind=bind)` already creates
-all four tables -- with their exact, explicitly-named `CheckConstraint`s
-(§4's "every enum-shaped column is a plain VARCHAR with a named CHECK
-constraint", enforced here via literal `CheckConstraint(name=...)` objects
-on each model, not SQLAlchemy's `Enum` type) -- on any database that runs
-`0001` against the *current* model set, i.e. any brand-new install. This
-migration's own raw SQL below is what creates these tables on a database
-that already historically applied `0001`-`0014` *before* this slice existed
-(the only path where `0001`'s `create_all()` could not have created them).
-`CREATE TABLE IF NOT EXISTS` makes the fresh-install path's re-application
-of this migration a no-op; the verification step below then confirms both
-paths converge to identical CHECK-constraint definitions, failing closed
-(not silently continuing) if a same-named table already exists with a
-different shape than expected -- the same "verify, don't just no-op"
-discipline migrations 0013/0014 established.
+all four tables on any brand-new install. This migration's own raw SQL
+below is what creates these tables on a database that already historically
+applied `0001`-`0014` *before* this slice existed (the only path where
+`0001`'s `create_all()` could not have created them). `CREATE TABLE/INDEX
+IF NOT EXISTS` makes the fresh-install path's re-application of this
+migration's DDL a no-op against objects that already exist under the
+expected name.
+
+**PR84-H1R: name-based `IF NOT EXISTS` is not itself a compatibility
+proof.** A same-named pre-existing object (table, column, constraint, or
+index) can silently differ in the property that actually matters --
+wrong column type, wrong nullability, wrong server default, an index or
+FK/UNIQUE constraint that shares a name but not a definition, or an index
+that is present, correctly defined, and still unusable
+(`pg_index.indisvalid`/`indisready = false`, e.g. from an interrupted
+`CREATE INDEX CONCURRENTLY`). `CREATE ... IF NOT EXISTS` would silently
+skip creation in every one of those cases and the migration would
+"succeed" over an incompatible historical schema. `_verify_schema_
+convergence()` below is this migration's own, production-owned defense
+against exactly that: after every `CREATE`/`ALTER` statement above has run
+(whether it just created the object fresh or no-op'd against something
+already there), it re-reads the *actual* PostgreSQL catalog for every
+column, constraint (CHECK/UNIQUE/FK/PK -- `pg_get_constraintdef()` is
+uniform across constraint kinds), and index (`pg_indexes.indexdef` +
+`pg_index.indisvalid`/`indisready`) this migration governs, and classifies
+each as MISSING / COMPATIBLE / INCOMPATIBLE against the literal expected
+values in `_EXPECTED_COLUMNS`/`_EXPECTED_CONSTRAINTS`/`_EXPECTED_INDEXES`
+(captured once, empirically, against a real fresh-installed PostgreSQL 16
+database -- never hand-guessed). Any non-COMPATIBLE classification aborts
+the migration with an actionable `RuntimeError` naming the specific
+table/object/expected/actual mismatch. Nothing is ever silently dropped,
+renamed, rebuilt, or coerced -- the default for an ambiguous or
+incompatible pre-existing object is fail closed, matching the discipline
+migrations 0011/0013/0014 already established for their own governed
+objects (index/constraint semantic-definition + health-state verification
+before any transformation, never name/presence alone).
+
+**Index health is a required, independent gate**, exactly as migration
+0014's `_IndexVerifier`/`_ConstraintVerifier` already require for their own
+renamed objects: an index matching its expected `indexdef` byte-for-byte is
+still classified INCOMPATIBLE if `indisvalid` or `indisready` is false --
+its name and definition matching is not sufficient proof it is usable.
+
+The regression-test suite (`tests/test_postgres_integration.py`) exercises
+this migration's own classification logic directly (via the real `alembic`
+CLI against deliberately-mutated pre-existing schemas), not a separate
+test-only comparison -- this migration's `_verify_schema_convergence()` is
+the single place compatibility is enforced; the tests verify its behavior,
+they do not duplicate it.
 
 Only ever runs raw SQL against PostgreSQL (see 0002/0004/0011/0012/0013/
 0014's identical dialect-gated pattern) -- SQLite tests create these tables
@@ -169,66 +204,356 @@ _INDEXES = (
     "ON import_row_errors (import_job_id, row_number)",
 )
 
-# §8 acceptance criteria: after either path (fresh-install no-op, or this
-# migration's own CREATE TABLE), the named CHECK constraint on each table
-# must exist with exactly this canonical definition -- verified here so a
-# divergence (e.g. the H2 defect from the original PR19A review: an ORM
-# Enum without create_constraint, silently producing no constraint at all
-# on the fresh path) fails this migration closed instead of shipping a
-# silent schema drift.
-_EXPECTED_CHECK_DEFS = {
-    "ck_import_sessions_status": (
-        "CHECK (((status)::text = ANY ((ARRAY["
-        "'created'::character varying, 'validating'::character varying, 'validated'::character varying, "
-        "'validation_failed'::character varying, 'dry_run_running'::character varying, "
-        "'dry_run_completed'::character varying, 'dry_run_failed'::character varying, "
-        "'executing'::character varying, 'completed'::character varying, 'failed'::character varying, "
-        "'cancelled'::character varying])::text[])))"
-    ),
-    "ck_import_sources_status": (
-        "CHECK (((status)::text = ANY ((ARRAY['registered'::character varying, "
-        "'frozen'::character varying])::text[])))"
-    ),
-    "ck_import_sources_checksum_length": "CHECK ((length((checksum)::text) >= 32))",
-    "ck_import_sessions_notes_length": "CHECK ((length(notes) <= 4000))",
-    "ck_import_sessions_failure_reason_length": "CHECK ((length(failure_reason) <= 2000))",
-    "ck_import_jobs_error_message_length": "CHECK ((length(error_message) <= 2000))",
-    "ck_import_jobs_job_type": (
-        "CHECK (((job_type)::text = ANY ((ARRAY['validate'::character varying, "
-        "'dry_run'::character varying, 'execute'::character varying])::text[])))"
-    ),
-    "ck_import_jobs_status": (
-        "CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'running'::character varying, "
-        "'succeeded'::character varying, 'failed'::character varying, "
-        "'abandoned'::character varying])::text[])))"
-    ),
-    "ck_import_row_errors_severity": (
-        "CHECK (((severity)::text = ANY ((ARRAY['error'::character varying, "
-        "'warning'::character varying])::text[])))"
-    ),
+_GOVERNED_TABLES = ("import_sessions", "import_sources", "import_jobs", "import_row_errors")
+
+# PR84-H1R: every column this migration governs, across all four tables,
+# regardless of which later slice (PR19A2/A3) populates or reads it (§4.6:
+# "for every table and every column ... is entirely PR19A1's testing
+# responsibility"). Each value is
+# (data_type, udt_name, character_maximum_length, is_nullable, column_default)
+# exactly as `information_schema.columns` reports it -- captured empirically
+# against a real, freshly-installed PostgreSQL 16 database, never
+# hand-guessed. `column_default` is PostgreSQL's own catalog rendering of
+# the DDL `DEFAULT` clause (e.g. `"'created'::character varying"`, `'now()'`,
+# `'0'`) -- `None` means "no server default", which is itself part of the
+# contract for nullable columns with no default at all.
+_EXPECTED_COLUMNS = {
+    "import_sessions": {
+        "created_at": ("timestamp with time zone", "timestamptz", None, "NO", "now()"),
+        "created_by_user_id": ("uuid", "uuid", None, "NO", None),
+        "current_validation_job_id": ("uuid", "uuid", None, "YES", None),
+        "dataset_type": ("character varying", "varchar", 100, "NO", None),
+        "dry_run_completed_at": ("timestamp with time zone", "timestamptz", None, "YES", None),
+        "executed_at": ("timestamp with time zone", "timestamptz", None, "YES", None),
+        "failure_reason": ("text", "text", None, "YES", None),
+        "id": ("uuid", "uuid", None, "NO", None),
+        "idempotency_key": ("character varying", "varchar", 200, "YES", None),
+        "imported_rows": ("integer", "int4", None, "YES", None),
+        "invalid_rows": ("integer", "int4", None, "YES", None),
+        "notes": ("text", "text", None, "YES", None),
+        "retention_cleanup_claim_expires_at": ("timestamp with time zone", "timestamptz", None, "YES", None),
+        "retention_cleanup_claimed_by": ("uuid", "uuid", None, "YES", None),
+        "retention_purged_at": ("timestamp with time zone", "timestamptz", None, "YES", None),
+        "source_bytes_deleted_at": ("timestamp with time zone", "timestamptz", None, "YES", None),
+        "status": ("character varying", "varchar", 30, "NO", "'created'::character varying"),
+        "terminal_at": ("timestamp with time zone", "timestamptz", None, "YES", None),
+        "total_rows": ("integer", "int4", None, "YES", None),
+        "updated_at": ("timestamp with time zone", "timestamptz", None, "NO", "now()"),
+        "valid_rows": ("integer", "int4", None, "YES", None),
+        "validated_at": ("timestamp with time zone", "timestamptz", None, "YES", None),
+        "version": ("integer", "int4", None, "NO", "0"),
+        "warning_rows": ("integer", "int4", None, "YES", None),
+    },
+    "import_sources": {
+        "byte_size": ("bigint", "int8", None, "NO", None),
+        "checksum": ("character varying", "varchar", 128, "NO", None),
+        "content_type": ("character varying", "varchar", 255, "YES", None),
+        "created_at": ("timestamp with time zone", "timestamptz", None, "NO", "now()"),
+        "filename": ("character varying", "varchar", 255, "YES", None),
+        "frozen_at": ("timestamp with time zone", "timestamptz", None, "YES", None),
+        "id": ("uuid", "uuid", None, "NO", None),
+        "import_session_id": ("uuid", "uuid", None, "NO", None),
+        "options_fingerprint": ("character varying", "varchar", 64, "NO", None),
+        "source_fingerprint": ("character varying", "varchar", 64, "NO", None),
+        "source_version": ("character varying", "varchar", 100, "YES", None),
+        "status": ("character varying", "varchar", 20, "NO", "'registered'::character varying"),
+    },
+    "import_jobs": {
+        "attempt_number": ("integer", "int4", None, "NO", None),
+        "created_at": ("timestamp with time zone", "timestamptz", None, "NO", "now()"),
+        "error_message": ("text", "text", None, "YES", None),
+        "finished_at": ("timestamp with time zone", "timestamptz", None, "YES", None),
+        "heartbeat_at": ("timestamp with time zone", "timestamptz", None, "YES", None),
+        "id": ("uuid", "uuid", None, "NO", None),
+        "import_session_id": ("uuid", "uuid", None, "NO", None),
+        "job_type": ("character varying", "varchar", 20, "NO", None),
+        "lease_expires_at": ("timestamp with time zone", "timestamptz", None, "YES", None),
+        "lease_generation": ("integer", "int4", None, "NO", "1"),
+        "lease_owner": ("uuid", "uuid", None, "YES", None),
+        "ruleset_version": ("character varying", "varchar", 50, "YES", None),
+        "started_at": ("timestamp with time zone", "timestamptz", None, "YES", None),
+        "status": ("character varying", "varchar", 20, "NO", "'pending'::character varying"),
+    },
+    "import_row_errors": {
+        "error_code": ("character varying", "varchar", 100, "NO", None),
+        "field": ("character varying", "varchar", 100, "YES", None),
+        "id": ("uuid", "uuid", None, "NO", None),
+        "import_job_id": ("uuid", "uuid", None, "NO", None),
+        "message": ("text", "text", None, "NO", None),
+        "row_number": ("integer", "int4", None, "YES", None),
+        "severity": ("character varying", "varchar", 10, "NO", "'error'::character varying"),
+    },
 }
 
+# Every constraint (PK/FK/UNIQUE/CHECK) on the four governed tables --
+# `pg_get_constraintdef()` renders all four kinds uniformly, so one
+# classification path covers them all, including PostgreSQL's own
+# auto-generated FK/PK constraint names. Captured empirically the same way
+# as `_EXPECTED_COLUMNS`. This supersedes the CHECK-only `_EXPECTED_CHECK_
+# DEFS` this migration originally shipped with (PR84-H1R) -- the CHECK
+# entries below are unchanged from that version.
+_EXPECTED_CONSTRAINTS = {
+    "import_sessions": {
+        "ck_import_sessions_failure_reason_length": "CHECK ((length(failure_reason) <= 2000))",
+        "ck_import_sessions_notes_length": "CHECK ((length(notes) <= 4000))",
+        "ck_import_sessions_status": (
+            "CHECK (((status)::text = ANY ((ARRAY["
+            "'created'::character varying, 'validating'::character varying, 'validated'::character varying, "
+            "'validation_failed'::character varying, 'dry_run_running'::character varying, "
+            "'dry_run_completed'::character varying, 'dry_run_failed'::character varying, "
+            "'executing'::character varying, 'completed'::character varying, 'failed'::character varying, "
+            "'cancelled'::character varying])::text[])))"
+        ),
+        "fk_import_sessions_current_validation_job": (
+            "FOREIGN KEY (id, current_validation_job_id) REFERENCES import_jobs(import_session_id, id) "
+            "ON DELETE RESTRICT"
+        ),
+        "import_sessions_created_by_user_id_fkey": "FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT",
+        "import_sessions_pkey": "PRIMARY KEY (id)",
+        "uq_import_sessions_dataset_idempotency": "UNIQUE (dataset_type, idempotency_key)",
+    },
+    "import_sources": {
+        "ck_import_sources_checksum_length": "CHECK ((length((checksum)::text) >= 32))",
+        "ck_import_sources_status": (
+            "CHECK (((status)::text = ANY ((ARRAY['registered'::character varying, "
+            "'frozen'::character varying])::text[])))"
+        ),
+        "import_sources_import_session_id_fkey": "FOREIGN KEY (import_session_id) REFERENCES import_sessions(id) ON DELETE RESTRICT",
+        "import_sources_import_session_id_key": "UNIQUE (import_session_id)",
+        "import_sources_pkey": "PRIMARY KEY (id)",
+    },
+    "import_jobs": {
+        "ck_import_jobs_error_message_length": "CHECK ((length(error_message) <= 2000))",
+        "ck_import_jobs_job_type": (
+            "CHECK (((job_type)::text = ANY ((ARRAY['validate'::character varying, "
+            "'dry_run'::character varying, 'execute'::character varying])::text[])))"
+        ),
+        "ck_import_jobs_status": (
+            "CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'running'::character varying, "
+            "'succeeded'::character varying, 'failed'::character varying, "
+            "'abandoned'::character varying])::text[])))"
+        ),
+        "import_jobs_import_session_id_fkey": "FOREIGN KEY (import_session_id) REFERENCES import_sessions(id) ON DELETE RESTRICT",
+        "import_jobs_pkey": "PRIMARY KEY (id)",
+        "uq_import_jobs_session_id": "UNIQUE (import_session_id, id)",
+        "uq_import_jobs_session_job_type_attempt": "UNIQUE (import_session_id, job_type, attempt_number)",
+    },
+    "import_row_errors": {
+        "ck_import_row_errors_severity": (
+            "CHECK (((severity)::text = ANY ((ARRAY['error'::character varying, "
+            "'warning'::character varying])::text[])))"
+        ),
+        "import_row_errors_import_job_id_fkey": "FOREIGN KEY (import_job_id) REFERENCES import_jobs(id) ON DELETE RESTRICT",
+        "import_row_errors_pkey": "PRIMARY KEY (id)",
+    },
+}
+
+# Every index on the four governed tables (PK-backing, UNIQUE-backing, and
+# plain), captured the same way. `indexdef` alone is not sufficient for
+# compatibility -- see `_classify_index()`'s health check below.
+_EXPECTED_INDEXES = {
+    "import_sessions": {
+        "import_sessions_pkey": "CREATE UNIQUE INDEX import_sessions_pkey ON public.import_sessions USING btree (id)",
+        "ix_import_sessions_created_by_user_id": (
+            "CREATE INDEX ix_import_sessions_created_by_user_id ON public.import_sessions USING btree "
+            "(created_by_user_id)"
+        ),
+        "ix_import_sessions_dataset_type_status": (
+            "CREATE INDEX ix_import_sessions_dataset_type_status ON public.import_sessions USING btree "
+            "(dataset_type, status)"
+        ),
+        "ix_import_sessions_retention_cleanup_claim": (
+            "CREATE INDEX ix_import_sessions_retention_cleanup_claim ON public.import_sessions USING btree "
+            "(retention_cleanup_claim_expires_at) WHERE (retention_purged_at IS NULL)"
+        ),
+        "ix_import_sessions_terminal_at": "CREATE INDEX ix_import_sessions_terminal_at ON public.import_sessions USING btree (terminal_at)",
+        "uq_import_sessions_dataset_idempotency": (
+            "CREATE UNIQUE INDEX uq_import_sessions_dataset_idempotency ON public.import_sessions USING btree "
+            "(dataset_type, idempotency_key)"
+        ),
+    },
+    "import_sources": {
+        "import_sources_import_session_id_key": (
+            "CREATE UNIQUE INDEX import_sources_import_session_id_key ON public.import_sources USING btree "
+            "(import_session_id)"
+        ),
+        "import_sources_pkey": "CREATE UNIQUE INDEX import_sources_pkey ON public.import_sources USING btree (id)",
+        "ix_import_sources_checksum": "CREATE INDEX ix_import_sources_checksum ON public.import_sources USING btree (checksum)",
+    },
+    "import_jobs": {
+        "import_jobs_pkey": "CREATE UNIQUE INDEX import_jobs_pkey ON public.import_jobs USING btree (id)",
+        "ix_import_jobs_lease_expires_at": (
+            "CREATE INDEX ix_import_jobs_lease_expires_at ON public.import_jobs USING btree (lease_expires_at) "
+            "WHERE ((status)::text = 'running'::text)"
+        ),
+        "ix_import_jobs_session_id_job_type": (
+            "CREATE INDEX ix_import_jobs_session_id_job_type ON public.import_jobs USING btree "
+            "(import_session_id, job_type)"
+        ),
+        "uq_import_jobs_session_id": (
+            "CREATE UNIQUE INDEX uq_import_jobs_session_id ON public.import_jobs USING btree "
+            "(import_session_id, id)"
+        ),
+        "uq_import_jobs_session_job_type_attempt": (
+            "CREATE UNIQUE INDEX uq_import_jobs_session_job_type_attempt ON public.import_jobs USING btree "
+            "(import_session_id, job_type, attempt_number)"
+        ),
+    },
+    "import_row_errors": {
+        "import_row_errors_pkey": "CREATE UNIQUE INDEX import_row_errors_pkey ON public.import_row_errors USING btree (id)",
+        "ix_import_row_errors_job_id_row_number": (
+            "CREATE INDEX ix_import_row_errors_job_id_row_number ON public.import_row_errors USING btree "
+            "(import_job_id, row_number)"
+        ),
+    },
+}
+
+_MISSING = "missing"
+_COMPATIBLE = "compatible"
+_INCOMPATIBLE_DEFINITION = "incompatible_definition"
+_INCOMPATIBLE_HEALTH = "incompatible_health"
+
+_COLUMN_SQL = sa.text(
+    "SELECT data_type, udt_name, character_maximum_length, is_nullable, column_default "
+    "FROM information_schema.columns WHERE table_schema = 'public' AND table_name = :t AND column_name = :c"
+)
 _CONSTRAINT_DEF_SQL = sa.text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = :name")
+# Mirrors migration 0014's `_INDEX_ROW_SQL` -- the same join pattern this
+# codebase already established for "index definition + health in one query".
+_INDEX_ROW_SQL = sa.text(
+    """
+    SELECT ix.indexdef, i.indisvalid, i.indisready
+    FROM pg_indexes ix
+    JOIN pg_class c ON c.relname = ix.indexname AND c.relnamespace = 'public'::regnamespace
+    JOIN pg_index i ON i.indexrelid = c.oid
+    WHERE ix.schemaname = 'public' AND ix.indexname = :name
+    """
+)
 
 
-def _verify_check_constraints(bind) -> None:
-    for name, expected in _EXPECTED_CHECK_DEFS.items():
-        row = bind.execute(_CONSTRAINT_DEF_SQL, {"name": name}).one_or_none()
-        if row is None:
-            raise RuntimeError(
-                f"Migration 0015 aborted: expected CHECK constraint '{name}' does not exist after "
-                "table creation on either the fresh-install or historical-upgrade path. Refusing to "
-                "continue with a schema that would silently accept out-of-domain values."
-            )
-        actual = row[0]
-        if actual != expected:
-            raise RuntimeError(
-                f"Migration 0015 aborted: CHECK constraint '{name}' exists but its definition diverges "
-                f"between the fresh-install and historical-upgrade paths.\nExpected: {expected}\n"
-                f"Actual:   {actual}\nThis is the exact class of divergence Roadmap PR19A1 (§8) exists "
-                "to prevent -- refusing to silently continue with two databases that enforce different "
-                "domains for the same column."
-            )
+def _classify_column(bind, table: str, column: str, expected: tuple) -> tuple[str, tuple | None]:
+    row = bind.execute(_COLUMN_SQL, {"t": table, "c": column}).one_or_none()
+    if row is None:
+        return _MISSING, None
+    actual = (row.data_type, row.udt_name, row.character_maximum_length, row.is_nullable, row.column_default)
+    return (_COMPATIBLE if actual == expected else _INCOMPATIBLE_DEFINITION), actual
+
+
+def _classify_constraint(bind, name: str, expected_def: str) -> tuple[str, str | None]:
+    row = bind.execute(_CONSTRAINT_DEF_SQL, {"name": name}).one_or_none()
+    if row is None:
+        return _MISSING, None
+    actual = row[0]
+    return (_COMPATIBLE if actual == expected_def else _INCOMPATIBLE_DEFINITION), actual
+
+
+def _classify_index(bind, name: str, expected_def: str) -> tuple[str, tuple[str, bool, bool] | None]:
+    row = bind.execute(_INDEX_ROW_SQL, {"name": name}).one_or_none()
+    if row is None:
+        return _MISSING, None
+    if row.indexdef != expected_def:
+        return _INCOMPATIBLE_DEFINITION, (row.indexdef, row.indisvalid, row.indisready)
+    # PR84-H1R: a same-named, same-defined index is still not usable if it
+    # is not valid/ready (e.g. left behind by an interrupted CREATE INDEX
+    # CONCURRENTLY) -- health is an independent, required gate, exactly as
+    # migration 0014 already established for its own governed indexes.
+    if not (row.indisvalid and row.indisready):
+        return _INCOMPATIBLE_HEALTH, (row.indexdef, row.indisvalid, row.indisready)
+    return _COMPATIBLE, (row.indexdef, row.indisvalid, row.indisready)
+
+
+def _verify_schema_convergence(bind) -> None:
+    """PR84-H1R: production, migration-owned fail-closed catalog
+    classification -- not merely CHECK-constraint text, and not only
+    enforced by the test suite. Runs after every CREATE/ALTER statement in
+    `upgrade()` above, so it classifies the schema's *actual final state*,
+    whichever path produced it: freshly created by this migration's own
+    `IF NOT EXISTS` DDL, already present and correct from the ORM
+    fresh-install path, or a genuinely incompatible pre-existing historical
+    object that `IF NOT EXISTS` silently no-op'd against.
+
+    Every governed column/constraint/index across all four tables is
+    classified MISSING / COMPATIBLE / INCOMPATIBLE (definition or health).
+    A MISSING classification here means this migration's own preceding
+    CREATE statement did not produce the object -- an internal migration
+    bug, never a pre-existing-schema case, since MISSING is only checked
+    after creation has already run. Any non-COMPATIBLE classification
+    aborts the migration with every mismatch it found, described concretely
+    (table, object, expected value, actual value) -- never a bare
+    assertion, and never a partial fix (drop/rename/rebuild/coerce) applied
+    on its own initiative.
+    """
+    problems: list[str] = []
+
+    for table, columns in _EXPECTED_COLUMNS.items():
+        for column, expected in columns.items():
+            kind, actual = _classify_column(bind, table, column, expected)
+            if kind == _MISSING:
+                problems.append(
+                    f"{table}.{column}: column does not exist even after this migration's own CREATE "
+                    "TABLE ran -- this indicates an internal migration bug, not a pre-existing "
+                    "incompatible schema."
+                )
+            elif kind == _INCOMPATIBLE_DEFINITION:
+                problems.append(
+                    f"{table}.{column}: column exists but diverges from the design contract "
+                    "(docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §4).\n"
+                    f"    Expected (data_type, udt_name, char_max_length, is_nullable, column_default) = "
+                    f"{expected!r}\n"
+                    f"    Actual                                                                        = "
+                    f"{actual!r}"
+                )
+
+    for table, constraints in _EXPECTED_CONSTRAINTS.items():
+        for name, expected_def in constraints.items():
+            kind, actual = _classify_constraint(bind, name, expected_def)
+            if kind == _MISSING:
+                problems.append(
+                    f"{table}: constraint '{name}' does not exist even after this migration's own DDL "
+                    "ran -- this indicates an internal migration bug, not a pre-existing incompatible "
+                    "schema."
+                )
+            elif kind == _INCOMPATIBLE_DEFINITION:
+                problems.append(
+                    f"{table}: constraint '{name}' exists but its definition diverges.\n"
+                    f"    Expected: {expected_def}\n"
+                    f"    Actual:   {actual}"
+                )
+
+    for table, indexes in _EXPECTED_INDEXES.items():
+        for name, expected_def in indexes.items():
+            kind, actual = _classify_index(bind, name, expected_def)
+            if kind == _MISSING:
+                problems.append(
+                    f"{table}: index '{name}' does not exist even after this migration's own CREATE "
+                    "INDEX ran -- this indicates an internal migration bug, not a pre-existing "
+                    "incompatible schema."
+                )
+            elif kind == _INCOMPATIBLE_DEFINITION:
+                actual_def, _valid, _ready = actual
+                problems.append(
+                    f"{table}: index '{name}' exists but its definition diverges (CREATE INDEX IF NOT "
+                    "EXISTS silently no-ops against a same-named index regardless of its actual "
+                    "definition -- name equality alone is never treated as compatibility).\n"
+                    f"    Expected: {expected_def}\n"
+                    f"    Actual:   {actual_def}"
+                )
+            elif kind == _INCOMPATIBLE_HEALTH:
+                actual_def, valid, ready = actual
+                problems.append(
+                    f"{table}: index '{name}' matches its expected definition but is not usable "
+                    f"(pg_index.indisvalid={valid}, indisready={ready}). This usually means a previous "
+                    "CREATE INDEX CONCURRENTLY / REINDEX CONCURRENTLY was interrupted. A same-named, "
+                    "same-definition index is never classified as compatible while unhealthy."
+                )
+
+    if problems:
+        raise RuntimeError(
+            "Migration 0015 aborted: the existing PostgreSQL catalog diverges from the PR19A1 design "
+            f"contract (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §4/§4.6) in {len(problems)} "
+            "way(s). Refusing to silently continue with an incompatible historical schema:\n\n"
+            + "\n\n".join(problems)
+        )
 
 
 def upgrade() -> None:
@@ -255,7 +580,7 @@ def upgrade() -> None:
     for stmt in _INDEXES:
         op.execute(sa.text(stmt))
 
-    _verify_check_constraints(bind)
+    _verify_schema_convergence(bind)
 
 
 def downgrade() -> None:
