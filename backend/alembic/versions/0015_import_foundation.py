@@ -58,6 +58,27 @@ renamed objects: an index matching its expected `indexdef` byte-for-byte is
 still classified INCOMPATIBLE if `indisvalid` or `indisready` is false --
 its name and definition matching is not sufficient proof it is usable.
 
+**PR84-H1R2: the contract is closed-world equality, not `expected ⊆
+actual`.** Verifying that every expected object exists and is correct is
+not sufficient on its own -- a pre-existing historical table could carry
+every expected column/constraint/index *plus* an extra one (e.g. an
+additional `UNIQUE(checksum)` on `import_sources`) that changes write
+behavior without touching anything this migration explicitly checks.
+`_verify_schema_convergence()` therefore also collects every *actual*
+governed column/constraint/index name per table and rejects any name not
+present in `_EXPECTED_COLUMNS`/`_EXPECTED_CONSTRAINTS`/`_EXPECTED_INDEXES`
+-- `expected_governed_objects == actual_governed_objects`, both
+directions. The governed-object boundary is explicit and narrow: columns
+via `information_schema.columns`; constraints via `pg_constraint` filtered
+to `contype IN ('p','f','u','c')` (every kind this design ever declares --
+no EXCLUDE constraints exist here); indexes via `pg_indexes`, which already
+lists exactly the application-visible indexes for a table, including the
+ones PostgreSQL auto-creates to back a PRIMARY KEY/UNIQUE constraint --
+`_EXPECTED_INDEXES` already names those backing indexes explicitly (e.g.
+`import_sessions_pkey`, `import_sources_import_session_id_key`), so no
+special-casing is needed to tell them apart from "real" indexes. No
+PostgreSQL-internal or TOAST object is ever part of this comparison.
+
 The regression-test suite (`tests/test_postgres_integration.py`) exercises
 this migration's own classification logic directly (via the real `alembic`
 CLI against deliberately-mutated pre-existing schemas), not a separate
@@ -430,6 +451,41 @@ _INDEX_ROW_SQL = sa.text(
     """
 )
 
+# PR84-H1R2: closed-world governed-set queries -- every actual column /
+# constraint / index name PostgreSQL reports for a table, used to detect
+# objects that exist but are *not* in `_EXPECTED_*` at all (§4's physical
+# schema contract is exact: `expected_governed_objects == actual_governed_
+# objects`, not `expected ⊆ actual`). Boundary, explicitly: `contype IN
+# ('p','f','u','c')` is every constraint kind this design ever declares
+# (PRIMARY KEY/FOREIGN KEY/UNIQUE/CHECK) -- this schema has no EXCLUDE
+# constraints, so 'x' is deliberately outside the governed set; nothing
+# else in `pg_constraint` is table-scoped in a way that could collide here.
+# `pg_indexes` already lists exactly the application-visible indexes for a
+# table -- both plain indexes and the indexes PostgreSQL auto-creates to
+# back a PRIMARY KEY/UNIQUE constraint (e.g. `import_sessions_pkey`,
+# `import_sources_import_session_id_key`) -- no TOAST/internal objects.
+# `_EXPECTED_INDEXES` already lists every one of those backing indexes by
+# its real PostgreSQL-assigned name (captured empirically, same as every
+# other expected value here), so no special-casing is needed to tell a
+# "real" index apart from a constraint-backing one: both are first-class
+# entries in the same dict, and any index name present in the catalog but
+# absent from `_EXPECTED_INDEXES[table]` is, by construction, an unexpected
+# governed object.
+_ACTUAL_COLUMN_NAMES_SQL = sa.text(
+    "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = :t"
+)
+_ACTUAL_CONSTRAINT_NAMES_SQL = sa.text(
+    "SELECT conname FROM pg_constraint WHERE conrelid = (:t)::regclass AND contype IN ('p', 'f', 'u', 'c')"
+)
+_ACTUAL_INDEX_NAMES_SQL = sa.text(
+    "SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND tablename = :t"
+)
+
+
+def _unexpected_object_names(bind, sql, table: str, expected_names) -> set[str]:
+    actual_names = {row[0] for row in bind.execute(sql, {"t": table})}
+    return actual_names - set(expected_names)
+
 
 def _classify_column(bind, table: str, column: str, expected: tuple) -> tuple[str, tuple | None]:
     row = bind.execute(_COLUMN_SQL, {"t": table, "c": column}).one_or_none()
@@ -463,7 +519,7 @@ def _classify_index(bind, name: str, expected_def: str) -> tuple[str, tuple[str,
 
 
 def _verify_schema_convergence(bind) -> None:
-    """PR84-H1R: production, migration-owned fail-closed catalog
+    """PR84-H1R/H1R2: production, migration-owned fail-closed catalog
     classification -- not merely CHECK-constraint text, and not only
     enforced by the test suite. Runs after every CREATE/ALTER statement in
     `upgrade()` above, so it classifies the schema's *actual final state*,
@@ -472,18 +528,63 @@ def _verify_schema_convergence(bind) -> None:
     fresh-install path, or a genuinely incompatible pre-existing historical
     object that `IF NOT EXISTS` silently no-op'd against.
 
-    Every governed column/constraint/index across all four tables is
-    classified MISSING / COMPATIBLE / INCOMPATIBLE (definition or health).
-    A MISSING classification here means this migration's own preceding
-    CREATE statement did not produce the object -- an internal migration
-    bug, never a pre-existing-schema case, since MISSING is only checked
-    after creation has already run. Any non-COMPATIBLE classification
-    aborts the migration with every mismatch it found, described concretely
-    (table, object, expected value, actual value) -- never a bare
-    assertion, and never a partial fix (drop/rename/rebuild/coerce) applied
-    on its own initiative.
+    The required invariant is `expected_governed_objects ==
+    actual_governed_objects` -- exact closed-world equality, not merely
+    `expected ⊆ actual`. §4's physical schema contract is exact: an
+    unexpected same-table object (e.g. an additional `UNIQUE(checksum)` on
+    `import_sources`) changes write behavior even though every *expected*
+    object is still present and correct, so it must fail closed exactly
+    like a wrong-definition or unhealthy expected object would. Every
+    governed column/constraint/index across all four tables is classified
+    MISSING / COMPATIBLE / INCOMPATIBLE (wrong definition, unhealthy, or
+    -- new here -- present but not part of the design contract at all). A
+    MISSING classification means this migration's own preceding CREATE
+    statement did not produce the object -- an internal migration bug,
+    never a pre-existing-schema case, since MISSING is only checked after
+    creation has already run. Any non-COMPATIBLE classification aborts the
+    migration with every mismatch it found, described concretely (table,
+    object, expected value, actual value) -- never a bare assertion, and
+    never a partial fix (drop/rename/rebuild/coerce) applied on its own
+    initiative. Because every `op.execute()` call in `upgrade()` runs
+    inside Alembic's single per-invocation transaction (`alembic/env.py`'s
+    `context.begin_transaction()`), raising here rolls back every DDL
+    statement this migration issued *and* Alembic's own `alembic_version`
+    bookkeeping update together -- a failed run leaves the pre-migration
+    schema, including the object that caused the failure, completely
+    unchanged (proven by `test_migration_0015_failed_verification_leaves_no_
+    partial_state_and_does_not_advance_alembic_version`).
     """
     problems: list[str] = []
+
+    for table in _GOVERNED_TABLES:
+        unexpected_columns = _unexpected_object_names(
+            bind, _ACTUAL_COLUMN_NAMES_SQL, table, _EXPECTED_COLUMNS[table]
+        )
+        if unexpected_columns:
+            problems.append(
+                f"{table}: unexpected column(s) not part of the PR19A1 design contract "
+                f"(docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §4): {sorted(unexpected_columns)}. "
+                "An extra application column is never silently accepted merely because every expected "
+                "column also exists."
+            )
+        unexpected_constraints = _unexpected_object_names(
+            bind, _ACTUAL_CONSTRAINT_NAMES_SQL, table, _EXPECTED_CONSTRAINTS[table]
+        )
+        if unexpected_constraints:
+            problems.append(
+                f"{table}: unexpected constraint(s) (PRIMARY KEY/FOREIGN KEY/UNIQUE/CHECK) not part of "
+                f"the PR19A1 design contract: {sorted(unexpected_constraints)}. An extra constraint (e.g. "
+                "an additional UNIQUE) changes write behavior even when every expected constraint is "
+                "also present and correct -- never silently accepted."
+            )
+        unexpected_indexes = _unexpected_object_names(bind, _ACTUAL_INDEX_NAMES_SQL, table, _EXPECTED_INDEXES[table])
+        if unexpected_indexes:
+            problems.append(
+                f"{table}: unexpected index(es) not part of the PR19A1 design contract: "
+                f"{sorted(unexpected_indexes)}. `_EXPECTED_INDEXES` already lists every index this design "
+                "requires, including the ones PostgreSQL auto-creates to back a PRIMARY KEY/UNIQUE "
+                "constraint -- any index name outside that set is an unexpected governed object."
+            )
 
     for table, columns in _EXPECTED_COLUMNS.items():
         for column, expected in columns.items():

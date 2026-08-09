@@ -9172,21 +9172,52 @@ _CATALOG_MISMATCH_SCENARIOS = (
         ),
         "ix_import_jobs_lease_expires_at",
     ),
+    # PR84-H1R2: an otherwise fully-correct schema that also carries an
+    # *extra*, unexpected governed object -- every expected column/
+    # constraint/index is present and correct, but the closed-world
+    # `expected_governed_objects == actual_governed_objects` invariant is
+    # still violated. `expected ⊆ actual` alone would have passed all four
+    # of these.
+    (
+        "extra_unique_constraint",
+        ("ALTER TABLE import_sources ADD CONSTRAINT uq_import_sources_checksum_extra UNIQUE (checksum)",),
+        "uq_import_sources_checksum_extra",
+    ),
+    (
+        "extra_check_constraint",
+        ("ALTER TABLE import_sessions ADD CONSTRAINT ck_import_sessions_extra_check CHECK (version >= 0)",),
+        "ck_import_sessions_extra_check",
+    ),
+    (
+        "extra_column",
+        ("ALTER TABLE import_sessions ADD COLUMN extra_column TEXT",),
+        "extra_column",
+    ),
+    (
+        "extra_index",
+        ("CREATE INDEX ix_import_sessions_extra ON import_sessions (dataset_type)",),
+        "ix_import_sessions_extra",
+    ),
 )
 
 
 @pytest.mark.parametrize("scenario_name,mutations,expected_substring", _CATALOG_MISMATCH_SCENARIOS, ids=lambda v: v if isinstance(v, str) else "")
 async def test_migration_0015_catalog_mismatches_fail_closed(scenario_name, mutations, expected_substring):
-    """Regression scenarios #3-#10: an otherwise fully-correct pre-existing
-    historical schema with exactly one deliberate divergence -- a same-named
-    index pointing at the wrong column, a same-named-and-defined but
-    unhealthy index, a wrong column type, wrong nullability, a wrong server
-    default, a same-named FK pointing at the wrong table, a same-named
-    UNIQUE constraint over the wrong columns, or a same-named index missing
-    its partial predicate -- must fail `upgrade head` closed, naming the
-    specific mismatched object. `CREATE TABLE/INDEX IF NOT EXISTS` would
-    silently no-op against every one of these (H1R); only migration 0015's
-    own `_verify_schema_convergence()` catches them."""
+    """Regression scenarios #3-#10 (H1R) plus the H1R2 unexpected-object
+    scenarios: an otherwise fully-correct pre-existing historical schema
+    with exactly one deliberate divergence -- a same-named index pointing
+    at the wrong column, a same-named-and-defined but unhealthy index, a
+    wrong column type, wrong nullability, a wrong server default, a
+    same-named FK pointing at the wrong table, a same-named UNIQUE
+    constraint over the wrong columns, a same-named index missing its
+    partial predicate, or (H1R2) an *extra* UNIQUE/CHECK constraint, an
+    extra application column, or an extra application index that coexists
+    with every correctly-defined expected object -- must fail `upgrade
+    head` closed, naming the specific object. `CREATE TABLE/INDEX IF NOT
+    EXISTS` would silently no-op against every wrong-definition scenario,
+    and an `expected ⊆ actual` check alone would silently pass every
+    extra-object scenario; only migration 0015's own
+    `_verify_schema_convergence()` catches all of them."""
     try:
         await _recreate_scratch_database()
     except Exception as exc:
@@ -9210,6 +9241,95 @@ async def test_migration_0015_catalog_mismatches_fail_closed(scenario_name, muta
             f"scenario '{scenario_name}': failure must name the specific mismatched object "
             f"('{expected_substring}'):\n{combined}"
         )
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0015_failed_verification_leaves_no_partial_state_and_does_not_advance_alembic_version():
+    """Rollback/atomicity: when `_verify_schema_convergence()` aborts, the
+    migration must leave *zero* trace -- not just refuse to proceed. Every
+    `op.execute()` call in `upgrade()` runs inside Alembic's single
+    per-invocation transaction (`alembic/env.py`'s `context.begin_
+    transaction()`), so a raised `RuntimeError` rolls back every DDL
+    statement this migration issued in this run *and* Alembic's own
+    `alembic_version` bookkeeping UPDATE together.
+
+    This is deliberately set up so the migration does genuine, real DDL
+    work before the failure is detected: only `import_sessions` is
+    pre-created historically (with one extra, unexpected column), so
+    `upgrade()`'s CREATE TABLE IF NOT EXISTS no-ops against it but goes on
+    to freshly create `import_sources`, `import_jobs`, and
+    `import_row_errors`, add the composite FK, and create every index --
+    real, uncommitted progress -- before `_verify_schema_convergence()`
+    finds the extra column and aborts. If rollback is genuinely clean, all
+    three of those newly-created tables must be gone afterwards, not just
+    left half-created; `import_sessions` itself, including its extra
+    column, must be completely untouched; and `alembic_version` must still
+    read `0014_index_naming_convergence`, never `0015_import_foundation`."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0014_index_naming_convergence")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text(_migration_0015._CREATE_IMPORT_SESSIONS))
+                await conn.execute(text("ALTER TABLE import_sessions ADD COLUMN extra_column TEXT"))
+            async with engine.connect() as conn:
+                version_before = (
+                    await conn.execute(text("SELECT version_num FROM alembic_version"))
+                ).scalar_one()
+                assert version_before == "0014_index_naming_convergence", "test setup: unexpected starting revision"
+                for table in ("import_sources", "import_jobs", "import_row_errors"):
+                    exists = (
+                        await conn.execute(text("SELECT to_regclass(:name) IS NOT NULL"), {"name": table})
+                    ).scalar_one()
+                    assert not exists, f"test setup must leave {table} genuinely absent before proceeding"
+        finally:
+            await engine.dispose()
+
+        result = _run_alembic_allow_failure("upgrade", "head")
+        assert result.returncode != 0, "the unexpected column must fail the migration closed"
+        combined = result.stdout + result.stderr
+        assert "extra_column" in combined
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                version_after = (
+                    await conn.execute(text("SELECT version_num FROM alembic_version"))
+                ).scalar_one()
+                assert version_after == "0014_index_naming_convergence", (
+                    f"alembic_version must not advance past a failed migration, got {version_after!r}"
+                )
+                for table in ("import_sources", "import_jobs", "import_row_errors"):
+                    exists = (
+                        await conn.execute(text("SELECT to_regclass(:name) IS NOT NULL"), {"name": table})
+                    ).scalar_one()
+                    assert not exists, (
+                        f"{table} must not exist after a failed migration -- no partial 0015 state may remain"
+                    )
+                columns = {
+                    row[0]
+                    for row in (
+                        await conn.execute(
+                            text(
+                                "SELECT column_name FROM information_schema.columns "
+                                "WHERE table_schema='public' AND table_name='import_sessions'"
+                            )
+                        )
+                    ).all()
+                }
+                assert "extra_column" in columns, (
+                    "the pre-existing incompatible object itself must remain completely unchanged "
+                    "by a failed migration -- never dropped, altered, or otherwise touched"
+                )
+        finally:
+            await engine.dispose()
     finally:
         await _drop_scratch_database()
 
