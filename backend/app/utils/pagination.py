@@ -49,3 +49,27 @@ def decode_alpha_cursor(cursor: str) -> tuple[str, str]:
         return data["v"], data["id"]
     except (ValueError, TypeError, KeyError) as exc:
         raise InvalidInputError("Invalid or malformed pagination cursor.") from exc
+
+
+def encode_int_cursor(sort_value: int, id_: str) -> str:
+    """Roadmap PR19A2 (`app.crud.import_job.list_findings`): the same
+    base64/JSON cursor technique as `encode_cursor`/`encode_alpha_cursor`
+    above, for a query ordered by an integer column -- `ImportRowError`
+    has no `created_at` to sort by (§4.4), so `GET /{id}/errors` orders by
+    a row-number-derived integer instead. A distinct ordering basis, not a
+    second incompatible pagination implementation."""
+    raw = json.dumps({"n": sort_value, "id": id_})
+    return base64.urlsafe_b64encode(raw.encode()).decode()
+
+
+def decode_int_cursor(cursor: str) -> tuple[int, str]:
+    # Same malformed-input handling as decode_cursor above.
+    try:
+        raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+        data: dict[str, Any] = json.loads(raw)
+        sort_value = data["n"]
+        if not isinstance(sort_value, int) or isinstance(sort_value, bool):
+            raise ValueError("cursor's integer sort field is not an integer")
+        return sort_value, data["id"]
+    except (ValueError, TypeError, KeyError) as exc:
+        raise InvalidInputError("Invalid or malformed pagination cursor.") from exc

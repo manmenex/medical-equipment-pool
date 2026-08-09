@@ -28,6 +28,16 @@ class ImportSessionOut(BaseModel):
     failure_reason: str | None
     created_at: datetime
     updated_at: datetime
+    # Roadmap PR19A2 (§12): populated only once a validate attempt has
+    # completed (COMPATIBLE with PR19A1's response shape -- these are
+    # simply always None/unset before this slice's first validate call,
+    # exactly like `jobs`/`finding_count` were always empty/zero in
+    # PR19A1's ImportSessionSummaryOut before this slice existed).
+    validated_at: datetime | None = None
+    total_rows: int | None = None
+    valid_rows: int | None = None
+    invalid_rows: int | None = None
+    warning_rows: int | None = None
 
     model_config = {"from_attributes": True}
 
@@ -95,5 +105,19 @@ class ImportSourceOut(BaseModel):
     source_version: str | None
     source_fingerprint: str
     created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# Roadmap PR19A2 (§21 endpoint #9). `ImportRowError` has no `created_at`
+# column (§4.4) -- pagination for this response type orders by
+# row_number/id instead (see app.crud.import_job.list_findings).
+class ValidationFindingOut(BaseModel):
+    id: UUIDStr
+    row_number: int | None
+    field: str | None
+    error_code: str
+    message: str
+    severity: str
 
     model_config = {"from_attributes": True}

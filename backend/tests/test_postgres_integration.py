@@ -9598,3 +9598,113 @@ async def test_print_data_row_limit_exceeded_on_postgres_no_partial_document(pg_
     body = resp.json()
     assert body["code"] == "EXPORT_TOO_LARGE"
     assert "rows" not in body
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR19A2 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §7, §9)
+# -- genuine two-connection PostgreSQL concurrency proofs. The equivalent
+# CAS/fencing SQL is already exercised deterministically (single-connection,
+# manually-sequenced) in tests/test_import_validation.py; these tests prove
+# the same invariants hold under real concurrent database connections.
+# ---------------------------------------------------------------------------
+
+from app.services.import_adapter import ImportAdapter as _PgImportAdapter
+from app.services.import_adapter import RawImportRecord as _PgRawImportRecord
+from app.services.import_adapter import register_adapter as _pg_register_adapter
+from app.services.import_adapter import unregister_adapter as _pg_unregister_adapter
+
+_PG_IMPORT_DATASET_TYPE = "pr19a2_pg_concurrency_test"
+
+
+class _SlowFakeAdapter(_PgImportAdapter):
+    """A real (short) sleep in parse() widens the window during which the
+    admission winner's session is genuinely 'validating', so concurrent
+    losers reliably observe IMPORT_ATTEMPT_IN_PROGRESS rather than a
+    just-completed terminal state."""
+
+    dataset_type = _PG_IMPORT_DATASET_TYPE
+
+    def parse(self, raw_input):
+        import time
+
+        time.sleep(0.3)
+        return [_PgRawImportRecord(row_number=1, fields={})]
+
+    def validate_business_rules(self, record, context):
+        return []
+
+
+async def test_concurrent_validate_attempts_single_winner_on_postgres(pg_client, pg_seeded_users):
+    headers = await _admin_headers(pg_client)
+    created = (
+        await pg_client.post("/api/v1/import-sessions", headers=headers, json={"dataset_type": _PG_IMPORT_DATASET_TYPE})
+    ).json()
+    reg = await pg_client.post(
+        f"/api/v1/import-sessions/{created['id']}/source",
+        headers=headers,
+        json={"checksum": "a" * 64, "byte_size": 10},
+    )
+    assert reg.status_code == 201, reg.text
+
+    adapter = _SlowFakeAdapter()
+    _pg_register_adapter(adapter)
+    try:
+        async def _validate():
+            return await pg_client.post(f"/api/v1/import-sessions/{created['id']}/validate", headers=headers)
+
+        # return_exceptions=True: a raised exception in one task would
+        # otherwise cascade-cancel the other gathered tasks (asyncio.gather's
+        # default behavior), turning a real single-winner-admission failure
+        # into a confusing unrelated CancelledError instead of a clear
+        # assertion failure below.
+        raw_results = await asyncio.gather(*(_validate() for _ in range(3)), return_exceptions=True)
+    finally:
+        _pg_unregister_adapter(_PG_IMPORT_DATASET_TYPE)
+
+    responses = [r for r in raw_results if not isinstance(r, BaseException)]
+    assert len(responses) == 3, f"all concurrent validate calls must complete cleanly, got {raw_results}"
+
+    statuses = [r.status_code for r in responses]
+    assert statuses.count(200) == 1, f"exactly one concurrent validate call must win admission, got {statuses}"
+    for r, status in zip(responses, statuses):
+        if status != 200:
+            assert status == 409, r.text
+            assert r.json()["code"] in ("IMPORT_ATTEMPT_IN_PROGRESS", "IMPORT_SESSION_INVALID_STATE"), r.text
+
+
+async def test_recovery_single_winner_on_postgres(pg_client, pg_seeded_users, pg_engine):
+    headers = await _admin_headers(pg_client)
+    created = (
+        await pg_client.post("/api/v1/import-sessions", headers=headers, json={"dataset_type": _PG_IMPORT_DATASET_TYPE})
+    ).json()
+    reg = await pg_client.post(
+        f"/api/v1/import-sessions/{created['id']}/source",
+        headers=headers,
+        json={"checksum": "b" * 64, "byte_size": 10},
+    )
+    assert reg.status_code == 201, reg.text
+
+    from app.crud import import_job as import_job_crud
+
+    setup_session_maker = async_sessionmaker(pg_engine, expire_on_commit=False, class_=AsyncSession)
+    async with setup_session_maker() as setup_db:
+        _existed, _s, job = await import_job_crud.admit_validate_job(
+            setup_db,
+            session_id=uuid.UUID(created["id"]),
+            expected_version=0,
+            lease_owner=uuid.uuid4(),
+            lease_duration_seconds=300,
+        )
+        await setup_db.execute(
+            text("UPDATE import_jobs SET lease_expires_at = now() - interval '1 second' WHERE id = :id"),
+            {"id": job.id},
+        )
+        await setup_db.commit()
+
+    async def _recover():
+        return await pg_client.post(f"/api/v1/import-sessions/{created['id']}/recover", headers=headers)
+
+    responses = await asyncio.gather(*(_recover() for _ in range(5)))
+    statuses = [r.status_code for r in responses]
+    assert statuses.count(200) == 1, f"recovery must be single-winner under real concurrency, got {statuses}"
+    assert statuses.count(409) == 4

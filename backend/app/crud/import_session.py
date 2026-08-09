@@ -46,6 +46,15 @@ async def get_by_id(db: AsyncSession, session_id: uuid.UUID) -> ImportSession | 
     return (await db.execute(select(ImportSession).where(ImportSession.id == session_id))).scalar_one_or_none()
 
 
+async def get_source(db: AsyncSession, *, session_id: uuid.UUID) -> ImportSource | None:
+    """Roadmap PR19A2 (design §6): `validate`'s admission gate needs to
+    know whether a source row exists at all -- in either `registered` or
+    `frozen` state -- before attempting any CAS transition."""
+    return (
+        await db.execute(select(ImportSource).where(ImportSource.import_session_id == session_id))
+    ).scalar_one_or_none()
+
+
 async def get_session_jobs_and_finding_count(
     db: AsyncSession, *, session_id: uuid.UUID
 ) -> tuple[list[ImportJob], int]:
