@@ -11,6 +11,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -69,11 +70,16 @@ class ImportSession(UUIDPKMixin, TimestampMixin, Base):
     )
 
     dataset_type: Mapped[str] = mapped_column(String(100), nullable=False)
-    status: Mapped[str] = mapped_column(String(30), nullable=False, default="created")
+    # §4.1: `Default 'created'` is a real PostgreSQL server default, not
+    # merely a Python-side convenience -- matching the raw-SQL migration's
+    # `DEFAULT 'created'` so the fresh-install (ORM) and historical-upgrade
+    # (migration 0015) catalogs converge exactly (§4.6/§8; `default=` alone
+    # renders no DDL `DEFAULT` clause at all, the PR84-H1 defect).
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="created", server_default=text("'created'"))
     # Optimistic-concurrency counter -- incremented by exactly 1 on every
     # CAS-guarded UPDATE to this row (§7). An additional, independent guard
     # alongside `status`, never a substitute for it.
-    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
     created_by_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     idempotency_key: Mapped[str | None] = mapped_column(String(200))
     notes: Mapped[str | None] = mapped_column(Text)
@@ -109,12 +115,20 @@ class ImportSource(UUIDPKMixin, Base):
     __table_args__ = (
         CheckConstraint("status IN ('registered','frozen')", name="ck_import_sources_status"),
         CheckConstraint("LENGTH(checksum) >= 32", name="ck_import_sources_checksum_length"),
+        # §4.2's Keys/constraints line names exactly `INDEX (checksum)` --
+        # not `source_fingerprint` (the PR84-H2 defect). `checksum` is the
+        # column callers and support tooling look records up by; the
+        # composite `source_fingerprint` has no such lookup requirement
+        # anywhere in this design.
+        Index("ix_import_sources_checksum", "checksum"),
     )
 
     import_session_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("import_sessions.id", ondelete="RESTRICT"), nullable=False, unique=True
     )
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="registered")
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="registered", server_default=text("'registered'")
+    )
     frozen_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     checksum: Mapped[str] = mapped_column(String(128), nullable=False)
     byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -122,8 +136,10 @@ class ImportSource(UUIDPKMixin, Base):
     filename: Mapped[str | None] = mapped_column(String(255))
     source_version: Mapped[str | None] = mapped_column(String(100))
     options_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
-    source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    # §4.2: `Default now()` is a real PostgreSQL server default (PR84-H1;
+    # see ImportSession.status above for the general rationale).
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, server_default=func.now())
 
 
 class ImportJob(UUIDPKMixin, Base):
@@ -163,21 +179,24 @@ class ImportJob(UUIDPKMixin, Base):
         ForeignKey("import_sessions.id", ondelete="RESTRICT"), nullable=False
     )
     job_type: Mapped[str] = mapped_column(String(20), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending", server_default=text("'pending'")
+    )
     attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
     lease_owner: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     # Forward-compatible fencing token, part 2 -- always 1 in this
     # foundation (a new attempt is always a new row, never an in-place
     # re-lease); included so a future completion-fencing check never needs
     # to change shape if that assumption is ever revisited (§9.1).
-    lease_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    lease_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default=text("1"))
     lease_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     heartbeat_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     error_message: Mapped[str | None] = mapped_column(Text)
     ruleset_version: Mapped[str | None] = mapped_column(String(50))
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    # §4.3: `Default now()` is a real PostgreSQL server default (PR84-H1).
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, server_default=func.now())
 
 
 class ImportRowError(UUIDPKMixin, Base):
@@ -195,4 +214,4 @@ class ImportRowError(UUIDPKMixin, Base):
     field: Mapped[str | None] = mapped_column(String(100))
     error_code: Mapped[str] = mapped_column(String(100), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
-    severity: Mapped[str] = mapped_column(String(10), nullable=False, default="error")
+    severity: Mapped[str] = mapped_column(String(10), nullable=False, default="error", server_default=text("'error'"))

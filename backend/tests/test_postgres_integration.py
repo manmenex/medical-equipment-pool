@@ -8600,6 +8600,27 @@ _IMPORT_FOUNDATION_CHECK_DEFS = {
 
 _IMPORT_FOUNDATION_TABLES = ("import_sessions", "import_sources", "import_jobs", "import_row_errors")
 
+# PR84-H1: §4's `Default` column is a real PostgreSQL server default for
+# these eight columns, not merely a Python-side `default=` convenience --
+# empirically verified against real PostgreSQL (never guessed). Before the
+# PR84-H1 fix, the ORM models declared only `default=` (a client-side
+# INSERT-time value with no DDL effect at all), so the fresh-install path
+# had NO server default here while the migration's raw-SQL historical-
+# upgrade path genuinely did -- a real, silent catalog divergence that the
+# old CHECK-only convergence test could never have caught.
+_IMPORT_FOUNDATION_EXPECTED_DEFAULTS = {
+    ("import_sessions", "status"): "'created'::character varying",
+    ("import_sessions", "version"): "0",
+    ("import_sessions", "created_at"): "now()",
+    ("import_sessions", "updated_at"): "now()",
+    ("import_sources", "status"): "'registered'::character varying",
+    ("import_sources", "created_at"): "now()",
+    ("import_jobs", "status"): "'pending'::character varying",
+    ("import_jobs", "lease_generation"): "1",
+    ("import_jobs", "created_at"): "now()",
+    ("import_row_errors", "severity"): "'error'::character varying",
+}
+
 
 async def _import_foundation_check_defs(engine) -> dict[str, str]:
     async with engine.connect() as conn:
@@ -8610,6 +8631,94 @@ async def _import_foundation_check_defs(engine) -> dict[str, str]:
             )
         ).all()
         return {name: definition for name, definition in rows}
+
+
+async def _import_foundation_catalog_snapshot(engine) -> dict[str, dict[str, dict]]:
+    """Full catalog-semantic snapshot of every PR19A1 table (design §4),
+    covering every category §4.6's convergence matrix identifies as likely
+    to diverge between the ORM fresh-install and Alembic historical-upgrade
+    paths: columns (type/nullability/server default via
+    `information_schema.columns`), every PK/FK/UNIQUE/CHECK constraint (via
+    `pg_get_constraintdef()`, so ON DELETE/MATCH/referenced-columns/
+    composite-column-order are all captured, not just names), and every
+    index (via `pg_indexes.indexdef`, so predicate text and column order
+    are captured too). Reused by both the fresh-vs-historical convergence
+    test and (implicitly, by construction) every other migration-0015 test
+    that only needs one path's shape."""
+    snapshot: dict[str, dict[str, dict]] = {}
+    async with engine.connect() as conn:
+        for table in _IMPORT_FOUNDATION_TABLES:
+            columns = (
+                await conn.execute(
+                    text(
+                        "SELECT column_name, data_type, udt_name, character_maximum_length, "
+                        "is_nullable, column_default FROM information_schema.columns "
+                        "WHERE table_schema = 'public' AND table_name = :t ORDER BY column_name"
+                    ),
+                    {"t": table},
+                )
+            ).all()
+            constraints = (
+                await conn.execute(
+                    text(
+                        "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint "
+                        "WHERE conrelid = (:t)::regclass ORDER BY conname"
+                    ),
+                    {"t": table},
+                )
+            ).all()
+            indexes = (
+                await conn.execute(
+                    text(
+                        "SELECT indexname, indexdef FROM pg_indexes "
+                        "WHERE schemaname = 'public' AND tablename = :t ORDER BY indexname"
+                    ),
+                    {"t": table},
+                )
+            ).all()
+            snapshot[table] = {
+                "columns": {
+                    c.column_name: {
+                        "data_type": c.data_type,
+                        "udt_name": c.udt_name,
+                        "character_maximum_length": c.character_maximum_length,
+                        "is_nullable": c.is_nullable,
+                        "column_default": c.column_default,
+                    }
+                    for c in columns
+                },
+                "constraints": {name: definition for name, definition in constraints},
+                "indexes": {name: definition for name, definition in indexes},
+            }
+    return snapshot
+
+
+def _diff_catalog_snapshots(fresh: dict, historical: dict) -> list[str]:
+    """Diagnostic list of every divergence between two
+    `_import_foundation_catalog_snapshot()` results, identifying table,
+    object type, object name, and both sides' values -- never a bare
+    `assert a == b`. Normalizes nothing: PostgreSQL already renders both
+    paths' DDL through the same catalog functions, so any remaining
+    textual difference here is a real semantic difference (e.g. a missing
+    server default, a different ON DELETE action, a differently-targeted
+    index), not a cosmetic one."""
+    diffs: list[str] = []
+    for table in sorted(set(fresh) | set(historical)):
+        if table not in fresh:
+            diffs.append(f"{table}: missing entirely from the fresh-install path")
+            continue
+        if table not in historical:
+            diffs.append(f"{table}: missing entirely from the historical-upgrade path")
+            continue
+        for kind in ("columns", "constraints", "indexes"):
+            f_objs = fresh[table][kind]
+            h_objs = historical[table][kind]
+            for name in sorted(set(f_objs) | set(h_objs)):
+                f_val = f_objs.get(name, "<absent>")
+                h_val = h_objs.get(name, "<absent>")
+                if f_val != h_val:
+                    diffs.append(f"{table}.{kind}['{name}']: fresh-install={f_val!r} historical-upgrade={h_val!r}")
+    return diffs
 
 
 async def test_migration_0015_fresh_database_check_constraints_match_expected():
@@ -8624,6 +8733,20 @@ async def test_migration_0015_fresh_database_check_constraints_match_expected():
         try:
             actual = await _import_foundation_check_defs(engine)
             assert actual == _IMPORT_FOUNDATION_CHECK_DEFS
+            snapshot = await _import_foundation_catalog_snapshot(engine)
+            for (table, column), expected_default in _IMPORT_FOUNDATION_EXPECTED_DEFAULTS.items():
+                actual_default = snapshot[table]["columns"][column]["column_default"]
+                assert actual_default == expected_default, (
+                    f"{table}.{column} server default: expected {expected_default!r}, got {actual_default!r} "
+                    "(PR84-H1: a Python-side `default=` alone renders no DDL DEFAULT clause)"
+                )
+            # PR84-H2: §4.2 names exactly `INDEX (checksum)` -- not
+            # `source_fingerprint`. Both must hold on the fresh-install path.
+            assert "ix_import_sources_checksum" in snapshot["import_sources"]["indexes"]
+            assert "ix_import_sources_source_fingerprint" not in snapshot["import_sources"]["indexes"], (
+                "the checksum index must replace, not add to, the incorrectly-targeted "
+                "source_fingerprint index (PR84-H2)"
+            )
             async with engine.connect() as conn:
                 for table in _IMPORT_FOUNDATION_TABLES:
                     exists = (
@@ -8643,6 +8766,67 @@ async def test_migration_0015_fresh_database_check_constraints_match_expected():
             await engine.dispose()
     finally:
         await _drop_scratch_database()
+
+
+async def test_migration_0015_fresh_and_historical_schemas_fully_converge():
+    """§8/§4.6's full acceptance criterion: fresh-install and historical-
+    upgrade paths must converge on catalog-semantic equality across every
+    category §4.6 names as a divergence risk -- columns (type/nullability/
+    server default), every PK/FK/UNIQUE/CHECK constraint, and every index --
+    not merely matching CHECK-constraint text as the pre-PR84-H1 version of
+    this test suite checked.
+
+    This is the regression test for PR84-H1: before that fix,
+    `import_sessions.status`/`version`, `import_sources.status`/
+    `created_at`, `import_jobs.status`/`lease_generation`/`created_at`, and
+    `import_row_errors.severity` used SQLAlchemy's Python-side `default=`
+    only (no DDL `DEFAULT` clause at all on the ORM fresh-install path),
+    while the migration's raw-SQL `CREATE TABLE` genuinely declared
+    `DEFAULT ...` on the historical-upgrade path -- a real, silent schema
+    divergence a CHECK-only comparison could never detect. This test fails
+    against that implementation and passes once both paths agree."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+    try:
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            fresh_snapshot = await _import_foundation_catalog_snapshot(engine)
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+    try:
+        # A genuinely tables-absent historical baseline: 0001's
+        # create_all() already reflects current model metadata (including
+        # the import_* models), so only a full upgrade-then-downgrade
+        # round trip -- which invokes migration 0015's own downgrade(),
+        # genuinely dropping the four tables -- produces a state where this
+        # migration's own raw-SQL CREATE TABLE path actually runs (see
+        # test_migration_0015_fresh_install_via_0001_create_all_already_matches_expected
+        # below for the full explanation).
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0014_index_naming_convergence")
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            historical_snapshot = await _import_foundation_catalog_snapshot(engine)
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+    diffs = _diff_catalog_snapshots(fresh_snapshot, historical_snapshot)
+    assert not diffs, "fresh-install and historical-upgrade paths must converge on an identical catalog schema:\n" + "\n".join(
+        diffs
+    )
 
 
 async def test_migration_0015_fresh_install_via_0001_create_all_already_matches_expected():
@@ -8667,6 +8851,14 @@ async def test_migration_0015_fresh_install_via_0001_create_all_already_matches_
         try:
             actual = await _import_foundation_check_defs(engine)
             assert actual == _IMPORT_FOUNDATION_CHECK_DEFS
+            snapshot = await _import_foundation_catalog_snapshot(engine)
+            for (table, column), expected_default in _IMPORT_FOUNDATION_EXPECTED_DEFAULTS.items():
+                actual_default = snapshot[table]["columns"][column]["column_default"]
+                assert actual_default == expected_default, (
+                    f"{table}.{column} server default after 0001 alone: expected {expected_default!r}, "
+                    f"got {actual_default!r}"
+                )
+            assert "ix_import_sources_checksum" in snapshot["import_sources"]["indexes"]
             async with engine.connect() as conn:
                 for table in _IMPORT_FOUNDATION_TABLES:
                     exists = (
@@ -8704,6 +8896,14 @@ async def test_migration_0015_downgrade_re_upgrade_round_trip():
         try:
             actual = await _import_foundation_check_defs(engine)
             assert actual == _IMPORT_FOUNDATION_CHECK_DEFS
+            snapshot = await _import_foundation_catalog_snapshot(engine)
+            for (table, column), expected_default in _IMPORT_FOUNDATION_EXPECTED_DEFAULTS.items():
+                actual_default = snapshot[table]["columns"][column]["column_default"]
+                assert actual_default == expected_default, (
+                    f"{table}.{column} server default after re-upgrade: expected {expected_default!r}, "
+                    f"got {actual_default!r}"
+                )
+            assert "ix_import_sources_checksum" in snapshot["import_sources"]["indexes"]
         finally:
             await engine.dispose()
     finally:

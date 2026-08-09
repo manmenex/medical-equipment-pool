@@ -158,7 +158,10 @@ _INDEXES = (
     "CREATE INDEX IF NOT EXISTS ix_import_sessions_terminal_at ON import_sessions (terminal_at)",
     "CREATE INDEX IF NOT EXISTS ix_import_sessions_retention_cleanup_claim "
     "ON import_sessions (retention_cleanup_claim_expires_at) WHERE retention_purged_at IS NULL",
-    "CREATE INDEX IF NOT EXISTS ix_import_sources_source_fingerprint ON import_sources (source_fingerprint)",
+    # §4.2's Keys/constraints line names exactly `INDEX (checksum)` -- not
+    # `source_fingerprint` (PR84-H2). checksum is the column callers and
+    # support tooling look records up by.
+    "CREATE INDEX IF NOT EXISTS ix_import_sources_checksum ON import_sources (checksum)",
     "CREATE INDEX IF NOT EXISTS ix_import_jobs_session_id_job_type ON import_jobs (import_session_id, job_type)",
     "CREATE INDEX IF NOT EXISTS ix_import_jobs_lease_expires_at "
     "ON import_jobs (lease_expires_at) WHERE status = 'running'",
