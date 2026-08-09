@@ -31,8 +31,11 @@ split — not a shared implementation baseline. PR19B is Draft PR #80,
 branched from this baseline (`729d1aa...`). **PR19A's architecture design
 has since merged as GitHub PR #83** (squash SHA
 `38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`), also branched from
-`729d1aa...` in parallel; its implementation slices PR19A1/PR19A2/PR19A3
-have not started. The base branch's actual current tip is `38a21e8...`.
+`729d1aa...` in parallel. **PR19A1** (schema, session/source lifecycle,
+CAS) is in progress on Draft PR #84
+(`feature/pr19a1-legacy-import-schema`), open and not merged or complete;
+**PR19A2** and **PR19A3** have not started. The base branch's actual
+current tip is `38a21e8...`.
 
 ## Current work
 
@@ -64,9 +67,10 @@ complete.** The next planned implementation work is Roadmap PR19, approved
 Skeleton, a frontend-only workflow-review prototype with no real upload,
 parsing, validation, dry-run, or import execution). PR19B is Draft PR #80
 (`feature/pr19b-import-frontend-skeleton`), open and pending independent
-review. PR19A's architecture design has since merged as GitHub PR #83; its
-implementation slices PR19A1/PR19A2/PR19A3 have not started. **Neither
-PR19A's implementation nor PR19B is complete yet.**
+review. PR19A's architecture design has since merged as GitHub PR #83;
+PR19A1 is in progress on Draft PR #84 (open, not merged); PR19A2 and
+PR19A3 have not started. **Neither PR19A's implementation nor PR19B is
+complete yet.**
 
 1. PR19A — Legacy Import Foundation (backend).
 2. PR19B — Legacy Import Frontend Skeleton (workflow-review prototype only;
@@ -119,7 +123,8 @@ Legacy migration and reconciliation are mandatory before PR24.
   an explicit Owner-approved exception to this repository's usual
   design-document-first slice precedent, since at the time no PR19 design
   document existed. PR19A's architecture design has since merged (GitHub PR
-  #83); PR19A's own implementation slices (PR19A1/PR19A2/PR19A3) have not.
+  #83); of PR19A's own implementation slices, PR19A1 is in progress (Draft
+  PR #84, open, not merged) and PR19A2/PR19A3 have not started.
   PR19B's types/mock client are still provisional and must be realigned to
   PR19A's now-authoritative contract per `docs/DECISION_LOG.md`'s Exception
   Record before PR19B can be considered complete.

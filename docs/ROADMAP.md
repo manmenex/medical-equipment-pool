@@ -47,8 +47,11 @@ forward sequence" below. PR19B is Draft PR #80
 **#83** (`docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`, squash SHA
 `38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`, branched directly from
 `729d1aa...` in parallel, not stacked on this or any other PR19 branch);
-its runtime implementation slices (PR19A1/PR19A2/PR19A3, design §25) have
-not started. The base branch's actual current tip is `38a21e8...`.
+its runtime implementation slices (PR19A1/PR19A2/PR19A3, design §25) are
+in progress: **PR19A1** (schema, session/source lifecycle, CAS) is Draft PR
+**#84** (`feature/pr19a1-legacy-import-schema`, based on PR #83's squash
+SHA), open and not merged; **PR19A2** and **PR19A3** have not started. The
+base branch's actual current tip is `38a21e8...`.
 
 **Current baseline (supersedes the paragraph above):**
 `5d8cf7d8f378f6231d43e330310f664f6c19560f` — squash commit of GitHub PR
@@ -244,8 +247,9 @@ squash SHA `38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`), likewise branched
 directly from `729d1aa...` in parallel — confirming in practice that
 "independent-scope" never required a shared baseline. That design defines
 PR19A's authoritative contract and decomposes it into implementation
-slices PR19A1/PR19A2/PR19A3 (design §25), none of which has started yet.
-**Neither PR19A's implementation nor PR19B is complete; Roadmap PR19 is
+slices PR19A1/PR19A2/PR19A3 (design §25). **PR19A1** is in progress on
+Draft PR #84 — open, not merged or complete; **PR19A2** and **PR19A3**
+have not started. **Neither PR19A's implementation nor PR19B is complete; Roadmap PR19 is
 not done.** See `docs/DECISION_LOG.md`'s Exception Record for the binding
 distinction between "parallel-development authorization" (ended when PR83
 merged) and this exception's own open status (not ended until PR19B is

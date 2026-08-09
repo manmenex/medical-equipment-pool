@@ -7,6 +7,19 @@
 
 This file tracks *what changed in the shared mental model* over time, one line of context per concept. For the PR-by-PR rationale behind each change, see `docs/DECISION_LOG.md` (from Roadmap PR5 onward) and `docs/PROJECT_MEMORY.md` (Roadmap PR1 through Governance Pack v1.0).
 
+## PR19A1 implementation started (Draft PR #84)
+
+Roadmap PR19A1 (schema, session/source lifecycle, CAS-guarded state
+transitions — the first of PR19A's design-decomposed implementation
+slices, design §25) is in progress on Draft PR #84
+(`feature/pr19a1-legacy-import-schema`), based on PR #83's squash SHA
+`38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`. Open, not yet merged or
+complete. PR19A2 and PR19A3 have not started. This does not change
+`docs/DECISION_LOG.md`'s Exception Record: PR19A's design merging (not
+PR19A1 starting) is what ended PR19B's provisional-development
+authorization; the Exception Record itself remains open regardless of
+PR19A1's progress, pending PR19B's own reconciliation and verification.
+
 ## PR19A architecture design approved (GitHub PR #83)
 
 Roadmap PR19A's architecture design (`docs/design/
@@ -18,7 +31,7 @@ for either of the others to merge, confirming in practice that
 "independent-scope" never required a shared implementation baseline. The
 design defines PR19A's authoritative API/session/document-model contract
 and decomposes PR19A's own implementation into slices PR19A1/PR19A2/PR19A3
-(design §25), none of which has started. This does **not** by itself
+(design §25) — see the entry above for PR19A1's subsequent progress. This does **not** by itself
 complete or close PR19B's Exception Record: per `docs/DECISION_LOG.md`,
 PR19A's design merging ends the "develop provisionally, no contract yet"
 authorization for new PR19B work, but the Exception Record itself remains

@@ -422,8 +422,10 @@ PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`), branched directly from
 `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` in parallel with PR19B and the
 governance PR that approved this split — confirming in practice that the
 split never required a shared baseline. That design decomposes PR19A's own
-implementation into slices PR19A1/PR19A2/PR19A3 (design §25), none of which
-has started; see that design document for their scope, not this entry.
+implementation into slices PR19A1/PR19A2/PR19A3 (design §25); see that
+design document for their scope, not this entry. **PR19A1** (schema,
+session/source lifecycle, CAS) is in progress on Draft PR #84, open and not
+merged or complete; **PR19A2** and **PR19A3** have not started.
 
 #### PR19A — Legacy Import Foundation (backend)
 - **Objective:** Provide a staged, validation-first, traceable import framework.

@@ -127,9 +127,12 @@ not mean they share one implementation baseline. PR19B is Draft PR #80,
 branched from this baseline (`729d1aa...`), open and pending independent
 review. **PR19A's architecture design has since merged as GitHub PR #83**
 (squash SHA `38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`), also branched from
-`729d1aa...` in parallel; its implementation slices PR19A1/PR19A2/PR19A3
-have not started. The base branch's actual current tip is `38a21e8...`.
-**Neither PR19A's implementation nor PR19B is complete.** This split is an
+`729d1aa...` in parallel. **PR19A1** (schema, session/source lifecycle,
+CAS) is in progress on Draft PR #84
+(`feature/pr19a1-legacy-import-schema`), open and not merged or complete;
+**PR19A2** and **PR19A3** have not started. The base branch's actual
+current tip is `38a21e8...`. **Neither PR19A's implementation nor PR19B is
+complete.** This split is an
 explicit, Owner-approved exception to this repository's usual
 design-document-first slice precedent, since at the time of approval no
 PR19 design document existed. The remaining approved sequence is:

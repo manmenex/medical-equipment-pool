@@ -50,7 +50,11 @@ merged as GitHub PR #83** (squash SHA
 `38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`, `docs/design/
 PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`), also branched directly from
 `729d1aa...` in parallel; its implementation slices PR19A1/PR19A2/PR19A3
-have not started. The base branch's actual current tip is `38a21e8...`.
+are decomposed by that design. **PR19A1** (schema, session/source
+lifecycle, CAS) is in progress on Draft PR #84
+(`feature/pr19a1-legacy-import-schema`, based on PR #83's squash SHA) —
+open, not merged or complete; **PR19A2** and **PR19A3** have not started.
+The base branch's actual current tip is `38a21e8...`.
 **Neither PR19A's implementation nor PR19B is complete.**
 
 Roadmap numbering and GitHub PR numbering are independent. In particular,
@@ -61,7 +65,7 @@ PR18.
 
 | Order | Roadmap item | Status |
 |---|---|---|
-| 1 | PR19A — Legacy Import Foundation (backend) | Design merged (GitHub PR #83); implementation slices PR19A1/PR19A2/PR19A3 not started |
+| 1 | PR19A — Legacy Import Foundation (backend) | Design merged (GitHub PR #83); PR19A1 in progress (Draft PR #84, not merged); PR19A2/PR19A3 not started |
 | 2 | PR19B — Legacy Import Frontend Skeleton (workflow-review prototype, no real import) | Draft PR #80 open, pending independent review |
 | 3 | PR20 — Equipment Master Import | Planned |
 | 4 | PR21 — Legacy Receive and Issue History Import | Planned |

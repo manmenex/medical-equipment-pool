@@ -839,9 +839,13 @@
     stacked" was meant to allow; PR19A's branch did not wait for this PR to
     merge). That design defines PR19A's authoritative API/session/document
     model contract and further decomposes PR19A into implementation slices
-    **PR19A1/PR19A2/PR19A3** (design §25) — none of which has started or
-    merged yet. See "Expiration / Follow-up" below for what PR83's merge
-    does and does not change about this exception.
+    **PR19A1/PR19A2/PR19A3** (design §25). **PR19A1** (schema, session/source
+    lifecycle, CAS) is in progress on Draft PR **#84**
+    (`feature/pr19a1-legacy-import-schema`, based on PR #83's squash SHA
+    `38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`) — not merged or complete.
+    **PR19A2** and **PR19A3** have not started. See "Expiration / Follow-up"
+    below for what PR83's merge does and does not change about this
+    exception.
   - **PR19B — Legacy Import Frontend Skeleton:** a frontend-only, mock-data
     UI prototype of the future import workflow, for early hospital-user
     workflow review ahead of PR19A's real contract. Branched from
