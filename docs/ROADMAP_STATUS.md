@@ -41,13 +41,17 @@ two independent-scope slices — **PR19A** (backend import framework) and
 **PR19B** (frontend-only workflow-review skeleton, no real import) — per
 `docs/DECISION_LOG.md` ("Roadmap PR19 approved split: PR19A (backend) /
 PR19B (frontend skeleton)") — an explicit, Owner-approved exception, since
-no PR19 design document exists. "Parallel" describes scope/dependency
-independence only, not a shared implementation baseline. PR19B is Draft PR
-#80 (`feature/pr19b-import-frontend-skeleton`), branched from
-`729d1aa...` (the latest approved baseline at the time), open and pending
-independent review. PR19A has not started — it has no branch or baseline of
-its own and, when it begins, must start from whatever is the latest
-approved base-branch baseline at that time. **Neither slice is complete.**
+at the time of approval no PR19 design document existed. "Parallel"
+describes scope/dependency independence only, not a shared implementation
+baseline. PR19B is Draft PR #80 (`feature/pr19b-import-frontend-skeleton`),
+branched from `729d1aa...` (the latest approved baseline at the time), open
+and pending independent review. **PR19A's architecture design has since
+merged as GitHub PR #83** (squash SHA
+`38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`, `docs/design/
+PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`), also branched directly from
+`729d1aa...` in parallel; its implementation slices PR19A1/PR19A2/PR19A3
+have not started. The base branch's actual current tip is `38a21e8...`.
+**Neither PR19A's implementation nor PR19B is complete.**
 
 Roadmap numbering and GitHub PR numbering are independent. In particular,
 GitHub PR #18 was the Knowledge & Governance Foundation; it was not Roadmap
@@ -57,7 +61,7 @@ PR18.
 
 | Order | Roadmap item | Status |
 |---|---|---|
-| 1 | PR19A — Legacy Import Foundation (backend) | Planned; not started |
+| 1 | PR19A — Legacy Import Foundation (backend) | Design merged (GitHub PR #83); implementation slices PR19A1/PR19A2/PR19A3 not started |
 | 2 | PR19B — Legacy Import Frontend Skeleton (workflow-review prototype, no real import) | Draft PR #80 open, pending independent review |
 | 3 | PR20 — Equipment Master Import | Planned |
 | 4 | PR21 — Legacy Receive and Issue History Import | Planned |

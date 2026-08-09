@@ -828,14 +828,20 @@
   frozen implementation baseline commit:
   - **PR19A — Legacy Import Foundation (backend):** the staged,
     validation-first, traceable import framework itself — API contract,
-    session/document model, validation and dry-run mechanics. **Not started**
-    at the time of this entry: no branch, PR, design document, or
-    implementation baseline exists yet. When PR19A work begins, it MUST
-    start from the latest approved squash-merge baseline on the base branch
-    *at that time* — after this governance PR (#82) merges, that is this
-    PR's own resulting squash SHA, **not**
-    `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52`. This entry does not set
-    PR19A's baseline; only PR19A's own branch-creation event does that.
+    session/document model, validation and dry-run mechanics. At the time
+    this entry was originally written, PR19A had not started. **Update
+    (post-authoring, this same still-unmerged governance PR):** PR19A's
+    architecture design has since merged —
+    `docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`, GitHub PR **#83**,
+    squash SHA `38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7` — branched directly
+    from `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` in genuine parallel with
+    this governance PR and PR19B (exactly what "independent-scope, not
+    stacked" was meant to allow; PR19A's branch did not wait for this PR to
+    merge). That design defines PR19A's authoritative API/session/document
+    model contract and further decomposes PR19A into implementation slices
+    **PR19A1/PR19A2/PR19A3** (design §25) — none of which has started or
+    merged yet. See "Expiration / Follow-up" below for what PR83's merge
+    does and does not change about this exception.
   - **PR19B — Legacy Import Frontend Skeleton:** a frontend-only, mock-data
     UI prototype of the future import workflow, for early hospital-user
     workflow review ahead of PR19A's real contract. Branched from
@@ -942,33 +948,53 @@
   - An exact-head re-review is required after realignment, the same as any
     other post-fix incremental review.
 - **Expiration / Follow-up:**
-  - This exception ends once PR19A's contract (API, session/document model)
-    is approved and merged.
-  - **PR19B MUST NOT be considered complete or merge-ready while its
-    contract differs from the authoritative merged PR19A contract.** After
-    PR19A becomes authoritative, before PR19B can be considered complete:
-    1. compare PR19B's provisional assumptions against PR19A's approved
-       API/domain contracts;
-    2. rebase/integrate PR19B against the correct merged PR19A baseline;
-    3. update PR19B's provisional frontend contracts
-       (`types/legacyImport.ts`, `legacyImportClient.ts`) as necessary to
-       match;
-    4. add and execute the contract/integration tests required by the
-       Mitigations above;
-    5. remove or replace any provisional assumption found incompatible with
-       the approved contract.
-  - If PR19A materially changes semantics that provisional PR19B work
-    assumed, the affected PR19B implementation must be modified to match,
-    or that provisional work discarded if reconciliation is not practical —
-    PR19A must never be distorted merely to preserve obsolete provisional
-    PR19B behavior.
-  - This exception itself expires once PR19B has been reconciled with the
-    authoritative PR19A contracts and the verification required above has
-    passed.
-  - Roadmap PR19 must not be declared complete until every slice (PR19A,
-    PR19B, and the realignment/governance-sync work that follows PR19A) is
-    merged — mirroring the PR18F-style final governance synchronization
-    already used for Roadmap PR18.
+
+  This distinguishes two different things that this Exception Record
+  governs — they end at different times, and conflating them previously
+  made this section internally contradictory once PR19A's design merged
+  (Codex finding GOV82-H1R2):
+
+  1. **Authorization to develop PR19B provisionally in parallel with PR19A —
+     ENDED.** This authorization existed only while PR19A had no approved
+     contract to develop against. It ended when PR19A's architecture design
+     — its API/session/document model contract — was approved and merged
+     (GitHub PR #83, squash SHA `38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`,
+     see the PR19A bullet above). From this point forward, any *new*
+     PR19B (or PR19B-follow-up) work must be developed against PR19A's
+     authoritative contract directly — the "no contract exists yet, develop
+     provisionally" justification no longer applies to new work.
+  2. **This Exception Record's own open/unresolved status — NOT yet ended.**
+     The record itself remains open and continues to govern PR19B/Draft
+     PR #80 until *all* of the following are complete, none of which have
+     happened yet:
+     1. PR19B is rebased/integrated against PR19A's correct merged baseline
+        (`38a21e8...` on the base branch, or later);
+     2. PR19B's provisional assumptions are compared against, and its
+        frontend contracts (`types/legacyImport.ts`,
+        `legacyImportClient.ts`) are updated to match, PR19A's approved
+        API/domain contracts;
+     3. the contract/integration tests required by the Mitigations above
+        are added and passing;
+     4. an exact-head re-review of the reconciled PR19B head is complete;
+     5. Repository Owner acceptance of the reconciled, re-reviewed PR19B
+        head is recorded.
+
+     **PR19B MUST NOT be considered complete, merge-ready, or "aligned,"
+     and this Exception Record MUST NOT be treated as closed, until all
+     five steps above are done and recorded.** Only completing step 5 —
+     not merely PR19A merging — closes this Exception Record.
+
+  If PR19A materially changes semantics that provisional PR19B work
+  assumed, the affected PR19B implementation must be modified to match,
+  or that provisional work discarded if reconciliation is not practical —
+  PR19A must never be distorted merely to preserve obsolete provisional
+  PR19B behavior.
+
+  Roadmap PR19 must not be declared complete until every slice (PR19A and
+  its own PR19A1/PR19A2/PR19A3 implementation slices, PR19B, and the
+  realignment/governance-sync work that follows) is merged — mirroring the
+  PR18F-style final governance synchronization already used for Roadmap
+  PR18.
 
 - **PR19B scope statement (binding on PR19B and any later PR19B follow-up):**
   frontend-only; mock/skeleton UI; intended for hospital-user workflow
@@ -986,12 +1012,19 @@
   depends on PR19–PR21; PR24 is blocked by PR19–PR23) already matched this
   decision and required no renumbering or reconciliation.
 - **Source:** Draft PR #80 (`feature/pr19b-import-frontend-skeleton`,
-  branched from `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52`) and this
-  governance PR (branch `docs/pr19-import-roadmap-split-governance`, also
-  branched from `729d1aa...` since no newer approved baseline existed when
-  this branch was created). This governance PR's own resulting squash SHA
-  becomes the next approved base-branch baseline once merged; it is the
-  baseline any future PR19A branch must start from, not `729d1aa...`.
+  branched from `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52`), this governance
+  PR (branch `docs/pr19-import-roadmap-split-governance`, also branched from
+  `729d1aa...`), and GitHub PR #83 (`docs/pr19a-legacy-import-design`,
+  likewise branched from `729d1aa...`, merged squash SHA
+  `38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`) — three genuinely independent
+  branches from the same then-latest baseline, confirming in practice that
+  "independent-scope" never meant a shared frozen baseline: PR83 did not
+  wait for this governance PR to merge, and neither did PR19B. The base
+  branch's actual current tip is now `38a21e8...` (PR #83); this governance
+  PR has not been rebased onto it (no conflict — PR83 touches only
+  `docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`, disjoint from this
+  PR's files), and this governance PR's own resulting squash SHA becomes the
+  next approved base-branch baseline once merged.
 - **Status:** Approved governance decision, documentation-only. **Neither
   PR19A nor PR19B is complete or implemented by this entry.** Roadmap PR19
   remains not done; PR19B's own implementation review is tracked

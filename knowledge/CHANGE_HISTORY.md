@@ -7,6 +7,26 @@
 
 This file tracks *what changed in the shared mental model* over time, one line of context per concept. For the PR-by-PR rationale behind each change, see `docs/DECISION_LOG.md` (from Roadmap PR5 onward) and `docs/PROJECT_MEMORY.md` (Roadmap PR1 through Governance Pack v1.0).
 
+## PR19A architecture design approved (GitHub PR #83)
+
+Roadmap PR19A's architecture design (`docs/design/
+PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`) merged as GitHub PR #83, squash SHA
+`38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`, branched directly from
+`729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` in genuine parallel with PR19B
+(Draft PR #80) and the PR19-split governance PR — none of the three waited
+for either of the others to merge, confirming in practice that
+"independent-scope" never required a shared implementation baseline. The
+design defines PR19A's authoritative API/session/document-model contract
+and decomposes PR19A's own implementation into slices PR19A1/PR19A2/PR19A3
+(design §25), none of which has started. This does **not** by itself
+complete or close PR19B's Exception Record: per `docs/DECISION_LOG.md`,
+PR19A's design merging ends the "develop provisionally, no contract yet"
+authorization for new PR19B work, but the Exception Record itself remains
+open until PR19B is rebased/reconciled against this contract, required
+contract/integration tests pass, exact-head re-review is complete, and
+Repository Owner acceptance is recorded — none of which had happened as of
+this entry.
+
 ## Roadmap PR19 split into PR19A (backend) and PR19B (frontend skeleton)
 
 Roadmap PR19 ("Legacy Import Foundation") was previously one unsplit Roadmap
@@ -19,12 +39,11 @@ contract. "Independent-scope" (parallel) describes dependency independence
 only — neither slice is stacked on, or blocked by, the other's unmerged
 branch — it does not mean the two slices share one implementation baseline
 commit: PR19B branched from `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52`
-(GitHub PR #79); PR19A has not started and has no baseline of its own, and
-must start from whatever is the latest approved base-branch baseline
-whenever it begins. This split is an explicit exception to this
-repository's usual pattern of splitting a Roadmap item into lettered
-slices only after an architecture-approved design document — no PR19 design
-document exists. PR19B's import-category labels (Equipment Master / Receive
+(GitHub PR #79). This split is an explicit exception to this repository's
+usual pattern of splitting a Roadmap item into lettered slices only after
+an architecture-approved design document — at the time of this decision, no
+PR19 design document existed yet (see the entry below recording that PR19A's
+design has since merged). PR19B's import-category labels (Equipment Master / Receive
 History / Issue History) are preview labels pulled forward from PR20/PR21
 scope for review purposes only, not an implemented capability or an approval
 of PR20/PR21's own design. Neither PR19A nor PR19B is implemented by this

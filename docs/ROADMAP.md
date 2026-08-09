@@ -43,9 +43,12 @@ complete.** The next planned item is Roadmap PR19, approved
 **PR19A** (backend) / **PR19B** (frontend skeleton) split — see "Approved
 forward sequence" below. PR19B is Draft PR #80
 (`feature/pr19b-import-frontend-skeleton`), branched from this baseline
-(`729d1aa...`); PR19A has not started and has no branch or baseline of its
-own yet — when it begins, it must start from the latest approved
-base-branch baseline at that time, not necessarily this one.
+(`729d1aa...`). PR19A's architecture design has since merged as GitHub PR
+**#83** (`docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`, squash SHA
+`38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`, branched directly from
+`729d1aa...` in parallel, not stacked on this or any other PR19 branch);
+its runtime implementation slices (PR19A1/PR19A2/PR19A3, design §25) have
+not started. The base branch's actual current tip is `38a21e8...`.
 
 **Current baseline (supersedes the paragraph above):**
 `5d8cf7d8f378f6231d43e330310f664f6c19560f` — squash commit of GitHub PR
@@ -223,23 +226,30 @@ complete.** The next planned item is Roadmap PR19.
 two independent-scope implementation slices, per `docs/DECISION_LOG.md`
 ("Roadmap PR19 approved split: PR19A (backend) / PR19B (frontend
 skeleton)") — an explicit, Owner-approved exception to this repository's
-usual design-document-first slice precedent, since no PR19 design document
-exists. "Parallel" describes scope/dependency independence only (neither
-slice is stacked on, or blocked by, the other's unmerged branch) — it does
-**not** mean the two slices share one implementation baseline commit.
-**PR19A** is the backend import framework itself; **PR19B** is a
-frontend-only, mock-data workflow-review prototype (no upload, parsing,
-validation, dry-run, or import execution; its Equipment Master/Receive/Issue
-History category labels are preview labels pulled forward from PR20/PR21,
-not an implemented capability). PR19B is implemented on Draft PR #80
-(`feature/pr19b-import-frontend-skeleton`), branched from
-`729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` (the latest approved baseline
-when its branch was created), open and pending independent review at the
-time of this entry. PR19A has not started — no branch, PR, design document,
-or baseline exists yet; when it begins, it must start from whatever is the
-latest approved base-branch baseline at that time, not
-`729d1aa...` specifically. **Neither slice is complete; Roadmap PR19 is not
-done.**
+usual design-document-first slice precedent, since at the time of approval
+no PR19 design document existed. "Parallel" describes scope/dependency
+independence only (neither slice is stacked on, or blocked by, the other's
+unmerged branch) — it does **not** mean the two slices share one
+implementation baseline commit. **PR19A** is the backend import framework
+itself; **PR19B** is a frontend-only, mock-data workflow-review prototype
+(no upload, parsing, validation, dry-run, or import execution; its
+Equipment Master/Receive/Issue History category labels are preview labels
+pulled forward from PR20/PR21, not an implemented capability). PR19B is
+implemented on Draft PR #80 (`feature/pr19b-import-frontend-skeleton`),
+branched from `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` (the latest
+approved baseline when its branch was created), open and pending
+independent review. **PR19A's architecture design has since merged as
+GitHub PR #83** (`docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`,
+squash SHA `38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`), likewise branched
+directly from `729d1aa...` in parallel — confirming in practice that
+"independent-scope" never required a shared baseline. That design defines
+PR19A's authoritative contract and decomposes it into implementation
+slices PR19A1/PR19A2/PR19A3 (design §25), none of which has started yet.
+**Neither PR19A's implementation nor PR19B is complete; Roadmap PR19 is
+not done.** See `docs/DECISION_LOG.md`'s Exception Record for the binding
+distinction between "parallel-development authorization" (ended when PR83
+merged) and this exception's own open status (not ended until PR19B is
+reconciled, tested, re-reviewed, and Owner-accepted).
 
 | Roadmap item | Planned scope |
 |---|---|

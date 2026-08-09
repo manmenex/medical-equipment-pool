@@ -414,9 +414,16 @@ unmerged branch); it does not mean they share one implementation baseline
 commit — each slice starts from whatever is the latest approved base-branch
 baseline at the time its own branch is created. This is an explicit,
 Owner-approved exception to this repository's usual design-document-first
-slice precedent — no PR19 design document exists. Neither slice is complete
-or implemented as of the split decision; PR19A has no branch, PR, or
-baseline yet.
+slice precedent, since at the time of approval no PR19 design document
+existed. Neither PR19A's implementation nor PR19B is complete as of this
+entry. **PR19A's architecture design has since merged as GitHub PR #83**
+(squash SHA `38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`, `docs/design/
+PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`), branched directly from
+`729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` in parallel with PR19B and the
+governance PR that approved this split — confirming in practice that the
+split never required a shared baseline. That design decomposes PR19A's own
+implementation into slices PR19A1/PR19A2/PR19A3 (design §25), none of which
+has started; see that design document for their scope, not this entry.
 
 #### PR19A — Legacy Import Foundation (backend)
 - **Objective:** Provide a staged, validation-first, traceable import framework.
