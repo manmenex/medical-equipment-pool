@@ -208,3 +208,44 @@ class ImportSourceMismatchError(DomainError):
 
     code = "IMPORT_SOURCE_MISMATCH"
     status_code = 409
+
+
+class ImportSourceNotRegisteredError(DomainError):
+    """Roadmap PR19A2 (design §6, §23) — `validate` was called with no
+    `ImportSource` row registered for this session at all. Checked before
+    any CAS transition is attempted, per §6's validation-gate contract."""
+
+    code = "IMPORT_SOURCE_NOT_REGISTERED"
+    status_code = 409
+
+
+class ImportRecoveryRequiredError(DomainError):
+    """Roadmap PR19A2 (design §9) — a mutating call hit a stale lease
+    (pre-check: the session is `*_RUNNING` and its job's lease has already
+    expired), or a completion write lost its own fencing check after the
+    fact (post-check, §9.4.2 step 5). Never raised for a cleanly-recorded
+    failure (§9.4.2 step 8) or for `TX2` infrastructure failure (§9.4.2
+    step 7, which is a generic 500 instead)."""
+
+    code = "IMPORT_RECOVERY_REQUIRED"
+    status_code = 409
+
+
+class ImportAttemptInProgressError(DomainError):
+    """Roadmap PR19A2 (design §7, §17) — a concurrent request currently
+    holds the running claim for this phase (the session is already
+    `*_RUNNING` and its lease has not expired)."""
+
+    code = "IMPORT_ATTEMPT_IN_PROGRESS"
+    status_code = 409
+
+
+class ImportAdapterNotRegisteredError(DomainError):
+    """Roadmap PR19A2 (design §23) — no `ImportAdapter` is registered for
+    this session's `dataset_type`. Production ships with an empty adapter
+    registry (§26: no concrete parser in this foundation), so this is
+    reachable for every real `dataset_type` until a future concrete-adapter
+    slice registers one."""
+
+    code = "IMPORT_ADAPTER_NOT_REGISTERED"
+    status_code = 422

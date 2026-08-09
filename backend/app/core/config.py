@@ -61,6 +61,14 @@ class Settings(BaseSettings):
     PM_DUE_SOON_DAYS: int = 7
     CAL_DUE_SOON_DAYS: int = 7
 
+    # Roadmap PR19A2 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §9.1/
+    # §9.2): a validation-job lease's duration and the interval at which a
+    # live worker renews it. Defaults match the design's own recommended 5x
+    # safety margin (300s lease / 60s renewal) so a single missed renewal
+    # never triggers a false-positive recovery.
+    IMPORT_JOB_LEASE_DURATION_SECONDS: int = 300
+    IMPORT_JOB_HEARTBEAT_INTERVAL_SECONDS: int = 60
+
     @property
     def allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",") if origin.strip()]

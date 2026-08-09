@@ -46,6 +46,19 @@ AUDIT_ACTION_WARD_CORRECTION = "ward_correction"
 # filename, aggregate row counts) -- deliberately not one entry per
 # imported equipment row; see app.services.import_service.
 AUDIT_ACTION_IMPORT = "import"
+# Roadmap PR19A2 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §3.5,
+# §19): distinguished from the PR12 AUDIT_ACTION_IMPORT reuse above by
+# entity_type (AUDIT_ENTITY_IMPORT_SESSION), not by a new action string --
+# design §3.5 explicitly reuses "import" for a PR19A3 execute success. This
+# constant is the recovery-claim event only, written inside /recover's own
+# claim transaction (§9.3), never speculatively.
+AUDIT_ACTION_IMPORT_RECOVERY = "import_recovery"
+# §3.5/§19: a worker's own completion write (success or best-effort
+# failure) affected zero rows because it was already superseded by a
+# recovery claim or another completion. Written only once the loss is
+# already confirmed, in a separate small transaction (TX3, §9.4.2 step 5),
+# never speculatively and never causing or bypassing a fence.
+AUDIT_ACTION_IMPORT_FENCE_LOST = "import_fence_lost"
 
 # Audit entity-type values, same rationale as the actions above.
 AUDIT_ENTITY_EQUIPMENT = "equipment"
@@ -64,6 +77,12 @@ AUDIT_ENTITY_AUTH = "auth"
 # three transaction-domain audit actions (borrow/return/ward_correction)
 # group under one entity_type in audit_logs queries.
 AUDIT_ENTITY_BORROW_TRANSACTION = "borrow_transaction"
+# Roadmap PR19A2 (design §3.5): entity_type for every import-session audit
+# event (recovery, fence-lost; PR19A3 later adds execute success and
+# retention-cleanup under this same entity_type). entity_id is the
+# import_sessions.id, never the import_jobs.id -- the session is the
+# aggregate root (§3.1).
+AUDIT_ENTITY_IMPORT_SESSION = "import_session"
 
 # Substrings matched case-insensitively against JSON keys in before/after
 # payloads. Deliberately broad (e.g. "token" covers access_token,

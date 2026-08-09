@@ -83,6 +83,10 @@ A `422` validation error additionally includes an `errors` array:
 | `IMPORT_SESSION_NOT_FOUND` | 404 | `ImportSessionNotFoundError` | Roadmap PR19A1 (`docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md` §23): the `import_sessions.id` in the path doesn't resolve (`GET/POST /import-sessions/{id}...`) |
 | `IMPORT_SESSION_INVALID_STATE` | 409 | `ImportSessionInvalidStateError` | Roadmap PR19A1: the requested operation is invalid from the session's current `status`, or a concurrent request already won the CAS race (`cancel`) — one consolidated code per class of problem; the `detail` string carries specifics |
 | `IMPORT_SOURCE_MISMATCH` | 409 | `ImportSourceMismatchError` | Roadmap PR19A1 (design §6, §15.2): a `POST /import-sessions/{id}/source` submission's identity fingerprint differs from the session's already-frozen source. The row is never mutated in either case |
+| `IMPORT_SOURCE_NOT_REGISTERED` | 409 | `ImportSourceNotRegisteredError` | Roadmap PR19A2 (design §6, §23): `POST /import-sessions/{id}/validate` called with no `ImportSource` row registered for this session at all. Checked before any CAS transition is attempted |
+| `IMPORT_RECOVERY_REQUIRED` | 409 | `ImportRecoveryRequiredError` | Roadmap PR19A2 (design §9): a mutating call hit a stale lease (pre-check), or a completion write lost its own fencing check after the fact (post-check, §9.4.2 step 5). Never raised for a cleanly-recorded failure or for `TX2` infrastructure failure (those return `200`/`500` respectively) |
+| `IMPORT_ATTEMPT_IN_PROGRESS` | 409 | `ImportAttemptInProgressError` | Roadmap PR19A2 (design §7, §17): a concurrent request currently holds the running claim for this phase (the session is already `*_RUNNING` and its lease has not expired) |
+| `IMPORT_ADAPTER_NOT_REGISTERED` | 422 | `ImportAdapterNotRegisteredError` | Roadmap PR19A2 (design §23): no `ImportAdapter` is registered for the session's `dataset_type`. Production ships with an empty adapter registry -- reachable for every real `dataset_type` until a future concrete-adapter slice registers one |
 
 ### FastAPI/Starlette-level errors (`backend/app/main.py`)
 
