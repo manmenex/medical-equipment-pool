@@ -954,41 +954,64 @@
   made this section internally contradictory once PR19A's design merged
   (Codex finding GOV82-H1R2):
 
-  1. **Authorization to develop PR19B provisionally in parallel with PR19A —
-     ENDED.** This authorization existed only while PR19A had no approved
-     contract to develop against. It ended when PR19A's architecture design
-     — its API/session/document model contract — was approved and merged
-     (GitHub PR #83, squash SHA `38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`,
-     see the PR19A bullet above). From this point forward, any *new*
-     PR19B (or PR19B-follow-up) work must be developed against PR19A's
-     authoritative contract directly — the "no contract exists yet, develop
-     provisionally" justification no longer applies to new work.
-  2. **This Exception Record's own open/unresolved status — NOT yet ended.**
-     The record itself remains open and continues to govern PR19B/Draft
-     PR #80 until *all* of the following are complete, none of which have
-     happened yet:
-     1. PR19B is rebased/integrated against PR19A's correct merged baseline
-        (`38a21e8...` on the base branch, or later);
-     2. PR19B's provisional assumptions are compared against, and its
-        frontend contracts (`types/legacyImport.ts`,
-        `legacyImportClient.ts`) are updated to match, PR19A's approved
-        API/domain contracts;
-     3. the contract/integration tests required by the Mitigations above
-        are added and passing;
-     4. an exact-head re-review of the reconciled PR19B head is complete;
-     5. Repository Owner acceptance of the reconciled, re-reviewed PR19B
-        head is recorded.
+  > The provisional-development permission and the Exception Record have
+  > different lifecycles. Provisional-development permission expired when
+  > PR19A Design became authoritative. The Exception Record remains open
+  > until the provisional PR19B work is reconciled, verified, independently
+  > reviewed, and Owner-approved.
 
-     **PR19B MUST NOT be considered complete, merge-ready, or "aligned,"
-     and this Exception Record MUST NOT be treated as closed, until all
-     five steps above are done and recorded.** Only completing step 5 —
-     not merely PR19A merging — closes this Exception Record.
+  - **Provisional Development Permission: EXPIRED**
+  - **Exception Record: OPEN — pending PR19B reconciliation and
+    verification**
+
+  ### A. Provisional Development Permission — EXPIRED
+
+  The permission for PR19B to develop against provisional assumptions
+  while PR19A had no approved contract to develop against **expired** when
+  PR19A's architecture design — its API/session/document model contract —
+  was approved and merged (GitHub PR #83, squash SHA
+  `38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`, see the PR19A bullet above).
+  PR19A is now the source of truth for reconciliation.
+
+  From this point forward:
+  - PR19B may no longer rely on the original provisional-development
+    exception to introduce **new** behavior based on assumptions that
+    conflict with the authoritative PR19A Design.
+  - Existing PR19B work must now be evaluated against the authoritative
+    PR19A Design, not against the provisional assumptions it was originally
+    written against.
+
+  ### B. Exception Record — OPEN
+
+  The Exception Record itself does **not** close merely because PR19A
+  merged. It remains **OPEN**, for governance traceability, until the
+  existing provisional PR19B work has been reconciled and verified. It may
+  close only after **all** of the following are satisfied — none of which
+  have happened yet:
+
+  1. PR19B / Draft PR #80 is rebased or integrated onto the correct
+     post-PR19A authoritative baseline (`38a21e8...` on the base branch, or
+     later);
+  2. existing provisional frontend assumptions
+     (`frontend/src/types/legacyImport.ts`, `legacyImportClient.ts`) are
+     compared against the merged PR19A contracts;
+  3. conflicting provisional behavior is modified or removed;
+  4. the required frontend/backend contract and integration tests (see
+     Mitigations above) are added and pass where applicable;
+  5. PR19B passes independent Codex exact-head review;
+  6. required CI passes on that exact reviewed head;
+  7. the Repository Owner approves PR19B for merge.
+
+  **PR19B MUST NOT be considered complete, merge-ready, or "aligned," and
+  this Exception Record MUST NOT be treated as closed, until all seven
+  steps above are done and recorded.** Only completing step 7 — not merely
+  PR19A merging — closes this Exception Record.
 
   If PR19A materially changes semantics that provisional PR19B work
-  assumed, the affected PR19B implementation must be modified to match,
-  or that provisional work discarded if reconciliation is not practical —
-  PR19A must never be distorted merely to preserve obsolete provisional
-  PR19B behavior.
+  assumed, the affected PR19B implementation must be modified to match, or
+  that provisional work discarded if reconciliation is not practical.
+  **PR19B changes; PR19A does not** — PR19A must never be distorted or
+  constrained merely to preserve an obsolete provisional PR19B assumption.
 
   Roadmap PR19 must not be declared complete until every slice (PR19A and
   its own PR19A1/PR19A2/PR19A3 implementation slices, PR19B, and the
