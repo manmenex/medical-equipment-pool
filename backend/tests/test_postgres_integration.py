@@ -8555,6 +8555,218 @@ async def test_pr15b_schema_convergence_fresh_and_historical_paths_are_identical
     )
 
 
+# ---------------------------------------------------------------------------
+# Roadmap PR19A1: migration 0015_import_foundation.py convergence tests
+# (design §8 acceptance criteria) -- a fresh empty database upgraded
+# directly to head, and a database upgraded historically through the
+# pre-existing migration chain then to head, must produce byte-identical
+# CHECK-constraint definitions for every table this migration introduces.
+# Downgrade -> re-upgrade must reproduce the same converged state. A
+# deliberately mismatched pre-existing definition must fail the migration
+# closed, never silently continue.
+# ---------------------------------------------------------------------------
+
+_IMPORT_FOUNDATION_CHECK_DEFS = {
+    "ck_import_sessions_status": (
+        "CHECK (((status)::text = ANY ((ARRAY["
+        "'created'::character varying, 'validating'::character varying, 'validated'::character varying, "
+        "'validation_failed'::character varying, 'dry_run_running'::character varying, "
+        "'dry_run_completed'::character varying, 'dry_run_failed'::character varying, "
+        "'executing'::character varying, 'completed'::character varying, 'failed'::character varying, "
+        "'cancelled'::character varying])::text[])))"
+    ),
+    "ck_import_sessions_notes_length": "CHECK ((length(notes) <= 4000))",
+    "ck_import_sessions_failure_reason_length": "CHECK ((length(failure_reason) <= 2000))",
+    "ck_import_sources_status": (
+        "CHECK (((status)::text = ANY ((ARRAY['registered'::character varying, "
+        "'frozen'::character varying])::text[])))"
+    ),
+    "ck_import_sources_checksum_length": "CHECK ((length((checksum)::text) >= 32))",
+    "ck_import_jobs_job_type": (
+        "CHECK (((job_type)::text = ANY ((ARRAY['validate'::character varying, "
+        "'dry_run'::character varying, 'execute'::character varying])::text[])))"
+    ),
+    "ck_import_jobs_status": (
+        "CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'running'::character varying, "
+        "'succeeded'::character varying, 'failed'::character varying, "
+        "'abandoned'::character varying])::text[])))"
+    ),
+    "ck_import_jobs_error_message_length": "CHECK ((length(error_message) <= 2000))",
+    "ck_import_row_errors_severity": (
+        "CHECK (((severity)::text = ANY ((ARRAY['error'::character varying, "
+        "'warning'::character varying])::text[])))"
+    ),
+}
+
+_IMPORT_FOUNDATION_TABLES = ("import_sessions", "import_sources", "import_jobs", "import_row_errors")
+
+
+async def _import_foundation_check_defs(engine) -> dict[str, str]:
+    async with engine.connect() as conn:
+        rows = (
+            await conn.execute(
+                text("SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = ANY(:names)"),
+                {"names": list(_IMPORT_FOUNDATION_CHECK_DEFS)},
+            )
+        ).all()
+        return {name: definition for name, definition in rows}
+
+
+async def test_migration_0015_fresh_database_check_constraints_match_expected():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            actual = await _import_foundation_check_defs(engine)
+            assert actual == _IMPORT_FOUNDATION_CHECK_DEFS
+            async with engine.connect() as conn:
+                for table in _IMPORT_FOUNDATION_TABLES:
+                    exists = (
+                        await conn.execute(text("SELECT to_regclass(:name) IS NOT NULL"), {"name": table})
+                    ).scalar_one()
+                    assert exists, f"{table} must exist on the fresh-install path"
+                composite_fk = (
+                    await conn.execute(
+                        text(
+                            "SELECT 1 FROM pg_constraint WHERE conname = "
+                            "'fk_import_sessions_current_validation_job'"
+                        )
+                    )
+                ).one_or_none()
+                assert composite_fk is not None, "the composite ownership FK (§4.5) must exist"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0015_fresh_install_via_0001_create_all_already_matches_expected():
+    """§8's documented convergence reasoning: `app.models.import_session`
+    is registered in `app/db/base.py`, so `0001_initial.py`'s
+    `Base.metadata.create_all(bind=bind)` -- which always uses *current*
+    model metadata, not a historically frozen snapshot -- already creates
+    all four tables with correct, named CHECK constraints on any brand-new
+    database, stopping at `0001` alone, long before migration 0015 in the
+    chain ever runs. (Stopping at a later-but-still-pre-0015 revision like
+    `0014` does NOT exercise a genuinely tables-absent state for this same
+    reason -- see the downgrade/re-upgrade round trip below for the only
+    valid way to exercise 0015's own raw-SQL creation path.)"""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0001_initial")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            actual = await _import_foundation_check_defs(engine)
+            assert actual == _IMPORT_FOUNDATION_CHECK_DEFS
+            async with engine.connect() as conn:
+                for table in _IMPORT_FOUNDATION_TABLES:
+                    exists = (
+                        await conn.execute(text("SELECT to_regclass(:name) IS NOT NULL"), {"name": table})
+                    ).scalar_one()
+                    assert exists, f"{table} must already exist after 0001 alone, via Base.metadata.create_all()"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0015_downgrade_re_upgrade_round_trip():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0014_index_naming_convergence")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                for table in _IMPORT_FOUNDATION_TABLES:
+                    exists = (
+                        await conn.execute(text("SELECT to_regclass(:name) IS NOT NULL"), {"name": table})
+                    ).scalar_one()
+                    assert not exists, f"{table} must be fully dropped by downgrade"
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            actual = await _import_foundation_check_defs(engine)
+            assert actual == _IMPORT_FOUNDATION_CHECK_DEFS
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0015_mismatched_check_definition_fails_closed():
+    """§8 acceptance criteria: 'a deliberately mismatched pre-existing
+    table causes the migration to fail closed.' Pre-creates import_sessions
+    historically (0014 baseline) with a CHECK constraint under the expected
+    name but a genuinely different bound -- CREATE TABLE IF NOT EXISTS is a
+    no-op against it, so only _verify_check_constraints() can catch this."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        # Only after 0015 has genuinely applied once and then been rolled
+        # back does import_sessions stop existing -- see the "fresh install
+        # via 0001" test above for why stopping at an earlier revision
+        # never produces a genuinely tables-absent state on this codebase.
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0014_index_naming_convergence")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                # Every column the real migration's CREATE TABLE declares
+                # must be present -- a genuinely mismatched CHECK bound is
+                # the only deliberate divergence, isolating the failure to
+                # _verify_check_constraints() rather than an incidental
+                # missing-column error from a later step (index creation).
+                await conn.execute(
+                    text(
+                        "CREATE TABLE import_sessions ("
+                        "id UUID NOT NULL PRIMARY KEY, dataset_type VARCHAR(100) NOT NULL, "
+                        "status VARCHAR(30) NOT NULL DEFAULT 'created', version INTEGER NOT NULL DEFAULT 0, "
+                        "created_by_user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT, "
+                        "idempotency_key VARCHAR(200), notes TEXT, current_validation_job_id UUID, "
+                        "validated_at TIMESTAMPTZ, dry_run_completed_at TIMESTAMPTZ, executed_at TIMESTAMPTZ, "
+                        "terminal_at TIMESTAMPTZ, retention_purged_at TIMESTAMPTZ, source_bytes_deleted_at TIMESTAMPTZ, "
+                        "retention_cleanup_claimed_by UUID, retention_cleanup_claim_expires_at TIMESTAMPTZ, "
+                        "total_rows INTEGER, valid_rows INTEGER, invalid_rows INTEGER, warning_rows INTEGER, "
+                        "imported_rows INTEGER, failure_reason TEXT, "
+                        "created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), "
+                        # Deliberately wrong: only two of the eleven real
+                        # statuses, under the expected constraint name.
+                        "CONSTRAINT ck_import_sessions_status CHECK (status IN ('created','cancelled')), "
+                        "CONSTRAINT uq_import_sessions_dataset_idempotency UNIQUE (dataset_type, idempotency_key)"
+                        ")"
+                    )
+                )
+        finally:
+            await engine.dispose()
+
+        result = _run_alembic_allow_failure("upgrade", "head")
+        assert result.returncode != 0, "a mismatched CHECK definition must fail the migration, not be silently accepted"
+        combined = result.stdout + result.stderr
+        assert "diverges" in combined, f"failure must explain the mismatch:\n{combined}"
+    finally:
+        await _drop_scratch_database()
+
+
 # Roadmap PR16 (Reporting Foundation, Implementation Slice 1) -- the SQL-expression
 # twin evaluated against a real PostgreSQL 16 instance (timestamptz, AT TIME ZONE),
 # not just SQLite's fixed +7 hour fallback, confirming both dialects agree with the

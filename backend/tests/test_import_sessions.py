@@ -69,11 +69,52 @@ async def test_get_session_summary_and_status(client: AsyncClient, seeded_users)
 
     summary = await client.get(f"/api/v1/import-sessions/{created['id']}", headers=headers)
     assert summary.status_code == 200
-    assert summary.json()["status"] == "created"
+    body = summary.json()
+    assert body["status"] == "created"
+    # §21 endpoint #3: "session + jobs + finding count + validation_attempt_id".
+    # No endpoint in this foundation ever creates an ImportJob or
+    # ImportRowError row, so these are always empty/zero/null -- the
+    # response shape itself is what PR19A1 establishes.
+    assert body["jobs"] == []
+    assert body["finding_count"] == 0
+    assert body["validation_attempt_id"] is None
 
     status = await client.get(f"/api/v1/import-sessions/{created['id']}/status", headers=headers)
     assert status.status_code == 200
     assert status.json()["version"] == 0
+
+
+async def test_get_session_summary_reflects_jobs_and_finding_count(client: AsyncClient, seeded_users, db_session):
+    # No endpoint in PR19A1 creates an ImportJob/ImportRowError row (§25:
+    # "no endpoint here ever enters a *_RUNNING state") -- insert directly,
+    # exactly as PR19A2's validate admission eventually will, to prove the
+    # summary query itself (not just its empty-case default) is correct.
+    from app.models.import_session import ImportJob, ImportRowError
+
+    headers = await auth_headers(client)
+    session = (await _create_session(client, headers)).json()
+    session_id = uuid.UUID(session["id"])
+
+    job = ImportJob(
+        import_session_id=session_id,
+        job_type="validate",
+        status="succeeded",
+        attempt_number=1,
+        created_at=datetime.now(timezone.utc),
+    )
+    db_session.add(job)
+    await db_session.flush()
+    db_session.add(ImportRowError(import_job_id=job.id, error_code="BAD_ROW", message="x", severity="error"))
+    db_session.add(ImportRowError(import_job_id=job.id, error_code="BAD_ROW", message="y", severity="warning"))
+    await db_session.commit()
+
+    r = await client.get(f"/api/v1/import-sessions/{session_id}", headers=headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["jobs"]) == 1
+    assert body["jobs"][0]["job_type"] == "validate"
+    assert body["jobs"][0]["status"] == "succeeded"
+    assert body["finding_count"] == 2
 
 
 async def test_get_session_summary_404_for_unknown_id(client: AsyncClient, seeded_users):
@@ -352,6 +393,84 @@ async def test_cancel_session_requires_administrator(client: AsyncClient, seeded
     staff_headers = await auth_headers(client, role="equipment_pool_staff")
     r = await client.post(f"/api/v1/import-sessions/{session['id']}/cancel", headers=staff_headers)
     assert r.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# §4.1/§4.3 -- notes/failure_reason/error_message length CHECK constraints.
+# Do not rely on application validation where the Design requires
+# PostgreSQL/SQLite enforcement at the database level (§4).
+# ---------------------------------------------------------------------------
+
+
+async def test_create_session_rejects_notes_over_4000_chars(client: AsyncClient, seeded_users):
+    # Pydantic's own max_length=4000 on ImportSessionCreate.notes rejects
+    # this before it ever reaches the database -- confirms the API-level
+    # bound matches the DB-level ck_import_sessions_notes_length bound.
+    headers = await auth_headers(client)
+    r = await client.post(
+        "/api/v1/import-sessions", headers=headers, json={"dataset_type": "equipment", "notes": "x" * 4001}
+    )
+    assert r.status_code == 422
+
+
+async def test_import_sessions_notes_length_check_constraint_enforced_at_db_level(db_session, seeded_users):
+    from sqlalchemy.exc import IntegrityError
+
+    from app.models.user import ROLE_ADMINISTRATOR
+
+    session = ImportSession(
+        dataset_type="equipment",
+        status="created",
+        version=0,
+        created_by_user_id=seeded_users[ROLE_ADMINISTRATOR].id,
+        notes="x" * 4001,
+    )
+    db_session.add(session)
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_import_sessions_failure_reason_length_check_constraint_enforced_at_db_level(db_session, seeded_users):
+    from sqlalchemy.exc import IntegrityError
+
+    from app.models.user import ROLE_ADMINISTRATOR
+
+    session = ImportSession(
+        dataset_type="equipment",
+        status="failed",
+        version=0,
+        created_by_user_id=seeded_users[ROLE_ADMINISTRATOR].id,
+        failure_reason="x" * 2001,
+    )
+    db_session.add(session)
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_import_jobs_error_message_length_check_constraint_enforced_at_db_level(db_session, seeded_users):
+    from sqlalchemy.exc import IntegrityError
+
+    from app.models.import_session import ImportJob
+    from app.models.user import ROLE_ADMINISTRATOR
+
+    session, _ = await import_crud.get_or_create_session(
+        db_session,
+        dataset_type="equipment",
+        idempotency_key=None,
+        notes=None,
+        created_by_user_id=seeded_users[ROLE_ADMINISTRATOR].id,
+    )
+    await db_session.flush()
+    job = ImportJob(
+        import_session_id=session.id,
+        job_type="validate",
+        status="failed",
+        attempt_number=1,
+        error_message="x" * 2001,
+    )
+    db_session.add(job)
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
 
 
 # ---------------------------------------------------------------------------

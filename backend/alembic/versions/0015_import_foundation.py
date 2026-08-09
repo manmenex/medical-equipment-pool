@@ -76,7 +76,9 @@ CREATE TABLE IF NOT EXISTS import_sessions (
                    'dry_run_running','dry_run_completed','dry_run_failed',
                    'executing','completed','failed','cancelled')
     ),
-    CONSTRAINT uq_import_sessions_dataset_idempotency UNIQUE (dataset_type, idempotency_key)
+    CONSTRAINT uq_import_sessions_dataset_idempotency UNIQUE (dataset_type, idempotency_key),
+    CONSTRAINT ck_import_sessions_notes_length CHECK (LENGTH(notes) <= 4000),
+    CONSTRAINT ck_import_sessions_failure_reason_length CHECK (LENGTH(failure_reason) <= 2000)
 )
 """
 
@@ -118,7 +120,8 @@ CREATE TABLE IF NOT EXISTS import_jobs (
     CONSTRAINT ck_import_jobs_job_type CHECK (job_type IN ('validate','dry_run','execute')),
     CONSTRAINT ck_import_jobs_status CHECK (status IN ('pending','running','succeeded','failed','abandoned')),
     CONSTRAINT uq_import_jobs_session_id UNIQUE (import_session_id, id),
-    CONSTRAINT uq_import_jobs_session_job_type_attempt UNIQUE (import_session_id, job_type, attempt_number)
+    CONSTRAINT uq_import_jobs_session_job_type_attempt UNIQUE (import_session_id, job_type, attempt_number),
+    CONSTRAINT ck_import_jobs_error_message_length CHECK (LENGTH(error_message) <= 2000)
 )
 """
 
@@ -184,6 +187,9 @@ _EXPECTED_CHECK_DEFS = {
         "'frozen'::character varying])::text[])))"
     ),
     "ck_import_sources_checksum_length": "CHECK ((length((checksum)::text) >= 32))",
+    "ck_import_sessions_notes_length": "CHECK ((length(notes) <= 4000))",
+    "ck_import_sessions_failure_reason_length": "CHECK ((length(failure_reason) <= 2000))",
+    "ck_import_jobs_error_message_length": "CHECK ((length(error_message) <= 2000))",
     "ck_import_jobs_job_type": (
         "CHECK (((job_type)::text = ANY ((ARRAY['validate'::character varying, "
         "'dry_run'::character varying, 'execute'::character varying])::text[])))"

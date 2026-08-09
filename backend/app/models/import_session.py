@@ -41,6 +41,8 @@ class ImportSession(UUIDPKMixin, TimestampMixin, Base):
             name="ck_import_sessions_status",
         ),
         UniqueConstraint("dataset_type", "idempotency_key", name="uq_import_sessions_dataset_idempotency"),
+        CheckConstraint("LENGTH(notes) <= 4000", name="ck_import_sessions_notes_length"),
+        CheckConstraint("LENGTH(failure_reason) <= 2000", name="ck_import_sessions_failure_reason_length"),
         # §4.5: the composite ownership FK. `current_validation_job_id`
         # alone only proves *some* import_jobs row exists; this additionally
         # requires that row's own import_session_id to equal this session's
@@ -145,6 +147,7 @@ class ImportJob(UUIDPKMixin, Base):
         UniqueConstraint(
             "import_session_id", "job_type", "attempt_number", name="uq_import_jobs_session_job_type_attempt"
         ),
+        CheckConstraint("LENGTH(error_message) <= 2000", name="ck_import_jobs_error_message_length"),
         Index("ix_import_jobs_session_id_job_type", "import_session_id", "job_type"),
         # Supports the recovery-claim scan (§9.3, a later slice) -- only a
         # currently-running job is ever a stale-lease candidate.

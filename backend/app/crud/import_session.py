@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ImportSessionInvalidStateError, ImportSourceMismatchError
-from app.models.import_session import ImportSession, ImportSource
+from app.models.import_session import ImportJob, ImportRowError, ImportSession, ImportSource
 
 # Roadmap PR19A1 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §6, §7,
 # §15.1, §15.2, §20). Every state-changing operation here is a single,
@@ -44,6 +44,34 @@ def _source_fingerprint(*, checksum: str, byte_size: int, dataset_type: str, fil
 
 async def get_by_id(db: AsyncSession, session_id: uuid.UUID) -> ImportSession | None:
     return (await db.execute(select(ImportSession).where(ImportSession.id == session_id))).scalar_one_or_none()
+
+
+async def get_session_jobs_and_finding_count(
+    db: AsyncSession, *, session_id: uuid.UUID
+) -> tuple[list[ImportJob], int]:
+    """§21 endpoint #3's "session + jobs + finding count +
+    validation_attempt_id". No endpoint in this foundation ever creates an
+    `ImportJob` or `ImportRowError` row, so this always returns `([], 0)`
+    today -- the query itself is the real, generic implementation PR19A2/
+    PR19A3 populate data for, not a placeholder that changes shape later."""
+    jobs = list(
+        (
+            await db.execute(
+                select(ImportJob).where(ImportJob.import_session_id == session_id).order_by(ImportJob.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    finding_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(ImportRowError)
+            .join(ImportJob, ImportRowError.import_job_id == ImportJob.id)
+            .where(ImportJob.import_session_id == session_id)
+        )
+    ).scalar_one()
+    return jobs, finding_count
 
 
 async def get_or_create_session(

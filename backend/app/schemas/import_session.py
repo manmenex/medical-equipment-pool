@@ -32,6 +32,40 @@ class ImportSessionOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ImportJobSummaryOut(BaseModel):
+    """Minimal, public-safe view of one `ImportJob` row, nested inside
+    `ImportSessionSummaryOut` (§21 endpoint #3). Deliberately excludes the
+    lease/fencing token fields (`lease_owner`, `lease_generation`,
+    `lease_expires_at`, `heartbeat_at`) and `error_message`/
+    `ruleset_version` -- operational detail with no public API contract in
+    this foundation, not a SQLAlchemy-model passthrough (§22)."""
+
+    id: UUIDStr
+    job_type: str
+    status: str
+    attempt_number: int
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class ImportSessionSummaryOut(ImportSessionOut):
+    """§21 endpoint #3 (`GET /import-sessions/{id}`): "session + jobs +
+    finding count + validation_attempt_id". PR19A1 establishes this shape
+    as the summary response's core; PR19A2/PR19A3 extend it additively by
+    populating `jobs`/`finding_count`/`validation_attempt_id` with real
+    data once validate/dry-run/execute exist -- in this foundation, no
+    endpoint ever creates an `ImportJob` or `ImportRowError` row, so these
+    fields are always `[]`/`0`/`None` in practice, but the response shape
+    itself does not change later."""
+
+    jobs: list[ImportJobSummaryOut]
+    finding_count: int
+    validation_attempt_id: UUIDStr | None
+
+
 class ImportSessionStatusOut(BaseModel):
     id: UUIDStr
     status: str

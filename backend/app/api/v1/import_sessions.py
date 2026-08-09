@@ -12,6 +12,7 @@ from app.schemas.import_session import (
     ImportSessionCreate,
     ImportSessionOut,
     ImportSessionStatusOut,
+    ImportSessionSummaryOut,
     ImportSourceIn,
     ImportSourceOut,
 )
@@ -83,13 +84,20 @@ async def list_sessions(
     return Page(items=rows, next_cursor=next_cursor, total=total)
 
 
-@router.get("/{session_id}", response_model=ImportSessionOut)
+@router.get("/{session_id}", response_model=ImportSessionSummaryOut)
 async def get_session_summary(
     session_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     _actor=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
 ):
-    return await _get_or_404(db, session_id)
+    session = await _get_or_404(db, session_id)
+    jobs, finding_count = await import_crud.get_session_jobs_and_finding_count(db, session_id=session.id)
+    return ImportSessionSummaryOut(
+        **ImportSessionOut.model_validate(session).model_dump(),
+        jobs=jobs,
+        finding_count=finding_count,
+        validation_attempt_id=session.current_validation_job_id,
+    )
 
 
 @router.get("/{session_id}/status", response_model=ImportSessionStatusOut)
