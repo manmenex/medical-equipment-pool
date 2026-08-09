@@ -143,15 +143,21 @@ async def run_validation(
     for re-validate) source, atomically freezes it as part of admission
     (§6), then runs the fully fenced validate phase (§9.4).
 
-    Every primitive needed from `session` is captured into a local
-    variable up front, before any statement that could roll back `db`.
-    `admit_validate_job` rolls back `db` internally when its CAS loses a
-    race, and SQLAlchemy expires every ORM object attached to a session on
-    rollback -- a bare attribute access on the now-expired `session`
-    afterward (e.g. `session.id`) would trigger an implicit lazy-reload
-    outside any awaited context, raising `MissingGreenlet`. Using the
-    captured primitives instead of touching `session` again avoids this
-    entirely."""
+    Every primitive needed anywhere in this function -- including in the
+    TX2 failure-publication path below -- is captured into a local
+    variable as soon as it becomes available, before any statement that
+    could roll back or expire `db`'s objects. `db.rollback()` (called
+    unconditionally on the TX1-failure path, and internally by
+    `admit_validate_job` when its CAS loses a race) expires every ORM
+    object attached to the session -- `expire_on_commit=False` only
+    protects against `commit()`, not `rollback()`. A bare attribute access
+    on an expired ORM instance afterward (e.g. `session.id`, `job_row.id`,
+    `session_row.version`) would trigger an implicit lazy-reload outside
+    any awaited context, raising `MissingGreenlet`. Using the captured
+    primitives instead of touching `session`/`session_row`/`job_row` again
+    avoids this entirely, including when real database work (e.g. an
+    adapter's `preload_business_context`) has made the transaction active
+    before a later failure."""
     session_id = session.id
     dataset_type = session.dataset_type
     expected_version = session.version
@@ -181,9 +187,16 @@ async def run_validation(
     if session_row is None or job_row is None:
         await _raise_for_non_admittable_session(db, session_id)
 
+    # §9.4.2: captured immediately, before any statement that could roll
+    # back or expire `job_row`/`session_row` -- see docstring above. Both
+    # TX1's own completion writes and TX2's later failure-publication use
+    # these primitives exclusively, never the ORM instances themselves.
+    job_id = job_row.id
+    admitted_session_version = session_row.version
+
     renewal_task = asyncio.create_task(
         _renew_lease_loop(
-            job_id=job_row.id,
+            job_id=job_id,
             lease_owner=lease_owner,
             lease_generation=lease_generation,
             lease_duration_seconds=settings.IMPORT_JOB_LEASE_DURATION_SECONDS,
@@ -207,7 +220,7 @@ async def run_validation(
             for field_error in adapter.validate_business_rules(record, context):
                 findings.append(
                     ImportRowError(
-                        import_job_id=job_row.id,
+                        import_job_id=job_id,
                         row_number=record.row_number,
                         field=field_error.field,
                         error_code=field_error.error_code,
@@ -233,11 +246,11 @@ async def run_validation(
 
         final_session = await import_job_crud.fenced_success(
             db,
-            job_id=job_row.id,
+            job_id=job_id,
             lease_owner=lease_owner,
             lease_generation=lease_generation,
-            session_id=session.id,
-            expected_version=session_row.version,
+            session_id=session_id,
+            expected_version=admitted_session_version,
             new_session_status=new_status,
             total_rows=total_rows,
             valid_rows=valid_rows,
@@ -251,7 +264,7 @@ async def run_validation(
         domain_exc = exc
         final_session = None
         if not isinstance(exc, (_RowLimitExceededError, _FenceLostDuringSuccessError)):
-            logger.exception("Validation attempt %s crashed", job_row.id)
+            logger.exception("Validation attempt %s crashed", job_id)
     finally:
         renewal_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -268,18 +281,18 @@ async def run_validation(
         async with AsyncSessionLocal() as tx2:
             failed_session = await import_job_crud.fenced_failure(
                 tx2,
-                job_id=job_row.id,
+                job_id=job_id,
                 lease_owner=lease_owner,
                 lease_generation=lease_generation,
-                session_id=session.id,
-                expected_version=session_row.version,
+                session_id=session_id,
+                expected_version=admitted_session_version,
                 failure_status="validation_failed",
                 bounded_error_message=bounded_message,
             )
             if failed_session is None:
                 # §9.4.2 step 5: fenced out on our own failure publication too.
                 await tx2.rollback()
-                await _write_fence_lost_audit(actor_id=actor_id, session_id=session.id, request=request)
+                await _write_fence_lost_audit(actor_id=actor_id, session_id=session_id, request=request)
                 raise ImportRecoveryRequiredError(
                     "This validation attempt was superseded by a recovery claim or a later attempt."
                 )
@@ -295,7 +308,7 @@ async def run_validation(
         logger.exception(
             "TX2 (best-effort fenced failure publication) for validation attempt %s failed on infrastructure "
             "grounds; job left running, lease will expire naturally",
-            job_row.id,
+            job_id,
         )
         raise
 

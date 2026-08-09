@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.audit import AUDIT_ACTION_IMPORT_RECOVERY, AUDIT_ENTITY_IMPORT_SESSION
@@ -281,6 +281,178 @@ async def test_bounded_row_count(client: AsyncClient, seeded_users, monkeypatch)
         assert r.json()["status"] == "validation_failed"
     finally:
         unregister_adapter(DATASET_TYPE)
+
+
+# ---------------------------------------------------------------------------
+# §9.4.2 Rollback-safe failure publication (ORM-expiry regression)
+# ---------------------------------------------------------------------------
+# `run_validation`'s failure path calls `await db.rollback()` before
+# publishing via TX2. SQLAlchemy expires every ORM object attached to a
+# session on rollback regardless of `expire_on_commit` -- a bare attribute
+# access on one of those now-expired objects afterward (outside an awaited
+# context) raises `sqlalchemy.exc.MissingGreenlet`. These tests force a real
+# database round-trip inside the post-admission transaction (so there is
+# genuine in-memory state for rollback to expire) before the failure, which
+# is what previously reproduced the crash.
+
+
+class _DbBackedFailingAdapter(ImportAdapter):
+    """Case 1: `preload_business_context` performs a real, awaited query --
+    making TX1's transaction genuinely active, not merely theoretically
+    open -- before `validate_business_rules` raises."""
+
+    dataset_type = DATASET_TYPE
+    ruleset_version = "1"
+
+    def __init__(self, *, rows: int = 2):
+        self.rows = rows
+
+    def parse(self, raw_input):
+        return [RawImportRecord(row_number=i + 1, fields={}) for i in range(self.rows)]
+
+    async def preload_business_context(self, db, records):
+        await db.execute(select(ImportSession).limit(1))
+        return None
+
+    def validate_business_rules(self, record, context):
+        raise RuntimeError("simulated business-rule crash after an active preload query")
+
+
+async def test_failure_after_db_backed_preload_publishes_cleanly(client: AsyncClient, seeded_users, db_session):
+    """Case 1: a real query runs in preload, then validation raises. TX1
+    must roll back and TX2 must still publish `validation_failed` -- no
+    `MissingGreenlet` from touching expired ORM state afterward."""
+    adapter = _DbBackedFailingAdapter()
+    register_adapter(adapter)
+    try:
+        headers = await auth_headers(client)
+        session = await _create_and_register(client, headers)
+        r = await client.post(f"/api/v1/import-sessions/{session['id']}/validate", headers=headers)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["status"] == "validation_failed"
+        assert body["failure_reason"] is not None
+        # §22: never the raw exception message/content.
+        assert "simulated business-rule crash" not in body["failure_reason"]
+
+        job = (
+            await db_session.execute(select(ImportJob).where(ImportJob.import_session_id == uuid.UUID(session["id"])))
+        ).scalar_one()
+        assert job.status == "failed"
+        assert job.error_message is not None
+        assert "simulated business-rule crash" not in job.error_message
+    finally:
+        unregister_adapter(DATASET_TYPE)
+
+
+class _DbBackedFindingThenFailAdapter(ImportAdapter):
+    """Case 2: preload issues a real, executed write statement (not merely
+    a read, and not merely a same-process Python list append) -- a genuine
+    `UPDATE` sent to the database -- before `validate_business_rules`
+    raises. `run_validation`'s own `db.add_all(findings)` is never reached
+    in this scenario since the exception propagates out of the row loop
+    before that call, which is exactly why this adapter must generate its
+    own real database write to make the failing transaction genuinely
+    active."""
+
+    dataset_type = DATASET_TYPE
+    ruleset_version = "1"
+
+    def __init__(self, *, rows: int = 2):
+        self.rows = rows
+
+    def parse(self, raw_input):
+        return [RawImportRecord(row_number=i + 1, fields={}) for i in range(self.rows)]
+
+    async def preload_business_context(self, db, records):
+        # A real write statement, actually sent to the database (0 rows
+        # affected is fine -- what matters is that a genuine transaction
+        # is now active with real executed SQL, not just a pending add).
+        await db.execute(
+            update(ImportJob).where(ImportJob.id == uuid.uuid4()).values(heartbeat_at=datetime.now(timezone.utc))
+        )
+        return None
+
+    def validate_business_rules(self, record, context):
+        raise RuntimeError("simulated crash after a real write was already executed in this transaction")
+
+
+async def test_failure_after_active_transaction_discards_partial_data(client: AsyncClient, seeded_users, db_session):
+    """Case 2: at least one real, executed write statement happens inside
+    the post-admission transaction before the crash. Assert: rollback
+    completes, failure publication succeeds without `MissingGreenlet`,
+    job/session state is correct, and no partial validation data survives
+    (no findings are ever persisted for this attempt)."""
+    adapter = _DbBackedFindingThenFailAdapter()
+    register_adapter(adapter)
+    try:
+        headers = await auth_headers(client)
+        session = await _create_and_register(client, headers)
+        r = await client.post(f"/api/v1/import-sessions/{session['id']}/validate", headers=headers)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["status"] == "validation_failed"
+        assert body["failure_reason"] is not None
+
+        job = (
+            await db_session.execute(select(ImportJob).where(ImportJob.import_session_id == uuid.UUID(session["id"])))
+        ).scalar_one()
+        assert job.status == "failed"
+
+        findings = (
+            (await db_session.execute(select(ImportRowError).where(ImportRowError.import_job_id == job.id)))
+            .scalars()
+            .all()
+        )
+        assert findings == [], "no partial validation data may survive TX1's rollback"
+    finally:
+        unregister_adapter(DATASET_TYPE)
+
+
+async def test_late_worker_failure_publication_fenced_after_recovery(client: AsyncClient, seeded_users, db_session):
+    """Case 3: TX2's failure publication uses the session version captured
+    at admission time (exactly as `run_validation` does), and that captured
+    value must still be correctly fenced out once a concurrent recovery has
+    moved the session on -- mirroring the already-covered success-path
+    fencing (`test_late_worker_cannot_publish_after_recovery`) for the
+    failure path this fix touches directly. Fixing the ORM-expiry crash must
+    never come at the cost of weakening this fencing check."""
+    headers = await auth_headers(client)
+    session = await _create_and_register(client, headers)
+    session_id = uuid.UUID(session["id"])
+
+    owner_a = uuid.uuid4()
+    _existed, session_row, job = await import_job_crud.admit_validate_job(
+        db_session, session_id=session_id, expected_version=0, lease_owner=owner_a, lease_duration_seconds=300
+    )
+    # Exactly what run_validation captures immediately after admission.
+    captured_job_id = job.id
+    captured_admitted_version = session_row.version
+
+    await db_session.execute(
+        ImportJob.__table__.update()
+        .where(ImportJob.id == job.id)
+        .values(lease_expires_at=datetime.now(timezone.utc) - timedelta(seconds=1))
+    )
+    await db_session.commit()
+
+    recover_resp = await client.post(f"/api/v1/import-sessions/{session['id']}/recover", headers=headers)
+    assert recover_resp.status_code == 200
+
+    late_failure_result = await import_job_crud.fenced_failure(
+        db_session,
+        job_id=captured_job_id,
+        lease_owner=owner_a,
+        lease_generation=1,
+        session_id=session_id,
+        expected_version=captured_admitted_version,
+        failure_status="validation_failed",
+        bounded_error_message="x",
+    )
+    assert late_failure_result is None, (
+        "a worker fenced out by recovery must never publish failure using its captured (now stale) admitted "
+        "version either"
+    )
 
 
 # ---------------------------------------------------------------------------
