@@ -16,10 +16,13 @@ from app.models.import_session import ImportJob, ImportRowError, ImportSession, 
 # the boundary.
 
 # §25: "generic across job_type... only a small per-job_type mapping to
-# session-status values". PR19A2 adds exactly one entry; PR19A3 extends
-# this same mapping for dry_run/execute, unchanged otherwise.
+# session-status values". PR19A2 adds exactly one entry (validate);
+# PR19A3 extends this same mapping for dry_run/execute -- the /recover
+# endpoint and completion-fencing mechanism themselves are unchanged.
 PHASE_STATUS_MAP: dict[str, dict[str, str]] = {
     "validate": {"running_status": "validating", "failure_status": "validation_failed"},
+    "dry_run": {"running_status": "dry_run_running", "failure_status": "dry_run_failed"},
+    "execute": {"running_status": "executing", "failure_status": "failed"},
 }
 
 _ALLOWED_VALIDATE_ADMISSION_STATUSES = ("created", "validated", "validation_failed")
@@ -92,6 +95,65 @@ async def admit_validate_job(
     await db.flush()
     await db.commit()
     return source_existed, session_row, job
+
+
+async def admit_phase_job(
+    db: AsyncSession,
+    *,
+    session_id: uuid.UUID,
+    job_type: str,
+    allowed_from_statuses: tuple[str, ...],
+    running_status: str,
+    expected_version: int,
+    lease_owner: uuid.UUID,
+    lease_duration_seconds: int,
+) -> tuple[ImportSession | None, ImportJob | None]:
+    """Roadmap PR19A3 (design §9.1, §25): the generic phase-admission
+    primitive dry-run/execute both use -- the identical session-CAS +
+    lease-acquisition shape `admit_validate_job` already established for
+    validate, without validate's own source-freeze step (the source is
+    already frozen by the time a session can ever reach `validated`,
+    §6 -- there is nothing left to freeze for a later phase). Returns
+    `(session_row_or_None, job_row_or_None)`; `None` means the CAS did not
+    match (wrong state or stale version) -- the caller must re-fetch and
+    decide how to respond (§23), never proceed as if it had won."""
+    now = datetime.now(timezone.utc)
+
+    session_result = await db.execute(
+        update(ImportSession)
+        .where(
+            ImportSession.id == session_id,
+            ImportSession.status.in_(allowed_from_statuses),
+            ImportSession.version == expected_version,
+        )
+        .values(status=running_status, version=ImportSession.version + 1)
+        .returning(ImportSession)
+    )
+    session_row = session_result.scalar_one_or_none()
+    if session_row is None:
+        await db.rollback()
+        return None, None
+
+    attempt_number_subq = select(func.coalesce(func.max(ImportJob.attempt_number), 0) + 1).where(
+        ImportJob.import_session_id == session_id, ImportJob.job_type == job_type
+    )
+    attempt_number = (await db.execute(attempt_number_subq)).scalar_one()
+
+    job = ImportJob(
+        import_session_id=session_id,
+        job_type=job_type,
+        status="running",
+        attempt_number=attempt_number,
+        lease_owner=lease_owner,
+        lease_generation=1,
+        lease_expires_at=now + timedelta(seconds=lease_duration_seconds),
+        heartbeat_at=now,
+        started_at=now,
+    )
+    db.add(job)
+    await db.flush()
+    await db.commit()
+    return session_row, job
 
 
 async def get_running_job(db: AsyncSession, *, session_id: uuid.UUID, job_type: str) -> ImportJob | None:
@@ -229,6 +291,109 @@ async def fenced_failure(
             updated_at=datetime.now(timezone.utc),
             failure_reason=bounded_error_message,
         )
+        .returning(ImportSession)
+    )
+    return session_result.scalar_one_or_none()
+
+
+async def fenced_phase_success(
+    db: AsyncSession,
+    *,
+    job_id: uuid.UUID,
+    lease_owner: uuid.UUID,
+    lease_generation: int,
+    session_id: uuid.UUID,
+    expected_version: int,
+    running_status: str,
+    new_session_status: str,
+    extra_session_values: dict | None = None,
+) -> ImportSession | None:
+    """Roadmap PR19A3 (design §9.4.1, §25): the generic fenced-success
+    primitive dry-run/execute both use -- the identical shape as
+    `fenced_success` above, parameterized by `running_status` (each phase
+    has its own `*_RUNNING` value) and `extra_session_values` (each phase
+    persists different completion columns: `dry_run_completed_at` for
+    dry-run; `executed_at`/`imported_rows`/`terminal_at` for execute).
+    `fenced_success` itself is untouched -- validate's own narrower,
+    already-merged function -- since neither of its own two extra columns
+    (`current_validation_job_id`, the four row-count columns) applies to
+    dry-run/execute. No commit (the caller's TX1 owns the boundary)."""
+    job_result = await db.execute(
+        update(ImportJob)
+        .where(
+            ImportJob.id == job_id,
+            ImportJob.lease_owner == lease_owner,
+            ImportJob.lease_generation == lease_generation,
+            ImportJob.status == "running",
+        )
+        .values(status="succeeded", finished_at=datetime.now(timezone.utc), error_message=None)
+        .returning(ImportJob.id)
+    )
+    if job_result.first() is None:
+        return None
+
+    values: dict = {
+        "status": new_session_status,
+        "version": ImportSession.version + 1,
+        "updated_at": datetime.now(timezone.utc),
+    }
+    if extra_session_values:
+        values.update(extra_session_values)
+
+    session_result = await db.execute(
+        update(ImportSession)
+        .where(ImportSession.id == session_id, ImportSession.status == running_status, ImportSession.version == expected_version)
+        .values(**values)
+        .returning(ImportSession)
+    )
+    return session_result.scalar_one_or_none()
+
+
+async def fenced_phase_failure(
+    db: AsyncSession,
+    *,
+    job_id: uuid.UUID,
+    lease_owner: uuid.UUID,
+    lease_generation: int,
+    session_id: uuid.UUID,
+    expected_version: int,
+    running_status: str,
+    failure_status: str,
+    bounded_error_message: str,
+    extra_session_values: dict | None = None,
+) -> ImportSession | None:
+    """Roadmap PR19A3 -- the generic fenced-failure counterpart to
+    `fenced_phase_success` above, mirroring `fenced_failure`'s shape.
+    `extra_session_values` lets execute set `terminal_at` (FAILED is
+    terminal, §5) while dry-run leaves it untouched (DRY_RUN_FAILED is
+    not terminal). No commit (the caller's TX2 owns the boundary)."""
+    job_result = await db.execute(
+        update(ImportJob)
+        .where(
+            ImportJob.id == job_id,
+            ImportJob.lease_owner == lease_owner,
+            ImportJob.lease_generation == lease_generation,
+            ImportJob.status == "running",
+        )
+        .values(status="failed", finished_at=datetime.now(timezone.utc), error_message=bounded_error_message)
+        .returning(ImportJob.id)
+    )
+    if job_result.first() is None:
+        return None
+
+    values: dict = {
+        "status": failure_status,
+        "version": ImportSession.version + 1,
+        "updated_at": datetime.now(timezone.utc),
+        "failure_reason": bounded_error_message,
+    }
+    if extra_session_values:
+        values.update(extra_session_values)
+
+    session_result = await db.execute(
+        update(ImportSession)
+        .where(ImportSession.id == session_id, ImportSession.status == running_status, ImportSession.version == expected_version)
+        .values(**values)
         .returning(ImportSession)
     )
     return session_result.scalar_one_or_none()

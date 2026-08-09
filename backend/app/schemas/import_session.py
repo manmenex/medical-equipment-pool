@@ -38,6 +38,13 @@ class ImportSessionOut(BaseModel):
     valid_rows: int | None = None
     invalid_rows: int | None = None
     warning_rows: int | None = None
+    # Roadmap PR19A3 (§16, §17): populated only once a dry-run/execute
+    # attempt has completed -- always None/unset before this slice's
+    # first dry-run/execute call, exactly like PR19A2's own validate-only
+    # fields were before PR19A2 existed.
+    dry_run_completed_at: datetime | None = None
+    executed_at: datetime | None = None
+    imported_rows: int | None = None
 
     model_config = {"from_attributes": True}
 
@@ -121,3 +128,14 @@ class ValidationFindingOut(BaseModel):
     severity: str
 
     model_config = {"from_attributes": True}
+
+
+# Roadmap PR19A3 (§21 endpoint #12).
+class ImportRetentionCleanupRequest(BaseModel):
+    limit: int = Field(default=100, ge=1, le=500)
+
+
+class ImportRetentionCleanupResult(BaseModel):
+    purged_count: int
+    skipped_count: int
+    has_more: bool

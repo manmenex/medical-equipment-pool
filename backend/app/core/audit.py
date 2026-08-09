@@ -59,6 +59,12 @@ AUDIT_ACTION_IMPORT_RECOVERY = "import_recovery"
 # already confirmed, in a separate small transaction (TX3, §9.4.2 step 5),
 # never speculatively and never causing or bypassing a fence.
 AUDIT_ACTION_IMPORT_FENCE_LOST = "import_fence_lost"
+# Roadmap PR19A3 (design §18/§19): one entry per session actually purged by
+# retention cleanup, written in the same fenced redaction transaction as
+# the session's own retention_purged_at/source_bytes_deleted_at UPDATE
+# (§18) -- never speculatively, never for a claimed-but-not-yet-purged or
+# fenced-out session (those write AUDIT_ACTION_IMPORT_FENCE_LOST instead).
+AUDIT_ACTION_IMPORT_RETENTION_CLEANUP = "import_retention_cleanup"
 
 # Audit entity-type values, same rationale as the actions above.
 AUDIT_ENTITY_EQUIPMENT = "equipment"

@@ -9708,3 +9708,288 @@ async def test_recovery_single_winner_on_postgres(pg_client, pg_seeded_users, pg
     statuses = [r.status_code for r in responses]
     assert statuses.count(200) == 1, f"recovery must be single-winner under real concurrency, got {statuses}"
     assert statuses.count(409) == 4
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR19A3 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §16,
+# §17, §18) -- genuine PostgreSQL enforcement/concurrency proofs the design
+# explicitly requires on PostgreSQL specifically:
+#   - §16: "Required PostgreSQL tests (PR19A3): a test adapter that
+#     deliberately attempts a write and asserts it raises and the phase
+#     fails; a normal no-op adapter proving success."
+#   - §17: "Required PostgreSQL test (PR19A3): a genuine two-connection
+#     concurrency test proving exactly one execution, one EXECUTE job, one
+#     audit entry, and a deterministic response for the loser."
+#   - §18: two concurrent retention-cleanup invocations must never claim
+#     the same session (SELECT ... FOR UPDATE SKIP LOCKED).
+# ---------------------------------------------------------------------------
+
+from app.core.audit import AUDIT_ACTION_IMPORT as _PG_AUDIT_ACTION_IMPORT
+from app.core.audit import AUDIT_ENTITY_IMPORT_SESSION as _PG_AUDIT_ENTITY_IMPORT_SESSION
+from app.models.import_session import ImportJob as _PgImportJob
+from app.models.import_session import ImportRowError as _PgImportRowError
+from app.models.import_session import ImportSession as _PgImportSession
+from app.models.import_session import ImportSource as _PgImportSource
+from app.services import import_execution_service as _pg_import_execution_service
+from app.services import import_lease as _pg_import_lease
+
+_PG_A3_DATASET_TYPE = "pr19a3_pg_concurrency_test"
+
+
+@pytest_asyncio.fixture
+async def _pg_patch_import_a3_session_factories(pg_engine, monkeypatch):
+    """`import_execution_service`/`import_lease` open their own TX2/TX3/
+    read-only-evaluation sessions directly via `app.db.session.
+    AsyncSessionLocal` (never through the `get_db` FastAPI dependency
+    `pg_client` overrides) -- see those modules' own docstrings for why
+    (MissingGreenlet avoidance / genuinely separate transactions). Left
+    unpatched, those sessions would silently bind to this process's real,
+    never-migrated `AsyncSessionLocal` (SQLite, from `DATABASE_URL`) instead
+    of `pg_engine`, surfacing as `no such table` errors. PR19A2's own
+    existing postgres tests never needed this: they only exercise the
+    admission-CAS-race path (loser gets 409 before TX2 is ever reached) and
+    recovery (uses only the endpoint's own injected `db`). Dry-run's
+    read-only evaluation session (`ro_db`) is opened unconditionally on
+    both success and failure, so every PR19A3 postgres test that reaches
+    dry-run or execute needs this patch."""
+    session_maker = async_sessionmaker(pg_engine, expire_on_commit=False, class_=AsyncSession)
+    monkeypatch.setattr(_pg_import_execution_service, "AsyncSessionLocal", session_maker)
+    monkeypatch.setattr(_pg_import_lease, "AsyncSessionLocal", session_maker)
+
+
+class _PgFullPipelineAdapter(_PgImportAdapter):
+    """Implements validate/dry-run/execute, all real no-ops except a real
+    (short) sleep in `execute()` to widen the concurrency window, mirroring
+    `_SlowFakeAdapter`'s identical rationale for validate above."""
+
+    dataset_type = _PG_A3_DATASET_TYPE
+
+    def __init__(self, *, execute_sleep_seconds: float = 0.0):
+        self.execute_sleep_seconds = execute_sleep_seconds
+
+    def parse(self, raw_input):
+        return [_PgRawImportRecord(row_number=1, fields={})]
+
+    def validate_business_rules(self, record, context):
+        return []
+
+    async def plan_dry_run(self, db):
+        return None
+
+    async def execute(self, db):
+        if self.execute_sleep_seconds:
+            await asyncio.sleep(self.execute_sleep_seconds)
+        return 1
+
+
+class _PgWriteAttemptDryRunAdapter(_PgImportAdapter):
+    """§16: deliberately attempts a write inside `plan_dry_run` -- must be
+    rejected by PostgreSQL's `SET TRANSACTION READ ONLY`, not merely
+    discarded after the fact. `WHERE 1=0` guarantees zero rows would ever
+    match even if enforcement somehow failed -- belt-and-suspenders, not a
+    substitute for the real assertion below."""
+
+    dataset_type = _PG_A3_DATASET_TYPE
+
+    def parse(self, raw_input):
+        return [_PgRawImportRecord(row_number=1, fields={})]
+
+    def validate_business_rules(self, record, context):
+        return []
+
+    async def plan_dry_run(self, db):
+        await db.execute(text("UPDATE import_sessions SET notes = 'should never persist' WHERE 1=0"))
+        return None
+
+    async def execute(self, db):
+        return 0
+
+
+async def _pg_create_registered_session(pg_client: AsyncClient, headers: dict, *, checksum_seed: str) -> dict:
+    created = (
+        await pg_client.post("/api/v1/import-sessions", headers=headers, json={"dataset_type": _PG_A3_DATASET_TYPE})
+    ).json()
+    reg = await pg_client.post(
+        f"/api/v1/import-sessions/{created['id']}/source",
+        headers=headers,
+        json={"checksum": checksum_seed * 64, "byte_size": 10},
+    )
+    assert reg.status_code == 201, reg.text
+    return created
+
+
+async def test_dry_run_write_attempt_rejected_on_postgres(
+    pg_client, pg_seeded_users, _pg_patch_import_a3_session_factories
+):
+    """§16: a real write attempt inside the read-only evaluation
+    transaction must be rejected by PostgreSQL itself, and the phase must
+    end DRY_RUN_FAILED, not silently succeed."""
+    headers = await _admin_headers(pg_client)
+    session = await _pg_create_registered_session(pg_client, headers, checksum_seed="c")
+
+    adapter = _PgWriteAttemptDryRunAdapter()
+    _pg_register_adapter(adapter)
+    try:
+        v = await pg_client.post(f"/api/v1/import-sessions/{session['id']}/validate", headers=headers)
+        assert v.status_code == 200 and v.json()["status"] == "validated", v.text
+
+        r = await pg_client.post(f"/api/v1/import-sessions/{session['id']}/dry-run", headers=headers)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["status"] == "dry_run_failed", (
+            "a write attempt inside plan_dry_run's read-only transaction must be rejected by PostgreSQL, "
+            f"and the phase recorded as dry_run_failed, got {body}"
+        )
+        assert body["failure_reason"] is not None
+    finally:
+        _pg_unregister_adapter(_PG_A3_DATASET_TYPE)
+
+
+async def test_dry_run_no_op_adapter_succeeds_on_postgres(
+    pg_client, pg_seeded_users, _pg_patch_import_a3_session_factories
+):
+    """§16's companion required test: a normal no-op adapter proving
+    success under the same real read-only-transaction enforcement."""
+    headers = await _admin_headers(pg_client)
+    session = await _pg_create_registered_session(pg_client, headers, checksum_seed="d")
+
+    adapter = _PgFullPipelineAdapter()
+    _pg_register_adapter(adapter)
+    try:
+        v = await pg_client.post(f"/api/v1/import-sessions/{session['id']}/validate", headers=headers)
+        assert v.status_code == 200 and v.json()["status"] == "validated", v.text
+
+        r = await pg_client.post(f"/api/v1/import-sessions/{session['id']}/dry-run", headers=headers)
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "dry_run_completed"
+    finally:
+        _pg_unregister_adapter(_PG_A3_DATASET_TYPE)
+
+
+async def test_concurrent_execute_single_winner_on_postgres(
+    pg_client, pg_seeded_users, pg_engine, _pg_patch_import_a3_session_factories
+):
+    """§17: exactly one execution, one EXECUTE job, one audit entry, and a
+    deterministic response for the loser, under genuine two-connection
+    concurrency."""
+    headers = await _admin_headers(pg_client)
+    session = await _pg_create_registered_session(pg_client, headers, checksum_seed="e")
+
+    adapter = _PgFullPipelineAdapter(execute_sleep_seconds=0.3)
+    _pg_register_adapter(adapter)
+    try:
+        v = await pg_client.post(f"/api/v1/import-sessions/{session['id']}/validate", headers=headers)
+        assert v.status_code == 200 and v.json()["status"] == "validated", v.text
+        dr = await pg_client.post(f"/api/v1/import-sessions/{session['id']}/dry-run", headers=headers)
+        assert dr.status_code == 200 and dr.json()["status"] == "dry_run_completed", dr.text
+
+        async def _execute():
+            return await pg_client.post(f"/api/v1/import-sessions/{session['id']}/execute", headers=headers)
+
+        raw_results = await asyncio.gather(*(_execute() for _ in range(3)), return_exceptions=True)
+    finally:
+        _pg_unregister_adapter(_PG_A3_DATASET_TYPE)
+
+    responses = [r for r in raw_results if not isinstance(r, BaseException)]
+    assert len(responses) == 3, f"all concurrent execute calls must complete cleanly, got {raw_results}"
+
+    statuses = [r.status_code for r in responses]
+    assert statuses.count(200) == 1, f"exactly one concurrent execute call must win admission, got {statuses}"
+    for r, status in zip(responses, statuses):
+        if status != 200:
+            assert status == 409, r.text
+            assert r.json()["code"] in ("IMPORT_ATTEMPT_IN_PROGRESS", "IMPORT_SESSION_INVALID_STATE"), r.text
+
+    verify_session_maker = async_sessionmaker(pg_engine, expire_on_commit=False, class_=AsyncSession)
+    async with verify_session_maker() as verify_db:
+        jobs = (
+            await verify_db.execute(
+                select(_PgImportJob).where(
+                    _PgImportJob.import_session_id == uuid.UUID(session["id"]), _PgImportJob.job_type == "execute"
+                )
+            )
+        ).scalars().all()
+        assert len(jobs) == 1, "exactly one EXECUTE job may ever be created for this session"
+        assert jobs[0].status == "succeeded"
+
+        audit_rows = (
+            await verify_db.execute(
+                select(AuditLog).where(
+                    AuditLog.entity_type == _PG_AUDIT_ENTITY_IMPORT_SESSION,
+                    AuditLog.action == _PG_AUDIT_ACTION_IMPORT,
+                    AuditLog.entity_id == uuid.UUID(session["id"]),
+                )
+            )
+        ).scalars().all()
+        assert len(audit_rows) == 1, "exactly one AUDIT_ACTION_IMPORT entry may ever be written for this execution"
+
+
+async def test_concurrent_retention_cleanup_single_winner_on_postgres(
+    pg_client, pg_seeded_users, pg_engine, pg_session, _pg_patch_import_a3_session_factories
+):
+    """§18: two concurrent retention-cleanup invocations must never claim
+    the same session -- `SELECT ... FOR UPDATE SKIP LOCKED` under genuine
+    two-connection concurrency."""
+    actor = pg_seeded_users["administrator"]
+    terminal_at = datetime.now(timezone.utc) - timedelta(days=200)
+    session = _PgImportSession(
+        dataset_type=_PG_A3_DATASET_TYPE,
+        status="completed",
+        version=0,
+        created_by_user_id=actor.id,
+        terminal_at=terminal_at,
+        notes="operator note",
+    )
+    pg_session.add(session)
+    await pg_session.flush()
+    pg_session.add(
+        _PgImportSource(
+            import_session_id=session.id,
+            status="frozen",
+            checksum="f" * 64,
+            byte_size=1,
+            content_type="text/csv",
+            filename="legacy.csv",
+            options_fingerprint="x",
+            source_fingerprint="y",
+            frozen_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    job = _PgImportJob(import_session_id=session.id, job_type="validate", status="succeeded", attempt_number=1, lease_generation=1)
+    pg_session.add(job)
+    await pg_session.flush()
+    pg_session.add(
+        _PgImportRowError(import_job_id=job.id, row_number=1, field="bcm_code", error_code="bad", message="raw legacy value", severity="error")
+    )
+    await pg_session.commit()
+    session_id = session.id
+
+    headers = await _admin_headers(pg_client)
+
+    async def _cleanup():
+        return await pg_client.post("/api/v1/import-sessions/retention/cleanup", headers=headers, json={"limit": 10})
+
+    responses = await asyncio.gather(*(_cleanup() for _ in range(2)))
+    for r in responses:
+        assert r.status_code == 200, r.text
+
+    purged_counts = [r.json()["purged_count"] for r in responses]
+    assert sorted(purged_counts) == [0, 1], f"exactly one concurrent cleanup call may purge this session, got {purged_counts}"
+
+    verify_session_maker = async_sessionmaker(pg_engine, expire_on_commit=False, class_=AsyncSession)
+    async with verify_session_maker() as verify_db:
+        row = (await verify_db.execute(select(_PgImportSession).where(_PgImportSession.id == session_id))).scalar_one()
+        assert row.retention_purged_at is not None
+        assert row.notes is None
+
+        audit_rows = (
+            await verify_db.execute(
+                select(AuditLog).where(
+                    AuditLog.entity_type == _PG_AUDIT_ENTITY_IMPORT_SESSION,
+                    AuditLog.action == "import_retention_cleanup",
+                    AuditLog.entity_id == session_id,
+                )
+            )
+        ).scalars().all()
+        assert len(audit_rows) == 1, "exactly one retention-cleanup audit entry may ever be written for this session"

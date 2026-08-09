@@ -1053,14 +1053,20 @@ async def test_validate_404_for_unknown_session(client: AsyncClient, seeded_user
     assert r.json()["code"] == "IMPORT_SESSION_NOT_FOUND"
 
 
-async def test_dry_run_and_execute_not_registered_by_pr19a2(client: AsyncClient, seeded_users):
-    """§25: PR19A2 registers exactly #7-#9 (recover, validate, errors) --
-    dry-run/execute remain PR19A3's, never reachable from this slice."""
+async def test_dry_run_and_execute_reachable_but_reject_a_freshly_created_session(client: AsyncClient, seeded_users):
+    """§25: PR19A2 itself registers exactly #7-#9 (recover, validate,
+    errors). Dry-run/execute are PR19A3's own endpoints -- reachable now
+    that PR19A3 has shipped, but a freshly-created (never validated)
+    session is not in either endpoint's admittable state set, so both
+    correctly reject it as a 409 state conflict rather than a 404 route
+    miss (proving they exist and enforce their own precondition, not that
+    they are absent)."""
     headers = await auth_headers(client)
     session = await _create_and_register(client, headers)
     for path in ("dry-run", "execute"):
         r = await client.post(f"/api/v1/import-sessions/{session['id']}/{path}", headers=headers)
-        assert r.status_code == 404
+        assert r.status_code == 409, r.text
+        assert r.json()["code"] == "IMPORT_SESSION_INVALID_STATE"
 
 
 async def test_concurrent_validate_returns_attempt_in_progress(client: AsyncClient, seeded_users, db_session):

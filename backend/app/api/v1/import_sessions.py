@@ -12,6 +12,8 @@ from app.db.session import get_db
 from app.models.import_session import ImportJob
 from app.schemas.common import Page
 from app.schemas.import_session import (
+    ImportRetentionCleanupRequest,
+    ImportRetentionCleanupResult,
     ImportSessionCreate,
     ImportSessionOut,
     ImportSessionStatusOut,
@@ -20,7 +22,7 @@ from app.schemas.import_session import (
     ImportSourceOut,
     ValidationFindingOut,
 )
-from app.services import import_validation_service
+from app.services import import_execution_service, import_retention_service, import_validation_service
 from app.utils.pagination import decode_cursor, decode_int_cursor, encode_cursor, encode_int_cursor
 
 # Roadmap PR19A1 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §21).
@@ -28,8 +30,11 @@ from app.utils.pagination import decode_cursor, decode_int_cursor, encode_cursor
 # cancel (PR19A1). Endpoints #7-#9 -- recover, validate, errors -- are
 # Roadmap PR19A2's addition, including the lease/heartbeat/recovery/
 # completion-fencing mechanism they depend on (see
-# app.services.import_validation_service). No dry-run, execute, or
-# retention-cleanup endpoint ships with this slice (§25) -- PR19A3.
+# app.services.import_validation_service). Endpoints #10-#12 -- dry-run,
+# execute, retention/cleanup -- are Roadmap PR19A3's addition (see
+# app.services.import_execution_service / import_retention_service),
+# composing onto PR19A2's mechanism unchanged rather than adding a new
+# one (§25).
 
 router = APIRouter(prefix="/import-sessions", tags=["import-sessions"])
 
@@ -88,6 +93,24 @@ async def list_sessions(
         last = rows[-1]
         next_cursor = encode_cursor(last.created_at, str(last.id))
     return Page(items=rows, next_cursor=next_cursor, total=total)
+
+
+@router.post("/retention/cleanup", response_model=ImportRetentionCleanupResult)
+async def retention_cleanup(
+    request: Request,
+    payload: ImportRetentionCleanupRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    actor=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
+):
+    # §21 endpoint #12: registered ahead of the `/{session_id}` routes --
+    # this path has no session id in it at all (a batch operation, not
+    # scoped to one session), so there is no shape collision with any
+    # `{session_id}/<literal>` route today, but registering it first
+    # keeps that true defensively even if a future route's literal
+    # second segment were ever named "cleanup".
+    limit = payload.limit if payload is not None else 100
+    result = await import_retention_service.run_retention_cleanup(db, actor_id=actor.id, request=request, limit=limit)
+    return ImportRetentionCleanupResult(**result)
 
 
 @router.get("/{session_id}", response_model=ImportSessionSummaryOut)
@@ -170,6 +193,28 @@ async def validate_session(
 ):
     session = await _get_or_404(db, session_id)
     return await import_validation_service.run_validation(db, session=session, actor_id=actor.id, request=request)
+
+
+@router.post("/{session_id}/dry-run", response_model=ImportSessionOut)
+async def dry_run_session(
+    session_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    actor=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
+):
+    session = await _get_or_404(db, session_id)
+    return await import_execution_service.run_dry_run(db, session=session, actor_id=actor.id, request=request)
+
+
+@router.post("/{session_id}/execute", response_model=ImportSessionOut)
+async def execute_session(
+    session_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    actor=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
+):
+    session = await _get_or_404(db, session_id)
+    return await import_execution_service.run_execute(db, session=session, actor_id=actor.id, request=request)
 
 
 @router.get("/{session_id}/errors", response_model=Page[ValidationFindingOut])

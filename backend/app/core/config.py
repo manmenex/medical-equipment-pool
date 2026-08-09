@@ -69,6 +69,16 @@ class Settings(BaseSettings):
     IMPORT_JOB_LEASE_DURATION_SECONDS: int = 300
     IMPORT_JOB_HEARTBEAT_INTERVAL_SECONDS: int = 60
 
+    # Roadmap PR19A3 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §18,
+    # Owner Decision recorded in docs/DECISION_LOG.md): 180-day post-terminal
+    # retention, deployment-configurable, no Version 1 Administrator UI to
+    # change it. IMPORT_RETENTION_CLEANUP_CLAIM_TIMEOUT_SECONDS bounds how
+    # long a retention-cleanup claim survives a crashed cleanup worker
+    # before another invocation may re-claim it (design §18's "e.g. 5
+    # minutes -- a single session's redaction is fast" example).
+    IMPORT_RETENTION_DAYS: int = 180
+    IMPORT_RETENTION_CLEANUP_CLAIM_TIMEOUT_SECONDS: int = 300
+
     @property
     def allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",") if origin.strip()]

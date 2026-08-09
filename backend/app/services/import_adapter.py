@@ -36,6 +36,20 @@ class RawImportRecord:
 
 
 @dataclass(frozen=True)
+class DryRunPlan:
+    """Roadmap PR19A3 (design §16). The opaque result of a read-only
+    evaluation, computed entirely within `plan_dry_run`'s read-only
+    transaction, then discarded -- never persisted itself (only whether
+    evaluation succeeded or raised feeds `session.dry_run_completed_at`/
+    `status`, via the normal fenced-completion contract, §9.4.3).
+    Deliberately minimal in this foundation; a future concrete-adapter
+    slice may populate `summary` with adapter-defined preview content
+    without changing this contract."""
+
+    summary: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class FieldError:
     """One business-rule validation finding for one record, before it is
     persisted as an `ImportRowError` row (§4.4). `severity` must be
@@ -98,6 +112,33 @@ class ImportAdapter(abc.ABC):
         """Synchronous. Receives only the record and the context
         `preload_business_context` returned -- no database session
         parameter, structurally preventing a per-record query."""
+
+    async def plan_dry_run(self, db: AsyncSession) -> "DryRunPlan":
+        """Roadmap PR19A3 (design §16). Called against a **separate**,
+        genuinely read-only `AsyncSession` (`SET TRANSACTION READ ONLY` on
+        PostgreSQL) -- any write attempt is rejected by the database
+        itself. Default: not implemented. Deliberately a concrete default
+        that raises, not `abc.abstractmethod` -- an adapter that only
+        implements `parse`/`validate_business_rules` (validate-only) is
+        still a valid, registrable adapter; the service layer detects a
+        non-overriding subclass before ever admitting a dry-run attempt
+        and responds `501 IMPORT_ADAPTER_NOT_IMPLEMENTED` (§23), never by
+        calling this default and catching the exception."""
+        raise NotImplementedError
+
+    async def execute(self, db: AsyncSession) -> int:
+        """Roadmap PR19A3 (design §17). Called against the normal,
+        read-write session, inside the single-winner execution's own `TX1`
+        (§9.4.1) -- unlike `plan_dry_run`, this must actually write.
+        Returns the number of rows imported (persisted as
+        `import_sessions.imported_rows`). Must never call `db.commit()`/
+        `db.rollback()` itself -- the caller owns `TX1`'s transaction
+        boundary (§22's adapter-contract invariant: "adapter writes
+        outside the provided session" is a documented obligation this
+        foundation cannot force a misbehaving adapter to comply with, but
+        never itself violates). Default: not implemented -- see
+        `plan_dry_run`'s docstring for the same rationale."""
+        raise NotImplementedError
 
 
 # §26/§10: production ships with no concrete adapter registered for any
