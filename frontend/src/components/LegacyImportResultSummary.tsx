@@ -9,6 +9,14 @@ import { LegacyImportStatusBadge } from "@/components/LegacyImportStatusBadge";
 // actually exists on the real `ImportSessionOut` once execute completes:
 // `status`, `imported_rows`, `terminal_at`, and the session's own `id` --
 // no `skippedCount`/`failedCount` field exists in that contract.
+//
+// Presentation is status-specific, never a single hardcoded "success"
+// card: a FAILED execution rolls back every domain write it attempted
+// (design §19) and a CANCELLED session never reaches execute at all
+// (design §5) -- neither has rows to claim as imported, so both render a
+// non-success message instead of the green completed card, and
+// `importedRows` (nullable, see types/legacyImport.ts) is never coerced
+// to 0 for either.
 export function LegacyImportResultSummary({ result }: { result: ImportResultSummary }) {
   return (
     <div className="flex flex-col gap-3">
@@ -16,10 +24,34 @@ export function LegacyImportResultSummary({ result }: { result: ImportResultSumm
         <h3 className="text-sm font-semibold">สรุปผลการนำเข้า</h3>
         <LegacyImportStatusBadge status={result.status} />
       </div>
-      <div className="surface flex w-fit flex-col gap-1 rounded-xl border p-3">
-        <span className="text-xs text-[var(--text-muted)]">นำเข้าสำเร็จ</span>
-        <span className="text-xl font-semibold text-status-available">{result.importedRows.toLocaleString()}</span>
-      </div>
+
+      {result.status === "completed" && (
+        <div className="surface flex w-fit flex-col gap-1 rounded-xl border p-3">
+          <span className="text-xs text-[var(--text-muted)]">จำนวนแถวที่นำเข้าสำเร็จ</span>
+          <span className="text-xl font-semibold text-status-available">
+            {(result.importedRows ?? 0).toLocaleString()}
+          </span>
+        </div>
+      )}
+
+      {result.status === "failed" && (
+        <div className="surface flex w-fit flex-col gap-1 rounded-xl border border-status-repair/40 bg-status-repair/5 p-3">
+          <span className="text-sm font-medium text-status-repair">การนำเข้าล้มเหลว</span>
+          <span className="text-xs text-[var(--text-muted)]">
+            ไม่มีข้อมูลถูกบันทึกลงระบบ -- การเปลี่ยนแปลงทั้งหมดของความพยายามนี้ถูกยกเลิก
+          </span>
+        </div>
+      )}
+
+      {result.status === "cancelled" && (
+        <div className="surface flex w-fit flex-col gap-1 rounded-xl border p-3">
+          <span className="text-sm font-medium">ยกเลิกการนำเข้า</span>
+          <span className="text-xs text-[var(--text-muted)]">
+            ยกเลิกก่อนเริ่มขั้นตอนบันทึกข้อมูล -- ไม่มีข้อมูลถูกนำเข้า
+          </span>
+        </div>
+      )}
+
       <dl className="grid grid-cols-1 gap-1 text-sm sm:grid-cols-2">
         <div>
           <dt className="text-xs text-[var(--text-muted)]">เลขอ้างอิงรายการนำเข้า</dt>

@@ -110,9 +110,17 @@ export interface ImportFindingCategoryCount {
 // completes: `status`, `imported_rows`, `terminal_at`, and the session's
 // own `id`. `skippedCount`/`failedCount` had no backend counterpart and
 // have been removed.
+//
+// `importedRows` is nullable like the real `imported_rows` field: a
+// FAILED execution rolls back every domain write it attempted (design
+// §19), and a CANCELLED session never reaches execute at all (design
+// §5's transition table only allows cancel from {CREATED, VALIDATED,
+// VALIDATION_FAILED, DRY_RUN_COMPLETED, DRY_RUN_FAILED}) -- neither has a
+// real "rows imported" outcome, so both must render as null, never a
+// coerced 0. Only a COMPLETED session ever reports a real, non-null count.
 export interface ImportResultSummary {
   status: Extract<ImportSessionStatus, "completed" | "failed" | "cancelled">;
-  importedRows: number;
+  importedRows: number | null;
   terminalAt: string | null;
   sessionId: string;
 }

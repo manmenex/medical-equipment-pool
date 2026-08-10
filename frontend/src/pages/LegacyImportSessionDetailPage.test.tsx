@@ -7,6 +7,7 @@ import { LegacyImportSessionDetailPage } from "@/pages/LegacyImportSessionDetail
 import { ImportSessionNotFoundError } from "@/services/legacyImportClient";
 import type { ImportSessionDetail } from "@/types/legacyImport";
 import type { UserProfile } from "@/types";
+import { assertImportSessionInvariants } from "@/utils/legacyImportInvariants";
 
 const getSession = vi.fn();
 
@@ -36,8 +37,16 @@ function makeUser(role: UserProfile["role"]): UserProfile {
 // Matches backend/app/schemas/import_session.py's ImportSessionOut field-for-
 // field where a real field exists; findings mirror ValidationFindingOut
 // (id/row_number/field/error_code/message/severity).
+//
+// Default status is dry_run_completed (the real confirm-gate state, design
+// §5), which is reachable only from VALIDATED -- so, per design §12/§13,
+// invalidRows must be 0 and the finding below is warning-severity, not
+// error. `assertImportSessionInvariants` runs on every call so an override
+// that accidentally recreates an impossible combination fails the test
+// immediately rather than silently rendering a state the real backend
+// could never produce.
 function makeDetail(overrides: Partial<ImportSessionDetail> = {}): ImportSessionDetail {
-  return {
+  const detail: ImportSessionDetail = {
     id: "demo-1",
     datasetType: "receive_history",
     filename: "receive.xlsx",
@@ -46,18 +55,18 @@ function makeDetail(overrides: Partial<ImportSessionDetail> = {}): ImportSession
     requestedByDisplayName: "สมชาย ใจดี",
     createdAt: "2026-07-20T03:00:00Z",
     totalRows: 100,
-    validRows: 90,
-    invalidRows: 5,
-    warningRows: 5,
+    validRows: 100,
+    invalidRows: 0,
+    warningRows: 1,
     importedRows: null,
     requestedFileSizeBytes: 2048,
     validationCounts: {
       totalRows: 100,
-      validRows: 90,
-      warningRows: 5,
-      invalidRows: 5,
+      validRows: 100,
+      warningRows: 1,
+      invalidRows: 0,
     },
-    findingsByCategory: [{ categoryLabelTh: "รูปแบบวันที่ไม่ถูกต้อง", count: 5 }],
+    findingsByCategory: [{ categoryLabelTh: "รูปแบบวันที่ไม่ถูกต้อง", count: 1 }],
     findings: [
       {
         id: "finding-1",
@@ -65,12 +74,14 @@ function makeDetail(overrides: Partial<ImportSessionDetail> = {}): ImportSession
         field: "วันที่",
         errorCode: "INVALID_DATE",
         message: "รูปแบบวันที่ไม่ถูกต้อง",
-        severity: "error",
+        severity: "warning",
       },
     ],
     resultSummary: null,
     ...overrides,
   };
+  assertImportSessionInvariants(detail);
+  return detail;
 }
 
 beforeEach(() => {
@@ -137,6 +148,7 @@ describe("LegacyImportSessionDetailPage", () => {
     getSession.mockResolvedValue(
       makeDetail({
         status: "completed",
+        warningRows: 0,
         validationCounts: null,
         findingsByCategory: [],
         findings: [],
