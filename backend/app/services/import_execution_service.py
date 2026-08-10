@@ -193,7 +193,7 @@ async def run_dry_run(
             expected_version=admitted_session_version,
             running_status="dry_run_running",
             new_session_status="dry_run_completed",
-            extra_session_values={"dry_run_completed_at": datetime.now(timezone.utc)},
+            extra_session_values=lambda now: {"dry_run_completed_at": now},
         )
         if final_session is None:
             raise _FenceLostDuringSuccessError()
@@ -327,7 +327,6 @@ async def run_execute(
         # §17/§9.4.1 step 3: unlike dry-run, execute must actually write --
         # the normal read-write session, inside this same TX1.
         imported_rows = await adapter.execute(db)
-        now = datetime.now(timezone.utc)
         final_session = await import_job_crud.fenced_phase_success(
             db,
             job_id=job_id,
@@ -337,7 +336,7 @@ async def run_execute(
             expected_version=admitted_session_version,
             running_status="executing",
             new_session_status="completed",
-            extra_session_values={"executed_at": now, "imported_rows": imported_rows, "terminal_at": now},
+            extra_session_values=lambda now: {"executed_at": now, "imported_rows": imported_rows, "terminal_at": now},
         )
         if final_session is None:
             raise _FenceLostDuringSuccessError()
@@ -384,7 +383,7 @@ async def run_execute(
                 bounded_error_message=bounded_message,
                 # §5: FAILED is terminal, unlike DRY_RUN_FAILED/
                 # VALIDATION_FAILED.
-                extra_session_values={"terminal_at": datetime.now(timezone.utc)},
+                extra_session_values=lambda now: {"terminal_at": now},
             )
             if failed_session is None:
                 await tx2.rollback()

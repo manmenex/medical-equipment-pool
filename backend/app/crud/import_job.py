@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import and_, func, or_, select, update
@@ -275,7 +276,7 @@ async def fenced_phase_success(
     expected_version: int,
     running_status: str,
     new_session_status: str,
-    extra_session_values: dict | None = None,
+    extra_session_values: dict | Callable[[datetime], dict] | None = None,
 ) -> ImportSession | None:
     """§9.4.1/§25's single, shared fenced-success primitive -- validate,
     dry-run, and execute all publish success through this one
@@ -289,18 +290,35 @@ async def fenced_phase_success(
     TX1 owns the boundary). Returns `None` if either fencing UPDATE
     affected zero rows -- the caller must roll back the entire
     transaction and follow the failure path (§9.4.2), never commit a
-    partial result."""
+    partial result.
+
+    Chronology (PR19A3 review round 2): `job.finished_at` (inside
+    `_fence_job_terminal`) is always established *before* this function's
+    own `now`, which in turn is always established *before* the session's
+    own completion timestamp -- `job fence -> job completion timestamp ->
+    session completion timestamp`, never the reverse. `extra_session_values`
+    accepts either a plain dict (for values with no ordering constraint,
+    e.g. row counts) or a `Callable[[datetime], dict]` that receives this
+    exact `now` -- the only way a caller can set an operation-specific
+    completion timestamp (`validated_at`, `dry_run_completed_at`,
+    `executed_at`/`terminal_at`) is by deriving it from the value handed
+    to it here, never by computing its own `datetime.now()` before calling
+    this function (which would race ahead of the job fence's own
+    timestamp -- exactly the bug this fixes)."""
     if not await _fence_job_terminal(
         db, job_id=job_id, lease_owner=lease_owner, lease_generation=lease_generation, new_status="succeeded", error_message=None
     ):
         return None
 
+    now = datetime.now(timezone.utc)
     values: dict = {
         "status": new_session_status,
         "version": ImportSession.version + 1,
-        "updated_at": datetime.now(timezone.utc),
+        "updated_at": now,
     }
-    if extra_session_values:
+    if callable(extra_session_values):
+        values.update(extra_session_values(now))
+    elif extra_session_values:
         values.update(extra_session_values)
     return await _fence_session_terminal(
         db, session_id=session_id, running_status=running_status, expected_version=expected_version, values=values
@@ -318,7 +336,7 @@ async def fenced_phase_failure(
     running_status: str,
     failure_status: str,
     bounded_error_message: str,
-    extra_session_values: dict | None = None,
+    extra_session_values: dict | Callable[[datetime], dict] | None = None,
 ) -> ImportSession | None:
     """§9.4.2/§25's single, shared fenced-failure primitive -- the
     failure-path counterpart to `fenced_phase_success` above, through the
@@ -330,7 +348,14 @@ async def fenced_phase_failure(
     rows -- this worker has also been fenced out on its own failure
     publication (§9.4.2 step 5); the caller must roll back TX2 and write
     a fence-lost audit entry in a separate TX3, never overwrite whatever
-    the new owner already wrote."""
+    the new owner already wrote.
+
+    Same chronology guarantee as `fenced_phase_success` above: the
+    `Callable[[datetime], dict]` form of `extra_session_values` receives
+    `now`, established only after `_fence_job_terminal` succeeds, so
+    `job.finished_at <= session`'s own failure-completion timestamp
+    (e.g. execute's `terminal_at`) always holds -- never computed by the
+    caller ahead of the fence."""
     if not await _fence_job_terminal(
         db,
         job_id=job_id,
@@ -341,13 +366,16 @@ async def fenced_phase_failure(
     ):
         return None
 
+    now = datetime.now(timezone.utc)
     values: dict = {
         "status": failure_status,
         "version": ImportSession.version + 1,
-        "updated_at": datetime.now(timezone.utc),
+        "updated_at": now,
         "failure_reason": bounded_error_message,
     }
-    if extra_session_values:
+    if callable(extra_session_values):
+        values.update(extra_session_values(now))
+    elif extra_session_values:
         values.update(extra_session_values)
     return await _fence_session_terminal(
         db, session_id=session_id, running_status=running_status, expected_version=expected_version, values=values
@@ -375,11 +403,16 @@ async def fenced_success(
     §12: `current_validation_job_id` is promoted unconditionally whenever
     the job reaches `succeeded`, regardless of whether `new_session_status`
     is `validated` or `validation_failed` -- a completed pass that finds
-    blocking errors is still a legitimate "current" result. `updated_at`
-    and `validated_at` are pinned to the same instant, matching this
-    function's pre-refactor behavior exactly. No commit (the caller's TX1
-    owns the boundary)."""
-    now = datetime.now(timezone.utc)
+    blocking errors is still a legitimate "current" result.
+
+    PR19A3 review round 2: `validated_at` is derived from the `now`
+    `fenced_phase_success` hands back via its callback -- established
+    only *after* the job fence succeeds -- never computed here ahead of
+    time. This restores PR19A2's original observable chronology
+    (`job.finished_at <= session.validated_at == session.updated_at`),
+    which a prior refactor round accidentally inverted by capturing this
+    wrapper's own `now` before calling into the shared primitive. No
+    commit (the caller's TX1 owns the boundary)."""
     return await fenced_phase_success(
         db,
         job_id=job_id,
@@ -389,8 +422,7 @@ async def fenced_success(
         expected_version=expected_version,
         running_status="validating",
         new_session_status=new_session_status,
-        extra_session_values={
-            "updated_at": now,
+        extra_session_values=lambda now: {
             "validated_at": now,
             "current_validation_job_id": job_id,
             "total_rows": total_rows,
