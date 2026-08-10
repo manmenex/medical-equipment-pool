@@ -5,6 +5,14 @@ Roadmap PR19A2 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §9,
 heartbeat-renewal / completion-fencing / failure-fencing mechanism (§9)
 for the first time, wired into `VALIDATING` -- what makes `validate` safe
 to merge and deploy on its own (§25).
+
+The renewal-loop/bound-failure-message/fence-lost-audit mechanics
+(§9.2/§9.4.2/§19) live in `app.services.import_lease`, shared unchanged
+with dry-run and execute (§25: "PR19A3 adds no new lease, heartbeat,
+fencing, or recovery code" -- the converse also holds, PR19A2 does not
+keep a private copy either). This module retains only what is genuinely
+`validate`-specific: parsing, business-rule evaluation, and row-finding
+persistence.
 """
 
 import asyncio
@@ -15,10 +23,9 @@ from datetime import datetime, timezone
 from typing import NoReturn
 
 from fastapi import Request
-from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.audit import AUDIT_ACTION_IMPORT_FENCE_LOST, AUDIT_ACTION_IMPORT_RECOVERY, AUDIT_ENTITY_IMPORT_SESSION, record_audit_event
+from app.core.audit import AUDIT_ACTION_IMPORT_RECOVERY, AUDIT_ENTITY_IMPORT_SESSION, record_audit_event
 from app.core.config import settings
 from app.core.exceptions import (
     ImportAdapterNotRegisteredError,
@@ -29,13 +36,11 @@ from app.core.exceptions import (
 )
 from app.crud import import_job as import_job_crud
 from app.crud import import_session as import_session_crud
-from app.db.session import AsyncSessionLocal
 from app.models.import_session import ImportRowError, ImportSession
+from app.services import import_lease
 from app.services.import_adapter import MAX_IMPORT_ROWS, get_adapter
 
 logger = logging.getLogger(__name__)
-
-_MAX_FAILURE_MESSAGE_LENGTH = 2000
 
 
 class _RowLimitExceededError(Exception):
@@ -71,69 +76,6 @@ async def _raise_for_non_admittable_session(db: AsyncSession, session_id: uuid.U
         f"Session status '{session.status}' does not allow validate. "
         "Allowed source states: created, validated, validation_failed."
     )
-
-
-def _bound_failure_message(exc: Exception | None) -> str:
-    """Never persists the raw exception message or traceback -- an adapter
-    may have echoed raw legacy source content into it (§22: "do not assume
-    legacy files contain no sensitive data"). A generic, bounded,
-    type-only description is sufficient for an operator to know a crash
-    happened; the full exception is logged server-side only, via
-    `logger.exception`."""
-    if exc is None:
-        return "Validation failed: this attempt was superseded by a concurrent completion."
-    return f"Validation failed: {type(exc).__name__}."[:_MAX_FAILURE_MESSAGE_LENGTH]
-
-
-async def _renew_lease_loop(
-    *, job_id: uuid.UUID, lease_owner: uuid.UUID, lease_generation: int, lease_duration_seconds: int, heartbeat_interval_seconds: int
-) -> None:
-    """§9.2's periodic renewal loop -- its own session, never the main
-    work's. A clean 0-row renewal result is an unambiguous "lease lost"
-    signal (stop immediately); a raised exception is treated as transient
-    and retried up to two more times, since it cannot distinguish "the
-    database is temporarily unreachable" from "the lease was reassigned".
-    This loop's own success or failure to notice a lost lease is only ever
-    a best-effort, early-warning signal -- the real safety guarantee is
-    completion fencing (§9.4), which works even if this loop never runs at
-    all."""
-    consecutive_transient_failures = 0
-    while True:
-        await asyncio.sleep(heartbeat_interval_seconds)
-        try:
-            async with AsyncSessionLocal() as db:
-                renewed = await import_job_crud.renew_lease(
-                    db,
-                    job_id=job_id,
-                    lease_owner=lease_owner,
-                    lease_generation=lease_generation,
-                    lease_duration_seconds=lease_duration_seconds,
-                )
-        except (OSError, DBAPIError):
-            consecutive_transient_failures += 1
-            if consecutive_transient_failures >= 3:
-                return
-            continue
-        consecutive_transient_failures = 0
-        if not renewed:
-            return
-
-
-async def _write_fence_lost_audit(*, actor_id: uuid.UUID | None, session_id: uuid.UUID, request: Request | None) -> None:
-    """§9.4.2 step 5 / §19: a separate, small transaction (TX3), opened
-    strictly after the fenced attempt has already failed and rolled back.
-    Never causes or bypasses a fence -- it only ever reports one already
-    confirmed lost."""
-    async with AsyncSessionLocal() as tx3:
-        await record_audit_event(
-            tx3,
-            actor_user_id=actor_id,
-            action=AUDIT_ACTION_IMPORT_FENCE_LOST,
-            entity_type=AUDIT_ENTITY_IMPORT_SESSION,
-            entity_id=session_id,
-            request=request,
-        )
-        await tx3.commit()
 
 
 async def run_validation(
@@ -195,7 +137,7 @@ async def run_validation(
     admitted_session_version = session_row.version
 
     renewal_task = asyncio.create_task(
-        _renew_lease_loop(
+        import_lease.renew_lease_loop(
             job_id=job_id,
             lease_owner=lease_owner,
             lease_generation=lease_generation,
@@ -276,9 +218,11 @@ async def run_validation(
     # §9.4.2: TX1 rolled back; a brand-new, clean transaction (TX2)
     # attempts best-effort fenced failure publication.
     await db.rollback()
-    bounded_message = _bound_failure_message(None if isinstance(domain_exc, _FenceLostDuringSuccessError) else domain_exc)
+    bounded_message = import_lease.bound_failure_message(
+        None if isinstance(domain_exc, _FenceLostDuringSuccessError) else domain_exc, phase_label="Validation"
+    )
     try:
-        async with AsyncSessionLocal() as tx2:
+        async with import_lease.AsyncSessionLocal() as tx2:
             failed_session = await import_job_crud.fenced_failure(
                 tx2,
                 job_id=job_id,
@@ -292,7 +236,7 @@ async def run_validation(
             if failed_session is None:
                 # §9.4.2 step 5: fenced out on our own failure publication too.
                 await tx2.rollback()
-                await _write_fence_lost_audit(actor_id=actor_id, session_id=session_id, request=request)
+                await import_lease.write_fence_lost_audit(actor_id=actor_id, session_id=session_id, request=request)
                 raise ImportRecoveryRequiredError(
                     "This validation attempt was superseded by a recovery claim or a later attempt."
                 )

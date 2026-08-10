@@ -22,7 +22,7 @@ from app.crud import import_session as import_crud
 from app.models.audit import AuditLog
 from app.models.import_session import ImportJob, ImportRowError, ImportSession, ImportSource
 from app.models.user import User
-from app.services import import_validation_service
+from app.services import import_lease, import_validation_service
 from app.services.import_adapter import FieldError, ImportAdapter, RawImportRecord, get_adapter, register_adapter, unregister_adapter
 from tests.conftest import auth_headers
 
@@ -68,16 +68,22 @@ class FakeAdapter(ImportAdapter):
 
 @pytest_asyncio.fixture(autouse=True)
 async def _patch_validation_service_session_factory(db_engine, monkeypatch):
-    """`import_validation_service` imports `AsyncSessionLocal` from
-    `app.db.session` at module level, bound to `settings.DATABASE_URL`'s
-    own engine -- a different, never-migrated in-memory SQLite database
-    than this test module's `db_engine` fixture. The heartbeat renewal
-    loop and TX2/TX3 all open their own session via that name, so it must
-    be repointed at this test's own engine (the same convention
-    `tests/test_dashboard_stream.py` already established for
-    `app.api.v1.dashboard`'s own direct `AsyncSessionLocal` usage)."""
+    """`import_validation_service` uses `app.services.import_lease`'s
+    shared renewal-loop/fence-lost-audit helpers, which import
+    `AsyncSessionLocal` from `app.db.session` at module level, bound to
+    `settings.DATABASE_URL`'s own engine -- a different, never-migrated
+    in-memory SQLite database than this test module's `db_engine`
+    fixture. The heartbeat renewal loop and TX2/TX3 all open their own
+    session via that name, so it must be repointed at this test's own
+    engine (the same convention `tests/test_dashboard_stream.py` already
+    established for `app.api.v1.dashboard`'s own direct
+    `AsyncSessionLocal` usage). Patched on `import_lease`, not
+    `import_validation_service`, since PR19A3's H1 fix moved these
+    mechanics into the one shared module every phase (validate, dry-run,
+    execute) now calls -- see `test_import_execution.py`'s identical
+    `_patch_execution_session_factories` fixture."""
     session_maker = async_sessionmaker(db_engine, expire_on_commit=False, class_=AsyncSession)
-    monkeypatch.setattr(import_validation_service, "AsyncSessionLocal", session_maker)
+    monkeypatch.setattr(import_lease, "AsyncSessionLocal", session_maker)
 
 
 @pytest_asyncio.fixture
@@ -686,7 +692,10 @@ async def test_heartbeat_renews_lease(monkeypatch):
     `test_renew_lease_returns_false_once_lease_reassigned`): each tick
     calls `import_job_crud.renew_lease` using the loop's own session
     (`AsyncSessionLocal`, never the caller's), and keeps looping while
-    renewal keeps succeeding."""
+    renewal keeps succeeding. Exercises `app.services.import_lease`'s
+    shared implementation -- the one `validate` itself calls (§25/H1: no
+    private per-phase copy of this mechanism exists any more; see
+    `tests/test_import_lease.py` for the shared-primitive-level suite)."""
     calls = []
 
     async def fake_renew_lease(db, *, job_id, lease_owner, lease_generation, lease_duration_seconds):
@@ -700,12 +709,12 @@ async def test_heartbeat_renews_lease(monkeypatch):
         async def __aexit__(self, *exc):
             return False
 
-    monkeypatch.setattr(import_validation_service, "AsyncSessionLocal", lambda: _NullSession())
+    monkeypatch.setattr(import_lease, "AsyncSessionLocal", lambda: _NullSession())
     monkeypatch.setattr(import_job_crud, "renew_lease", fake_renew_lease)
 
     job_id, owner = uuid.uuid4(), uuid.uuid4()
     await asyncio.wait_for(
-        import_validation_service._renew_lease_loop(
+        import_lease.renew_lease_loop(
             job_id=job_id, lease_owner=owner, lease_generation=1, lease_duration_seconds=300, heartbeat_interval_seconds=0
         ),
         timeout=2,
@@ -859,6 +868,209 @@ async def test_failure_fence_rejects_stale_owner(db_session, seeded_users):
         bounded_error_message="x",
     )
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# PR19A3 review round 2 -- validation completion timestamp chronology.
+#
+# A prior shared-primitives refactor (H1) accidentally inverted PR19A2's
+# original observable invariant by capturing the session's own
+# `validated_at`/`updated_at` in `fenced_success`'s wrapper *before*
+# calling into the shared `fenced_phase_success` primitive, which
+# computes `job.finished_at` only afterward. The fix restores the
+# original ordering (job fence -> job.finished_at -> session's own
+# completion timestamp) by deriving the session timestamp from the
+# `now` the shared primitive hands back post-fence, via a callback.
+# ---------------------------------------------------------------------------
+
+
+async def test_successful_validation_chronology(client: AsyncClient, seeded_users, db_session):
+    """Test 1: `job.finished_at <= session.validated_at ==
+    session.updated_at` for a genuine successful validation -- not merely
+    that all three timestamps exist."""
+    adapter = FakeAdapter(rows=1)
+    register_adapter(adapter)
+    try:
+        headers = await auth_headers(client)
+        session = await _create_and_register(client, headers)
+        r = await client.post(f"/api/v1/import-sessions/{session['id']}/validate", headers=headers)
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "validated"
+    finally:
+        unregister_adapter(DATASET_TYPE)
+
+    session_id = uuid.UUID(session["id"])
+    session_row = (await db_session.execute(select(ImportSession).where(ImportSession.id == session_id))).scalar_one()
+    job_row = (
+        await db_session.execute(select(ImportJob).where(ImportJob.import_session_id == session_id))
+    ).scalar_one()
+
+    assert job_row.finished_at is not None
+    assert session_row.validated_at is not None
+    assert session_row.updated_at is not None
+    assert job_row.finished_at <= session_row.validated_at, (
+        f"job.finished_at ({job_row.finished_at}) must be <= session.validated_at "
+        f"({session_row.validated_at}) -- the job fence must complete before the session's own "
+        "completion timestamp is established"
+    )
+    assert session_row.validated_at == session_row.updated_at
+
+
+async def test_successful_validation_chronology_via_api_summary(client: AsyncClient, seeded_users, db_session):
+    """Test 2: the same chronology, verified through the public summary
+    endpoint's serialized response -- not just the raw ORM rows."""
+    adapter = FakeAdapter(rows=1)
+    register_adapter(adapter)
+    try:
+        headers = await auth_headers(client)
+        session = await _create_and_register(client, headers)
+        r = await client.post(f"/api/v1/import-sessions/{session['id']}/validate", headers=headers)
+        assert r.status_code == 200, r.text
+    finally:
+        unregister_adapter(DATASET_TYPE)
+
+    summary = (await client.get(f"/api/v1/import-sessions/{session['id']}", headers=headers)).json()
+    assert summary["validated_at"] is not None
+    assert summary["updated_at"] is not None
+    validate_job = next(j for j in summary["jobs"] if j["job_type"] == "validate")
+    assert validate_job["finished_at"] is not None
+
+    job_finished_at = datetime.fromisoformat(validate_job["finished_at"])
+    session_validated_at = datetime.fromisoformat(summary["validated_at"])
+    session_updated_at = datetime.fromisoformat(summary["updated_at"])
+    assert job_finished_at <= session_validated_at
+    assert session_validated_at == session_updated_at
+
+
+async def test_stale_fence_never_publishes_validated_at(db_session, seeded_users):
+    """Test 3: a stale/superseded worker must never publish
+    `session.validated_at` -- the fenced-out publication attempt must
+    leave the session's completion timestamp untouched (still `None`),
+    not manufacture a chronology from a failed publication."""
+    actor_id = await _get_user_id(db_session)
+    session = ImportSession(dataset_type=DATASET_TYPE, status="created", version=0, created_by_user_id=actor_id)
+    db_session.add(session)
+    await db_session.flush()
+    db_session.add(
+        ImportSource(
+            import_session_id=session.id,
+            status="registered",
+            checksum=VALID_CHECKSUM,
+            byte_size=1,
+            options_fingerprint="x",
+            source_fingerprint="y",
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    await db_session.commit()
+
+    session_id = session.id
+    owner_a = uuid.uuid4()
+    _existed, session_row, job = await import_job_crud.admit_validate_job(
+        db_session, session_id=session_id, expected_version=0, lease_owner=owner_a, lease_duration_seconds=300
+    )
+
+    stale_result = await import_job_crud.fenced_success(
+        db_session,
+        job_id=job.id,
+        lease_owner=uuid.uuid4(),  # wrong owner -- a "late"/superseded worker
+        lease_generation=1,
+        session_id=session_id,
+        expected_version=session_row.version,
+        new_session_status="validated",
+        total_rows=1,
+        valid_rows=1,
+        invalid_rows=0,
+        warning_rows=0,
+    )
+    assert stale_result is None
+    await db_session.rollback()
+
+    # `db_session.rollback()` expires every ORM object attached to the
+    # session (`expire_on_commit=False` only protects against `commit()`)
+    # -- `session_id` was captured above, before this point, precisely to
+    # avoid a bare attribute access on the now-expired `session` instance.
+    db_session.expire_all()
+    fresh_session = (await db_session.execute(select(ImportSession).where(ImportSession.id == session_id))).scalar_one()
+    assert fresh_session.validated_at is None, "a fenced-out worker must never publish session.validated_at"
+    assert fresh_session.status == "validating", "the session must remain exactly where the real owner left it"
+
+
+async def test_lost_session_fence_leaves_no_partial_committed_state(db_session, db_engine, seeded_users):
+    """Test 4: if the job-level fence succeeds but the session-level fence
+    is then lost (e.g. a concurrent recovery already bumped the session's
+    version), the whole transaction must roll back -- there must be no
+    committed state where the job is `succeeded` while the session was
+    never actually moved to `validated`. Mirrors §9.4.1 step 6's own
+    contract, exercised directly at the primitive level with a real,
+    uncommitted transaction."""
+    actor_id = await _get_user_id(db_session)
+    session = ImportSession(dataset_type=DATASET_TYPE, status="created", version=0, created_by_user_id=actor_id)
+    db_session.add(session)
+    await db_session.flush()
+    session_id = session.id
+    db_session.add(
+        ImportSource(
+            import_session_id=session_id,
+            status="registered",
+            checksum=VALID_CHECKSUM,
+            byte_size=1,
+            options_fingerprint="x",
+            source_fingerprint="y",
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    await db_session.commit()
+
+    owner_a = uuid.uuid4()
+    _existed, session_row, job = await import_job_crud.admit_validate_job(
+        db_session, session_id=session_id, expected_version=0, lease_owner=owner_a, lease_duration_seconds=300
+    )
+    job_id = job.id
+    admitted_version = session_row.version
+
+    # A concurrent recovery (or any other unrelated version bump) moves the
+    # session on before this worker's own completion write reaches the
+    # session-level fence -- using a *different* connection/session (bound
+    # to the real `db_engine` fixture, not `db_session.get_bind()`, which
+    # for an AsyncSession unwraps to the underlying sync Engine, not an
+    # AsyncEngine), to genuinely simulate a concurrent actor rather than
+    # mutating the same in-flight transaction.
+    other_session_maker = async_sessionmaker(db_engine, expire_on_commit=False, class_=AsyncSession)
+    async with other_session_maker() as other_db:
+        await other_db.execute(
+            ImportSession.__table__.update().where(ImportSession.id == session_id).values(version=ImportSession.version + 1)
+        )
+        await other_db.commit()
+
+    result = await import_job_crud.fenced_success(
+        db_session,
+        job_id=job_id,
+        lease_owner=owner_a,
+        lease_generation=1,
+        session_id=session_id,
+        expected_version=admitted_version,  # stale -- the concurrent bump moved the real version on
+        new_session_status="validated",
+        total_rows=1,
+        valid_rows=1,
+        invalid_rows=0,
+        warning_rows=0,
+    )
+    assert result is None, "the session-level fence must be lost once a concurrent actor bumped the version"
+
+    # Exactly what run_validation does on a lost fence (§9.4.2): roll back
+    # the whole transaction, including the job UPDATE that already
+    # succeeded inside it.
+    await db_session.rollback()
+
+    async with other_session_maker() as verify_db:
+        job_row = (await verify_db.execute(select(ImportJob).where(ImportJob.id == job_id))).scalar_one()
+        session_row_after = (await verify_db.execute(select(ImportSession).where(ImportSession.id == session_id))).scalar_one()
+
+    assert job_row.status != "succeeded", "rollback must discard the job UPDATE too -- no partial committed state"
+    assert job_row.status == "running"
+    assert session_row_after.status != "validated"
+    assert session_row_after.validated_at is None
 
 
 async def test_late_worker_cannot_publish_after_recovery(client: AsyncClient, seeded_users, db_session):
@@ -1053,14 +1265,20 @@ async def test_validate_404_for_unknown_session(client: AsyncClient, seeded_user
     assert r.json()["code"] == "IMPORT_SESSION_NOT_FOUND"
 
 
-async def test_dry_run_and_execute_not_registered_by_pr19a2(client: AsyncClient, seeded_users):
-    """§25: PR19A2 registers exactly #7-#9 (recover, validate, errors) --
-    dry-run/execute remain PR19A3's, never reachable from this slice."""
+async def test_dry_run_and_execute_reachable_but_reject_a_freshly_created_session(client: AsyncClient, seeded_users):
+    """§25: PR19A2 itself registers exactly #7-#9 (recover, validate,
+    errors). Dry-run/execute are PR19A3's own endpoints -- reachable now
+    that PR19A3 has shipped, but a freshly-created (never validated)
+    session is not in either endpoint's admittable state set, so both
+    correctly reject it as a 409 state conflict rather than a 404 route
+    miss (proving they exist and enforce their own precondition, not that
+    they are absent)."""
     headers = await auth_headers(client)
     session = await _create_and_register(client, headers)
     for path in ("dry-run", "execute"):
         r = await client.post(f"/api/v1/import-sessions/{session['id']}/{path}", headers=headers)
-        assert r.status_code == 404
+        assert r.status_code == 409, r.text
+        assert r.json()["code"] == "IMPORT_SESSION_INVALID_STATE"
 
 
 async def test_concurrent_validate_returns_attempt_in_progress(client: AsyncClient, seeded_users, db_session):

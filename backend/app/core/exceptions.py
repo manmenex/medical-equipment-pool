@@ -249,3 +249,29 @@ class ImportAdapterNotRegisteredError(DomainError):
 
     code = "IMPORT_ADAPTER_NOT_REGISTERED"
     status_code = 422
+
+
+class ImportAdapterNotImplementedError(DomainError):
+    """Roadmap PR19A3 (design §23) — an `ImportAdapter` is registered for
+    this `dataset_type`, but does not override `plan_dry_run`/`execute`
+    (§16/§17). Detected before admission (the adapter's method identity is
+    compared against the base class's default, never by calling it and
+    catching the resulting `NotImplementedError`), so a not-implemented
+    adapter never enters `*_RUNNING` in the first place."""
+
+    code = "IMPORT_ADAPTER_NOT_IMPLEMENTED"
+    status_code = 501
+
+
+class ImportExecutionFailedError(DomainError):
+    """Roadmap PR19A3 (design §17, §21 endpoint #11, §23) — `execute`'s
+    own runtime failure was cleanly recorded via a fenced `TX2` (§9.4.2
+    step 8), the one phase where a completed-but-failed attempt is itself
+    the HTTP error (`500`), unlike validate/dry-run's `200`. Never raised
+    for a fencing loss (`409 IMPORT_RECOVERY_REQUIRED`) or a `TX2`
+    infrastructure failure (the generic `500 INTERNAL_ERROR` envelope,
+    §9.4.2 step 7) — only for the common case where `TX2` itself commits a
+    genuine execution failure."""
+
+    code = "IMPORT_EXECUTION_FAILED"
+    status_code = 500
