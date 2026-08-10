@@ -116,29 +116,38 @@ out of scope, unscheduled future work.
 Roadmap PR17 remains complete. **Roadmap PR18 (PR18A design, PR18B backend
 export foundation, PR18C Browser Print, PR18D backend PDF export, and PR18E
 Excel `.xlsx` export) is now fully complete** — Browser Print, PDF, and Excel
-are all implemented for all three PR17 report families. The next planned
-implementation work is Roadmap PR19, approved (2026-08-03,
-`docs/DECISION_LOG.md`) as an independent-scope split: **PR19A** (backend
-import framework) and **PR19B** (frontend-only workflow-review skeleton — no
-real upload, parsing, validation, dry-run, or import execution; its category
-labels preview PR20/PR21 scope only). "Independent-scope" means neither
-slice is stacked on, or blocked by, the other's unmerged branch — it does
-not mean they share one implementation baseline. PR19B is Draft PR #80,
-branched from this baseline (`729d1aa...`), open and pending independent
-review. **PR19A's architecture design has since merged as GitHub PR #83**
-(squash SHA `38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`), also branched from
-`729d1aa...` in parallel. **PR19A1** (schema, session/source lifecycle,
-CAS) is in progress on Draft PR #84
-(`feature/pr19a1-legacy-import-schema`), open and not merged or complete;
-**PR19A2** and **PR19A3** have not started. The base branch's actual
-current tip is `38a21e8...`. **Neither PR19A's implementation nor PR19B is
-complete.** This split is an
+are all implemented for all three PR17 report families. Roadmap PR19,
+approved (2026-08-03, `docs/DECISION_LOG.md`) as an independent-scope
+split — **PR19A** (backend import framework) and **PR19B** (frontend-only
+workflow-review skeleton — no real upload, parsing, validation, dry-run, or
+import execution; its category labels preview PR20/PR21 scope only) —
+"Independent-scope" means neither slice is stacked on, or blocked by, the
+other's unmerged branch; it does not mean they share one implementation
+baseline. **PR19A's architecture design merged as GitHub PR #83** (squash
+SHA `38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`), and all three of PR19A's
+own implementation slices have since merged too: PR19A1 (schema,
+session/source lifecycle, CAS) as GitHub PR #84, squash SHA
+`7d58986095c4df6a425dc9cfd8298851eee86c17`; PR19A2 (validation foundation)
+as GitHub PR #85, squash SHA `7e5e6f2d81057ca7d8c73bb32b6d8139b3807a4f`;
+PR19A3 (dry-run, execution, recovery, retention) as GitHub PR #86, squash
+SHA `7f13a1e85e9b6a4828170c4b12bc2be27b15de39`. **PR19A (Legacy Import
+Foundation, backend) is now fully complete — the base branch's actual
+current tip is `7f13a1e...`.** No concrete legacy dataset import
+(Equipment Master, Receive History, Issue History) is implemented by
+PR19A; that remains future Roadmap PR20/PR21 scope. PR19B remains Draft PR
+#80, branched from `729d1aa...`, open and not independently reviewed; it
+requires reconciliation against PR19A's now-merged authoritative contract
+before its Exception Record can close. GitHub PR #81, an earlier unsplit
+PR19A candidate, was closed without merging, superseded by
+PR19A1/PR19A2/PR19A3. **PR19A's implementation is complete; PR19B is not;
+Roadmap PR19 as a whole is therefore not yet complete.** This split was an
 explicit, Owner-approved exception to this repository's usual
 design-document-first slice precedent, since at the time of approval no
 PR19 design document existed. The remaining approved sequence is:
 
-- PR19A/PR19B: legacy import foundation and its frontend workflow-review
-  skeleton;
+- PR19B: legacy import frontend workflow-review skeleton — reconciliation
+  against PR19A's merged contract, independent review, and merge remain
+  outstanding before it is complete;
 - PR20–PR22: Equipment Master, AppSheet Receive/Issue history, validation and
   reconciliation;
 - PR23: cutover readiness;
