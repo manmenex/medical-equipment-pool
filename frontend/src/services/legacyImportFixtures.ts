@@ -39,7 +39,6 @@ const FINDING_CATEGORY_LABELS: Record<string, string> = {
   BCM_NOT_FOUND: "ไม่พบรหัส BCM ที่ตรงกัน",
   DUPLICATE_ROW: "ข้อมูลซ้ำกับแถวอื่นในไฟล์เดียวกัน",
   ALREADY_EXISTS: "มีรายการนี้อยู่แล้วในระบบ",
-  FILE_UNREADABLE: "ไม่สามารถอ่านไฟล์ได้",
   SAMPLE_WARNING: "ตัวอย่างคำเตือน",
 };
 
@@ -71,6 +70,12 @@ function buildDetail(input: {
   totalRows: number | null;
   requestedFileSizeBytes: number;
   findings: ImportFinding[];
+  // Matches `ImportSessionOut.failure_reason` -- see types/legacyImport.ts's
+  // field-level note. Non-null only for a genuine crash-recovery outcome
+  // (dry_run_failed/failed always; validation_failed only when totalRows
+  // is null, i.e. the structural-failure flavor) -- never for a clean
+  // completion, even one that found blocking errors.
+  failureReason: string | null;
   resultSummary: ImportSessionDetail["resultSummary"];
 }): ImportSessionDetail {
   const hasCounts = input.totalRows !== null;
@@ -91,6 +96,7 @@ function buildDetail(input: {
     invalidRows,
     warningRows,
     importedRows: input.resultSummary?.importedRows ?? null,
+    failureReason: input.failureReason,
     requestedFileSizeBytes: input.requestedFileSizeBytes,
     validationCounts: hasCounts
       ? { totalRows: input.totalRows as number, validRows: validRows as number, warningRows: warningRows as number, invalidRows: invalidRows as number }
@@ -139,6 +145,7 @@ const DRY_RUN_COMPLETED_FIXTURE: ImportSessionDetail = buildDetail({
       severity: "warning",
     },
   ],
+  failureReason: null,
   resultSummary: null,
 });
 
@@ -154,6 +161,7 @@ const COMPLETED_FIXTURE: ImportSessionDetail = buildDetail({
   totalRows: 210,
   requestedFileSizeBytes: 340_112,
   findings: [],
+  failureReason: null,
   resultSummary: {
     status: "completed",
     importedRows: 210,
@@ -186,6 +194,7 @@ const COMPLETED_WITH_WARNINGS_FIXTURE: ImportSessionDetail = buildDetail({
       severity: "warning",
     },
   ],
+  failureReason: null,
   resultSummary: {
     status: "completed",
     importedRows: 210,
@@ -195,10 +204,13 @@ const COMPLETED_WITH_WARNINGS_FIXTURE: ImportSessionDetail = buildDetail({
 });
 
 // Status = validation_failed, structural failure flavor: a validation
-// attempt that crashed/was recovered before producing any row-level
-// counts at all (design §9.4.2's "cleanly-recorded failure" path) --
-// total/valid/invalid/warning rows legitimately stay null here rather
-// than being filled in with invented numbers.
+// attempt that crashed before producing any row-level counts at all
+// (design §9.4.2's failure path -- TX1 is rolled back in its entirety, so
+// no ValidationFinding row and no counter update survives it; only TX2's
+// fenced failure write, carrying a generic failureReason, is durable).
+// total/valid/invalid/warning rows stay null and findings stays empty --
+// the real backend can never publish row-level findings alongside a
+// rolled-back attempt (this exact contradiction was PR80-H1R).
 const VALIDATION_FAILED_FIXTURE: ImportSessionDetail = buildDetail({
   id: "demo-validation-failed",
   datasetType: "receive_history",
@@ -209,25 +221,20 @@ const VALIDATION_FAILED_FIXTURE: ImportSessionDetail = buildDetail({
   createdAt: "2026-04-02T01:00:00Z",
   totalRows: null,
   requestedFileSizeBytes: 15_200,
-  findings: [
-    {
-      id: "demo-finding-4",
-      rowNumber: null,
-      field: null,
-      errorCode: "FILE_UNREADABLE",
-      message: "ไม่สามารถอ่านไฟล์นี้ได้ กรุณาตรวจสอบรูปแบบไฟล์แล้วลองใหม่",
-      severity: "error",
-    },
-  ],
+  findings: [],
+  failureReason: "ไม่สามารถอ่านไฟล์นี้ได้ กรุณาตรวจสอบรูปแบบไฟล์แล้วลองใหม่",
   resultSummary: null,
 });
 
 // Status = validation_failed, row-level flavor: a validation attempt that
-// ran to completion and found blocking errors on some rows (design §13 --
-// "a completed pass that finds blocking errors is still success for
-// job-completion purposes"). Distinct from the structural-failure fixture
-// above -- here total/valid/invalid/warning rows are all real, and
-// invalidRows/warningRows are derived from (and must match) `findings`.
+// ran to completion and found blocking errors on some rows -- design
+// §9.4.1's *success* path (job status 'succeeded', TX1 commits the
+// findings and counters), not the crash/failure path (§9.4.2). "A
+// completed pass that finds blocking errors is still success for
+// job-completion purposes" (§13). Distinct from the structural-failure
+// fixture above: here total/valid/invalid/warning rows are all real
+// (derived from, and must match, `findings`), and failureReason stays
+// null -- that field is reserved for the crash-recovery path only.
 const VALIDATION_FAILED_WITH_FINDINGS_FIXTURE: ImportSessionDetail = buildDetail({
   id: "demo-validation-failed-rows",
   datasetType: "receive_history",
@@ -264,13 +271,20 @@ const VALIDATION_FAILED_WITH_FINDINGS_FIXTURE: ImportSessionDetail = buildDetail
       severity: "warning",
     },
   ],
+  failureReason: null,
   resultSummary: null,
 });
 
 // Status = failed (terminal): execute() itself raised unexpectedly after a
-// successful dry-run (design §17, IMPORT_EXECUTION_FAILED). Every domain
-// write from that attempt is rolled back (design §19), so nothing was
-// ever actually imported -- importedRows is null, never a coerced 0.
+// successful dry-run (design §17, IMPORT_EXECUTION_FAILED) -- always the
+// crash/failure path (§9.4.2), never a "clean" variant, so failureReason
+// is always non-null here (enforced by CRASH_ONLY_FAILURE_STATUSES).
+// Every domain write from that attempt is rolled back (design §19), so
+// nothing was ever actually imported -- importedRows is null, never a
+// coerced 0. The validation counters/findings carried here are from the
+// last successful validate (still invalidRows === 0, per
+// STATUSES_REQUIRING_ZERO_INVALID_ROWS), not from the execute attempt
+// itself -- execute has no counters of its own in this foundation.
 const FAILED_FIXTURE: ImportSessionDetail = buildDetail({
   id: "demo-execute-failed",
   datasetType: "equipment_master",
@@ -291,6 +305,7 @@ const FAILED_FIXTURE: ImportSessionDetail = buildDetail({
       severity: "warning",
     },
   ],
+  failureReason: "การนำเข้าล้มเหลว: เกิดข้อผิดพลาดที่ไม่คาดคิดระหว่างการบันทึกข้อมูลลงระบบ",
   resultSummary: {
     status: "failed",
     importedRows: null,
@@ -325,6 +340,7 @@ const CANCELLED_FIXTURE: ImportSessionDetail = buildDetail({
       severity: "warning",
     },
   ],
+  failureReason: null,
   resultSummary: {
     status: "cancelled",
     importedRows: null,
@@ -390,6 +406,7 @@ export function createMockImportSession(input: {
         severity: "warning",
       },
     ],
+    failureReason: null,
     resultSummary: null,
   });
 }

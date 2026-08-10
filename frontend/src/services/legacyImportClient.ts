@@ -59,6 +59,7 @@ function toSummary(detail: ImportSessionDetail): ImportSessionSummary {
     invalidRows: detail.invalidRows,
     warningRows: detail.warningRows,
     importedRows: detail.importedRows,
+    failureReason: detail.failureReason,
   };
 }
 

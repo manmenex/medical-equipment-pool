@@ -14,9 +14,17 @@ import { LegacyImportStatusBadge } from "@/components/LegacyImportStatusBadge";
 // card: a FAILED execution rolls back every domain write it attempted
 // (design §19) and a CANCELLED session never reaches execute at all
 // (design §5) -- neither has rows to claim as imported, so both render a
-// non-success message instead of the green completed card, and
+// non-success message instead of the green completed card.
+//
 // `importedRows` (nullable, see types/legacyImport.ts) is never coerced
-// to 0 for either.
+// to 0 -- null and 0 are different facts (0 = backend explicitly reports
+// zero imported rows; null = no count available for this outcome) and
+// collapsing them would let the UI assert "นำเข้า 0 แถว" for an outcome
+// that never actually reported a count. A completed session in this
+// skeleton's own fixtures always has a real, non-null count (enforced by
+// assertImportSessionInvariants), but the component itself stays honest
+// about the nullable type rather than silently fabricating a number for
+// any input it's given.
 export function LegacyImportResultSummary({ result }: { result: ImportResultSummary }) {
   return (
     <div className="flex flex-col gap-3">
@@ -28,9 +36,13 @@ export function LegacyImportResultSummary({ result }: { result: ImportResultSumm
       {result.status === "completed" && (
         <div className="surface flex w-fit flex-col gap-1 rounded-xl border p-3">
           <span className="text-xs text-[var(--text-muted)]">จำนวนแถวที่นำเข้าสำเร็จ</span>
-          <span className="text-xl font-semibold text-status-available">
-            {(result.importedRows ?? 0).toLocaleString()}
-          </span>
+          {result.importedRows !== null ? (
+            <span className="text-xl font-semibold text-status-available">
+              {result.importedRows.toLocaleString()}
+            </span>
+          ) : (
+            <span className="text-sm text-[var(--text-muted)]">ไม่ทราบจำนวนแถวที่นำเข้า</span>
+          )}
         </div>
       )}
 

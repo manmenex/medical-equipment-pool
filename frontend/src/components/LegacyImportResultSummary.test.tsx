@@ -37,6 +37,29 @@ describe("LegacyImportResultSummary", () => {
     expect(screen.getByText("205")).toBeInTheDocument();
   });
 
+  // PR80-H2 non-blocking cleanup: importedRows=0 is a real backend fact
+  // (zero rows were imported) and must render as a literal "0", not be
+  // confused with the unavailable (null) case below.
+  it("completed with importedRows = 0: shows the real zero, not the unavailable message", () => {
+    render(<LegacyImportResultSummary result={makeResult({ status: "completed", importedRows: 0 })} />);
+
+    expect(screen.getByText("0")).toBeInTheDocument();
+    expect(screen.queryByText("ไม่ทราบจำนวนแถวที่นำเข้า")).not.toBeInTheDocument();
+  });
+
+  // null (no count available) must never be silently coerced to 0 -- that
+  // would fabricate a specific numeric claim ("นำเข้า 0 แถว") the backend
+  // never actually reported. This exercises the component defensively
+  // even though this skeleton's own fixtures never produce a completed
+  // session with a null importedRows (assertImportSessionInvariants
+  // forbids it) -- the component itself must stay honest regardless.
+  it("completed with importedRows = null: shows the unavailable message, never a fabricated 0", () => {
+    render(<LegacyImportResultSummary result={makeResult({ status: "completed", importedRows: null })} />);
+
+    expect(screen.getByText("ไม่ทราบจำนวนแถวที่นำเข้า")).toBeInTheDocument();
+    expect(screen.queryByText("0")).not.toBeInTheDocument();
+  });
+
   it("failed: never shows the success label, shows a failure message, and renders a null importedRows without crashing or claiming a count", () => {
     render(<LegacyImportResultSummary result={makeResult({ status: "failed", importedRows: null })} />);
 

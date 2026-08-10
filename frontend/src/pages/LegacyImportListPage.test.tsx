@@ -39,10 +39,11 @@ function makeSummary(overrides: Partial<ImportSessionSummary> = {}): ImportSessi
     requestedByDisplayName: "สมชาย ใจดี",
     createdAt: "2026-07-20T03:00:00Z",
     totalRows: 100,
-    validRows: 90,
+    validRows: 95,
     invalidRows: 5,
     warningRows: 5,
     importedRows: null,
+    failureReason: null,
     ...overrides,
   };
 }

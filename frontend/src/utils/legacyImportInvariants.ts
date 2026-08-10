@@ -29,6 +29,21 @@ export const STATUSES_REQUIRING_ZERO_INVALID_ROWS: ReadonlySet<ImportSessionStat
 // every session reaching one of them does set it.
 export const TERMINAL_STATUSES: ReadonlySet<ImportSessionStatus> = new Set(["completed", "failed", "cancelled"]);
 
+// design §9.4.1 vs §9.4.2: a validation pass that runs to completion and
+// finds blocking errors is still the *success* path (job 'succeeded',
+// TX1 commits the findings/counters) -- VALIDATION_FAILED reached this way
+// is not a "failure" in the crash-recovery sense and never sets
+// failure_reason. DRY_RUN_FAILED has no such clean variant (design §16:
+// "a dry-run that fails because an adapter attempted a write looks
+// identical to a dry-run that failed for any other adapter-raised
+// reason... a generic failure_reason") and neither does FAILED (design
+// §9.4.2 line ~492: execute's own runtime failure is "the one phase
+// treated as a genuine server error rather than a normal
+// completed-but-failed outcome") -- both are reachable only via the
+// crash/failure path (§9.4.2), so both always carry a non-null
+// failure_reason.
+export const CRASH_ONLY_FAILURE_STATUSES: ReadonlySet<ImportSessionStatus> = new Set(["dry_run_failed", "failed"]);
+
 // design §12 "Distinct-row counting": invalid_rows/warning_rows are each a
 // COUNT(DISTINCT row_number) over one severity -- independent projections,
 // so one row may legitimately contribute to both.
@@ -48,7 +63,7 @@ export function countDistinctRowsBySeverity(findings: ImportFinding[], severity:
 // immediately and loudly (module load / factory call), not silently at
 // render time.
 export function assertImportSessionInvariants(detail: ImportSessionDetail): void {
-  const { id, status, totalRows, validRows, invalidRows, warningRows, findings, resultSummary } = detail;
+  const { id, status, totalRows, validRows, invalidRows, warningRows, findings, failureReason, resultSummary } = detail;
 
   const counters = [totalRows, validRows, invalidRows, warningRows];
   const allNull = counters.every((c) => c === null);
@@ -58,6 +73,19 @@ export function assertImportSessionInvariants(detail: ImportSessionDetail): void
       `[${id}] total/valid/invalid/warning rows must be all-null or all-set together ` +
         `(design §12/schema: populated only once a validate attempt has completed)`
     );
+  }
+
+  if (allNull) {
+    // design §9.4.2: a structural/crash failure rolls back TX1 entirely --
+    // no ValidationFinding row and no counter update survives it. Null
+    // counters with any findings present is a state the real backend can
+    // never publish.
+    if (findings.length > 0) {
+      throw new Error(
+        `[${id}] counters are null (no completed validation snapshot exists) but findings is non-empty -- ` +
+          `a structural/crash failure rolls back every ValidationFinding row along with the counters (design §9.4.2)`
+      );
+    }
   }
 
   if (allSet) {
@@ -81,6 +109,36 @@ export function assertImportSessionInvariants(detail: ImportSessionDetail): void
         `[${id}] warningRows (${warningRows}) does not match distinct WARNING-severity rows in findings (${derivedWarning})`
       );
     }
+  }
+
+  // design §9.4.1 vs §9.4.2 (see CRASH_ONLY_FAILURE_STATUSES): failureReason
+  // is the crash-recovery-only field, never how a clean, completed-but-
+  // found-errors outcome is communicated.
+  if (CRASH_ONLY_FAILURE_STATUSES.has(status)) {
+    if (failureReason === null) {
+      throw new Error(
+        `[${id}] status "${status}" is only reachable via the crash/failure path (design §16/§9.4.2) and must set failureReason`
+      );
+    }
+  } else if (status === "validation_failed") {
+    // Dual-flavor status: a structural crash (null counters) sets
+    // failureReason; a clean completion that found blocking errors (set
+    // counters, design §9.4.1's success path) never does.
+    if (allNull && failureReason === null) {
+      throw new Error(
+        `[${id}] status "validation_failed" with null counters represents a structural/crash failure (design §9.4.2) and must set failureReason`
+      );
+    }
+    if (allSet && failureReason !== null) {
+      throw new Error(
+        `[${id}] status "validation_failed" with populated counters represents a clean completion that found blocking errors ` +
+          `(design §9.4.1/§13's success path) -- failureReason must be null, not "${failureReason}"`
+      );
+    }
+  } else if (failureReason !== null) {
+    throw new Error(
+      `[${id}] status "${status}" never sets failureReason (only validation_failed/dry_run_failed/failed do, design §9.4.2)`
+    );
   }
 
   if (STATUSES_REQUIRING_ZERO_INVALID_ROWS.has(status)) {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createMockImportSession, legacyImportSkeletonFixtures } from "@/services/legacyImportFixtures";
 import {
+  CRASH_ONLY_FAILURE_STATUSES,
   STATUSES_REQUIRING_ZERO_INVALID_ROWS,
   TERMINAL_STATUSES,
   assertImportSessionInvariants,
@@ -173,5 +174,82 @@ describe("legacy import fixture invariants", () => {
         resultSummary: { ...(validSession.resultSummary as NonNullable<typeof validSession.resultSummary>), terminalAt: null },
       })
     ).toThrow(/terminalAt/);
+  });
+
+  // PR80-H1R: a structural/crash failure (design §9.4.2) rolls back TX1
+  // entirely -- no ValidationFinding row and no counter update survives
+  // it. The pre-fix VALIDATION_FAILED_FIXTURE claimed null counters *and*
+  // a persisted finding simultaneously, a state the real backend can
+  // never publish. These tests pin the corrected two-flavor model.
+  describe("PR80-H1R: structural failure vs. clean completion-with-errors", () => {
+    it("the structural-failure validation_failed fixture has null counters, empty findings, and a non-null failureReason", () => {
+      const structural = fixtures.find((f) => f.id === "demo-validation-failed");
+      expect(structural).toBeDefined();
+      expect(structural?.status).toBe("validation_failed");
+      expect(structural?.totalRows).toBeNull();
+      expect(structural?.validRows).toBeNull();
+      expect(structural?.invalidRows).toBeNull();
+      expect(structural?.warningRows).toBeNull();
+      expect(structural?.findings).toEqual([]);
+      expect(structural?.failureReason).not.toBeNull();
+    });
+
+    it("the clean-completion validation_failed fixture has real counters, ERROR/WARNING findings, and a null failureReason", () => {
+      const clean = fixtures.find((f) => f.id === "demo-validation-failed-rows");
+      expect(clean).toBeDefined();
+      expect(clean?.status).toBe("validation_failed");
+      expect(clean?.totalRows).not.toBeNull();
+      expect(clean?.invalidRows).toBeGreaterThan(0);
+      expect(clean?.validRows).toBe((clean?.totalRows as number) - (clean?.invalidRows as number));
+      expect(clean?.findings.some((f) => f.severity === "error")).toBe(true);
+      expect(clean?.findings.some((f) => f.severity === "warning")).toBe(true);
+      expect(clean?.failureReason).toBeNull();
+    });
+
+    it("rejects the exact impossible combination this review flagged: null counters with a persisted finding", () => {
+      const template = fixtures.find((f) => f.id === "demo-validation-failed")!;
+      expect(() =>
+        assertImportSessionInvariants({
+          ...template,
+          findings: [
+            { id: "bad", rowNumber: 3, field: "x", errorCode: "X", message: "x", severity: "error" },
+          ],
+        })
+      ).toThrow(/findings is non-empty/);
+    });
+
+    it("rejects a structural validation_failed fixture that omits failureReason", () => {
+      const template = fixtures.find((f) => f.id === "demo-validation-failed")!;
+      expect(() => assertImportSessionInvariants({ ...template, failureReason: null })).toThrow(/failureReason/);
+    });
+
+    it("rejects a clean-completion validation_failed fixture that sets failureReason (that field is crash-recovery-only)", () => {
+      const template = fixtures.find((f) => f.id === "demo-validation-failed-rows")!;
+      expect(() =>
+        assertImportSessionInvariants({ ...template, failureReason: "should not be set here" })
+      ).toThrow(/failureReason must be null/);
+    });
+
+    it.each(
+      fixtures.filter((f) => CRASH_ONLY_FAILURE_STATUSES.has(f.status)).map((f) => [f.id, f] as const)
+    )("%s: dry_run_failed/failed fixtures always set failureReason (no clean variant exists for these statuses)", (_id, fixture) => {
+      expect(fixture.failureReason).not.toBeNull();
+    });
+
+    it("non-failure-status fixtures never set failureReason", () => {
+      for (const fixture of fixtures.filter(
+        (f) => f.status !== "validation_failed" && !CRASH_ONLY_FAILURE_STATUSES.has(f.status)
+      )) {
+        expect(fixture.failureReason).toBeNull();
+      }
+    });
+
+    it("warning-only completed validation still satisfies valid_rows = total_rows - invalid_rows (warnings never subtracted)", () => {
+      const completedWithWarnings = fixtures.find((f) => f.id === "demo-completed-warnings");
+      expect(completedWithWarnings).toBeDefined();
+      expect(completedWithWarnings?.warningRows).toBeGreaterThan(0);
+      expect(completedWithWarnings?.invalidRows).toBe(0);
+      expect(completedWithWarnings?.validRows).toBe(completedWithWarnings?.totalRows);
+    });
   });
 });

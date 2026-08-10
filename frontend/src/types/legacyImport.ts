@@ -81,6 +81,18 @@ export interface ImportSessionSummary {
   invalidRows: number | null;
   warningRows: number | null;
   importedRows: number | null;
+  // Matches `ImportSessionOut.failure_reason` (backend/app/schemas/
+  // import_session.py) -- a bounded, generic operator-facing message set
+  // only when a phase's fenced *crash-recovery* write records a failure
+  // (design §9.4.2), e.g. "recovered: prior attempt abandoned after lease
+  // expiry" or an adapter's bounded error text. Distinct from a clean
+  // `VALIDATION_FAILED` completion that simply found blocking row errors
+  // (design §9.4.1/§13's success path) -- that outcome is communicated
+  // entirely by `findings`/the row counters, never by this field. Always
+  // non-null for `dry_run_failed`/`failed` (design §16/§9.4.2 -- neither
+  // has a "clean, found issues" variant the way validate does); null for
+  // every other status, including a clean `validation_failed`.
+  failureReason: string | null;
   // Mock-only, combined-view convenience: in the real contract `filename`
   // belongs to the separate `ImportSource` resource (registered via
   // `POST /{id}/source`), not to `ImportSession` itself.

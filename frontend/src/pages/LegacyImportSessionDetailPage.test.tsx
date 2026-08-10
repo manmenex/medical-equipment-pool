@@ -59,6 +59,7 @@ function makeDetail(overrides: Partial<ImportSessionDetail> = {}): ImportSession
     invalidRows: 0,
     warningRows: 1,
     importedRows: null,
+    failureReason: null,
     requestedFileSizeBytes: 2048,
     validationCounts: {
       totalRows: 100,
