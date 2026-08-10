@@ -415,17 +415,37 @@ commit — each slice starts from whatever is the latest approved base-branch
 baseline at the time its own branch is created. This is an explicit,
 Owner-approved exception to this repository's usual design-document-first
 slice precedent, since at the time of approval no PR19 design document
-existed. Neither PR19A's implementation nor PR19B is complete as of this
-entry. **PR19A's architecture design has since merged as GitHub PR #83**
+existed. **PR19A's implementation is now complete; PR19B is not** — this
+supersedes this entry's original text (written when the split was first
+approved, describing neither slice as started). **PR19A's architecture
+design merged as GitHub PR #83**
 (squash SHA `38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`, `docs/design/
 PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`), branched directly from
 `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` in parallel with PR19B and the
 governance PR that approved this split — confirming in practice that the
-split never required a shared baseline. That design decomposes PR19A's own
+split never required a shared baseline. That design decomposed PR19A's own
 implementation into slices PR19A1/PR19A2/PR19A3 (design §25); see that
-design document for their scope, not this entry. **PR19A1** (schema,
-session/source lifecycle, CAS) is in progress on Draft PR #84, open and not
-merged or complete; **PR19A2** and **PR19A3** have not started.
+design document for their scope, not this entry. **All three slices are
+now merged:** PR19A1 (schema, session/source lifecycle, CAS) as GitHub PR
+#84, squash SHA `7d58986095c4df6a425dc9cfd8298851eee86c17`; PR19A2
+(validation foundation) as GitHub PR #85, squash SHA
+`7e5e6f2d81057ca7d8c73bb32b6d8139b3807a4f`; PR19A3 (dry-run, execution,
+recovery, retention) as GitHub PR #86, squash SHA
+`7f13a1e85e9b6a4828170c4b12bc2be27b15de39`, each independently reviewed and
+merged only after CI passed on its exact reviewed head — see
+`docs/DECISION_LOG.md` ("Roadmap PR19A complete: PR19A1 + PR19A2 + PR19A3
+merged") for the full slice-by-slice record. **Roadmap PR19A (Legacy
+Import Foundation, backend) is now fully complete.** This is the import
+*framework* only — Equipment Master, Receive History, and Issue History
+import business logic (PR20/PR21 below) are **not** implemented by PR19A.
+`7f13a1e85e9b6a4828170c4b12bc2be27b15de39` is the current authoritative
+base-branch baseline (superseding `729d1aa...` above for current-state
+purposes; that SHA is retained here as this entry's original provenance
+reference). PR19B remains Draft PR #80, open and unmerged, requiring
+reconciliation against PR19A's now-merged contract before it can be
+considered complete; sequencing between that reconciliation/merge decision
+and PR20/PR21 implementation below is an Owner planning decision, not
+established by this note.
 
 #### PR19A — Legacy Import Foundation (backend)
 - **Objective:** Provide a staged, validation-first, traceable import framework.

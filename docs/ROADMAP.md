@@ -7,7 +7,18 @@
 
 ## Current baseline
 
-**Current as of this audit:** `d4aaf0f` — squash commit of GitHub PR #68,
+**The single current authoritative baseline is
+`7f13a1e85e9b6a4828170c4b12bc2be27b15de39`** (squash commit of GitHub PR
+#86, Roadmap PR19A3 — see the dedicated paragraph below for full detail).
+Every other paragraph in this section is a historical baseline snapshot,
+each superseded by every entry that describes a later-merged PR — position
+within this section reflects the order paragraphs were originally written,
+not chronological order. Where a paragraph's own "supersedes" label
+conflicts with that fact, the label below has been corrected; no paragraph
+in this section other than the one above is current.
+
+**Historical — superseded by the current baseline above:** `d4aaf0f` —
+squash commit of GitHub PR #68,
 the Roadmap PR17 Slice 4 implementation (`GET /reports/equipment-verify-checklist`
 and its frontend screen, per Owner Decision #1 resolved to interpretation A),
 including its incremental fix round (Owner Decision #1 documentation
@@ -64,7 +75,8 @@ PR19A1/PR19A2/PR19A3 sequence actually merged as PR #84/#85/#86. See
 merged") for the full slice-by-slice implementation and review
 chronology, including each slice's independent Codex review rounds.
 
-**Current baseline (supersedes the paragraph above):**
+**Historical — superseded by the current baseline above (`7f13a1e...`),
+retained as provenance for Roadmap PR18 and earlier:**
 `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` — squash commit of GitHub PR #79,
 the documentation-only PR18F governance synchronization recording Roadmap
 PR18's completion. It is based on `5d8cf7d8f378f6231d43e330310f664f6c19560f`
@@ -87,7 +99,9 @@ in progress: **PR19A1** (schema, session/source lifecycle, CAS) is Draft PR
 SHA), open and not merged; **PR19A2** and **PR19A3** have not started. The
 base branch's actual current tip is `38a21e8...`.
 
-**Current baseline (supersedes the paragraph above):**
+**Historical — superseded by the paragraph above (`729d1aa...`, itself
+superseded by the current baseline at the top of this section,
+`7f13a1e...`), retained as provenance for Roadmap PR18E and earlier:**
 `5d8cf7d8f378f6231d43e330310f664f6c19560f` — squash commit of GitHub PR
 #78, the Roadmap PR18E Excel `.xlsx` export implementation. It is based on
 `bc274e6176f225518db4ebaf0b5ed643c653aaa7` (GitHub PR #77, the Roadmap PR18D

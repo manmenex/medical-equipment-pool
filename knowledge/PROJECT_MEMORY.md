@@ -92,10 +92,19 @@ Sources: `docs/PROJECT_PLAYBOOK.md`, `docs/ARCHITECTURE_GUARDRAILS.md`,
 
 ## Current baseline and Roadmap
 
-Current baseline: `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` — GitHub PR #79,
-the documentation-only PR18F governance synchronization recording Roadmap
-PR18's completion, squash SHA `729d1aa`, on top of GitHub PR #78 (`5d8cf7d`,
-Roadmap PR18E Excel `.xlsx` export), GitHub
+Current baseline: `7f13a1e85e9b6a4828170c4b12bc2be27b15de39` — GitHub PR
+#86, the Roadmap PR19A3 implementation (Dry-run, Execution, Recovery,
+Retention), following GitHub PR #85 (`7e5e6f2d`, PR19A2, Validation
+Foundation) and GitHub PR #84 (`7d589860`, PR19A1, Schema / Session /
+Source Foundation), both based on GitHub PR #83 (`38a21e8c`, the
+architecture-approved PR19A design). **All three of PR19A's implementation
+slices are merged — Roadmap PR19A (Legacy Import Foundation, backend) is
+now fully complete.** See "Roadmap PR19" below for full detail.
+
+That baseline is itself based on `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52`
+— GitHub PR #79, the documentation-only PR18F governance synchronization
+recording Roadmap PR18's completion, squash SHA `729d1aa`, on top of GitHub
+PR #78 (`5d8cf7d`, Roadmap PR18E Excel `.xlsx` export), GitHub
 PR #77 (`bc274e6`, PR18D backend PDF export), GitHub PR #76 (`beedc4d`, the
 documentation-only governance sync after PR18C), GitHub PR #75 (`e919a2a`,
 PR18C Browser Print), GitHub PR #74 (`4da1ebc`, the documentation-only
@@ -131,8 +140,8 @@ session/source lifecycle, CAS) as GitHub PR #84, squash SHA
 as GitHub PR #85, squash SHA `7e5e6f2d81057ca7d8c73bb32b6d8139b3807a4f`;
 PR19A3 (dry-run, execution, recovery, retention) as GitHub PR #86, squash
 SHA `7f13a1e85e9b6a4828170c4b12bc2be27b15de39`. **PR19A (Legacy Import
-Foundation, backend) is now fully complete — the base branch's actual
-current tip is `7f13a1e...`.** No concrete legacy dataset import
+Foundation, backend) is now fully complete** — `7f13a1e...` is the current
+baseline stated above. No concrete legacy dataset import
 (Equipment Master, Receive History, Issue History) is implemented by
 PR19A; that remains future Roadmap PR20/PR21 scope. PR19B remains Draft PR
 #80, branched from `729d1aa...`, open and not independently reviewed; it
@@ -143,7 +152,12 @@ PR19A1/PR19A2/PR19A3. **PR19A's implementation is complete; PR19B is not;
 Roadmap PR19 as a whole is therefore not yet complete.** This split was an
 explicit, Owner-approved exception to this repository's usual
 design-document-first slice precedent, since at the time of approval no
-PR19 design document existed. The remaining approved sequence is:
+PR19 design document existed. PR #80 remains provisional and requires
+reconciliation against the merged PR19A contracts before any merge
+decision. Sequencing between that reconciliation/merge decision and
+subsequent PR20/PR21 implementation remains an Owner planning decision, not
+established by this governance sync. The remaining Roadmap-numbered items
+are:
 
 - PR19B: legacy import frontend workflow-review skeleton — reconciliation
   against PR19A's merged contract, independent review, and merge remain

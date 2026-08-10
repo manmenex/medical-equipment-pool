@@ -1586,14 +1586,27 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
       is the review-round-2 fix that closed PR19A3 out.
 - **Review chronology:** Each slice received independent Codex review on
   its own exact head before merge, with CI green on that exact SHA in
-  every case (PR19A1: `_verify_schema_convergence()` findings PR84-H1R/
-  H1R2/H1R3, resolved before merge; PR19A2: reviewed and merged without
-  a recorded blocking round in this entry's source material; PR19A3: two
-  review rounds — round 1 (H1 shared-primitive duplication, H2
-  configuration fail-fast, M1 pagination boundary) and round 2 (the
-  validation-completion-timestamp-chronology regression introduced by
-  round 1's own fix) — both resolved before the final APPROVE and squash
-  merge).
+  every case. **PR19A1:** `_verify_schema_convergence()` findings PR84-H1R/
+  H1R2/H1R3, resolved before merge. **PR19A2:** one blocking review round —
+  initial reviewed head `f286f6e2dfa8489923367d62c867d9b9bcf01608` was
+  **REQUEST CHANGES** on finding **PR85-H1** (failure publication accessed
+  ORM attributes after rollback where instances could be expired, risking
+  `MissingGreenlet` and preventing the clean TX2 `validation_failed`
+  publication the design required); fixed by capturing the required
+  primitive identifiers/version/fence values before any rollback-capable
+  work and using those captured primitives in TX2 (commit
+  `7283ed5834ee95ba5a7a40cdc22502d20b47895b`, "capture pre-rollback
+  primitives to fix TX2 MissingGreenlet"); the final approved head,
+  `7283ed5834ee95ba5a7a40cdc22502d20b47895b`, received **APPROVE**. The
+  real squash merge SHA, `7e5e6f2d81057ca7d8c73bb32b6d8139b3807a4f`, is
+  distinct from both the initial and final reviewed feature-branch heads
+  above, per this repository's standard squash-merge SHA-retrieval
+  practice — do not treat any reviewed feature head as the merged
+  baseline. **PR19A3:** two review rounds — round 1 (H1 shared-primitive
+  duplication, H2 configuration fail-fast, M1 pagination boundary) and
+  round 2 (the validation-completion-timestamp-chronology regression
+  introduced by round 1's own fix) — both resolved before the final
+  APPROVE and squash merge.
 - **Testing decision:** Full non-PostgreSQL and full PostgreSQL regression
   suites were run and green on the exact reviewed head before each of the
   three slices merged, including genuine two-connection PostgreSQL
