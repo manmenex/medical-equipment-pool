@@ -8,6 +8,18 @@ control detailed ordering, scope, dependencies, and acceptance criteria.
 
 ## Current baseline
 
+`7f13a1e85e9b6a4828170c4b12bc2be27b15de39` — squash commit of GitHub PR
+#86, the Roadmap PR19A3 implementation (Dry-run, Execution, Recovery,
+Retention). It follows GitHub PR #85 (`7e5e6f2d`, Roadmap PR19A2 —
+Validation Foundation) and GitHub PR #84 (`7d589860`, Roadmap PR19A1 —
+Schema / Session / Source Foundation), both based on GitHub PR #83
+(`38a21e8c`, the architecture-approved PR19A design). **All three of
+PR19A's implementation slices are merged — Roadmap PR19A (Legacy Import
+Foundation, backend) is now fully complete.** See "Roadmap PR19 split"
+below for the full detail and for PR19B's still-open status. The older
+baseline narrative immediately below (`729d1aa...`, PR18F) is retained as
+provenance for Roadmap PR18 and earlier.
+
 `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` — squash commit of GitHub PR #79,
 the documentation-only PR18F governance synchronization recording Roadmap
 PR18's completion. It follows GitHub PR #78 (`5d8cf7d`, the merged Roadmap
@@ -43,19 +55,28 @@ two independent-scope slices — **PR19A** (backend import framework) and
 PR19B (frontend skeleton)") — an explicit, Owner-approved exception, since
 at the time of approval no PR19 design document existed. "Parallel"
 describes scope/dependency independence only, not a shared implementation
-baseline. PR19B is Draft PR #80 (`feature/pr19b-import-frontend-skeleton`),
-branched from `729d1aa...` (the latest approved baseline at the time), open
-and pending independent review. **PR19A's architecture design has since
-merged as GitHub PR #83** (squash SHA
-`38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`, `docs/design/
-PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`), also branched directly from
-`729d1aa...` in parallel; its implementation slices PR19A1/PR19A2/PR19A3
-are decomposed by that design. **PR19A1** (schema, session/source
-lifecycle, CAS) is in progress on Draft PR #84
-(`feature/pr19a1-legacy-import-schema`, based on PR #83's squash SHA) —
-open, not merged or complete; **PR19A2** and **PR19A3** have not started.
-The base branch's actual current tip is `38a21e8...`.
-**Neither PR19A's implementation nor PR19B is complete.**
+baseline. **PR19A's architecture design merged as GitHub PR #83** (squash
+SHA `38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`, `docs/design/
+PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`), branched directly from
+`729d1aa...`; its implementation slices PR19A1/PR19A2/PR19A3 (design §25)
+have since **all merged**: PR19A1 (schema, session/source lifecycle, CAS)
+as GitHub PR #84, squash SHA `7d58986095c4df6a425dc9cfd8298851eee86c17`;
+PR19A2 (validation foundation) as GitHub PR #85, squash SHA
+`7e5e6f2d81057ca7d8c73bb32b6d8139b3807a4f`; PR19A3 (dry-run, execution,
+recovery, retention) as GitHub PR #86, squash SHA
+`7f13a1e85e9b6a4828170c4b12bc2be27b15de39`. **PR19A (Legacy Import
+Foundation, backend) is now fully complete** — the current authoritative
+base-branch tip. No concrete legacy dataset import (Equipment Master,
+Receive History, Issue History) is implemented by PR19A; that remains
+future Roadmap PR20/PR21 scope. PR19B remains Draft PR #80
+(`feature/pr19b-import-frontend-skeleton`), branched from `729d1aa...`
+(the latest approved baseline when its branch was created), open and not
+yet independently reviewed; it must be reconciled against PR19A's
+now-merged authoritative contract before its own Exception Record can
+close (`docs/DECISION_LOG.md`). GitHub PR #81, an earlier unsplit PR19A
+candidate, was closed without merging, superseded by PR19A1/PR19A2/PR19A3.
+**PR19A's implementation is complete; PR19B is not; Roadmap PR19 as a
+whole is therefore not yet complete.**
 
 Roadmap numbering and GitHub PR numbering are independent. In particular,
 GitHub PR #18 was the Knowledge & Governance Foundation; it was not Roadmap
@@ -63,15 +84,23 @@ PR18.
 
 ## Current and planned sequence
 
-| Order | Roadmap item | Status |
+| Sequence | Roadmap item | Status |
 |---|---|---|
-| 1 | PR19A — Legacy Import Foundation (backend) | Design merged (GitHub PR #83); PR19A1 in progress (Draft PR #84, not merged); PR19A2/PR19A3 not started |
-| 2 | PR19B — Legacy Import Frontend Skeleton (workflow-review prototype, no real import) | Draft PR #80 open, pending independent review |
-| 3 | PR20 — Equipment Master Import | Planned |
-| 4 | PR21 — Legacy Receive and Issue History Import | Planned |
-| 5 | PR22 — Legacy Data Validation and Reconciliation | Planned |
-| 6 | PR23 — Cutover Readiness | Planned |
-| 7 | PR24 — Go-live / deployment | Planned; blocked by PR19–PR23 |
+| TBD | PR19B — Legacy Import Frontend Skeleton (workflow-review prototype, no real import) | Draft PR #80, open, not merged; requires reconciliation against PR19A's now-merged contract (`docs/DECISION_LOG.md` Exception Record) before it can be accepted. **Relative ordering vs. PR20 below is TBD** — no Owner Decision establishes precedence either way. |
+| TBD | PR20 — Equipment Master Import | Planned. **Relative ordering vs. PR19B above is TBD** — no Owner Decision establishes precedence either way. |
+| After PR20 | PR21 — Legacy Receive and Issue History Import | Planned; **depends on PR20** (`docs/audits/04-consolidated-implementation-plan.md`: "Dependencies: PR19A, PR20") — this dependency is authoritative and independent of the PR19B/PR20 TBD above |
+| After PR20, PR21 | PR22 — Legacy Data Validation and Reconciliation | Planned; depends on PR20 and PR21 |
+| After PR22 | PR23 — Cutover Readiness | Planned |
+| After PR19–PR23 | PR24 — Go-live / deployment | Planned; blocked by PR19–PR23 |
+
+PR19B and PR20 deliberately carry no relative numeric order — their
+sequencing is undecided pending an Owner Decision (see `docs/DECISION_LOG.md`'s
+Exception Record for PR19B's own reconciliation requirements). PR21 through
+PR24's ordering is preserved as-is because it reflects an existing
+authoritative dependency chain (`docs/audits/04-consolidated-implementation-plan.md`
+Part D, Group 8: PR21 depends on PR20; PR22 depends on PR20 and PR21; PR24
+is blocked by PR19–PR23), not a new sequencing decision introduced by this
+governance sync.
 
 Roadmap PR15B (Schema Hygiene implementation, GitHub PR #54), the
 documentation audit and Roadmap consistency work that preceded it
@@ -86,8 +115,14 @@ PR #73), a governance sync recording PR18B's completion (GitHub PR #74),
 PR18C Browser Print (GitHub PR #75), a governance sync recording PR18C's
 completion (GitHub PR #76), PR18D backend PDF export (GitHub PR #77), and
 PR18E Excel `.xlsx` export (GitHub PR #78) are all merged — see
-`docs/ROADMAP.md`'s Completed table for the full historical record. This
-table now begins with the split Roadmap PR19A/PR19B.
+`docs/ROADMAP.md`'s Completed table for the full historical record.
+**Roadmap PR19A (Legacy Import Foundation, backend) is also now fully
+complete and has moved off this table:** the architecture design (GitHub
+PR #83) and its three implementation slices PR19A1 (GitHub PR #84), PR19A2
+(GitHub PR #85), and PR19A3 (GitHub PR #86) are all merged — see
+`docs/DECISION_LOG.md` ("Roadmap PR19A complete: PR19A1 + PR19A2 + PR19A3
+merged") for the full slice-by-slice record. This table now begins with
+PR19B, the only remaining unmerged part of the Roadmap PR19 split.
 
 ## Scope guardrails for the planned sequence
 

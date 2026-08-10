@@ -10,32 +10,47 @@ ordering
 
 ## Current baseline
 
-Current baseline: `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` on
-`claude/medical-equipment-pool-0c7fz0` — GitHub PR #79, the documentation-only
-PR18F governance synchronization recording Roadmap PR18's completion. It
-follows GitHub PR #78 (`5d8cf7d`, the merged Roadmap PR18E Excel `.xlsx`
-export implementation), GitHub PR #77
-(`bc274e6`, the PR18D backend PDF export), GitHub PR #76 (`beedc4d`, the
-documentation-only governance sync after PR18C), GitHub PR #75 (`e919a2a`,
-the PR18C Browser Print implementation), GitHub PR #74 (`4da1ebc`, the
-documentation-only governance sync after PR18B), GitHub PR #73 (`c72929b`,
-the PR18B backend export foundation), GitHub PR #72 (`e1b358a`, the
-post-PR18A governance synchronization), and GitHub PR #71 (`6ba2c66`, the
-approved PR18A architecture design). Roadmap PR17 (Operational Reports),
-Roadmap PR16 (Reporting Foundation), and Roadmap PR15B Schema Hygiene remain
-implemented.
+Current baseline: `7f13a1e85e9b6a4828170c4b12bc2be27b15de39` on
+`claude/medical-equipment-pool-0c7fz0` — GitHub PR #86, the Roadmap PR19A3
+implementation (Dry-run, Execution, Recovery, Retention). It follows GitHub
+PR #85 (`7e5e6f2d`, Roadmap PR19A2, Validation Foundation) and GitHub PR #84
+(`7d589860`, Roadmap PR19A1, Schema / Session / Source Foundation), both
+based on GitHub PR #83 (`38a21e8c`, the architecture-approved PR19A design).
+**All three of PR19A's implementation slices are merged — Roadmap PR19A
+(Legacy Import Foundation, backend) is now fully complete.**
+
+This baseline is itself based on `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52`
+— GitHub PR #79, the documentation-only PR18F governance synchronization
+recording Roadmap PR18's completion — which follows GitHub PR #78
+(`5d8cf7d`, the merged Roadmap PR18E Excel `.xlsx` export implementation),
+GitHub PR #77 (`bc274e6`, the PR18D backend PDF export), GitHub PR #76
+(`beedc4d`, the documentation-only governance sync after PR18C), GitHub PR
+#75 (`e919a2a`, the PR18C Browser Print implementation), GitHub PR #74
+(`4da1ebc`, the documentation-only governance sync after PR18B), GitHub PR
+#73 (`c72929b`, the PR18B backend export foundation), GitHub PR #72
+(`e1b358a`, the post-PR18A governance synchronization), and GitHub PR #71
+(`6ba2c66`, the approved PR18A architecture design). Roadmap PR17
+(Operational Reports), Roadmap PR16 (Reporting Foundation), and Roadmap
+PR15B Schema Hygiene remain implemented.
 
 Roadmap PR19 is approved (`docs/DECISION_LOG.md`, 2026-08-03 entry) as an
 independent-scope **PR19A** (backend) / **PR19B** (frontend skeleton)
-split — not a shared implementation baseline. PR19B is Draft PR #80,
-branched from this baseline (`729d1aa...`). **PR19A's architecture design
-has since merged as GitHub PR #83** (squash SHA
-`38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`), also branched from
-`729d1aa...` in parallel. **PR19A1** (schema, session/source lifecycle,
-CAS) is in progress on Draft PR #84
-(`feature/pr19a1-legacy-import-schema`), open and not merged or complete;
-**PR19A2** and **PR19A3** have not started. The base branch's actual
-current tip is `38a21e8...`.
+split — not a shared implementation baseline. **PR19A's architecture
+design merged as GitHub PR #83** (squash SHA
+`38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`); its implementation slices
+have since **all merged**: PR19A1 (schema, session/source lifecycle, CAS)
+as GitHub PR #84, squash SHA `7d58986095c4df6a425dc9cfd8298851eee86c17`;
+PR19A2 (validation foundation) as GitHub PR #85, squash SHA
+`7e5e6f2d81057ca7d8c73bb32b6d8139b3807a4f`; PR19A3 (dry-run, execution,
+recovery, retention) as GitHub PR #86, squash SHA
+`7f13a1e85e9b6a4828170c4b12bc2be27b15de39`. No concrete legacy dataset import
+(Equipment Master, Receive History, Issue History) is implemented; that
+remains future Roadmap PR20/PR21 scope. PR19B is Draft PR #80, branched
+from `729d1aa...`, still open and not independently reviewed — it
+requires reconciliation against PR19A's now-merged authoritative contract
+before its Exception Record can close. GitHub PR #81, an earlier unsplit
+PR19A candidate, was closed without merging, superseded by
+PR19A1/PR19A2/PR19A3.
 
 ## Current work
 
@@ -61,20 +76,32 @@ master-data snapshot (Owner Decision #1, resolved to interpretation A) — no
 physical-verification workflow, no verification-event storage, no new
 equipment lifecycle state. **Roadmap PR18 (design, backend foundation,
 Browser Print, backend PDF export, and Excel `.xlsx` export) is fully
-complete.** The next planned implementation work is Roadmap PR19, approved
-(2026-08-03, `docs/DECISION_LOG.md`) as a parallel split: **PR19A**
-(Legacy Import Foundation, backend) and **PR19B** (Legacy Import Frontend
-Skeleton, a frontend-only workflow-review prototype with no real upload,
-parsing, validation, dry-run, or import execution). PR19B is Draft PR #80
-(`feature/pr19b-import-frontend-skeleton`), open and pending independent
-review. PR19A's architecture design has since merged as GitHub PR #83;
-PR19A1 is in progress on Draft PR #84 (open, not merged); PR19A2 and
-PR19A3 have not started. **Neither PR19A's implementation nor PR19B is
-complete yet.**
+complete.** Roadmap PR19, approved (2026-08-03, `docs/DECISION_LOG.md`) as
+a parallel split — **PR19A** (Legacy Import Foundation, backend) and
+**PR19B** (Legacy Import Frontend Skeleton, a frontend-only
+workflow-review prototype with no real upload, parsing, validation,
+dry-run, or import execution) — has its backend half complete: PR19A's
+architecture design merged as GitHub PR #83, and all three of its
+implementation slices have since merged — PR19A1 (GitHub PR #84), PR19A2
+(GitHub PR #85), PR19A3 (GitHub PR #86). **PR19A (Legacy Import
+Foundation, backend) is now fully complete.** No concrete legacy dataset
+import (Equipment Master, Receive History, Issue History) is implemented
+by PR19A — that remains future Roadmap PR20/PR21 scope. PR19B is Draft PR
+#80 (`feature/pr19b-import-frontend-skeleton`), still open and pending
+independent review; it requires reconciliation against PR19A's now-merged
+contract before its Exception Record can close. GitHub PR #81, an earlier
+unsplit PR19A candidate, was closed without merging. **Roadmap PR19 as a
+whole is not yet complete** — it requires PR19B (and the
+realignment/governance-sync work that follows) to merge too. PR #80
+remains provisional and requires reconciliation against the merged PR19A
+contracts before any merge decision. Sequencing between that
+reconciliation/merge decision and subsequent PR20/PR21 implementation
+remains an Owner planning decision, not established by this governance
+sync.
 
-1. PR19A — Legacy Import Foundation (backend).
-2. PR19B — Legacy Import Frontend Skeleton (workflow-review prototype only;
-   developed in parallel with PR19A, not stacked on it).
+1. PR19A — Legacy Import Foundation (backend) — **complete.**
+2. PR19B — Legacy Import Frontend Skeleton (workflow-review prototype
+   only) — open, requires reconciliation against PR19A's merged contract.
 3. PR20 — Equipment Master Import: BCM, Item Number, equipment attributes,
    existing hospital QR linkage, equipment duplicate detection, and
    equipment-record validation.
@@ -122,12 +149,18 @@ Legacy migration and reconciliation are mandatory before PR24.
 - PR19's approved PR19A/PR19B split (`docs/DECISION_LOG.md`, 2026-08-03) was
   an explicit Owner-approved exception to this repository's usual
   design-document-first slice precedent, since at the time no PR19 design
-  document existed. PR19A's architecture design has since merged (GitHub PR
-  #83); of PR19A's own implementation slices, PR19A1 is in progress (Draft
-  PR #84, open, not merged) and PR19A2/PR19A3 have not started.
-  PR19B's types/mock client are still provisional and must be realigned to
-  PR19A's now-authoritative contract per `docs/DECISION_LOG.md`'s Exception
-  Record before PR19B can be considered complete.
+  document existed. PR19A's architecture design merged (GitHub PR #83), and
+  all three of PR19A's own implementation slices have since merged too —
+  PR19A1 (GitHub PR #84), PR19A2 (GitHub PR #85), PR19A3 (GitHub PR #86).
+  **PR19A is fully complete.** PR19B's types/mock client are still
+  provisional and must be realigned to PR19A's now-authoritative contract
+  per `docs/DECISION_LOG.md`'s Exception Record before PR19B can be
+  considered complete. PR #80 remains provisional and requires
+  reconciliation against the merged PR19A contracts before any merge
+  decision. Sequencing between that reconciliation/merge decision and
+  subsequent PR20/PR21 implementation remains an Owner planning decision.
+  GitHub PR #81, an earlier unsplit PR19A candidate, was closed without
+  merging, superseded by PR19A1/PR19A2/PR19A3.
 - Broader PR15 metrics/tracing/dashboards/aggregation/alerting work is still
   unscheduled.
 

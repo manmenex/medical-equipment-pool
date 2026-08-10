@@ -7,7 +7,18 @@
 
 ## Current baseline
 
-**Current as of this audit:** `d4aaf0f` — squash commit of GitHub PR #68,
+**The single current authoritative baseline is
+`7f13a1e85e9b6a4828170c4b12bc2be27b15de39`** (squash commit of GitHub PR
+#86, Roadmap PR19A3 — see the dedicated paragraph below for full detail).
+Every other paragraph in this section is a historical baseline snapshot,
+each superseded by every entry that describes a later-merged PR — position
+within this section reflects the order paragraphs were originally written,
+not chronological order. Where a paragraph's own "supersedes" label
+conflicts with that fact, the label below has been corrected; no paragraph
+in this section other than the one above is current.
+
+**Historical — superseded by the current baseline above:** `d4aaf0f` —
+squash commit of GitHub PR #68,
 the Roadmap PR17 Slice 4 implementation (`GET /reports/equipment-verify-checklist`
 and its frontend screen, per Owner Decision #1 resolved to interpretation A),
 including its incremental fix round (Owner Decision #1 documentation
@@ -30,7 +41,42 @@ sync recording Roadmap PR16's completion), which is based on `ac19505`
 **All four Roadmap PR17 Implementation Slices are now complete — Roadmap
 PR17 (Operational Reports) is fully complete.** See the PR17 note below.
 
-**Current baseline (supersedes the paragraph above):**
+**Current baseline (supersedes the paragraph below, which described PR19A1
+as still open on Draft PR #84 and PR19A2/PR19A3 as not started):**
+`7f13a1e85e9b6a4828170c4b12bc2be27b15de39` — squash commit of GitHub PR
+**#86**, the Roadmap PR19A3 implementation (Dry-run, Execution, Recovery,
+Retention). It is based on `7e5e6f2d81057ca7d8c73bb32b6d8139b3807a4f`
+(GitHub PR **#85**, Roadmap PR19A2, the Validation Foundation), which is
+based on `7d58986095c4df6a425dc9cfd8298851eee86c17` (GitHub PR **#84**,
+Roadmap PR19A1, Schema / Session / Source Foundation), which is based on
+`38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7` (GitHub PR #83, the
+architecture-approved PR19A design, itself based on `729d1aa...` below).
+**All three of PR19A's implementation slices — PR19A1, PR19A2, PR19A3 —
+are now merged. Roadmap PR19A (Legacy Import Foundation, backend) is now
+fully complete.** This is the backend import framework only: enforced
+PostgreSQL read-only dry-run, single-winner execute admission with
+idempotent state-based replay, one shared lease/heartbeat/fencing
+implementation used by validate/dry-run/execute (design §25), crash
+recovery reuse, and 180-day retention cleanup with `SELECT ... FOR UPDATE
+SKIP LOCKED` concurrency safety. **No concrete legacy dataset import is
+implemented by PR19A** — Equipment Master, Receive History, and Issue
+History import business logic remain future Roadmap PR20/PR21 scope, per
+`docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md` §26 (Non-Goals).
+Roadmap PR19 as a whole (the PR19A/PR19B split approved
+`docs/DECISION_LOG.md`, 2026-08-03) is **not yet complete**: PR19B
+(`feature/pr19b-import-frontend-skeleton`, Draft PR #80) remains open,
+not independently reviewed, and requires reconciliation against PR19A's
+now-merged authoritative contract before its own Exception Record can
+close (see `docs/DECISION_LOG.md`'s Exception Record, Part B's condition
+list). GitHub PR #81 (an earlier, unsplit PR19A design/implementation
+candidate) was closed without merging on 2026-08-03, superseded by the
+PR19A1/PR19A2/PR19A3 sequence actually merged as PR #84/#85/#86. See
+`docs/DECISION_LOG.md` ("Roadmap PR19A complete: PR19A1 + PR19A2 + PR19A3
+merged") for the full slice-by-slice implementation and review
+chronology, including each slice's independent Codex review rounds.
+
+**Historical — superseded by the current baseline above (`7f13a1e...`),
+retained as provenance for Roadmap PR18 and earlier:**
 `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` — squash commit of GitHub PR #79,
 the documentation-only PR18F governance synchronization recording Roadmap
 PR18's completion. It is based on `5d8cf7d8f378f6231d43e330310f664f6c19560f`
@@ -53,7 +99,9 @@ in progress: **PR19A1** (schema, session/source lifecycle, CAS) is Draft PR
 SHA), open and not merged; **PR19A2** and **PR19A3** have not started. The
 base branch's actual current tip is `38a21e8...`.
 
-**Current baseline (supersedes the paragraph above):**
+**Historical — superseded by the paragraph above (`729d1aa...`, itself
+superseded by the current baseline at the top of this section,
+`7f13a1e...`), retained as provenance for Roadmap PR18E and earlier:**
 `5d8cf7d8f378f6231d43e330310f664f6c19560f` — squash commit of GitHub PR
 #78, the Roadmap PR18E Excel `.xlsx` export implementation. It is based on
 `bc274e6176f225518db4ebaf0b5ed643c653aaa7` (GitHub PR #77, the Roadmap PR18D
@@ -247,18 +295,33 @@ squash SHA `38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`), likewise branched
 directly from `729d1aa...` in parallel — confirming in practice that
 "independent-scope" never required a shared baseline. That design defines
 PR19A's authoritative contract and decomposes it into implementation
-slices PR19A1/PR19A2/PR19A3 (design §25). **PR19A1** is in progress on
-Draft PR #84 — open, not merged or complete; **PR19A2** and **PR19A3**
-have not started. **Neither PR19A's implementation nor PR19B is complete; Roadmap PR19 is
-not done.** See `docs/DECISION_LOG.md`'s Exception Record for the binding
+slices PR19A1/PR19A2/PR19A3 (design §25). **All three are now merged:
+PR19A1 (schema, session/source lifecycle, CAS) as GitHub PR #84, squash
+SHA `7d58986095c4df6a425dc9cfd8298851eee86c17`; PR19A2 (validation
+foundation) as GitHub PR #85, squash SHA
+`7e5e6f2d81057ca7d8c73bb32b6d8139b3807a4f`; PR19A3 (dry-run, execution,
+recovery, retention) as GitHub PR #86, squash SHA
+`7f13a1e85e9b6a4828170c4b12bc2be27b15de39`, each independently reviewed by
+Codex and merged only after CI passed on the exact reviewed head. **PR19A
+(Legacy Import Foundation, backend) is now fully complete.** PR19B
+remains open on Draft PR #80, not independently reviewed or merged.
+**Roadmap PR19 as a whole is not yet done** — the PR19A/PR19B split's
+Exception Record requires every slice (PR19A's own PR19A1/PR19A2/PR19A3,
+PR19B, and the realignment/governance-sync work that follows) to be
+merged before Roadmap PR19 can be declared complete; only PR19A's three
+slices satisfy that today. GitHub PR #81 (an earlier, unsplit PR19A
+candidate opened before the PR19A1/PR19A2/PR19A3 decomposition existed)
+was closed without merging, superseded by the slices actually merged.
+See `docs/DECISION_LOG.md`'s Exception Record for the binding
 distinction between "parallel-development authorization" (ended when PR83
 merged) and this exception's own open status (not ended until PR19B is
-reconciled, tested, re-reviewed, and Owner-accepted).
+reconciled against PR19A's now-fully-merged contract, tested, re-reviewed,
+and Owner-accepted).
 
 | Roadmap item | Planned scope |
 |---|---|
-| PR19A | Legacy Import Foundation (backend) |
-| PR19B | Legacy Import Frontend Skeleton (workflow-review prototype only; no real import) |
+| PR19A | Legacy Import Foundation (backend) — **COMPLETE / MERGED** (PR19A1 #84, PR19A2 #85, PR19A3 #86) |
+| PR19B | Legacy Import Frontend Skeleton (workflow-review prototype only; no real import) — Draft PR #80, open, not merged |
 | PR20 | Equipment Master Import: BCM, Item Number, equipment attributes, existing hospital QR linkage, equipment duplicate detection, and equipment-record validation |
 | PR21 | Legacy Receive and Issue History Import: Receive/Issue history, legacy BME-name preservation and user mapping, Ward normalization and mapping, transaction-row duplicate detection, and transaction source references |
 | PR22 | Legacy Data Validation and Reconciliation: cross-import validation, reconciliation, source traceability verification, duplicate review, and unified legacy/new history validation |

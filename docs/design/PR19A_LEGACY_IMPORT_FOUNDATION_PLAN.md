@@ -1,6 +1,20 @@
 # Roadmap PR19A — Legacy Import Foundation: Design Specification
 
-**Status:** Design only. No runtime code, migration, API, or test file is part of this PR. Nothing in this document has been implemented.
+**Status:** Approved and implemented. This design merged as GitHub PR #83
+(squash SHA `38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`). Its three
+design-decomposed implementation slices (§25) have since all merged:
+PR19A1 (schema, session/source lifecycle, CAS) as GitHub PR #84, squash SHA
+`7d58986095c4df6a425dc9cfd8298851eee86c17`; PR19A2 (validation foundation)
+as GitHub PR #85, squash SHA `7e5e6f2d81057ca7d8c73bb32b6d8139b3807a4f`;
+PR19A3 (dry-run, execution, recovery, retention) as GitHub PR #86, squash
+SHA `7f13a1e85e9b6a4828170c4b12bc2be27b15de39`. **Roadmap PR19A (Legacy
+Import Foundation, backend) is now fully complete** — see
+`docs/DECISION_LOG.md` and `docs/ROADMAP_STATUS.md` for the current
+authoritative baseline. No concrete legacy dataset import (Equipment
+Master, Receive History, Issue History) is implemented by PR19A; that
+remains future Roadmap PR20/PR21 scope. The specification below is
+retained as the authoritative architecture record of what was built; it is
+no longer a forward-looking design-only document.
 **Repository:** Medical Equipment Pool. Not MEMS, not Recall Monitor.
 **Baseline:** `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` — Roadmap PR18 is fully merged and governance-synced at this commit. This design branches directly from that commit.
 **Scope authority:** `docs/audits/04-consolidated-implementation-plan.md` Part D, Group 8, "PR19 — Legacy Import Foundation."

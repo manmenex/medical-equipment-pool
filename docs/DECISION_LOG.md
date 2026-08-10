@@ -839,13 +839,19 @@
     stacked" was meant to allow; PR19A's branch did not wait for this PR to
     merge). That design defines PR19A's authoritative API/session/document
     model contract and further decomposes PR19A into implementation slices
-    **PR19A1/PR19A2/PR19A3** (design §25). **PR19A1** (schema, session/source
-    lifecycle, CAS) is in progress on Draft PR **#84**
-    (`feature/pr19a1-legacy-import-schema`, based on PR #83's squash SHA
-    `38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`) — not merged or complete.
-    **PR19A2** and **PR19A3** have not started. See "Expiration / Follow-up"
-    below for what PR83's merge does and does not change about this
-    exception.
+    **PR19A1/PR19A2/PR19A3** (design §25). **Second update (2026-08-10,
+    this same entry): all three implementation slices have since merged.**
+    PR19A1 (schema, session/source lifecycle, CAS) merged as GitHub PR
+    **#84**, squash SHA `7d58986095c4df6a425dc9cfd8298851eee86c17`. PR19A2
+    (validation foundation) merged as GitHub PR **#85**, squash SHA
+    `7e5e6f2d81057ca7d8c73bb32b6d8139b3807a4f`. PR19A3 (dry-run, execution,
+    recovery, retention) merged as GitHub PR **#86**, squash SHA
+    `7f13a1e85e9b6a4828170c4b12bc2be27b15de39`. **PR19A (Legacy Import
+    Foundation, backend) is now fully complete.** See "Roadmap PR19A
+    complete: PR19A1 + PR19A2 + PR19A3 merged" (new entry, below) for the
+    full slice-by-slice implementation and review chronology. This does
+    **not** by itself close this Exception Record — see "Expiration /
+    Follow-up" below, updated accordingly.
   - **PR19B — Legacy Import Frontend Skeleton:** a frontend-only, mock-data
     UI prototype of the future import workflow, for early hospital-user
     workflow review ahead of PR19A's real contract. Branched from
@@ -1425,5 +1431,224 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   - **No indefinite retention of source values or PII is authorized by this decision** — the 180-day clock applies without exception once a session is terminal.
 - **Context:** The PR19A design (Rev 2, `docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`, GitHub PR #83) established that `ValidationFinding.message`/`field` and `ImportSource.filename` may echo raw legacy source content — potentially including names or other identifying information carried over from AppSheet — but had not yet defined how long that content may be retained. Independent review (PR #83, round 2, finding H5) required this to be resolved as an explicit Owner Decision before implementation could proceed, per this repository's "flag rather than guess" discipline for exactly this class of open business/compliance decision (the same discipline PR16's Day/Night shift boundary and PR17's Equipment Verify Checklist definition, both recorded above, already established).
 - **Source:** `docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md` §9 (Data Retention), updated in Rev 3 to record and implement this decision architecturally — `terminal_at`/`retention_purged_at` schema columns (§4.1), the per-session redaction contract, and the ordering/idempotency rules for cleanup. GitHub PR #83 (`docs/pr19a-legacy-import-design` branch), baseline `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52`.
-- **Status:** Decided. Not yet implemented — the `terminal_at`/`retention_purged_at` schema columns are assigned to Implementation Slice PR19A1; the actual retention-cleanup logic and its operational scheduling are explicitly deferred to a later, unscheduled Retention Cleanup slice (design §9/§22) — not bundled into PR19A1–A3, since cleanup is maintenance-oriented and would eventually require a scheduler, out of scope for those three slices' synchronous-only foundation.
-- **Consequences:** Roadmap PR19A's design (§9) is now unblocked on this previously-open question. No other Roadmap PR's scope, business rule, lifecycle state, or workflow is affected — this resolves exactly one previously-open input to the PR19A design, nothing more. The retention-cleanup slice itself remains unscheduled and is not authorized to begin by this entry; only the schema columns supporting it (via PR19A1) are.
+- **Status:** Decided. Not yet implemented at the time this entry was originally written — the `terminal_at`/`retention_purged_at` schema columns were assigned to Implementation Slice PR19A1; the actual retention-cleanup logic and its operational scheduling were, at that time, described as deferred to a later, unscheduled Retention Cleanup slice (design §9/§22), not bundled into PR19A1–A3. **Superseded by a later design revision, recorded here for historical-chronology accuracy:** the design doc's own §18/§21/§25 subsequently assigned retention-cleanup concurrency and its endpoint explicitly to PR19A3, not to a later unscheduled slice — see "Roadmap PR19A complete: PR19A1 + PR19A2 + PR19A3 merged" below. PR19A3 (GitHub PR #86) implements this policy at runtime: a `POST /import-sessions/retention/cleanup` endpoint, an atomic `SELECT ... FOR UPDATE SKIP LOCKED` claim so concurrent cleanup workers never process the same session, and fenced in-place redaction of source/row-error PII, enforced by the 180-day window this entry approved (deployment-configurable via `IMPORT_RETENTION_DAYS`, fail-fast validated at application startup). No background scheduler was added — the endpoint is a callable maintenance operation an operator or an external scheduler invokes; correctness does not depend on a specific invocation source, consistent with this entry's "operational scheduling" being out of scope for what got implemented.
+- **Consequences:** Roadmap PR19A's design (§9) is now unblocked on this previously-open question, and (per the update above) the retention-cleanup mechanism this decision approved is now implemented and merged, not merely designed.
+
+## 2026-08-10 — Roadmap PR19A complete: PR19A1 + PR19A2 + PR19A3 merged
+
+- **Decision:** None — this is a documentation/governance synchronization
+  entry, not a new Owner Decision. It records that all three implementation
+  slices of Roadmap PR19A (Legacy Import Foundation, backend), decomposed
+  by the architecture-approved design (`docs/design/
+  PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`, GitHub PR #83, design §25), are
+  now merged, independently Codex-reviewed, and CI-green on their exact
+  reviewed heads.
+- **What was built:**
+  - **PR19A1 — Schema / Session / Source Foundation** (GitHub PR **#84**,
+    branch `feature/pr19a1-legacy-import-schema`, squash SHA
+    `7d58986095c4df6a425dc9cfd8298851eee86c17`, based on PR #83's squash
+    SHA `38a21e8c6094fcf8686b1ba5ae4807c0aa1bbbf7`): the
+    `import_sessions`/`import_sources`/`import_jobs`/`import_row_errors`
+    tables (migration `0015_import_foundation`), CAS-guarded session
+    lifecycle transitions, source registration/freeze, the composite
+    ownership FK (`import_sessions` -> `import_jobs`), and cursor-paginated
+    session listing. No parser, validation, execution, or frontend code
+    shipped with this slice, per the design's slice-ownership table.
+    - **Fail-closed migration convergence:** `_verify_schema_convergence()`
+      re-reads the actual PostgreSQL catalog after every `CREATE`/`ALTER`
+      statement and fails the migration outright on any mismatch, rather
+      than trusting `CREATE ... IF NOT EXISTS`'s silent no-op as proof of
+      compatibility with a pre-existing, same-named object (review finding
+      **PR84-H1R**).
+    - **Closed-world governed-schema verification:** the convergence check
+      asserts exact equality between the migration's own governed set of
+      columns/constraints/indexes and what the catalog actually contains —
+      not merely that the expected set is a subset of what exists (review
+      finding **PR84-H1R2**).
+    - **Relation-scoped constraint verification:** constraint-name lookups
+      are scoped to the owning relation (`conrelid`), so a same-named
+      constraint belonging to an unrelated table can never satisfy this
+      migration's own check (review finding **PR84-H1R3**).
+    - **Rollback behavior:** `downgrade()` drops all four tables in
+      FK-dependency order (row-errors and jobs before sessions/sources),
+      guarded to run only on PostgreSQL and using `DROP TABLE IF EXISTS`
+      throughout.
+  - **PR19A2 — Validation Foundation** (GitHub PR **#85**, squash SHA
+    `7e5e6f2d81057ca7d8c73bb32b6d8139b3807a4f`, based on PR19A1's squash
+    SHA): the complete, generic lease-acquisition / heartbeat-renewal /
+    completion-fencing / failure-fencing mechanism (design §9) for the
+    first time, wired into `VALIDATING` — what made `validate` safe to
+    merge and deploy on its own.
+    - **Atomic source freeze:** `admit_validate_job` fuses the source
+      freeze and the session's own CAS transition into one transaction
+      with the job-lease INSERT, so admission and freeze can never observe
+      a partial state.
+    - **Parser adapter / off-thread contract:** `ImportAdapter.parse()`
+      runs via `asyncio.to_thread`, never blocking the event loop; batch
+      validation avoids N+1 queries via one `preload_business_context()`
+      call per attempt.
+    - **Validation attempts/snapshots:** each validate attempt is one
+      `ImportJob` row; findings are persisted atomically with the
+      attempt's own completion write, never as a separate, unguarded
+      insert.
+    - **Lease/heartbeat/fencing/recovery:** a periodic renewal loop (its
+      own session, bounded transient-failure retry), completion fencing on
+      both the success and failure paths (`fenced_success`/
+      `fenced_failure`, CAS on `lease_owner`/`lease_generation`/session
+      `version`), and a recovery endpoint that reclaims an expired-lease
+      job atomically and abandons it — generic across `job_type` from the
+      start (design §25), so PR19A3 could extend it unchanged.
+    - **TX1/TX2 failure publication:** on any exception, TX1 rolls back in
+      full and a clean TX2 attempts fenced failure publication; a TX2
+      infrastructure failure leaves the attempt `running` for recovery to
+      resolve, never an unfenced write.
+    - **Primitive capture across the rollback boundary:** every value TX2
+      needs (`job_id`, the admitted session version, lease owner/
+      generation) is captured into a local variable immediately after
+      admission, before any statement that could roll back or expire the
+      ORM objects — avoiding `MissingGreenlet` from an implicit lazy-reload
+      on an expired instance outside an awaited context.
+  - **PR19A3 — Dry-run, Execution, Recovery, Retention** (GitHub PR **#86**,
+    squash SHA `7f13a1e85e9b6a4828170c4b12bc2be27b15de39`, based on
+    PR19A2's squash SHA): the remaining generic-mechanism-reusing endpoints
+    design §25 assigned to this slice.
+    - **Enforced PostgreSQL read-only dry-run:** `plan_dry_run()` runs
+      inside a separate session with `SET TRANSACTION READ ONLY` issued
+      first, so a write attempt is rejected by the database itself, not
+      merely discarded after the fact — proven by dedicated PostgreSQL
+      tests (a write-attempting adapter and a no-op adapter, both against
+      genuine `SET TRANSACTION READ ONLY` enforcement).
+    - **Execution CAS / single-winner behavior:** the same atomic
+      conditional-`UPDATE` admission pattern validate established
+      (`dry_run_completed -> executing`), proven under genuine
+      two-connection PostgreSQL concurrency to admit exactly one winner.
+    - **Idempotency:** execute idempotency is **state-based replay**, per
+      design §17 ("a repeat call, not a request-payload comparison") —
+      `COMPLETED` always returns the existing session, `EXECUTING` is a
+      running-attempt conflict, any other state requires a fresh dry-run.
+      This is a deliberate, explicitly flagged deviation from the original
+      task brief's compound key+fingerprint contract, which design §17
+      does not define for execute (that mechanism is scoped to source
+      registration, §15, only) — resolved in favor of the merged design
+      per this repository's guardrail that task instructions cannot
+      silently override it.
+    - **Shared lease/heartbeat/fencing primitives:** `validate`, `dry_run`,
+      and `execute` all admit and fence through the same implementation —
+      `app/crud/import_job.py`'s `_claim_session_and_insert_job`/
+      `_fence_job_terminal`/`_fence_session_terminal`, and
+      `app/services/import_lease.py`'s renewal-loop/bound-failure-message/
+      fence-lost-audit helpers — not per-phase copies. This was itself a
+      review-round-1 fix (finding H1): the initial submission had composed
+      dry-run/execute onto a new shared module while leaving `validate`
+      with its own private, structurally-identical copies; fixed by
+      migrating `validate` onto the same shared primitives with zero
+      change to its externally observable contract (proven by the full,
+      unmodified PR19A2 regression suite passing after the migration).
+    - **PR19A2 validation migrated to shared primitives without semantic
+      drift:** a review-round-2 finding caught that the round-1 refactor
+      had inverted the original observable chronology invariant
+      (`job.finished_at <= session.validated_at == session.updated_at`) by
+      capturing the session's completion timestamp before the job fence
+      completed; fixed by having the shared fencing primitive establish
+      its own `now` strictly after the job fence succeeds and handing it
+      to callers via a `Callable[[datetime], dict]` callback, restoring the
+      original chronology for `validate`, `dry_run`, and `execute` alike.
+    - **TX1/TX2 execution failure behavior:** identical contract to
+      validate's own — TX1 rolls back in full on any exception, a clean
+      TX2 attempts fenced failure publication, and a TX2 infrastructure
+      failure leaves the attempt `executing` for recovery, never an
+      unfenced write.
+    - **Recovery:** reused from PR19A2 unchanged — dry-run/execute leases
+      recover through the same generic, already-merged mechanism, requiring
+      no new recovery code (design §25's own explicit claim, verified by
+      recovery regression tests exercising both new phases).
+    - **Retention enforcement:** implements the approved Owner Decision
+      (see "Roadmap PR19A — Owner Decision #1" above) at runtime — a
+      `POST /import-sessions/retention/cleanup` endpoint, an atomic
+      `SELECT ... FOR UPDATE SKIP LOCKED` claim (PostgreSQL) so concurrent
+      cleanup workers never claim the same session, and fenced in-place
+      redaction of source/row-error PII — not merely documented as a
+      future intent.
+    - **Configuration fail-fast behavior:** a review-round-1 finding (H2)
+      — `IMPORT_RETENTION_DAYS`, `IMPORT_RETENTION_CLEANUP_CLAIM_TIMEOUT_
+      SECONDS`, `IMPORT_JOB_LEASE_DURATION_SECONDS`, and `IMPORT_JOB_
+      HEARTBEAT_INTERVAL_SECONDS` now must all be positive, and the
+      heartbeat interval must be strictly less than the lease duration,
+      enforced by pydantic validators at `Settings()` construction (process
+      startup), never deferred to the first request that touches them.
+    - **Pagination correction:** a review-round-1 finding (M1) — retention
+      cleanup's `has_more` flag previously used `len(claimed) >= limit`,
+      which wrongly reported `true` when exactly `limit` eligible sessions
+      existed; fixed with limit-plus-one selection, matching this
+      codebase's other cursor-pagination helpers.
+    - **Final timestamp chronology preservation:** see "PR19A2 validation
+      migrated to shared primitives without semantic drift" above — this
+      is the review-round-2 fix that closed PR19A3 out.
+- **Review chronology:** Each slice received independent Codex review on
+  its own exact head before merge, with CI green on that exact SHA in
+  every case. **PR19A1:** `_verify_schema_convergence()` findings PR84-H1R/
+  H1R2/H1R3, resolved before merge. **PR19A2:** one blocking review round —
+  initial reviewed head `f286f6e2dfa8489923367d62c867d9b9bcf01608` was
+  **REQUEST CHANGES** on finding **PR85-H1** (failure publication accessed
+  ORM attributes after rollback where instances could be expired, risking
+  `MissingGreenlet` and preventing the clean TX2 `validation_failed`
+  publication the design required); fixed by capturing the required
+  primitive identifiers/version/fence values before any rollback-capable
+  work and using those captured primitives in TX2 (commit
+  `7283ed5834ee95ba5a7a40cdc22502d20b47895b`, "capture pre-rollback
+  primitives to fix TX2 MissingGreenlet"); the final approved head,
+  `7283ed5834ee95ba5a7a40cdc22502d20b47895b`, received **APPROVE**. The
+  real squash merge SHA, `7e5e6f2d81057ca7d8c73bb32b6d8139b3807a4f`, is
+  distinct from both the initial and final reviewed feature-branch heads
+  above, per this repository's standard squash-merge SHA-retrieval
+  practice — do not treat any reviewed feature head as the merged
+  baseline. **PR19A3:** two review rounds — round 1 (H1 shared-primitive
+  duplication, H2 configuration fail-fast, M1 pagination boundary) and
+  round 2 (the validation-completion-timestamp-chronology regression
+  introduced by round 1's own fix) — both resolved before the final
+  APPROVE and squash merge.
+- **Testing decision:** Full non-PostgreSQL and full PostgreSQL regression
+  suites were run and green on the exact reviewed head before each of the
+  three slices merged, including genuine two-connection PostgreSQL
+  concurrency tests for admission/execution/retention-cleanup
+  single-winner behavior and dedicated PostgreSQL tests proving the
+  dry-run read-only enforcement. `alembic heads` remained
+  `0015_import_foundation` throughout PR19A2 and PR19A3 — no new migration
+  was required for either slice, since PR19A1's schema already carried
+  every column both later slices needed.
+- **Source:** `docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`
+  (GitHub PR #83, architecture-approved); GitHub PRs #84, #85, #86 and
+  their linked review threads/CI runs.
+- **Status:** Merged. GitHub PRs #84 (`7d589860`), #85 (`7e5e6f2d`), #86
+  (`7f13a1e8`) — all three PR19A implementation slices are complete.
+  **Roadmap PR19A (Legacy Import Foundation, backend) is now fully
+  complete.** `7f13a1e85e9b6a4828170c4b12bc2be27b15de39` is the current
+  authoritative base-branch tip.
+- **Consequences:**
+  - **PR19A is the backend import framework only.** No concrete legacy
+    dataset import is implemented: Equipment Master, Receive History, and
+    Issue History import business logic remain future Roadmap PR20/PR21
+    scope, per the design's own §26 (Non-Goals) — nothing in PR19A1,
+    PR19A2, or PR19A3 implements, approves, or finalizes PR20 or PR21's
+    own design.
+  - **Roadmap PR19 as a whole is not yet complete.** Per the "Roadmap PR19
+    approved split" Exception Record above, Roadmap PR19 requires every
+    slice — PR19A's own PR19A1/PR19A2/PR19A3 (now merged), PR19B, and the
+    realignment/governance-sync work that follows — to be merged. PR19B
+    (`feature/pr19b-import-frontend-skeleton`, Draft PR **#80**) remains
+    open, not independently reviewed or merged, and its provisional
+    frontend contracts (`frontend/src/types/legacyImport.ts`,
+    `legacyImportClient.ts`) still require reconciliation against PR19A's
+    now-fully-merged authoritative contract before its own Exception
+    Record (Part B) can close — none of that reconciliation's seven
+    required steps have happened as of this entry.
+  - **GitHub PR #81** (`feature/pr19a-legacy-import-foundation`), an
+    earlier, unsplit PR19A design-and-implementation candidate opened
+    before the PR19A1/PR19A2/PR19A3 decomposition existed, was **closed
+    without merging** on 2026-08-03, superseded by the slice sequence
+    actually merged as PR #84/#85/#86. It introduced no runtime change to
+    the repository.
+  - **No change to any other Roadmap PR's scope**, business rule,
+    lifecycle state, or workflow. This entry is documentation/governance
+    synchronization only — no backend, frontend, migration, test, or CI
+    file was modified to produce it.

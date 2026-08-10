@@ -7,6 +7,28 @@
 
 This file tracks *what changed in the shared mental model* over time, one line of context per concept. For the PR-by-PR rationale behind each change, see `docs/DECISION_LOG.md` (from Roadmap PR5 onward) and `docs/PROJECT_MEMORY.md` (Roadmap PR1 through Governance Pack v1.0).
 
+## Roadmap PR19A complete: PR19A1 + PR19A2 + PR19A3 merged (GitHub PR #84, #85, #86)
+
+All three of Roadmap PR19A's design-decomposed implementation slices (design
+§25) have merged, each after its own exact-head Codex review and required CI:
+PR19A1 — schema, session/source lifecycle, CAS-guarded state transitions — as
+GitHub PR #84, squash SHA `7d58986095c4df6a425dc9cfd8298851eee86c17`; PR19A2 —
+validation foundation, including the lease/heartbeat/fencing/recovery
+mechanism later shared by PR19A3 — as GitHub PR #85, squash SHA
+`7e5e6f2d81057ca7d8c73bb32b6d8139b3807a4f`; PR19A3 — enforced PostgreSQL
+read-only dry-run, CAS single-winner execution, idempotency, retention
+enforcement, and migration of PR19A2's validation phase onto the shared
+lease/fencing primitives without semantic drift — as GitHub PR #86, squash SHA
+`7f13a1e85e9b6a4828170c4b12bc2be27b15de39`. `7f13a1e...` is the current
+authoritative base-branch tip. **Roadmap PR19A (Legacy Import Foundation,
+backend) is now fully complete.** No concrete legacy dataset import
+(Equipment Master, Receive History, Issue History) is implemented by PR19A;
+that remains future Roadmap PR20/PR21 scope. This supersedes the "PR19A1
+implementation started" entry below, which describes an intermediate,
+now-historical state. See `docs/DECISION_LOG.md` ("Roadmap PR19A complete:
+PR19A1 + PR19A2 + PR19A3 merged") for the full slice-by-slice technical
+record, including each slice's review chronology.
+
 ## PR19A1 implementation started (Draft PR #84)
 
 Roadmap PR19A1 (schema, session/source lifecycle, CAS-guarded state
