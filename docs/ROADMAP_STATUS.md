@@ -84,14 +84,23 @@ PR18.
 
 ## Current and planned sequence
 
-| Order | Roadmap item | Status |
+| Sequence | Roadmap item | Status |
 |---|---|---|
-| 1 | PR19B — Legacy Import Frontend Skeleton (workflow-review prototype, no real import) | Draft PR #80 open, not merged; requires reconciliation against PR19A's now-merged contract (`docs/DECISION_LOG.md` Exception Record) before it can be accepted |
-| 2 | PR20 — Equipment Master Import | Planned; sequencing relative to PR19B reconciliation/closure is a governance question, not yet an Owner Decision |
-| 3 | PR21 — Legacy Receive and Issue History Import | Planned |
-| 4 | PR22 — Legacy Data Validation and Reconciliation | Planned |
-| 5 | PR23 — Cutover Readiness | Planned |
-| 6 | PR24 — Go-live / deployment | Planned; blocked by PR19–PR23 |
+| TBD | PR19B — Legacy Import Frontend Skeleton (workflow-review prototype, no real import) | Draft PR #80, open, not merged; requires reconciliation against PR19A's now-merged contract (`docs/DECISION_LOG.md` Exception Record) before it can be accepted. **Relative ordering vs. PR20 below is TBD** — no Owner Decision establishes precedence either way. |
+| TBD | PR20 — Equipment Master Import | Planned. **Relative ordering vs. PR19B above is TBD** — no Owner Decision establishes precedence either way. |
+| After PR20 | PR21 — Legacy Receive and Issue History Import | Planned; **depends on PR20** (`docs/audits/04-consolidated-implementation-plan.md`: "Dependencies: PR19A, PR20") — this dependency is authoritative and independent of the PR19B/PR20 TBD above |
+| After PR20, PR21 | PR22 — Legacy Data Validation and Reconciliation | Planned; depends on PR20 and PR21 |
+| After PR22 | PR23 — Cutover Readiness | Planned |
+| After PR19–PR23 | PR24 — Go-live / deployment | Planned; blocked by PR19–PR23 |
+
+PR19B and PR20 deliberately carry no relative numeric order — their
+sequencing is undecided pending an Owner Decision (see `docs/DECISION_LOG.md`'s
+Exception Record for PR19B's own reconciliation requirements). PR21 through
+PR24's ordering is preserved as-is because it reflects an existing
+authoritative dependency chain (`docs/audits/04-consolidated-implementation-plan.md`
+Part D, Group 8: PR21 depends on PR20; PR22 depends on PR20 and PR21; PR24
+is blocked by PR19–PR23), not a new sequencing decision introduced by this
+governance sync.
 
 Roadmap PR15B (Schema Hygiene implementation, GitHub PR #54), the
 documentation audit and Roadmap consistency work that preceded it
