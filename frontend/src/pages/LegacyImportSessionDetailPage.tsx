@@ -16,7 +16,8 @@ import { IMPORT_CATEGORY_LABELS, formatFileSize } from "@/utils/legacyImportLabe
 // PR19B "Import session details": a read-only skeleton panel. Every
 // section renders mocked state from LegacyImportClient (see
 // services/legacyImportClient.ts) -- nothing here is computed, parsed, or
-// re-validated on the frontend.
+// re-validated on the frontend, and no PR19B code path calls the real,
+// now-merged PR19A /dry-run or /execute endpoints.
 export function LegacyImportSessionDetailPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const { user } = useAuth();
@@ -29,6 +30,10 @@ export function LegacyImportSessionDetailPage() {
   });
 
   const isNotFound = isError && error instanceof ImportSessionNotFoundError;
+  // The confirm-gate panel appears exactly when the session is sitting in
+  // the real backend's own confirm-gate status (design §5) -- not an
+  // invented "awaiting confirmation" status.
+  const isAwaitingConfirmation = session?.status === "dry_run_completed";
 
   return (
     <LegacyImportAccessGate>
@@ -70,7 +75,7 @@ export function LegacyImportSessionDetailPage() {
             <div className="surface rounded-xl border p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h1 className="text-lg font-semibold">{IMPORT_CATEGORY_LABELS[session.importCategory]}</h1>
+                  <h1 className="text-lg font-semibold">{IMPORT_CATEGORY_LABELS[session.datasetType]}</h1>
                   <p className="text-sm text-[var(--text-muted)]">
                     {session.filename} · {formatFileSize(session.requestedFileSizeBytes)}
                   </p>
@@ -93,22 +98,25 @@ export function LegacyImportSessionDetailPage() {
               </dl>
             </div>
 
-            {session.validationSummary && (
+            {session.validationCounts && (
               <div className="surface rounded-xl border p-4">
-                <LegacyImportValidationSummary summary={session.validationSummary} />
+                <LegacyImportValidationSummary
+                  counts={session.validationCounts}
+                  findingsByCategory={session.findingsByCategory}
+                />
               </div>
             )}
 
-            {session.issues.length > 0 && (
+            {session.findings.length > 0 && (
               <div className="surface rounded-xl border p-4">
                 <h3 className="mb-3 text-sm font-semibold">รายการที่ต้องตรวจสอบ</h3>
-                <LegacyImportIssuesTable issues={session.issues} />
+                <LegacyImportIssuesTable findings={session.findings} />
               </div>
             )}
 
-            {session.dryRunSummary && !session.resultSummary && (
+            {isAwaitingConfirmation && session.validationCounts && (
               <div className="surface rounded-xl border p-4">
-                <LegacyImportDryRunSummary summary={session.dryRunSummary} />
+                <LegacyImportDryRunSummary counts={session.validationCounts} />
               </div>
             )}
 

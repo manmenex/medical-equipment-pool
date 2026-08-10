@@ -94,8 +94,10 @@ export function AppShell() {
           )}
           {/* Roadmap PR19B: usability-only visibility gate, mirroring the
               /admin link above -- see hooks/useAuth.ts's
-              canManageLegacyImport note (the backend has no real PR19A
-              endpoint to authorize against yet). */}
+              canManageLegacyImport note. The real PR19A
+              /import-sessions endpoints are Administrator-only
+              (ADMINISTRATOR_ONLY_ROLES); this link is a usability mirror
+              of that RBAC rule, not the enforcement boundary itself. */}
           {canManageLegacyImport(user) && (
             <NavLink
               to="/imports"
@@ -157,6 +159,26 @@ export function AppShell() {
               {item.label}
             </NavLink>
           ))}
+          {/* Roadmap PR19B: reuses the same mobile bottom-nav mechanism as
+              every other item above (not a separate/invented nav pattern),
+              gated by the same canManageLegacyImport capability check as
+              the desktop sidebar's "นำเข้าข้อมูลเดิม" link -- see
+              hooks/useAuth.ts's canManageLegacyImport note. Direct
+              navigation to /imports remains guarded by
+              LegacyImportAccessGate regardless of nav visibility. */}
+          {canManageLegacyImport(user) && (
+            <NavLink
+              to="/imports"
+              className={({ isActive }) =>
+                `flex flex-1 flex-col items-center gap-0.5 py-2 text-xs ${
+                  isActive ? "text-status-borrowed" : "text-[var(--text-muted)]"
+                }`
+              }
+            >
+              <span className="text-lg">📥</span>
+              นำเข้าข้อมูลเดิม
+            </NavLink>
+          )}
         </nav>
       </div>
     </div>

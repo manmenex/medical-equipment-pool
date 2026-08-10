@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 
-import { formatFileSize } from "@/utils/legacyImportLabels";
+import { formatFileSize, isAllowedImportFile, IMPORT_FILE_TYPE_ERROR_MESSAGE } from "@/utils/legacyImportLabels";
 
 interface LegacyImportFileDropzoneProps {
   file: File | null;
@@ -15,9 +15,18 @@ const DEFAULT_ACCEPT = ".xlsx";
 // state, selected filename/size, remove/replace. Deliberately never
 // uploads, parses, or inspects file content -- only File.name/size/type are
 // ever read (task scope: "No real file processing").
+//
+// File-type enforcement: the `accept` attribute on the underlying
+// <input type="file"> is a usability hint only -- browsers do not apply it
+// to drag-and-drop, and a user can still pick a non-matching file via "all
+// files" in the native picker. `isAllowedImportFile` (checked on both the
+// picker and drag/drop paths) is the actual gate; a rejected file never
+// reaches `onSelect`, so the dropzone stays in its empty/selectable state
+// and the user can immediately try another file.
 export function LegacyImportFileDropzone({ file, onSelect, onRemove, accept = DEFAULT_ACCEPT }: LegacyImportFileDropzoneProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [typeError, setTypeError] = useState<string | null>(null);
 
   function openFileDialog() {
     inputRef.current?.click();
@@ -25,9 +34,13 @@ export function LegacyImportFileDropzone({ file, onSelect, onRemove, accept = DE
 
   function handleFiles(fileList: FileList | null) {
     const selected = fileList?.[0];
-    if (selected) {
-      onSelect(selected);
+    if (!selected) return;
+    if (!isAllowedImportFile(selected)) {
+      setTypeError(IMPORT_FILE_TYPE_ERROR_MESSAGE);
+      return;
     }
+    setTypeError(null);
+    onSelect(selected);
   }
 
   if (file) {
@@ -39,7 +52,10 @@ export function LegacyImportFileDropzone({ file, onSelect, onRemove, accept = DE
         </div>
         <button
           type="button"
-          onClick={onRemove}
+          onClick={() => {
+            setTypeError(null);
+            onRemove();
+          }}
           className="shrink-0 rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium"
         >
           เปลี่ยนไฟล์
@@ -83,13 +99,23 @@ export function LegacyImportFileDropzone({ file, onSelect, onRemove, accept = DE
           รองรับไฟล์ {accept} เท่านั้น
         </p>
       </div>
+      {typeError && (
+        <p role="alert" className="mt-2 text-sm text-status-repair">
+          {typeError}
+        </p>
+      )}
       <input
         ref={inputRef}
         type="file"
         accept={accept}
         aria-label="เลือกไฟล์สำหรับนำเข้าข้อมูลเดิม"
         className="sr-only"
-        onChange={(e) => handleFiles(e.target.files)}
+        onChange={(e) => {
+          handleFiles(e.target.files);
+          // Reset so re-selecting the same rejected filename re-fires
+          // onChange (browsers otherwise suppress a repeat-value event).
+          e.target.value = "";
+        }}
       />
     </div>
   );

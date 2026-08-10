@@ -1,26 +1,36 @@
-import type { ImportDryRunSummary } from "@/types/legacyImport";
+import type { ImportValidationCounts } from "@/types/legacyImport";
 
 interface LegacyImportDryRunSummaryProps {
-  summary: ImportDryRunSummary;
+  counts: ImportValidationCounts;
 }
 
-// PR19B "Dry-run summary skeleton". The confirm action ("ยืนยันนำเข้า") is
-// always disabled/unavailable in this skeleton -- task scope: "Do not
-// execute anything." There is no code path anywhere in PR19B that can
-// enable this button.
-export function LegacyImportDryRunSummary({ summary }: LegacyImportDryRunSummaryProps) {
+// PR19B "Dry-run completed / confirm-gate skeleton", shown whenever
+// session.status === "dry_run_completed" -- the real backend confirm-gate
+// state (design §5), not an invented separate status.
+//
+// No dedicated dry-run-result response shape exists in the merged PR19A
+// contract: `POST /{id}/dry-run` returns only the session itself
+// (`dry_run_completed_at` set); a would-create/would-skip breakdown is
+// adapter-specific detail that belongs to future PR20/PR21 concrete
+// adapters (design §26 Non-Goals), not this foundation. This panel
+// therefore reuses the session's real validation counters instead of
+// inventing execute-outcome-shaped counts with no contract to align to.
+//
+// The confirm action ("ยืนยันนำเข้า") is always disabled/unavailable in
+// this skeleton -- task scope: "Do not execute anything." There is no code
+// path anywhere in PR19B that can enable this button.
+export function LegacyImportDryRunSummary({ counts }: LegacyImportDryRunSummaryProps) {
   const cards = [
-    { label: "จะสร้างรายการใหม่", value: summary.wouldCreateCount, accentClassName: "text-status-available" },
-    { label: "จะข้าม", value: summary.wouldSkipCount, accentClassName: "text-status-out_of_service" },
-    { label: "รายการซ้ำ", value: summary.duplicateCount, accentClassName: "text-status-calibration" },
-    { label: "ตรวจสอบไม่ผ่าน", value: summary.validationFailureCount, accentClassName: "text-status-repair" },
-    { label: "คำเตือน", value: summary.warningCount, accentClassName: "text-status-pm" },
+    { label: "ทั้งหมด", value: counts.totalRows, accentClassName: "text-[var(--text-primary,inherit)]" },
+    { label: "พร้อมนำเข้า", value: counts.validRows, accentClassName: "text-status-available" },
+    { label: "มีคำเตือน", value: counts.warningRows, accentClassName: "text-status-pm" },
+    { label: "ไม่ถูกต้อง", value: counts.invalidRows, accentClassName: "text-status-repair" },
   ];
 
   return (
     <div className="flex flex-col gap-3">
-      <h3 className="text-sm font-semibold">สรุปผลทดลองนำเข้าโดยไม่บันทึก</h3>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
+      <h3 className="text-sm font-semibold">ทดลองนำเข้าโดยไม่บันทึกแล้ว — รอการยืนยัน</h3>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {cards.map((card) => (
           <div key={card.label} className="surface flex flex-col gap-1 rounded-xl border p-3">
             <span className="text-xs text-[var(--text-muted)]">{card.label}</span>

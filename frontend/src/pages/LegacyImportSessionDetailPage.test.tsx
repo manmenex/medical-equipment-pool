@@ -33,44 +33,41 @@ function makeUser(role: UserProfile["role"]): UserProfile {
   return { id: "user-1", employee_code: "U001", full_name: "Test User", email: "u@test.dev", role, permissions: {} };
 }
 
+// Matches backend/app/schemas/import_session.py's ImportSessionOut field-for-
+// field where a real field exists; findings mirror ValidationFindingOut
+// (id/row_number/field/error_code/message/severity).
 function makeDetail(overrides: Partial<ImportSessionDetail> = {}): ImportSessionDetail {
   return {
     id: "demo-1",
-    importCategory: "receive_history",
+    datasetType: "receive_history",
     filename: "receive.xlsx",
-    status: "awaiting_confirmation",
+    status: "dry_run_completed",
+    createdByUserId: "user-1",
     requestedByDisplayName: "สมชาย ใจดี",
     createdAt: "2026-07-20T03:00:00Z",
     totalRows: 100,
-    importedCount: null,
-    skippedCount: null,
-    failedCount: null,
+    validRows: 90,
+    invalidRows: 5,
+    warningRows: 5,
+    importedRows: null,
     requestedFileSizeBytes: 2048,
-    validationSummary: {
+    validationCounts: {
       totalRows: 100,
       validRows: 90,
       warningRows: 5,
       invalidRows: 5,
-      duplicateRows: 0,
-      byCategory: [],
     },
-    issues: [
+    findingsByCategory: [{ categoryLabelTh: "รูปแบบวันที่ไม่ถูกต้อง", count: 5 }],
+    findings: [
       {
+        id: "finding-1",
         rowNumber: 3,
         field: "วันที่",
-        submittedValue: "bad",
-        issueCode: "INVALID_DATE",
-        explanationTh: "รูปแบบวันที่ไม่ถูกต้อง",
+        errorCode: "INVALID_DATE",
+        message: "รูปแบบวันที่ไม่ถูกต้อง",
         severity: "error",
       },
     ],
-    dryRunSummary: {
-      wouldCreateCount: 90,
-      wouldSkipCount: 5,
-      duplicateCount: 0,
-      validationFailureCount: 5,
-      warningCount: 5,
-    },
     resultSummary: null,
     ...overrides,
   };
@@ -104,7 +101,7 @@ describe("LegacyImportSessionDetailPage", () => {
     expect(await screen.findByText("กำลังโหลดรายละเอียดการนำเข้าข้อมูล...")).toBeInTheDocument();
   });
 
-  it("renders validation summary, issue rows, and dry-run summary with a disabled confirm action", async () => {
+  it("renders validation summary, finding rows, and the dry-run confirm-gate panel with a disabled confirm action", async () => {
     getSession.mockResolvedValue(makeDetail());
     renderPage();
 
@@ -113,23 +110,41 @@ describe("LegacyImportSessionDetailPage", () => {
     // fallback (task brief: "responsive tables or card fallback on small
     // screens") -- jsdom has no viewport, so both are present in the DOM.
     expect(screen.getAllByText("รูปแบบวันที่ไม่ถูกต้อง").length).toBeGreaterThan(0);
-    expect(screen.getByText("สรุปผลทดลองนำเข้าโดยไม่บันทึก")).toBeInTheDocument();
+    // Real backend confirm-gate status (design §5): dry_run_completed.
+    expect(screen.getByText("ทดลองนำเข้าโดยไม่บันทึกแล้ว — รอการยืนยัน")).toBeInTheDocument();
 
     const confirmButton = screen.getByRole("button", { name: /ยืนยันนำเข้า/ });
     expect(confirmButton).toBeDisabled();
+  });
+
+  it("shows the non-blocking warning note when warningRows > 0", async () => {
+    getSession.mockResolvedValue(makeDetail());
+    renderPage();
+
+    expect(await screen.findByText(/คำเตือนไม่ปิดกั้นการดำเนินการต่อ/)).toBeInTheDocument();
+  });
+
+  it("does not show the dry-run confirm-gate panel for a status other than dry_run_completed", async () => {
+    getSession.mockResolvedValue(makeDetail({ status: "validated" }));
+    renderPage();
+
+    await screen.findByText("สรุปผลการตรวจสอบข้อมูล");
+    expect(screen.queryByText("ทดลองนำเข้าโดยไม่บันทึกแล้ว — รอการยืนยัน")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /ยืนยันนำเข้า/ })).not.toBeInTheDocument();
   });
 
   it("renders a result summary for a completed session and no dry-run confirm action", async () => {
     getSession.mockResolvedValue(
       makeDetail({
         status: "completed",
+        validationCounts: null,
+        findingsByCategory: [],
+        findings: [],
         resultSummary: {
           status: "completed",
-          importedCount: 90,
-          skippedCount: 5,
-          failedCount: 0,
-          completedAt: "2026-07-20T04:00:00Z",
-          sessionReference: "demo-1",
+          importedRows: 90,
+          terminalAt: "2026-07-20T04:00:00Z",
+          sessionId: "demo-1",
         },
       })
     );

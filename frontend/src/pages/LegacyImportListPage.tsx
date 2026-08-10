@@ -14,19 +14,22 @@ import { IMPORT_CATEGORY_LABELS } from "@/utils/legacyImportLabels";
 // 04-consolidated-implementation-plan.md Group 8 defines Roadmap PR19 as
 // "a staged, validation-first, traceable import framework" -- this screen
 // previews that framework's session list only. See
-// types/legacyImport.ts's file-level note: nothing rendered here is a
-// confirmed PR19A backend contract.
+// types/legacyImport.ts's file-level note: nothing rendered here is a live
+// call against the real, now-merged PR19A endpoints -- see
+// services/legacyImportClient.ts's MockImportClient, the only
+// implementation this skeleton uses.
 export function LegacyImportListPage() {
   const { user } = useAuth();
   // Never fires for a user the usability gate below would reject anyway --
   // mirrors the rest of this codebase's "don't call a lookup a role can't
   // use" convention (e.g. AdminPage never mounts InventoryImportPanel
   // unless canImportInventory(user) is already true).
-  const { data: sessions, isLoading, isError, error, refetch } = useQuery({
+  const { data: page, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["legacy-import", "sessions"],
     queryFn: () => legacyImportClient.listSessions(),
     enabled: canManageLegacyImport(user),
   });
+  const sessions = page?.items;
 
   return (
     <LegacyImportAccessGate>
@@ -96,7 +99,7 @@ export function LegacyImportListPage() {
                     <tr key={session.id} className="border-b border-[var(--border)] last:border-0">
                       <td className="py-2 pr-3">
                         <Link to={`/imports/${session.id}`} className="text-status-borrowed hover:underline">
-                          {IMPORT_CATEGORY_LABELS[session.importCategory]}
+                          {IMPORT_CATEGORY_LABELS[session.datasetType]}
                         </Link>
                       </td>
                       <td className="py-2 pr-3">{session.filename}</td>

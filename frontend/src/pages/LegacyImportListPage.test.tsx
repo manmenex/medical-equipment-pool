@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LegacyImportListPage } from "@/pages/LegacyImportListPage";
-import type { ImportSessionSummary } from "@/types/legacyImport";
+import type { ImportSessionPage, ImportSessionSummary } from "@/types/legacyImport";
 import type { UserProfile as _UserProfile } from "@/types";
 
 const listSessions = vi.fn();
@@ -32,22 +32,28 @@ function makeUser(role: _UserProfile["role"]): _UserProfile {
 function makeSummary(overrides: Partial<ImportSessionSummary> = {}): ImportSessionSummary {
   return {
     id: "demo-1",
-    importCategory: "receive_history",
+    datasetType: "receive_history",
     filename: "receive.xlsx",
-    status: "awaiting_confirmation",
+    status: "dry_run_completed",
+    createdByUserId: "user-1",
     requestedByDisplayName: "สมชาย ใจดี",
     createdAt: "2026-07-20T03:00:00Z",
     totalRows: 100,
-    importedCount: null,
-    skippedCount: null,
-    failedCount: null,
+    validRows: 90,
+    invalidRows: 5,
+    warningRows: 5,
+    importedRows: null,
     ...overrides,
   };
 }
 
+function makePage(items: ImportSessionSummary[]): ImportSessionPage {
+  return { items, nextCursor: null, total: items.length };
+}
+
 beforeEach(() => {
   mockUser = makeUser("administrator");
-  listSessions.mockResolvedValue([makeSummary()]);
+  listSessions.mockResolvedValue(makePage([makeSummary()]));
 });
 
 afterEach(() => {
@@ -80,7 +86,7 @@ describe("LegacyImportListPage", () => {
   });
 
   it("shows an empty state when there are no sessions", async () => {
-    listSessions.mockResolvedValue([]);
+    listSessions.mockResolvedValue(makePage([]));
     renderPage();
     expect(await screen.findByText("ยังไม่มีรายการนำเข้าข้อมูล")).toBeInTheDocument();
   });
@@ -97,7 +103,7 @@ describe("LegacyImportListPage", () => {
     renderPage();
 
     expect(await screen.findByText("ไม่สามารถโหลดรายการนำเข้าข้อมูลได้")).toBeInTheDocument();
-    listSessions.mockResolvedValueOnce([makeSummary()]);
+    listSessions.mockResolvedValueOnce(makePage([makeSummary()]));
     await user.click(screen.getByRole("button", { name: "ลองใหม่" }));
 
     await waitFor(() => expect(screen.queryByText("ไม่สามารถโหลดรายการนำเข้าข้อมูลได้")).not.toBeInTheDocument());

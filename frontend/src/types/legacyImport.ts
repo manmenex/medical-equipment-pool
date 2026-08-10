@@ -1,112 +1,127 @@
-// Roadmap PR19B (Legacy Import Frontend Skeleton) -- PROVISIONAL, FRONTEND-
-// ONLY PREVIEW CONTRACTS.
+// Roadmap PR19B (Legacy Import Frontend Skeleton) -- frontend-only preview,
+// reconciled against the now-merged PR19A1-A3 backend contract
+// (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md,
+// backend/app/models/import_session.py, backend/app/schemas/
+// import_session.py). PR19A is authoritative for every shape below that
+// has a real backend field; this file must not diverge from it.
 //
-// No PR19 design document exists in docs/design/ yet, and no PR19A backend
-// branch/PR/schema exists at the time this skeleton was built (verified
-// against docs/ROADMAP.md, docs/ROADMAP_STATUS.md, and
-// docs/audits/04-consolidated-implementation-plan.md Part D, Group 8).
-// Everything in this file is this skeleton's own invention for review
-// purposes only -- it is NOT an approved backend API contract, must not be
-// imported by any non-PR19B code, and must be realigned (or replaced
-// outright) once PR19A's real public API contract is approved and merged.
+// This remains, nonetheless, a frontend-only, non-executing preview: no
+// PR19B code path uploads a file, calls a real /import-sessions endpoint,
+// or performs a real import -- see services/legacyImportClient.ts's
+// MockImportClient, the only implementation this skeleton uses.
 //
-// Deliberately kept out of the shared frontend/src/types/index.ts so it can
-// never be mistaken for an established, cross-cutting type the rest of the
-// app already relies on.
-//
-// Scope note: docs/audits/04-consolidated-implementation-plan.md Group 8
-// defines PR19 itself as "a staged, validation-first, traceable import
-// framework" only -- the three ImportCategory values below (Equipment
-// Master / Receive History / Issue History) are actually PR20 and PR21
-// scope, each with PR19 as a listed dependency. Including them in this
-// PR19B skeleton is a deliberate, Repository-Owner-confirmed scope
-// decision to preview the end-to-end workflow, not a claim that PR20/PR21
-// are approved or implemented. See the PR description for the full
-// decision trail.
+// Two things below are NOT covered by the merged PR19A contract, and
+// remain this skeleton's own invention, clearly marked:
+//  - `ImportCategory`'s three values (Equipment Master / Receive History /
+//    Issue History) are PR20/PR21 preview labels pulled forward for
+//    workflow review, not a backend `dataset_type` enum -- the real
+//    column is free-text VARCHAR(100), unconstrained by any CHECK. See
+//    docs/ROADMAP.md's PR19B scope note.
+//  - The "dry-run result" screen: PR19A's `POST /{id}/dry-run` returns only
+//    `ImportSessionOut` with `dry_run_completed_at` set -- no adapter/plan
+//    response shape exists in this foundation (concrete adapters are
+//    future PR20/PR21 scope, design §26 Non-Goals). This skeleton
+//    therefore reuses the session's real validation counters for that
+//    screen instead of inventing execute-outcome-shaped counts with no
+//    contract to align to.
 
 export type ImportCategory = "equipment_master" | "receive_history" | "issue_history";
 
-// PROVISIONAL. Not a confirmed backend state machine -- invented here only
-// to demonstrate the reviewable screen states the user-goal workflow
-// (session list -> create -> file -> validate -> dry run -> confirm ->
-// result) needs. A real PR19A contract may use different names, a
-// different set of states, or a different transition shape entirely.
+// Matches backend/app/models/import_session.py's `ck_import_sessions_status`
+// CHECK constraint exactly (11 values) -- not a frontend invention. Do not
+// add a status value here that does not also exist in that constraint.
 export type ImportSessionStatus =
-  | "uploaded"
+  | "created"
   | "validating"
   | "validated"
+  | "validation_failed"
+  | "dry_run_running"
   | "dry_run_completed"
-  | "awaiting_confirmation"
+  | "dry_run_failed"
+  | "executing"
   | "completed"
-  | "completed_with_warnings"
   | "failed"
   | "cancelled";
 
+// Matches backend/app/models/import_session.py's
+// `ck_import_row_errors_severity` CHECK constraint. Per design §24 rule 10,
+// a WARNING never blocks progress -- UI must never imply otherwise.
+export type ImportFindingSeverity = "error" | "warning";
+
+// Matches backend/app/schemas/import_session.py's `ValidationFindingOut`
+// field-for-field (id/row_number/field/error_code/message/severity).
+// `submittedValue` from the pre-reconciliation skeleton had no backend
+// counterpart and has been removed.
+export interface ImportFinding {
+  id: string;
+  rowNumber: number | null;
+  field: string | null;
+  errorCode: string;
+  message: string;
+  severity: ImportFindingSeverity;
+}
+
+// Matches backend/app/schemas/import_session.py's `ImportSessionOut`
+// field-for-field where a real field exists. `skippedCount`/`failedCount`
+// from the pre-reconciliation skeleton had no backend counterpart (only
+// `imported_rows` exists at session level) and have been removed.
 export interface ImportSessionSummary {
   id: string;
-  importCategory: ImportCategory;
-  filename: string;
+  datasetType: ImportCategory;
   status: ImportSessionStatus;
+  createdByUserId: string;
+  // Mock-only display convenience. The real `ImportSessionOut` has no
+  // display-name field, only `created_by_user_id` (a user id reference) --
+  // no name-resolution endpoint exists in this foundation to resolve one
+  // for real. Kept here as clearly-mock UI sugar only.
   requestedByDisplayName: string;
   createdAt: string;
   totalRows: number | null;
-  importedCount: number | null;
-  skippedCount: number | null;
-  failedCount: number | null;
+  validRows: number | null;
+  invalidRows: number | null;
+  warningRows: number | null;
+  importedRows: number | null;
+  // Mock-only, combined-view convenience: in the real contract `filename`
+  // belongs to the separate `ImportSource` resource (registered via
+  // `POST /{id}/source`), not to `ImportSession` itself.
+  filename: string;
 }
 
-export interface ImportValidationCategoryCount {
-  categoryLabelTh: string;
-  count: number;
-}
-
-export interface ImportValidationSummary {
+// Mirrors the four real counters on `ImportSessionOut`
+// (total_rows/valid_rows/invalid_rows/warning_rows). No `duplicateRows`
+// field -- the real contract has no such counter; a duplicate row is
+// represented as one specific `errorCode` on an `ImportFinding` instead.
+export interface ImportValidationCounts {
   totalRows: number;
   validRows: number;
   warningRows: number;
   invalidRows: number;
-  duplicateRows: number;
-  byCategory: ImportValidationCategoryCount[];
 }
 
-export type ImportIssueSeverity = "error" | "warning";
-
-export interface ImportIssue {
-  rowNumber: number;
-  field: string;
-  submittedValue: string;
-  issueCode: string;
-  explanationTh: string;
-  severity: ImportIssueSeverity;
+// Presentational-only grouping of mock findings by Thai label for display
+// -- not a real backend aggregate (no such endpoint exists in this
+// foundation); derived from `findings`, never authoritative on its own.
+export interface ImportFindingCategoryCount {
+  categoryLabelTh: string;
+  count: number;
 }
 
-export interface ImportDryRunSummary {
-  wouldCreateCount: number;
-  wouldSkipCount: number;
-  duplicateCount: number;
-  validationFailureCount: number;
-  warningCount: number;
-}
-
-export type ImportResultStatus = Extract<
-  ImportSessionStatus,
-  "completed" | "completed_with_warnings" | "failed" | "cancelled"
->;
-
+// Mirrors what actually exists on `ImportSessionOut` once execute
+// completes: `status`, `imported_rows`, `terminal_at`, and the session's
+// own `id`. `skippedCount`/`failedCount` had no backend counterpart and
+// have been removed.
 export interface ImportResultSummary {
-  status: ImportResultStatus;
-  importedCount: number;
-  skippedCount: number;
-  failedCount: number;
-  completedAt: string | null;
-  sessionReference: string;
+  status: Extract<ImportSessionStatus, "completed" | "failed" | "cancelled">;
+  importedRows: number;
+  terminalAt: string | null;
+  sessionId: string;
 }
 
 export interface ImportSessionDetail extends ImportSessionSummary {
   requestedFileSizeBytes: number;
-  validationSummary: ImportValidationSummary | null;
-  issues: ImportIssue[];
-  dryRunSummary: ImportDryRunSummary | null;
+  validationCounts: ImportValidationCounts | null;
+  findingsByCategory: ImportFindingCategoryCount[];
+  findings: ImportFinding[];
   resultSummary: ImportResultSummary | null;
 }
 
@@ -117,4 +132,14 @@ export interface SelectedFilePreview {
   name: string;
   sizeBytes: number;
   type: string;
+}
+
+// Mirrors backend/app/schemas/common.py's `Page[T]` shape exactly
+// (items/next_cursor/total) -- `GET /import-sessions` is cursor-paginated
+// in the real contract, even though this skeleton's mock client never
+// needs a second page for its fixed fixture set.
+export interface ImportSessionPage {
+  items: ImportSessionSummary[];
+  nextCursor: string | null;
+  total: number;
 }

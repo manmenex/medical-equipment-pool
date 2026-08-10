@@ -37,6 +37,17 @@ export function LegacyImportCreatePage() {
   const canContinueFromType = category !== null;
   const canContinueFromFile = file !== null && !submitting;
 
+  // Changing the import category invalidates any file already selected
+  // for the previous category -- a file picked for one dataset type must
+  // never silently carry over to a different one. Also clears any
+  // file-dependent error/submission state so the "ตรวจสอบข้อมูล" step
+  // always starts clean for the newly selected category.
+  function handleSelectCategory(next: ImportCategory) {
+    setCategory(next);
+    setFile(null);
+    setError(null);
+  }
+
   async function handleCreatePreview() {
     if (!category || !file) return;
     setSubmitting(true);
@@ -88,7 +99,7 @@ export function LegacyImportCreatePage() {
                     name="import-category"
                     value={c}
                     checked={category === c}
-                    onChange={() => setCategory(c)}
+                    onChange={() => handleSelectCategory(c)}
                   />
                   {IMPORT_CATEGORY_LABELS[c]}
                 </label>

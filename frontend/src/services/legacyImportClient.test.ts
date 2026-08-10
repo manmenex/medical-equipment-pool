@@ -1,20 +1,25 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ImportSessionNotFoundError, MockImportClient } from "@/services/legacyImportClient";
 import { legacyImportSkeletonFixtures } from "@/services/legacyImportFixtures";
+import { api } from "@/services/api";
 
 // PR19B "Contract protection" tests: the mock client never imports
 // "@/services/api" (verified by this file's own import graph -- see the
 // top-of-file import list, which never references it) and never issues a
 // network request; every method resolves purely from local fixtures/state.
+// listSessions() returns the real Page[T] shape (items/nextCursor/total),
+// matching backend/app/schemas/common.py's Page.
 describe("MockImportClient", () => {
-  it("lists every seeded session as a summary, newest first", async () => {
+  it("lists every seeded session as a summary, newest first, in a Page-shaped response", async () => {
     const client = new MockImportClient();
-    const sessions = await client.listSessions();
+    const page = await client.listSessions();
 
-    expect(sessions.length).toBe(legacyImportSkeletonFixtures.length);
-    for (let i = 1; i < sessions.length; i += 1) {
-      expect(sessions[i - 1].createdAt >= sessions[i].createdAt).toBe(true);
+    expect(page.total).toBe(legacyImportSkeletonFixtures.length);
+    expect(page.items.length).toBe(legacyImportSkeletonFixtures.length);
+    expect(page.nextCursor).toBeNull();
+    for (let i = 1; i < page.items.length; i += 1) {
+      expect(page.items[i - 1].createdAt >= page.items[i].createdAt).toBe(true);
     }
   });
 
@@ -41,7 +46,8 @@ describe("MockImportClient", () => {
 
     expect(created.filename).toBe("test.xlsx");
     expect(created.requestedFileSizeBytes).toBe(12_345);
-    expect(created.status).toBe("awaiting_confirmation");
+    // The real backend confirm-gate status (design §5) -- not an invented one.
+    expect(created.status).toBe("dry_run_completed");
     // Fixed, category-keyed sample counts -- not derived from sizeBytes above.
     expect(created.totalRows).toBe(480);
     expect(created.resultSummary).toBeNull();
@@ -57,5 +63,24 @@ describe("MockImportClient", () => {
 
     const fetched = await client.getSession(created.id);
     expect(fetched.id).toBe(created.id);
+  });
+
+  it("never calls the real axios client -- skeleton safety (no upload, no parser, no dry-run/execute call)", async () => {
+    const getSpy = vi.spyOn(api, "get");
+    const postSpy = vi.spyOn(api, "post");
+    const client = new MockImportClient();
+
+    await client.listSessions();
+    await client.getSession(legacyImportSkeletonFixtures[0].id);
+    await client.createPreviewSession({
+      importCategory: "equipment_master",
+      file: { name: "a.xlsx", sizeBytes: 1, type: "" },
+      requestedByDisplayName: "ผู้ทดสอบ",
+    });
+
+    expect(getSpy).not.toHaveBeenCalled();
+    expect(postSpy).not.toHaveBeenCalled();
+    getSpy.mockRestore();
+    postSpy.mockRestore();
   });
 });

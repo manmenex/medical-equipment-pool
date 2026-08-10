@@ -45,6 +45,24 @@ describe("AppShell legacy import nav entry", () => {
     expect(screen.getAllByRole("link", { name: /นำเข้าข้อมูลเดิม/ }).length).toBeGreaterThan(0);
   });
 
+  // Bug-fix regression: the desktop sidebar's navItems array structurally
+  // never included admin-tier entries in the mobile bottom nav -- the
+  // mobile <nav> only ever mapped over navItems. Fixed by adding a
+  // dedicated canManageLegacyImport-gated link to the mobile <nav> block,
+  // mirroring the desktop sidebar's. This asserts both surfaces render
+  // exactly one link each (desktop <aside> + mobile <nav>), not just "at
+  // least one", so a regression that only fixes one surface fails loudly.
+  it("reaches /imports from both the desktop sidebar and the mobile bottom nav for an administrator", () => {
+    mockUser = makeUser("administrator");
+    renderShell();
+
+    const links = screen.getAllByRole("link", { name: /นำเข้าข้อมูลเดิม/ });
+    expect(links).toHaveLength(2);
+    for (const link of links) {
+      expect(link).toHaveAttribute("href", "/imports");
+    }
+  });
+
   it("hides the นำเข้าข้อมูลเดิม nav link for equipment_pool_staff", () => {
     mockUser = makeUser("equipment_pool_staff");
     renderShell();

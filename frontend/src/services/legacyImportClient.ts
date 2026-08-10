@@ -1,16 +1,23 @@
 import { createMockImportSession, legacyImportSkeletonFixtures } from "@/services/legacyImportFixtures";
-import type { ImportCategory, ImportSessionDetail, ImportSessionSummary, SelectedFilePreview } from "@/types/legacyImport";
+import type {
+  ImportCategory,
+  ImportSessionDetail,
+  ImportSessionPage,
+  ImportSessionSummary,
+  SelectedFilePreview,
+} from "@/types/legacyImport";
 
 // PR19B skeleton only -- see types/legacyImport.ts's file-level note.
 //
 // LegacyImportClient is the one seam every PR19B page/component goes
 // through. It never imports "@/services/api" and never issues an HTTP
-// request -- there is no PR19A backend endpoint to call yet. Once PR19A's
-// public API contract is approved and merged, a real HttpLegacyImportClient
-// implementing this same interface can replace MockImportClient below
-// without any page/component change.
+// request -- there is no wiring to the real, now-merged PR19A endpoints in
+// this skeleton (that integration is explicitly out of this task's scope).
+// Once a real HttpLegacyImportClient implementing this same interface is
+// authorized, it can replace MockImportClient below without any
+// page/component change.
 export interface LegacyImportClient {
-  listSessions(): Promise<ImportSessionSummary[]>;
+  listSessions(): Promise<ImportSessionPage>;
   getSession(sessionId: string): Promise<ImportSessionDetail>;
   createPreviewSession(input: {
     importCategory: ImportCategory;
@@ -20,6 +27,8 @@ export interface LegacyImportClient {
 }
 
 export class ImportSessionNotFoundError extends Error {
+  // Matches the real backend's IMPORT_SESSION_NOT_FOUND code
+  // (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §23).
   readonly code = "IMPORT_SESSION_NOT_FOUND";
 
   constructor(sessionId: string) {
@@ -39,15 +48,17 @@ function delay<T>(value: T): Promise<T> {
 function toSummary(detail: ImportSessionDetail): ImportSessionSummary {
   return {
     id: detail.id,
-    importCategory: detail.importCategory,
+    datasetType: detail.datasetType,
     filename: detail.filename,
     status: detail.status,
+    createdByUserId: detail.createdByUserId,
     requestedByDisplayName: detail.requestedByDisplayName,
     createdAt: detail.createdAt,
     totalRows: detail.totalRows,
-    importedCount: detail.importedCount,
-    skippedCount: detail.skippedCount,
-    failedCount: detail.failedCount,
+    validRows: detail.validRows,
+    invalidRows: detail.invalidRows,
+    warningRows: detail.warningRows,
+    importedRows: detail.importedRows,
   };
 }
 
@@ -62,11 +73,14 @@ export class MockImportClient implements LegacyImportClient {
     seed.forEach((session) => this.sessions.set(session.id, session));
   }
 
-  async listSessions(): Promise<ImportSessionSummary[]> {
+  async listSessions(): Promise<ImportSessionPage> {
     const items = Array.from(this.sessions.values())
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
       .map(toSummary);
-    return delay(items);
+    // Mirrors the real Page[T] shape (backend/app/schemas/common.py) --
+    // this mock never has more than one page of fixtures, so next_cursor
+    // is always null.
+    return delay({ items, nextCursor: null, total: items.length });
   }
 
   async getSession(sessionId: string): Promise<ImportSessionDetail> {
