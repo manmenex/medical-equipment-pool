@@ -7,6 +7,23 @@ authorize implementation of the parts marked OPEN below. Per
 Owner Decision MUST NOT begin" — three Owner Decisions are opened by this
 document (§9) and implementation of the areas they gate must wait for
 Repository Owner resolution.
+**Fix round 1** (independent review 4903718985, REQUEST CHANGES on head
+`41a9430637d772ed355708a76e1a46baf4366af2`) resolved five technical design
+gaps this revision closes without touching OD-1/OD-2/OD-3: the adapter
+needed an explicit, immutable invocation-context contract rather than
+reconstructing session/source identity itself (§6.4); source
+metadata+blob persistence needed an explicit transaction-ownership
+contract, since the existing CRUD layer commits internally (§6.2);
+PR20A's slice boundary needed correction once that transaction and
+context work turned out to be real, non-Owner-Decision-gated prerequisites
+(§24); the dry-run summary needed an explicit persistence/API answer,
+since `DryRunPlan.summary` is otherwise discarded by the merged framework
+(§14); and update-mode execution needed an explicit optimistic-concurrency
+contract, since unique constraints alone do not protect against lost
+updates (§15.1). Two non-blocking corrections were also made: numeric
+Excel identifier cells do not actually preserve leading zeros (§7), and
+the `register_adapter()` pseudocode call in §6.3 previously did not match
+the real merged signature (§6.3).
 **Repository:** Medical Equipment Pool. Not MEMS, not Recall Monitor.
 **Baseline:** `e3156bfc231fcbc126251f41292bc397fdf8ad3f` — the real
 squash-merge SHA of GitHub PR #88 (Post-PR19B Governance Sync), itself on
@@ -63,6 +80,9 @@ this PR (§26).
 | Roadmap scope | `docs/audits/04-consolidated-implementation-plan.md` Part D, Group 8 | PR20's Objective, Boundary (Ward/BME values belong to PR21, not PR20), and Dependency (PR19A only). |
 | Engineering process | `docs/ENGINEERING_WORKFLOW.md` §6, §7 | A Design PR is required before this work (new API surface, new database writes, new business-rule matching/duplicate-detection semantics); an Owner Decision is required for unresolved business policy, and implementation depending on one must not begin. |
 | Source-evidence search | Repository-wide search for "Equipment Master," legacy column names, sample `.xlsx`/`.csv` fixtures | **Zero real evidence found** anywhere in the repository of the actual legacy Equipment Master column layout, encoding, or sample data (§7, §9 OD-1). |
+| Adapter call sites (fix round 1) | `backend/app/services/import_execution_service.py::run_dry_run`/`run_execute`, `import_validation_service.py::run_validation` | Confirmed by reading the actual invocation code: `adapter.plan_dry_run(ro_db)`/`adapter.execute(db)` are called with **only** the db session — no session/source identity parameter exists — requiring the `AdapterInvocationContext` mechanism (§6.4). |
+| CRUD transaction behavior (fix round 1) | `backend/app/crud/import_session.py::register_or_correct_source`/`cancel_session` | Confirmed by reading the actual code: both call `await db.commit()` internally, meaning a naive "register source, then separately add a blob row" sequence is **not** atomic — requiring the non-committing CRUD variant and explicit transaction-ownership contract (§6.2). |
+| Equipment concurrency token (fix round 1) | `backend/app/models/equipment.py`, `app/models/mixins.py::TimestampMixin` | Confirmed by reading the actual model: `Equipment` has no dedicated `version` counter, but does have `updated_at` (`onupdate=func.now()`, server-computed) — usable as an optimistic-concurrency CAS token without a schema change (§15.1). |
 
 ---
 
@@ -252,7 +272,7 @@ must pass to `POST /import-sessions {"dataset_type": "equipment_master"}`.
 This is the only change to session-creation behavior; no new endpoint is
 needed for this step.
 
-### 6.2 File ingestion — the gap PR19A left open
+### 6.2 File ingestion — the gap PR19A left open, and its transaction contract
 
 **This is a genuine, non-Equipment-specific architecture problem PR20 must
 solve, independent of §9's business-policy Owner Decisions.** The merged
@@ -275,24 +295,24 @@ qualifier):
   checksum server-side from the uploaded bytes (closing PR19A's own
   documented "checksum trust boundary" gap — the design doc explicitly
   requires this of "a future concrete-adapter slice"), (b) stores the
-  bytes in a bounded, retention-aware location, and (c) calls the existing
-  `register_or_correct_source` CRUD function with the server-computed
-  checksum/byte_size, exactly as `POST /{id}/source` does today for the
-  metadata-only case. The existing `POST /{id}/source` endpoint remains
-  usable for future adapters that resolve their own checksum out-of-band;
-  PR20 does not remove or modify it.
+  bytes durably, and (c) registers the source's metadata — all as **one
+  atomic unit** (see the transaction contract below). The existing `POST
+  /{id}/source` endpoint remains usable for future adapters that resolve
+  their own checksum out-of-band; PR20 does not remove or modify it.
 - **Byte storage location**: proposed default is the same PostgreSQL
-  database (a new column or a new narrowly-scoped table, e.g.
-  `import_source_blobs(import_source_id PK/FK, content BYTEA)`, 1:1 with
-  `import_sources`, `ON DELETE RESTRICT`), bounded by the same
-  `MAX_UPLOAD_BYTES` ceiling as PR12 (10 MiB) — small enough that a
-  dedicated object-storage integration is not justified for V1, and
-  consistent with this repository's existing pattern of storing bounded
-  binary content in PostgreSQL only where a size ceiling already exists
-  (there is no existing object-storage integration in this codebase to
-  build on). This keeps retention/redaction trivial (same transactional
-  boundary as the rest of PR19A's redact-in-place mechanism, §3.6) instead
-  of requiring a second, out-of-band deletion contract.
+  database — a new, narrowly-scoped table, `import_source_blobs
+  (import_source_id UUID PK, FK import_sources.id ON DELETE RESTRICT,
+  content BYTEA NOT NULL)`, 1:1 with `import_sources` — bounded by the same
+  `MAX_UPLOAD_BYTES` ceiling as PR12 (10 MiB). This choice is **deliberate
+  and load-bearing for the atomicity contract below**: because the blob
+  lives in the same PostgreSQL database as `import_sources`, a genuine,
+  single-database-transaction ACID guarantee is achievable for free,
+  without a saga or two-phase-commit protocol. A dedicated object-storage
+  integration is not justified for V1 at this size ceiling, and none
+  exists in this codebase to build on; if a future revision moves byte
+  storage to an external system, the atomicity contract below no longer
+  applies and must be redesigned around a durable-write-then-orphan-cleanup
+  pattern instead (not needed for the V1 architecture proposed here).
 - **Retention obligation this reintroduces**: PR19A's design doc explicitly
   warns that a future byte-storing slice "must, as a required acceptance
   criterion of its own design," drive `source_bytes_deleted_at` from a
@@ -302,38 +322,127 @@ qualifier):
   blob deletion, verified by a dedicated PostgreSQL test proving a blob
   actually disappears (not merely that a timestamp column is set).
 
+**Transaction-ownership contract (resolves the finding that the existing
+CRUD layer commits internally and therefore cannot be composed naively):**
+`app.crud.import_session.register_or_correct_source` and
+`cancel_session` both call `await db.commit()` internally (confirmed by
+reading the actual merged code, not assumed). Calling that function and
+then separately adding a blob row afterward would **not** be atomic — the
+metadata commit would already have closed the transaction before the blob
+write ever happened, so a crash between the two leaves an orphaned,
+sourceless blob or a source with no blob. The correct contract, using the
+review's own requested language, is **"transactional DB finalize" with no
+external orphan-cleanup step needed** (not "true cross-system atomic
+DB+blob," which V1's architecture does not need to claim, and would not
+be true if it did):
+
+1. **Who begins the transaction:** implicit — this codebase's existing
+   convention (every endpoint receives one request-scoped `AsyncSession`
+   via dependency injection; no manual `BEGIN`).
+2. **Ordering:** (a) validate the uploaded bytes' structural/security
+   bounds in memory, no DB writes yet (§21); (b) compute the checksum and
+   byte_size server-side from the actual received bytes; (c) call a new,
+   **additive, non-committing** CRUD entry point —
+   `register_or_correct_source_pending(db, ..., commit=False)` (or an
+   equivalent keyword-argable variant of the existing function that
+   preserves the current committing behavior as the default for every
+   existing caller, so `POST /{id}/source` is unaffected) — which performs
+   the identical INSERT/UPDATE/`await db.flush()` logic the existing
+   function already has, but leaves `commit()` to the caller; (d)
+   `db.add()` the new `import_source_blobs` row, referencing the
+   now-**flushed**-but-not-yet-committed `import_source.id` (visible
+   within the same open transaction, so the FK is satisfiable) — using an
+   upsert/replace-if-exists write (matching `register_or_correct_source`'s
+   own "register-or-correct" idempotent semantics, so a client retry after
+   a lost response does not create two blob rows); (e) a single `await
+   db.commit()` at the very end, committing the source-metadata row and
+   the blob row together as one physical PostgreSQL transaction.
+3. **Who commits:** the new upload endpoint itself, once, after step
+   2(d) — never the CRUD helper (via the new non-committing variant).
+4. **Who rolls back:** this codebase's existing exception-handling
+   convention (whatever already triggers `db.rollback()` on an unhandled
+   exception for every other endpoint — confirmed at implementation time
+   against the actual mechanism, not invented here); since both the source
+   row and the blob row live in the same uncommitted transaction, a
+   rollback at any point before step 2(e) discards both together — there
+   is nothing to orphan.
+5. **Checksum verification:** trivially satisfied — the checksum persisted
+   in step 2(c) is computed directly from the same bytes persisted in step
+   2(d), in the same request, closing PR19A's documented trust-boundary
+   gap without a separate "verify after the fact" step.
+6. **Orphan blob cleanup:** **not needed for this V1 architecture.**
+   Because both writes share one physical transaction, no state exists
+   where a blob persists without its owning source row, or vice versa.
+   This is explicitly a consequence of choosing same-database BYTEA
+   storage (above) rather than external object storage; it is not a
+   general property of file-upload systems.
+7. **Storage failure before metadata finalize / database failure after
+   blob write:** both are the same case under this architecture (there is
+   only one storage system) — an uncommitted transaction is discarded
+   wholesale by the database itself on any failure before step 2(e); no
+   PR20-specific handling is required beyond normal database
+   crash-recovery, which this codebase already relies on everywhere else.
+8. **Retry/idempotency:** a client retry (e.g. after a dropped response
+   but a server-side commit that actually succeeded) is handled by the
+   same "register-or-correct" semantics `register_or_correct_source`
+   already provides for metadata, extended to the blob row via the upsert
+   write in step 2(d) — a second identical upload does not create a
+   second blob row.
+
 This subsection is **proposed architecture, not a finalized decision** —
 it is included so the implementation PRs (§24) have a concrete starting
 point for independent review, and so the Owner Decisions in §9 can be
 evaluated against a realistic ingestion mechanism rather than an abstract
 one. Independent review of the implementation PR that adds this endpoint
-must re-validate the bounds and the blob-retention design before merge.
+must re-validate the bounds, the non-committing CRUD variant's exact
+signature, and the blob-retention design before merge.
 
 ### 6.3 `EquipmentMasterAdapter` shape (structure resolved; field-level
 content gated by §9 OD-1)
 
+The pseudocode below matches the actual merged `ImportAdapter` ABC
+signatures exactly (`backend/app/services/import_adapter.py`, confirmed by
+reading the real code, not assumed) — every method takes precisely the
+parameters the real base class declares, no more:
+
 ```python
+from app.services.import_adapter import (
+    DryRunPlan,
+    FieldError,
+    ImportAdapter,
+    RawImportRecord,
+    register_adapter,
+)
+
 class EquipmentMasterAdapter(ImportAdapter):
     dataset_type = "equipment_master"
     ruleset_version = "1"
 
-    def parse(self, raw_input: bytes) -> list[RawImportRecord]:
-        # Opens the workbook via openpyxl (reusing PR12's parsing
-        # discipline: header detection, blank-row skip, bounded rows/
-        # worksheets/headers), yields one RawImportRecord per data row,
-        # 1-based row_number matching the source file. Exact column
-        # names: BLOCKED on §9 OD-1.
+    def parse(self, raw_input: Any) -> list[RawImportRecord]:
+        # `raw_input` is the `SourceContentRef` the framework resolves
+        # from durable blob storage and passes in (§6.2, §6.4) — never
+        # None for this adapter, unlike the PR19A-era default. Opens the
+        # workbook via openpyxl (reusing PR12's parsing discipline: header
+        # detection, blank-row skip, bounded rows/worksheets/headers),
+        # yields one RawImportRecord per data row, 1-based row_number
+        # matching the source file. Exact column names: BLOCKED on §9
+        # OD-1.
         ...
 
-    async def preload_business_context(self, db, records) -> EquipmentMasterContext:
+    async def preload_business_context(
+        self, db: AsyncSession, records: list[RawImportRecord]
+    ) -> "EquipmentMasterContext":
         # Bulk-resolves every distinct BCM/Item No appearing in `records`
         # via the existing get_by_bcm_codes/get_by_item_nos (§4.3) in
         # exactly two queries, regardless of row count — avoids N+1,
         # matching PR19A2's precedent. Returns a context object exposing
-        # both maps to validate_business_rules.
+        # both maps to validate_business_rules. No session/source identity
+        # needed here — record-level business context only (§6.4).
         ...
 
-    def validate_business_rules(self, record, context) -> list[FieldError]:
+    def validate_business_rules(
+        self, record: RawImportRecord, context: "EquipmentMasterContext"
+    ) -> list[FieldError]:
         # Per-row: canonicalize BCM/Item No (§4.2), check required
         # fields, check within-workbook duplicates, resolve identity
         # against `context` (§9 OD-3), classify legacy status (§9 OD-1),
@@ -343,29 +452,127 @@ class EquipmentMasterAdapter(ImportAdapter):
         # §9 OD-1/OD-2/OD-3.
         ...
 
-    async def plan_dry_run(self, ro_db) -> DryRunPlan:
-        # Re-runs the same matching/classification logic (business logic
-        # duplicated intentionally between validate and plan_dry_run is
-        # avoided by sharing a common pure-function core, not by two
-        # independent implementations) against the read-only session,
-        # producing counts only (§12). Never writes.
+    async def plan_dry_run(self, db: AsyncSession) -> DryRunPlan:
+        # `db` is the caller's genuinely read-only session (§3.4). Session/
+        # source identity is obtained from the adapter-invocation
+        # contextvar (§6.4), never by querying for "the" running job.
+        # Re-derives the exact same parse -> preload_business_context ->
+        # validate_business_rules pipeline against the same frozen source
+        # bytes and the same ruleset_version (deterministic replay, not a
+        # second independent implementation), then re-resolves each
+        # planned create/update against the *current* database state via
+        # `context` — producing counts only (§14). Never writes.
         ...
 
-    async def execute(self, rw_db) -> int:
-        # Applies the resolved create/update decisions from the dry-run
-        # plan to `rw_db`, inside the caller's existing transaction
-        # (§3.5) — never commits/rolls back itself. Returns imported_rows
-        # count. Exact write behavior: BLOCKED on §9 OD-1/OD-2.
+    async def execute(self, db: AsyncSession) -> int:
+        # `db` is the caller's normal read-write session, inside TX1
+        # (§3.5, §15) — never commits/rolls back itself. Session/source
+        # identity via the same contextvar (§6.4). Re-derives the plan
+        # exactly as plan_dry_run does, then applies it: for update-mode
+        # rows, using the optimistic-concurrency predicate (§15.1); for
+        # create-mode rows (once authorized, §9 OD-2), a plain insert
+        # guarded by the existing unique constraints (§16). Returns
+        # imported_rows count. Exact write behavior: BLOCKED on §9
+        # OD-1/OD-2.
         ...
+
+
+register_adapter(EquipmentMasterAdapter())
 ```
+
+Note the corrected registration call: the real `register_adapter(adapter:
+ImportAdapter) -> None` takes only the adapter instance — it reads
+`adapter.dataset_type` itself — not a separate `dataset_type` argument.
 
 This shape is implementation-grade for every part not gated by an Owner
 Decision: the adapter's *structure*, its integration points with PR19A's
-lease/fencing/dry-run/execute mechanics, and its reuse of
-`preload_business_context` for bulk lookups are fully specified. Only the
-row-level *content* of `validate_business_rules`/`execute` — which fields
-exist, how they map, and what identity/create-update policy governs them
-— is blocked.
+lease/fencing/dry-run/execute mechanics, its invocation-context contract
+(§6.4), and its reuse of `preload_business_context` for bulk lookups are
+fully specified. Only the row-level *content* of
+`validate_business_rules`/`execute` — which fields exist, how they map,
+and what identity/create-update policy governs them — is blocked.
+
+### 6.4 Adapter Invocation Context — session/source identity for `plan_dry_run`/`execute`
+
+**Real constraint, confirmed by reading the actual call sites (not
+assumed):** `import_execution_service.run_dry_run` calls exactly
+`await adapter.plan_dry_run(ro_db)`, and `run_execute` calls exactly
+`imported_rows = await adapter.execute(db)` — **neither passes
+`import_session_id`, `import_source_id`, or any other identity
+parameter.** `parse`/`preload_business_context`/`validate_business_rules`
+don't need this (they operate on records/db already scoped correctly by
+the caller), but `plan_dry_run`/`execute` genuinely cannot know *which*
+session's source to act on from their parameters alone. The adapter must
+never resolve this by querying for "whichever job is currently running"
+— that is exactly the "adapter reconstructing source identity by querying
+arbitrary tables on its own" anti-pattern this fix round rules out, and it
+would be unsafe under concurrent sessions of the same `dataset_type`
+regardless.
+
+**Resolution — a small, additive, backward-compatible extension to the
+PR19A service layer** (in scope for PR20A, §24, not a modification of any
+existing adapter's observable behavior, since no other adapter exists
+yet):
+
+```python
+import contextvars
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class AdapterInvocationContext:
+    """Immutable. Set by the framework immediately before calling
+    `adapter.plan_dry_run`/`adapter.execute`, read by the concrete
+    adapter's own implementation of those methods -- never passed as a
+    positional/keyword argument, so `ImportAdapter`'s existing merged
+    ABC method signatures are not modified."""
+
+    import_session_id: uuid.UUID
+    import_source_id: uuid.UUID
+    dataset_type: str
+    source_checksum: str
+    source_fingerprint: str
+    ruleset_version: str
+
+_adapter_invocation_context: contextvars.ContextVar[AdapterInvocationContext | None] = (
+    contextvars.ContextVar("_adapter_invocation_context", default=None)
+)
+
+def get_adapter_invocation_context() -> AdapterInvocationContext:
+    ctx = _adapter_invocation_context.get()
+    if ctx is None:
+        raise RuntimeError(
+            "No AdapterInvocationContext is set -- plan_dry_run/execute "
+            "must only be called from within the framework's own "
+            "context-setting wrapper."
+        )
+    return ctx
+```
+
+`import_execution_service.run_dry_run`/`run_execute` (both already have
+`session`/`job_row` loaded at the point they call the adapter, per the
+actual merged code) set this contextvar immediately before, and reset it
+immediately after, each `adapter.plan_dry_run(ro_db)`/`adapter.execute(db)`
+call — using `contextvars.Token`-based reset (Python's standard,
+task-safe pattern; each `asyncio` task gets its own copy of the context,
+so two concurrent sessions' dry-run/execute calls never observe each
+other's context, unlike a plain module-level global).
+`EquipmentMasterAdapter.plan_dry_run`/`execute` call
+`get_adapter_invocation_context()` internally to obtain
+`import_source_id` (to load the frozen source's blob and checksum, §6.2)
+and `ruleset_version` (to select the correct parsing/mapping logic if
+more than one legacy source format is ever authorized, §9 OD-1) — never
+`import_session_id` for any write purpose, since `execute()` never writes
+to `import_sessions`/`import_jobs` itself (that remains the framework's
+own responsibility, §3.3/§3.5); `import_session_id` is retained in the
+context only for audit-logging purposes (§18).
+
+This mechanism is **the only backend code this design proposes adding to
+`import_execution_service.py`/`import_validation_service.py`** — it does
+not change either function's own signature, return type, or any existing
+behavior for a session with no adapter-side dependency on this context (a
+future adapter that doesn't need session identity simply never calls
+`get_adapter_invocation_context()`). It is a technical prerequisite, not
+gated by OD-1/OD-2/OD-3, and belongs in PR20A (§24).
 
 ---
 
@@ -392,11 +599,28 @@ real column layout, and are specified now:
   regions as their top-left value only (openpyxl's default merged-cell
   read behavior) — this is a parsing-robustness requirement independent
   of what the columns are named.
-- **Numeric cells rendered as identifiers** (e.g. Excel silently storing
-  `"00123"` as the number `123`): PR20 must read BCM/Item No/Asset Number
-  candidate cells as text, not numeric, to avoid silent leading-zero loss
-  — this constraint is knowable now (any identifier can suffer this bug)
-  even though *which* column is the identifier column is not.
+- **Numeric cells rendered as identifiers** (e.g. a user typing `00123`
+  into Excel, which silently stores the number `123` with a *display*
+  format that shows the padding): **correction from the prior revision —
+  reading such a cell "as text" does not recover the original leading
+  zeros.** Once Excel has stored the value as a number, the padding was
+  never persisted as characters; it is presentation metadata (a numeric
+  format string) attached to the cell, not retrievable from the
+  underlying value. PR20 must distinguish two genuinely different cases:
+  (a) the source cell is **text-typed** in the workbook — leading zeros
+  are real characters and are preserved correctly by reading the cell as
+  a string, no special handling needed; (b) the source cell is
+  **numeric-typed** — any leading-zero padding is already, unrecoverably
+  lost at the source, and PR20 must not attempt to reconstruct it (e.g. by
+  re-padding to a guessed fixed width) except where a specific,
+  Owner-approved mapping rule makes the original value unambiguous (for
+  example, a *known*, fixed-width identifier format confirmed as part of
+  §9 OD-1). Absent such an explicit rule, a numeric-typed identifier
+  candidate cell must produce a blocking or warning finding (per §9 OD-1's
+  eventual taxonomy) demanding source correction, never a silently
+  invented value — this constraint on *behavior* is knowable and fixed now
+  even though *which* column is the identifier column, and whether a safe
+  re-padding rule exists, is not.
 - **Duplicate rows** (byte-identical row content repeated): treated as two
   separate logical rows for row-numbering/finding purposes; whether they
   collapse to one BCM/Item-No conflict is §9 OD-3's concern, not a
@@ -645,21 +869,86 @@ duplicate rows, or are accepted with a warning — OD-3.
 
 ---
 
-## 14. Dry-Run Contract
+## 14. Dry-Run Contract — Persistence and API Path
 
 Reuses PR19A's `DryRunPlan(summary: dict)` shape and read-only enforcement
-(§3.4, §6.3) directly — no new dry-run mechanism. The summary must report
-(once OD-1/OD-2/OD-3 make these countable): `rows_considered`,
-`creates_planned` (0 if OD-2 resolves to update-only),
-`updates_planned` (0 if OD-2 resolves to create-only), `skipped_rows`
-(rows already correctly reflected, if that concept applies once OD-2
-resolves), `warnings_count`, `blocking_conflicts_count`. This mirrors the
-structure PR19B's frontend already expects from `ImportResultSummary`-
-adjacent presentation work (nullable counts, never fabricated zeros) —
-PR20's backend summary shape should stay compatible with what PR19B
-already renders where reasonable, without PR20 being obligated to match it
-field-for-field (PR19B's own docs state its mock fixtures are
-presentation-only and do not bind PR20's real contract).
+(§3.4, §6.3) directly — no new dry-run *mechanism*. But per the merged
+`ImportAdapter.plan_dry_run` docstring itself: `DryRunPlan` is "the opaque
+result of a read-only evaluation, computed entirely within
+`plan_dry_run`'s read-only transaction, then discarded — never persisted
+itself (only whether evaluation succeeded or raised feeds
+`session.dry_run_completed_at`/`status`)." **This means the framework, as
+merged, throws away the summary's actual content today** — no API
+anywhere returns "N creates, M updates, K skipped" from a dry-run. This
+must be resolved explicitly, not left implicit:
+
+1. **Where is the summary persisted?** Nowhere new, by design. It is
+   **not** added as new columns on `ImportSession` (which would be a
+   schema change to an existing, frozen table beyond what this design
+   proposes elsewhere) and **not** given a new dedicated result table.
+   Instead, this design proposes the summary is **deterministically
+   recomputed on demand**, matching the framework's own established
+   philosophy for `ValidationFinding` retrieval (`GET
+   /import-sessions/{id}/errors` already re-reads persisted findings
+   rather than caching a summary elsewhere) and matching `DryRunPlan`'s
+   own "computed, then discarded" contract exactly, rather than fighting
+   it.
+2. **Why recompute is safe and cheap**: given the same frozen source bytes
+   (§6.2, immutable once registered) and the same `ruleset_version` (§6.4),
+   `parse → preload_business_context → validate_business_rules` is a pure,
+   deterministic pipeline (§6.3) — recomputing it costs one bounded pass
+   over at most `MAX_IMPORT_ROWS=5000` rows plus the same two bulk lookup
+   queries `preload_business_context` already performs, well within a
+   normal request's latency budget.
+3. **One deliberate consistency caveat, stated explicitly rather than
+   hidden**: `preload_business_context`'s BCM/Item No lookup reflects the
+   *current* database state at the moment it runs, not a state frozen at
+   the original dry-run's `dry_run_completed_at` timestamp. A recomputed
+   summary can therefore differ from what was true at the original
+   dry-run if the underlying Equipment table changed in between (an
+   Administrator edited a matched record, or another import session
+   executed first). This is expected and intentional, not a bug to
+   suppress — it is exactly why §15.1's optimistic-concurrency check
+   exists at execute time regardless of what any dry-run summary claimed.
+4. **API path**: a new, read-only endpoint,
+   e.g. `GET /import-sessions/{id}/dry-run-summary`, Administrator-only
+   (§17), valid only when `session.status` has reached at least
+   `dry_run_completed` at some point (i.e. not for a session still in
+   `validating`) — re-runs the adapter's `plan_dry_run` pipeline against a
+   **fresh, genuinely read-only** transaction (the exact same `SET
+   TRANSACTION READ ONLY` enforcement as the real dry-run attempt, §3.4)
+   and returns its `summary` dict directly, rather than reading a stored
+   value. This is additive (a new endpoint, not a change to any existing
+   one) and requires no migration.
+5. **Fields** (illustrative, not finalized until OD-1/OD-2/OD-3 resolve
+   what is actually countable): `rows_considered`, `creates_planned` (0 if
+   OD-2 resolves to update-only), `updates_planned` (0 if OD-2 resolves to
+   create-only), `skipped_rows` (rows already correctly reflected, if that
+   concept applies once OD-2 resolves), `warnings_count`,
+   `blocking_conflicts_count`. Do not finalize this list until OD-1/OD-2/
+   OD-3 make it meaningful — these are the *shape* to reuse, not a
+   commitment to exactly these six fields.
+6. **History**: not retained beyond what `import_row_errors` already
+   retains per validation attempt (§3.1) — a dry-run summary is always
+   "the current recomputation," never a historical snapshot list; if a
+   future need for point-in-time dry-run history emerges, that is a
+   separate design question, not solved here.
+7. **Frontend consumption**: this mirrors the structure PR19B's frontend
+   already expects from its `ImportResultSummary`-adjacent presentation
+   work (nullable counts, never fabricated zeros) — PR20's backend summary
+   shape should stay compatible with what PR19B already renders where
+   reasonable, without PR20 being obligated to match it field-for-field
+   (PR19B's own docs state its mock fixtures are presentation-only and do
+   not bind PR20's real contract).
+
+**Invariant this section exists to protect**: dry-run and execute must
+operate from the same frozen source bytes and the same `ruleset_version`
+(§6.4) — satisfied structurally, since both derive from the same
+`AdapterInvocationContext.source_checksum`/`ruleset_version` and the same
+immutable blob (§6.2). What is *not* frozen between them, by design, is
+the live database state each recompute matches against — that gap is
+exactly what §15.1's optimistic-concurrency contract closes at the one
+point (execute) where it actually matters.
 
 ---
 
@@ -683,6 +972,93 @@ One consequence worth flagging for implementation: `MAX_IMPORT_ROWS=5000`
 (§7) bounds a single execute transaction to at most 5000 Equipment
 writes — well within normal PostgreSQL transaction-size tolerances, so no
 chunking/batching design is needed.
+
+### 15.1 Update-mode optimistic concurrency (conditional on §9 OD-2)
+
+**If OD-2 authorizes update mode, this contract is mandatory. If OD-2
+resolves to create-only, this entire subsection is moot** — a create
+either succeeds via the database's own unique constraints or fails with a
+duplicate-identifier `IntegrityError`, already covered by §16; there is no
+existing row whose freshness needs protecting.
+
+**The problem, confirmed rather than assumed**: the existing unique
+constraints on `bcm_code`/`item_no`/`serial_number` (§4.1) protect against
+two *creates* colliding on the same identifier — they do **not** protect
+an *update* from silently overwriting a change made to the target
+Equipment record after the matching/dry-run snapshot was taken. A planned
+update computed during `plan_dry_run` (§14) and later applied during
+`execute` could clobber an edit made by an Administrator, or by a
+different import session, in the window between the two — a classic lost-
+update race, and unique constraints are structurally the wrong tool for
+it (they guard *identifier* collisions, not *staleness*).
+
+**Existing concurrency token evaluated**: `Equipment` has no dedicated
+integer `version` counter (unlike `ImportSession.version`, §3.1). It does
+have `updated_at` (`TimestampMixin`, `UTCDateTime`,
+`onupdate=func.now()`, server-computed on every UPDATE) — confirmed by
+reading `backend/app/models/mixins.py` directly. This design proposes
+reusing `updated_at` as the optimistic-concurrency token, **without a
+schema change**, rather than adding a new `version` column:
+
+- At `plan_dry_run` time (and, transitively, whenever `execute` re-derives
+  the same plan, §14), for every row resolved to an *update* action, the
+  adapter captures `expected_updated_at = matched_equipment.updated_at`
+  as part of that row's working decision.
+- At `execute` time, the adapter applies each planned update via a
+  compare-and-swap predicate conceptually equivalent to:
+  ```sql
+  UPDATE equipment
+  SET ...
+  WHERE id = :id AND updated_at = :expected_updated_at
+  ```
+  (the actual implementation may express this as an ORM-level
+  `session.execute(update(...).where(...))` with a rowcount check, rather
+  than raw SQL — the predicate shape is what matters, not the exact API
+  used to issue it).
+- **Zero rows affected means a conflict, not a no-op.** The adapter must
+  check the affected-row count after issuing the update and treat zero as
+  a genuine staleness conflict, never silently proceed as if nothing
+  needed to change.
+- **On conflict**: consistent with §15's all-or-nothing execute-attempt
+  guarantee, a detected staleness conflict on *any* row causes the
+  adapter's `execute()` to raise (surfacing as the existing framework's
+  "genuine server error" treatment, mirroring `ImportExecutionFailedError`
+  handling already established for other execute failures, §16) — the
+  entire attempt rolls back via TX1, never partially applying the other,
+  non-conflicting rows. This preserves the framework's existing atomicity
+  guarantee cleanly rather than inventing new partial-success semantics;
+  an operator investigates the reported conflicting row(s) (identified in
+  the bounded, generic failure message, per `bound_failure_message`'s
+  existing discipline) and re-runs dry-run/execute after resolving the
+  discrepancy. A future revision could weaken this to a per-row
+  skip-with-warning instead of a whole-attempt failure, but that is a
+  distinct design choice this document does not make by default, since it
+  changes execute's observable atomicity contract and should be reviewed
+  explicitly if proposed.
+- **Scenarios this covers, confirmed one by one**: (a) *manual Equipment
+  edit after dry-run* — any `PATCH /equipment/{id}` bumps `updated_at`,
+  caught. (b) *another import session updating the same Equipment* —
+  same mechanism, whichever `execute` call reaches the row second observes
+  a stale `expected_updated_at` and conflicts. (c) *identity field change
+  on the existing record* — also bumps `updated_at`, caught by the same
+  generic staleness check; no separate identity-specific mechanism is
+  needed (and OD-2's own field-mutability rule should already forbid an
+  *import-driven* update from touching identity fields in the first
+  place, §9 OD-2). (d) *lifecycle/status change* — `change_status_for_*`
+  functions persist through the normal ORM update path, which also bumps
+  `updated_at` via the mixin, caught the same way.
+- **Caveat, stated honestly**: this is a timestamp-equality CAS, not a
+  strictly monotonic integer counter. `onupdate=func.now()` provides
+  microsecond-resolution UTC timestamps in PostgreSQL, which is
+  practically collision-safe for this use case (two genuinely distinct
+  updates to the same row landing in the same microsecond is not a
+  realistic operational scenario for this system's write volume) — but it
+  is a weaker theoretical guarantee than a dedicated monotonic `version`
+  column would provide. If independent review prefers the stronger
+  guarantee, adding a `version` integer column to `Equipment` (mirroring
+  `ImportSession.version` exactly) is the alternative, at the cost of a
+  new migration — this is a technical implementation choice for the
+  PR20C implementation PR to confirm, not itself an Owner Decision.
 
 ---
 
@@ -719,11 +1095,17 @@ BCM/Item No. Analysis:
   hold row locks between phases (by design — validate/dry-run/execute are
   separate transactions, potentially separated by real wall-clock time),
   a record matched during validation could theoretically be modified or
-  deleted by unrelated activity before execute runs. This is the same
-  class of risk PR12's own commit phase already accepts (its own design
-  does not lock rows between preview and commit either) — PR20 inherits
-  this accepted risk rather than introducing new locking machinery beyond
-  what the unique constraints already provide.
+  deleted by unrelated activity before execute runs. For *create*-mode
+  rows, this is the same class of risk PR12's own commit phase already
+  accepts (its own design does not lock rows between preview and commit
+  either), and is fully covered by the unique-constraint boundary above —
+  PR20 inherits this accepted risk rather than introducing new locking
+  machinery. For *update*-mode rows (if OD-2 authorizes update), this
+  TOCTOU window is **not** merely accepted risk — §15.1's
+  `updated_at`-based optimistic-concurrency check exists specifically to
+  detect and reject a stale update rather than silently applying it,
+  closing this gap for updates while deliberately leaving creates to the
+  cheaper, already-sufficient unique-constraint boundary.
 
 ---
 
@@ -879,7 +1261,26 @@ atomicity (a failure partway through a multi-row execute leaves zero
 Equipment rows created, §15); idempotency (a `completed` session replay
 returns unchanged, inherited from PR19A, re-verified for this adapter);
 lease/fencing behavior specifically exercised through the real adapter
-(not just the existing generic `FakeAdapter`-based PR19A tests).
+(not just the existing generic `FakeAdapter`-based PR19A tests);
+**source metadata + blob atomicity** (a forced failure between the
+metadata flush and the final commit leaves neither an `import_sources`
+row nor an `import_source_blobs` row — proving the transaction contract
+in §6.2 is real, not merely asserted); **upload retry/idempotency** (a
+second identical upload does not create a duplicate blob row, §6.2 step
+8); **adapter invocation context** (a dedicated test proving
+`get_adapter_invocation_context()` returns the correct session/source
+identity inside `plan_dry_run`/`execute`, and that two concurrent
+sessions' `asyncio` tasks never observe each other's context, §6.4);
+**dry-run summary recompute** (the new `GET
+/import-sessions/{id}/dry-run-summary` endpoint returns correct counts,
+remains read-only under concurrent load, and reflects a changed database
+state on a second call after an intervening Equipment edit, §14);
+**optimistic-concurrency conflict detection** (§15.1, conditional on
+OD-2 authorizing update mode: a genuine two-connection PostgreSQL test
+proving a manual `PATCH /equipment/{id}` between dry-run and execute
+causes the affected row's update to be detected as zero-rows-affected,
+and that the whole execute attempt then rolls back per §15's atomicity
+guarantee rather than partially applying other rows).
 
 **Migration**: only if §6.2's byte-storage proposal is adopted — a new
 migration for `import_source_blobs` (or equivalent), following this
@@ -935,43 +1336,96 @@ implementation PRs must **not**:
 
 The task's suggested starting hypothesis (PR20A parser/validation, PR20B
 dry-run/execution, PR20C frontend wiring, PR20D governance sync) is
-directionally correct but must be adjusted for the file-ingestion gap
-(§6.2), which is not covered by that hypothesis's PR20A framing and is a
-prerequisite for *any* real Equipment Master data reaching the parser.
-Revised proposal:
+directionally correct but must be adjusted twice over: once for the
+file-ingestion gap (§6.2), and again for this fix round's finding that
+"PR20A can start now" was too casual a claim — some of what §6.2/§6.4
+require turned out to depend on a real, previously-undesigned transaction
+contract and an adapter-context mechanism, not merely "an upload
+endpoint." **Revised proposal, with each slice's readiness stated
+explicitly rather than assumed:**
 
-- **PR20A — Source ingestion**: the byte-upload endpoint, checksum
-  computation, and byte-storage schema (§6.2). Independently testable
-  (security bounds, checksum correctness) without any Equipment-specific
-  logic and without depending on OD-1/OD-2/OD-3 at all — this slice can
-  begin once this design document itself is approved, since it resolves a
-  technical gap, not a business-policy one.
+- **PR20A — Source ingestion, transaction contract, and adapter
+  invocation context.** **READY** — not blocked by OD-1/OD-2/OD-3 (all
+  three are business-policy questions; everything in this slice is a
+  resolved technical design, §6.2/§6.4), but only after this design's
+  H1/H2 resolutions above are themselves independently reviewed and
+  approved (design review is an ordinary prerequisite for any
+  implementation PR in this codebase, not a special gate unique to
+  PR20A). Concrete scope: the `import_source_blobs` table + migration
+  (§6.2); the additive, non-committing CRUD variant of
+  `register_or_correct_source` (§6.2); the new upload endpoint and its
+  transactional-finalize contract (§6.2); the `AdapterInvocationContext`
+  contextvar mechanism added to `import_validation_service.py`/
+  `import_execution_service.py` (§6.4) — additive, does not change any
+  existing function's signature or observable behavior for any adapter
+  that doesn't use it. **No Equipment-domain write path is introduced by
+  this slice** — it stores bytes and threads context, nothing more.
+  **API exposure**: one new endpoint (`POST
+  /import-sessions/{id}/source/upload`), Administrator-only, no
+  Equipment data reachable through it yet (no adapter is registered until
+  PR20B). **Schema/migration impact**: yes, one new additive table
+  (`import_source_blobs`), no modification to any existing table.
+  **Deployable independently**: yes — with no adapter registered for
+  `equipment_master`, uploading a source is possible but validating it
+  still returns `422 IMPORT_ADAPTER_NOT_REGISTERED` exactly as it does for
+  every other still-unimplemented dataset type today, so this slice alone
+  exposes no reachable Equipment-domain behavior, safe or unsafe.
 - **PR20B — Equipment Master parser, normalization, and validation
   adapter**: `EquipmentMasterAdapter.parse`/`preload_business_context`/
-  `validate_business_rules`. **Blocked on OD-1/OD-2/OD-3.**
-- **PR20C — Dry-run and execution integration**: `plan_dry_run`/`execute`,
-  wired to the same matching/policy core as PR20B. **Blocked on
-  OD-1/OD-2/OD-3** (inherits PR20B's blockers).
+  `validate_business_rules`, plus `register_adapter(EquipmentMasterAdapter())`
+  (§6.1, §6.3). **NOT READY — blocked on OD-1/OD-2/OD-3** (field mapping,
+  create/update policy, and identity-conflict policy are all read inside
+  `validate_business_rules`, §6.3). Depends on PR20A (needs the blob
+  storage and context mechanism to have real bytes/identity to parse
+  against). **API exposure**: `POST /{id}/validate` becomes live for
+  `dataset_type=equipment_master` once this slice registers the adapter;
+  `plan_dry_run`/`execute` remain `NotImplementedError` per the base
+  `ImportAdapter` contract's own default until PR20C lands — matching
+  PR19A2's own precedent of shipping `validate` safely ahead of
+  `dry_run`/`execute`. **Schema/migration impact**: none. **Owner
+  Decision required**: yes, OD-1/OD-2/OD-3, before this slice's own
+  implementation PR can begin (not merely before it merges).
+- **PR20C — Dry-run and execution integration**: `plan_dry_run`/`execute`
+  (§6.3), the dry-run summary recompute endpoint (§14), and the
+  optimistic-concurrency update path (§15.1, conditional on OD-2).
+  **NOT READY — blocked on OD-1/OD-2/OD-3** (inherits PR20B's blockers;
+  §15.1's concurrency mechanism itself is technically ready but has
+  nothing to protect until OD-2 authorizes update mode). Depends on
+  PR20B (re-derives the same parse/validate pipeline, §14). **API
+  exposure**: `POST /{id}/dry-run`, `POST /{id}/execute`, `GET
+  /{id}/dry-run-summary` become live for this dataset type. **Schema/
+  migration impact**: none beyond what PR20A already added, **unless**
+  independent review of §15.1 prefers a dedicated `Equipment.version`
+  column over the proposed `updated_at`-based CAS, in which case this
+  slice would need its own small migration — a decision for PR20C's own
+  implementation PR, not this design.
 - **PR20D — Frontend real-API wiring**: replaces the Equipment Master
-  `MockImportClient` path only (§20). Can begin once PR20A+PR20B+PR20C's
-  API contract is stable enough to integrate against (likely sequenced
-  after PR20C, or in parallel against a contract-frozen API surface if the
-  team prefers — an implementation-sequencing choice, not a design
-  question).
+  `MockImportClient` path only (§20). **Depends on PR20A+PR20B+PR20C's
+  API contract being stable enough to integrate against** — likely
+  sequenced after PR20C, or in parallel against a contract-frozen API
+  surface if the team prefers (an implementation-sequencing choice, not a
+  design question). Not blocked by OD-1/OD-2/OD-3 directly, but has
+  nothing real to wire against until PR20C lands.
 - **PR20E — Governance sync**: records PR20's actual merged scope,
   following this repository's established post-merge documentation-sync
   pattern (as this document's own predecessor, the PR19B governance sync,
   did) — not performed by this Design PR itself (§25).
 
-Each slice remains independently testable and does not leave an unsafe
-production endpoint exposed: PR20A alone introduces no Equipment-domain
-write path at all (it only stores bytes); PR20B alone introduces no
-`execute` capability (dry-run/execute remain `422`/`501`
-`IMPORT_ADAPTER_NOT_REGISTERED` — actually, once PR20B registers the
-adapter, `validate` becomes live but `plan_dry_run`/`execute` remain
-`NotImplementedError` per the base `ImportAdapter` contract until PR20C
-lands, matching PR19A2's own precedent of shipping `validate` safely ahead
-of `dry_run`/`execute`).
+**Summary — which slice can start now, which is blocked, and by what:**
+
+| Slice | Owner-Decision-blocked? | Depends on | Ready now? |
+|---|---|---|---|
+| PR20A | No | This design's own review/approval | **Yes** |
+| PR20B | Yes — OD-1, OD-2, OD-3 | PR20A | No |
+| PR20C | Yes — OD-1, OD-2, OD-3 (and OD-2 specifically for §15.1) | PR20B | No |
+| PR20D | No (indirectly gated by having something real to integrate) | PR20C | No |
+| PR20E | No | All of the above merged | No |
+
+No slice exposes a production endpoint before its required safety/storage
+contract exists: PR20A's own new endpoint reaches no Equipment data;
+PR20B's `validate` reaches only findings, never a write; `dry_run`/
+`execute` remain unreachable (`NotImplementedError`) until PR20C, which
+itself cannot be implemented before OD-1/OD-2/OD-3 resolve.
 
 ---
 
@@ -1029,3 +1483,29 @@ gates.
 - [x] Explicitly enumerated non-goals and STOP conditions (§9, §23).
 - [x] No backend, frontend, migration, or test file modified by this PR
       (§26).
+- [x] **Fix round 1**: defined an explicit, immutable adapter-invocation
+      context contract for `plan_dry_run`/`execute`, after confirming by
+      reading the actual call sites that no session/source identity is
+      passed to either (§6.4).
+- [x] **Fix round 1**: defined an explicit transaction-ownership contract
+      for source metadata + blob persistence, after confirming by reading
+      the actual CRUD code that it commits internally and cannot be
+      composed naively (§6.2).
+- [x] **Fix round 1**: corrected PR20A's readiness claim to state its
+      actual, larger scope (ingestion + transaction contract + adapter
+      context) while confirming it remains not gated by OD-1/OD-2/OD-3
+      (§24), and made every other slice's readiness/blocking status
+      explicit rather than assumed.
+- [x] **Fix round 1**: defined an explicit dry-run summary persistence/API
+      contract (deterministic recompute, not new persisted state) after
+      confirming the merged framework otherwise discards `DryRunPlan`'s
+      content (§14).
+- [x] **Fix round 1**: defined an explicit optimistic-concurrency contract
+      for update-mode execution, conditional on OD-2, using the existing
+      `updated_at` column as a CAS token without a schema change (§15.1).
+- [x] **Fix round 1**: corrected the numeric-Excel-identifier wording to
+      state plainly that leading zeros are not recoverable once a cell is
+      numeric-typed, rather than implying "read as text" fixes it (§7).
+- [x] **Fix round 1**: corrected the `register_adapter()` pseudocode call
+      and every adapter method signature to match the actual merged
+      `ImportAdapter` ABC exactly (§6.3).
