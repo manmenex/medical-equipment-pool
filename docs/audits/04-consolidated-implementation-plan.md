@@ -438,14 +438,32 @@ merged") for the full slice-by-slice record. **Roadmap PR19A (Legacy
 Import Foundation, backend) is now fully complete.** This is the import
 *framework* only — Equipment Master, Receive History, and Issue History
 import business logic (PR20/PR21 below) are **not** implemented by PR19A.
-`7f13a1e85e9b6a4828170c4b12bc2be27b15de39` is the current authoritative
-base-branch baseline (superseding `729d1aa...` above for current-state
-purposes; that SHA is retained here as this entry's original provenance
-reference). PR19B remains Draft PR #80, open and unmerged, requiring
-reconciliation against PR19A's now-merged contract before it can be
-considered complete; sequencing between that reconciliation/merge decision
-and PR20/PR21 implementation below is an Owner planning decision, not
-established by this note.
+**PR19B has since merged too:** independent review went through three
+rounds on GitHub PR #80 (reconciliation head
+`71dc97df583f60c3e9f8bccbbcb2e72b0b7307d5` — REQUEST CHANGES, findings
+PR80-H1/H2; fix head `6139bd4abd44c0a4ac07bf6ac63bf1b897dad653` — REQUEST
+CHANGES, remaining finding PR80-H1R; final reviewed head
+`5edf1bfd8de7013eb74f300193456c9e5c0f0332` — APPROVE, CI green 6/6), and
+PR19B merged with real squash-merge SHA
+`04f5bf5c76b51744981d1cc8072c074e604224e9`. See `docs/DECISION_LOG.md`
+("Roadmap PR19B merged: Exception Record closed; Roadmap PR19 fully
+complete") for the full chronology. **Roadmap PR19 (Legacy Import
+Foundation, backend + frontend skeleton) as a whole is now fully
+complete.** `04f5bf5c76b51744981d1cc8072c074e604224e9` is the current
+authoritative base-branch baseline (superseding
+`7f13a1e85e9b6a4828170c4b12bc2be27b15de39` and `729d1aa...` above for
+current-state purposes; both SHAs are retained here as this entry's
+historical provenance references). PR19B remains a frontend-only
+workflow-review skeleton — no real file upload, parsing,
+validation/dry-run/import execution, or production legacy dataset adapter
+is implemented; concrete legacy dataset import (Equipment Master, Receive
+History, Issue History) remains unimplemented, future Roadmap PR20/PR21
+scope. PR20's dependency on PR19A only (not PR19B, see its Dependencies
+bullet below) is unchanged by PR19B's merge; a separate, still-unresolved
+question of relative sequencing between PR19B and PR20 was left TBD
+pending an Owner Decision while PR19B was provisional
+(`docs/ROADMAP_STATUS.md`) and remains open — this entry does not resolve
+it or start PR20.
 
 #### PR19A — Legacy Import Foundation (backend)
 - **Objective:** Provide a staged, validation-first, traceable import framework.

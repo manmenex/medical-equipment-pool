@@ -7,6 +7,50 @@
 
 This file tracks *what changed in the shared mental model* over time, one line of context per concept. For the PR-by-PR rationale behind each change, see `docs/DECISION_LOG.md` (from Roadmap PR5 onward) and `docs/PROJECT_MEMORY.md` (Roadmap PR1 through Governance Pack v1.0).
 
+## Roadmap PR19B merged: Exception Record closed; Roadmap PR19 fully complete (GitHub PR #80)
+
+Roadmap PR19B (Legacy Import Frontend Skeleton) merged after three
+independent-review rounds on GitHub PR #80: reconciliation head
+`71dc97df583f60c3e9f8bccbbcb2e72b0b7307d5` (REQUEST CHANGES, findings
+PR80-H1 — mock fixtures violated backend invariants — and PR80-H2 —
+failed/cancelled result presentation could falsely appear successful); fix
+head `6139bd4abd44c0a4ac07bf6ac63bf1b897dad653` (REQUEST CHANGES, remaining
+finding PR80-H1R — a structural `validation_failed` fixture carried a
+persisted finding despite TX1 rollback semantics); final reviewed head
+`5edf1bfd8de7013eb74f300193456c9e5c0f0332` (**APPROVE**, CI green 6/6).
+The real squash-merge SHA, `04f5bf5c76b51744981d1cc8072c074e604224e9`, is
+distinct from that final reviewed feature-branch head, per this
+repository's standard squash-merge SHA-retrieval practice — the reviewed
+head is never treated as the merged baseline. `04f5bf5c...` is now the
+current authoritative base-branch tip, superseding `7f13a1e...` for
+current-state purposes. PR19B's frontend types/mock fixtures were
+reconciled against PR19A's merged public contracts (nullable
+`imported_rows`, the `failure_reason` field); its terminal-outcome
+presentation (`LegacyImportResultSummary`) now renders truthfully per
+status instead of a single hardcoded success card. PR19B remains a
+frontend-only workflow-review skeleton — no real file upload, workbook
+parsing, validation/dry-run/import execution, or production legacy
+dataset adapter exists; concrete Equipment Master/Receive History/Issue
+History import remains future Roadmap PR20/PR21 scope, not implemented by
+this merge. **Both PR19A and PR19B are now merged; Roadmap PR19 (Legacy
+Import Foundation, backend + frontend skeleton) as a whole is now fully
+complete**, and the Exception Record governing the PR19A/PR19B split
+(`docs/DECISION_LOG.md`, "Roadmap PR19 approved split") is **CLOSED** —
+all seven required closure steps are satisfied. This supersedes the
+"Roadmap PR19 split into PR19A (backend) and PR19B (frontend skeleton)"
+entry below insofar as it described PR19B as unimplemented; that entry's
+description of the original split decision remains accurate historical
+record. GitHub PR #81 remains closed without merge, superseded by
+PR19A1/PR19A2/PR19A3 — unaffected by this entry. A separate,
+still-unresolved question of relative sequencing between PR19B and PR20
+was left TBD pending an Owner Decision while PR19B was provisional
+(`docs/ROADMAP_STATUS.md`); PR20 has only ever depended on PR19A, not
+PR19B (`docs/audits/04-consolidated-implementation-plan.md`), so this
+merge does not change PR20's readiness, and this entry does not resolve
+that sequencing question or start PR20. See `docs/DECISION_LOG.md`
+("Roadmap PR19B merged: Exception Record closed; Roadmap PR19 fully
+complete") for the full review-round and closure-evidence record.
+
 ## Roadmap PR19A complete: PR19A1 + PR19A2 + PR19A3 merged (GitHub PR #84, #85, #86)
 
 All three of Roadmap PR19A's design-decomposed implementation slices (design

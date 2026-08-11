@@ -859,7 +859,20 @@
     governance synchronization) — the latest approved baseline at the time
     PR19B's branch was created. Implemented on branch
     `feature/pr19b-import-frontend-skeleton`, Draft PR **#80** — not yet
-    independently reviewed or merged at the time of this entry.
+    independently reviewed or merged at the time of this entry. **Third
+    update (2026-08-11, this same entry):** PR19B was reconciled against
+    PR19A's merged contract at reviewed head
+    `71dc97df583f60c3e9f8bccbbcb2e72b0b7307d5` (REQUEST CHANGES — findings
+    PR80-H1 and PR80-H2), fixed at `6139bd4abd44c0a4ac07bf6ac63bf1b897dad653`
+    (REQUEST CHANGES — remaining finding PR80-H1R), and fixed again at the
+    final reviewed head `5edf1bfd8de7013eb74f300193456c9e5c0f0332`
+    (**APPROVE**, CI green 6/6). PR19B then merged as GitHub PR **#80**,
+    real squash-merge SHA `04f5bf5c76b51744981d1cc8072c074e604224e9`. **PR19B
+    (Legacy Import Frontend Skeleton) is now fully complete.** See "Roadmap
+    PR19B merged: Exception Record closed; Roadmap PR19 fully complete" (new
+    entry, below) for the full review-round chronology. This closes the
+    Exception Record below — see "Expiration / Follow-up", updated
+    accordingly.
 
 ### Exception Record (per `docs/ENGINEERING_WORKFLOW.md` §22, Exception Policy)
 
@@ -971,8 +984,10 @@
   > reviewed, and Owner-approved.
 
   - **Provisional Development Permission: EXPIRED**
-  - **Exception Record: OPEN — pending PR19B reconciliation and
-    verification**
+  - **Exception Record: CLOSED (2026-08-11) — all seven closure steps
+    below are satisfied and recorded.** *(Originally OPEN — pending PR19B
+    reconciliation and verification; see Part B below for the closure
+    evidence.)*
 
   ### A. Provisional Development Permission — EXPIRED
 
@@ -991,31 +1006,47 @@
     PR19A Design, not against the provisional assumptions it was originally
     written against.
 
-  ### B. Exception Record — OPEN
+  ### B. Exception Record — CLOSED (2026-08-11)
 
-  The Exception Record itself does **not** close merely because PR19A
-  merged. It remains **OPEN**, for governance traceability, until the
-  existing provisional PR19B work has been reconciled and verified. It may
-  close only after **all** of the following are satisfied — none of which
-  have happened yet:
+  The Exception Record did **not** close merely because PR19A merged. It
+  remained **OPEN**, for governance traceability, until the existing
+  provisional PR19B work was reconciled and verified. It closes now that
+  **all** of the following are satisfied and recorded:
 
-  1. PR19B / Draft PR #80 is rebased or integrated onto the correct
-     post-PR19A authoritative baseline (`38a21e8...` on the base branch, or
-     later);
-  2. existing provisional frontend assumptions
-     (`frontend/src/types/legacyImport.ts`, `legacyImportClient.ts`) are
-     compared against the merged PR19A contracts;
-  3. conflicting provisional behavior is modified or removed;
-  4. the required frontend/backend contract and integration tests (see
-     Mitigations above) are added and pass where applicable;
-  5. PR19B passes independent Codex exact-head review;
-  6. required CI passes on that exact reviewed head;
-  7. the Repository Owner approves PR19B for merge.
+  1. **PR19B rebased/integrated onto the post-PR19A baseline** — done: the
+     reconciliation head `71dc97df583f60c3e9f8bccbbcb2e72b0b7307d5` aligned
+     PR19B against the merged PR19A1/PR19A2/PR19A3 contracts.
+  2. **Provisional frontend assumptions compared against the merged PR19A
+     contracts** — done: `frontend/src/types/legacyImport.ts` and
+     `legacyImportClient.ts` were reconciled against the real
+     `ImportSessionOut` contract (including `failure_reason` and nullable
+     `imported_rows`).
+  3. **Conflicting provisional behavior modified or removed** — done: mock
+     fixtures were rebuilt around `assertImportSessionInvariants()` /
+     `buildDetail()` (`frontend/src/utils/legacyImportInvariants.ts`,
+     `frontend/src/services/legacyImportFixtures.ts`) to obey the real
+     backend's §5/§9/§12/§13/§16/§18 invariants; `LegacyImportResultSummary`
+     was rewritten to render truthful, status-specific outcomes instead of
+     a single hardcoded success card.
+  4. **Required frontend/backend contract and integration tests added and
+     passing** — done: `legacyImportFixtures.test.ts` (37 tests) and
+     `LegacyImportResultSummary.test.tsx` (8 tests), plus corrected
+     `LegacyImportSessionDetailPage.test.tsx` / `LegacyImportListPage.test.tsx`
+     fixtures.
+  5. **PR19B passes independent Codex exact-head review** — done: final
+     reviewed head `5edf1bfd8de7013eb74f300193456c9e5c0f0332` received
+     **APPROVE** after two REQUEST CHANGES rounds (PR80-H1/H2, then
+     PR80-H1R) were resolved.
+  6. **Required CI passes on that exact reviewed head** — done: CI green
+     (6/6) on `5edf1bfd8de7013eb74f300193456c9e5c0f0332`.
+  7. **Repository Owner approves PR19B for merge** — done: PR19B merged as
+     GitHub PR **#80**, real squash-merge SHA
+     `04f5bf5c76b51744981d1cc8072c074e604224e9`.
 
-  **PR19B MUST NOT be considered complete, merge-ready, or "aligned," and
-  this Exception Record MUST NOT be treated as closed, until all seven
-  steps above are done and recorded.** Only completing step 7 — not merely
-  PR19A merging — closes this Exception Record.
+  **All seven steps above are done and recorded; this Exception Record is
+  therefore CLOSED.** See "Roadmap PR19B merged: Exception Record closed;
+  Roadmap PR19 fully complete" (new entry, below) for the full evidence
+  and review chronology.
 
   If PR19A materially changes semantics that provisional PR19B work
   assumed, the affected PR19B implementation must be modified to match, or
@@ -1061,12 +1092,21 @@
 - **Status:** Approved governance decision, documentation-only. **Neither
   PR19A nor PR19B is complete or implemented by this entry.** Roadmap PR19
   remains not done; PR19B's own implementation review is tracked
-  separately on Draft PR #80.
+  separately on Draft PR #80. **Update (2026-08-11, this same entry): both
+  slices have since merged — PR19A (PR19A1/PR19A2/PR19A3, GitHub PR #84/#85/
+  #86) and PR19B (GitHub PR #80, squash SHA
+  `04f5bf5c76b51744981d1cc8072c074e604224e9`). Roadmap PR19 (Legacy Import
+  Foundation, backend + frontend skeleton) is now fully complete, and the
+  Exception Record above is CLOSED.** Concrete production legacy dataset
+  import (Equipment Master, Receive History, Issue History) remains
+  unimplemented and is future Roadmap PR20/PR21 scope.
 - **Consequences:** `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`,
   `docs/audits/04-consolidated-implementation-plan.md` (Group 8),
   `knowledge/CHANGE_HISTORY.md`, `knowledge/CONTEXT.md`, and
   `knowledge/PROJECT_MEMORY.md` are updated alongside this entry to record
-  the approved split without claiming either slice is complete.
+  the approved split without claiming either slice is complete. **Update
+  (2026-08-11):** the same files are updated again, alongside the new
+  "Roadmap PR19B merged" entry below, to record both slices' completion.
 
 ## Numbering note — read this first
 
@@ -1652,3 +1692,153 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
     lifecycle state, or workflow. This entry is documentation/governance
     synchronization only — no backend, frontend, migration, test, or CI
     file was modified to produce it.
+
+## 2026-08-11 — Roadmap PR19B merged: Exception Record closed; Roadmap PR19 fully complete
+
+- **Decision:** None — this is a documentation/governance synchronization
+  entry, not a new Owner Decision. It records that Roadmap PR19B (Legacy
+  Import Frontend Skeleton) has merged, that the Exception Record governing
+  the Roadmap PR19 split ("Roadmap PR19 approved split: PR19A (backend) /
+  PR19B (frontend skeleton)" above) is now CLOSED, and that Roadmap PR19
+  (Legacy Import Foundation, backend + frontend skeleton) as a whole is now
+  fully complete.
+- **What was built:** PR19B is a **frontend-only, user-reviewable Legacy
+  Import workflow skeleton**: navigation entry points (including mobile
+  discoverability), Administrator-only visibility and route guarding,
+  import-category selection (Equipment Master / Receive History / Issue
+  History preview labels), `.xlsx` file-selection UX with category-change
+  file reset, and mock-backed session list/detail/result presentation
+  reconciled against PR19A's merged public contracts. It explicitly does
+  **not** provide real file upload, real workbook parsing, real
+  validation/dry-run/import execution, production legacy dataset adapters,
+  or concrete Equipment Master/Receive History/Issue History import — those
+  remain future Roadmap PR20/PR21 scope, not implemented by this merge.
+  - **Reconciliation against merged PR19A contracts** (design
+    `docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`): frontend types
+    (`frontend/src/types/legacyImport.ts`) and the mock client
+    (`frontend/src/services/legacyImportClient.ts`) were aligned to the
+    real `ImportSessionOut` contract, including nullable `imported_rows`
+    and the `failure_reason` field.
+  - **Invariant-enforced fixtures:** a new
+    `frontend/src/utils/legacyImportInvariants.ts` module
+    (`assertImportSessionInvariants()`) encodes the backend's real
+    invariants — distinct-row counting (design §12: `invalid_rows`/
+    `warning_rows` are independent, possibly-overlapping projections;
+    `valid_rows = total_rows - invalid_rows` only, never also minus
+    `warning_rows`), the state-machine reachability rules (design §5:
+    dry-run only reachable from `VALIDATED`, implying zero invalid rows for
+    every status reachable from there), and terminal-state rules (design
+    §18: `terminal_at` set only for, and always for, `COMPLETED`/`FAILED`/
+    `CANCELLED`). `frontend/src/services/legacyImportFixtures.ts` was
+    rebuilt around a `buildDetail()` factory that derives every counter
+    from a `findings` array and calls this guard before returning, so an
+    impossible mock state cannot silently exist.
+  - **Two legitimate flavors of `validation_failed` distinguished**
+    (design §9.4.1 vs §9.4.2, §16): a structural/crash failure (TX1 rolls
+    back entirely — null counters, empty findings, non-null
+    `failureReason`) versus a clean completion that found blocking errors
+    (TX1 commits — real counters/findings, null `failureReason`). Both are
+    represented by distinct fixtures
+    (`VALIDATION_FAILED_FIXTURE`/`VALIDATION_FAILED_WITH_FINDINGS_FIXTURE`).
+  - **Truthful terminal-outcome presentation:** `LegacyImportResultSummary`
+    renders a status-specific outcome — a green success card only for
+    `completed` (with the real imported-row count, or an explicit
+    "unavailable" message if `importedRows` is `null`, never a fabricated
+    `0`), a red failure message for `failed`, and a neutral cancellation
+    message for `cancelled` — never a single hardcoded success card
+    regardless of outcome.
+- **Review chronology (GitHub PR #80):** three independent-review rounds
+  on exact heads, each with CI run on that same head.
+  - **Round 1 — reconciliation head**
+    `71dc97df583f60c3e9f8bccbbcb2e72b0b7307d5`: **REQUEST CHANGES.**
+    **PR80-H1:** mock fixtures violated backend invariants (e.g. warning
+    rows double-subtracted from valid rows, impossible dry-run-completed
+    states with blocking ERROR findings). **PR80-H2:** failed/cancelled
+    result presentation could falsely appear successful (a single
+    hardcoded success card regardless of `status`).
+  - **Round 2 — fix head** `6139bd4abd44c0a4ac07bf6ac63bf1b897dad653`:
+    **REQUEST CHANGES.** PR80-H2 fully resolved; PR80-H1 mostly resolved,
+    with one remaining finding, **PR80-H1R** — the structural
+    `validation_failed` fixture claimed null counters *and* a persisted
+    `ValidationFinding` simultaneously, a state the real backend (TX1
+    rollback semantics, design §9.4.2) can never publish — plus a
+    non-blocking observation that nullable `importedRows` must not be
+    silently coerced to `0`.
+  - **Round 3 — final fix head, the reviewed head that merged**
+    `5edf1bfd8de7013eb74f300193456c9e5c0f0332`: **APPROVE**, CI green
+    (6/6). Confirmed: the structural validation-failure fixture now aligns
+    with TX1/TX2 semantics (null counters, empty findings, non-null
+    `failureReason`); completed-with-errors validation findings/counters
+    are coherent; impossible mock states are rejected by the invariant
+    guard's own rejection tests; failed/cancelled presentation is truthful;
+    `importedRows: null` is rendered distinctly from an actual `0`;
+    frontend-only scope is preserved (no real import/API execution
+    introduced); CI 6/6 green.
+  - **Merge:** PR19B merged as GitHub PR **#80**. Its real squash-merge
+    SHA, `04f5bf5c76b51744981d1cc8072c074e604224e9`, is distinct from the
+    final reviewed feature-branch head above
+    (`5edf1bfd8de7013eb74f300193456c9e5c0f0332`) — per this repository's
+    standard squash-merge SHA-retrieval practice, the reviewed head is
+    never treated as the merged baseline; `04f5bf5c...` (parent
+    `bc4d490bd0e9b85eb6d630fc7aa013c801b333c9`, itself parented on
+    `7f13a1e85e9b6a4828170c4b12bc2be27b15de39`, GitHub PR #86) is the
+    actual commit landed on the base branch and is now the current
+    authoritative baseline.
+- **Testing decision:** Frontend test suites (`legacyImportFixtures.test.ts`,
+  37 tests; `LegacyImportResultSummary.test.tsx`, 8 tests; plus corrected
+  `LegacyImportSessionDetailPage.test.tsx` / `LegacyImportListPage.test.tsx`
+  fixtures) were run and green on the exact reviewed head
+  (`5edf1bfd8de7013eb74f300193456c9e5c0f0332`) before merge, alongside the
+  full existing frontend suite. No backend, migration, or PostgreSQL test
+  changed — PR19B introduces no backend, migration, or API change.
+- **Source:** `docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`
+  (GitHub PR #83, the authoritative backend contract PR19B was reconciled
+  against); GitHub PR #80 (`feature/pr19b-import-frontend-skeleton`) and
+  its linked review threads/CI runs.
+- **Status:** Merged. GitHub PR #80, squash SHA
+  `04f5bf5c76b51744981d1cc8072c074e604224e9`. **Roadmap PR19B (Legacy
+  Import Frontend Skeleton) is now fully complete.** Combined with
+  "Roadmap PR19A complete: PR19A1 + PR19A2 + PR19A3 merged" above,
+  **Roadmap PR19 (Legacy Import Foundation, backend + frontend skeleton)
+  as a whole is now fully complete.** The Exception Record governing the
+  Roadmap PR19 split ("Roadmap PR19 approved split" above, Part B) is
+  **CLOSED** — all seven required closure steps are satisfied and recorded
+  there. `04f5bf5c76b51744981d1cc8072c074e604224e9` is the current
+  authoritative base-branch tip, superseding
+  `7f13a1e85e9b6a4828170c4b12bc2be27b15de39` for current-state purposes
+  (the latter remains accurate as historical provenance for Roadmap PR19A).
+- **Consequences:**
+  - **Roadmap PR19 is complete, but concrete legacy dataset import is
+    not.** PR19B remains a frontend-only workflow-review skeleton: no real
+    file upload, workbook parsing, validation/dry-run/import execution, or
+    production legacy dataset adapter exists. Concrete Equipment Master,
+    Receive History, and Issue History import business logic remain future
+    Roadmap PR20/PR21 scope — merging PR19A and PR19B does not, by itself,
+    provide end-to-end production import of legacy hospital datasets.
+  - **Backend remains the sole source of truth** for import lifecycle
+    states, validation rules, state transitions, permissions, dry-run
+    safety, execution idempotency, and retention. PR19B's frontend
+    types/mock fixtures were reconciled against PR19A's merged contracts
+    for presentation purposes only; nothing in PR19B redefines, overrides,
+    or duplicates ownership of any backend business rule.
+  - **GitHub PR #81** remains closed without merge, superseded by
+    PR19A1/PR19A2/PR19A3 (see "Roadmap PR19A complete" above) — this entry
+    does not reopen or otherwise change PR #81's status.
+  - **PR20/PR21 sequencing is unchanged by this entry.** PR20 has only
+    ever depended on PR19A, not PR19B
+    (`docs/audits/04-consolidated-implementation-plan.md`: "Dependencies:
+    PR19A ... PR19B is a frontend preview only and is not a dependency").
+    A separate, still-unresolved question of *relative sequencing*
+    (not a hard dependency) between PR19B and PR20 was left TBD in
+    `docs/ROADMAP_STATUS.md` pending an Owner Decision while PR19B was
+    still provisional; PR19B's merge does not itself resolve that
+    question, and this entry does not create a new Owner Decision to
+    resolve it. PR20 remains the next planned, not-yet-started Roadmap
+    item.
+  - **Owner Decision #2** (branding configuration ownership, recorded
+    elsewhere in this log) is unaffected by this entry and remains open.
+  - **No change to any other Roadmap PR's scope**, business rule,
+    lifecycle state, API, or database schema. This entry, and the
+    governance-sync PR that introduces it, are documentation/knowledge-only
+    — no backend, frontend, migration, test, or CI file was modified to
+    produce them. Roadmap PR20 has not been started by this entry.
