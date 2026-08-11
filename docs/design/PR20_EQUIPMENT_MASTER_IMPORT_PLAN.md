@@ -78,9 +78,23 @@ JSONB content had no retention story, despite carrying the same category
 of content the existing blob/session redaction already protects — closed
 by extending the same claimed/fenced retention transaction a second time
 (§14.9, formerly H9). One non-blocking item was also resolved: the
-`updated_at`-vs-`version` concurrency-token choice is now finalized in
-this design as `updated_at`, not deferred to the implementation PR
-(§15.1, formerly M2).
+`updated_at`-vs-`version` concurrency-token choice was finalized in that
+round as `updated_at` — **subsequently reversed by fix round 4, below.**
+**Fix round 4** (independent review 4911457257, REQUEST CHANGES on head
+`7f392b19f1273664ba3ca17276a3d9f2095e4673`; CI 6/6 green on that exact
+head) confirmed every fix-round-3 resolution except two, which it found
+still needed correction, and closed both without touching OD-1/OD-2/OD-3:
+the H6/H7 resolution still changed PR19A's existing bodyless generic
+`POST /{id}/execute` contract to accept a request body, which independent
+review correctly rejected as unjustified — `execute()` now resolves its
+own confirmed plan entirely internally, via a DB-provable
+partial-unique-index invariant plus the existing generic session-CAS
+admission mechanism, so the route's contract is genuinely unchanged
+(§14.4, §6.4); and the `updated_at` concurrency-token decision is
+reversed in favor of a dedicated `Equipment.version` integer column,
+mirroring `ImportSession.version`'s own existing pattern, broken out into
+its own new implementation slice (PR20B) that must land before Equipment
+Master's own execute path can be built (§14.2, §15.1, §24).
 **Repository:** Medical Equipment Pool. Not MEMS, not Recall Monitor.
 **Baseline:** `e3156bfc231fcbc126251f41292bc397fdf8ad3f` — the real
 squash-merge SHA of GitHub PR #88 (Post-PR19B Governance Sync), itself on
@@ -139,7 +153,7 @@ this PR (§26).
 | Source-evidence search | Repository-wide search for "Equipment Master," legacy column names, sample `.xlsx`/`.csv` fixtures | **Zero real evidence found** anywhere in the repository of the actual legacy Equipment Master column layout, encoding, or sample data (§7, §9 OD-1). |
 | Adapter call sites (fix round 1) | `backend/app/services/import_execution_service.py::run_dry_run`/`run_execute`, `import_validation_service.py::run_validation` | Confirmed by reading the actual invocation code: `adapter.plan_dry_run(ro_db)`/`adapter.execute(db)` are called with **only** the db session — no session/source identity parameter exists — requiring the `AdapterInvocationContext` mechanism (§6.4). |
 | CRUD transaction behavior (fix round 1) | `backend/app/crud/import_session.py::register_or_correct_source`/`cancel_session` | Confirmed by reading the actual code: both call `await db.commit()` internally, meaning a naive "register source, then separately add a blob row" sequence is **not** atomic — requiring the non-committing CRUD variant and explicit transaction-ownership contract (§6.2). |
-| Equipment concurrency token (fix round 1) | `backend/app/models/equipment.py`, `app/models/mixins.py::TimestampMixin` | Confirmed by reading the actual model: `Equipment` has no dedicated `version` counter, but does have `updated_at` (`onupdate=func.now()`, server-computed) — usable as an optimistic-concurrency CAS token without a schema change (§15.1). |
+| Equipment concurrency token (fix round 1; superseded fix round 4, H9) | `backend/app/models/equipment.py`, `app/models/mixins.py::TimestampMixin` | Confirmed by reading the actual model: `Equipment` has no dedicated `version` counter, but does have `updated_at` (`onupdate=func.now()`, server-computed). Fix round 1/3 initially proposed reusing `updated_at`; fix round 4 finalizes a dedicated `Equipment.version` integer column instead, mirroring `ImportSession.version`'s existing pattern (§15.1). |
 
 ---
 
@@ -612,7 +626,7 @@ class EquipmentMasterAdapter(ImportAdapter):
         # ruleset_version, resolving each row's planned action (CREATE/
         # UPDATE/SKIP) against the *current* database state, and — for
         # every UPDATE row — capturing that row's concurrency token
-        # (matched_equipment.updated_at) *now*, at dry-run time (§15.1).
+        # (matched_equipment.version) *now*, at dry-run time (§15.1).
         # Returns the full row-level plan via `DryRunPlan.summary` (an
         # in-memory, read-only computation only — this method itself never
         # writes; persistence is a separate step, below). Exact
@@ -732,11 +746,13 @@ class AdapterInvocationContext:
     # PR19A field, §3.1), which the framework already holds. `None` for
     # `execute`.
     accepted_validation_job_id: uuid.UUID | None
-    # Populated only for `execute` (from the new required request-body
-    # field on `POST /{id}/execute`, §14's "Execution Input Contract") --
-    # always `None` for `plan_dry_run`, which is creating a plan, not
-    # consuming one.
-    dry_run_plan_id: uuid.UUID | None
+    # Fix round 4 (H6): there is deliberately NO `dry_run_plan_id` field
+    # here. The prior revision populated one from a new request-body
+    # field on `POST /{id}/execute`, which independent review correctly
+    # rejected as an unjustified breaking change to PR19A's existing
+    # bodyless generic execute contract. `execute()` now resolves its own
+    # plan internally, via a DB-provable query, without any externally
+    # supplied identity (§14.4).
 
 _adapter_invocation_context: contextvars.ContextVar[AdapterInvocationContext | None] = (
     contextvars.ContextVar("_adapter_invocation_context", default=None)
@@ -775,10 +791,11 @@ without ever querying for "the latest" of either) — never
 nor `execute()` writes to `import_sessions`/`import_jobs` itself (that
 remains the framework's own responsibility, §3.3/§3.5); `import_session_id`
 is retained in the context only for audit-logging purposes (§18).
-`execute()` reads only `dry_run_plan_id`, to load the exact confirmed plan
-(§14.4) — `verified_source_content`/`dry_run_job_id`/
-`accepted_validation_job_id` are always `None` for `execute()`, since it
-never re-reads or re-parses the source.
+`execute()` reads none of these fields — `verified_source_content`/
+`dry_run_job_id`/`accepted_validation_job_id` are always `None` for
+`execute()`, since it never re-reads or re-parses the source and never
+needs an externally supplied plan identity; it resolves its own plan
+internally (fix round 4, H6, §14.4).
 
 This mechanism is **one of the small, additive backend extensions this
 design proposes to `import_execution_service.py`/
@@ -1022,13 +1039,13 @@ one.**
   PR20A alongside the rest of the source-artifact infrastructure (§24),
   not a separate slice.
 - **This subsection covers the source blob only.** Fix round 3 (H9)
-  identified that the two persisted dry-run plan tables PR20C introduces
-  (§14.2) carry their own retention-relevant JSONB content and are
-  **not** covered by the extension above — that extension is specified
-  separately, in §14.9, since those tables don't exist until PR20C's
-  migration lands, and is PR20C's ownership responsibility, not PR20A's,
-  even though it composes onto the same underlying transaction this
-  subsection extends.
+  identified that the two persisted dry-run plan tables PR20D introduces
+  (§14.2, renumbered fix round 4) carry their own retention-relevant
+  JSONB content and are **not** covered by the extension above — that
+  extension is specified separately, in §14.9, since those tables don't
+  exist until PR20D's migration lands, and is PR20D's ownership
+  responsibility, not PR20A's, even though it composes onto the same
+  underlying transaction this subsection extends.
 
 ---
 
@@ -1443,28 +1460,33 @@ normalized_values: JSONB  # the values that would be written -- exact
     # field set BLOCKED on OD-1/OD-2
 matched_identity_fields: JSONB  # BCM/Item No used for matching, for audit/
     # display, not re-derivation -- retention-redacted, §6.6/§14.9 (H9)
-expected_concurrency_token: UTCDateTime | None  # UPDATE rows only --
-    # captured HERE, at dry-run time, never refreshed (§15.1)
-    # Fix round 3, H8, CHECK ((action = 'UPDATE') = (expected_concurrency_token IS NOT NULL)):
-    # expected_concurrency_token is set if and only if action = 'UPDATE'
+expected_equipment_version: int | None  # UPDATE rows only -- captured
+    # HERE, at dry-run time, never refreshed (§15.1). Renamed from
+    # `expected_concurrency_token` (fix round 4, H9 -- see §15.1 for the
+    # finalized decision to use a dedicated `Equipment.version` integer
+    # column rather than `updated_at`); the capture-once-never-refresh
+    # discipline is unchanged, only the underlying token type is.
+    # Fix round 3, H8, CHECK ((action = 'UPDATE') = (expected_equipment_version IS NOT NULL)):
+    # expected_equipment_version is set if and only if action = 'UPDATE'
 warnings: JSONB  # findings relevant to this specific row's confirmation
     # -- retention-redacted, §6.6/§14.9 (H9)
 ```
 
 Both tables are additive; neither modifies `import_sessions`,
 `import_sources`, `import_jobs`, or `import_row_errors`. This is a
-schema/migration requirement assigned to **PR20C** (§24), since it is
-inseparable from the execute-by-plan-id mechanism (§14.4) — not PR20A,
-which has no need for it (PR20A never computes or reads a plan). Every
-constraint above is a required part of that migration, following this
-codebase's existing fail-closed `_verify_schema_convergence()` discipline
-and fresh-install/historical-upgrade PostgreSQL test pattern already used
-for migration 0015 (§3.1) — the migration is not considered complete
-without a test proving each constraint actually rejects the row it names
+schema/migration requirement assigned to **PR20D** (§24, renumbered fix
+round 4 — see the revised slicing), since it is inseparable from the
+execute resolution mechanism (§14.4) — not PR20A, which has no need for
+it (PR20A never computes or reads a plan). Every constraint above is a
+required part of that migration, following this codebase's existing
+fail-closed `_verify_schema_convergence()` discipline and
+fresh-install/historical-upgrade PostgreSQL test pattern already used for
+migration 0015 (§3.1) — the migration is not considered complete without
+a test proving each constraint actually rejects the row it names
 (cross-session job binding, a second concurrent `active` plan, a
 duplicate `source_row_number`, a negative summary count, and a
 CREATE/SKIP row carrying a non-null `target_equipment_id`/
-`expected_concurrency_token`, or an UPDATE row missing either).
+`expected_equipment_version`, or an UPDATE row missing either).
 
 ### 14.3 Write-time mechanics — how a read-only computation becomes a persisted write
 
@@ -1499,134 +1521,126 @@ prior plan for that session**; there is never more than one `active` plan
 at a time, making "the current confirmable plan" a trivial, unambiguous
 query (`WHERE import_session_id = ... AND status = 'active'`).
 
-### 14.4 Execution input contract — confirming a plan id, not a session (rewritten, fix round 3, H6/H7)
+### 14.4 Execution input contract — resolving the plan internally, bodyless execute preserved (rewritten, fix round 4, H6)
 
-**Fix-round-3 correction: the prior revision asserted checks 1–4 below
-happen "before admission" but then assigned them to `adapter.execute()`
-"as its own first step" — those two claims contradict the actual merged
-state machine. `import_execution_service.run_execute` only calls
-`adapter.execute(db)` *after* `admit_phase_job` has already won the CAS
-race and transitioned the session to `executing` (§3.3, confirmed by
-reading the real call order). A check inside `adapter.execute()` is
-therefore a *post-admission* check: raising there enters the existing
-TX2 path and marks the session terminally `failed` — it is not a
-pre-admission request rejection, and (per the unchanged PR19A state
-machine) a `failed` session cannot transition back to `dry_run_completed`
-to allow a same-session retry. This section now defines two explicit,
-separate layers instead of one ambiguous one.** It also corrects a second
-defect: the prior revision made `dry_run_plan_id` unconditionally
-**required** on the same generic `POST /{id}/execute` route every
-dataset type shares, which would break every existing/future adapter
-that has no persisted-plan concept of its own (§3.2 still correctly
-states the PR19A API surface is reused, not forked).
+**Fix-round-4 correction: fix round 3's H7 fix made `dry_run_plan_id`
+*optional* at the generic route rather than required, which avoided
+breaking other dataset types' request validation, but it still changed
+the shared, already-merged `POST /{id}/execute` contract from bodyless to
+body-accepting, and still relied on the client to supply plan identity at
+all. Independent review correctly rejected this as an unjustified
+change to a contract PR19A already shipped and every existing/future
+caller and test already assumes is bodyless. This section is rewritten
+so `POST /import-sessions/{id}/execute` stays exactly as merged —
+**no request body, no new field, no route-level change of any kind** —
+and `EquipmentMasterAdapter.execute()` resolves its own plan
+identity entirely internally, using a DB-provable invariant rather than
+an ambiguous "latest" query or any client-supplied id.**
 
-**API contract (H7 fix)**: the generic request schema gains one new
-**optional** field, harmless to every other `dataset_type`:
+**The resolution invariant, stated precisely**: §14.3 already establishes
+that `persist_dry_run_plan` marks any prior `active` plan `superseded`
+and inserts the new plan as `active` *in the same transaction* as the
+session's own `dry_run_completed` transition (`fenced_phase_success`).
+Combined with §14.2's partial unique index (`WHERE status = 'active'`,
+one row per session, fix round 3 H8), this gives a structural guarantee,
+not an assumption: **whenever a session is in `dry_run_completed`, it has
+*exactly one* `active` plan, and that plan is the one produced by the
+exact dry-run attempt that most recently moved the session into that
+state.** There is no window where the session is `dry_run_completed` but
+has zero or more-than-one active plans — both are prevented by physical
+constraints (the partial unique index for "more than one," and the
+same-transaction coupling for "zero").
 
+**Resolving the race the review asks about, explicitly, using existing
+PR19A machinery rather than a new lock**: could a *second* dry-run
+complete and supersede the plan in the window between when a client
+sends `POST {id}/execute` and when `adapter.execute()` runs? No new
+locking primitive is needed to rule this out, because both a fresh
+dry-run attempt and an execute attempt are phase-job admissions on the
+*same session*, gated by the *same* existing generic CAS admission
+mechanism (`admit_phase_job`, §3.3, unchanged) — only one phase-job can
+be admitted against a session at a time, and admission is what moves the
+session out of `dry_run_completed`. Whichever admission (the fresh
+dry-run's, or the execute's) commits first, atomically, wins; the other
+necessarily fails the existing, unmodified CAS check as an ordinary
+admission conflict (retryable by the client through the existing,
+unmodified error path — no new failure category). **This means by the
+time `adapter.execute()` actually runs, admission has already
+established, via the existing mechanism, that no concurrent dry-run
+could have raced it** — `execute()` simply queries for the session's
+`active` plan (`WHERE import_session_id = :context.import_session_id AND
+status = 'active'`), and the partial unique index guarantees this query
+returns exactly one row, deterministically, with no ambiguity and no
+"pick the newest" heuristic:
+
+```python
+async def execute(self, db: AsyncSession) -> int:
+    ctx = get_adapter_invocation_context()
+    plan = await equipment_master_dry_run_plan_crud.get_active_for_session(
+        db, ctx.import_session_id
+    )
+    # `plan` is guaranteed non-None here by the invariant above -- a
+    # session cannot reach `executing` admission without having been in
+    # `dry_run_completed`, which cannot hold without a matching active
+    # plan (§14.3). A missing plan at this point would indicate a
+    # framework-level invariant violation, not a client input error --
+    # raised as a genuine, unexpected failure, never silently tolerated.
+    ...
 ```
-POST /import-sessions/{id}/execute
-{ "dry_run_plan_id": "<uuid> | null" }   # optional at the generic route
-```
 
-The framework unconditionally threads whatever value is present (or
-`None`) into `AdapterInvocationContext.dry_run_plan_id` (§6.4) — no
-per-dataset-type branching in the generic route or its Pydantic model.
-Whether the field is *required* is an **adapter-specific** rule, enforced
-by Layer 1 below for `dataset_type="equipment_master"` only; an adapter
-with no plan concept simply never reads `dry_run_plan_id` from the
-context and is completely unaffected by its presence in the schema.
+**Defensive checks retained, restated as post-admission (not
+pre-admission) verification**: as its own first step, after loading
+`plan`, `execute()` still verifies `plan.import_source_id ==
+ctx.import_source_id`/`plan.source_checksum == ctx.source_checksum`
+(structurally guaranteed by §6.2's immutable-once-frozen source, but
+checked defensively, not assumed) and `plan.accepted_validation_job_id ==
+ctx.accepted_validation_job_id` is **not** re-checked here the way fix
+round 3 proposed, because `ctx` no longer carries that field for
+`execute()` (§6.4) — the plan's own binding to the validation job it was
+computed from is intrinsic to the plan row itself (§14.2's composite FK),
+not something `execute()` needs to re-derive or re-compare. Any defensive
+check that fails here indicates the same class of framework-invariant
+violation as a missing plan, not a client-correctable input error.
 
-**Layer 1 — framework-owned, pre-admission validation (no state
-mutation, stable 4xx, runs *before* `admit_phase_job`)**: a new,
-additive check in `run_execute`, before the existing CAS admission call,
-specific to sessions whose `dataset_type == "equipment_master"`:
-
-1. **the field is present** — if `dry_run_plan_id` is `null`/missing for
-   this dataset type, return `400 Bad Request`,
-   `IMPORT_EXECUTE_DRY_RUN_PLAN_ID_REQUIRED` (a structural client error,
-   not a business one — no session/plan row is touched);
-2. **the plan exists and belongs to this session**
-   (`plan.import_session_id == session.id`) — `404 Not Found`,
-   `IMPORT_DRY_RUN_PLAN_NOT_FOUND`, if not;
-3. **the plan belongs to the exact frozen source**
-   (`plan.import_source_id == session.import_source_id` and
-   `plan.source_checksum == import_sources.checksum`) — structurally
-   guaranteed to always hold given §6.2's immutable-once-frozen source,
-   but verified defensively, not assumed — `409 Conflict`,
-   `IMPORT_DRY_RUN_PLAN_SOURCE_MISMATCH`, if not;
-4. **the plan references the currently accepted validation snapshot**
-   (`plan.accepted_validation_job_id ==
-   session.current_validation_job_id`, existing PR19A field, §3.1) — per
-   the merged state machine, a session cannot re-enter `validating` once
-   it has reached `dry_run_completed` without an intervening cancel (a
-   fresh session), so this is confirmed structurally unreachable as a
-   *failure* case, but is included as an explicit, cheap defensive check
-   — `409 Conflict`, `IMPORT_DRY_RUN_PLAN_VALIDATION_MISMATCH`, if not;
-5. **the plan is `active`** (not `superseded`/`consumed`/`failed`) —
-   `409 Conflict`, `IMPORT_DRY_RUN_PLAN_NOT_ACTIVE`, if not. **This is the
-   layer that makes "resubmit a stale/superseded plan id" a same-session,
-   no-mutation, retryable rejection**: the session's own state is
-   completely untouched by a Layer-1 failure, so the operator can request
-   a fresh dry-run (§14.3, which supersedes nothing that hasn't already
-   been superseded) and retry `execute` with the new plan's id, on the
-   *same* session, as many times as needed — Layer 1 never marks anything
-   `failed`.
-
-Only a request that passes all five Layer-1 checks reaches
-`admit_phase_job` at all.
-
-**Layer 2 — post-admission, same-TX1, locked re-check (closes the race
-between Layer 1 and admission)**: `admit_phase_job` is a CAS on the
-session's own `version`/`status` (§3.3, unchanged) — it does not
-serialize against a *concurrent* dry-run superseding this exact plan in
-the narrow window between Layer 1's read and admission's write. As its
-own first step inside `execute()`, after admission has succeeded and
-before applying any row, the adapter re-reads the confirmed plan **with a
-row lock** (`SELECT ... FOR UPDATE` on the specific
-`equipment_master_dry_run_plans` row, inside the same TX1 that will apply
-the writes) and re-verifies check 5 above (`status == 'active'`) one more
-time. A Layer-2 failure here is **not** a client-input problem — a
-concurrent dry-run only *could* have superseded the plan after Layer 1
-already accepted it — but this design treats it identically to any other
-post-admission execution conflict, below, rather than inventing a third
-failure category.
-
-**Post-admission failure lifecycle, defined explicitly (H6)**: any
-failure from this point forward — Layer 2's re-check, a §15.1 concurrency
-conflict on an UPDATE row, or a unique-constraint `IntegrityError` on a
-CREATE row — is a **genuine execution failure**, surfacing through the
-existing TX2 crash/fenced-failure path exactly as any other adapter's
-`execute()` exception already does (§3.3, §15). This means, stated
-plainly rather than left implicit: **the session transitions to its
-terminal `failed` state and, under the unchanged merged state machine,
-cannot transition back to `dry_run_completed` or `validating` — there is
-no same-session retry for a post-admission conflict.** An operator who
-hits this must start a **new** import session (a fresh
-`ImportSession`/source-registration/validate/dry-run cycle) — resolving
-the discrepancy first if the conflict was a genuine data problem, or
-simply retrying if it was transient. **In the same TX2 write that marks
-the session `failed`, the confirmed plan's own `status` is also updated
-to `'failed'`** (§14.2's new status value) — it must never be left
-`active`/`is_current=true` (§14.6) once its owning session has terminally
-failed; a plan in `'failed'` status can never again pass Layer 1's check
-5, closing the loop.
+**Post-admission failure lifecycle, unchanged from fix round 3's
+resolution (H6, retained)**: a genuine execution conflict — a §15.1
+concurrency conflict on an UPDATE row, or a unique-constraint
+`IntegrityError` on a CREATE row — is a **genuine execution failure**,
+surfacing through the existing TX2 crash/fenced-failure path exactly as
+any other adapter's `execute()` exception already does (§3.3, §15). The
+session transitions to its terminal `failed` state and, under the
+unchanged merged state machine, cannot transition back to
+`dry_run_completed` or `validating` — **there is no same-session retry
+for a post-admission conflict.** An operator who hits this must start a
+**new** import session (a fresh `ImportSession`/source-registration/
+validate/dry-run cycle) — resolving the discrepancy first if the
+conflict was a genuine data problem, or simply retrying if it was
+transient. In the same TX2 write that marks the session `failed`, the
+resolved plan's own `status` is also updated to `'failed'`
+(§14.2) — it must never be left `active`/`is_current=true` (§14.6) once
+its owning session has terminally failed.
 
 On successful completion, `execute()` marks the plan `consumed` in the
-same transaction as the rest of its writes (§15), exactly as the prior
-revision already specified.
+same transaction as the rest of its writes (§15), exactly as prior
+revisions already specified.
 
-**Required test coverage, added (§22)**: Layer-1 rejection for a missing
-field (equipment_master only), a wrong-session plan id, a
-superseded/consumed/failed plan id — each proven to leave the session's
-own state completely untouched and immediately retryable; a Layer-2 test
-proving a dry-run started and completed *during* the admission race
-correctly fails the locked re-check; a post-admission conflict test
-proving the session reaches terminal `failed`, the plan reaches `failed`
-in the *same* transaction, and no same-session retry is possible
-(`POST {id}/dry-run` on a `failed` session is rejected by the existing,
-unchanged session-state check, §3.3); and a test proving `dry_run_plan_id`
-being absent/`null` has zero effect on any other `dataset_type`'s
-existing `execute` behavior.
+**Required test coverage, revised (§22)**: a test proving the resolved
+plan always matches the one produced by the session's most recent
+successful dry-run, across repeated dry-run/supersede cycles; a test
+proving `POST {id}/execute` accepts **no body** and behaves identically
+whether an empty body, no body, or `Content-Length: 0` is sent —
+confirming the generic route's contract is genuinely unmodified; a test
+proving a concurrent fresh-dry-run-vs-execute race resolves via the
+existing generic admission CAS (one succeeds, the other receives the
+existing, unmodified admission-conflict error) rather than via any new
+PR20-specific mechanism; a post-admission conflict test proving the
+session reaches terminal `failed`, the plan reaches `failed` in the
+*same* transaction, and no same-session retry is possible (`POST
+{id}/dry-run` on a `failed` session is rejected by the existing,
+unchanged session-state check, §3.3); and a test proving that a session
+admitted for execute with **zero** active plans (a hypothetical
+invariant violation) fails loudly as a genuine server error rather than
+silently proceeding.
 
 ### 14.5 Plan freshness — what makes a plan stale, defined exhaustively, no TTL
 
@@ -1634,15 +1648,15 @@ existing `execute` behavior.
   frozen (§6.2, unchanged PR19A invariant). Not a real staleness vector;
   listed for completeness, not because it is reachable.
 - **Validation snapshot changed**: cannot happen for the same session
-  without an intervening cancel, per §14.4 Layer 1 check 4's
-  state-machine analysis above — confirmed non-issue, not merely assumed.
+  without an intervening cancel, per §14.4's state-machine analysis above
+  — confirmed non-issue, not merely assumed.
 - **Adapter/mapping version changed**: not applicable for V1 (a single
   `ruleset_version="1"`, §6.1); becomes relevant only if OD-1 later
   authorizes multiple legacy source formats with different ruleset
   versions, at which point a mismatch would be included in this check.
 - **Target Equipment version changed**: **not** a plan-level staleness
   check — this is deliberately a *row-level* check, performed at execute
-  time via each row's own persisted `expected_concurrency_token` (§15.1),
+  time via each row's own persisted `expected_equipment_version` (§15.1),
   not a whole-plan invalidation. A stale row fails narrowly and
   identifiably; the plan itself isn't "stale" merely because one row's
   target changed.
@@ -1655,10 +1669,11 @@ existing `execute` behavior.
   caught by the existing, unchanged CAS admission check on the session's
   own `version`/`status` (§3.3) — PR20 adds nothing new here.
 - **Plan superseded by a newer dry-run, or failed by a prior execution
-  attempt**: the explicit `status` check in §14.4 Layer 1 check 5
-  (and Layer 2's locked re-check of the same field) — `status` now also
-  covers `'failed'` (fix round 3, H6), so a plan whose earlier execution
-  attempt genuinely conflicted can never be resubmitted either.
+  attempt**: `execute()` only ever resolves the session's single `active`
+  plan (§14.4) — a `superseded` or `failed` plan is never reachable by
+  that query at all, so there is nothing to "resubmit" in the first
+  place; staleness here is prevented structurally, not by a runtime
+  check against a client-supplied id.
 
 **No arbitrary time-based TTL is used as a substitute for any of the
 above** — every staleness vector the review asked about is either
@@ -1674,10 +1689,16 @@ gap these checks don't already close.
 returns the current `active` plan's `id`, its persisted summary fields
 (§14.2), relevant warnings, `created_at`, and `is_current: bool` (a UX
 convenience — `true` iff `status == "active"`; the *authoritative*
-staleness enforcement is always §14.4's execute-time check, never this
-read-only flag). The user confirms by supplying this `id` back to
-`POST /{id}/execute` (§14.4) — **a plan id, not merely "this session's
-dry-run,"** closing exactly the gap the review identified.
+staleness enforcement is always §14.4's resolution logic, never this
+read-only flag). **Fix round 4 (H6): the user reviews this plan's
+`id` and summary for display/traceability only — they do not submit it
+back anywhere.** `POST /{id}/execute` remains PR19A's existing, bodyless
+generic endpoint (§14.4); the plan the user reviewed here is
+*structurally guaranteed* to be the exact plan `execute()` resolves and
+applies, because both this endpoint and `execute()`'s own resolution
+query read the same single-row-by-invariant `active` plan for the
+session (§14.4) — there is no separate "confirm by id" step for the
+client to get right or wrong.
 
 ### 14.7 Recovery/fencing interaction — two orthogonal layers, not duplicated
 
@@ -1701,8 +1722,12 @@ fabricated zeros) — PR20's backend summary shape should stay compatible
 with what PR19B already renders where reasonable, without PR20 being
 obligated to match it field-for-field (PR19B's own docs state its mock
 fixtures are presentation-only and do not bind PR20's real contract). The
-frontend's confirmation step now specifically displays and submits a
-`dry_run_plan_id`, not merely a session id (§20 updated accordingly).
+frontend's confirmation step displays the plan's `id` and summary
+(§14.6) for the operator's review, then submits the existing, unmodified
+bodyless `POST /{id}/execute` request — **fix round 4 (H6): it does not
+submit the plan id anywhere**, since the backend resolves it internally
+(§14.4); the displayed id is for operator traceability/audit only (§20
+updated accordingly).
 
 ### 14.9 Plan-artifact retention — closing the gap the two new tables introduce (fix round 3, H9)
 
@@ -1731,7 +1756,7 @@ have persisted plan rows:
   implementation time). **What is explicitly preserved** (structural, not
   PII, exactly matching §6.6's precedent for `import_sources.checksum`/
   `byte_size`): `id`, `dry_run_plan_id`, `source_row_number`, `action`,
-  `target_equipment_id`, `expected_concurrency_token`. This keeps the
+  `target_equipment_id`, `expected_equipment_version`. This keeps the
   plan's row *shape* (how many creates/updates/skips, which target
   Equipment rows were touched) queryable for historical/audit purposes
   after purge, exactly as session-level counts remain queryable today,
@@ -1747,13 +1772,13 @@ have persisted plan rows:
   together, and a later cleanup run retries all three via the existing,
   unmodified claim mechanism. No new retry/tombstone machinery is
   introduced, for the same reason §6.6 already gives for the blob.
-- **Ownership**: since the two plan tables are themselves a PR20C
-  artifact (§14.2, §24 — they do not exist until PR20C's migration
-  lands), this retention extension is PR20C's responsibility, not
-  PR20A's, even though it composes onto the same transaction §6.6
-  (PR20A) already extended once. PR20C's implementation PR must not
-  merge without this redaction step, exactly as PR20A's must not merge
-  without §6.6's blob deletion.
+- **Ownership**: since the two plan tables are themselves a PR20D
+  artifact (§14.2, §24, renumbered fix round 4 — they do not exist until
+  PR20D's migration lands), this retention extension is PR20D's
+  responsibility, not PR20A's, even though it composes onto the same
+  transaction §6.6 (PR20A) already extended once. PR20D's implementation
+  PR must not merge without this redaction step, exactly as PR20A's must
+  not merge without §6.6's blob deletion.
 - **Required test coverage (§22)**: a forced-failure test proving
   plan-row redaction, blob deletion, and session redaction commit or roll
   back together, never partially; a test proving redacted plan rows
@@ -1804,11 +1829,11 @@ DRY-RUN
 read Equipment
   |
   v
-capture concurrency token T1
+capture concurrency token T1 (Equipment.version, fix round 4, H9)
   |
   v
 persist T1 in the DryRunPlan row (equipment_master_dry_run_plan_rows
-  .expected_concurrency_token, §14.2) -- NEVER re-read at execute time
+  .expected_equipment_version, §14.2) -- NEVER re-read at execute time
   |
   v
 user reviews the persisted plan (§14.4/§14.6)
@@ -1817,13 +1842,14 @@ user reviews the persisted plan (§14.4/§14.6)
 [another actor may modify the Equipment record here -> T2 != T1]
   |
   v
-EXECUTE (by confirmed plan id, §14.4)
+EXECUTE (resolves the session's active plan internally, §14.4)
   |
   v
-UPDATE ... WHERE id = :equipment_id AND updated_at = :T1   (never :T2, never re-read)
+UPDATE ... WHERE id = :equipment_id AND version = :T1
+  SET version = version + 1, ...   (never :T2, never re-read)
   |
   v
-if current token != T1 (zero rows affected): STALE PLAN / CONFLICT
+if current version != T1 (zero rows affected): STALE PLAN / CONFLICT
 ```
 
 **If OD-2 authorizes update mode, this contract is mandatory. If OD-2
@@ -1843,39 +1869,83 @@ different import session, in the window between the two — a classic lost-
 update race, and unique constraints are structurally the wrong tool for
 it (they guard *identifier* collisions, not *staleness*).
 
-**Existing concurrency token evaluated**: `Equipment` has no dedicated
-integer `version` counter (unlike `ImportSession.version`, §3.1). It does
-have `updated_at` (`TimestampMixin`, `UTCDateTime`,
-`onupdate=func.now()`, server-computed on every UPDATE) — confirmed by
-reading `backend/app/models/mixins.py` directly. This design proposes
-reusing `updated_at` as the optimistic-concurrency token, **without a
-schema change**, rather than adding a new `version` column:
+**Concurrency token: finalized as a dedicated `Equipment.version` column
+(fix round 4, H9, superseding fix round 3's M2 resolution)** — fix round
+3 approved reusing `updated_at` as a timestamp-equality CAS, reasoning it
+was "practically collision-safe" and required no migration. Independent
+review correctly pushed back: the token choice is schema/contract
+architecture that should be made on correctness grounds, not migration
+convenience, and a dedicated monotonic integer counter removes an entire
+class of timestamp-precision/clock-semantics questions a CAS predicate
+should never have to reason about in the first place. **This design now
+selects Option B: a new `Equipment.version` integer column**, mirroring
+`ImportSession.version`'s own existing pattern in this exact codebase
+(§3.1) rather than inventing a new one:
 
+- **Schema**: `version INTEGER NOT NULL DEFAULT 1` on `equipment`,
+  additive migration, no other column affected. **Backfill**: every
+  existing row starts at `1` (the default applies at migration time via
+  the same `_verify_schema_convergence()`-checked pattern this codebase's
+  prior migrations already use for new `NOT NULL` columns) — there is no
+  ambiguity about a "correct" historical value, since no optimistic-lock
+  check has ever existed for `Equipment` before this design.
+- **Increment rule**: incremented by exactly `1` on every successful
+  mutation of an `Equipment` row, at the same application/service layer
+  that already performs the mutation — mirroring how `ImportSession.version`
+  itself is managed (confirmed by reading the actual merged code, §3.1),
+  **not** a database trigger. This codebase has no precedent anywhere for
+  trigger-based versioning, and this design does not introduce one
+  without evidence it is the established pattern; the honest trade-off is
+  stated explicitly, not hidden: an application-layer increment requires
+  every *future* Equipment write path to remember to bump `version`,
+  whereas a trigger would enforce this unconditionally at the database
+  level. This design accepts that trade-off for V1, consistent with the
+  existing `ImportSession.version` precedent, and mitigates it with the
+  mandatory enumerated-mutation-path test below rather than leaving it as
+  an unverified assumption.
+- **Mutation paths that MUST increment `version`, enumerated explicitly**
+  (this design does not increment `version` in only the paths PR20 itself
+  adds and leave every pre-existing path silently non-compliant):
+  `PATCH /equipment/{id}` (the general update endpoint), every
+  `change_status_for_*` lifecycle-transition function (§10), and this
+  design's own `execute()` UPDATE path (below). Enumerating this list is
+  itself part of this design's contract — the required test (below)
+  fails closed if any of these paths is later found not to increment
+  `version`.
+- **PR20A/PR20B ownership boundary, stated explicitly**: introducing
+  `Equipment.version` and wiring every *existing* mutation path to
+  increment it is **not** an Equipment-Master-specific concern — it is a
+  prerequisite Equipment-domain change every future optimistic-concurrency
+  consumer would need, and is broken out into its own slice, **PR20B**
+  (§24, revised), which must land and be independently verified *before*
+  PR20E (execution) can be implemented. PR20 does not add `version` while
+  leaving pre-existing Equipment mutation paths bypassing the increment.
 - **Captured exactly once, at `plan_dry_run` time, and nowhere else.**
   For every row resolved to an *update* action, the adapter reads
-  `matched_equipment.updated_at` and writes it into
-  `expected_concurrency_token` on that row's `persist_dry_run_plan`
+  `matched_equipment.version` and writes it into
+  `expected_equipment_version` on that row's `persist_dry_run_plan`
   write (§14.2, §14.3) — this is `T1` in the diagram above, and it is
   the **only** place this value is ever captured. `plan_dry_run` never
   runs again for an already-confirmed plan; there is no "re-derive" step
   left in this architecture for `execute` to perform (§14.4 replaced
-  that with "load the persisted plan").
+  that with "resolve and load the persisted plan").
 - At `execute` time, the adapter applies each planned update via a
   compare-and-swap predicate using **the row's own persisted token**,
-  never a freshly-read one:
+  never a freshly-read one, and atomically advances the counter in the
+  same statement:
   ```sql
   UPDATE equipment
-  SET ...
-  WHERE id = :target_equipment_id AND updated_at = :expected_concurrency_token
+  SET version = version + 1, ...
+  WHERE id = :target_equipment_id AND version = :expected_equipment_version
   ```
   (the actual implementation may express this as an ORM-level
   `session.execute(update(...).where(...))` with a rowcount check, rather
   than raw SQL — the predicate shape is what matters, not the exact API
-  used to issue it). `:expected_concurrency_token` comes from
+  used to issue it). `:expected_equipment_version` comes from
   `equipment_master_dry_run_plan_rows`, loaded alongside the rest of the
   confirmed plan (§14.4) — `execute()` never issues a fresh `SELECT
-  ... updated_at` on the target row before this UPDATE; doing so would
-  silently reintroduce the exact bug this fix round closes.
+  ... version` on the target row before this UPDATE; doing so would
+  silently reintroduce the exact class of bug fix round 2's H5R closed.
 - **Zero rows affected means a conflict, not a no-op.** The adapter must
   check the affected-row count after issuing the update and treat zero as
   a genuine staleness conflict, never silently proceed as if nothing
@@ -1913,52 +1983,34 @@ schema change**, rather than adding a new `version` column:
   changes execute's observable atomicity contract and should be reviewed
   explicitly if proposed.
 - **Scenarios this covers, confirmed one by one**: (a) *manual Equipment
-  edit after dry-run* — any `PATCH /equipment/{id}` bumps `updated_at`,
-  caught. (b) *another import session updating the same Equipment* —
-  same mechanism, whichever `execute` call reaches the row second observes
-  a stale `expected_concurrency_token` and conflicts. (c) *identity field
-  change on the existing record* — also bumps `updated_at`, caught by the
-  same generic staleness check; no separate identity-specific mechanism is
-  needed (and OD-2's own field-mutability rule should already forbid an
-  *import-driven* update from touching identity fields in the first
+  edit after dry-run* — any `PATCH /equipment/{id}` bumps `version`,
+  caught (conditional on PR20B's enforcement across this path, below).
+  (b) *another import session updating the same Equipment* — same
+  mechanism, whichever `execute` call reaches the row second observes a
+  stale `expected_equipment_version` and conflicts. (c) *identity field
+  change on the existing record* — also bumps `version`, caught by the
+  same generic staleness check; no separate identity-specific mechanism
+  is needed (and OD-2's own field-mutability rule should already forbid
+  an *import-driven* update from touching identity fields in the first
   place, §9 OD-2). (d) *lifecycle/status change* — `change_status_for_*`
-  functions persist through the normal ORM update path, which also bumps
-  `updated_at` via the mixin, caught the same way. (e) *Equipment record
-  deleted after dry-run* — the UPDATE's `WHERE id = :target_equipment_id`
-  clause matches zero rows regardless of the token, correctly surfacing
-  as the same conflict path (a soft-deleted row, per `SoftDeleteMixin`,
-  still physically exists with a `deleted_at` set — its own `updated_at`
-  bump from the delete itself is still caught by the token comparison
-  before any lookup-scoping question even arises).
-- **Concurrency token: finalized in this design, fix round 3 (M2)** — the
-  prior revision left `updated_at` vs. a dedicated `Equipment.version`
-  column as an open choice for the PR20C implementation PR to confirm.
-  Independent review correctly identified this as schema/contract
-  architecture belonging in the design itself, not an incidental
-  implementation detail. **This design approves `updated_at` as the V1
-  concurrency token, decided here, not deferred.** Rationale: this is a
-  timestamp-equality CAS, not a strictly monotonic integer counter —
-  `onupdate=func.now()` provides microsecond-resolution UTC timestamps in
-  PostgreSQL, which is practically collision-safe for this use case (two
-  genuinely distinct updates to the same row landing in the same
-  microsecond is not a realistic operational scenario for this system's
-  write volume), and it requires no new migration, reusing a column that
-  already exists on every row. This is a weaker theoretical guarantee
-  than a dedicated monotonic `version` column would provide, and that
-  trade-off is made explicitly, not silently: if the Repository Owner or
-  independent review later prefers the stronger guarantee, adding a
-  `version` integer column to `Equipment` (mirroring
-  `ImportSession.version` exactly) is a well-understood, self-contained
-  follow-up migration — but it is not a prerequisite for PR20C to
-  proceed, and this design does not gate PR20C on that choice being
-  revisited. **Required test coverage (§22), now made a hard requirement
-  rather than an aspiration**: a dedicated test enumerating every known
-  Equipment write path reachable in this codebase today (`PATCH
-  /equipment/{id}`, every `change_status_for_*` lifecycle-transition
-  function, and this design's own `execute()` UPDATE path itself) and
-  asserting each one actually advances `updated_at` — approving this
-  token without that proof would be exactly the kind of unverified
-  assumption this document otherwise commits to avoiding.
+  functions persist through the normal ORM update path, which PR20B
+  requires to also bump `version`, caught the same way. (e) *Equipment
+  record deleted after dry-run* — the UPDATE's `WHERE id =
+  :target_equipment_id` clause matches zero rows regardless of the
+  token, correctly surfacing as the same conflict path (a soft-deleted
+  row, per `SoftDeleteMixin`, still physically exists with a `deleted_at`
+  set — its own `version` bump from the delete itself, once PR20B covers
+  that path, is still caught by the token comparison before any
+  lookup-scoping question even arises).
+- **Required test coverage (§22), a hard requirement, not an
+  aspiration**: PR20B (below) is not considered complete without a
+  dedicated test enumerating every known Equipment write path reachable
+  in this codebase today (`PATCH /equipment/{id}`, every
+  `change_status_for_*` lifecycle-transition function) and asserting each
+  one actually advances `version` by exactly `1`; PR20E adds the
+  companion test that its own `execute()` UPDATE path does too. Relying
+  on this token without that proof would be exactly the kind of
+  unverified assumption this document otherwise commits to avoiding.
 
 ---
 
@@ -2002,7 +2054,7 @@ BCM/Item No. Analysis:
   PR20 inherits this accepted risk rather than introducing new locking
   machinery. For *update*-mode rows (if OD-2 authorizes update), this
   TOCTOU window is **not** merely accepted risk — §15.1's
-  `updated_at`-based optimistic-concurrency check exists specifically to
+  `Equipment.version`-based optimistic-concurrency check exists specifically to
   detect and reject a stale update rather than silently applying it,
   closing this gap for updates while deliberately leaving creates to the
   cheaper, already-sufficient unique-constraint boundary.
@@ -2189,24 +2241,24 @@ outcome, never a fabricated per-row finding); **persisted dry-run plan**
 matches what was persisted by `persist_dry_run_plan`, not a live
 recomputation; the plan is immutable — no code path ever mutates an
 existing plan row; a second `POST /{id}/dry-run` creates a genuinely new
-plan and marks the prior one `superseded`, never overwriting it); **two-
-layer execution admission** (fix round 3, H6/H7, §14.4: five separate
-Layer-1 pre-admission rejection tests — missing `dry_run_plan_id` for
-`equipment_master` specifically, with a companion test proving the field
-being absent has zero effect on any other `dataset_type`; wrong-session
-plan id; source/checksum mismatch; validation-snapshot mismatch;
-non-`active` status — each proven to leave the session's own state, CAS
-`version`, and `import_jobs` completely untouched, and immediately
-retryable on the same session with a fresh `POST {id}/dry-run`; a Layer-2
-test proving a dry-run that supersedes the confirmed plan *during* the
-admission race is caught by the locked re-check even though Layer 1 had
-already accepted it);
+plan and marks the prior one `superseded`, never overwriting it); **plan
+resolution and bodyless execute preservation** (fix round 4, H6, §14.4: a
+test proving the resolved plan always matches the one produced by the
+session's most recent successful dry-run, across repeated
+dry-run/supersede cycles; a test proving `POST {id}/execute` accepts no
+body and behaves identically whether an empty body, no body, or
+`Content-Length: 0` is sent; a test proving a concurrent
+fresh-dry-run-vs-execute race resolves via the existing generic admission
+CAS alone — one succeeds, the other receives the existing, unmodified
+admission-conflict error — with no PR20-specific locking involved; a test
+proving a session admitted for execute with zero active plans, a
+hypothetical invariant violation, fails loudly as a genuine server error);
 **optimistic-concurrency conflict detection** (§15.1, conditional on
 OD-2 authorizing update mode: a genuine two-connection PostgreSQL test
 proving a manual `PATCH /equipment/{id}` issued *between* dry-run and
 execute causes the affected row's update to be detected as
 zero-rows-affected using the *persisted* token — explicitly asserting
-`execute()` never issues its own fresh `SELECT ... updated_at` before the
+`execute()` never issues its own fresh `SELECT ... version` before the
 CAS UPDATE — and that the whole execute attempt then rolls back per §15's
 atomicity guarantee rather than partially applying other rows; a
 companion test for a record **deleted** after dry-run, §15.1 scenario
@@ -2214,18 +2266,16 @@ companion test for a record **deleted** after dry-run, §15.1 scenario
 after dry-run for a planned CREATE row, surfaced via the existing
 `IntegrityError` path, §16); **post-admission failure lifecycle** (fix
 round 3, H6, §14.4: a test proving that any of the conflicts above
-(concurrency-token mismatch, deleted record, CREATE collision, or a
-Layer-2 re-check failure) drives the session to terminal `failed` *and*
-the confirmed plan to `status='failed'` in the same transaction; a test
-proving `POST {id}/dry-run` on a `failed` session is rejected by the
-existing, unchanged session-state check — i.e. there is **no**
-same-session retry after a post-admission conflict, only a fresh
-`ImportSession`; contrasted explicitly against the Layer-1 tests above,
-where the session is never touched at all); and a **stale-worker** test
-proving a delayed/retried execute attempt against a plan already
-`consumed` by an earlier, successful execute is rejected idempotently
-rather than double-applying, reusing PR19A's existing state-based execute
-idempotency, §3.5).
+(concurrency-token mismatch, deleted record, or CREATE collision) drives
+the session to terminal `failed` *and* the resolved plan to
+`status='failed'` in the same transaction; a test proving `POST
+{id}/dry-run` on a `failed` session is rejected by the existing,
+unchanged session-state check — i.e. there is **no** same-session retry
+after a post-admission conflict, only a fresh `ImportSession`); and a
+**stale-worker** test proving a delayed/retried execute attempt against a
+plan already `consumed` by an earlier, successful execute is rejected
+idempotently rather than double-applying, reusing PR19A's existing
+state-based execute idempotency, §3.5).
 
 **Source blob retention** (§6.6): a forced failure mid-retention-cleanup
 transaction leaves both the metadata redaction and the blob deletion
@@ -2255,18 +2305,22 @@ cross-session job-ID binding (both the `accepted_validation_job_id` and
 `dry_run_job_id` composite FKs), a second concurrent `active` plan for the
 same session (the partial unique index), a duplicate `source_row_number`
 within one plan, a negative summary count, a CREATE/SKIP row carrying a
-non-null `target_equipment_id`/`expected_concurrency_token`, and an
+non-null `target_equipment_id`/`expected_equipment_version`, and an
 UPDATE row missing either — plus the standard fresh-install and
-historical-upgrade convergence tests.
+historical-upgrade convergence tests. **This same discipline applies to
+PR20B's `Equipment.version` migration** (fix round 4, H9): a fresh-install
+test proving the column defaults new rows to `1`; a historical-upgrade
+test proving every pre-existing row backfills to `1`; a downgrade test.
 
-**Equipment concurrency-token finalization** (§15.1, fix round 3, M2): a
-dedicated test enumerating every known Equipment write path in this
-codebase — `PATCH /equipment/{id}`, every `change_status_for_*`
-lifecycle-transition function, and this design's own `execute()` UPDATE
-path — and asserting each one actually advances `updated_at`, since the
-approved V1 CAS token's correctness depends on that being true for every
-reachable write path, not merely the ones exercised elsewhere in this
-plan.
+**Equipment concurrency-token finalization** (§15.1, fix round 4, H9): a
+dedicated test — required as part of **PR20B**, not deferred to PR20E —
+enumerating every known Equipment write path in this codebase (`PATCH
+/equipment/{id}`, every `change_status_for_*` lifecycle-transition
+function) and asserting each one advances `Equipment.version` by exactly
+`1`; a companion test, part of PR20E, proving this design's own
+`execute()` UPDATE path does too — since the approved V1 CAS token's
+correctness depends on that being true for every reachable write path,
+not merely the ones exercised elsewhere in this plan.
 
 **Frontend**: real-client integration tests for the Equipment Master path
 (loading/error/result states against a real or realistically-mocked
@@ -2326,25 +2380,26 @@ implementation PRs must **not**:
 
 The task's suggested starting hypothesis (PR20A parser/validation, PR20B
 dry-run/execution, PR20C frontend wiring, PR20D governance sync) is
-directionally correct but must be adjusted twice over: once for the
-file-ingestion gap (§6.2), and again for this fix round's finding that
-"PR20A can start now" was too casual a claim — some of what §6.2/§6.4
-require turned out to depend on a real, previously-undesigned transaction
-contract and an adapter-context mechanism, not merely "an upload
-endpoint." **Revised proposal, with each slice's readiness stated
-explicitly rather than assumed:**
+directionally correct but has been adjusted repeatedly across fix rounds:
+for the file-ingestion gap (§6.2), for the finding that "PR20A can start
+now" was too casual a claim, and — fix round 4 — to break out a new,
+dedicated Equipment-domain slice for the finalized `Equipment.version`
+concurrency token (§15.1, H9), since introducing that column and
+enforcing it across every *existing* Equipment mutation path is a
+prerequisite significant enough to warrant independent review and merge
+before Equipment Master's own execute path can be built on top of it.
+**Revised proposal (A–G), with each slice's readiness stated explicitly
+rather than assumed:**
 
 - **PR20A — Source ingestion, transaction contract, verified source
-  reader, retention integration, and adapter invocation context.**
-  **READY** — not blocked by OD-1/OD-2/OD-3 (all three are
-  business-policy questions; everything in this slice is a resolved
-  technical design, §6.2/§6.4/§6.5/§6.6), but only after this design's
-  H1R/H2R/H3R resolutions above are themselves independently reviewed and
-  approved (design review is an ordinary prerequisite for any
-  implementation PR in this codebase, not a special gate unique to
-  PR20A). Per this fix round's H3R finding, PR20A's scope is expanded to
-  include **every** technical prerequisite for safe source registration,
-  access, and disposal — not merely storage and upload. Concrete scope:
+  reader, retention integration, adapter invocation context, and
+  registration-endpoint guard.** **READY** — not blocked by
+  OD-1/OD-2/OD-3 (all three are business-policy questions; everything in
+  this slice is a resolved technical design, §6.2/§6.4/§6.5/§6.6), but
+  only after this design's fix-round resolutions above are themselves
+  independently reviewed and approved (design review is an ordinary
+  prerequisite for any implementation PR in this codebase, not a special
+  gate unique to PR20A). Concrete scope:
   - the `import_source_blobs` table + migration (§6.2), 1:1 FK to
     `import_sources`;
   - the single authoritative, server-checksummed registration operation
@@ -2354,28 +2409,34 @@ explicitly rather than assumed:**
     `register_or_correct_source` used inside that operation (§6.2);
   - the new upload endpoint and its transactional-finalize contract
     (§6.2);
+  - the mechanical guard added to the existing `POST /{id}/source`
+    handler rejecting `dataset_type="equipment_master"` before any CRUD
+    call (fix round 3/4, H2R2, §6.2) — the one narrowly-scoped
+    modification this design makes to an existing PR19A endpoint,
+    behaviorally inert for every other dataset type;
   - the `ImportSourceReader`/`SourceDescriptor`/`VerifiedSourceContent`
     component (§6.5) — blob-load, bound-check, checksum-recompute, and
     length-verify at read time, called by the framework before
-    `adapter.parse()`, with its failure-classification table routing
-    every failure through the existing PR19A TX1/TX2 crash path;
+    `adapter.parse()` **and** before `adapter.plan_dry_run()` (fix round
+    4, H1R2), with its failure-classification table routing every
+    failure through the existing PR19A TX1/TX2 crash path;
   - source blob retention integrated into PR19A's existing
     `redact_session` transaction (§6.6) — one additional same-transaction
     `DELETE`, not a second retention mechanism;
   - the `AdapterInvocationContext` contextvar mechanism added to
-    `import_validation_service.py`/`import_execution_service.py` (§6.4,
-    including its `dry_run_plan_id` field) — additive, does not change
-    any existing function's signature or observable behavior for any
-    adapter that doesn't use it.
+    `import_validation_service.py`/`import_execution_service.py` (§6.4)
+    — additive, does not change any existing function's signature or
+    observable behavior for any adapter that doesn't use it.
 
   **No Equipment-domain write path is introduced by this slice** — it
   stores bytes, verifies them at read time, retires them on schedule, and
   threads context; nothing more. **API exposure**: one new endpoint
-  (`POST /import-sessions/{id}/source/upload`), Administrator-only, no
-  Equipment data reachable through it yet (no adapter is registered until
-  PR20B). **Schema/migration impact**: yes, one new additive table
-  (`import_source_blobs`), no modification to any existing table.
-  **Deployable independently**: yes — with no adapter registered for
+  (`POST /import-sessions/{id}/source/upload`), Administrator-only, plus
+  one guard on an existing endpoint; no Equipment data reachable through
+  either yet (no adapter is registered until PR20C). **Schema/migration
+  impact**: yes, one new additive table (`import_source_blobs`), no
+  modification to any existing table's columns. **Deployable
+  independently**: yes — with no adapter registered for
   `equipment_master`, uploading a source is possible but validating it
   still returns `422 IMPORT_ADAPTER_NOT_REGISTERED` exactly as it does for
   every other still-unimplemented dataset type today, so this slice alone
@@ -2384,81 +2445,119 @@ explicitly rather than assumed:**
   list above — if independent review identifies a further undefined
   technical prerequisite, PR20A's scope must expand again (or split
   further) rather than being declared ready with a gap.
-- **PR20B — Equipment Master parser, normalization, and validation
-  adapter**: `EquipmentMasterAdapter.parse`/`preload_business_context`/
-  `validate_business_rules`, plus `register_adapter(EquipmentMasterAdapter())`
-  (§6.1, §6.3). **NOT READY — blocked on OD-1/OD-2/OD-3** (field mapping,
-  create/update policy, and identity-conflict policy are all read inside
-  `validate_business_rules`, §6.3). Depends on PR20A (needs the verified
-  source reader, blob storage, and context mechanism to have real,
-  checked bytes and identity to parse against — `parse()` receives a
-  `VerifiedSourceContent`, never a raw/unverified source, §6.5). **API
-  exposure**: `POST /{id}/validate` becomes live for
-  `dataset_type=equipment_master` once this slice registers the adapter;
-  `plan_dry_run`/`execute` remain `NotImplementedError` per the base
-  `ImportAdapter` contract's own default until PR20C lands — matching
-  PR19A2's own precedent of shipping `validate` safely ahead of
-  `dry_run`/`execute`. **Schema/migration impact**: none. **Owner
-  Decision required**: yes, OD-1/OD-2/OD-3, before this slice's own
-  implementation PR can begin (not merely before it merges).
-- **PR20C — Dry-run and execution integration**: `plan_dry_run`/
-  `persist_dry_run_plan`/`execute` (§6.3), the two new persisted-plan
-  tables and their full physical constraint set (`equipment_master_dry_run_plans`/
+- **PR20B — Equipment optimistic-concurrency foundation (NEW, fix round
+  4, H9).** **READY as a technical matter** — introducing
+  `Equipment.version` and wiring every *existing* Equipment mutation path
+  to increment it is a general Equipment-domain improvement, independent
+  of Equipment Master's own field mapping/policy questions, and touches
+  no PR20-specific code. **Its necessity for PR20 specifically is
+  conditional on OD-2**: if OD-2 ultimately authorizes update mode, this
+  slice is a hard prerequisite for PR20E (below); if OD-2 resolves to
+  create-only, this slice is not required for PR20 to proceed at all
+  (though it may still be independently valuable as a general
+  Equipment-domain improvement, outside this design's scope to mandate).
+  Concrete scope: the `version INTEGER NOT NULL DEFAULT 1` migration on
+  `equipment` (§15.1), with backfill; wiring `PATCH /equipment/{id}` and
+  every `change_status_for_*` lifecycle-transition function to increment
+  it; the required regression test enumerating and proving every one of
+  those paths advances `version` by exactly `1` (§22). **API exposure**:
+  none new — existing endpoints' observable behavior is unchanged except
+  for the new `version` field appearing in Equipment responses, if
+  exposed (an implementation-time API-contract decision, not fixed by
+  this design). **Schema/migration impact**: yes, one new column with
+  backfill, no modification to any other column.
+- **PR20C — Equipment Master parser, normalization, and validation
+  adapter** (renumbered from PR20B): `EquipmentMasterAdapter.parse`/
+  `preload_business_context`/`validate_business_rules`, plus
+  `register_adapter(EquipmentMasterAdapter())` (§6.1, §6.3). **NOT
+  READY — blocked on OD-1/OD-2/OD-3** (field mapping, create/update
+  policy, and identity-conflict policy are all read inside
+  `validate_business_rules`, §6.3). Depends on PR20A only (needs the
+  verified source reader, blob storage, and context mechanism to have
+  real, checked bytes and identity to parse against — `parse()` receives
+  a `VerifiedSourceContent`, never a raw/unverified source, §6.5); does
+  **not** depend on PR20B, since parsing/validation never touches
+  Equipment concurrency tokens. **API exposure**: `POST /{id}/validate`
+  becomes live for `dataset_type=equipment_master` once this slice
+  registers the adapter; `plan_dry_run`/`execute` remain
+  `NotImplementedError` per the base `ImportAdapter` contract's own
+  default until PR20D/PR20E land — matching PR19A2's own precedent of
+  shipping `validate` safely ahead of `dry_run`/`execute`. **Schema/
+  migration impact**: none. **Owner Decision required**: yes,
+  OD-1/OD-2/OD-3, before this slice's own implementation PR can begin
+  (not merely before it merges).
+- **PR20D — Persisted DryRunPlan** (renumbered/narrowed from the prior
+  PR20C, execution split out into PR20E below): `plan_dry_run`/
+  `persist_dry_run_plan` (§6.3), the two new persisted-plan tables and
+  their full physical constraint set (`equipment_master_dry_run_plans`/
   `equipment_master_dry_run_plan_rows`, including the H8 composite FKs,
-  partial unique index, and CHECK constraints, §14.2) and their migration,
-  the two-layer pre-admission/post-admission execution contract (§14.4,
-  H6/H7 — the optional-at-the-generic-route `dry_run_plan_id` field, the
-  Layer-1 framework-owned pre-admission validation, and the Layer-2
-  locked post-admission re-check) and the `GET /{id}/dry-run-plan`
-  retrieval endpoint (§14.6), the plan-artifact retention integration
-  (§6.6/§14.9, H9 — redacting `normalized_values`/`matched_identity_fields`/
-  `warnings` in the same claimed/fenced retention transaction that already
-  redacts session metadata and deletes the source blob), and the
-  optimistic-concurrency execute path reading its token from the
-  persisted plan row rather than a fresh read, using the `updated_at`
-  token this design now finalizes (§15.1, M2 — conditional on OD-2 for
-  whether update mode is authorized at all, not for which token
-  mechanism to use, which is no longer an open question). **NOT READY —
-  blocked on OD-1/OD-2/OD-3** (inherits PR20B's blockers; §15.1's
-  concurrency mechanism itself is technically ready but has nothing to
-  protect until OD-2 authorizes update mode). Depends on PR20B (execute
-  *loads and applies* the confirmed persisted plan produced by PR20B's
-  `validate_business_rules`/`plan_dry_run` pipeline — it never re-derives
-  or recomputes that plan, §14.1). **API exposure**: `POST
-  /{id}/dry-run`, `GET /{id}/dry-run-plan`, `POST /{id}/execute`
-  (`dry_run_plan_id` required for this dataset type only, §14.4) become
+  partial unique index, and CHECK constraints, §14.2) and their
+  migration, and the `GET /{id}/dry-run-plan` retrieval endpoint (§14.6),
+  and the plan-artifact retention integration (§6.6/§14.9 — redacting
+  `normalized_values`/`matched_identity_fields`/`warnings` in the same
+  claimed/fenced retention transaction that already redacts session
+  metadata and deletes the source blob). **NOT READY — blocked on
+  OD-1/OD-2/OD-3** (inherits PR20C's blockers — the plan's row content is
+  meaningless without field mapping/policy resolved). Depends on PR20C
+  (needs the parse/validate pipeline to compute a plan against). Its
+  `expected_equipment_version` column is a plain integer snapshot, not a
+  foreign key, so this slice has no *hard* schema dependency on PR20B —
+  but the value is only meaningful once PR20B's column exists, so PR20B
+  should still land first as a matter of implementation sequencing.
+  **API exposure**: `POST /{id}/dry-run`, `GET /{id}/dry-run-plan` become
   live for this dataset type; there is no `dry-run-summary` recompute
   endpoint. **Schema/migration impact**: yes — the two new persisted-plan
-  tables with their full constraint set (§14.2), in addition to whatever
-  PR20A already added; the `updated_at`-based CAS token requires no
-  further migration, per §15.1's finalized decision.
-- **PR20D — Frontend real-API wiring**: replaces the Equipment Master
-  `MockImportClient` path only (§20). **Depends on PR20A+PR20B+PR20C's
-  API contract being stable enough to integrate against** — likely
-  sequenced after PR20C, or in parallel against a contract-frozen API
-  surface if the team prefers (an implementation-sequencing choice, not a
-  design question). Not blocked by OD-1/OD-2/OD-3 directly, but has
-  nothing real to wire against until PR20C lands.
-- **PR20E — Governance sync**: records PR20's actual merged scope,
-  following this repository's established post-merge documentation-sync
-  pattern (as this document's own predecessor, the PR19B governance sync,
-  did) — not performed by this Design PR itself (§25).
+  tables with their full constraint set (§14.2).
+- **PR20E — Execution** (split out from the prior PR20C, fix round 4,
+  H6/H9): `execute()` (§6.3) — internally resolving the session's active
+  plan (§14.4, no client-supplied plan id, generic bodyless `POST
+  /{id}/execute` contract fully preserved), applying the
+  optimistic-concurrency CAS using `Equipment.version` (§15.1), and the
+  post-admission failure lifecycle (session/plan both terminally `failed`
+  together, §14.4). **NOT READY — blocked on OD-1/OD-2/OD-3** (inherits
+  PR20D's blockers; the concurrency mechanism itself is technically
+  ready but has nothing to protect until OD-2 authorizes update mode).
+  **Hard dependency on both PR20B and PR20D** — PR20B must exist for the
+  CAS predicate to have a real column to compare against, and PR20D must
+  exist for there to be a persisted plan to resolve and apply; this
+  slice cannot be implemented before either merges. **API exposure**:
+  `POST /{id}/execute` becomes live for this dataset type — the route
+  itself is unchanged from PR19A's existing generic contract. **Schema/
+  migration impact**: none beyond what PR20B/PR20D already added.
+- **PR20F — Frontend real-API wiring** (renumbered from PR20D): replaces
+  the Equipment Master `MockImportClient` path only (§20), displaying the
+  resolved plan's `id`/summary for operator traceability without
+  submitting it anywhere (§14.6, §14.8). **Depends on PR20A+PR20C+PR20D+
+  PR20E's API contract being stable enough to integrate against** —
+  likely sequenced last among the backend slices, or in parallel against
+  a contract-frozen API surface if the team prefers (an
+  implementation-sequencing choice, not a design question). Not blocked
+  by OD-1/OD-2/OD-3 directly, but has nothing real to wire against until
+  the backend slices land.
+- **PR20G — Governance sync** (renumbered from PR20E): records PR20's
+  actual merged scope, following this repository's established
+  post-merge documentation-sync pattern (as this document's own
+  predecessor, the PR19B governance sync, did) — not performed by this
+  Design PR itself (§25).
 
 **Summary — which slice can start now, which is blocked, and by what:**
 
 | Slice | Owner-Decision-blocked? | Depends on | Ready now? |
 |---|---|---|---|
 | PR20A | No | This design's own review/approval | **Yes** |
-| PR20B | Yes — OD-1, OD-2, OD-3 | PR20A | No |
-| PR20C | Yes — OD-1, OD-2, OD-3 (and OD-2 specifically for §15.1) | PR20B | No |
-| PR20D | No (indirectly gated by having something real to integrate) | PR20C | No |
-| PR20E | No | All of the above merged | No |
+| PR20B | No (technically) — necessity conditional on OD-2 | None | **Yes** (technically; may be deferred pending OD-2) |
+| PR20C | Yes — OD-1, OD-2, OD-3 | PR20A | No |
+| PR20D | Yes — OD-1, OD-2, OD-3 | PR20C | No |
+| PR20E | Yes — OD-1, OD-2, OD-3 | PR20B and PR20D | No |
+| PR20F | No (indirectly gated by having something real to integrate) | PR20A, PR20C, PR20D, PR20E | No |
+| PR20G | No | All of the above merged | No |
 
 No slice exposes a production endpoint before its required safety/storage
 contract exists: PR20A's own new endpoint reaches no Equipment data;
-PR20B's `validate` reaches only findings, never a write; `dry_run`/
-`execute` remain unreachable (`NotImplementedError`) until PR20C, which
-itself cannot be implemented before OD-1/OD-2/OD-3 resolve.
+PR20B changes no observable Equipment behavior beyond the new column;
+PR20C's `validate` reaches only findings, never a write; `plan_dry_run`/
+`execute` remain unreachable (`NotImplementedError`) until PR20D/PR20E,
+which themselves cannot be implemented before OD-1/OD-2/OD-3 resolve.
 
 ---
 
@@ -2470,7 +2569,7 @@ convention PR19A's own design PR used (recording the design as approved/
 pending, not marking the Roadmap item implemented). No broad governance
 sync (ROADMAP.md/ROADMAP_STATUS.md/DECISION_LOG.md/knowledge/* rewrite) is
 performed here; that follows the established pattern only after actual
-implementation slices merge (§24, PR20E), mirroring how PR19A's own design
+implementation slices merge (§24, PR20G), mirroring how PR19A's own design
 doc (GitHub PR #83) did not itself update the full governance surface —
 the post-implementation governance-sync PRs (#87, #88) did.
 
@@ -2606,16 +2705,19 @@ gates.
       (`dry_run_job_id`/`accepted_validation_job_id`), populated by the
       framework from values it already holds, never queried for "the
       latest" of either (§6.4, §14.2).
-- [x] **Fix round 3 (H6)**: corrected the execution admission/failure
-      ordering to match the actual merged state machine — split into a
-      framework-owned, no-mutation Layer-1 pre-admission check and a
-      locked Layer-2 post-admission re-check; defined the terminal
-      post-admission failure lifecycle explicitly (session `failed`, plan
-      `failed`, no same-session retry) (§14.4, §15.1).
-- [x] **Fix round 3 (H7)**: made `dry_run_plan_id` optional at the shared
-      generic `execute` route and required only for `equipment_master`,
-      preserving the reused PR19A API contract for every other dataset
-      type (§14.4).
+- [x] **Fix round 3 (H6)** *(post-admission failure lifecycle retained,
+      pre-admission mechanism superseded by fix round 4 H6 below)*:
+      corrected the execution admission/failure ordering to match the
+      actual merged state machine and defined the terminal post-admission
+      failure lifecycle explicitly (session `failed`, plan `failed`, no
+      same-session retry) (§14.4, §15.1) — the specific two-layer,
+      client-supplied-plan-id mechanism this round used to enforce it was
+      itself superseded by fix round 4's internal-resolution mechanism.
+- [x] **Fix round 3 (H7)** *(superseded by fix round 4 H6)*: made
+      `dry_run_plan_id` optional at the shared generic `execute` route —
+      independent review correctly identified that even an optional new
+      field was an unjustified change to PR19A's existing bodyless
+      contract; fix round 4 removes the field entirely (§14.4).
 - [x] **Fix round 3 (H8)**: completed the persisted-plan tables' physical
       integrity contract — composite ownership FKs for both job-identity
       columns, a partial unique index for one active plan per session,
@@ -2626,12 +2728,44 @@ gates.
       and deletes the source blob, closing the gap where the two new
       tables' JSONB content could survive the 180-day purge indefinitely
       (§14.9).
-- [x] **Fix round 3 (M2)**: finalized the Equipment concurrency-token
-      choice as `updated_at` in this design, rather than deferring it to
-      the PR20C implementation PR, with a required test proving every
-      known Equipment write path advances it (§15.1).
+- [x] **Fix round 3 (M2)** *(reversed by fix round 4 H9)*: finalized the
+      Equipment concurrency-token choice as `updated_at` — independent
+      review correctly identified a dedicated `Equipment.version` column
+      as the correctness-driven choice; fix round 4 reverses this
+      decision (§15.1).
 - [x] **Fix round 3**: did not close OD-1/OD-2/OD-3 — no repository
       evidence for the real source schema or either business policy has
       appeared since fix round 2; all three remain OPEN (§9).
 - [x] **Fix round 3**: did not start PR20A or any implementation PR; this
+      remains a design-only document (§26).
+- [x] **Fix round 4 (H1R2)**: threaded `VerifiedSourceContent` to
+      `plan_dry_run` via a new `AdapterInvocationContext` field, populated
+      by the framework calling `ImportSourceReader.open_verified` before
+      `plan_dry_run` — the adapter still never calls the reader itself
+      (§6.4, §6.5).
+- [x] **Fix round 4 (H2R2)**: specified the actual guard added to the
+      existing `POST /{id}/source` handler enforcing rejection of
+      `dataset_type="equipment_master"` before any CRUD call, with a
+      stable error code (§6.2).
+- [x] **Fix round 4 (H4R2)**: threaded `dry_run_job_id`/
+      `accepted_validation_job_id` through the invocation context so the
+      persisted plan header can populate its own job-identity columns
+      without querying for "the latest" of either (§6.4, §14.2).
+- [x] **Fix round 4 (H6)**: reversed fix round 3's H6/H7 mechanism —
+      `POST /{id}/execute` remains PR19A's exact, unmodified, bodyless
+      generic contract; `execute()` resolves the session's active plan
+      internally via a DB-provable partial-unique-index invariant, with
+      the race against a concurrent dry-run closed by the existing
+      generic session-CAS admission mechanism alone, no new locking
+      primitive (§14.4).
+- [x] **Fix round 4 (H9)**: reversed fix round 3's M2 resolution —
+      selected a dedicated `Equipment.version` integer column as the
+      finalized concurrency token, mirroring `ImportSession.version`;
+      broke the column's introduction and existing-mutation-path
+      enforcement into its own new implementation slice, PR20B, required
+      before PR20E (execution) can be implemented (§14.2, §15.1, §24).
+- [x] **Fix round 4**: did not close OD-1/OD-2/OD-3 — no repository
+      evidence for the real source schema or either business policy has
+      appeared since fix round 3; all three remain OPEN (§9).
+- [x] **Fix round 4**: did not start PR20A or any implementation PR; this
       remains a design-only document (§26).
