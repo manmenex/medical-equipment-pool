@@ -121,27 +121,31 @@ PR18.
 
 | Sequence | Roadmap item | Status |
 |---|---|---|
-| TBD | PR20 — Equipment Master Import | Planned; not started. Depends on PR19A only — `docs/audits/04-consolidated-implementation-plan.md` records PR20's dependency as "PR19A (the backend import framework; PR19B is a frontend preview only and is not a dependency)", so PR19B's merge does not change PR20's readiness. A historical, still-unresolved question of *relative sequencing* (not a hard dependency) between PR19B and PR20 was left TBD pending an Owner Decision while PR19B was still provisional (see below); PR19B has since merged, but that TBD relative-ordering question was not itself an implementation blocker and remains unresolved — no Owner Decision has been made, and this governance sync does not create one. |
+| Next | PR20 — Equipment Master Import | Planned; not started; the next planned Roadmap item, first on this table now that PR19 (PR19A + PR19B) has moved off it (see below). Depends on PR19A only — `docs/audits/04-consolidated-implementation-plan.md` records PR20's dependency as "PR19A (the backend import framework; PR19B is a frontend preview only and is not a dependency)", so PR19B's merge does not change PR20's readiness. A separate, historical question of *relative sequencing* (not a hard dependency, and not a blocker on starting PR20) between PR19B and PR20 was left open pending an Owner Decision while PR19B was still provisional (see the historical note below); PR19B has since merged, and that historical question was never a precondition for PR20 to begin — no Owner Decision has been made on it, this governance sync does not create one, and it does not change PR20's own "next planned" position on this table. |
 | After PR20 | PR21 — Legacy Receive and Issue History Import | Planned; **depends on PR20** (`docs/audits/04-consolidated-implementation-plan.md`: "Dependencies: PR19A, PR20") |
 | After PR20, PR21 | PR22 — Legacy Data Validation and Reconciliation | Planned; depends on PR20 and PR21 |
 | After PR22 | PR23 — Cutover Readiness | Planned |
 | After PR19–PR23 | PR24 — Go-live / deployment | Planned; blocked by PR19–PR23 |
 
-**Historical note on PR19B/PR20 relative ordering:** while PR19B was still
-a provisional, unreviewed Draft (GitHub PR #80), this table carried both a
-PR19B row and a PR20 row with no relative numeric order between them,
-noting the sequencing was undecided pending an Owner Decision. PR19B has
+**Historical note on PR19B/PR20 relative ordering:** before PR19B merged,
+while it was still a provisional, unreviewed Draft (GitHub PR #80), this
+table carried both a PR19B row and a PR20 row with no relative numeric
+order between them, and noted that their sequencing had not been fixed by
+an Owner Decision. That was never a statement about a hard dependency —
+PR20 has only ever depended on PR19A, not PR19B — it only meant no Owner
+Decision had settled which of the two would be worked on first. PR19B has
 since been independently reviewed and merged (squash SHA
 `04f5bf5c76b51744981d1cc8072c074e604224e9`; see "Current baseline" above
-and "Roadmap PR19 split" below), so its own row has moved off this table
-the same way PR19A's did. The relative-ordering question itself was never
-about a hard dependency — PR20 has only ever depended on PR19A, not
-PR19B — and remains open exactly as before: no Owner Decision has
-resolved it, and this governance sync does not introduce one. PR21
-through PR24's ordering is preserved as-is because it reflects an
-existing authoritative dependency chain
-(`docs/audits/04-consolidated-implementation-plan.md` Part D, Group 8:
-PR21 depends on PR20; PR22 depends on PR20 and PR21; PR24 is blocked by
+and "Roadmap PR19 split" below); its own row has therefore moved off this
+table the same way PR19A's did, and **the current roadmap now proceeds to
+PR20** as the next planned item, shown with sequence "Next" in the table
+above. This governance sync does not manufacture an Owner Decision to
+reach that conclusion — it is simply what already happened: the one item
+whose relative order was ever in question (PR19B) is done, leaving PR20
+as the sole remaining next candidate. PR21 through PR24's ordering is
+preserved as-is because it reflects an existing authoritative dependency
+chain (`docs/audits/04-consolidated-implementation-plan.md` Part D, Group
+8: PR21 depends on PR20; PR22 depends on PR20 and PR21; PR24 is blocked by
 PR19–PR23), not a new sequencing decision introduced by this governance
 sync.
 

@@ -41,13 +41,14 @@ all seven required closure steps are satisfied. This supersedes the
 entry below insofar as it described PR19B as unimplemented; that entry's
 description of the original split decision remains accurate historical
 record. GitHub PR #81 remains closed without merge, superseded by
-PR19A1/PR19A2/PR19A3 — unaffected by this entry. A separate,
-still-unresolved question of relative sequencing between PR19B and PR20
-was left TBD pending an Owner Decision while PR19B was provisional
-(`docs/ROADMAP_STATUS.md`); PR20 has only ever depended on PR19A, not
-PR19B (`docs/audits/04-consolidated-implementation-plan.md`), so this
-merge does not change PR20's readiness, and this entry does not resolve
-that sequencing question or start PR20. See `docs/DECISION_LOG.md`
+PR19A1/PR19A2/PR19A3 — unaffected by this entry. Before PR19B merged, a
+separate question of relative work sequencing (never a hard dependency —
+PR20 has only ever depended on PR19A, not PR19B, per
+`docs/audits/04-consolidated-implementation-plan.md`) between PR19B and
+PR20 had not been fixed by an Owner Decision (`docs/ROADMAP_STATUS.md`);
+PR19B has since merged, which settles which of the two came first without
+a new Owner Decision — PR20 is simply the next planned Roadmap item now,
+not started by this entry. See `docs/DECISION_LOG.md`
 ("Roadmap PR19B merged: Exception Record closed; Roadmap PR19 fully
 complete") for the full review-round and closure-evidence record.
 

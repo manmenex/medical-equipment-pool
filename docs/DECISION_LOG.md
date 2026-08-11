@@ -1828,13 +1828,13 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
     ever depended on PR19A, not PR19B
     (`docs/audits/04-consolidated-implementation-plan.md`: "Dependencies:
     PR19A ... PR19B is a frontend preview only and is not a dependency").
-    A separate, still-unresolved question of *relative sequencing*
-    (not a hard dependency) between PR19B and PR20 was left TBD in
-    `docs/ROADMAP_STATUS.md` pending an Owner Decision while PR19B was
-    still provisional; PR19B's merge does not itself resolve that
-    question, and this entry does not create a new Owner Decision to
-    resolve it. PR20 remains the next planned, not-yet-started Roadmap
-    item.
+    Before PR19B merged, a separate question of *relative work sequencing*
+    (never a hard dependency) between PR19B and PR20 had not been fixed by
+    an Owner Decision, per `docs/ROADMAP_STATUS.md`. PR19B has since
+    merged, which settles which of the two came first — without this entry
+    creating a new Owner Decision to do so. **PR20 is the next planned,
+    not-yet-started Roadmap item**, and is not qualified or blocked by that
+    now-historical sequencing question.
   - **Owner Decision #2** (branding configuration ownership, recorded
     elsewhere in this log) is unaffected by this entry and remains open.
   - **No change to any other Roadmap PR's scope**, business rule,

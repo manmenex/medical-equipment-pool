@@ -117,10 +117,13 @@ skeleton) is now fully complete.** No concrete legacy dataset import
 either slice — that remains future Roadmap PR20/PR21 scope, not yet
 started. GitHub PR #81, an earlier unsplit PR19A candidate, was closed
 without merging. PR20 depends on PR19A only, not PR19B
-(`docs/audits/04-consolidated-implementation-plan.md`); a separate,
-still-unresolved question of relative sequencing between PR19B and PR20
-was left TBD pending an Owner Decision while PR19B was provisional and
-remains open — this governance sync does not resolve it or start PR20.
+(`docs/audits/04-consolidated-implementation-plan.md`). Before PR19B
+merged, a separate question of relative work sequencing (never a hard
+dependency) between PR19B and PR20 had not been fixed by an Owner
+Decision; PR19B has since merged, which settles which of the two came
+first without any new Owner Decision — PR20 is simply the next planned
+item now, not started, and not blocked or qualified by that now-historical
+question.
 
 1. PR19A — Legacy Import Foundation (backend) — **complete.**
 2. PR19B — Legacy Import Frontend Skeleton (workflow-review prototype
@@ -182,13 +185,13 @@ Legacy migration and reconciliation are mandatory before PR24.
   GitHub PR #80 (squash SHA `04f5bf5c76b51744981d1cc8072c074e604224e9`).
   **PR19B is fully complete; Roadmap PR19 as a whole is now fully complete,
   and the Exception Record governing this split (`docs/DECISION_LOG.md`)
-  is closed.** A separate, still-unresolved question of relative sequencing
-  between PR19B and PR20 was left TBD pending an Owner Decision while
-  PR19B was provisional and remains open; PR20 has only ever depended on
-  PR19A, so PR19B's merge does not change PR20's own readiness, and this
-  governance sync does not resolve the sequencing question or start PR20.
-  GitHub PR #81, an earlier unsplit PR19A candidate, was closed without
-  merging, superseded by PR19A1/PR19A2/PR19A3.
+  is closed.** Before PR19B merged, a separate question of relative work
+  sequencing (never a hard dependency — PR20 has only ever depended on
+  PR19A) between PR19B and PR20 had not been fixed by an Owner Decision;
+  PR19B has since merged, which settles which of the two came first
+  without a new Owner Decision — PR20 is simply the next planned Roadmap
+  item now, not started. GitHub PR #81, an earlier unsplit PR19A candidate,
+  was closed without merging, superseded by PR19A1/PR19A2/PR19A3.
 - Broader PR15 metrics/tracing/dashboards/aggregation/alerting work is still
   unscheduled.
 

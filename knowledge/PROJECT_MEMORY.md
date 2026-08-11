@@ -164,14 +164,14 @@ now fully complete**, and the Exception Record governing this split
 (`docs/DECISION_LOG.md`) is closed. This split was an explicit,
 Owner-approved exception to this repository's usual
 design-document-first slice precedent, since at the time of approval no
-PR19 design document existed. A separate, still-unresolved question of
-relative sequencing between PR19B and PR20 was left TBD pending an Owner
-Decision while PR19B was provisional (`docs/ROADMAP_STATUS.md`) and
-remains open; PR20 has only ever depended on PR19A, not PR19B
-(`docs/audits/04-consolidated-implementation-plan.md`), so PR19B's merge
-does not change PR20's readiness, and this governance sync does not
-resolve the sequencing question or start PR20. The remaining
-Roadmap-numbered items are:
+PR19 design document existed. Before PR19B merged, a separate question of
+relative work sequencing (never a hard dependency — PR20 has only ever
+depended on PR19A, not PR19B, per
+`docs/audits/04-consolidated-implementation-plan.md`) between PR19B and
+PR20 had not been fixed by an Owner Decision (`docs/ROADMAP_STATUS.md`);
+PR19B has since merged, which settles which of the two came first without
+a new Owner Decision. **PR20 is the next planned Roadmap item, not
+started.** The remaining Roadmap-numbered items are:
 
 - PR20–PR22: Equipment Master, AppSheet Receive/Issue history, validation and
   reconciliation;

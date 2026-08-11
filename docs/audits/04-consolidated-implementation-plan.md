@@ -459,11 +459,13 @@ validation/dry-run/import execution, or production legacy dataset adapter
 is implemented; concrete legacy dataset import (Equipment Master, Receive
 History, Issue History) remains unimplemented, future Roadmap PR20/PR21
 scope. PR20's dependency on PR19A only (not PR19B, see its Dependencies
-bullet below) is unchanged by PR19B's merge; a separate, still-unresolved
-question of relative sequencing between PR19B and PR20 was left TBD
-pending an Owner Decision while PR19B was provisional
-(`docs/ROADMAP_STATUS.md`) and remains open — this entry does not resolve
-it or start PR20.
+bullet below) is unchanged by PR19B's merge. Before PR19B merged, a
+separate question of relative work sequencing (never a hard dependency)
+between PR19B and PR20 had not been fixed by an Owner Decision
+(`docs/ROADMAP_STATUS.md`); PR19B has since merged, which settles which of
+the two came first without this entry creating a new Owner Decision.
+**PR20 is the next planned Roadmap item, not started by this entry**, and
+is not qualified or blocked by that now-historical sequencing question.
 
 #### PR19A — Legacy Import Foundation (backend)
 - **Objective:** Provide a staged, validation-first, traceable import framework.
