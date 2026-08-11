@@ -27,6 +27,15 @@ const EquipmentVerifyChecklistPage = lazy(() =>
 );
 const ReportPrintPage = lazy(() => import("@/pages/ReportPrintPage").then((m) => ({ default: m.ReportPrintPage })));
 const AdminPage = lazy(() => import("@/pages/AdminPage").then((m) => ({ default: m.AdminPage })));
+const LegacyImportListPage = lazy(() =>
+  import("@/pages/LegacyImportListPage").then((m) => ({ default: m.LegacyImportListPage }))
+);
+const LegacyImportCreatePage = lazy(() =>
+  import("@/pages/LegacyImportCreatePage").then((m) => ({ default: m.LegacyImportCreatePage }))
+);
+const LegacyImportSessionDetailPage = lazy(() =>
+  import("@/pages/LegacyImportSessionDetailPage").then((m) => ({ default: m.LegacyImportSessionDetailPage }))
+);
 const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 const NotFoundPage = lazy(() => import("@/pages/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
 
@@ -76,6 +85,13 @@ export function App() {
           {/* Roadmap PR17 Slice 4: the final PR17 report screen, same
               /reports sub-route convention as Slice 3's two screens. */}
           <Route path="/reports/equipment-verify-checklist" element={<EquipmentVerifyChecklistPage />} />
+          {/* Roadmap PR19B (Legacy Import Frontend Skeleton): preview-only
+              routes, no real import execution -- see
+              pages/LegacyImport*.tsx and types/legacyImport.ts's
+              file-level note. */}
+          <Route path="/imports" element={<LegacyImportListPage />} />
+          <Route path="/imports/new" element={<LegacyImportCreatePage />} />
+          <Route path="/imports/:sessionId" element={<LegacyImportSessionDetailPage />} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>

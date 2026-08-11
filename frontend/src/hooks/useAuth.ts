@@ -102,3 +102,14 @@ export function canImportInventory(user: RoleLike): boolean {
 export function canDispatchOrReceiveEquipment(user: RoleLike): boolean {
   return hasRole(user, "administrator", "equipment_pool_staff");
 }
+
+// Roadmap PR19B (Legacy Import Frontend Skeleton): mirrors the now-merged
+// PR19A backend's real authorization boundary -- every
+// /import-sessions endpoint (backend/app/api/v1/import_sessions.py) is
+// gated by ADMINISTRATOR_ONLY_ROLES, the same tier as canImportInventory's
+// PR12 precedent. This is a usability-only mirror of that backend rule,
+// not the enforcement boundary itself -- the backend remains the real
+// authority.
+export function canManageLegacyImport(user: RoleLike): boolean {
+  return hasRole(user, "administrator");
+}
