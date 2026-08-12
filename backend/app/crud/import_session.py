@@ -267,6 +267,96 @@ async def register_or_correct_source(
     )
 
 
+async def register_or_correct_source_pending(
+    db: AsyncSession,
+    *,
+    session_id: uuid.UUID,
+    dataset_type: str,
+    checksum: str,
+    byte_size: int,
+    content_type: str | None,
+    filename: str | None,
+    source_version: str | None,
+) -> tuple[ImportSource, bool]:
+    """Roadmap PR20A (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    §6.2): an additive, non-committing variant of
+    `register_or_correct_source` above, used inside the new upload
+    endpoint's own transaction (§6.2 step 2(c)) so a single `db.commit()`
+    -- issued by the caller, never this function -- finalizes this row
+    and the caller's own `import_source_blobs` write together as one
+    physical transaction. Identical INSERT/CAS-UPDATE/`await db.flush()`
+    logic to `register_or_correct_source`, with every `await db.commit()`/
+    `await db.rollback()` removed; `register_or_correct_source` itself is
+    completely unmodified and remains the only entry point the existing
+    metadata-only `POST /{id}/source` handler calls, so its own committing
+    behavior is unaffected for every dataset_type. Returns (source,
+    created). Raises `ImportSourceMismatchError` unchanged if the source
+    is already `frozen` with a different identity fingerprint -- the
+    caller must not catch this and commit anyway."""
+    fingerprint = _source_fingerprint(
+        checksum=checksum, byte_size=byte_size, dataset_type=dataset_type, filename=filename, source_version=source_version
+    )
+    source = ImportSource(
+        import_session_id=session_id,
+        status="registered",
+        checksum=checksum,
+        byte_size=byte_size,
+        content_type=content_type,
+        filename=filename,
+        source_version=source_version,
+        options_fingerprint=_EMPTY_OPTIONS_FINGERPRINT,
+        source_fingerprint=fingerprint,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(source)
+    try:
+        await db.flush()
+    except IntegrityError:
+        # §6.2 step 2(c): the caller owns the transaction boundary -- a
+        # failed INSERT still requires discarding the failed statement
+        # before the CAS UPDATE fallback below can run in the same
+        # transaction (matches `register_or_correct_source`'s own use of
+        # `db.rollback()` here, which is safe: PostgreSQL requires the
+        # failed statement to be discarded before further statements in
+        # the same transaction can proceed, and no other write has
+        # occurred yet in this call).
+        await db.rollback()
+    else:
+        return source, True
+
+    result = await db.execute(
+        update(ImportSource)
+        .where(ImportSource.import_session_id == session_id, ImportSource.status == "registered")
+        .values(
+            checksum=checksum,
+            byte_size=byte_size,
+            content_type=content_type,
+            filename=filename,
+            source_version=source_version,
+            options_fingerprint=_EMPTY_OPTIONS_FINGERPRINT,
+            source_fingerprint=fingerprint,
+        )
+        .returning(ImportSource)
+    )
+    row = result.scalar_one_or_none()
+    if row is not None:
+        return row, False
+
+    # The CAS UPDATE affected zero rows -- the source is 'frozen'. Frozen
+    # is terminal and never reversed, so a plain SELECT now carries no
+    # race (identical reasoning to `register_or_correct_source` above).
+    existing = (
+        await db.execute(select(ImportSource).where(ImportSource.import_session_id == session_id))
+    ).scalar_one_or_none()
+    if existing is None:
+        raise ImportSourceMismatchError("Source registration state could not be determined; retry.")
+    if existing.source_fingerprint == fingerprint:
+        return existing, False
+    raise ImportSourceMismatchError(
+        "This session's source is already frozen with a different identity fingerprint. The row is never mutated once frozen."
+    )
+
+
 async def freeze_source_and_transition_to_validating(
     db: AsyncSession, *, session_id: uuid.UUID, expected_version: int
 ) -> tuple[bool, ImportSession | None]:

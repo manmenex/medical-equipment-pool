@@ -1,13 +1,19 @@
+import hashlib
 import uuid
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import ADMINISTRATOR_ONLY_ROLES, require_roles
-from app.core.exceptions import ImportSessionNotFoundError, InvalidInputError
+from app.core.exceptions import (
+    ImportSessionNotFoundError,
+    ImportSourceRegistrationMethodNotAllowedError,
+    InvalidInputError,
+)
 from app.crud import import_job as import_job_crud
 from app.crud import import_session as import_crud
+from app.crud import import_source_blob as import_source_blob_crud
 from app.db.session import get_db
 from app.models.import_session import ImportJob
 from app.schemas.common import Page
@@ -23,7 +29,17 @@ from app.schemas.import_session import (
     ValidationFindingOut,
 )
 from app.services import import_execution_service, import_retention_service, import_validation_service
+from app.services.import_service import MAX_UPLOAD_BYTES, _read_upload_bounded, _validate_filename, _validate_zip_archive_bounds
 from app.utils.pagination import decode_cursor, decode_int_cursor, encode_cursor, encode_int_cursor
+
+# Roadmap PR20A (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §6.1,
+# §6.2): the reserved dataset_type value this design owns. A plain literal
+# (matching this codebase's existing convention for job_type/status
+# literals, e.g. `import_execution_service._DRY_RUN_ALLOWED_FROM_STATUSES`)
+# -- not a shared constant module, since the future EquipmentMasterAdapter
+# (PR20C) declares its own `dataset_type` class attribute independently,
+# per this codebase's existing ImportAdapter pattern.
+_EQUIPMENT_MASTER_DATASET_TYPE = "equipment_master"
 
 # Roadmap PR19A1 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §21).
 # Endpoints #1-#6: create, list, summary, status, source register/correct,
@@ -147,6 +163,15 @@ async def register_source(
     _actor=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
 ):
     session = await _get_or_404(db, session_id)
+    # Roadmap PR20A (design §6.2, H2R2): a pure in-memory guard on the
+    # already-loaded session's dataset_type -- no CRUD call, no database
+    # write is reachable before this returns. Every other dataset_type
+    # falls through to the existing handler body unchanged.
+    if session.dataset_type == _EQUIPMENT_MASTER_DATASET_TYPE:
+        raise ImportSourceRegistrationMethodNotAllowedError(
+            "dataset_type 'equipment_master' does not accept metadata-only source registration. "
+            "Use POST /import-sessions/{id}/source/upload instead."
+        )
     source, created = await import_crud.register_or_correct_source(
         db,
         session_id=session.id,
@@ -159,6 +184,58 @@ async def register_source(
     )
     # §15.2/§21 endpoint #5: 201 for the session's first registration, 200
     # for an idempotent no-op or a pre-freeze correction.
+    response.status_code = 201 if created else 200
+    return source
+
+
+@router.post("/{session_id}/source/upload", response_model=ImportSourceOut)
+async def upload_source(
+    session_id: uuid.UUID,
+    response: Response,
+    file: UploadFile = File(...),
+    # Optional, advisory-only client-supplied checksum (design §6.2): the
+    # server never trusts this as authority -- if supplied, it must match
+    # the server's own independently computed checksum or the upload is
+    # rejected as a client error, before any registration happens.
+    checksum: str | None = Form(default=None),
+    source_version: str | None = Form(default=None),
+    db: AsyncSession = Depends(get_db),
+    _actor=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
+):
+    """Roadmap PR20A (design §6.2): the single authoritative,
+    server-checksummed registration operation. Step 1: bound-check the
+    uploaded bytes (size/structure) -- no database writes yet. Step 2:
+    compute the checksum/byte length server-side, from the actual received
+    bytes. Step 3: persist the bytes durably and finalize the source's
+    metadata together, as one physical database transaction (the
+    non-committing CRUD variant + the blob upsert, committed once, here).
+    A source can never reach a state where its metadata claims a
+    checksum/byte length the actual durable blob does not match."""
+    session = await _get_or_404(db, session_id)
+
+    filename = _validate_filename(file.filename)
+    content = await _read_upload_bounded(file, max_bytes=MAX_UPLOAD_BYTES)
+    _validate_zip_archive_bounds(content)
+
+    server_checksum = hashlib.sha256(content).hexdigest()
+    if checksum is not None and checksum != server_checksum:
+        raise InvalidInputError(
+            "Supplied checksum does not match the server-computed checksum of the uploaded bytes."
+        )
+
+    source, created = await import_crud.register_or_correct_source_pending(
+        db,
+        session_id=session.id,
+        dataset_type=session.dataset_type,
+        checksum=server_checksum,
+        byte_size=len(content),
+        content_type=file.content_type,
+        filename=filename,
+        source_version=source_version,
+    )
+    await import_source_blob_crud.upsert_pending(db, import_source_id=source.id, content=content)
+    await db.commit()
+
     response.status_code = 201 if created else 200
     return source
 

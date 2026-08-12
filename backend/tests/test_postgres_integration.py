@@ -9993,3 +9993,389 @@ async def test_concurrent_retention_cleanup_single_winner_on_postgres(
             )
         ).scalars().all()
         assert len(audit_rows) == 1, "exactly one retention-cleanup audit entry may ever be written for this session"
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR20A (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §6.2, §6.5,
+# §18, architecture-approved via the merged Design PR #89) -- genuine
+# PostgreSQL constraint/concurrency proofs: FK ON DELETE RESTRICT
+# enforcement, real (non-SQLite, non-mocked) transaction atomicity for the
+# source-metadata + blob write pair, two-connection concurrency for the
+# upload/registration race, and blob-aware retention cleanup under real
+# `SELECT ... FOR UPDATE SKIP LOCKED` contention.
+# ---------------------------------------------------------------------------
+
+import hashlib as _pg_hashlib
+import io as _pg_io
+import zipfile as _pg_zipfile
+
+from sqlalchemy import delete as _pg_delete
+from sqlalchemy.exc import IntegrityError as _PgIntegrityError
+
+from app.crud import import_source_blob as _pg_import_source_blob_crud
+from app.models.import_session import ImportSourceBlob as _PgImportSourceBlob
+
+_PG_A20A_DATASET_TYPE = "pr20a_pg_test_dataset"
+
+
+def _pg_build_xlsx_bytes(payload: bytes = b"pr20a-pg-stub") -> bytes:
+    buf = _pg_io.BytesIO()
+    with _pg_zipfile.ZipFile(buf, "w") as archive:
+        archive.writestr("[Content_Types].xml", payload)
+    return buf.getvalue()
+
+
+async def _pg_create_session(pg_client: AsyncClient, headers: dict) -> dict:
+    r = await pg_client.post("/api/v1/import-sessions", headers=headers, json={"dataset_type": _PG_A20A_DATASET_TYPE})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+async def _pg_upload_source(pg_client: AsyncClient, headers: dict, session_id: str, *, content: bytes | None = None):
+    content = content if content is not None else _pg_build_xlsx_bytes()
+    files = {"file": ("source.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    return await pg_client.post(f"/api/v1/import-sessions/{session_id}/source/upload", headers=headers, files=files)
+
+
+async def test_import_source_blob_fk_restrict_prevents_deleting_referenced_source(pg_session, pg_seeded_users):
+    """§6.2's physical schema: `import_source_blobs.import_source_id`
+    references `import_sources.id` `ON DELETE RESTRICT` -- the database
+    itself, not merely application code, must refuse to delete a source
+    row while its blob still exists."""
+    actor = pg_seeded_users["administrator"]
+    session = _PgImportSession(dataset_type=_PG_A20A_DATASET_TYPE, status="created", version=0, created_by_user_id=actor.id)
+    pg_session.add(session)
+    await pg_session.flush()
+    source = _PgImportSource(
+        import_session_id=session.id,
+        status="registered",
+        checksum="a" * 64,
+        byte_size=4,
+        options_fingerprint="x",
+        source_fingerprint="y",
+        created_at=datetime.now(timezone.utc),
+    )
+    pg_session.add(source)
+    await pg_session.flush()
+    pg_session.add(_PgImportSourceBlob(import_source_id=source.id, content=b"abcd"))
+    await pg_session.commit()
+
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.execute(_pg_delete(_PgImportSource).where(_PgImportSource.id == source.id))
+    await pg_session.rollback()
+
+
+async def test_upload_source_finalize_failure_leaves_no_partial_state_on_real_postgres(
+    pg_client, pg_seeded_users, pg_engine, monkeypatch
+):
+    """§6.2's single-physical-transaction atomicity claim, proven against a
+    real PostgreSQL transaction rather than SQLite/mocks: a failure between
+    the blob write and the final commit must leave neither the metadata row
+    nor the blob row behind."""
+    import app.api.v1.import_sessions as import_sessions_module
+
+    original_upsert = _pg_import_source_blob_crud.upsert_pending
+
+    async def _upsert_then_raise(db, *, import_source_id, content):
+        await original_upsert(db, import_source_id=import_source_id, content=content)
+        raise RuntimeError("simulated finalize failure after blob write (postgres)")
+
+    monkeypatch.setattr(import_sessions_module.import_source_blob_crud, "upsert_pending", _upsert_then_raise)
+
+    headers = await _admin_headers(pg_client)
+    session = await _pg_create_session(pg_client, headers)
+
+    from httpx import ASGITransport
+    from httpx import AsyncClient as _RawAsyncClient
+
+    from app.main import app as _pg_app
+
+    raw_transport = ASGITransport(app=_pg_app, raise_app_exceptions=False)
+    async with _RawAsyncClient(transport=raw_transport, base_url="http://test") as raw_client:
+        resp = await _pg_upload_source(raw_client, headers, session["id"])
+    assert resp.status_code == 500
+
+    verify_session_maker = async_sessionmaker(pg_engine, expire_on_commit=False, class_=AsyncSession)
+    async with verify_session_maker() as verify_db:
+        sources = (
+            await verify_db.execute(
+                select(_PgImportSource).where(_PgImportSource.import_session_id == uuid.UUID(session["id"]))
+            )
+        ).scalars().all()
+        assert sources == [], "a real-PostgreSQL finalize failure must leave no partial ImportSource row"
+        blobs = (await verify_db.execute(select(_PgImportSourceBlob))).scalars().all()
+        assert blobs == [], "a real-PostgreSQL finalize failure must leave no partial ImportSourceBlob row"
+
+
+async def test_concurrent_upload_registration_same_bytes_never_duplicates_source_row(pg_client, pg_seeded_users, pg_engine):
+    """Genuine two-connection concurrency: several simultaneous uploads of
+    identical bytes, before the source ever freezes, must never produce two
+    `ImportSource` rows for the same session -- exactly one INSERT wins,
+    every other observes the UNIQUE(import_session_id) violation and takes
+    the CAS-correction branch instead."""
+    headers = await _admin_headers(pg_client)
+    session = await _pg_create_session(pg_client, headers)
+    content = _pg_build_xlsx_bytes()
+
+    async def _upload():
+        return await _pg_upload_source(pg_client, headers, session["id"], content=content)
+
+    responses = await asyncio.gather(*(_upload() for _ in range(3)))
+    for r in responses:
+        assert r.status_code in (200, 201), r.text
+    ids = {r.json()["id"] for r in responses}
+    assert len(ids) == 1, "concurrent uploads of identical bytes must all resolve to the same source row"
+
+    verify_session_maker = async_sessionmaker(pg_engine, expire_on_commit=False, class_=AsyncSession)
+    async with verify_session_maker() as verify_db:
+        sources = (
+            await verify_db.execute(
+                select(_PgImportSource).where(_PgImportSource.import_session_id == uuid.UUID(session["id"]))
+            )
+        ).scalars().all()
+        assert len(sources) == 1, "no duplicate ImportSource row may ever exist for one session"
+        blobs = (
+            await verify_db.execute(select(_PgImportSourceBlob).where(_PgImportSourceBlob.import_source_id == sources[0].id))
+        ).scalars().all()
+        assert len(blobs) == 1
+
+
+async def test_concurrent_retention_cleanup_deletes_blob_exactly_once_on_postgres(pg_client, pg_seeded_users, pg_engine, pg_session):
+    """§18/§6.6 extended: two concurrent retention-cleanup invocations
+    racing for the same blob-backed session must never both attempt (or
+    both skip) the blob delete -- `SELECT ... FOR UPDATE SKIP LOCKED` fences
+    exactly one winner, mirroring the existing PR19A3 concurrent-cleanup
+    proof above."""
+    actor = pg_seeded_users["administrator"]
+    terminal_at = datetime.now(timezone.utc) - timedelta(days=200)
+    session = _PgImportSession(
+        dataset_type=_PG_A20A_DATASET_TYPE, status="completed", version=0, created_by_user_id=actor.id, terminal_at=terminal_at
+    )
+    pg_session.add(session)
+    await pg_session.flush()
+    content = b"pr20a-retention-concurrency-bytes"
+    source = _PgImportSource(
+        import_session_id=session.id,
+        status="frozen",
+        checksum=_pg_hashlib.sha256(content).hexdigest(),
+        byte_size=len(content),
+        options_fingerprint="x",
+        source_fingerprint="y",
+        frozen_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+    )
+    pg_session.add(source)
+    await pg_session.flush()
+    pg_session.add(_PgImportSourceBlob(import_source_id=source.id, content=content))
+    await pg_session.commit()
+    session_id = session.id
+    source_id = source.id
+
+    headers = await _admin_headers(pg_client)
+
+    async def _cleanup():
+        return await pg_client.post("/api/v1/import-sessions/retention/cleanup", headers=headers, json={"limit": 10})
+
+    responses = await asyncio.gather(*(_cleanup() for _ in range(2)))
+    for r in responses:
+        assert r.status_code == 200, r.text
+    purged_counts = [r.json()["purged_count"] for r in responses]
+    assert sorted(purged_counts) == [0, 1], f"exactly one concurrent cleanup call may purge this session, got {purged_counts}"
+
+    verify_session_maker = async_sessionmaker(pg_engine, expire_on_commit=False, class_=AsyncSession)
+    async with verify_session_maker() as verify_db:
+        row = (await verify_db.execute(select(_PgImportSession).where(_PgImportSession.id == session_id))).scalar_one()
+        assert row.retention_purged_at is not None
+        blob = (
+            await verify_db.execute(select(_PgImportSourceBlob).where(_PgImportSourceBlob.import_source_id == source_id))
+        ).scalar_one_or_none()
+        assert blob is None, "the winning cleanup call must have deleted the blob exactly once"
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR20A: migration 0016_import_source_blobs.py convergence tests,
+# mirroring 0015_import_foundation.py's own discipline (see that section's
+# extensive rationale above -- not restated here).
+# ---------------------------------------------------------------------------
+
+
+def _load_migration_0016_module():
+    spec = importlib.util.spec_from_file_location(
+        "_migration_0016_import_source_blobs", _BACKEND_DIR / "alembic" / "versions" / "0016_import_source_blobs.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_migration_0016 = _load_migration_0016_module()
+
+
+async def _import_source_blobs_catalog_snapshot(engine) -> dict:
+    async with engine.connect() as conn:
+        columns = (
+            await conn.execute(
+                text(
+                    "SELECT column_name, data_type, udt_name, character_maximum_length, is_nullable, column_default "
+                    "FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'import_source_blobs' "
+                    "ORDER BY column_name"
+                )
+            )
+        ).all()
+        constraints = (
+            await conn.execute(
+                text(
+                    "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint "
+                    "WHERE conrelid = 'import_source_blobs'::regclass ORDER BY conname"
+                )
+            )
+        ).all()
+        indexes = (
+            await conn.execute(
+                text(
+                    "SELECT indexname, indexdef FROM pg_indexes "
+                    "WHERE schemaname = 'public' AND tablename = 'import_source_blobs' ORDER BY indexname"
+                )
+            )
+        ).all()
+    return {
+        "columns": {
+            c.column_name: {
+                "data_type": c.data_type,
+                "udt_name": c.udt_name,
+                "character_maximum_length": c.character_maximum_length,
+                "is_nullable": c.is_nullable,
+                "column_default": c.column_default,
+            }
+            for c in columns
+        },
+        "constraints": {name: definition for name, definition in constraints},
+        "indexes": {name: definition for name, definition in indexes},
+    }
+
+
+async def test_migration_0016_fresh_database_matches_expected():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                exists = (await conn.execute(text("SELECT to_regclass('import_source_blobs') IS NOT NULL"))).scalar_one()
+                assert exists, "import_source_blobs must exist on the fresh-install path"
+            snapshot = await _import_source_blobs_catalog_snapshot(engine)
+            for name, expected_def in _migration_0016._EXPECTED_CONSTRAINTS.items():
+                assert name in snapshot["constraints"], f"missing expected constraint {name}"
+                assert snapshot["constraints"][name] == expected_def
+            assert "import_source_blobs_pkey" in snapshot["indexes"]
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0016_fresh_and_historical_schemas_converge():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+    try:
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            fresh_snapshot = await _import_source_blobs_catalog_snapshot(engine)
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+    try:
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0015_import_foundation")
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            historical_snapshot = await _import_source_blobs_catalog_snapshot(engine)
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+    assert fresh_snapshot == historical_snapshot, (
+        f"fresh-install and historical-upgrade paths must converge on an identical catalog:\n"
+        f"fresh={fresh_snapshot}\nhistorical={historical_snapshot}"
+    )
+
+
+async def test_migration_0016_downgrade_re_upgrade_round_trip():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0015_import_foundation")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                exists = (await conn.execute(text("SELECT to_regclass('import_source_blobs') IS NOT NULL"))).scalar_one()
+                assert not exists, "import_source_blobs must be fully dropped by downgrade"
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                exists = (await conn.execute(text("SELECT to_regclass('import_source_blobs') IS NOT NULL"))).scalar_one()
+                assert exists, "import_source_blobs must exist again after re-upgrade"
+            snapshot = await _import_source_blobs_catalog_snapshot(engine)
+            for name, expected_def in _migration_0016._EXPECTED_CONSTRAINTS.items():
+                assert snapshot["constraints"].get(name) == expected_def
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0016_mismatched_fk_definition_fails_closed():
+    """A deliberately mismatched pre-existing `import_source_blobs` table
+    (wrong `ON DELETE` action) must fail the migration closed --
+    `CREATE TABLE IF NOT EXISTS` is a no-op against it, so only
+    `_verify_schema_convergence()` can catch this."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0015_import_foundation")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "CREATE TABLE import_source_blobs ("
+                        "import_source_id UUID NOT NULL PRIMARY KEY REFERENCES import_sources(id) ON DELETE CASCADE, "
+                        "content BYTEA NOT NULL)"
+                    )
+                )
+        finally:
+            await engine.dispose()
+
+        result = _run_alembic_allow_failure("upgrade", "head")
+        assert result.returncode != 0, "a mismatched FK ON DELETE action must fail the migration, not be silently accepted"
+        combined = result.stdout + result.stderr
+        assert "diverges" in combined, f"failure must explain the mismatch:\n{combined}"
+    finally:
+        await _drop_scratch_database()

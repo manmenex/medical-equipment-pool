@@ -32,13 +32,17 @@ from app.core.exceptions import (
     ImportExecutionFailedError,
     ImportRecoveryRequiredError,
     ImportSessionInvalidStateError,
+    ImportSourceNotRegisteredError,
 )
 from app.crud import import_job as import_job_crud
 from app.crud import import_session as import_session_crud
+from app.crud import import_source_blob as import_source_blob_crud
 from app.db.session import AsyncSessionLocal
 from app.models.import_session import ImportSession
 from app.services import import_lease
 from app.services.import_adapter import ImportAdapter, get_adapter
+from app.services.import_adapter_context import AdapterInvocationContext, adapter_invocation_context
+from app.services.import_source_reader import ImportSourceReader, SourceDescriptor
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +153,11 @@ async def run_dry_run(
 
     job_id = job_row.id
     admitted_session_version = session_row.version
+    # Roadmap PR20A (design §6.4): captured immediately, as a bare
+    # primitive, following this function's own established discipline --
+    # `session_row` must not be touched again after any statement that
+    # could roll back/expire it.
+    accepted_validation_job_id = session_row.current_validation_job_id
 
     renewal_task = asyncio.create_task(
         import_lease.renew_lease_loop(
@@ -163,6 +172,48 @@ async def run_dry_run(
     domain_exc: Exception | None = None
     final_session: ImportSession | None = None
     try:
+        # Roadmap PR20A (design §6.4/§6.5): resolved inside the fenced
+        # attempt, exactly like `import_validation_service.run_validation`'s
+        # identical `open_verified` call -- a missing source/blob or a
+        # checksum/length mismatch here is a structural failure that must
+        # route through the existing TX1/TX2 crash path (§6.5's failure-
+        # classification table), never a bare pre-admission rejection that
+        # would leave this already-admitted job stuck `running` with no
+        # fenced failure ever published. A source row is guaranteed to
+        # exist in the normal case -- dry-run is only reachable from
+        # `validated`/`dry_run_completed`/`dry_run_failed`, and validate's
+        # own admission already requires a registered source -- but this
+        # is still verified, not assumed.
+        source = await import_session_crud.get_source(db, session_id=session_id)
+        if source is None:
+            raise ImportSourceNotRegisteredError(
+                f"Import session '{session_id}' has no registered source despite being admitted for dry-run."
+            )
+        verified_source_content = None
+        if await import_source_blob_crud.exists_for_source(db, import_source_id=source.id):
+            descriptor = SourceDescriptor(
+                import_source_id=source.id,
+                import_session_id=session_id,
+                dataset_type=dataset_type,
+                expected_checksum=source.checksum,
+                expected_byte_size=source.byte_size,
+                content_type=source.content_type,
+                original_filename=source.filename,
+                registration_status=source.status,
+            )
+            verified_source_content = await ImportSourceReader().open_verified(db, descriptor)
+        invocation_context = AdapterInvocationContext(
+            import_session_id=session_id,
+            import_source_id=source.id,
+            dataset_type=dataset_type,
+            source_checksum=source.checksum,
+            source_fingerprint=source.source_fingerprint,
+            ruleset_version=adapter.ruleset_version,
+            verified_source_content=verified_source_content,
+            dry_run_job_id=job_id,
+            accepted_validation_job_id=accepted_validation_job_id,
+        )
+
         async with AsyncSessionLocal() as ro_db:
             # §16: PostgreSQL's `SET TRANSACTION READ ONLY` is the primary,
             # safety-critical enforcement mechanism, and design §16
@@ -182,7 +233,10 @@ async def run_dry_run(
             # §16: computed entirely within the read-only transaction,
             # then discarded -- only pass/fail feeds the session's own
             # completion columns below (§16's "Result persistence").
-            await adapter.plan_dry_run(ro_db)
+            # Roadmap PR20A (design §6.4): the contextvar is set/reset
+            # around exactly this call, nothing else.
+            with adapter_invocation_context(invocation_context):
+                await adapter.plan_dry_run(ro_db)
 
         final_session = await import_job_crud.fenced_phase_success(
             db,
@@ -324,9 +378,35 @@ async def run_execute(
     domain_exc: Exception | None = None
     final_session: ImportSession | None = None
     try:
+        # Roadmap PR20A (design §6.4): identity-only context for `execute`
+        # -- `verified_source_content`/`dry_run_job_id`/
+        # `accepted_validation_job_id` are always `None` here, since
+        # `execute()` never re-reads or re-parses the source and resolves
+        # its own confirmed plan internally (design §14.4, a later slice).
+        # `import_session_id` is retained only for audit-logging purposes;
+        # neither `plan_dry_run` nor `execute` writes to
+        # `import_sessions`/`import_jobs` itself.
+        source = await import_session_crud.get_source(db, session_id=session_id)
+        if source is None:
+            raise ImportSourceNotRegisteredError(
+                f"Import session '{session_id}' has no registered source despite being admitted for execute."
+            )
+        invocation_context = AdapterInvocationContext(
+            import_session_id=session_id,
+            import_source_id=source.id,
+            dataset_type=dataset_type,
+            source_checksum=source.checksum,
+            source_fingerprint=source.source_fingerprint,
+            ruleset_version=adapter.ruleset_version,
+            verified_source_content=None,
+            dry_run_job_id=None,
+            accepted_validation_job_id=None,
+        )
+
         # §17/§9.4.1 step 3: unlike dry-run, execute must actually write --
         # the normal read-write session, inside this same TX1.
-        imported_rows = await adapter.execute(db)
+        with adapter_invocation_context(invocation_context):
+            imported_rows = await adapter.execute(db)
         final_session = await import_job_crud.fenced_phase_success(
             db,
             job_id=job_id,

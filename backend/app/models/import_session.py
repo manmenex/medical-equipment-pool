@@ -8,6 +8,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -197,6 +198,25 @@ class ImportJob(UUIDPKMixin, Base):
     ruleset_version: Mapped[str | None] = mapped_column(String(50))
     # §4.3: `Default now()` is a real PostgreSQL server default (PR84-H1).
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, server_default=func.now())
+
+
+class ImportSourceBlob(Base):
+    """Roadmap PR20A (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    §6.2). 1:1 durable byte storage for a registered `ImportSource`,
+    colocated in the same PostgreSQL database as `import_sources` so
+    registration is a single physical transaction -- no saga/orphan-cleanup
+    machinery is needed (§6.2's atomicity contract). Deliberately not a
+    `UUIDPKMixin` row: `import_source_id` itself is the primary key (1:1,
+    never a separate synthetic id), matching the design's exact physical
+    schema (`import_source_blobs (import_source_id UUID PK, FK
+    import_sources.id ON DELETE RESTRICT, content BYTEA NOT NULL)`)."""
+
+    __tablename__ = "import_source_blobs"
+
+    import_source_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("import_sources.id", ondelete="RESTRICT"), primary_key=True
+    )
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
 
 
 class ImportRowError(UUIDPKMixin, Base):

@@ -36,9 +36,11 @@ from app.core.exceptions import (
 )
 from app.crud import import_job as import_job_crud
 from app.crud import import_session as import_session_crud
+from app.crud import import_source_blob as import_source_blob_crud
 from app.models.import_session import ImportRowError, ImportSession
 from app.services import import_lease
 from app.services.import_adapter import MAX_IMPORT_ROWS, get_adapter
+from app.services.import_source_reader import ImportSourceReader, SourceDescriptor
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +151,28 @@ async def run_validation(
     domain_exc: Exception | None = None
     final_session: ImportSession | None = None
     try:
-        raw_records = await asyncio.to_thread(adapter.parse, None)
+        # Roadmap PR20A (design §6.5): the framework, never the adapter,
+        # is the only caller of `ImportSourceReader.open_verified`. A
+        # source registered only via the existing PR19A metadata-only
+        # `POST /{id}/source` path has no `import_source_blobs` row, so
+        # this blob-existence check (never a hardcoded dataset_type
+        # comparison) leaves `parse()` receiving `None` exactly as PR19A
+        # shipped it, for every dataset_type that doesn't use PR20A's
+        # byte-storage upload endpoint.
+        raw_input: object = None
+        if await import_source_blob_crud.exists_for_source(db, import_source_id=source.id):
+            descriptor = SourceDescriptor(
+                import_source_id=source.id,
+                import_session_id=session_id,
+                dataset_type=dataset_type,
+                expected_checksum=source.checksum,
+                expected_byte_size=source.byte_size,
+                content_type=source.content_type,
+                original_filename=source.filename,
+                registration_status=source.status,
+            )
+            raw_input = await ImportSourceReader().open_verified(db, descriptor)
+        raw_records = await asyncio.to_thread(adapter.parse, raw_input)
         if len(raw_records) > MAX_IMPORT_ROWS:
             raise _RowLimitExceededError(f"Source has more than {MAX_IMPORT_ROWS} rows.")
 
