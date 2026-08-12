@@ -111,10 +111,30 @@ mechanism for a primitive plan identity to survive TX1's rollback into
 TX2 — closed by a new, additive `AdapterExecutionConflict` exception and
 `on_execution_failure` adapter hook (§14.4b, formerly H11); PR20B's
 `Equipment.version` API exposure was left undecided, contradicting this
-repository's own contract-change documentation policy — closed by
-deciding `version` is internal-only for V1, not exposed in any response
-schema (§24, formerly H12). Non-blocking: swept the adapter pseudocode's
-stale plan-by-id language (§6.3, formerly M3).
+repository's own contract-change documentation policy — closed in that
+round by deciding `version` was internal-only for V1 (**this specific
+exposure direction is reversed by fix round 6, below**). Non-blocking:
+swept the adapter pseudocode's stale plan-by-id language (§6.3, formerly
+M3).
+**Fix round 6** (a further, more detailed relay of the same review class
+covering H10/H11/H12/M3, confirming the round-5 mechanisms and requesting
+three refinements) closes three follow-up gaps without touching
+OD-1/OD-2/OD-3: explicitly reconciled why a plan-row confirmation flag
+(rather than a session-level FK pointer) satisfies H10's binding
+requirement, why `confirmed_at IS NOT NULL` is a presence check rather
+than "inferring confirmation from timestamps," and confirmed the
+non-terminal-session retention guarantee already holds by construction
+from PR19A's own unmodified mechanism (§14.4a); identified and closed a
+genuine gap in H11's mechanism — the exception-based TX2 hook only
+covers a live worker raising an exception, not a hard crash reconciled by
+PR19A's separate, independent recovery sweep, which had no path to also
+mark the plan `failed` — closed with a new, query-based (not
+exception-based) recovery-reconciliation contract (§14.4c); and reversed
+fix round 5's H12 decision — `Equipment.version` is now exposed
+read-only in `EquipmentOut` (list and detail), never accepted in any
+write request, with every existing/reachable Equipment mutation path
+enumerated in an explicit table as part of PR20B's own acceptance
+contract (§24).
 **Repository:** Medical Equipment Pool. Not MEMS, not Recall Monitor.
 **Baseline:** `e3156bfc231fcbc126251f41292bc397fdf8ad3f` — the real
 squash-merge SHA of GitHub PR #88 (Post-PR19B Governance Sync), itself on
@@ -1853,6 +1873,52 @@ precheck_execute: active AND confirmed plan exists, or reject pre-admission
 admission -> execute() re-resolves the same active+confirmed plan -> ...
 ```
 
+**Reconciling two follow-up questions explicitly, fix round 6**:
+
+- **"Session-level pointer vs. plan-row flag" — why this design uses the
+  latter, and why the composite-FK concern raised for a pointer design is
+  structurally moot here**: an alternative design (a
+  `confirmed_dry_run_plan_id` FK column *on `import_sessions`*) was
+  considered and rejected in favor of `confirmed_at`/
+  `confirmed_by_user_id` living *on the plan row itself* (§14.2). The two
+  are behaviorally equivalent for every scenario this section closes —
+  both make "was the exact reviewed plan confirmed" a server-verifiable
+  fact, and both are cleared/invalidated identically when a newer
+  dry-run supersedes the confirmed plan — but the plan-row design avoids
+  a **new** cross-table FK entirely: the confirmation fact is already
+  physically scoped to the correct session via the plan row's own
+  pre-existing `import_session_id` column and composite FKs (§14.2, fix
+  round 3 H8), so there is no separate pointer that could reference a
+  plan belonging to a different session in the first place — the
+  question "does the confirmed-plan pointer respect session ownership"
+  has no separate answer to give, because there is no separate pointer.
+  This is a design choice stated explicitly, not an oversight.
+- **`confirmed_at IS NOT NULL` is a presence check, not "inferring
+  confirmation from timestamps"**: the review's caution against
+  "inferring confirmation from timestamps" is, read in context, a
+  caution against *heuristic* timestamp reasoning — e.g. treating
+  "created within the last N minutes" as an implicit confirmation, or
+  picking "whichever plan has the latest `created_at`" as though recency
+  implied approval. `confirmed_at`'s *value* is never compared, ordered,
+  or reasoned about — the check is exactly `IS NOT NULL`, a boolean-style
+  flag that happens to be typed as a timestamp so it can also serve as an
+  audit field (paired with `confirmed_by_user_id`) recording *when* the
+  explicit confirmation action happened. The confirmation itself always
+  originates from one explicit, unambiguous server operation (§14.4a's
+  conditional `UPDATE`), never from proximity to any other event.
+- **Retention interaction, stated explicitly**: PR19A's existing
+  retention sweep (§3.6, unchanged) claims and redacts sessions keyed off
+  `terminal_at` plus the `IMPORT_RETENTION_DAYS` window — it is
+  structurally impossible for a non-terminal session (one still awaiting
+  confirmation or execution) to become retention-eligible, since
+  `terminal_at` is never set until the session reaches a terminal state
+  in the first place. A confirmed-but-not-yet-executed plan's content is
+  therefore never at risk of being purged out from under an operator
+  mid-workflow — this holds by construction from PR19A's own unmodified
+  mechanism, not because PR20 adds a special case for it. §14.9's
+  plan-row redaction (fix round 3, H9) only ever runs as part of that
+  same terminal-session sweep, so it inherits this guarantee for free.
+
 **Required test coverage (§22)**: the exact stale-page sequence itself —
 confirm plan A, let a subsequent dry-run supersede it with plan B,
 confirm A cannot be reused (the original confirmation event does not
@@ -1861,9 +1927,12 @@ pre-admission with zero session mutation; a test proving
 `POST .../confirm` with a `plan_id` that has already been superseded
 returns `409`/`IMPORT_DRY_RUN_PLAN_STALE` and performs no write; a test
 proving re-confirming an already-confirmed, still-active plan is a
-harmless idempotent no-op; and a test proving `precheck_execute` rejects
+harmless idempotent no-op; a test proving `precheck_execute` rejects
 cleanly, pre-admission, when no plan has ever been confirmed for the
-session.
+session; and a test proving a non-terminal session's confirmed plan is
+never selected by the retention sweep, regardless of how much time has
+elapsed since `confirmed_at` (closing the retention-interaction question
+explicitly rather than leaving it implicit).
 
 ### 14.4b TX2 plan-failure hook contract — surviving TX1 rollback (NEW, fix round 5, H11)
 
@@ -1954,6 +2023,55 @@ correctly; and a test proving `resolved_resource_id=None` (an adapter
 raising a bare `AdapterExecutionConflict` with no resource, or a
 different adapter's own unrelated exception) leaves `on_execution_failure`
 a harmless no-op for every adapter that doesn't use this mechanism.
+
+### 14.4c Recovery reconciliation — the case §14.4b's exception-based hook cannot cover (NEW, fix round 6, H11-follow-up)
+
+**Gap identified explicitly: §14.4b's mechanism only fires when
+`execute()` itself raises `AdapterExecutionConflict` on a live worker.**
+A worker that crashes outright — the process dies mid-`execute()`, before
+raising anything — never reaches that exception handler at all. PR19A's
+existing generic recovery sweep (§3.3) is what reconciles this case: it
+independently discovers a session whose lease/fence expired mid-phase and
+marks it terminally `failed` via its own generic mechanism, entirely
+without any adapter-supplied exception or `resolved_resource_id` (there
+is nothing to capture — the crashed worker produced no exception for
+anything to catch). **Without an additional step, this leaves the
+session `failed` while its plan remains `active`/confirmed forever** —
+exactly the "plan left stale while session diverges" inconsistency this
+whole contract exists to prevent.
+
+**Resolution — a query-based reconciliation, not an exception-based
+one**, since recovery has no captured primitive to work from: when
+PR19A's recovery sweep reconciles a session whose in-flight phase was
+`execute`, it additionally resolves that session's own plan via the
+identical, already-established query
+(`WHERE import_session_id = :session_id AND status = 'active'` — no
+`confirmed_at` predicate needed here, since a session that reached
+`executing` admission was necessarily confirmed at that time, per
+§14.4a's precondition) and marks that plan `failed`, in the **same**
+recovery transaction that marks the session `failed`. This reuses the
+same invariant §14.4's resolution logic already depends on (at most one
+`active` plan per session) rather than inventing a second lookup
+mechanism.
+
+**Implementation-time verification required, stated honestly**: whether
+this is best expressed as the recovery sweep calling
+`on_execution_failure(recovery_db, None)` (with the adapter's own
+implementation interpreting `None` during a recovery-flagged call as "go
+resolve the plan yourself, no primitive is available") or as a distinct,
+dedicated recovery hook is a call-site detail to confirm against the
+actual recovery sweep's code at implementation time — consistent with
+this document's existing discipline of flagging every PR19A framework
+touch point for verification against the real code rather than asserting
+an unconfirmed mechanism. What is fixed by this design, not left open, is
+the **outcome**: a session recovery reconciles to terminal `failed` must
+never complete while its plan is left `active`.
+
+**Required test coverage (§22)**: a test simulating a hard worker crash
+during `execute()` (no exception ever raised, e.g. by killing the
+process/connection mid-transaction in a PostgreSQL integration test) and
+asserting that after the existing recovery sweep next runs, both the
+session and its plan are `failed` together, never one without the other.
 
 ### 14.5 Plan freshness — what makes a plan stale, defined exhaustively, no TTL
 
@@ -2656,13 +2774,24 @@ test proving every pre-existing row backfills to `1`; a downgrade test.
 
 **Equipment concurrency-token finalization** (§15.1, fix round 4, H9): a
 dedicated test — required as part of **PR20B**, not deferred to PR20E —
-enumerating every known Equipment write path in this codebase (`PATCH
-/equipment/{id}`, every `change_status_for_*` lifecycle-transition
-function) and asserting each one advances `Equipment.version` by exactly
-`1`; a companion test, part of PR20E, proving this design's own
+enumerating every known Equipment write path in this codebase per §24's
+mutation-path table (`PATCH /equipment/{id}`, `POST /equipment`, every
+`change_status_for_*` lifecycle-transition function) and asserting each
+one advances `Equipment.version` by exactly `1` (or initializes it to `1`
+on create); a companion test, part of PR20E, proving this design's own
 `execute()` UPDATE path does too — since the approved V1 CAS token's
 correctness depends on that being true for every reachable write path,
-not merely the ones exercised elsewhere in this plan.
+not merely the ones exercised elsewhere in this plan. **API-exposure
+tests, fix round 6 (H12)**: a test proving `GET /equipment/{id}` and the
+Equipment list endpoint both include a read-only `version: int` field
+matching the row's actual database value; a test proving `PATCH
+/equipment/{id}` (and every other Equipment write endpoint) rejects or
+silently ignores a client-supplied `version`/`expected_version` field in
+the request body — it is never accepted as input, only ever emitted as
+output — with an explicit compatibility test confirming existing clients
+that don't send this new field are completely unaffected (an additive
+response field, not a breaking change, per `docs/ENGINEERING_WORKFLOW.md`
+§16).
 
 **Frontend**: real-client integration tests for the Equipment Master path
 (loading/error/result states against a real or realistically-mocked
@@ -2798,26 +2927,69 @@ rather than assumed:**
   create-only, this slice is not required for PR20 to proceed at all
   (though it may still be independently valuable as a general
   Equipment-domain improvement, outside this design's scope to mandate).
-  Concrete scope: the `version INTEGER NOT NULL DEFAULT 1` migration on
-  `equipment` (§15.1), with backfill; wiring `PATCH /equipment/{id}` and
-  every `change_status_for_*` lifecycle-transition function to increment
-  it; the required regression test enumerating and proving every one of
-  those paths advances `version` by exactly `1` (§22). **API exposure,
-  decided here, not deferred (fix round 5, H12)**: `docs/ENGINEERING_
-  WORKFLOW.md` §16 treats an additive response field as a contract change
-  requiring its own documentation and compatibility tests — this design
-  does not leave that decision to the implementation PR. **`version` is
-  internal-only for V1: it is not added to `EquipmentOut` or any other
-  response schema.** No client need for a visible version number has been
-  demonstrated anywhere in this design or the existing frontend (§20); the
-  column exists purely as a server-side optimistic-concurrency primitive,
-  read only by `plan_dry_run`/`execute` (§15.1), never by any API
-  response serializer. If a genuine future need for a client-visible
-  version emerges, exposing it is a small, self-contained additive schema
-  change — its own documentation and compatibility tests, per §16 — and
-  is explicitly **not** authorized by this design. **Schema/migration
-  impact**: yes, one new column with backfill, no modification to any
-  other column, no schema/response-model change.
+  Concrete scope, defined completely below (fix round 6 reverses fix
+  round 5's H12 resolution on API exposure specifically; every other part
+  of this slice's scope is unchanged):
+
+  **`Equipment.version` full contract**:
+  - **DB type**: `INTEGER NOT NULL DEFAULT 1`, additive migration on
+    `equipment`, no modification to any other column.
+  - **Initial value / backfill**: every pre-existing row backfills to
+    `1` at migration time (via this codebase's established
+    `_verify_schema_convergence()`-checked pattern for new `NOT NULL`
+    columns) — there is no prior optimistic-lock history to reconcile,
+    since no version concept has ever existed for `Equipment` before
+    this design.
+  - **Increment behavior**: incremented by exactly `1` on every
+    successful mutation, at the same application/service layer that
+    already performs the mutation (mirroring `ImportSession.version`'s
+    existing pattern, §3.1 — not a database trigger; this codebase has
+    no trigger-based versioning precedent, and this design does not
+    invent one without evidence).
+  - **API exposure — reversed, fix round 6 (H12)**: fix round 5 decided
+    `version` should be internal-only, reasoning no client need had been
+    demonstrated. Independent review correctly identified that leaving a
+    concurrency-relevant field *inconsistently* absent from the public
+    schema is itself worse than exposing it consistently as read-only
+    metadata — **this design now exposes `version` in `EquipmentOut`**,
+    included in **both** list and detail responses (consistent shape,
+    not detail-only), serialized as a plain integer. It is **strictly
+    read-only**: no write/update request schema (`EquipmentUpdate`,
+    `EquipmentCreate`, or any `PATCH`/`POST` body) accepts a
+    client-supplied `version` or `expected_version` field — a client
+    cannot set, bump, or contest it directly through the public API.
+    Internally, the only surfaces that read `version` as a concurrency
+    token are `plan_dry_run`/`execute` (§15.1) via direct ORM/CRUD access,
+    never through the public response schema — the public `version`
+    field is provided for client-side observability/debugging only
+    (e.g. an admin noticing a record changed between two screen loads),
+    not as an input to any client-driven CAS flow, since PR20 is the
+    only consumer of `version` as an actual concurrency predicate in
+    this design.
+  - **Mutation-path increment coverage, enumerated exhaustively** (per
+    finding: PR20B is not READY while any reachable Equipment mutation
+    path could silently bypass the increment) — every path this
+    repository's current runtime exposes that mutates an `Equipment`
+    row, with its own required regression test:
+
+    | Mutation path | Increment point | Test required |
+    |---|---|---|
+    | `PATCH /equipment/{id}` (general update) | Service/CRUD layer, same call that persists the update | Yes — asserts `version` advances by exactly `1` |
+    | `POST /equipment` (create) | Row created with `version = 1` (the column default) — not an "increment" but confirmed explicitly | Yes — asserts a newly created row's `version` is `1` |
+    | Every `change_status_for_*` lifecycle-transition function (§10) | Same ORM update path already used for the status write | Yes — one test per transition function, or a parameterized test iterating all of them |
+    | Receive/Issue dispatch flows that mutate Equipment fields (e.g. status changes as a side effect of a borrow transaction) | Confirmed at implementation time to route through the same `change_status_for_*` functions above, not a separate write path — if a genuinely separate write path is found, it must be added to this table before PR20B merges | Yes — same coverage as the lifecycle-transition row, verified not duplicated |
+    | This design's own `execute()` UPDATE path (§15.1, PR20E) | The CAS `UPDATE ... SET version = version + 1 ...` statement itself | Yes — covered by PR20E's own test suite, not PR20B's (§22) |
+    | Any bulk/admin utility mutating `Equipment` directly (e.g. a future data-fix script) | Not currently known to exist in this codebase; if one is found at implementation time, it must be added to this table and covered before PR20B merges | Confirmed absent, or added and covered, before PR20B merges |
+
+    This table is itself part of PR20B's acceptance contract — PR20B's
+    implementation PR must confirm (by reading the actual current code,
+    not assuming) that no further Equipment mutation path exists beyond
+    what is listed here, and must add any it finds.
+  - **Schema/migration impact**: yes, one new column with backfill, no
+    modification to any other column; the `EquipmentOut` response schema
+    gains one additive, read-only `version: int` field (§16, contract
+    change per `docs/ENGINEERING_WORKFLOW.md` §16, documented and tested
+    here rather than left implicit).
 - **PR20C — Equipment Master parser, normalization, and validation
   adapter** (renumbered from PR20B): `EquipmentMasterAdapter.parse`/
   `preload_business_context`/`validate_business_rules`, plus
@@ -3149,10 +3321,12 @@ gates.
       carrying only a bare primitive id) and a new `on_execution_failure`
       adapter hook, called inside TX2 before `fenced_phase_failure`
       commits (§14.4b).
-- [x] **Fix round 5 (H12)**: decided `Equipment.version`'s API exposure
-      now rather than deferring it — internal-only for V1, not added to
-      any response schema, per this repository's own contract-change
-      documentation policy (§24).
+- [x] **Fix round 5 (H12)** *(exposure direction reversed by fix round 6,
+      below; the underlying principle — decide now, don't defer — is
+      retained)*: decided `Equipment.version`'s API exposure now rather
+      than deferring it — this round chose internal-only; fix round 6
+      reverses that specific choice to read-only-exposed, per this
+      repository's own contract-change documentation policy (§24).
 - [x] **Fix round 5 (M3)**: swept §6.3's adapter pseudocode for the
       superseded plan-by-id contract, replacing it with the
       `precheck_execute`/`execute`/`on_execution_failure` hook triad
@@ -3161,4 +3335,27 @@ gates.
       evidence for the real source schema or either business policy has
       appeared since fix round 4; all three remain OPEN (§9).
 - [x] **Fix round 5**: did not start PR20A or PR20B or any implementation
+      PR; this remains a design-only document (§26).
+- [x] **Fix round 6 (H10-follow-up)**: explicitly reconciled the
+      plan-row-flag-vs-session-pointer design choice, clarified
+      `confirmed_at IS NOT NULL` is a presence check not timestamp
+      inference, and confirmed the non-terminal-session retention
+      guarantee holds by construction from PR19A's unmodified mechanism
+      (§14.4a).
+- [x] **Fix round 6 (H11-follow-up)**: identified and closed the gap
+      where §14.4b's exception-based TX2 hook cannot cover a hard worker
+      crash reconciled by PR19A's independent recovery sweep — added a
+      new, query-based recovery-reconciliation contract ensuring a
+      session and its plan are never left inconsistent after recovery
+      (§14.4c).
+- [x] **Fix round 6 (H12)**: reversed fix round 5's internal-only
+      decision — `Equipment.version` is now exposed read-only in
+      `EquipmentOut` (list and detail), never accepted in any write
+      request, with a complete DB-type/backfill/increment/serialization
+      contract and an explicit, exhaustive mutation-path table as part of
+      PR20B's own acceptance contract (§24).
+- [x] **Fix round 6**: did not close OD-1/OD-2/OD-3 — no repository
+      evidence for the real source schema or either business policy has
+      appeared since fix round 5; all three remain OPEN (§9).
+- [x] **Fix round 6**: did not start PR20A or PR20B or any implementation
       PR; this remains a design-only document (§26).
