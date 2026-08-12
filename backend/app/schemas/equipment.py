@@ -50,6 +50,18 @@ class EquipmentUpdate(BaseModel):
     item_no: str | None = Field(default=None, max_length=64)
     bcm_code: str | None = Field(default=None, max_length=64)
 
+    # Roadmap PR91-H1 (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    # §24): the same `extra: "forbid"` technique Roadmap PR7b/PR8B/PR9A
+    # already established for BorrowRequest/ReturnRequest/
+    # WardCorrectionRequest (app.schemas.transaction) -- a caller sending
+    # `version` (or any other field this schema does not declare) gets a
+    # hard 422 via FastAPI's own centralized validation-error handling,
+    # never a silently-ignored field. `version` is deliberately not
+    # declared as a field on this schema at all -- it is exposed read-only
+    # on EquipmentOut only and must never be settable through a write
+    # request.
+    model_config = {"extra": "forbid"}
+
 
 class EquipmentStatusChange(BaseModel):
     status: EquipmentStatus

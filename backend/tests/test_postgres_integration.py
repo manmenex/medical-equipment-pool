@@ -10712,3 +10712,67 @@ async def test_migration_0017_mismatched_column_definition_fails_closed():
         assert "diverges" in combined, f"failure must explain the mismatch:\n{combined}"
     finally:
         await _drop_scratch_database()
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR91-H1: clients could previously bump Equipment.version without
+# mutating any supported field. The optimistic-concurrency behavior this
+# guards ultimately protects real PostgreSQL state, so this is proven
+# against a real PostgreSQL database, not only SQLite.
+# ---------------------------------------------------------------------------
+
+
+async def test_empty_patch_does_not_advance_version_on_postgres(pg_client, pg_seeded_users, pg_engine):
+    headers = await _admin_headers(pg_client)
+    create_resp = await pg_client.post(
+        "/api/v1/equipment", headers=headers, json={"asset_number": "PG-PR91H1-0001", "equipment_name": "Infusion Pump"}
+    )
+    assert create_resp.status_code == 201, create_resp.text
+    equipment_id = create_resp.json()["id"]
+    assert create_resp.json()["version"] == 1
+
+    resp = await pg_client.patch(f"/api/v1/equipment/{equipment_id}", headers=headers, json={})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["version"] == 1
+
+    session_maker = async_sessionmaker(pg_engine, expire_on_commit=False, class_=AsyncSession)
+    async with session_maker() as fresh_session:
+        row = (
+            await fresh_session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment_id)))
+        ).scalar_one()
+    assert row.version == 1, "persisted version must remain unchanged after an empty PATCH on real PostgreSQL"
+
+
+async def test_version_only_patch_rejected_before_reaching_postgres(pg_client, pg_seeded_users, pg_engine):
+    headers = await _admin_headers(pg_client)
+    create_resp = await pg_client.post(
+        "/api/v1/equipment", headers=headers, json={"asset_number": "PG-PR91H1-0002", "equipment_name": "X-Ray"}
+    )
+    assert create_resp.status_code == 201, create_resp.text
+    equipment_id = create_resp.json()["id"]
+
+    resp = await pg_client.patch(f"/api/v1/equipment/{equipment_id}", headers=headers, json={"version": 999})
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["code"] == "VALIDATION_ERROR"
+
+    session_maker = async_sessionmaker(pg_engine, expire_on_commit=False, class_=AsyncSession)
+    async with session_maker() as fresh_session:
+        row = (
+            await fresh_session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment_id)))
+        ).scalar_one()
+    assert row.version == 1, "a rejected version-only PATCH must never reach PostgreSQL, so version stays 1"
+
+
+async def test_genuine_update_still_advances_version_on_postgres_after_h1_fix(pg_client, pg_seeded_users, pg_engine):
+    headers = await _admin_headers(pg_client)
+    create_resp = await pg_client.post(
+        "/api/v1/equipment", headers=headers, json={"asset_number": "PG-PR91H1-0003", "equipment_name": "Old Name"}
+    )
+    assert create_resp.status_code == 201, create_resp.text
+    equipment_id = create_resp.json()["id"]
+
+    resp = await pg_client.patch(
+        f"/api/v1/equipment/{equipment_id}", headers=headers, json={"equipment_name": "New Name"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["version"] == 2, "a genuine supported-field update must still advance version by exactly 1"

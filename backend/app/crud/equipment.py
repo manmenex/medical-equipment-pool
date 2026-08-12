@@ -334,10 +334,18 @@ async def update(db: AsyncSession, equipment: Equipment, *, data: dict) -> Equip
     # cannot accept.
     for key, value in data.items():
         setattr(equipment, key, value)
-    # Roadmap PR20B (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24):
-    # every successful mutation through this function increments the
-    # optimistic-concurrency counter by exactly 1.
-    equipment.version += 1
+    # Roadmap PR91-H1 (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    # §24): every successful mutation through this function increments the
+    # optimistic-concurrency counter by exactly 1 -- but an empty `data`
+    # (an empty PATCH body, or any internal caller that ends up with
+    # nothing to set) performs no genuine field mutation at all, so it
+    # must not bump the counter merely because this function was called.
+    # This guard lives here, in the CRUD layer itself, not only at the
+    # API/schema boundary -- so a future internal caller (an import path,
+    # a script, a test) cannot bypass it by constructing an empty dict
+    # directly.
+    if data:
+        equipment.version += 1
     await db.flush()
     return equipment
 
