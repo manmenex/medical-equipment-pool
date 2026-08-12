@@ -1926,3 +1926,94 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   this entry — it is the next planned implementation slice, now unblocked
   by Owner Decision but still subject to this repository's ordinary
   Design-PR-then-implementation-PR sequencing.
+
+## 2026-08-12 — Roadmap PR20 Owner Decisions OD-1, OD-2, OD-3 — completion to implementation grade (GitHub PR #92)
+
+- **Decision:** The framework-level resolution recorded in the preceding
+  entry is completed to **implementation grade** — every remaining
+  ambiguity the Repository Owner's evidence review (§7/§8/§9 of
+  `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md`) resolves is now
+  recorded explicitly, so that a reader of the design document alone (no
+  PR comments) can implement PR20C without further Owner input.
+  - **Source workbook contract (§7), RESOLVED in full:** the authoritative
+    source is `export_template.xlsx`; exactly one relevant worksheet,
+    `Sheet1` (selected by name, never "the first sheet"; missing `Sheet1`
+    is a structural failure; any other sheet present is ignored, not
+    interpreted); header is exactly row 1; data begins row 2; 4,729 data
+    rows; column order is **not** semantically authoritative — parsing is
+    exact-header-name based; all 32 governed headers must be present
+    exactly once (missing, duplicated, or unknown/extra → structural
+    `ERROR`, fail-closed on schema drift). BCM (`ID CODE`) accepts a
+    text cell only — a numeric-typed cell is a blocking `ERROR`. Item
+    Number (`Item No.`) accepts a text cell (trimmed) or an integer
+    numeric cell (converted losslessly to a canonical decimal string;
+    fractional/NaN/infinite rejected); if Excel already destroyed a
+    textual leading zero by storing the cell numerically, PR20C must
+    never invent/reconstruct one — it must emit a blocking finding
+    instead.
+  - **Field mapping (§8), RESOLVED in full:** a complete 32-row mapping
+    table classifies every governed column as one of exactly four things
+    — an actual existing `Equipment`/`master_data` destination field;
+    validation/reference-only; intentionally ignored; or deferred
+    (requires a future schema decision, and PR20C must not depend on a
+    deferred field) — derived by inspecting the real
+    `backend/app/models/equipment.py`/`master_data.py` models, not
+    invented. No placeholder destination field is introduced. Notably:
+    `ชื่อไทย` (Thai name) maps to `equipment_name` as the primary source
+    (this system's established Thai-first convention, per Roadmap PR11);
+    `ชื่ออังกฤษ` (English name) is validation/reference-only, not stored
+    anywhere (storing it in `equipment_metadata` JSON was considered and
+    rejected — it is not one of the four sanctioned classifications).
+    Location/category-shaped columns (`หน่วยงาน`/`อาคาร`/`ชั้น`/`ห้อง`/
+    `ประเภทเครื่องมือ`) are deferred as write destinations because
+    `department_owner_id`/`current_location_id`/`category_id` are foreign
+    keys with no Owner-approved legacy-name-to-UUID matching algorithm.
+  - **OD-2 create/update field policy, RESOLVED in full:** fields import
+    may **never** overwrite on UPDATE: `Equipment.id`, `bcm_code`,
+    `item_no`, `version`, `created_at`/`updated_at`, current operational
+    ward/location, and current lifecycle/status. Exact CREATE-writable
+    fields: `item_no`, `bcm_code`, `asset_id`, `equipment_name`, `brand`,
+    `model`, `serial_number`, `status` (via approved mapping only);
+    `category_id`/`department_owner_id`/`current_location_id` are left
+    `NULL` on CREATE. Exact UPDATE-writable fields: `asset_id`, `brand`,
+    `model`, `serial_number` only — explicitly **not**
+    `equipment_name`, since an operator-facing name may have been
+    corrected since export and must not be silently overwritten.
+    Same-value updates omit the field write and do not bump
+    `Equipment.version` (reusing PR91-H1's server-owned `version`
+    contract, not a second import-specific rule). Legacy lifecycle
+    policy: CREATE may initialize status only via an approved
+    one-to-one mapping to one of the four approved `EquipmentStatus`
+    values, no fifth state; UPDATE never overwrites current live
+    status, a mismatch produces a non-blocking `WARNING` only. Location
+    policy: `หน่วยงาน`/`อาคาร`/`ชั้น`/`ห้อง` never overwrite live
+    location on UPDATE and are not populated on CREATE either (no
+    approved matching algorithm); `ISSUED_TO_WARD` is never fabricated
+    from a legacy department/location cell.
+  - **OD-3 identity policy, RESOLVED in full:** BCM and Item Number are
+    **both required** for any row to become a CREATE or UPDATE
+    candidate — the blank/null identifier requiredness matrix (both
+    present → continue to matching; BCM blank → `ERROR`, no matching by
+    Item Number alone; Item Number blank → `ERROR`; both blank → `ERROR`,
+    no generated/fallback identifier of any kind) is a mandatory
+    precondition evaluated **before** the seven-case identity matrix.
+    The seven-case matrix (recorded in the preceding entry) is no longer
+    described as exhaustive of blank/null validation — that framing is
+    corrected in the design document.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §7, in the
+  same documentation-only PR pattern as the preceding entry. PR20C's own
+  implementation PR must not begin until this PR is independently
+  reviewed and merged.
+- **Source:** `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` §7, §8,
+  §9 (OD-1/OD-2/OD-3), §11, §12, §13, §24 — all updated in place; a
+  full-document sweep (§1, §2, §4, §5, §6, §11, §12, §15, §16, §22, §23,
+  §24) removed remaining stale "OD open"/"blocked on"/"conditional on"
+  language; prior fix-round historical entries are preserved unedited.
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this entry or the design-doc
+  update. PR20C has not been started by this entry. PR20C may be marked
+  READY on this basis (source workbook contract complete; all 32 columns
+  mapped/classified; identifier blank policy complete; candidate
+  matching policy complete; CREATE/UPDATE field policy complete;
+  lifecycle mapping implementation-grade; no normative contradiction
+  remains in the design document) once this PR itself merges.

@@ -204,6 +204,35 @@ record these resolutions; the prior OPEN framing is not deleted from the
 historical record above, consistent with this document's own established
 practice of recording fix-round history rather than rewriting it away.
 Also recorded in `docs/DECISION_LOG.md`.
+**Owner Decision resolution round — completion (GitHub PR #92, review
+round closing PR92-H1/H2/H3/H4)**: the prior paragraph's framework-level
+resolution is completed to implementation grade. §7 (Source Workbook
+Contract) now records the full authoritative structural contract:
+`Sheet1` worksheet-selection-by-name, header exactly row 1, column order
+not semantically authoritative, all 32 governed headers required exactly
+once (missing/duplicate/unknown → structural `ERROR`), and distinct
+per-identifier cell-type rules for BCM (text-only) versus Item Number
+(text or losslessly-convertible integer). §8 (Field Mapping) now records
+the complete 32-row mapping table — every governed column classified as
+an actual destination field, validation-reference-only, intentionally
+ignored, or deferred-requires-future-schema-decision, with no placeholder
+destination fields, derived by inspecting the actual `Equipment`/
+`master_data` models rather than assumed. §9 OD-2 now records the exact
+CREATE-writable field list, the exact UPDATE-writable field list, the
+immutable/non-writable field list, the same-value-update no-version-bump
+rule (tied to PR91-H1's server-owned `version` contract), and the
+Legacy Lifecycle and Location policies. §9 OD-3 now records the
+blank/null identifier requiredness matrix as a mandatory precondition
+evaluated ahead of the seven-case identity matrix, and no longer frames
+those seven cases as exhaustive of blank/null validation. §11 (Location/
+Ward Consistency) is RESOLVED via §9 OD-2's Location Policy. §13's
+duplicate-row blocking scope (all rows sharing a duplicated BCM/Item
+Number, not merely the second occurrence) is RESOLVED. A full-document
+sweep (§1, §2, §4, §5, §6, §11, §12, §15, §16, §22, §23, §24) replaced
+remaining stale "OD-1/OD-2 open," "blocked on," "conditional on," and
+"exactly seven cases" language with the now-current RESOLVED state.
+PR20C is marked READY (§24) on this completed basis. Also recorded in
+`docs/DECISION_LOG.md`.
 **Repository:** Medical Equipment Pool. Not MEMS, not Recall Monitor.
 **Baseline:** `e3156bfc231fcbc126251f41292bc397fdf8ad3f` — the real
 squash-merge SHA of GitHub PR #88 (Post-PR19B Governance Sync), itself on
@@ -237,14 +266,19 @@ equipment-record validation, per
 `docs/audits/04-consolidated-implementation-plan.md`'s PR20 Objective.
 
 This document resolves every question that the merged PR19A runtime and
-existing governance can answer authoritatively. It explicitly does **not**
-resolve, and instead opens as Owner Decisions (§9), the questions that
-depend on evidence not present anywhere in this repository: the real
-legacy Equipment Master source-file column layout, the create-vs-update
-policy for this specific dataset, and the BCM/Item-Number identity-conflict
-resolution policy. No parser is written, no field mapping is finalized, no
-create/update decision is made, and no implementation code is included in
-this PR (§26).
+existing governance can answer authoritatively, and additionally records,
+as this document's own Owner Decision resolution round, the three
+business-policy questions that originally could not be answered from
+repository evidence alone: the real legacy Equipment Master source-file
+column layout, the create-vs-update policy for this specific dataset, and
+the BCM/Item-Number identity-conflict resolution policy. All three are now
+**RESOLVED** — §9 records the Repository Owner's binding resolution of
+each, §7 records the full source-workbook structural contract, and §8
+records the complete 32-column field mapping. No implementation code is
+included in this PR (§26); this remains a documentation/governance-only
+record, and no PR20 implementation slice may begin using it until this
+resolution is itself independently reviewed and merged
+(`docs/ENGINEERING_WORKFLOW.md` §7).
 
 ---
 
@@ -259,7 +293,7 @@ this PR (§26).
 | Identifier model | `knowledge/adr/ADR-002-identifier-model.md`, `ADR-003-bcm-manual-search.md`, `ADR-004-hospital-item-no-qr.md`, `knowledge/architecture/identifiers.md` | UUID/BCM Code/Item No/Asset Number each have exactly one fixed role; canonicalization functions (`normalize_bcm_code`, `normalize_item_no`) already exist and must be reused, not reimplemented; Asset Number must never be fabricated or inferred from BCM/Item No — the same constraint that forced PR12 into update-only mode is directly relevant to PR20's own create-vs-update question (§9, OD-2). |
 | Roadmap scope | `docs/audits/04-consolidated-implementation-plan.md` Part D, Group 8 | PR20's Objective, Boundary (Ward/BME values belong to PR21, not PR20), and Dependency (PR19A only). |
 | Engineering process | `docs/ENGINEERING_WORKFLOW.md` §6, §7 | A Design PR is required before this work (new API surface, new database writes, new business-rule matching/duplicate-detection semantics); an Owner Decision is required for unresolved business policy, and implementation depending on one must not begin. |
-| Source-evidence search | Repository-wide search for "Equipment Master," legacy column names, sample `.xlsx`/`.csv` fixtures | **Zero real evidence found** anywhere in the repository of the actual legacy Equipment Master column layout, encoding, or sample data (§7, §9 OD-1). |
+| Source-evidence search (historical, at original design time) | Repository-wide search for "Equipment Master," legacy column names, sample `.xlsx`/`.csv` fixtures | **Zero real evidence found** anywhere in the repository of the actual legacy Equipment Master column layout, encoding, or sample data — this absence is what originally opened OD-1. **Superseded**: the Repository Owner has since directly supplied and reviewed the actual `export_template.xlsx` workbook; the resulting authoritative structural contract and column schema are recorded in §7/§8/§9 OD-1 (RESOLVED), not as a repository fixture file. |
 | Adapter call sites (fix round 1) | `backend/app/services/import_execution_service.py::run_dry_run`/`run_execute`, `import_validation_service.py::run_validation` | Confirmed by reading the actual invocation code: `adapter.plan_dry_run(ro_db)`/`adapter.execute(db)` are called with **only** the db session — no session/source identity parameter exists — requiring the `AdapterInvocationContext` mechanism (§6.4). |
 | CRUD transaction behavior (fix round 1) | `backend/app/crud/import_session.py::register_or_correct_source`/`cancel_session` | Confirmed by reading the actual code: both call `await db.commit()` internally, meaning a naive "register source, then separately add a blob row" sequence is **not** atomic — requiring the non-committing CRUD variant and explicit transaction-ownership contract (§6.2). |
 | Equipment concurrency token (fix round 1; superseded fix round 4, H9) | `backend/app/models/equipment.py`, `app/models/mixins.py::TimestampMixin` | Confirmed by reading the actual model: `Equipment` has no dedicated `version` counter, but does have `updated_at` (`onupdate=func.now()`, server-computed). Fix round 1/3 initially proposed reusing `updated_at`; fix round 4 finalizes a dedicated `Equipment.version` integer column instead, mirroring `ImportSession.version`'s existing pattern (§15.1). |
@@ -402,14 +436,17 @@ lookup function is needed for BCM/Item No matching.
 ### 4.4 What the Equipment domain does *not* provide (informs, does not
 block, PR20 design)
 
-No `create_or_update`/upsert-by-BCM helper exists — §9 OD-2 must resolve
-whether PR20 needs one at all (update-only would not). `asset_id` has no
-DB uniqueness guarantee (deliberately, per PR12's own Owner Decision — see
-`get_by_asset_ids`'s "application-layer conflict flagging, not a
-uniqueness guarantee" behavior) — if PR20's field mapping ends up including
-`asset_id` (§9 OD-1, not yet knowable), it must follow the same
-non-unique, conflict-flagging pattern PR12 established, not invent a new
-uniqueness constraint unilaterally.
+No `create_or_update`/upsert-by-BCM helper exists — §9 OD-2 (RESOLVED)
+confirms PR20 needs both create and update paths, since both CREATE and
+UPDATE candidates are in scope; PR20C itself still only classifies rows
+(§9 OD-2's explicit scope boundary), so the later execution slice
+(PR20E) is where such a helper, if any, would actually be introduced.
+`asset_id` has no DB uniqueness guarantee (deliberately, per PR12's own
+Owner Decision — see `get_by_asset_ids`'s "application-layer conflict
+flagging, not a uniqueness guarantee" behavior) — `asset_id` is included
+in PR20's field mapping (§8 row 3) and must follow the same non-unique,
+conflict-flagging pattern PR12 established, not invent a new uniqueness
+constraint unilaterally.
 
 ---
 
@@ -425,9 +462,9 @@ PR12's feature. The two are architecturally disjoint:
 |---|---|---|
 | Framework | Standalone (`import_service.py`, no PR19A involvement) | PR19A `ImportSession`/`ImportJob` framework |
 | API | `/import/preview`, `/import/commit` | `/import-sessions/*` (reused, §3.2) |
-| Match key | BCM Code only | Undecided — §9 OD-3 |
-| Create vs update | Update-only, by Owner Decision (PR12-H1/H1R) | Undecided — §9 OD-2 |
-| Fields written | `asset_id, brand, model, raw_source_status` + opaque metadata only | Undecided — §9 OD-1 |
+| Match key | BCM Code only | BCM primary, Item Number secondary integrity/QR check — §9 OD-3 (RESOLVED) |
+| Create vs update | Update-only, by Owner Decision (PR12-H1/H1R) | Both CREATE and UPDATE — §9 OD-2 (RESOLVED) |
+| Fields written | `asset_id, brand, model, raw_source_status` + opaque metadata only | Full 32-column mapping, §8 (RESOLVED) — see §9 OD-2 for the exact CREATE-writable and UPDATE-writable field lists |
 | Source-column evidence | Its own `REQUIRED_HEADERS`, itself marked illustrative/unconfirmed | None found anywhere (§7) |
 | Concurrency/lease/retention | None (single-request preview→commit) | Full PR19A session/job/lease/retention lifecycle |
 
@@ -439,7 +476,8 @@ directly authoritative for PR20, because PR20 targets a different dataset
 (the full Equipment Master, not incremental attribute refresh) with a
 materially different objective (durable legacy migration, not periodic
 sync) per `docs/audits/04-consolidated-implementation-plan.md`. §9 OD-2
-must resolve PR20's own policy explicitly, not inherit PR12's by default.
+resolves PR20's own policy explicitly (RESOLVED — both CREATE and
+UPDATE), rather than inheriting PR12's update-only default.
 
 Both features may coexist permanently; PR20 does not deprecate or replace
 PR12's `/import/*` endpoints.
@@ -680,8 +718,8 @@ one. Independent review of the implementation PR that adds this endpoint
 must re-validate the bounds, the non-committing CRUD variant's exact
 signature, and the retention integration (§6.6) before merge.
 
-### 6.3 `EquipmentMasterAdapter` shape (structure resolved; field-level
-content gated by §9 OD-1)
+### 6.3 `EquipmentMasterAdapter` shape (structure and field-level content
+both RESOLVED, §7/§8/§9)
 
 The pseudocode below matches the actual merged `ImportAdapter` ABC
 signatures exactly (`backend/app/services/import_adapter.py`, confirmed by
@@ -727,13 +765,15 @@ class EquipmentMasterAdapter(ImportAdapter):
     def validate_business_rules(
         self, record: RawImportRecord, context: "EquipmentMasterContext"
     ) -> list[FieldError]:
-        # Per-row: canonicalize BCM/Item No (§4.2), check required
-        # fields, check within-workbook duplicates, resolve identity
-        # against `context` (§9 OD-3), classify legacy status (§9 OD-1),
-        # and — if create is authorized (§9 OD-2) — validate the
-        # would-be-created record against the same constraints
-        # `POST /equipment` already enforces. Exact rules: BLOCKED on
-        # §9 OD-1/OD-2/OD-3.
+        # Per-row: canonicalize BCM/Item No (§4.2), check required-identity
+        # presence (§9 OD-3's blank/null matrix), check within-workbook
+        # duplicates, resolve identity against `context` (§9 OD-3's
+        # seven-case identity matrix), classify legacy status (§10's
+        # approved four-state mapping), and — for a CREATE candidate —
+        # validate the would-be-created record against the same
+        # constraints `POST /equipment` already enforces. Exact rules:
+        # RESOLVED, §7 (structural contract), §8 (field mapping), §9
+        # OD-1/OD-2/OD-3.
         ...
 
     async def plan_dry_run(self, db: AsyncSession) -> DryRunPlan:
@@ -806,7 +846,7 @@ class EquipmentMasterAdapter(ImportAdapter):
         # §14.4b), never silently tolerated. Applies each plan row's
         # planned action: UPDATE rows via the CAS predicate using that
         # row's own persisted concurrency token (§15.1, never a
-        # freshly-read one); CREATE rows (once authorized, §9 OD-2) via a
+        # freshly-read one); CREATE rows (authorized per §9 OD-2) via a
         # plain insert guarded by the existing unique constraints (§16).
         # Any conflict (stale token, missing plan, unique violation)
         # raises `EquipmentExecutionConflict(resolved_resource_id=
@@ -1222,10 +1262,57 @@ one.**
 
 ---
 
-## 7. Source Workbook Contract — Partially OPEN
+## 7. Source Workbook Contract — RESOLVED
 
-The following bounds and behaviors are resolvable *without* knowing the
-real column layout, and are specified now:
+**Authoritative source**: `export_template.xlsx`, as supplied and
+reviewed by the Repository Owner (§9 OD-1). The observed authoritative
+evidence: the workbook contains exactly one relevant worksheet, named
+**`Sheet1`**; the header row is **row 1**; data begins at **row 2**; the
+authoritative evidence contains **4,729 data rows**; the source layout
+contains **32 governed columns** (listed in full in §9 OD-1 / §8's
+mapping table).
+
+**Worksheet selection**: the parser MUST select `Sheet1` by name, never
+an arbitrary first worksheet. If `Sheet1` is missing, this is a
+structural validation failure (same failure class as any other missing
+required structural element, §12). If the workbook contains additional
+worksheets beyond `Sheet1`, the V1 contract is: **`Sheet1` is
+authoritative and required; additional sheets are ignored, not
+interpreted as Equipment Master data; no other sheet may substitute for
+`Sheet1`.** This is a deliberate, explicit V1 choice, not an oversight —
+a future revision that needs to interpret a second sheet must update this
+contract explicitly, not infer permission from silence.
+
+**Header selection**: the header is **exactly row 1**. The parser MUST
+NOT scan multiple rows attempting to guess which one is the header. A
+row within the data region (row 2 onward) that happens to repeat the
+header row's exact content is treated as an ordinary data row subject to
+the same required-column/identifier validation as any other row — not
+specially detected as a "repeated header" and stripped, since doing so
+silently would hide a genuine source-quality problem (per §12's
+duplicate/structural finding taxonomy, such a row will fail identifier
+validation in the ordinary way if its cells are not valid data).
+
+**Column order is not semantically authoritative.** Parsing is
+**exact-header-name based, not ordinal-position based** — a workbook
+containing the same 32 governed headers in a different column order
+remains valid. This deliberately avoids tying identity or business
+meaning to Excel column positions, which are not a stable contract across
+export vintages.
+
+**Required structural columns**: all 32 governed header names (§8) must
+be present in row 1, each exactly once.
+- **Missing governed header** → structural `ERROR`.
+- **Duplicate governed header** (the same governed name appears twice in
+  row 1) → structural `ERROR`.
+- **Unknown/extra header** (a row-1 column name not in the governed list)
+  → structural `ERROR` for PR20 V1. The approved production import fails
+  closed on source-schema drift rather than silently ignoring a
+  newly-added hospital-data column; a future schema evolution requires an
+  explicit contract update to this document, not silent tolerance.
+
+The following bounds and behaviors were already resolvable *without*
+knowing the real column layout, and remain unchanged by the above:
 
 - **File type**: `.xlsx` only (matches this codebase's only existing
   precedent, PR12; no evidence anywhere suggests a different legacy
@@ -1245,59 +1332,144 @@ real column layout, and are specified now:
   regions as their top-left value only (openpyxl's default merged-cell
   read behavior) — this is a parsing-robustness requirement independent
   of what the columns are named.
-- **Numeric cells rendered as identifiers** (e.g. a user typing `00123`
-  into Excel, which silently stores the number `123` with a *display*
-  format that shows the padding): **correction from the prior revision —
-  reading such a cell "as text" does not recover the original leading
-  zeros.** Once Excel has stored the value as a number, the padding was
-  never persisted as characters; it is presentation metadata (a numeric
-  format string) attached to the cell, not retrievable from the
-  underlying value. PR20 must distinguish two genuinely different cases:
-  (a) the source cell is **text-typed** in the workbook — leading zeros
-  are real characters and are preserved correctly by reading the cell as
-  a string, no special handling needed; (b) the source cell is
-  **numeric-typed** — any leading-zero padding is already, unrecoverably
-  lost at the source, and PR20 must not attempt to reconstruct it (e.g. by
-  re-padding to a guessed fixed width) except where a specific,
-  Owner-approved mapping rule makes the original value unambiguous (for
-  example, a *known*, fixed-width identifier format confirmed as part of
-  §9 OD-1). Absent such an explicit rule, a numeric-typed identifier
-  candidate cell must produce a blocking or warning finding (per §9 OD-1's
-  eventual taxonomy) demanding source correction, never a silently
-  invented value — this constraint on *behavior* is knowable and fixed now
-  even though *which* column is the identifier column, and whether a safe
-  re-padding rule exists, is not.
+- **Numeric cells rendered as identifiers**: reading a numeric-typed cell
+  "as text" does not recover original leading zeros. Once Excel has
+  stored a value as a number, any leading-zero padding was never
+  persisted as characters — it is presentation metadata (a numeric format
+  string) attached to the cell, not retrievable from the underlying
+  value. This constraint is real and applies to both governed
+  identifiers, but the two now have **distinct, resolved acceptance
+  rules** (§9 OD-1's identifier cell contract, restated here for the
+  parsing layer):
+  - **`ID CODE` (→ BCM)**: accepts a **text-typed cell only**. A
+    numeric-typed `ID CODE` cell is rejected outright (a blocking
+    `ERROR`) — BCM is never accepted as a numeric cell, so this class of
+    leading-zero ambiguity cannot occur for BCM by construction.
+  - **`Item No.` (→ Item Number)**: accepts **either** a text-typed cell
+    (preserved verbatim after whitespace trim) **or** a numeric-typed
+    cell (converted losslessly to its canonical decimal string
+    representation — e.g. the underlying value `123`, never scientific
+    notation, never a floating-point artifact like `123.0`). A fractional,
+    `NaN`, or infinite numeric value is rejected (blocking `ERROR`). If a
+    numeric-typed `Item No.` cell's original textual leading zeros were
+    already destroyed by Excel before this system ever saw the file, this
+    design does not attempt to reconstruct them — no re-padding to a
+    guessed fixed width is ever performed. That is a source-data quality
+    problem to correct at the source, not a parsing problem this system
+    can safely solve by inventing a value.
 - **Duplicate rows** (byte-identical row content repeated): treated as two
   separate logical rows for row-numbering/finding purposes; whether they
-  collapse to one BCM/Item-No conflict is §9 OD-3's concern, not a
-  parsing concern.
+  collapse to one BCM/Item-No conflict follows §9 OD-3's now-RESOLVED
+  identity matrix, not a parsing concern.
 - **Completely empty file**: `total_rows = 0`, a structural
   `validation_failed` outcome (mirrors PR19B's own "structural failure"
   fixture semantics already established in the merged frontend — a
   `validation_failed` session with null counters and a bounded generic
   `failure_reason`, not a fabricated zero-row "success").
 
-**What remains OPEN**: the actual header row's column names, their order,
-their data types, and how many distinct sheets/tabs a real legacy export
-contains. §9 OD-1.
+This section is fully RESOLVED — the header row's column names, their
+order-independence, the workbook/sheet structure, and the two governed
+identifiers' distinct cell-type rules are all specified above and in §8's
+mapping table. No further Owner input is required to implement the
+structural/identifier parsing layer.
 
 ---
 
-## 8. Field Mapping — OPEN (§9 OD-1)
+## 8. Field Mapping — RESOLVED (implementation-grade)
 
-No field mapping can be specified. The repository contains zero real
-evidence of the legacy Equipment Master source's column layout (§2, source
-row "Source-evidence search"). PR12's `REQUIRED_HEADERS` is the closest
-artifact in the codebase and is explicitly marked "illustrative...
-pending confirmation against a real hospital inventory export" by its own
-authors — it must not be treated as PR20's source contract by inheritance.
+This section is the authoritative, implementation-grade column mapping
+for all 32 governed columns of `export_template.xlsx` (§7, §9 OD-1). It
+is derived from the actual current Equipment domain model
+(`backend/app/models/equipment.py`, `backend/app/models/master_data.py`
+— inspected directly, not assumed) — no schema is added or invented to
+preserve a legacy column that has no current destination.
 
-Per the user's explicit instruction for this design round: **this document
-does not guess column names, does not assume PR12's headers apply, and
-does not propose a field mapping.** §9 OD-1 requests the concrete artifact
-needed (a real sample export, or an Owner-provided column specification)
-before this section can be completed in a follow-up revision of this
-document or a dedicated field-mapping addendum.
+**Classification legend** (every row uses exactly one):
+
+- **destination field** — an actual existing `Equipment` column this
+  value is written into.
+- **validation/reference only** — never written to any field; may appear
+  in a finding's context payload or audit trail for operator visibility,
+  never persisted as Equipment data.
+- **intentionally ignored** — permanently out of scope for this system's
+  current domain model (e.g. a concept this single-hospital system does
+  not represent at all).
+- **deferred / requires future schema decision** — a legitimate business
+  attribute with no current Equipment field. **PR20C must not depend on
+  a deferred field** — it is never required for a row to be classified
+  CREATE, UPDATE, or valid.
+
+**General cell-normalization rules** (apply to every column below unless
+a row states an exception):
+
+- Text fields: trim leading/trailing whitespace; an empty string
+  normalizes to `null` where the destination field is nullable.
+- Formula cells are never executed — only the literal last-computed
+  value is read (§21), and a cell that is itself a live formula (not a
+  cached value) is treated as unreadable content, producing a finding
+  rather than silently evaluating it.
+- Date fields (columns 4–8 below): none of them have a current
+  Equipment-domain destination (all deferred), so no date-parsing rule is
+  specified here — a future revision that adds a destination for any of
+  them must specify its own explicit accepted date representations at
+  that time, not inherit an implicit one.
+- Integer fields with a current destination: none exist among the 32
+  columns below (`Life Expect`, the one integer-shaped column with no
+  destination, is deferred — see row 29).
+
+**Full 32-column mapping table:**
+
+| # | Source column | Source type | Required? | Destination field | CREATE write? | UPDATE write? | Validation | Notes |
+|---|---|---|---|---|---|---|---|---|
+| 1 | `Item No.` | text or integer-numeric cell | **Required** (§9 OD-3) | `Equipment.item_no` | Yes — identity | **No** — immutable, matching key only | Blank → `ERROR` (missing Item Number, §9 OD-3); numeric cell converted losslessly to canonical decimal string, fractional/NaN/infinite rejected (§7) | Never derived from BCM; leading zeros never fabricated |
+| 2 | `ID CODE` | text cell only | **Required** (§9 OD-3) | `Equipment.bcm_code` | Yes — identity | **No** — immutable, matching key only | Blank → `ERROR` (missing BCM, §9 OD-3); numeric-typed cell → `ERROR` (§7) | Never derived from Item Number |
+| 3 | `Asset ID` | text or numeric cell | optional | `Equipment.asset_id` | Yes | Yes | Non-unique; a conflicting value across records is a `WARNING`, application-layer conflict flagging only — mirrors the existing PR12 Inventory Import precedent (`get_by_asset_ids`, §4.4) exactly, no new uniqueness invented | Same destination column PR12's own import already writes |
+| 4 | `ปีที่ซื้อ` (year purchased) | numeric/text | optional | — | No | No | — | **Deferred** — no current field |
+| 5 | `วันที่ลงทะเบียน` (registration date) | date | optional | — | No | No | — | **Deferred** |
+| 6 | `วันที่รับ` (date received) | date | optional | — | No | No | — | **Deferred** |
+| 7 | `วันเริ่มประกัน` (warranty start) | date | optional | — | No | No | — | **Deferred** — a distinct concept from `pm_due_date`/`cal_due_date` (PM/calibration scheduling), never conflated with either |
+| 8 | `วันหมดประกัน` (warranty end) | date | optional | — | No | No | — | **Deferred** — same distinction as above |
+| 9 | `ชื่อไทย` (Thai name) | text | **Required for CREATE** (`equipment_name` is `NOT NULL`) | `Equipment.equipment_name` | Yes | Yes | Blank on a CREATE candidate → `ERROR` (required field, §4.1) | **Recorded design decision** (see rationale below the table) — Thai name is the primary display name |
+| 10 | `ชื่ออังกฤษ` (English name) | text | optional | — (validation/reference only) | No | No | — | Not written to any field; available for finding/audit context only — see rationale below the table |
+| 11 | `Ownership` | text | optional | — | No | No | — | **Intentionally ignored** — no ownership concept exists in the current Equipment domain |
+| 12 | `กลุ่มโรงพยาบาล` (hospital group) | text | optional | — | No | No | — | **Intentionally ignored** — this system is single-hospital scoped (`docs/HOSPITAL_DOMAIN_MODEL.md`); no multi-hospital-group concept exists |
+| 13 | `โรงพยาบาล` (hospital) | text | optional | — | No | No | — | **Intentionally ignored** — same reason as row 12 |
+| 14 | `หน่วยงาน` (department/unit) | text | optional | — (validation/reference only) | No | No | May appear in finding/audit context | **Deferred as a write destination** — `department_owner_id` is a foreign key; no approved legacy-name-to-UUID matching algorithm exists (§9 OD-2 Location Policy) |
+| 15 | `อาคาร` (building) | text | optional | — (validation/reference only) | No | No | May appear in finding/audit context | **Deferred** — `current_location_id` is a foreign key, same reasoning as row 14 |
+| 16 | `ชั้น` (floor) | text | optional | — (validation/reference only) | No | No | May appear in finding/audit context | **Deferred** — same reasoning |
+| 17 | `ห้อง` (room) | text | optional | — (validation/reference only) | No | No | May appear in finding/audit context | **Deferred** — same reasoning |
+| 18 | `ประเภทเครื่องมือ` (equipment type) | text | optional | — (validation/reference only) | No | No | May appear in finding/audit context | **Deferred** — `category_id` is a foreign key, same reasoning as row 14 |
+| 19 | `ชนิดเครื่องมือ` (equipment kind/subtype) | text | optional | — | No | No | — | **Intentionally ignored** — no current Equipment field distinct from `category_id` (already deferred, row 18) |
+| 20 | `ยี่ห้อ` (brand) | text | optional | `Equipment.brand` | Yes | Yes | — (free text, no format constraint) | Direct existing field |
+| 21 | `รุ่น` (model) | text | optional | `Equipment.model` | Yes | Yes | — (free text) | Direct existing field |
+| 22 | `S/N` (serial number) | text | optional | `Equipment.serial_number` | Yes | Yes | DB-unique (`uq_equipment_serial_number`) — a conflicting value is a blocking `ERROR` (unlike `asset_id`, this column has a real physical uniqueness constraint PR20C must not let reach execution unflagged) | Not a governed identity field under §9 OD-3 — only BCM/Item Number are identity keys |
+| 23 | `ราคาซื้อ` (purchase price) | numeric | optional | — | No | No | — | **Deferred** — no current field |
+| 24 | `ผู้ขาย` (vendor) | text | optional | — | No | No | — | **Deferred** |
+| 25 | `ชื่อผู้ติดต่อ` (contact name) | text | optional | — | No | No | — | **Deferred** |
+| 26 | `เบอร์โทรผู้ติดต่อ` (contact phone) | text | optional | — | No | No | — | **Deferred** |
+| 27 | `สถานะเครื่องมือ` (equipment status) | text | optional column presence; value mapping required for CREATE | `Equipment.status` (CREATE only, §9 OD-2 Legacy Lifecycle Policy) | Yes — only via an approved one-to-one mapping to one of the four `EquipmentStatus` values; unmappable → blocking `ERROR`, never a fifth state | **No** — never overwrites current live status; a mismatch between legacy and current status produces a non-blocking `WARNING` finding only | See §9 OD-2 for the full CREATE/UPDATE lifecycle policy; the exact per-value Thai/English string enumeration remains an implementation-time task for PR20C's own PR, verified against real source content — not a further Owner Decision, since the fallback (unmappable → blocking `ERROR`) is already fixed | |
+| 28 | `อยู่ในประกัน` (under warranty) | text/boolean-like | optional | — | No | No | — | **Deferred** |
+| 29 | `Life Expect` | integer | optional | — | No | No | — | **Deferred** — no current field; if a future revision adds a destination, it should accept an integer cell or an explicitly-approved integer-text representation, per this section's general normalization rules |
+| 30 | `ความเสี่ยง` (risk classification) | text | optional | — | No | No | — | **Deferred** |
+| 31 | `Classification` | text | optional | — | No | No | — | **Deferred** — conceptually adjacent to `ประเภทเครื่องมือ`/`ชนิดเครื่องมือ` (rows 18–19) but kept as its own explicit row rather than silently merged with either |
+| 32 | `TOR` | text | optional | — | No | No | — | **Deferred/ignored** — an unmapped legacy field with no current destination |
+
+**Design decision recorded for rows 9–10 (`ชื่อไทย`/`ชื่ออังกฤษ`)**:
+`Equipment.equipment_name` is a single `NOT NULL` string column — the
+source workbook offers two name columns, and a CREATE candidate must
+populate `equipment_name` with exactly one value. This design resolves
+that mapping ambiguity as a technical implementation judgment (not a
+further Owner Decision — the Owner has already supplied both source
+columns; deciding which single value feeds the one available field is an
+architecture decision within the implementing engineer's authority): the
+Thai name (`ชื่อไทย`) is the primary destination for `equipment_name`,
+matching this system's established Thai-first operational convention
+(e.g. the existing เบิก/รับคืน terminology work, Roadmap PR11). The
+English name (`ชื่ออังกฤษ`) is not discarded — it remains available as
+validation/reference-only context (e.g. surfaced in a finding or audit
+record for operator cross-checking) but is never written to any
+Equipment field, since no second name column exists in the current
+domain model and this design does not invent one solely to preserve it.
 
 ---
 
@@ -1344,6 +1516,18 @@ set as part of the required schema. §7/§8/§10 (validation taxonomy,
 column-mapping classification, lifecycle-status mapping) proceed against
 this list.
 
+**Full workbook/sheet/header structural contract**: recorded in §7
+(RESOLVED) — authoritative worksheet name `Sheet1`, header row 1, data
+begins row 2, 4,729 authoritative evidence rows, exact-header-name-based
+parsing (column order not authoritative), all 32 headers required exactly
+once (missing/duplicate/unknown-extra → structural `ERROR`), and the two
+governed identifiers' distinct cell-type acceptance rules.
+
+**Full implementation-grade column mapping**: recorded in §8 (RESOLVED)
+— every one of the 32 columns is classified as an existing destination
+field, validation/reference only, intentionally ignored, or deferred,
+with explicit CREATE/UPDATE write behavior per column.
+
 **Note on §10 (Equipment Lifecycle Mapping) — narrower item, not blocked
 by this resolution:** OD-1 resolves the *column schema*, not an
 exhaustive enumeration of every legacy value that appears in the
@@ -1380,17 +1564,106 @@ UPDATE candidate, or a conflict — it performs **no Equipment mutation of
 any kind**. The classification is validation/planning output only. The
 actual CREATE or UPDATE action is materialized later, by the persisted
 `DryRunPlan`/execution slice (PR20D/PR20E), which alone is authorized to
-write to the `equipment` table. This mirrors §6.3's pre-existing "exact
-create/update content: BLOCKED on OD-1/OD-2" language, now unblocked for
-classification purposes but still deliberately silent on execution, which
-remains a separate slice's responsibility.
+write to the `equipment` table.
 
-Which specific non-identity fields a create may populate, and which
-fields an update may or may not overwrite on an existing record, remain
-subject to §4.1's existing column list and any further field-mapping
-detail PR20C's own implementation records (§12) — no additional Owner
-Decision is required to begin PR20C's classification-only work, since
-PR20C never writes to `equipment` regardless of that mapping detail.
+**Fields import may NEVER overwrite on UPDATE** (immutable through this
+import path, regardless of what the workbook contains):
+
+- `Equipment.id` (UUID) — never derived from legacy data, never rewritten.
+- `bcm_code` (BCM) — the matching key itself; never rewritten by a
+  successful match (a mismatch is a blocking identity conflict, §9 OD-3,
+  never an automatic correction).
+- `item_no` (Item Number) — same as BCM; used only for matching.
+- `version` — server-managed (Roadmap PR20B); this import path never
+  bumps it directly, and never accepts a client/source-supplied value for
+  it.
+- `created_at`/`updated_at` and any other system/audit timestamp.
+- The current operational ward/location implied by an active
+  `BorrowTransaction` — legacy master data never rewinds live pool
+  workflow state.
+- The current Equipment lifecycle/status (`status`) on UPDATE — see the
+  Legacy Lifecycle Policy below; a legacy status value is never applied
+  to an existing record's live status.
+
+**Exact CREATE-writable fields** (derived from §8's mapping table — every
+column marked "CREATE write? Yes"):
+
+- `item_no` (identity, required)
+- `bcm_code` (identity, required)
+- `asset_id`
+- `equipment_name` (from `ชื่อไทย`, required — see §8's recorded design
+  decision)
+- `brand` (from `ยี่ห้อ`)
+- `model` (from `รุ่น`)
+- `serial_number` (from `S/N`)
+- `status` — only via the approved one-to-one legacy-lifecycle mapping
+  (Legacy Lifecycle Policy below); unmappable → blocking `ERROR`, the row
+  is not a valid CREATE candidate.
+
+No other column has a CREATE-writable destination. `category_id`,
+`department_owner_id`, and `current_location_id` are **not** populated by
+this import path on CREATE — §8 rows 14/15/16/17/18 defer all four
+location/category-shaped legacy columns as write destinations, since no
+approved legacy-name-to-existing-master-data-row matching algorithm
+exists yet (see Location Policy below). A CREATE candidate's `equipment`
+row is created with these three foreign keys left `NULL`, exactly as the
+domain model already permits for equipment predating this import.
+
+**Exact UPDATE-writable fields** (derived from §8's mapping table —
+every column marked "UPDATE write? Yes", excluding the immutable-field
+list above): `asset_id`, `brand`, `model`, `serial_number`. These are
+this design's **legacy-master descriptive fields** — non-identity,
+non-operational, already-existing Equipment columns. `equipment_name` is
+CREATE-writable but is deliberately **not** listed as UPDATE-writable
+here: an existing record's operator-facing name is live operational data
+an operator may have already corrected since the legacy export was taken,
+and this import path does not overwrite it on UPDATE (only `asset_id`,
+`brand`, `model`, `serial_number` are updated for a matched record).
+
+**Same-value updates**: execution planning (a later slice's
+responsibility) may omit a field write where the normalized incoming
+value is identical to the record's current value. `Equipment.version`
+must not advance for a row whose effective writable field set contains
+no actual change — this preserves Roadmap PR20B's server-owned version
+contract (`equipment_crud.update()`'s own empty-`data` guard, PR91-H1)
+rather than introducing a second, import-specific version-bump rule.
+
+**Legacy Lifecycle Policy:**
+
+- **For CREATE**: legacy lifecycle/status may initialize `Equipment.status`
+  only when an approved one-to-one mapping exists to one of
+  `AVAILABLE_AT_POOL`, `ISSUED_TO_WARD`, `UNAVAILABLE_DEFECTIVE`,
+  `DECOMMISSIONED` (§10). No fifth lifecycle state may be introduced. The
+  exact per-value Thai/English string enumeration is an implementation-time
+  task for PR20C's own PR, verified against the real 4,729-row source
+  content — not a further Owner Decision (§8 row 27, §10). Consistent with
+  this design's pre-existing recommendation (§11), PR20 should not import
+  equipment directly into `ISSUED_TO_WARD` on CREATE, since doing so
+  without a corresponding `BorrowTransaction` would violate the invariant
+  that `ISSUED_TO_WARD` equipment always has an active transaction — a
+  legacy status that appears to represent "currently issued" maps to a
+  blocking `ERROR` under this rule, not a fabricated CREATE-time issuance.
+- **For UPDATE**: legacy source must **never** overwrite an existing
+  record's current live `status`. If the legacy lifecycle value conflicts
+  with the existing record's current status, the import does not mutate
+  status — the difference is reported as a non-blocking `WARNING` finding
+  (informational only; current operational workflow remains the source of
+  truth for live status, per this design's own established discipline,
+  §10/§11).
+
+**Location Policy** (`หน่วยงาน`, `อาคาร`, `ชั้น`, `ห้อง`, §8 rows
+14–17): these legacy columns must **not** overwrite the live operational
+ward/location of an existing Equipment record through UPDATE. For
+CREATE, §8 defers all four as write destinations — `department_owner_id`
+and `current_location_id` are foreign keys, and no approved algorithm for
+resolving a legacy Thai location/department string into an existing
+master-data row's UUID has been established (fuzzy matching, exact-name
+matching, and create-a-new-master-data-row-on-miss are all live design
+questions this document does not resolve unilaterally). A CREATE
+candidate therefore leaves these three foreign keys `NULL`; a future
+schema/matching decision may add this capability, but this design does
+not infer issuance or location merely from a legacy department/location
+cell being present.
 
 ### OD-3 — BCM / Item Number identity-conflict policy
 
@@ -1416,9 +1689,34 @@ explicitly bound to the legacy source columns):
 consistency against whatever Equipment record (if any) the BCM match (or
 non-match) implies.
 
-**Required identity matrix** (authoritative — PR20C's
-`validate_business_rules` must implement exactly these seven cases, no
-more, no fewer):
+**Requiredness precondition — both identifiers are mandatory.** Per the
+Repository Owner's binding clarification: BCM and Item Number are BOTH
+**required** for a PR20 Equipment Master row to become a CREATE or UPDATE
+candidate. No row may CREATE or UPDATE with either identifier missing.
+This precondition is evaluated for every row **before** the identity
+matrix below is consulted; the identity matrix governs matching outcomes
+only for rows that have already satisfied this precondition.
+
+**Blank/null identifier requiredness matrix** (exhaustive over the four
+presence combinations — evaluated first, ahead of any matching logic):
+
+| Case | Source BCM (`ID CODE`) | Source Item No. | Outcome |
+|---|---|---|---|
+| A | present | present | Continue to the identity matrix below |
+| B | blank/null | present | **ERROR** — BCM is required; matching by Item Number alone is not permitted; no CREATE, no UPDATE |
+| C | present | blank/null | **ERROR** — Item Number is required; no CREATE, no UPDATE |
+| D | blank/null | blank/null | **ERROR** — both required identities are missing; the row is invalid; no generated/fallback identifier of any kind is substituted |
+
+None of the four cases above may be satisfied by generating, deriving, or
+otherwise fabricating a missing identifier (for example, deriving BCM
+from Item Number, or vice versa). A missing identifier is always a
+blocking structural/business finding, never silently defaulted.
+
+**Required identity matrix** (authoritative for rows that have already
+passed the blank/null requiredness matrix above — cases 1–7 cover every
+matching outcome once both identifiers are known to be present; the
+blank/null cases above are separate, mandatory preconditions and are not
+counted among, or excluded by, these seven cases):
 
 | Case | Source BCM | Source Item No. | Database state | Result |
 |---|---|---|---|---|
@@ -1461,32 +1759,32 @@ disallowed-state list — no such equivalence is asserted here.
 
 ---
 
-## 11. Location / Ward Consistency — Partially OPEN
+## 11. Location / Ward Consistency — RESOLVED via §9 OD-2's Location Policy
 
 Per `docs/audits/04-consolidated-implementation-plan.md`'s PR20 Boundary,
 "Legacy BME names and Ward values belong to transaction history and are
 handled by PR21, not this Equipment Master import" — PR20 must not import
-transaction/ward history. However, if the legacy Equipment Master source
-itself carries a "current location" or "current ward" field *at the
-equipment level* (distinct from transaction history, which is out of
-scope), that would interact with `status`: an equipment record imported as
-`ISSUED_TO_WARD` implies an active issue, which this system currently
-represents only via an active `BorrowTransaction`, not an equipment-level
-location column being set independently. The current domain has no
-equipment-level "current ward" field at all (`current_location_id` exists
-but is a different concept — see `app/models/equipment.py`).
+transaction/ward history. The real source (`export_template.xlsx`, §7)
+does carry equipment-level location-shaped columns
+(`หน่วยงาน`/`อาคาร`/`ชั้น`/`ห้อง`) distinct from transaction history — §9
+OD-2's Location Policy resolves how PR20 treats them: these four columns
+must **never** overwrite the live operational ward/location of an
+existing record through UPDATE, and are **not** populated on CREATE
+either, because `department_owner_id`/`current_location_id` are foreign
+keys with no Owner-approved legacy-name-to-UUID matching algorithm (§8
+rows 14–17). This system currently represents "currently issued" only via
+an active `BorrowTransaction`, not an equipment-level location column set
+independently, so PR20 never fabricates `ISSUED_TO_WARD` from a legacy
+department/location cell (§9 OD-2, §10).
 
-**Recommendation for Owner consideration**: PR20 should likely never
-import equipment directly into `ISSUED_TO_WARD` (since doing so without a
-corresponding transaction would violate the invariant that
-`ISSUED_TO_WARD` equipment always has an active transaction, and creating
-a synthetic transaction is explicitly PR21's scope, not PR20's) — any
-legacy status that appears to represent "currently issued" should map to
-a blocking `ERROR` finding under §10's classification rule, deferred to
-whatever PR21 or a later reconciliation PR designs for that case, rather
-than PR20 inventing a workaround. This is a recommendation, not a
-decision; it becomes concrete only once OD-1 reveals whether this
-situation is even present in the real source data.
+This confirms the design's own prior "Recommendation for Owner
+consideration" (PR20 should never import equipment directly into
+`ISSUED_TO_WARD` from a legacy location cell) — the Owner's resolution of
+§9 OD-2 makes this the actual, binding policy, not merely a
+recommendation. Any legacy status that appears to represent "currently
+issued" still maps to a blocking `ERROR` finding under §10's
+classification rule, deferred to whatever PR21 or a later reconciliation
+PR designs for that case, rather than PR20 inventing a workaround.
 
 ---
 
@@ -1509,13 +1807,16 @@ CONFLICT`, `EQUIPMENT_MASTER_STATUS_UNMAPPABLE` — illustrative examples
 only, not a final list.
 
 **Categories resolvable now** (structure, not exact codes): missing
-required identifier(s); malformed identifier (fails canonicalization);
-duplicate identifier within the same workbook; identifier collides with
-an existing record in a way OD-2/OD-3 classifies as a conflict;
-unmappable legacy status (§10); field length/type violations (once OD-1
-defines the fields); create attempted where create is not authorized (if
-OD-2 resolves to update-only, this becomes the correct rejection path,
-mirroring PR12-H1's precedent exactly).
+required identifier(s) (§9 OD-3's blank/null matrix); malformed
+identifier (fails canonicalization); duplicate identifier within the same
+workbook; identifier collides with an existing record in a way OD-2/OD-3
+classifies as a conflict; unmappable legacy status (§10); field
+length/type violations against the fixed field set (§7, §8); a source
+row attempting to write an immutable or non-writable field on UPDATE
+(§9 OD-2's "never overwrite" list) — mirroring PR12-H1's
+update-only-field-protection precedent for the fields §9 OD-2 actually
+protects, without inheriting PR12's broader update-only restriction on
+create.
 
 **What remains for PR20C's own implementation PR to finalize** (not a
 further Owner Decision — the governing policy itself is now fully
@@ -1555,8 +1856,10 @@ Distinguishing the six categories the task requires:
   question (OD-2) applied across sessions rather than within one — no
   additional mechanism beyond OD-2's resolution is needed.
 
-**What remains OPEN**: whether (B)/(C) block the whole row, block only the
-duplicate rows, or are accepted with a warning — OD-3.
+**RESOLVED**: (B) and (C) each block every row participating in the
+duplicate (all rows sharing the duplicated BCM, or all rows sharing the
+duplicated Item Number) with a blocking `ERROR` — not merely the second
+occurrence, and never accepted with a warning — per §9 OD-3's cases 6/7.
 
 ---
 
@@ -2555,7 +2858,7 @@ One consequence worth flagging for implementation: `MAX_IMPORT_ROWS=5000`
 writes — well within normal PostgreSQL transaction-size tolerances, so no
 chunking/batching design is needed.
 
-### 15.1 Update-mode optimistic concurrency (conditional on §9 OD-2) — rewritten, fix round 2, H5R
+### 15.1 Update-mode optimistic concurrency (mandatory — §9 OD-2 authorizes update mode) — rewritten, fix round 2, H5R
 
 **Fix-round-2 correction: the prior revision described the concurrency
 token as captured "at `plan_dry_run` time... and, transitively, whenever
@@ -2596,11 +2899,12 @@ UPDATE ... WHERE id = :equipment_id AND version = :T1
 if current version != T1 (zero rows affected): STALE PLAN / CONFLICT
 ```
 
-**If OD-2 authorizes update mode, this contract is mandatory. If OD-2
-resolves to create-only, this entire subsection is moot** — a create
-either succeeds via the database's own unique constraints or fails with a
-duplicate-identifier `IntegrityError`, already covered by §16; there is no
-existing row whose freshness needs protecting.
+**§9 OD-2 (RESOLVED) authorizes update mode, so this contract is
+mandatory** — it applies to every UPDATE candidate PR20's execution slice
+processes. A CREATE candidate is unaffected by this subsection: it either
+succeeds via the database's own unique constraints or fails with a
+duplicate-identifier `IntegrityError`, already covered by §16, since there
+is no existing row whose freshness needs protecting.
 
 **The problem, confirmed rather than assumed**: the existing unique
 constraints on `bcm_code`/`item_no`/`serial_number` (§4.1) protect against
@@ -2742,7 +3046,7 @@ selects Option B: a new `Equipment.version` integer column**, mirroring
   explicitly if proposed.
 - **Scenarios this covers, confirmed one by one**: (a) *manual Equipment
   edit after dry-run* — any `PATCH /equipment/{id}` bumps `version`,
-  caught (conditional on PR20B's enforcement across this path, below).
+  caught by PR20B's already-merged enforcement across this path (below).
   (b) *another import session updating the same Equipment* — same
   mechanism, whichever `execute` call reaches the row second observes a
   stale `expected_equipment_version` and conflicts. (c) *identity field
@@ -2819,7 +3123,7 @@ BCM/Item No. Analysis:
   accepts (its own design does not lock rows between preview and commit
   either), and is fully covered by the unique-constraint boundary above —
   PR20 inherits this accepted risk rather than introducing new locking
-  machinery. For *update*-mode rows (if OD-2 authorizes update), this
+  machinery. For *update*-mode rows (§9 OD-2 authorizes update mode), this
   TOCTOU window is **not** merely accepted risk — §15.1's
   `Equipment.version`-based optimistic-concurrency check exists specifically to
   detect and reject a stale update rather than silently applying it,
@@ -2944,11 +3248,11 @@ change is a real-client wiring exercise, not new UI design.
 - **External links**: reject or ignore workbook external-reference cells
   (openpyxl does not resolve these by default; confirm this remains true
   at implementation time rather than assuming).
-- **Oversized strings**: every persisted string field (once OD-1 defines
-  the field set) must have an explicit bounded length, enforced at both
-  the Pydantic/validation layer and (where the field lands on an existing
-  `Equipment` column) the database's own existing column-length
-  constraint.
+- **Oversized strings**: every persisted string field (the destination
+  field set is now fixed by §8's 32-column mapping table) must have an
+  explicit bounded length, enforced at both the Pydantic/validation layer
+  and (where the field lands on an existing `Equipment` column) the
+  database's own existing column-length constraint.
 - **Temporary file / in-memory buffer cleanup**: if the implementation
   writes any intermediate temp file during parsing, it must be cleaned up
   in a `finally` block (matches the PR19A design doc's own explicit
@@ -2966,15 +3270,18 @@ change is a real-client wiring exercise, not new UI design.
 
 ## 22. Testing Strategy
 
-**Unit**: parsing (header detection, blank-row skip, numeric-as-identifier
-handling, malformed-workbook rejection — all resolvable without OD-1);
-canonicalization reuse (BCM/Item No via `app.services.identifiers`, no new
-canonicalization logic to test); duplicate detection within a workbook
-(§13 B/C, structurally testable with synthetic column names even before
-OD-1 resolves the real ones — implementation PRs may need to use
-placeholder field names until OD-1 lands, or may need to be sequenced
-after OD-1 resolves, per §24); lifecycle-status classification (§10,
-gated by OD-1); identifier-conflict detection (§9 OD-3, once resolved).
+**Unit**: parsing (worksheet-name selection, header-row detection at row
+1, blank-row skip, BCM/Item Number cell-type handling per §7, malformed-
+workbook rejection); canonicalization reuse (BCM/Item No via
+`app.services.identifiers`, no new canonicalization logic to test);
+required-column and duplicate-header structural validation against the
+real 32-column header set (§7); field-mapping classification per §8's
+mapping table (destination write vs. validation-only vs. intentionally-
+ignored vs. deferred, for every governed column); blank/null identifier
+requiredness (§9 OD-3's four-case matrix) and duplicate detection within
+a workbook against the real column names (§13 B/C); lifecycle-status
+classification (§10, against the approved four-state mapping);
+identifier-conflict detection (§9 OD-3's seven-case identity matrix).
 
 **Integration (real PostgreSQL)**: existing-Equipment conflict scenarios
 (unique-constraint collision surfaced correctly, §16); concurrent-session
@@ -3026,8 +3333,8 @@ CAS alone — one succeeds, the other receives the existing, unmodified
 admission-conflict error — with no PR20-specific locking involved; a test
 proving a session admitted for execute with zero active plans, a
 hypothetical invariant violation, fails loudly as a genuine server error);
-**optimistic-concurrency conflict detection** (§15.1, conditional on
-OD-2 authorizing update mode: a genuine two-connection PostgreSQL test
+**optimistic-concurrency conflict detection** (§15.1, mandatory since §9
+OD-2 authorizes update mode: a genuine two-connection PostgreSQL test
 proving a manual `PATCH /equipment/{id}` issued *between* dry-run and
 execute causes the affected row's update to be detected as
 zero-rows-affected using the *persisted* token — explicitly asserting
@@ -3127,11 +3434,16 @@ existing one.
 Per the task's explicit scope guard and this design's own findings, PR20
 implementation PRs must **not**:
 
-- Guess or invent the legacy Equipment Master column layout (§8, blocked
-  on OD-1).
-- Decide create-vs-update policy unilaterally (blocked on OD-2).
-- Decide BCM/Item No identity-conflict resolution unilaterally (blocked
-  on OD-3).
+- Guess or invent the legacy Equipment Master column layout — it is now
+  fixed by the Owner-supplied `export_template.xlsx` evidence (§7, §8,
+  §9 OD-1, RESOLVED); an implementation PR may not deviate from that
+  recorded 32-column contract.
+- Decide create-vs-update policy unilaterally — it is now fixed by §9
+  OD-2 (RESOLVED: both CREATE and UPDATE, per the exact field-mutability
+  rules recorded there).
+- Decide BCM/Item No identity-conflict resolution unilaterally — it is
+  now fixed by §9 OD-3 (RESOLVED: the blank/null requiredness matrix and
+  the seven-case identity matrix).
 - Introduce a fifth equipment lifecycle state.
 - Modify PR12's existing `/import/*` Inventory Import feature.
 - Modify PR19A's session/job/lease/fencing/recovery/retention
@@ -3150,12 +3462,15 @@ implementation PRs must **not**:
 - Import Receive/Issue transaction history or Ward values (PR21's scope,
   per the Roadmap Boundary already quoted in §2/§11).
 - Weaken the existing Administrator-only RBAC gate.
-- Begin any implementation PR before OD-1/OD-2/OD-3 are resolved by the
-  Repository Owner, for the specific areas each gates (§9). Architecture
-  work that is *not* gated by an Owner Decision — e.g. the byte-ingestion
-  endpoint's shape (§6.2), reusable across whatever field mapping OD-1
-  eventually resolves — may proceed independently once this design itself
-  is reviewed and approved, at the Owner's discretion, since it is a
+- Begin PR20C or any later PR20 implementation slice before this Owner
+  Decision resolution PR is itself independently reviewed and merged
+  (§9 records OD-1/OD-2/OD-3 as RESOLVED, but recording them here is not
+  the same as the separate, reviewed merge `docs/ENGINEERING_WORKFLOW.md`
+  §7 requires before dependent implementation may begin). Architecture
+  work that was never gated by an Owner Decision — e.g. the
+  byte-ingestion endpoint's shape (§6.2), reusable regardless of the
+  field mapping OD-1 resolves — was always free to proceed independently
+  once the base design itself was reviewed and approved, since it is a
   technical rather than business-policy question.
 
 ---
@@ -3235,12 +3550,10 @@ rather than assumed:**
   to increment it is a general Equipment-domain improvement, independent
   of Equipment Master's own field mapping/policy questions, and touches
   no PR20-specific code. **Its necessity for PR20 specifically is
-  conditional on OD-2**: if OD-2 ultimately authorizes update mode, this
-  slice is a hard prerequisite for PR20E (below); if OD-2 resolves to
-  create-only, this slice is not required for PR20 to proceed at all
-  (though it may still be independently valuable as a general
-  Equipment-domain improvement, outside this design's scope to mandate).
-  Concrete scope, defined completely below (fix round 6 reverses fix
+  confirmed by §9 OD-2 (RESOLVED)**: OD-2 authorizes update mode, so this
+  slice is a hard prerequisite for PR20E (below) — already merged as
+  GitHub PR #91 for exactly this reason. Concrete scope, defined
+  completely below (fix round 6 reverses fix
   round 5's H12 resolution on API exposure specifically; every other part
   of this slice's scope is unchanged):
 
@@ -3730,3 +4043,34 @@ gates.
       appeared since fix round 7; all three remain OPEN (§9).
 - [x] **Fix round 8**: did not start PR20A or PR20B or any implementation
       PR; this remains a design-only document (§26).
+- [x] **Fix round 9 (PR92, Owner Decision completion — PR92-H1/H2/H3/H4)**:
+      closed PR92-H1 by making §7's source-workbook contract
+      implementation-grade (worksheet-name selection, header-row-1-only,
+      column-order-not-authoritative, required-32-header structural
+      validation, distinct BCM/Item-Number cell-type rules) and §8's
+      field mapping implementation-grade (complete 32-row mapping table,
+      four-classification legend, no placeholder destination fields,
+      derived from the actual `Equipment`/`master_data` models).
+- [x] **Fix round 9 (PR92-H2)**: closed the OD-2 create/update-field gap
+      — §9 OD-2 now enumerates the exact CREATE-writable fields, the
+      exact UPDATE-writable fields, the immutable/non-writable field
+      list, the same-value no-version-bump rule, and the Legacy
+      Lifecycle/Location policies, instead of deferring them to
+      implementation time.
+- [x] **Fix round 9 (PR92-H3)**: closed the OD-3 blank/null gap — §9 OD-3
+      now states the four-case blank/null identifier requiredness matrix
+      as a mandatory precondition evaluated before the seven-case
+      identity matrix, and no longer describes the seven cases as
+      exhaustive of blank/null validation.
+- [x] **Fix round 9 (PR92-H4)**: performed the full-document normative
+      consistency sweep the task required — §1, §2, §4, §5, §6, §11,
+      §12, §15, §16, §22, §23, §24 corrected for stale "OD-1/OD-2 open,"
+      "blocked on OD-2," "conditional on OD-2," "field set once OD-1
+      defines it," and "exactly seven cases" language; prior fix-round
+      historical entries above are preserved unedited as historical
+      record, not rewritten.
+- [x] **Fix round 9**: did not start PR20C or any later PR20
+      implementation slice; this remains a design/governance-only
+      document (§26). PR20C is marked READY (§24) on the now-completed
+      OD-1/OD-2/OD-3 basis, pending this PR's own independent review and
+      merge per `docs/ENGINEERING_WORKFLOW.md` §7.
