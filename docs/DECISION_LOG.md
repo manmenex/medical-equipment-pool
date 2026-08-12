@@ -1947,10 +1947,14 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
     text cell only — a numeric-typed cell is a blocking `ERROR`. Item
     Number (`Item No.`) accepts a text cell (trimmed) or an integer
     numeric cell (converted losslessly to a canonical decimal string;
-    fractional/NaN/infinite rejected); if Excel already destroyed a
-    textual leading zero by storing the cell numerically, PR20C must
-    never invent/reconstruct one — it must emit a blocking finding
-    instead.
+    fractional/NaN/infinite rejected). **Superseded below (PR92-H1R,
+    2026-08-12 entry):** this entry originally stated that PR20C "must
+    emit a blocking finding" for a numeric-typed cell on the theory that
+    Excel "already destroyed" a textual leading zero. That overstated
+    what is knowable — this system cannot determine whether the source
+    ever had a leading zero — and the corrected rule does **not**
+    auto-emit any such finding for an otherwise-valid numeric cell; see
+    the later PR92-H1R entry below for the exact corrected rule.
   - **Field mapping (§8), RESOLVED in full:** a complete 32-row mapping
     table classifies every governed column as one of exactly four things
     — an actual existing `Equipment`/`master_data` destination field;
@@ -1975,10 +1979,12 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
     fields: `item_no`, `bcm_code`, `asset_id`, `equipment_name`, `brand`,
     `model`, `serial_number`, `status` (via approved mapping only);
     `category_id`/`department_owner_id`/`current_location_id` are left
-    `NULL` on CREATE. Exact UPDATE-writable fields: `asset_id`, `brand`,
-    `model`, `serial_number` only — explicitly **not**
-    `equipment_name`, since an operator-facing name may have been
-    corrected since export and must not be silently overwritten.
+    `NULL` on CREATE. Exact UPDATE-writable fields: `asset_id`,
+    `equipment_name`, `brand`, `model`, `serial_number` — corrected in
+    a subsequent review round (PR92-H2R2): `equipment_name` is
+    descriptive master data on the same footing as `brand`/`model`/
+    `serial_number`, not live operational state, and is UPDATE-writable
+    on the same basis, subject to the same same-value-update no-op rule.
     Same-value updates omit the field write and do not bump
     `Equipment.version` (reusing PR91-H1's server-owned `version`
     contract, not a second import-specific rule). Legacy lifecycle
@@ -2017,3 +2023,92 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   matching policy complete; CREATE/UPDATE field policy complete;
   lifecycle mapping implementation-grade; no normative contradiction
   remains in the design document) once this PR itself merges.
+
+## 2026-08-12 — Roadmap PR20 Owner Decision OD-4 (Equipment Master CREATE Asset Number policy) + corrective fixes (GitHub PR #92)
+
+- **Decision — OD-4 (Equipment Master CREATE Asset Number policy):
+  RESOLVED.** `Equipment.asset_number` is a distinct, `NOT NULL`,
+  `UNIQUE` identifier (§4.1) governed by ADR-002, separate from BCM, Item
+  Number, the legacy `asset_id` provenance field, and the internal UUID.
+  The Repository Owner has approved:
+  1. `asset_number` is **never fabricated**.
+  2. `asset_number` is **never derived** from BCM, Item Number, `asset_id`,
+     UUID, row number, or any other legacy identifier. (This closes the
+     exact failure mode Roadmap PR12's own history already rejected
+     twice — see the Roadmap PR12 entries above: round 1's
+     BCM-derived `asset_number` was found to violate ADR-002; round 2's
+     random `IMPORT-<hex>` placeholder token was rejected as fabricated
+     metadata. PR20 repeats neither.)
+  3. **CREATE requires an Asset Number from a separately identified,
+     authoritative source.** The currently-approved 32-column
+     `export_template.xlsx` contract (OD-1) does **not** establish such a
+     source — no governed column maps to `asset_number`.
+  4. A potential CREATE candidate (per OD-3's identity matrix, case 1)
+     that lacks an authoritative `asset_number` receives a blocking
+     `ASSET_NUMBER_REQUIRED_FOR_CREATE` finding, does not become
+     executable CREATE work, never receives a generated/placeholder
+     value, and never has `asset_id`/BCM/Item Number copied into it.
+  5. UPDATE candidates are unaffected — an existing record's persisted
+     `asset_number` is never touched by this import path.
+  6. **PR20C (Parse + Normalize + Validate) readiness is distinct from
+     CREATE-execution readiness.** PR20C's parser/validation contract can
+     be complete and implementation-ready — including the deterministic
+     `ASSET_NUMBER_REQUIRED_FOR_CREATE` blocking behavior — while actual
+     CREATE *execution* (a later slice) remains blocked for any row
+     lacking an authoritative Asset Number, until the Repository Owner
+     supplies that source. General PR20 CREATE-execution readiness is
+     **not** claimed merely because parser/validation is ready.
+  7. This does not weaken the existing `NOT NULL`/`UNIQUE`
+     `Equipment.asset_number` database invariant.
+- **Corrective fix (PR92-H2R2) — `equipment_name` UPDATE-writable:** a
+  prior round of this document excluded `equipment_name` from the
+  UPDATE-writable field list, reasoning it was live operational data. The
+  Repository Owner has corrected this: `equipment_name` is descriptive
+  master data on the same footing as `brand`/`model`/`serial_number`,
+  consistent with the existing `EquipmentUpdate` schema, and is
+  UPDATE-writable on the same basis (subject to the same same-value-update
+  no-op rule). The exact UPDATE-writable field list is now: `asset_id`,
+  `equipment_name`, `brand`, `model`, `serial_number`. The immutable/
+  never-overwrite-on-UPDATE list is unchanged and now explicitly names
+  `asset_number` alongside `Equipment.id`, `bcm_code`, `item_no`,
+  `version`, timestamps, current operational ward/location, and current
+  lifecycle/status.
+- **Corrective fix (PR92-H2R2) — header presence vs. row-value
+  requiredness:** the design document's 32-column mapping table used a
+  single "Required?" column and the word "optional," which read as if a
+  governed column's *header* could be absent from the workbook. It
+  cannot — all 32 headers are unconditionally required in the workbook
+  schema (§7), independent of whether any given row's *cell* under that
+  header may be blank. The table column is renamed "Row value required?"
+  to state only per-row cell nullability, never header presence.
+- **Corrective fix (PR92-H2R2) — blank CREATE-status:** a CREATE
+  candidate with a blank/null `สถานะเครื่องมือ` cell now explicitly
+  receives the same blocking `ERROR` treatment as an unmappable non-blank
+  value — never a silent default to `AVAILABLE_AT_POOL`, and never
+  inferred from an unrelated column such as a populated location cell.
+- **Corrective fix (PR92-H1R) — Item Number numeric-cell semantics:** a
+  prior revision asserted the parser could determine that a numeric-typed
+  `Item No.` cell's original textual leading zeros "were already
+  destroyed." That overstated what is knowable: once Excel represents a
+  value numerically, this system cannot determine whether the source
+  value ever had a leading zero. The corrected rule: the parser (a) never
+  reconstructs or invents a leading zero; (b) never automatically emits a
+  "lost leading zero" finding merely because a cell is numeric-typed and
+  otherwise valid; (c) treats the observed, losslessly-converted value as
+  the Item Number of record. A separate authoritative source later
+  showing the observed value is wrong is a source-data reconciliation
+  issue, not a parsing defect. Rejected numeric cases are unchanged:
+  fractional, `NaN`, infinite, or out-of-domain values.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §7, in the
+  same documentation-only PR pattern as the preceding entries. PR20C's
+  own implementation PR must not begin until this PR is independently
+  reviewed and merged.
+- **Source:** `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` — new
+  §9 OD-4 subsection; top-of-document Status section; §7 (Item Number
+  cell-type rule); §8 (mapping table header rename, row 27 blank-CREATE
+  wording); §9 OD-2 (CREATE/UPDATE-writable field lists, immutable-field
+  list); §24 (readiness table, parse/validation vs. CREATE-execution
+  distinction) — all updated in place.
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this entry or the design-doc
+  update. PR20C has not been started by this entry.
