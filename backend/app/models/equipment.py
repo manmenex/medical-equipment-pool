@@ -2,8 +2,9 @@ import enum
 import uuid
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Date, Enum, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import Date, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
@@ -196,6 +197,19 @@ class Equipment(UUIDPKMixin, TimestampMixin, SoftDeleteMixin, Base):
     # by an inventory import.
     raw_source_status: Mapped[str | None] = mapped_column(String(100))
     equipment_metadata: Mapped[dict] = mapped_column("metadata", JSONType, default=dict)
+    # Roadmap PR20B (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24):
+    # optimistic-concurrency counter, mirroring ImportSession.version's
+    # existing pattern (app/models/import_session.py). Incremented by
+    # exactly 1 at the same application/service layer that already performs
+    # each mutation (app.crud.equipment) -- not a database trigger, no
+    # trigger-based versioning precedent exists in this codebase. Read-only
+    # in the public API (EquipmentOut) -- no write request schema
+    # (EquipmentCreate/EquipmentUpdate/EquipmentStatusChange) accepts a
+    # client-supplied value. The only internal readers that use this as an
+    # actual concurrency predicate are a future Equipment Master execute
+    # path's CAS UPDATE (not implemented by this slice) -- see migration
+    # 0017 for the physical column definition and backfill behavior.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default=text("1"))
 
     category: Mapped["EquipmentCategory | None"] = relationship()
     department_owner: Mapped["Department | None"] = relationship()

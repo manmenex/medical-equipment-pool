@@ -1623,3 +1623,317 @@ async def test_decommission_requires_passing_through_unavailable_defective(clien
     )
     assert decommission_resp.status_code == 200, decommission_resp.text
     assert decommission_resp.json()["status"] == "decommissioned"
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR20B (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24):
+# Equipment.version optimistic-concurrency counter. One test per mutation
+# path in that section's exhaustive coverage table -- create, PATCH, every
+# change_status_for_* transition family (manual lifecycle here; dispatch/
+# receipt below, confirmed to route through the same shared change_status()
+# function), and soft-delete. `version` is also asserted absent from every
+# write-request schema's accepted input.
+# ---------------------------------------------------------------------------
+
+
+async def test_create_equipment_sets_version_to_one(client, seeded_users):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "AST-PR20B-0001", "equipment_name": "PR20B Create Test"},
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["version"] == 1, "a newly created row's version must be exactly 1, the column default"
+
+
+async def test_update_equipment_increments_version_by_exactly_one(client, seeded_users):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR20B-0002")
+    assert equipment["version"] == 1
+
+    resp = await client.patch(
+        f"/api/v1/equipment/{equipment['id']}",
+        headers=headers,
+        json={"equipment_name": "PR20B Updated Name"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["version"] == 2, "PATCH must advance version by exactly 1"
+
+    resp2 = await client.patch(
+        f"/api/v1/equipment/{equipment['id']}",
+        headers=headers,
+        json={"equipment_name": "PR20B Updated Name Again"},
+    )
+    assert resp2.status_code == 200, resp2.text
+    assert resp2.json()["version"] == 3, "a second PATCH must advance version by exactly 1 more, not reset it"
+
+
+async def test_manual_lifecycle_status_change_increments_version_by_exactly_one(client, seeded_users):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR20B-0003")
+    assert equipment["version"] == 1
+
+    resp = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/status",
+        headers=headers,
+        json={"status": "unavailable_defective", "reason": "PR20B version test"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["version"] == 2, "a manual lifecycle transition must advance version by exactly 1"
+
+
+async def test_dispatch_and_receipt_transitions_increment_version(client, seeded_users):
+    """Design §24: 'Receive/Issue dispatch flows... confirmed to route
+    through the same change_status_for_* functions above, not a separate
+    write path' -- proven here end-to-end via the real borrow/return API,
+    not merely asserted."""
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    nurse_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR20B-0004")
+    assert equipment["version"] == 1
+
+    payload = await _on_demand_borrow_payload(client, headers, equipment["id"], ward_code="W-PR20B-0004")
+    borrow_resp = await client.post("/api/v1/borrow", headers=nurse_headers, json=payload)
+    assert borrow_resp.status_code == 201, borrow_resp.text
+    tx = borrow_resp.json()
+
+    after_dispatch = await client.get(f"/api/v1/equipment/{equipment['id']}", headers=headers)
+    assert after_dispatch.json()["version"] == 2, "dispatch must advance version by exactly 1"
+
+    return_resp = await client.post(
+        f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"receipt_outcome": "usable"}
+    )
+    assert return_resp.status_code == 200, return_resp.text
+
+    after_receipt = await client.get(f"/api/v1/equipment/{equipment['id']}", headers=headers)
+    assert after_receipt.json()["version"] == 3, "receipt must advance version by exactly 1 more"
+
+
+async def test_delete_equipment_increments_version_before_soft_delete(client, seeded_users, db_session):
+    from app.models.equipment import Equipment
+
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR20B-0005")
+    assert equipment["version"] == 1
+
+    resp = await client.delete(f"/api/v1/equipment/{equipment['id']}", headers=headers)
+    assert resp.status_code == 204, resp.text
+
+    row = (
+        await db_session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment["id"])))
+    ).scalar_one()
+    assert row.version == 2, "soft-delete must advance version by exactly 1, not silently bypass it"
+    assert row.deleted_at is not None
+
+
+async def test_equipment_create_schema_never_accepts_a_client_supplied_version(client, seeded_users):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "AST-PR20B-0007", "equipment_name": "PR20B Create No Version", "version": 999},
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["version"] == 1, "a client-supplied version on create must be ignored -- always starts at 1"
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR91-H1 (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24):
+# clients could previously bump Equipment.version without mutating any
+# supported field -- {}  /  {"version": 999}  /  {"unknown": "x"} all
+# reached equipment_crud.update() with update_data={} (version was never a
+# declared field, and an unrecognized field was silently dropped by
+# Pydantic's default behavior), which incremented version unconditionally.
+# Two-layer fix: EquipmentUpdate now rejects any undeclared field (the same
+# `extra: "forbid"` technique already established for BorrowRequest/
+# ReturnRequest/WardCorrectionRequest), and equipment_crud.update() itself
+# only increments version when update_data is non-empty, so a future
+# internal caller cannot bypass the guard by constructing an empty dict
+# directly.
+# ---------------------------------------------------------------------------
+
+
+async def test_empty_patch_does_not_advance_version(client, seeded_users):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR91H1-0001")
+    assert equipment["version"] == 1
+
+    resp = await client.patch(f"/api/v1/equipment/{equipment['id']}", headers=headers, json={})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["version"] == 1, "an empty PATCH must not advance version"
+
+    check_resp = await client.get(f"/api/v1/equipment/{equipment['id']}", headers=headers)
+    assert check_resp.json()["version"] == 1, "persisted version must remain unchanged after an empty PATCH"
+
+
+async def test_empty_patch_does_not_create_an_audit_event(client, seeded_users, db_session):
+    from sqlalchemy import select
+
+    from app.core.audit import AUDIT_ACTION_UPDATE, AUDIT_ENTITY_EQUIPMENT
+    from app.models.audit import AuditLog
+
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR91H1-0002")
+
+    resp = await client.patch(f"/api/v1/equipment/{equipment['id']}", headers=headers, json={})
+    assert resp.status_code == 200, resp.text
+
+    rows = (
+        await db_session.execute(
+            select(AuditLog).where(
+                AuditLog.entity_type == AUDIT_ENTITY_EQUIPMENT,
+                AuditLog.entity_id == uuid.UUID(equipment["id"]),
+                AuditLog.action == AUDIT_ACTION_UPDATE,
+            )
+        )
+    ).scalars().all()
+    assert rows == [], "an empty PATCH performed no genuine mutation and must not write an audit UPDATE record"
+
+
+async def test_version_only_patch_is_rejected_and_does_not_advance_version(client, seeded_users):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR91H1-0003")
+    assert equipment["version"] == 1
+
+    resp = await client.patch(
+        f"/api/v1/equipment/{equipment['id']}", headers=headers, json={"version": 999}
+    )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["code"] == "VALIDATION_ERROR", "must reuse the existing centralized 422 envelope"
+
+    check_resp = await client.get(f"/api/v1/equipment/{equipment['id']}", headers=headers)
+    assert check_resp.json()["version"] == 1, "a rejected version-only PATCH must not advance persisted version"
+
+
+async def test_unknown_field_patch_is_rejected_and_does_not_advance_version(client, seeded_users):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR91H1-0004")
+    assert equipment["version"] == 1
+
+    resp = await client.patch(
+        f"/api/v1/equipment/{equipment['id']}", headers=headers, json={"unknown": "x"}
+    )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["code"] == "VALIDATION_ERROR"
+
+    check_resp = await client.get(f"/api/v1/equipment/{equipment['id']}", headers=headers)
+    assert check_resp.json()["version"] == 1, "a rejected unknown-field PATCH must not advance persisted version"
+
+
+async def test_version_and_unknown_field_patch_produces_no_side_effects(client, seeded_users, db_session):
+    """API-level proof mirroring test_borrow.py's
+    test_removed_field_in_borrow_request_is_rejected_with_no_side_effects --
+    a rejected request must fail entirely, before the handler body (and
+    therefore equipment_crud.update()) ever runs, so it can never persist a
+    field change, advance version, or write an audit record."""
+    from sqlalchemy import select
+
+    from app.core.audit import AUDIT_ACTION_UPDATE, AUDIT_ENTITY_EQUIPMENT
+    from app.models.audit import AuditLog
+
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR91H1-0005")
+
+    resp = await client.patch(
+        f"/api/v1/equipment/{equipment['id']}",
+        headers=headers,
+        json={"equipment_name": "Should Not Persist", "version": 999, "unknown": "x"},
+    )
+    assert resp.status_code == 422, resp.text
+
+    check_resp = await client.get(f"/api/v1/equipment/{equipment['id']}", headers=headers)
+    body = check_resp.json()
+    assert body["version"] == 1
+    assert body["equipment_name"] != "Should Not Persist"
+
+    rows = (
+        await db_session.execute(
+            select(AuditLog).where(
+                AuditLog.entity_type == AUDIT_ENTITY_EQUIPMENT,
+                AuditLog.entity_id == uuid.UUID(equipment["id"]),
+                AuditLog.action == AUDIT_ACTION_UPDATE,
+            )
+        )
+    ).scalars().all()
+    assert rows == []
+
+
+async def test_genuine_update_still_advances_version_exactly_once_after_h1_fix(client, seeded_users):
+    """Preserves the already-reviewed PR20B behavior: a real, supported
+    field update -- with or without an accompanying unknown field that
+    would otherwise get it rejected -- must still increment version by
+    exactly 1, never 0, never more than 1."""
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR91H1-0006")
+    assert equipment["version"] == 1
+
+    resp = await client.patch(
+        f"/api/v1/equipment/{equipment['id']}",
+        headers=headers,
+        json={"equipment_name": "Genuine PR91-H1 Update"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["equipment_name"] == "Genuine PR91-H1 Update"
+    assert body["version"] == 2, "a genuine supported-field update must still advance version by exactly 1"
+
+
+async def test_crud_update_with_empty_data_does_not_advance_version(seeded_users, db_session):
+    """CRUD-level regression, independent of HTTP: a future internal caller
+    (an import path, a script, a test) invoking equipment_crud.update()
+    directly with an empty data dict must not bump version merely because
+    the function was called -- the guard lives in the CRUD layer itself,
+    not only at the API/schema boundary."""
+    from app.crud import equipment as equipment_crud
+    from app.models.equipment import Equipment
+
+    equipment = Equipment(asset_number="AST-PR91H1-CRUD-0001", equipment_name="CRUD Guard Test")
+    db_session.add(equipment)
+    await db_session.flush()
+    assert equipment.version == 1
+
+    result = await equipment_crud.update(db_session, equipment, data={})
+    assert result.version == 1, "equipment_crud.update() with empty data must not increment version"
+
+    await db_session.flush()
+    assert equipment.version == 1, "version must remain unchanged after flush"
+
+
+async def test_crud_update_with_nonempty_data_still_advances_version(seeded_users, db_session):
+    """Companion to the empty-data CRUD guard above -- proves the guard is
+    conditional on `data`, not an accidental removal of the increment
+    entirely."""
+    from app.crud import equipment as equipment_crud
+    from app.models.equipment import Equipment
+
+    equipment = Equipment(asset_number="AST-PR91H1-CRUD-0002", equipment_name="CRUD Guard Test 2")
+    db_session.add(equipment)
+    await db_session.flush()
+    assert equipment.version == 1
+
+    result = await equipment_crud.update(db_session, equipment, data={"equipment_name": "Changed"})
+    assert result.version == 2, "equipment_crud.update() with non-empty data must still increment version by 1"
+
+
+async def test_patch_with_unchanged_value_still_advances_version(client, seeded_users):
+    """PR91-H1 §7: distinguishes an empty update_data (must not advance
+    version) from a supported field explicitly supplied with its existing
+    value (a non-empty update_data -- this codebase's existing semantics
+    already treat that as a genuine accepted update, and this fix must not
+    invent a new value-difference-tracking behavior beyond preventing the
+    empty/unknown/version-only cases)."""
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR91H1-0007", name="Unchanged Name")
+    assert equipment["version"] == 1
+
+    resp = await client.patch(
+        f"/api/v1/equipment/{equipment['id']}",
+        headers=headers,
+        json={"equipment_name": "Unchanged Name"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["version"] == 2, (
+        "a supported field explicitly supplied, even with its existing value, is a genuine "
+        "update_data entry (not empty) and must still advance version"
+    )

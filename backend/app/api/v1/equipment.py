@@ -112,6 +112,7 @@ def _serialize(equipment) -> dict:
         "bcm_code": equipment.bcm_code,
         "created_at": equipment.created_at,
         "updated_at": equipment.updated_at,
+        "version": equipment.version,
     }
 
 
@@ -266,23 +267,32 @@ async def update_equipment(
 
     async with translate_integrity_error(db, resource="equipment"):
         equipment = await equipment_crud.update(db, equipment, data=update_data)
-    # The canonicalized values actually written, not the raw request body,
-    # so the audit trail matches what was persisted (See ADR-002).
-    audit_after = payload.model_dump(exclude_unset=True, mode="json")
-    if "bcm_code" in audit_after:
-        audit_after["bcm_code"] = update_data.get("bcm_code")
-    if "item_no" in audit_after:
-        audit_after["item_no"] = update_data.get("item_no")
-    await record_audit_event(
-        db,
-        actor_user_id=user.id,
-        action=AUDIT_ACTION_UPDATE,
-        entity_type=AUDIT_ENTITY_EQUIPMENT,
-        entity_id=equipment.id,
-        before={k: str(v) for k, v in before.items()},
-        after=audit_after,
-        request=request,
-    )
+    # Roadmap PR91-H1: an empty PATCH (exclude_unset=True producing no
+    # fields at all) performs no genuine Equipment mutation --
+    # equipment_crud.update() itself already skips the version increment
+    # for this case (see its own guard) -- so it must not produce a
+    # spurious AUDIT_ACTION_UPDATE record either. A non-empty update_data
+    # still records normally, even if a supplied field's value happens to
+    # match the record's existing value -- that is a genuine accepted
+    # update by this codebase's existing semantics, not a no-op.
+    if update_data:
+        # The canonicalized values actually written, not the raw request
+        # body, so the audit trail matches what was persisted (See ADR-002).
+        audit_after = payload.model_dump(exclude_unset=True, mode="json")
+        if "bcm_code" in audit_after:
+            audit_after["bcm_code"] = update_data.get("bcm_code")
+        if "item_no" in audit_after:
+            audit_after["item_no"] = update_data.get("item_no")
+        await record_audit_event(
+            db,
+            actor_user_id=user.id,
+            action=AUDIT_ACTION_UPDATE,
+            entity_type=AUDIT_ENTITY_EQUIPMENT,
+            entity_id=equipment.id,
+            before={k: str(v) for k, v in before.items()},
+            after=audit_after,
+            request=request,
+        )
     await db.commit()
     await cache_delete_prefix("equipment:search:")
     return EquipmentOut.model_validate(_serialize(equipment))
