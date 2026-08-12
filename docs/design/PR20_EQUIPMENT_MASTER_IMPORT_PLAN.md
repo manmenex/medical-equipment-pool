@@ -907,15 +907,28 @@ ImportAdapter) -> None` takes only the adapter instance — it reads
 including §6.1's, now uses this exact form — swept, not just the
 previously-cited instance.)
 
-This shape is implementation-grade for every part not gated by an Owner
-Decision: the adapter's *structure*, its integration points with PR19A's
-lease/fencing/dry-run/execute mechanics, its invocation-context contract
-(§6.4), its verified-content boundary (§6.5), its persisted-plan
-lifecycle (§14, §15.1), and its reuse of `preload_business_context` for
-bulk lookups are fully specified. Only the row-level *content* of
-`validate_business_rules`/`plan_dry_run`/`execute` — which fields exist,
-how they map, and what identity/create-update policy governs them — is
-blocked.
+**PR92-H4R2 correction:** this paragraph previously stated that the
+row-level *content* of `validate_business_rules`/`plan_dry_run`/`execute`
+— which fields exist, how they map, and what identity/create-update
+policy governs them — remained "blocked." That is no longer accurate and
+directly contradicted this subsection's own header above. OD-1/OD-2/OD-3/
+OD-4 are all RESOLVED (§9), and §7/§8 supply the full structural contract
+and 32-column field mapping this row-level content depends on. This
+shape is therefore implementation-grade in full: the adapter's
+*structure*, its integration points with PR19A's lease/fencing/dry-run/
+execute mechanics, its invocation-context contract (§6.4), its
+verified-content boundary (§6.5), its persisted-plan lifecycle (§14,
+§15.1), its reuse of `preload_business_context` for bulk lookups, and the
+row-level *content* of `validate_business_rules` (field existence,
+mapping, identity/create-update policy, and the OD-4 `asset_number`
+CREATE gate) are all fully specified. Equipment Master row-level
+adapter/parser/validation implementation is authorized to begin once this
+design PR (#92) is itself independently reviewed and merged — not before,
+per `docs/ENGINEERING_WORKFLOW.md` §7's separate-reviewed-merge
+requirement, but no longer gated by any open Owner Decision. `plan_dry_run`
+and `execute` remain the responsibility of the later PR20D/PR20E slices
+(§24) — PR20C itself implements `parse`/`preload_business_context`/
+`validate_business_rules` only, and never mutates `equipment`.
 
 ### 6.4 Adapter Invocation Context — session/source identity for `plan_dry_run`/`execute`
 
@@ -1036,7 +1049,7 @@ signature, return type, or any existing behavior for a session with no
 adapter-side dependency on this context (a future adapter that doesn't
 need session identity simply never calls
 `get_adapter_invocation_context()`). All are technical prerequisites, not
-gated by OD-1/OD-2/OD-3, and belong in PR20A (§24).
+gated by OD-1/OD-2/OD-3/OD-4, and belong in PR20A (§24).
 
 **Concurrent-session isolation, restated for the new fields**: the same
 `contextvars`-based, per-`asyncio`-task isolation already claimed for the
@@ -3630,14 +3643,19 @@ implementation PRs must **not**:
 - Weaken the existing Administrator-only RBAC gate.
 - Begin PR20C or any later PR20 implementation slice before this Owner
   Decision resolution PR is itself independently reviewed and merged
-  (§9 records OD-1/OD-2/OD-3 as RESOLVED, but recording them here is not
-  the same as the separate, reviewed merge `docs/ENGINEERING_WORKFLOW.md`
-  §7 requires before dependent implementation may begin). Architecture
-  work that was never gated by an Owner Decision — e.g. the
-  byte-ingestion endpoint's shape (§6.2), reusable regardless of the
-  field mapping OD-1 resolves — was always free to proceed independently
-  once the base design itself was reviewed and approved, since it is a
-  technical rather than business-policy question.
+  (§9 records OD-1/OD-2/OD-3/OD-4 as RESOLVED, but recording them here is
+  not the same as the separate, reviewed merge
+  `docs/ENGINEERING_WORKFLOW.md` §7 requires before dependent
+  implementation may begin). This distinguishes PR20C's parse/validation
+  readiness (implementation-ready once this PR merges, §24) from
+  executable CREATE work, which additionally remains fail-closed under
+  OD-4's `asset_number` prerequisite regardless of merge status — that is
+  a resolved business rule, not a further gate on when PR20C itself may
+  begin. Architecture work that was never gated by an Owner Decision —
+  e.g. the byte-ingestion endpoint's shape (§6.2), reusable regardless of
+  the field mapping OD-1 resolves — was always free to proceed
+  independently once the base design itself was reviewed and approved,
+  since it is a technical rather than business-policy question.
 
 ---
 
@@ -3659,8 +3677,8 @@ rather than assumed:**
 - **PR20A — Source ingestion, transaction contract, verified source
   reader, retention integration, adapter invocation context, and
   registration-endpoint guard.** **READY** — not blocked by
-  OD-1/OD-2/OD-3 (all three are business-policy questions; everything in
-  this slice is a resolved technical design, §6.2/§6.4/§6.5/§6.6), but
+  OD-1/OD-2/OD-3/OD-4 (all four are business-policy questions; everything
+  in this slice is a resolved technical design, §6.2/§6.4/§6.5/§6.6), but
   only after this design's fix-round resolutions above are themselves
   independently reviewed and approved (design review is an ordinary
   prerequisite for any implementation PR in this codebase, not a special
@@ -3831,11 +3849,15 @@ rather than assumed:**
   retention transaction that already redacts session metadata and
   deletes the source blob; the new confirmation columns are not PII and
   are left untouched by retention, matching the existing precedent for
-  structural fields). **Not Owner-Decision-blocked (OD-1/OD-2/OD-3
+  structural fields). **Not Owner-Decision-blocked (OD-1/OD-2/OD-3/OD-4
   RESOLVED, §9) but NOT READY to implement yet** — depends on PR20C
   actually merging first (needs the parse/validate pipeline to compute a
   plan against; PR20C itself must not implement any part of this slice).
-  Its `expected_equipment_version`
+  **OD-4 enforcement**: `plan_dry_run` must not compute a CREATE action
+  for any row `validate_business_rules` already flagged with
+  `ASSET_NUMBER_REQUIRED_FOR_CREATE` (§9 OD-4) — such a row's plan entry
+  is a non-executable finding, never a CREATE action with a generated or
+  copied `asset_number`. Its `expected_equipment_version`
   column is a plain integer snapshot, not a foreign key, so this slice
   has no *hard* schema dependency on PR20B — but the value is only
   meaningful once PR20B's column exists, so PR20B should still land
@@ -3857,10 +3879,16 @@ rather than assumed:**
   additive `AdapterExecutionConflict` exception class in PR19A's own
   `import_adapter.py` module (§14.4b, a small, generic, backward-
   compatible addition, not a fork). **Not Owner-Decision-blocked
-  (OD-1/OD-2/OD-3 RESOLVED, §9) but NOT READY to implement yet** — the
-  concurrency mechanism itself is technically ready and has something to
-  protect now that OD-2 authorizes update mode, but this slice cannot be
-  built before PR20D actually merges. **Hard dependency on both PR20B and
+  (OD-1/OD-2/OD-3/OD-4 RESOLVED, §9) but NOT READY to implement yet** —
+  the concurrency mechanism itself is technically ready and has something
+  to protect now that OD-2 authorizes update mode, but this slice cannot
+  be built before PR20D actually merges. **OD-4 enforcement**: `execute()`
+  must only apply a CREATE action for a plan row that already carries a
+  genuine, non-fabricated `asset_number` (§9 OD-4) — a plan can never
+  contain a CREATE action lacking one, since PR20D's `plan_dry_run` never
+  produces one (above); `execute()` does not independently re-check this,
+  it relies on the persisted plan's own invariant. **Hard dependency on
+  both PR20B and
   PR20D** —
   PR20B must exist for the CAS predicate to have a real column to compare
   against, and PR20D must exist for there to be a persisted, confirmable
@@ -3877,8 +3905,8 @@ rather than assumed:**
   likely sequenced last among the backend slices, or in parallel against
   a contract-frozen API surface if the team prefers (an
   implementation-sequencing choice, not a design question). Not blocked
-  by OD-1/OD-2/OD-3 directly, but has nothing real to wire against until
-  the backend slices land.
+  by OD-1/OD-2/OD-3/OD-4 directly, but has nothing real to wire against
+  until the backend slices land.
 - **PR20G — Governance sync** (renumbered from PR20E): records PR20's
   actual merged scope, following this repository's established
   post-merge documentation-sync pattern (as this document's own
@@ -3917,32 +3945,90 @@ implemented before PR20C (and, for PR20E, PR20D) actually merge.
 
 ## 25. Governance Updates In This Design PR
 
-This Design PR records only that PR20's design has started and opens the
-Owner Decisions above (§9 — three at original authoring time; a fourth,
-OD-4, was opened in a later corrective round, §9 OD-4) — following the
-same minimal-update
-convention PR19A's own design PR used (recording the design as approved/
-pending, not marking the Roadmap item implemented). No broad governance
-sync (ROADMAP.md/ROADMAP_STATUS.md/DECISION_LOG.md/knowledge/* rewrite) is
-performed here; that follows the established pattern only after actual
-implementation slices merge (§24, PR20G), mirroring how PR19A's own design
-doc (GitHub PR #83) did not itself update the full governance surface —
-the post-implementation governance-sync PRs (#87, #88) did.
+**PR92-H4R2 correction:** this section previously described the current
+state of this PR as merely "records that PR20's design has started and
+opens the Owner Decisions above." That was accurate only at the original
+authoring point (GitHub PR #89, historical) and is not the current state.
+
+**Current state (this document, as of this PR):** this PR — which began
+as the PR20 Equipment Master import design/decision document — has, over
+its review history, resolved every Owner Decision it originally opened.
+The final state this PR records is:
+
+- **Authoritative source contract established** — `export_template.xlsx`'s
+  worksheet/header/column structure and 32-column schema (§7, §9 OD-1,
+  RESOLVED).
+- **Identifier semantics established** — BCM/Item Number roles, cell-type
+  rules, and canonicalization (§7, §9 OD-3, RESOLVED).
+- **Candidate classification policy established** — the blank/null
+  requiredness matrix and the seven-case identity matrix (§9 OD-3,
+  RESOLVED).
+- **Field-level CREATE/UPDATE policy established** — the complete
+  32-column mapping table and the exact CREATE-writable/UPDATE-writable/
+  immutable field lists (§8, §9 OD-2, RESOLVED).
+- **`asset_number` CREATE prerequisite established** — never fabricated
+  or derived; an authoritative source is required for executable CREATE;
+  absent one, a blocking `ASSET_NUMBER_REQUIRED_FOR_CREATE` finding
+  applies (§9 OD-4, RESOLVED).
+- **PR20C's parser/normalize/validate contract is implementation-ready
+  after this PR merges** — not before, per `docs/ENGINEERING_WORKFLOW.md`
+  §7's separate-reviewed-merge requirement (§6.3, §24).
+- **CREATE execution remains fail-closed without an authoritative
+  `asset_number`** — a resolved business rule (§9 OD-4), not an open
+  Owner Decision, and not itself performed by PR20C (§9 OD-2's scope
+  boundary; execution belongs to PR20D/PR20E, §24).
+
+This PR does **not** currently "open" OD-1/OD-2/OD-3/OD-4 — that
+historical framing describes only the document's state at original
+authoring time (GitHub PR #89) and, narrower still, before OD-4 was
+raised in a later corrective round. No broad governance sync
+(ROADMAP.md/ROADMAP_STATUS.md/knowledge/* rewrite) is performed here;
+that follows the established pattern only after actual implementation
+slices merge (§24, PR20G), mirroring how PR19A's own design doc (GitHub
+PR #83) did not itself update the full governance surface — the
+post-implementation governance-sync PRs (#87, #88) did.
+`docs/DECISION_LOG.md`, by contrast, **is** updated by this PR — Owner
+Decision resolutions are recorded there directly, per
+`docs/ENGINEERING_WORKFLOW.md` §7's explicit recording requirement, which
+is a narrower, decision-recording update distinct from the broader
+Roadmap-status/knowledge-base governance sync described above.
 
 ---
 
 ## 26. Scope Guard For This PR
 
-This PR (the Design PR itself) touches only:
+**PR92-H4R2 correction:** this section previously said "this PR touches
+only a new design file," which described only this document's original
+authoring (GitHub PR #89, historical) and is no longer an accurate
+statement of the current PR's diff scope.
 
-- `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` (this file, new).
+**Current scope (verified against the actual diff, not hardcoded):** this
+PR is **documentation/design/governance-only**. As of this PR's current
+state, it modifies:
 
-No `backend/**`, `frontend/**`, `migrations/**`, `tests/**`, `.github/**`,
-or other `docs/**`/`knowledge/**` file is modified by this PR. No Roadmap
-item is marked implemented. PR20 implementation does not begin in this PR
-or any PR that follows it without independent review of this design and
-Repository Owner resolution of §9's Owner Decisions for the areas each
-gates.
+- `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` (this file).
+- `docs/DECISION_LOG.md` (Owner Decision resolution entries, per
+  `docs/ENGINEERING_WORKFLOW.md` §7's recording requirement).
+
+No other file is touched. The governing invariant — not a specific file
+count, which changes across review rounds and must always be re-verified
+against `git diff --stat`/`--name-only` at commit time rather than
+assumed from this prose — is:
+
+- No `backend/**` file (no runtime code).
+- No `frontend/**` file (no runtime code).
+- No `alembic/**`/`migrations/**` file (no schema change).
+- No `tests/**` file (no runtime test behavior change).
+- No `.github/**` file (no CI configuration change).
+- No application configuration or dependency file.
+
+No Roadmap item is marked implemented. PR20C (and any later PR20
+implementation slice) does not begin in this PR or any PR that follows it
+without this design PR's own independent review and merge, per
+`docs/ENGINEERING_WORKFLOW.md` §7 — all of §9's Owner Decisions
+(OD-1/OD-2/OD-3/OD-4) are RESOLVED as recorded in this document, but that
+recording is not itself the separate, reviewed merge §7 requires before
+dependent implementation may begin.
 
 ---
 
