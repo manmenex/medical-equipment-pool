@@ -284,43 +284,52 @@ async def register_or_correct_source_pending(
     endpoint's own transaction (§6.2 step 2(c)) so a single `db.commit()`
     -- issued by the caller, never this function -- finalizes this row
     and the caller's own `import_source_blobs` write together as one
-    physical transaction. Identical INSERT/CAS-UPDATE/`await db.flush()`
-    logic to `register_or_correct_source`, with every `await db.commit()`/
-    `await db.rollback()` removed; `register_or_correct_source` itself is
+    physical transaction. Identical INSERT/CAS-UPDATE logic to
+    `register_or_correct_source`; `register_or_correct_source` itself is
     completely unmodified and remains the only entry point the existing
     metadata-only `POST /{id}/source` handler calls, so its own committing
     behavior is unaffected for every dataset_type. Returns (source,
     created). Raises `ImportSourceMismatchError` unchanged if the source
     is already `frozen` with a different identity fingerprint -- the
-    caller must not catch this and commit anyway."""
+    caller must not catch this and commit anyway.
+
+    PR90-H1 fix: this function must never decide the fate of the caller's
+    outer transaction -- a failed INSERT here must not discard whatever
+    else the caller has already written in the same transaction (e.g. a
+    future caller that stages other work before calling this). The
+    conflict-prone INSERT is therefore isolated in its own SAVEPOINT
+    (`db.begin_nested()`): the object construction, `db.add()`, and the
+    `db.flush()` that may raise `IntegrityError` all happen *inside* that
+    block, and the exception is left to propagate out of it uncaught --
+    only then does `begin_nested()`'s own `__aexit__` issue `ROLLBACK TO
+    SAVEPOINT` (undoing only this INSERT), which is caught by the `except`
+    below. Doing the add/flush before entering the SAVEPOINT, or catching
+    the exception before it exits the `async with` block, would instead
+    autoflush/fail outside the SAVEPOINT's protection and mark the whole
+    session's transaction as needing an explicit `db.rollback()` --
+    exactly the caller-transaction-destroying failure mode this fix
+    closes. Verified empirically against both SQLite and PostgreSQL."""
     fingerprint = _source_fingerprint(
         checksum=checksum, byte_size=byte_size, dataset_type=dataset_type, filename=filename, source_version=source_version
     )
-    source = ImportSource(
-        import_session_id=session_id,
-        status="registered",
-        checksum=checksum,
-        byte_size=byte_size,
-        content_type=content_type,
-        filename=filename,
-        source_version=source_version,
-        options_fingerprint=_EMPTY_OPTIONS_FINGERPRINT,
-        source_fingerprint=fingerprint,
-        created_at=datetime.now(timezone.utc),
-    )
-    db.add(source)
     try:
-        await db.flush()
+        async with db.begin_nested():
+            source = ImportSource(
+                import_session_id=session_id,
+                status="registered",
+                checksum=checksum,
+                byte_size=byte_size,
+                content_type=content_type,
+                filename=filename,
+                source_version=source_version,
+                options_fingerprint=_EMPTY_OPTIONS_FINGERPRINT,
+                source_fingerprint=fingerprint,
+                created_at=datetime.now(timezone.utc),
+            )
+            db.add(source)
+            await db.flush()
     except IntegrityError:
-        # §6.2 step 2(c): the caller owns the transaction boundary -- a
-        # failed INSERT still requires discarding the failed statement
-        # before the CAS UPDATE fallback below can run in the same
-        # transaction (matches `register_or_correct_source`'s own use of
-        # `db.rollback()` here, which is safe: PostgreSQL requires the
-        # failed statement to be discarded before further statements in
-        # the same transaction can proceed, and no other write has
-        # occurred yet in this call).
-        await db.rollback()
+        pass
     else:
         return source, True
 

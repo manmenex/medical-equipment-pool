@@ -41,6 +41,17 @@ from app.utils.pagination import decode_cursor, decode_int_cursor, encode_cursor
 # per this codebase's existing ImportAdapter pattern.
 _EQUIPMENT_MASTER_DATASET_TYPE = "equipment_master"
 
+# PR90-H2: matches `ImportSource.content_type`'s exact column width
+# (String(255), app/models/import_session.py), the same literal
+# `ImportSourceIn.content_type`'s `Field(max_length=255)` already enforces
+# for the metadata-only registration path (app/schemas/import_session.py).
+# `UploadFile.content_type` is untrusted multipart metadata FastAPI does
+# not itself bound the way it bounds a `Form(...)` field -- this endpoint
+# must reject an oversized value itself, before any registration write,
+# rather than letting it reach PostgreSQL and surface as a truncation/
+# data error instead of a clean 400.
+_CONTENT_TYPE_MAX_LENGTH = 255
+
 # Roadmap PR19A1 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §21).
 # Endpoints #1-#6: create, list, summary, status, source register/correct,
 # cancel (PR19A1). Endpoints #7-#9 -- recover, validate, errors -- are
@@ -198,7 +209,16 @@ async def upload_source(
     # the server's own independently computed checksum or the upload is
     # rejected as a client error, before any registration happens.
     checksum: str | None = Form(default=None),
-    source_version: str | None = Form(default=None),
+    # PR90-H2: bounded to the exact `ImportSource.source_version` column
+    # width (String(100), app/models/import_session.py) at the API
+    # boundary -- an oversized value must be rejected by FastAPI/Pydantic's
+    # own centralized RequestValidationError handling (app/main.py) before
+    # this function body ever runs, never discovered only once it reaches
+    # PostgreSQL. Mirrors `ImportSourceIn.source_version`'s identical
+    # `Field(max_length=100)` bound on the existing metadata-only
+    # registration path (app/schemas/import_session.py) -- the same
+    # domain limit, enforced the same way, for both entry points.
+    source_version: str | None = Form(default=None, max_length=100),
     db: AsyncSession = Depends(get_db),
     _actor=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
 ):
@@ -214,6 +234,10 @@ async def upload_source(
     session = await _get_or_404(db, session_id)
 
     filename = _validate_filename(file.filename)
+    if file.content_type is not None and len(file.content_type) > _CONTENT_TYPE_MAX_LENGTH:
+        raise InvalidInputError(
+            f"Uploaded file's content type exceeds the maximum allowed length of {_CONTENT_TYPE_MAX_LENGTH} characters."
+        )
     content = await _read_upload_bounded(file, max_bytes=MAX_UPLOAD_BYTES)
     _validate_zip_archive_bounds(content)
 

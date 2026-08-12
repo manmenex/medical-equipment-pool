@@ -10067,6 +10067,116 @@ async def test_import_source_blob_fk_restrict_prevents_deleting_referenced_sourc
     await pg_session.rollback()
 
 
+async def test_register_or_correct_source_pending_preserves_caller_transaction_on_conflict_on_postgres(
+    pg_session, pg_seeded_users
+):
+    """PR90-H1, real-PostgreSQL coverage: PostgreSQL's own aborted-
+    transaction behavior (any failed statement poisons the transaction
+    until an explicit ROLLBACK, exactly like SQLAlchemy's ORM-level flush-
+    failure handling) is what makes this fix's SAVEPOINT isolation
+    genuinely necessary, not merely a SQLite artifact -- so this is proven
+    against real PostgreSQL directly, not only at the SQLite/CRUD level."""
+    actor = pg_seeded_users["administrator"]
+    session = _PgImportSession(dataset_type=_PG_A20A_DATASET_TYPE, status="created", version=0, created_by_user_id=actor.id)
+    pg_session.add(session)
+    await pg_session.flush()
+    session_id = session.id
+
+    existing_content = b"already-registered-bytes-pg"
+    pg_session.add(
+        _PgImportSource(
+            import_session_id=session_id,
+            status="registered",
+            checksum=_pg_hashlib.sha256(existing_content).hexdigest(),
+            byte_size=len(existing_content),
+            options_fingerprint="x",
+            source_fingerprint="pre-existing-fingerprint",
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    await pg_session.commit()
+
+    # Outer transaction begins. Write A: unrelated to source registration,
+    # staged but not committed.
+    write_a = _PgImportSession(
+        dataset_type=_PG_A20A_DATASET_TYPE, status="created", version=0, created_by_user_id=actor.id, notes="write-A-must-survive"
+    )
+    pg_session.add(write_a)
+    await pg_session.flush()
+    write_a_id = write_a.id
+
+    conflicting_content = b"conflicting-bytes-different-from-existing-pg"
+    from app.crud import import_session as _pg_import_session_crud
+
+    _result, created = await _pg_import_session_crud.register_or_correct_source_pending(
+        pg_session,
+        session_id=session_id,
+        dataset_type=_PG_A20A_DATASET_TYPE,
+        checksum=_pg_hashlib.sha256(conflicting_content).hexdigest(),
+        byte_size=len(conflicting_content),
+        content_type=None,
+        filename=None,
+        source_version=None,
+    )
+    assert created is False, "the conflicting insert must resolve via the CAS-UPDATE fallback"
+
+    still_present = (
+        await pg_session.execute(select(_PgImportSession).where(_PgImportSession.id == write_a_id))
+    ).scalar_one_or_none()
+    assert still_present is not None, (
+        "PR90-H1: a duplicate/conflict inside register_or_correct_source_pending must not roll back "
+        "the caller's own unrelated prior write in the same transaction, even under PostgreSQL's own "
+        "aborted-transaction semantics"
+    )
+
+    await pg_session.commit()
+
+    persisted_write_a = (
+        await pg_session.execute(select(_PgImportSession).where(_PgImportSession.id == write_a_id))
+    ).scalar_one_or_none()
+    assert persisted_write_a is not None
+    assert persisted_write_a.notes == "write-A-must-survive"
+
+    corrected_source = (
+        await pg_session.execute(select(_PgImportSource).where(_PgImportSource.import_session_id == session_id))
+    ).scalar_one()
+    assert corrected_source.checksum == _pg_hashlib.sha256(conflicting_content).hexdigest()
+
+
+async def test_upload_content_type_over_max_length_rejected_before_reaching_postgres(pg_client, pg_seeded_users):
+    """PR90-H2, PostgreSQL-aware coverage: an oversized `content_type`
+    must be rejected by this endpoint's own application-level check before
+    any statement reaches PostgreSQL -- SQLite's lenient VARCHAR handling
+    is not proof of this; a real PostgreSQL `String(255)` column would
+    raise `StringDataRightTruncation`/`DataError` if the oversized value
+    were ever sent, which this test proves never happens."""
+    headers = await _admin_headers(pg_client)
+    session = await _pg_create_session(pg_client, headers)
+    content = _pg_build_xlsx_bytes()
+    files = {"file": ("source.xlsx", content, "a" * 256)}
+
+    resp = await pg_client.post(f"/api/v1/import-sessions/{session['id']}/source/upload", headers=headers, files=files)
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["code"] == "INVALID_INPUT"
+
+
+async def test_upload_source_version_over_max_length_rejected_before_reaching_postgres(pg_client, pg_seeded_users):
+    """PR90-H2 companion: an oversized `source_version` Form field must be
+    rejected by FastAPI/Pydantic's own centralized validation before any
+    statement reaches PostgreSQL's `String(100)` column."""
+    headers = await _admin_headers(pg_client)
+    session = await _pg_create_session(pg_client, headers)
+    content = _pg_build_xlsx_bytes()
+    files = {"file": ("source.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    data = {"source_version": "v" * 101}
+
+    resp = await pg_client.post(
+        f"/api/v1/import-sessions/{session['id']}/source/upload", headers=headers, files=files, data=data
+    )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["code"] == "VALIDATION_ERROR"
+
+
 async def test_upload_source_finalize_failure_leaves_no_partial_state_on_real_postgres(
     pg_client, pg_seeded_users, pg_engine, monkeypatch
 ):

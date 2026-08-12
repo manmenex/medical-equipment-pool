@@ -19,11 +19,12 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.crud import import_retention as import_retention_crud
+from app.crud import import_session as import_crud
 from app.crud import import_source_blob as import_source_blob_crud
 from app.models.import_session import ImportJob, ImportSession, ImportSource, ImportSourceBlob
 from app.models.user import User
@@ -399,11 +400,116 @@ async def test_upload_source_requires_administrator(client: AsyncClient, seeded_
 
 # ---------------------------------------------------------------------------
 # Blob/DB failure boundary (§6.2's single-transaction atomicity contract)
+#
+# PR90-H1 fix note: `register_or_correct_source_pending`'s conflict-prone
+# INSERT is now isolated in its own SAVEPOINT (`db.begin_nested()`), which
+# for the *non-conflicting* case (the scenarios below -- a first-time
+# registration, no prior source row) still means a SAVEPOINT is opened and
+# released before the later blob-write/finalize failure. pysqlite's default
+# legacy transaction handling does not correctly support a released
+# SAVEPOINT combined with a later session close-without-commit (the exact,
+# separately documented caveat `test_audit.py`'s own `sp_engine` fixture
+# works around -- see its docstring for the full rationale and the
+# SQLAlchemy recipe reference) -- without that recipe, a released
+# SAVEPOINT's row can survive even though the outer session is only ever
+# closed, never committed. The three tests below therefore use the same
+# dedicated, event-listener-patched SQLite engine/client `test_audit.py`
+# already established for this identical class of problem, rather than the
+# shared `db_engine`/`client` fixtures used everywhere else in this module
+# (which ~50 other tests in this file depend on and must not be changed).
+# Real PostgreSQL has no such caveat -- see
+# `test_upload_source_finalize_failure_leaves_no_partial_state_on_real_postgres`
+# in test_postgres_integration.py for the authoritative, non-quirky proof
+# of this exact invariant.
 # ---------------------------------------------------------------------------
 
 
+@pytest_asyncio.fixture
+async def sp_engine():
+    from sqlalchemy import event
+    from sqlalchemy.pool import StaticPool
+
+    from app.db.base import Base
+
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+
+    # See https://docs.sqlalchemy.org/en/20/dialects/sqlite.html#serializable-isolation-savepoints-transactional-ddl
+    @event.listens_for(engine.sync_engine, "connect")
+    def _do_connect(dbapi_connection, connection_record):
+        dbapi_connection.isolation_level = None
+
+    @event.listens_for(engine.sync_engine, "begin")
+    def _do_begin(conn):
+        conn.exec_driver_sql("BEGIN")
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield engine
+    await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def sp_seeded_users(sp_engine):
+    from app.core.security import hash_password
+    from app.models.user import ALL_ROLES, Role
+
+    session_maker = async_sessionmaker(sp_engine, expire_on_commit=False, class_=AsyncSession)
+    async with session_maker() as session:
+        roles = {}
+        for name in ALL_ROLES:
+            role = Role(name=name, permissions={})
+            session.add(role)
+            roles[name] = role
+        await session.flush()
+
+        users = {}
+        for role_name in ALL_ROLES:
+            user = User(
+                employee_code=f"{role_name.upper()}001",
+                full_name=f"Test {role_name}",
+                email=f"{role_name}@mep-hospital-test.dev",
+                password_hash=hash_password("Password@123"),
+                role_id=roles[role_name].id,
+            )
+            session.add(user)
+            users[role_name] = user
+        await session.commit()
+        return users
+
+
+@pytest_asyncio.fixture
+async def sp_client(sp_engine):
+    from app.db.session import get_db
+    from app.main import app as sp_app
+
+    session_maker = async_sessionmaker(sp_engine, expire_on_commit=False, class_=AsyncSession)
+
+    async def override_get_db():
+        async with session_maker() as session:
+            yield session
+
+    sp_app.dependency_overrides[get_db] = override_get_db
+    async with AsyncClient(transport=ASGITransport(app=sp_app), base_url="http://test") as ac:
+        yield ac
+    sp_app.dependency_overrides.clear()
+
+
+async def _sp_verify_no_source_or_blob(sp_engine, *, session_id: str) -> None:
+    """Verifies through a brand-new session/connection -- the same pattern
+    `test_audit.py`'s own `_rows_fresh` uses for identical reasons."""
+    session_maker = async_sessionmaker(sp_engine, expire_on_commit=False, class_=AsyncSession)
+    async with session_maker() as verify:
+        sources = (
+            await verify.execute(select(ImportSource).where(ImportSource.import_session_id == uuid.UUID(session_id)))
+        ).scalars().all()
+        assert sources == [], "a storage/finalize failure must leave no partial ImportSource row"
+        assert (await verify.execute(select(ImportSourceBlob))).scalars().all() == []
+
+
 async def test_upload_storage_failure_before_finalize_leaves_no_partial_state(
-    client: AsyncClient, seeded_users, db_session, monkeypatch
+    sp_client: AsyncClient, sp_seeded_users, sp_engine, monkeypatch
 ):
     import app.api.v1.import_sessions as import_sessions_module
 
@@ -412,21 +518,17 @@ async def test_upload_storage_failure_before_finalize_leaves_no_partial_state(
 
     monkeypatch.setattr(import_sessions_module.import_source_blob_crud, "upsert_pending", _raise)
 
-    headers = await auth_headers(client)
-    session = await _create_session(client, headers)
+    headers = await auth_headers(sp_client)
+    session = await _create_session(sp_client, headers)
     async with await _raw_client() as raw_client:
         resp = await _upload_source(raw_client, headers, session["id"])
     assert resp.status_code == 500
 
-    sources = (
-        await db_session.execute(select(ImportSource).where(ImportSource.import_session_id == uuid.UUID(session["id"])))
-    ).scalars().all()
-    assert sources == [], "a storage failure before finalize must leave no partial ImportSource row"
-    assert (await db_session.execute(select(ImportSourceBlob))).scalars().all() == []
+    await _sp_verify_no_source_or_blob(sp_engine, session_id=session["id"])
 
 
 async def test_upload_finalize_failure_after_blob_write_rolls_back_both_writes(
-    client: AsyncClient, seeded_users, db_session, monkeypatch
+    sp_client: AsyncClient, sp_seeded_users, sp_engine, monkeypatch
 ):
     """The blob INSERT is executed (flushed to the transaction) before the
     simulated failure -- proving rollback discards an already-executed
@@ -441,28 +543,24 @@ async def test_upload_finalize_failure_after_blob_write_rolls_back_both_writes(
 
     monkeypatch.setattr(import_sessions_module.import_source_blob_crud, "upsert_pending", _upsert_then_raise)
 
-    headers = await auth_headers(client)
-    session = await _create_session(client, headers)
+    headers = await auth_headers(sp_client)
+    session = await _create_session(sp_client, headers)
     async with await _raw_client() as raw_client:
         resp = await _upload_source(raw_client, headers, session["id"])
     assert resp.status_code == 500
 
-    sources = (
-        await db_session.execute(select(ImportSource).where(ImportSource.import_session_id == uuid.UUID(session["id"])))
-    ).scalars().all()
-    assert sources == [], "rollback must discard the metadata write together with the already-executed blob write"
-    assert (await db_session.execute(select(ImportSourceBlob))).scalars().all() == []
+    await _sp_verify_no_source_or_blob(sp_engine, session_id=session["id"])
 
 
-async def test_upload_retry_after_failure_succeeds(client: AsyncClient, seeded_users, monkeypatch):
+async def test_upload_retry_after_failure_succeeds(sp_client: AsyncClient, sp_seeded_users, monkeypatch):
     import app.api.v1.import_sessions as import_sessions_module
 
     async def _raise(*_args, **_kwargs):
         raise RuntimeError("simulated storage failure")
 
     monkeypatch.setattr(import_sessions_module.import_source_blob_crud, "upsert_pending", _raise)
-    headers = await auth_headers(client)
-    session = await _create_session(client, headers)
+    headers = await auth_headers(sp_client)
+    session = await _create_session(sp_client, headers)
     content = _build_xlsx_bytes()
 
     async with await _raw_client() as raw_client:
@@ -470,7 +568,7 @@ async def test_upload_retry_after_failure_succeeds(client: AsyncClient, seeded_u
     assert failed.status_code == 500
 
     monkeypatch.undo()
-    retried = await _upload_source(client, headers, session["id"], content=content)
+    retried = await _upload_source(sp_client, headers, session["id"], content=content)
     assert retried.status_code == 201, retried.text
     assert retried.json()["checksum"] == hashlib.sha256(content).hexdigest()
 
@@ -992,3 +1090,195 @@ async def test_full_metadata_only_pipeline_unaffected_by_pr20a(client: AsyncClie
     assert capturing_adapter.execute_context.verified_source_content is None
     blobs = (await db_session.execute(select(ImportSourceBlob))).scalars().all()
     assert blobs == [], "a metadata-only pipeline must never create an import_source_blobs row"
+
+
+# ---------------------------------------------------------------------------
+# PR90-H1: register_or_correct_source_pending must never decide the fate of
+# the caller's outer transaction. Its duplicate/conflict INSERT is isolated
+# in its own SAVEPOINT (`db.begin_nested()`) -- resolving that conflict must
+# never discard whatever else the caller already wrote in the same,
+# still-open transaction. Exercised directly at the CRUD layer with a real
+# database session (not a fake/mocked one), proving the externally
+# observable invariant, not merely that a function was called.
+# ---------------------------------------------------------------------------
+
+
+async def test_register_or_correct_source_pending_preserves_caller_transaction_on_conflict(db_session, seeded_users):
+    actor_id = await _get_user_id(db_session)
+    session = ImportSession(dataset_type=DATASET_TYPE, status="created", version=0, created_by_user_id=actor_id)
+    db_session.add(session)
+    await db_session.flush()
+    session_id = session.id
+
+    existing_content = b"already-registered-bytes"
+    db_session.add(
+        ImportSource(
+            import_session_id=session_id,
+            status="registered",
+            checksum=hashlib.sha256(existing_content).hexdigest(),
+            byte_size=len(existing_content),
+            options_fingerprint="x",
+            source_fingerprint="pre-existing-fingerprint",
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    await db_session.commit()
+
+    # Outer transaction begins. Write A: a write entirely unrelated to
+    # source registration (a second, independent ImportSession row),
+    # staged in this same transaction but not yet committed.
+    write_a = ImportSession(
+        dataset_type=DATASET_TYPE, status="created", version=0, created_by_user_id=actor_id, notes="write-A-must-survive"
+    )
+    db_session.add(write_a)
+    await db_session.flush()
+    write_a_id = write_a.id
+
+    # Trigger the conflict path: a different identity for the same
+    # session_id collides with the existing row's UNIQUE(import_session_id)
+    # constraint, forcing the INSERT to fail and the CAS-UPDATE fallback to
+    # resolve it -- the exact duplicate/conflict path PR90-H1 targets.
+    conflicting_content = b"conflicting-bytes-different-from-existing"
+    result, created = await import_crud.register_or_correct_source_pending(
+        db_session,
+        session_id=session_id,
+        dataset_type=DATASET_TYPE,
+        checksum=hashlib.sha256(conflicting_content).hexdigest(),
+        byte_size=len(conflicting_content),
+        content_type=None,
+        filename=None,
+        source_version=None,
+    )
+    assert created is False, "the conflicting insert must resolve via the CAS-UPDATE fallback, not report a fresh insert"
+
+    # The caller's own pre-existing, uncommitted write must still be
+    # visible in this same transaction -- proof the helper's internal
+    # SAVEPOINT rollback was scoped to its own failed INSERT only, and
+    # never terminated the caller's outer transaction.
+    still_present = (
+        await db_session.execute(select(ImportSession).where(ImportSession.id == write_a_id))
+    ).scalar_one_or_none()
+    assert still_present is not None, (
+        "PR90-H1: a duplicate/conflict inside register_or_correct_source_pending must not roll back "
+        "the caller's own unrelated prior write in the same transaction"
+    )
+
+    # The caller still owns the commit/rollback decision -- proven by
+    # successfully committing here. A destroyed outer transaction (the
+    # pre-fix bug) would have made this raise or silently lose write A.
+    await db_session.commit()
+
+    persisted_write_a = (
+        await db_session.execute(select(ImportSession).where(ImportSession.id == write_a_id))
+    ).scalar_one_or_none()
+    assert persisted_write_a is not None, "write A must have survived the commit that followed the resolved conflict"
+    assert persisted_write_a.notes == "write-A-must-survive"
+
+    corrected_source = (
+        await db_session.execute(select(ImportSource).where(ImportSource.import_session_id == session_id))
+    ).scalar_one()
+    assert corrected_source.checksum == hashlib.sha256(conflicting_content).hexdigest()
+
+
+def test_register_or_correct_source_pending_helper_never_calls_outer_rollback_or_commit():
+    """AST-based static-inspection guard (not substring matching -- the
+    function's own explanatory docstring legitimately mentions
+    `db.rollback()`/`db.commit()` in prose, which a substring check would
+    false-positive on): the helper must never contain an actual
+    `db.rollback()`/`db.commit()` *call expression* -- only
+    `db.begin_nested()`'s own SAVEPOINT-scoped `async with` block may issue
+    transaction control."""
+    import ast
+    import inspect
+    import textwrap
+
+    source = textwrap.dedent(inspect.getsource(import_crud.register_or_correct_source_pending))
+    tree = ast.parse(source)
+
+    forbidden_calls = [
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in ("rollback", "commit")
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "db"
+    ]
+    assert forbidden_calls == [], (
+        f"register_or_correct_source_pending must never call db.rollback()/db.commit() directly against the "
+        f"caller's outer session, found call(s): {forbidden_calls}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# PR90-H2: multipart metadata (`source_version`, `content_type`) must be
+# bounded at the API boundary -- matching `ImportSource.source_version`'s
+# String(100) and `ImportSource.content_type`'s String(255) column widths
+# -- and rejected there, never merely truncated or left for PostgreSQL to
+# discover as a truncation/data error.
+# ---------------------------------------------------------------------------
+
+
+async def test_upload_source_version_at_max_length_is_accepted(client: AsyncClient, seeded_users):
+    headers = await auth_headers(client)
+    session = await _create_session(client, headers)
+    resp = await _upload_source(client, headers, session["id"], source_version="v" * 100)
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["source_version"] == "v" * 100
+
+
+async def test_upload_source_version_over_max_length_rejected_before_persistence(
+    client: AsyncClient, seeded_users, db_session
+):
+    headers = await auth_headers(client)
+    session = await _create_session(client, headers)
+    resp = await _upload_source(client, headers, session["id"], source_version="v" * 101)
+    assert resp.status_code == 422, resp.text
+    body = resp.json()
+    assert body["code"] == "VALIDATION_ERROR"
+
+    sources = (
+        await db_session.execute(select(ImportSource).where(ImportSource.import_session_id == uuid.UUID(session["id"])))
+    ).scalars().all()
+    assert sources == [], "an oversized source_version must be rejected before any registration write"
+    assert (await db_session.execute(select(ImportSourceBlob))).scalars().all() == []
+
+
+async def test_upload_content_type_at_max_length_is_accepted(client: AsyncClient, seeded_users):
+    headers = await auth_headers(client)
+    session = await _create_session(client, headers)
+    resp = await _upload_source(client, headers, session["id"], content_type="a" * 255)
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["content_type"] == "a" * 255
+
+
+async def test_upload_content_type_over_max_length_rejected_before_persistence(
+    client: AsyncClient, seeded_users, db_session
+):
+    headers = await auth_headers(client)
+    session = await _create_session(client, headers)
+    resp = await _upload_source(client, headers, session["id"], content_type="a" * 256)
+    assert resp.status_code == 400, resp.text
+    body = resp.json()
+    assert body["code"] == "INVALID_INPUT"
+
+    sources = (
+        await db_session.execute(select(ImportSource).where(ImportSource.import_session_id == uuid.UUID(session["id"])))
+    ).scalars().all()
+    assert sources == [], "an oversized content_type must be rejected before any registration write"
+    assert (await db_session.execute(select(ImportSourceBlob))).scalars().all() == []
+
+
+async def test_upload_source_version_and_content_type_within_bounds_still_work_together(
+    client: AsyncClient, seeded_users
+):
+    """Regression: the new bounds must not interfere with ordinary, in-range
+    values -- both fields still round-trip correctly through the upload
+    endpoint."""
+    headers = await auth_headers(client)
+    session = await _create_session(client, headers)
+    resp = await _upload_source(client, headers, session["id"], source_version="rev-1", content_type="text/csv")
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["source_version"] == "rev-1"
+    assert body["content_type"] == "text/csv"
