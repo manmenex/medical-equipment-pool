@@ -95,6 +95,26 @@ reversed in favor of a dedicated `Equipment.version` integer column,
 mirroring `ImportSession.version`'s own existing pattern, broken out into
 its own new implementation slice (PR20B) that must land before Equipment
 Master's own execute path can be built (§14.2, §15.1, §24).
+**Fix round 5** (independent review 4911457257-followup on head
+`2b97f0c550555fd2174aa4d935395575d11ad1e3`, REQUEST CHANGES; CI 6/6 green
+on that exact head) confirmed H1R2/H2R2/H4R2/H8/H9-retention resolved and
+closed three further blocking gaps plus one non-blocking item: resolving
+"the active plan" internally closes the concurrent-admission race but not
+the ordinary stale-page sequence — an operator reviews plan A, a later
+dry-run supersedes it with plan B, and the operator's unchanged page's
+bodyless execute would silently apply B — closed by a new, explicit,
+PR20-owned plan-confirmation endpoint and `confirmed_at`/
+`confirmed_by_user_id` columns, with `execute()`'s resolution query
+requiring both `active` and confirmed (§14.4a, formerly H10); the
+promised "plan marked `failed` in the same TX2 write" had no specified
+mechanism for a primitive plan identity to survive TX1's rollback into
+TX2 — closed by a new, additive `AdapterExecutionConflict` exception and
+`on_execution_failure` adapter hook (§14.4b, formerly H11); PR20B's
+`Equipment.version` API exposure was left undecided, contradicting this
+repository's own contract-change documentation policy — closed by
+deciding `version` is internal-only for V1, not exposed in any response
+schema (§24, formerly H12). Non-blocking: swept the adapter pseudocode's
+stale plan-by-id language (§6.3, formerly M3).
 **Repository:** Medical Equipment Pool. Not MEMS, not Recall Monitor.
 **Baseline:** `e3156bfc231fcbc126251f41292bc397fdf8ad3f` — the real
 squash-merge SHA of GitHub PR #88 (Post-PR19B Governance Sync), itself on
@@ -643,27 +663,77 @@ class EquipmentMasterAdapter(ImportAdapter):
         # (equipment_master_dry_run_plans /
         # equipment_master_dry_run_plan_rows, §14) — including each
         # UPDATE row's captured concurrency token — as one immutable,
-        # newly `active` plan, marking any prior `active` plan for this
-        # session `superseded` in the same transaction. Never called
+        # newly `active`, **unconfirmed** (`confirmed_at IS NULL`, fix
+        # round 5 H10, §14.4a) plan, marking any prior `active` plan for
+        # this session `superseded` in the same transaction. Never called
         # inside plan_dry_run's own read-only transaction.
+        ...
+
+    async def precheck_execute(self, db: AsyncSession) -> None:
+        # NEW, additive, default-no-op ImportAdapter hook (fix round 5,
+        # H10, §14.4a) -- called by the framework in `run_execute`,
+        # **before** `admit_phase_job` runs, on a read-only session,
+        # never mutating anything. Session/source identity via the same
+        # contextvar (§6.4). Verifies a plan exists for this session that
+        # is both `status = 'active'` **and** `confirmed_at IS NOT NULL`
+        # (§14.4a) -- if none exists (never confirmed, or confirmed but
+        # since superseded by a newer, not-yet-confirmed dry-run), raises
+        # a structural, non-mutating rejection
+        # (`IMPORT_NO_CONFIRMED_PLAN`) the framework surfaces as a plain
+        # 4xx response, before any session state changes. This is the
+        # mechanism that makes "operator never confirmed" or "operator's
+        # confirmed plan went stale" a cheap, retryable rejection rather
+        # than a terminal execute failure.
         ...
 
     async def execute(self, db: AsyncSession) -> int:
         # `db` is the caller's normal read-write session, inside TX1
-        # (§3.5, §15) — never commits/rolls back itself. Session/source/
-        # dry_run_plan identity via the same contextvar (§6.4). Loads the
-        # *exact* confirmed plan by id (never recomputes, never re-parses
-        # the source) and, as its own first step, verifies the plan is
-        # `active` (not already `consumed` or `superseded`) — an invalid
-        # plan raises immediately, surfacing through the existing
-        # crash/fenced-failure path (§15, §6.5's failure-classification
-        # table). Applies each plan row's planned action: UPDATE rows via
-        # the CAS predicate using that row's own persisted concurrency
-        # token (§15.1, never a freshly-read one); CREATE rows (once
-        # authorized, §9 OD-2) via a plain insert guarded by the existing
-        # unique constraints (§16). Marks the plan `consumed` in the same
-        # transaction on success. Returns imported_rows count. Exact write
-        # content: BLOCKED on §9 OD-1/OD-2.
+        # (§3.5, §15) — never commits/rolls back itself. Session/source
+        # identity via the same contextvar (§6.4) -- **no plan identity
+        # is threaded through context** (fix round 4, H6). As its own
+        # first step, re-resolves the session's plan via the identical
+        # `status = 'active' AND confirmed_at IS NOT NULL` query
+        # `precheck_execute` already used (§14.4a) -- a defensive
+        # re-check, not a fresh design, since the two calls are separated
+        # only by `admit_phase_job`'s own atomic admission and are
+        # therefore covered by the same session-CAS race-freedom argument
+        # as fix round 4's H6 resolution (§14.4). A missing plan at this
+        # point indicates a framework-level invariant violation (not a
+        # client-correctable error, since `precheck_execute` already
+        # confirmed one existed) and is raised as a genuine, unexpected
+        # failure via `EquipmentExecutionConflict` (fix round 5, H11,
+        # §14.4b), never silently tolerated. Applies each plan row's
+        # planned action: UPDATE rows via the CAS predicate using that
+        # row's own persisted concurrency token (§15.1, never a
+        # freshly-read one); CREATE rows (once authorized, §9 OD-2) via a
+        # plain insert guarded by the existing unique constraints (§16).
+        # Any conflict (stale token, missing plan, unique violation)
+        # raises `EquipmentExecutionConflict(resolved_resource_id=
+        # plan.id)` (§14.4b) rather than a bare exception, so the
+        # framework's TX2 failure path can mark the plan `failed` using
+        # only that primitive id. Marks the plan `consumed` in the same
+        # transaction on success. Returns imported_rows count. Exact
+        # write content: BLOCKED on §9 OD-1/OD-2.
+        ...
+
+    async def on_execution_failure(
+        self, db: AsyncSession, resolved_resource_id: uuid.UUID | None
+    ) -> None:
+        # NEW, additive, default-no-op ImportAdapter hook (fix round 5,
+        # H11, §14.4b) -- called by the framework inside TX2, on TX2's
+        # own session, immediately before `fenced_phase_failure`'s write
+        # commits, **only** when the exception `execute()` raised was an
+        # `EquipmentExecutionConflict` (or the framework's generic
+        # equivalent protocol, §14.4b) carrying a non-`None`
+        # `resolved_resource_id`. Never receives an ORM object -- only
+        # the bare plan-id primitive, since TX1 has already rolled back
+        # by this point and any ORM-bound reference from `execute()` is
+        # detached/invalid. Issues
+        # `UPDATE equipment_master_dry_run_plans SET status = 'failed'
+        # WHERE id = :resolved_resource_id` on the TX2 session -- if this
+        # raises, TX2 itself aborts, and the session/plan pair falls back
+        # to PR19A's existing generic fence-loss/recovery sweep (§3.3)
+        # rather than a new PR20-specific recovery mechanism.
         ...
 
 
@@ -1418,6 +1488,12 @@ status: str  # CHECK IN ('active', 'superseded', 'consumed', 'failed')
     # deliberately a distinct terminal value from 'superseded' (superseded
     # by a newer dry-run) and 'consumed' (applied successfully)
 created_at: UTCDateTime
+confirmed_at: UTCDateTime | None  # NEW, fix round 5, H10 -- NULL until
+    # an operator explicitly confirms this exact plan_id via
+    # POST {id}/dry-run-plan/{plan_id}/confirm (§14.4a); never set
+    # implicitly, including immediately after persist_dry_run_plan
+confirmed_by_user_id: UUID | None  # NEW, fix round 5, H10 -- FK users.id,
+    # set together with confirmed_at, audit trail for who confirmed
 summary_total_rows: int  # CHECK (summary_total_rows >= 0), and likewise
     # for every summary_* column below (fix round 3, H8)
 summary_creates: int  # CHECK (summary_creates >= 0)
@@ -1516,12 +1592,15 @@ await db.commit()   # unchanged, PR19A -- now also commits the plan
 
 `persist_dry_run_plan` (§6.3) marks any prior `active` plan for this
 session `superseded` in the same transaction before inserting the new
-`active` plan and its rows — **a fresh dry-run always supersedes every
-prior plan for that session**; there is never more than one `active` plan
-at a time, making "the current confirmable plan" a trivial, unambiguous
-query (`WHERE import_session_id = ... AND status = 'active'`).
+`active`, **unconfirmed** (fix round 5, H10, §14.4a) plan and its rows —
+**a fresh dry-run always supersedes every prior plan for that session**;
+there is never more than one `active` plan at a time, making "the current
+plan" a trivial, unambiguous query (`WHERE import_session_id = ... AND
+status = 'active'`) — though, as §14.4a establishes, being the current
+plan is necessary but not sufficient for `execute()` to be willing to
+apply it; it must also be *confirmed*.
 
-### 14.4 Execution input contract — resolving the plan internally, bodyless execute preserved (rewritten, fix round 4, H6)
+### 14.4 Execution input contract — resolving the plan internally, bodyless execute preserved (rewritten, fix round 4, H6; extended fix round 5, H10)
 
 **Fix-round-4 correction: fix round 3's H7 fix made `dry_run_plan_id`
 *optional* at the generic route rather than required, which avoided
@@ -1537,21 +1616,39 @@ and `EquipmentMasterAdapter.execute()` resolves its own plan
 identity entirely internally, using a DB-provable invariant rather than
 an ambiguous "latest" query or any client-supplied id.**
 
-**The resolution invariant, stated precisely**: §14.3 already establishes
-that `persist_dry_run_plan` marks any prior `active` plan `superseded`
-and inserts the new plan as `active` *in the same transaction* as the
-session's own `dry_run_completed` transition (`fenced_phase_success`).
-Combined with §14.2's partial unique index (`WHERE status = 'active'`,
-one row per session, fix round 3 H8), this gives a structural guarantee,
-not an assumption: **whenever a session is in `dry_run_completed`, it has
-*exactly one* `active` plan, and that plan is the one produced by the
-exact dry-run attempt that most recently moved the session into that
-state.** There is no window where the session is `dry_run_completed` but
-has zero or more-than-one active plans — both are prevented by physical
-constraints (the partial unique index for "more than one," and the
-same-transaction coupling for "zero").
+**Fix-round-5 correction (H10): the mechanism above, alone, is not
+sufficient.** Resolving "the current active plan" internally closes the
+*concurrent-admission* race (below), but it does **not** bind execution
+to the specific plan the operator actually reviewed on screen. A genuine,
+non-concurrent sequence still exists: the operator loads plan A via
+§14.6; minutes later, an unrelated fresh dry-run completes and supersedes
+A with plan B; the operator's still-open page, unaware of this, submits
+the bodyless `POST {id}/execute`; under the mechanism as originally
+described, the backend would resolve and apply B — a plan the operator
+never saw. Independent review correctly identified that a partial unique
+index proves only "at most one active plan at execution time," not "this
+is the plan the caller confirmed." **§14.4a below closes this gap with an
+explicit, separate confirmation step** — `execute()`'s resolution query
+is revised accordingly, immediately below.
 
-**Resolving the race the review asks about, explicitly, using existing
+**The resolution invariant, stated precisely (revised, H10)**: §14.3
+already establishes that `persist_dry_run_plan` marks any prior `active`
+plan `superseded` and inserts the new plan as `active` *in the same
+transaction* as the session's own `dry_run_completed` transition
+(`fenced_phase_success`). Combined with §14.2's partial unique index
+(`WHERE status = 'active'`, one row per session, fix round 3 H8), this
+gives a structural guarantee, not an assumption: **whenever a session is
+in `dry_run_completed`, it has *exactly one* `active` plan.** There is no
+window where the session is `dry_run_completed` but has zero or
+more-than-one active plans — both are prevented by physical constraints
+(the partial unique index for "more than one," and the same-transaction
+coupling for "zero"). **This invariant is necessary but not sufficient
+for execution** — a fresh `active` plan starts `confirmed_at IS NULL`
+(§14.4a) until an operator explicitly confirms it, so "exactly one active
+plan exists" and "there is a plan `execute()` may apply" are now
+deliberately two different facts.
+
+**Resolving the concurrent-admission race, explicitly, using existing
 PR19A machinery rather than a new lock**: could a *second* dry-run
 complete and supersede the plan in the window between when a client
 sends `POST {id}/execute` and when `adapter.execute()` runs? No new
@@ -1567,24 +1664,33 @@ admission conflict (retryable by the client through the existing,
 unmodified error path — no new failure category). **This means by the
 time `adapter.execute()` actually runs, admission has already
 established, via the existing mechanism, that no concurrent dry-run
-could have raced it** — `execute()` simply queries for the session's
-`active` plan (`WHERE import_session_id = :context.import_session_id AND
-status = 'active'`), and the partial unique index guarantees this query
-returns exactly one row, deterministically, with no ambiguity and no
-"pick the newest" heuristic:
+could have raced it.** This argument closes the *concurrent* race only —
+it is deliberately not relied on to close the *stale-page* race H10
+describes, which is a confirmation-binding problem, not a
+concurrency-control problem, and is solved separately, in §14.4a.
+`execute()` queries for the session's `active`, **confirmed** plan
+(`WHERE import_session_id = :context.import_session_id AND status =
+'active' AND confirmed_at IS NOT NULL`), and the partial unique index
+guarantees this query returns at most one row, deterministically, with no
+ambiguity and no "pick the newest" heuristic:
 
 ```python
 async def execute(self, db: AsyncSession) -> int:
     ctx = get_adapter_invocation_context()
-    plan = await equipment_master_dry_run_plan_crud.get_active_for_session(
+    plan = await equipment_master_dry_run_plan_crud.get_active_confirmed_for_session(
         db, ctx.import_session_id
     )
-    # `plan` is guaranteed non-None here by the invariant above -- a
-    # session cannot reach `executing` admission without having been in
-    # `dry_run_completed`, which cannot hold without a matching active
-    # plan (§14.3). A missing plan at this point would indicate a
-    # framework-level invariant violation, not a client input error --
-    # raised as a genuine, unexpected failure, never silently tolerated.
+    # Unlike the fix-round-4 version of this query, `plan` is NOT
+    # guaranteed non-None here merely by the dry_run_completed
+    # invariant -- an active-but-unconfirmed plan is a normal, expected
+    # state (§14.4a). `precheck_execute` (§14.4a) already verified a
+    # confirmed plan existed *before* admission; a None result here
+    # indicates that guarantee was violated between precheck and
+    # admission -- which the race-freedom argument above rules out for
+    # anything routed through the existing admission CAS -- so a None
+    # result here is a genuine framework-invariant violation, raised as
+    # `EquipmentExecutionConflict(resolved_resource_id=None)` (§14.4b),
+    # never silently tolerated.
     ...
 ```
 
@@ -1602,45 +1708,252 @@ not something `execute()` needs to re-derive or re-compare. Any defensive
 check that fails here indicates the same class of framework-invariant
 violation as a missing plan, not a client-correctable input error.
 
-**Post-admission failure lifecycle, unchanged from fix round 3's
-resolution (H6, retained)**: a genuine execution conflict — a §15.1
-concurrency conflict on an UPDATE row, or a unique-constraint
-`IntegrityError` on a CREATE row — is a **genuine execution failure**,
-surfacing through the existing TX2 crash/fenced-failure path exactly as
-any other adapter's `execute()` exception already does (§3.3, §15). The
-session transitions to its terminal `failed` state and, under the
-unchanged merged state machine, cannot transition back to
-`dry_run_completed` or `validating` — **there is no same-session retry
-for a post-admission conflict.** An operator who hits this must start a
-**new** import session (a fresh `ImportSession`/source-registration/
-validate/dry-run cycle) — resolving the discrepancy first if the
-conflict was a genuine data problem, or simply retrying if it was
-transient. In the same TX2 write that marks the session `failed`, the
-resolved plan's own `status` is also updated to `'failed'`
-(§14.2) — it must never be left `active`/`is_current=true` (§14.6) once
-its owning session has terminally failed.
+**Post-admission failure lifecycle** (defined in fix round 3, H6; the
+*mechanism* that surfaces the plan id into TX2 is now specified
+separately, in §14.4b, per fix round 5, H11): a genuine execution
+conflict — a §15.1 concurrency conflict on an UPDATE row, a
+unique-constraint `IntegrityError` on a CREATE row, or the
+framework-invariant violation described in the code comment above — is a
+**genuine execution failure**, surfacing through the existing TX2
+crash/fenced-failure path exactly as any other adapter's `execute()`
+exception already does (§3.3, §15). The session transitions to its
+terminal `failed` state and, under the unchanged merged state machine,
+cannot transition back to `dry_run_completed` or `validating` — **there
+is no same-session retry for a post-admission conflict.** An operator who
+hits this must start a **new** import session (a fresh
+`ImportSession`/source-registration/validate/dry-run cycle) — resolving
+the discrepancy first if the conflict was a genuine data problem, or
+simply retrying if it was transient. In the same TX2 write that marks the
+session `failed`, the resolved plan's own `status` is also updated to
+`'failed'` (§14.2) via the mechanism §14.4b defines — it must never be
+left `active` once its owning session has terminally failed.
 
 On successful completion, `execute()` marks the plan `consumed` in the
 same transaction as the rest of its writes (§15), exactly as prior
 revisions already specified.
 
 **Required test coverage, revised (§22)**: a test proving the resolved
-plan always matches the one produced by the session's most recent
-successful dry-run, across repeated dry-run/supersede cycles; a test
-proving `POST {id}/execute` accepts **no body** and behaves identically
-whether an empty body, no body, or `Content-Length: 0` is sent —
-confirming the generic route's contract is genuinely unmodified; a test
-proving a concurrent fresh-dry-run-vs-execute race resolves via the
-existing generic admission CAS (one succeeds, the other receives the
-existing, unmodified admission-conflict error) rather than via any new
+plan always matches the operator's most recently *confirmed* plan (§14.4a)
+— not merely the most recent dry-run's plan, which may differ if a newer,
+unconfirmed dry-run has since superseded it; a test proving `POST
+{id}/execute` accepts **no body** and behaves identically whether an
+empty body, no body, or `Content-Length: 0` is sent — confirming the
+generic route's contract is genuinely unmodified; a test proving a
+concurrent fresh-dry-run-vs-execute race resolves via the existing
+generic admission CAS (one succeeds, the other receives the existing,
+unmodified admission-conflict error) rather than via any new
 PR20-specific mechanism; a post-admission conflict test proving the
 session reaches terminal `failed`, the plan reaches `failed` in the
 *same* transaction, and no same-session retry is possible (`POST
 {id}/dry-run` on a `failed` session is rejected by the existing,
 unchanged session-state check, §3.3); and a test proving that a session
-admitted for execute with **zero** active plans (a hypothetical
-invariant violation) fails loudly as a genuine server error rather than
-silently proceeding.
+admitted for execute with **zero** confirmed active plans (a hypothetical
+invariant violation, since `precheck_execute` should have already
+rejected this pre-admission) fails loudly as a genuine server error
+rather than silently proceeding.
+
+### 14.4a Plan confirmation contract — closing the stale-page gap (NEW, fix round 5, H10)
+
+**Fix-round-5 finding: resolving "the active plan" internally (§14.4)
+closes the concurrent-admission race but not the ordinary stale-page
+sequence** — the operator reviews plan A (§14.6), a later, unrelated
+dry-run supersedes it with plan B, and the operator's unchanged page
+submits the bodyless execute, which would silently apply B. §14.1's own
+invariant ("user confirmation of that exact plan") requires a
+server-verifiable binding between what the operator reviewed and what
+gets executed — the partial unique index alone proves only "at most one
+active plan," not "this is the plan the caller confirmed."
+
+**Resolution — an explicit, separate, PR20-owned confirmation
+operation**, distinct from (and not a modification of) PR19A's generic
+bodyless `POST {id}/execute`:
+
+```
+POST /import-sessions/{id}/dry-run-plan/{plan_id}/confirm
+```
+
+Administrator-only (§17). Unlike the generic execute route, this is a
+**new, PR20-owned endpoint** — H6's "do not modify PR19A's existing
+contract" constraint applies to the generic route, not to new endpoints
+this design introduces, so requiring an explicit `plan_id` here (to
+detect exactly the staleness this section closes) does not reintroduce
+the problem H6/H7 fixed.
+
+**Schema addition** (§14.2): `equipment_master_dry_run_plans` gains two
+new nullable columns: `confirmed_at: UTCDateTime | None`,
+`confirmed_by_user_id: UUID | None` (FK `users.id`). A freshly persisted
+plan (§14.3) always starts with both `NULL` — **confirmation is never
+implicit or automatic**, including immediately after a dry-run completes.
+
+**Write-time mechanics — a single conditional `UPDATE`, no locking
+needed**:
+
+```sql
+UPDATE equipment_master_dry_run_plans
+SET confirmed_at = now(), confirmed_by_user_id = :current_user_id
+WHERE id = :plan_id AND import_session_id = :session_id AND status = 'active'
+```
+
+- **If this matches one row**: confirmation succeeds; the endpoint
+  returns the plan's `id` and summary (mirroring §14.6's shape) so the
+  frontend can display an explicit "confirmed" state.
+- **If this matches zero rows**: `plan_id` is not the session's current
+  `active` plan — either it was already superseded by a newer dry-run
+  (**exactly the staleness this section exists to catch**), belongs to a
+  different session, or does not exist. The endpoint returns `409
+  Conflict`, `IMPORT_DRY_RUN_PLAN_STALE`, instructing the client to
+  re-fetch `GET {id}/dry-run-plan` (§14.6) and, if the plan actually
+  changed, re-review the new plan's content before confirming again —
+  never silently confirming a plan the operator has not seen.
+- **Idempotent re-confirmation**: confirming an already-confirmed,
+  still-`active` plan is a harmless no-op (the `UPDATE` still matches and
+  re-applies the same values) — not an error, since a client retry after
+  a dropped response must not be treated as a staleness conflict.
+- **No row lock required**: this is the same conditional-`UPDATE`
+  pattern already used throughout this design (e.g. §6.2's
+  register-or-correct semantics) — the `WHERE status = 'active'` clause
+  makes the operation atomically self-checking without `SELECT ... FOR
+  UPDATE`.
+
+**`precheck_execute`'s role, restated precisely** (§6.3): the new
+adapter hook checks `WHERE import_session_id = ... AND status = 'active'
+AND confirmed_at IS NOT NULL` — if this returns no row, `execute()` must
+never be reached; the framework surfaces a plain `409`,
+`IMPORT_NO_CONFIRMED_PLAN`, **before** `admit_phase_job` runs, so no
+session state is touched and the operator can confirm (or re-confirm,
+after reviewing a superseding plan) and retry freely, on the same
+session, as many times as needed. This is the mechanism that makes
+"forgot to confirm" and "confirmed plan went stale" cheap, retryable
+rejections rather than terminal execute failures.
+
+**§14.1's chain, updated to include this step explicitly**:
+
+```
+... persisted dry-run plan (active, unconfirmed)
+        |
+        v
+GET {id}/dry-run-plan  <-- operator reviews plan content (§14.6)
+        |
+        v
+POST {id}/dry-run-plan/{plan_id}/confirm  <-- NEW, this section
+        |
+        v
+[plan_id must still be the active plan, or 409 IMPORT_DRY_RUN_PLAN_STALE]
+        |
+        v
+plan.confirmed_at set
+        |
+        v
+POST {id}/execute (bodyless, unmodified, §14.4)
+        |
+        v
+precheck_execute: active AND confirmed plan exists, or reject pre-admission
+        |
+        v
+admission -> execute() re-resolves the same active+confirmed plan -> ...
+```
+
+**Required test coverage (§22)**: the exact stale-page sequence itself —
+confirm plan A, let a subsequent dry-run supersede it with plan B,
+confirm A cannot be reused (the original confirmation event does not
+carry forward to B), `execute()` before B is confirmed is rejected
+pre-admission with zero session mutation; a test proving
+`POST .../confirm` with a `plan_id` that has already been superseded
+returns `409`/`IMPORT_DRY_RUN_PLAN_STALE` and performs no write; a test
+proving re-confirming an already-confirmed, still-active plan is a
+harmless idempotent no-op; and a test proving `precheck_execute` rejects
+cleanly, pre-admission, when no plan has ever been confirmed for the
+session.
+
+### 14.4b TX2 plan-failure hook contract — surviving TX1 rollback (NEW, fix round 5, H11)
+
+**Fix-round-5 finding: §14.4's "the plan's status is set to `'failed'` in
+the same TX2 write" was asserted without specifying how a plan identity
+survives from `execute()`'s exception, through TX1's rollback, into the
+framework's own TX2 write** — `run_execute`'s existing exception handling
+calls `fenced_phase_failure()` using primitives it already holds
+(session id, error info), not adapter-internal state, and by the time
+that runs, TX1 has already rolled back — any ORM-bound plan object
+`execute()` held is now detached/invalid and cannot be passed across that
+boundary.
+
+**Resolution — a typed exception carrying a bare primitive, plus one
+more additive, default-no-op `ImportAdapter` hook**, generically named
+(not equipment-master-specific vocabulary) so any future adapter with a
+similar "resolved sub-resource" concept can reuse the same mechanism:
+
+```python
+# In app.services.import_adapter (PR19A's module) -- additive only, one
+# new exception class, no change to any existing signature or behavior
+# for an adapter that never raises it.
+class AdapterExecutionConflict(RuntimeError):
+    """Raised by `execute()` to signal a genuine execution-time conflict
+    that must also mark an adapter-owned sub-resource `failed`, inside
+    the same TX2 write PR19A already performs on any execute failure.
+    `resolved_resource_id` is an opaque, adapter-defined primitive
+    (never an ORM object) -- PR19A's framework never interprets its
+    value, only passes it back to the adapter's own `on_execution_failure`
+    hook."""
+
+    def __init__(self, message: str, resolved_resource_id: uuid.UUID | None = None):
+        super().__init__(message)
+        self.resolved_resource_id = resolved_resource_id
+```
+
+**Framework-side change, additive to `run_execute`'s existing exception
+handling** (confirmed at implementation time against the actual TX1/TX2
+call site, §3.3 — the shape below is this design's proposed contract, to
+be verified against the real code exactly as every other framework
+touchpoint in this document has been): when the exception `execute()`
+raised is an `AdapterExecutionConflict`, the framework captures
+`exc.resolved_resource_id` (a bare UUID, safe to hold across the
+rollback) *before* building TX2; then, inside TX2, **before**
+`fenced_phase_failure()`'s own write commits, it calls
+`await adapter.on_execution_failure(tx2_db, exc.resolved_resource_id)`
+— giving the adapter a chance to mark its own resource `failed` using
+only that primitive, in the same transaction. If `resolved_resource_id`
+is `None` (the exception carries no resource, or the raising adapter
+doesn't use this mechanism), the hook is still called with `None` and the
+default no-op implementation does nothing — fully backward compatible
+with every adapter that predates this mechanism.
+
+**Ordering and failure semantics, stated explicitly (per the review's
+request)**:
+
+1. `execute()` raises `AdapterExecutionConflict(msg, resolved_resource_id=plan.id)`.
+2. TX1 rolls back (existing, unmodified PR19A behavior).
+3. The framework captures the primitive `resolved_resource_id` from the
+   caught exception (not from any ORM state).
+4. TX2 opens (existing, unmodified PR19A mechanism).
+5. `await adapter.on_execution_failure(tx2_db, resolved_resource_id)` runs
+   — for `EquipmentMasterAdapter`, this issues `UPDATE
+   equipment_master_dry_run_plans SET status = 'failed' WHERE id =
+   :resolved_resource_id` on `tx2_db`.
+6. `fenced_phase_failure()` runs on the same `tx2_db` (existing,
+   unmodified PR19A mechanism), writing the session's own terminal
+   `failed` state and bounded failure message.
+7. TX2 commits — session-failure and plan-failure land together, or
+   neither does.
+8. **If step 5 itself raises**: TX2 aborts entirely (it never reaches
+   step 6's commit). This is treated identically to any other TX2
+   infrastructure failure this codebase already has to tolerate — the
+   session/plan pair falls back to PR19A's existing generic
+   fence-loss/recovery sweep (§3.3), which is designed exactly for "a
+   worker died mid-failure-publication" scenarios; this is not a new
+   PR20-specific recovery mechanism, and this design does not invent one.
+
+**Required test coverage (§22)**: a test proving TX1's rollback leaves
+the plan's `status` completely unchanged (still `active`) — the plan is
+only ever touched inside TX2, never TX1; a test proving a successful TX2
+commits both the session's `failed` state and the plan's `failed` status
+together; a test proving a forced failure inside `on_execution_failure`
+itself leaves **both** the session and the plan un-updated (still
+whatever they were before the failed TX2 attempt), and that a subsequent
+recovery pass (existing PR19A mechanism) can still reconcile the session
+correctly; and a test proving `resolved_resource_id=None` (an adapter
+raising a bare `AdapterExecutionConflict` with no resource, or a
+different adapter's own unrelated exception) leaves `on_execution_failure`
+a harmless no-op for every adapter that doesn't use this mechanism.
 
 ### 14.5 Plan freshness — what makes a plan stale, defined exhaustively, no TTL
 
@@ -1674,6 +1987,14 @@ silently proceeding.
   that query at all, so there is nothing to "resubmit" in the first
   place; staleness here is prevented structurally, not by a runtime
   check against a client-supplied id.
+- **Confirmed plan superseded by a newer, unconfirmed dry-run** (NEW, fix
+  round 5, H10) — this is the one staleness vector the prior revision
+  missed: a plan the operator reviewed and confirmed can still be
+  superseded by a *later* dry-run's `active`-but-unconfirmed replacement.
+  This is exactly the vector §14.4a's `confirmed_at IS NOT NULL`
+  predicate closes: `execute()`/`precheck_execute` never treat a merely
+  `active` plan as executable — only an `active` **and confirmed** one —
+  so a superseding, not-yet-confirmed plan is never silently applied.
 
 **No arbitrary time-based TTL is used as a substitute for any of the
 above** — every staleness vector the review asked about is either
@@ -1683,22 +2004,28 @@ version-irrelevant for V1, or covered by an explicit, targeted check
 would only add an arbitrary, unjustified failure mode without closing any
 gap these checks don't already close.
 
-### 14.6 API path for confirmation UI
+### 14.6 API path for confirmation UI (revised, fix round 5, H10)
 
 `GET /import-sessions/{id}/dry-run-plan`, Administrator-only (§17),
 returns the current `active` plan's `id`, its persisted summary fields
-(§14.2), relevant warnings, `created_at`, and `is_current: bool` (a UX
-convenience — `true` iff `status == "active"`; the *authoritative*
-staleness enforcement is always §14.4's resolution logic, never this
-read-only flag). **Fix round 4 (H6): the user reviews this plan's
-`id` and summary for display/traceability only — they do not submit it
-back anywhere.** `POST /{id}/execute` remains PR19A's existing, bodyless
-generic endpoint (§14.4); the plan the user reviewed here is
-*structurally guaranteed* to be the exact plan `execute()` resolves and
-applies, because both this endpoint and `execute()`'s own resolution
-query read the same single-row-by-invariant `active` plan for the
-session (§14.4) — there is no separate "confirm by id" step for the
-client to get right or wrong.
+(§14.2), relevant warnings, `created_at`, `confirmed_at`/
+`confirmed_by_user_id` (`null` until confirmed, §14.4a), and
+`is_current: bool` (a UX convenience — `true` iff `status == "active"`;
+the *authoritative* staleness enforcement is always §14.4/§14.4a's
+resolution logic, never this read-only flag).
+
+**Fix round 4 (H6) claimed "there is no separate confirm by id step" —
+independent review correctly identified this as insufficient (H10): a
+structural guarantee that `execute()` resolves *an* active plan is not a
+guarantee it resolves *the plan the operator reviewed*.** The user now
+explicitly confirms this plan's `id` via `POST
+{id}/dry-run-plan/{plan_id}/confirm` (§14.4a) **before** the existing,
+unmodified bodyless `POST /{id}/execute` (§14.4) is called — two
+requests, not one, but the second (`execute`) is still PR19A's exact
+generic contract, unaware that a plan even exists. The frontend flow is:
+`GET .../dry-run-plan` (display) → `POST .../confirm` (explicit operator
+action, e.g. a "Confirm and Import" button) → `POST /{id}/execute`
+(triggered only after a successful confirm response).
 
 ### 14.7 Recovery/fencing interaction — two orthogonal layers, not duplicated
 
@@ -1723,11 +2050,20 @@ with what PR19B already renders where reasonable, without PR20 being
 obligated to match it field-for-field (PR19B's own docs state its mock
 fixtures are presentation-only and do not bind PR20's real contract). The
 frontend's confirmation step displays the plan's `id` and summary
-(§14.6) for the operator's review, then submits the existing, unmodified
-bodyless `POST /{id}/execute` request — **fix round 4 (H6): it does not
-submit the plan id anywhere**, since the backend resolves it internally
-(§14.4); the displayed id is for operator traceability/audit only (§20
-updated accordingly).
+(§14.6) for the operator's review, then, on explicit operator action
+(e.g. a "Confirm and Import" button), submits `POST
+{id}/dry-run-plan/{plan_id}/confirm` with the exact displayed `plan_id`
+(§14.4a, fix round 5, H10) — **correcting fix round 4's claim that
+nothing is ever submitted**, which independent review identified as
+insufficient. Only after a successful confirm response does the frontend
+call the existing, unmodified bodyless `POST /{id}/execute` request; it
+never submits the plan id to *that* endpoint, since `execute()` resolves
+its own plan internally (§14.4) — the plan id travels only to the new,
+PR20-owned confirm endpoint, never to PR19A's generic execute route. If
+`.../confirm` returns `409 IMPORT_DRY_RUN_PLAN_STALE` (§14.4a), the
+frontend must re-fetch `GET .../dry-run-plan` and prompt the operator to
+review the new plan before confirming again — never silently retrying
+confirm with the same stale `plan_id` (§20 updated accordingly).
 
 ### 14.9 Plan-artifact retention — closing the gap the two new tables introduce (fix round 3, H9)
 
@@ -2145,6 +2481,12 @@ frontend integration is:
 4. Receive-History and Issue-History mock paths (PR21's future scope)
    remain mocked; only the Equipment Master path is wired to real data by
    PR20.
+5. The dry-run review screen gains one explicit operator action (e.g. a
+   "Confirm and Import" button) that calls `POST
+   {id}/dry-run-plan/{plan_id}/confirm` (§14.4a, fix round 5, H10) before
+   the existing "execute" action fires — a UI-flow addition, not a
+   redesign, since PR19B's existing dry-run-review screen already has a
+   confirmation-style call-to-action to attach this to.
 
 This is a backend/domain-adapter slice primarily (§24); the frontend
 change is a real-client wiring exercise, not new UI design.
@@ -2460,12 +2802,22 @@ rather than assumed:**
   `equipment` (§15.1), with backfill; wiring `PATCH /equipment/{id}` and
   every `change_status_for_*` lifecycle-transition function to increment
   it; the required regression test enumerating and proving every one of
-  those paths advances `version` by exactly `1` (§22). **API exposure**:
-  none new — existing endpoints' observable behavior is unchanged except
-  for the new `version` field appearing in Equipment responses, if
-  exposed (an implementation-time API-contract decision, not fixed by
-  this design). **Schema/migration impact**: yes, one new column with
-  backfill, no modification to any other column.
+  those paths advances `version` by exactly `1` (§22). **API exposure,
+  decided here, not deferred (fix round 5, H12)**: `docs/ENGINEERING_
+  WORKFLOW.md` §16 treats an additive response field as a contract change
+  requiring its own documentation and compatibility tests — this design
+  does not leave that decision to the implementation PR. **`version` is
+  internal-only for V1: it is not added to `EquipmentOut` or any other
+  response schema.** No client need for a visible version number has been
+  demonstrated anywhere in this design or the existing frontend (§20); the
+  column exists purely as a server-side optimistic-concurrency primitive,
+  read only by `plan_dry_run`/`execute` (§15.1), never by any API
+  response serializer. If a genuine future need for a client-visible
+  version emerges, exposing it is a small, self-contained additive schema
+  change — its own documentation and compatibility tests, per §16 — and
+  is explicitly **not** authorized by this design. **Schema/migration
+  impact**: yes, one new column with backfill, no modification to any
+  other column, no schema/response-model change.
 - **PR20C — Equipment Master parser, normalization, and validation
   adapter** (renumbered from PR20B): `EquipmentMasterAdapter.parse`/
   `preload_business_context`/`validate_business_rules`, plus
@@ -2486,44 +2838,57 @@ rather than assumed:**
   migration impact**: none. **Owner Decision required**: yes,
   OD-1/OD-2/OD-3, before this slice's own implementation PR can begin
   (not merely before it merges).
-- **PR20D — Persisted DryRunPlan** (renumbered/narrowed from the prior
-  PR20C, execution split out into PR20E below): `plan_dry_run`/
-  `persist_dry_run_plan` (§6.3), the two new persisted-plan tables and
-  their full physical constraint set (`equipment_master_dry_run_plans`/
+- **PR20D — Persisted DryRunPlan and confirmation** (renumbered/narrowed
+  from the prior PR20C, execution split out into PR20E below; scope
+  expanded fix round 5, H10): `plan_dry_run`/`persist_dry_run_plan`
+  (§6.3), the two new persisted-plan tables and their full physical
+  constraint set (`equipment_master_dry_run_plans`/
   `equipment_master_dry_run_plan_rows`, including the H8 composite FKs,
-  partial unique index, and CHECK constraints, §14.2) and their
-  migration, and the `GET /{id}/dry-run-plan` retrieval endpoint (§14.6),
-  and the plan-artifact retention integration (§6.6/§14.9 — redacting
-  `normalized_values`/`matched_identity_fields`/`warnings` in the same
-  claimed/fenced retention transaction that already redacts session
-  metadata and deletes the source blob). **NOT READY — blocked on
-  OD-1/OD-2/OD-3** (inherits PR20C's blockers — the plan's row content is
-  meaningless without field mapping/policy resolved). Depends on PR20C
-  (needs the parse/validate pipeline to compute a plan against). Its
-  `expected_equipment_version` column is a plain integer snapshot, not a
-  foreign key, so this slice has no *hard* schema dependency on PR20B —
-  but the value is only meaningful once PR20B's column exists, so PR20B
-  should still land first as a matter of implementation sequencing.
-  **API exposure**: `POST /{id}/dry-run`, `GET /{id}/dry-run-plan` become
-  live for this dataset type; there is no `dry-run-summary` recompute
-  endpoint. **Schema/migration impact**: yes — the two new persisted-plan
-  tables with their full constraint set (§14.2).
+  partial unique index, CHECK constraints, and the new `confirmed_at`/
+  `confirmed_by_user_id` columns, §14.2) and their migration, the `GET
+  /{id}/dry-run-plan` retrieval endpoint (§14.6), the new `POST
+  /{id}/dry-run-plan/{plan_id}/confirm` endpoint and its conditional-
+  `UPDATE` confirmation contract (§14.4a), and the plan-artifact
+  retention integration (§6.6/§14.9 — redacting `normalized_values`/
+  `matched_identity_fields`/`warnings` in the same claimed/fenced
+  retention transaction that already redacts session metadata and
+  deletes the source blob; the new confirmation columns are not PII and
+  are left untouched by retention, matching the existing precedent for
+  structural fields). **NOT READY — blocked on OD-1/OD-2/OD-3** (inherits
+  PR20C's blockers — the plan's row content is meaningless without field
+  mapping/policy resolved). Depends on PR20C (needs the parse/validate
+  pipeline to compute a plan against). Its `expected_equipment_version`
+  column is a plain integer snapshot, not a foreign key, so this slice
+  has no *hard* schema dependency on PR20B — but the value is only
+  meaningful once PR20B's column exists, so PR20B should still land
+  first as a matter of implementation sequencing. **API exposure**:
+  `POST /{id}/dry-run`, `GET /{id}/dry-run-plan`, `POST
+  /{id}/dry-run-plan/{plan_id}/confirm` become live for this dataset
+  type; there is no `dry-run-summary` recompute endpoint. **Schema/
+  migration impact**: yes — the two new persisted-plan tables with their
+  full constraint set, including the confirmation columns (§14.2).
 - **PR20E — Execution** (split out from the prior PR20C, fix round 4,
-  H6/H9): `execute()` (§6.3) — internally resolving the session's active
-  plan (§14.4, no client-supplied plan id, generic bodyless `POST
-  /{id}/execute` contract fully preserved), applying the
-  optimistic-concurrency CAS using `Equipment.version` (§15.1), and the
-  post-admission failure lifecycle (session/plan both terminally `failed`
-  together, §14.4). **NOT READY — blocked on OD-1/OD-2/OD-3** (inherits
-  PR20D's blockers; the concurrency mechanism itself is technically
-  ready but has nothing to protect until OD-2 authorizes update mode).
-  **Hard dependency on both PR20B and PR20D** — PR20B must exist for the
-  CAS predicate to have a real column to compare against, and PR20D must
-  exist for there to be a persisted plan to resolve and apply; this
-  slice cannot be implemented before either merges. **API exposure**:
-  `POST /{id}/execute` becomes live for this dataset type — the route
-  itself is unchanged from PR19A's existing generic contract. **Schema/
-  migration impact**: none beyond what PR20B/PR20D already added.
+  H6/H9; scope expanded fix round 5, H10/H11): `precheck_execute`,
+  `execute()`, and `on_execution_failure` (§6.3) — internally resolving
+  the session's `active`-**and-confirmed** plan (§14.4/§14.4a, no
+  client-supplied plan id, generic bodyless `POST /{id}/execute` contract
+  fully preserved), applying the optimistic-concurrency CAS using
+  `Equipment.version` (§15.1), and the TX2 plan-failure hook contract
+  that binds a bare `resolved_resource_id` primitive across TX1's
+  rollback into TX2's own failure write (§14.4b) — including the new,
+  additive `AdapterExecutionConflict` exception class in PR19A's own
+  `import_adapter.py` module (§14.4b, a small, generic, backward-
+  compatible addition, not a fork). **NOT READY — blocked on
+  OD-1/OD-2/OD-3** (inherits PR20D's blockers; the concurrency mechanism
+  itself is technically ready but has nothing to protect until OD-2
+  authorizes update mode). **Hard dependency on both PR20B and PR20D** —
+  PR20B must exist for the CAS predicate to have a real column to compare
+  against, and PR20D must exist for there to be a persisted, confirmable
+  plan to resolve and apply; this slice cannot be implemented before
+  either merges. **API exposure**: `POST /{id}/execute` becomes live for
+  this dataset type — the route itself is unchanged from PR19A's existing
+  generic contract. **Schema/migration impact**: none beyond what
+  PR20B/PR20D already added.
 - **PR20F — Frontend real-API wiring** (renumbered from PR20D): replaces
   the Equipment Master `MockImportClient` path only (§20), displaying the
   resolved plan's `id`/summary for operator traceability without
@@ -2769,3 +3134,31 @@ gates.
       appeared since fix round 3; all three remain OPEN (§9).
 - [x] **Fix round 4**: did not start PR20A or any implementation PR; this
       remains a design-only document (§26).
+- [x] **Fix round 5 (H10)**: closed the stale-page confirmation gap —
+      internal plan resolution alone proved the concurrent-admission race
+      was closed but not that execution binds to the plan the operator
+      actually reviewed. Added a new, explicit, PR20-owned
+      `POST {id}/dry-run-plan/{plan_id}/confirm` endpoint,
+      `confirmed_at`/`confirmed_by_user_id` columns, and a new
+      `precheck_execute` adapter hook requiring both `active` and
+      confirmed before `execute()` is ever admitted (§14.4a).
+- [x] **Fix round 5 (H11)**: defined the previously-unspecified mechanism
+      by which a plan identity survives TX1's rollback into the
+      framework's own TX2 failure write — a new, additive
+      `AdapterExecutionConflict` exception (in PR19A's own module,
+      carrying only a bare primitive id) and a new `on_execution_failure`
+      adapter hook, called inside TX2 before `fenced_phase_failure`
+      commits (§14.4b).
+- [x] **Fix round 5 (H12)**: decided `Equipment.version`'s API exposure
+      now rather than deferring it — internal-only for V1, not added to
+      any response schema, per this repository's own contract-change
+      documentation policy (§24).
+- [x] **Fix round 5 (M3)**: swept §6.3's adapter pseudocode for the
+      superseded plan-by-id contract, replacing it with the
+      `precheck_execute`/`execute`/`on_execution_failure` hook triad
+      matching §14.4/§14.4a/§14.4b exactly.
+- [x] **Fix round 5**: did not close OD-1/OD-2/OD-3 — no repository
+      evidence for the real source schema or either business policy has
+      appeared since fix round 4; all three remain OPEN (§9).
+- [x] **Fix round 5**: did not start PR20A or PR20B or any implementation
+      PR; this remains a design-only document (§26).
