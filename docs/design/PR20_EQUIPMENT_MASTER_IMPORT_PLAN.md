@@ -165,6 +165,27 @@ that preserves the first confirmation, a `RETURNING` clause so the caller
 always sees who actually confirmed first, and a new physical
 pair-consistency `CHECK` on the two columns (§14.2, §14.4a, formerly
 H14).
+**Fix round 8** (independent review on head
+`f7b296b825d5decb2d893dcc0ee2e7550658e0c9`, **APPROVE WITH NON-BLOCKING
+COMMENTS** — confirmed H11R/H13/H14 resolved, no remaining
+merge-blocking finding identified; CI 4/6 green at review time, both
+backend test jobs still running) addressed the two non-blocking items:
+the plan-confirmation `UPDATE` (§14.4a) is scoped only by
+plan id/session id/`status = 'active'`, so an unconfirmed active plan
+could still be confirmed after its owning session moved to `cancelled`
+or a later `dry_run_failed` — execute's own session-state admission
+would already reject this downstream, so no Equipment row could ever be
+written, but it created misleading confirmation/audit state and
+unnecessary UX churn; closed by adding a relation-scoped `EXISTS`
+predicate requiring the owning session to still be `dry_run_completed`
+in the same statement (§14.4a, formerly M4). §3.2's endpoint-inventory
+overview had drifted stale, still claiming PR20 adds no endpoint under
+`/import-sessions` when the design's later sections add three; corrected
+to list them explicitly (§3.2, formerly L2). This review's approval is
+not itself authorization to merge — CI must be green on the exact head,
+the PR must leave Draft, and the repository owner's own merge decision
+remains outstanding, per this document's standing "will not be merged by
+the author" commitment.
 **Repository:** Medical Equipment Pool. Not MEMS, not Recall Monitor.
 **Baseline:** `e3156bfc231fcbc126251f41292bc397fdf8ad3f` — the real
 squash-merge SHA of GitHub PR #88 (Post-PR19B Governance Sync), itself on
@@ -255,11 +276,20 @@ bookkeeping.
 `POST /import-sessions/{id}/dry-run`, `POST /import-sessions/{id}/execute`,
 `GET /import-sessions/{id}/errors`, `POST
 /import-sessions/retention/cleanup` — all reused unmodified, gated by the
-same `require_roles(*ADMINISTRATOR_ONLY_ROLES)` dependency (§10). PR20
-adds **no new endpoint under `/import-sessions`**; the only new API
-surface PR20 may need is a separate, narrowly-scoped byte-ingestion
-endpoint (§6.2 — architecture proposed, exact shape gated by design
-review, not by an Owner Decision).
+same `require_roles(*ADMINISTRATOR_ONLY_ROLES)` dependency (§10). This
+list of PR19A's existing endpoints is unmodified by PR20 — every one of
+them keeps its exact contract, request/response shape, and behavior
+across every fix round (§14.4). **Fix round 8 correction (L2)**: this
+subsection previously claimed PR20 "adds no new endpoint under
+`/import-sessions`," which had drifted stale relative to the design's
+own later, authoritative sections. PR20 does add new endpoints under
+`/import-sessions/{id}`, all Administrator-only (§17): the
+byte-ingestion endpoint `POST /import-sessions/{id}/source/upload`
+(§6.2), `GET /import-sessions/{id}/dry-run-plan` (§14.6), and `POST
+/import-sessions/{id}/dry-run-plan/{plan_id}/confirm` (§14.4a). None of
+these three modifies or replaces any endpoint in the list above — each
+is a new, additive route with its own exact shape defined in the
+referenced section, not a variant of an existing one.
 
 ### 3.3 Admission, lease, fencing, recovery (reused as-is)
 
@@ -1857,8 +1887,33 @@ UPDATE equipment_master_dry_run_plans
 SET confirmed_at = COALESCE(confirmed_at, now()),
     confirmed_by_user_id = COALESCE(confirmed_by_user_id, :current_user_id)
 WHERE id = :plan_id AND import_session_id = :session_id AND status = 'active'
+  AND EXISTS (
+    SELECT 1 FROM import_sessions
+    WHERE import_sessions.id = equipment_master_dry_run_plans.import_session_id
+      AND import_sessions.status = 'dry_run_completed'
+  )
 RETURNING id, confirmed_at, confirmed_by_user_id
 ```
+
+**Fix round 8 (M4)**: the predicate above adds a relation-scoped `EXISTS`
+against the owning `import_sessions` row, requiring `status =
+'dry_run_completed'` — added because the plan-row-only predicate
+(`status = 'active'`) does not by itself rule out confirming a plan whose
+*session* has since moved to `cancelled` (PR19A permits cancellation from
+`dry_run_completed`) or to `dry_run_failed` (a later dry-run attempt on
+the same session can fail while an *earlier* plan is still `active`,
+since a failed dry-run job never runs `persist_dry_run_plan`'s
+supersession write). `execute()`'s own session-state admission would
+already reject this downstream, so no Equipment row could ever actually
+be written from a confirmation in this state — but allowing the
+confirmation to silently succeed first still creates misleading
+confirmation/audit state (`confirmed_at`/`confirmed_by_user_id` set on a
+plan whose session can never execute it) and unnecessary UX churn (an
+operator confirms, then execute inexplicably 409s). Gating confirmation
+on the same session state PR19A already requires for `dry_run` to have
+produced this plan in the first place closes that gap at the point of
+confirmation rather than deferring it to a later, more confusing
+rejection.
 
 - **If this matches one row**: confirmation succeeds. The `RETURNING`
   clause hands back the row's *actual* `confirmed_at`/`confirmed_by_user_id`
@@ -1871,13 +1926,18 @@ RETURNING id, confirmed_at, confirmed_by_user_id
   explicit "confirmed" state, including *by whom* if that differs from
   the current caller.
 - **If this matches zero rows**: `plan_id` is not the session's current
-  `active` plan — either it was already superseded by a newer dry-run
+  confirmable plan — either it was already superseded by a newer dry-run
   (**exactly the staleness this section exists to catch**), belongs to a
-  different session, or does not exist. The endpoint returns `409
+  different session, does not exist, or (fix round 8, M4) the owning
+  session is no longer `dry_run_completed` (e.g. `cancelled` or
+  `dry_run_failed` from a later attempt). The endpoint returns `409
   Conflict`, `IMPORT_DRY_RUN_PLAN_STALE`, instructing the client to
   re-fetch `GET {id}/dry-run-plan` (§14.6) and, if the plan actually
   changed, re-review the new plan's content before confirming again —
-  never silently confirming a plan the operator has not seen.
+  never silently confirming a plan the operator has not seen. This
+  design does not attempt to distinguish these sub-cases with different
+  error codes; all of them mean the same thing to the client: re-fetch
+  and re-check before proceeding.
 - **Idempotent re-confirmation, made precise**: confirming an
   already-confirmed, still-`active` plan is a true no-op — the `UPDATE`
   still matches the row (so the caller still gets a `200`, not an error,
@@ -2008,10 +2068,16 @@ byte-for-byte unchanged (not merely equal-valued — the same write is
 never re-issued with a fresh `now()`); a test proving a **different**
 Administrator confirming an already-confirmed, still-active plan
 succeeds (`200`) but leaves `confirmed_by_user_id` as the *original*
-confirmer, never reassigned to the second caller; and a test proving the
+confirmer, never reassigned to the second caller; a test proving the
 `equipment_master_dry_run_plans` migration's pair-consistency `CHECK`
 rejects any row with exactly one of `confirmed_at`/`confirmed_by_user_id`
-set and the other `NULL`.
+set and the other `NULL`; and, fix round 8 (M4) — a test proving
+`POST .../confirm` on an otherwise-still-`active` plan whose session has
+moved to `cancelled` returns `409`/`IMPORT_DRY_RUN_PLAN_STALE` and
+performs no write, and a companion test for the `dry_run_failed` case
+(constructed by having a later dry-run attempt on the same session fail
+before its own `persist_dry_run_plan` write, leaving an earlier plan
+`active` while the session itself is no longer `dry_run_completed`).
 
 ### 14.4b TX2 plan-failure hook contract — surviving TX1 rollback (NEW, fix round 5, H11)
 
@@ -3572,4 +3638,22 @@ gates.
       evidence for the real source schema or either business policy has
       appeared since fix round 6; all three remain OPEN (§9).
 - [x] **Fix round 7**: did not start PR20A or PR20B or any implementation
+      PR; this remains a design-only document (§26).
+- [x] **Fix round 8 (M4, non-blocking)**: added a relation-scoped
+      `EXISTS` predicate to the plan-confirmation `UPDATE`, requiring the
+      owning session to still be `dry_run_completed`, closing the
+      misleading-confirmation-state gap for `cancelled`/`dry_run_failed`
+      sessions with an unconfirmed but still-`active` plan (§14.4a).
+- [x] **Fix round 8 (L2, non-blocking)**: corrected §3.2's stale
+      endpoint-inventory overview, which claimed PR20 adds no endpoint
+      under `/import-sessions`, to explicitly list the three it actually
+      adds (`source/upload`, `dry-run-plan`, `dry-run-plan/{plan_id}/confirm`)
+      (§3.2).
+- [x] **Fix round 8**: this round's review was an **approval** — no
+      remaining merge-blocking finding was identified; did not treat the
+      approval as merge authorization (§26, standing commitment).
+- [x] **Fix round 8**: did not close OD-1/OD-2/OD-3 — no repository
+      evidence for the real source schema or either business policy has
+      appeared since fix round 7; all three remain OPEN (§9).
+- [x] **Fix round 8**: did not start PR20A or PR20B or any implementation
       PR; this remains a design-only document (§26).
