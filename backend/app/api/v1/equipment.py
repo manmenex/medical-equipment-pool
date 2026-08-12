@@ -112,6 +112,7 @@ def _serialize(equipment) -> dict:
         "bcm_code": equipment.bcm_code,
         "created_at": equipment.created_at,
         "updated_at": equipment.updated_at,
+        "version": equipment.version,
     }
 
 

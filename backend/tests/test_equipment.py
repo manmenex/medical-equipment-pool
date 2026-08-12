@@ -1623,3 +1623,134 @@ async def test_decommission_requires_passing_through_unavailable_defective(clien
     )
     assert decommission_resp.status_code == 200, decommission_resp.text
     assert decommission_resp.json()["status"] == "decommissioned"
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR20B (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24):
+# Equipment.version optimistic-concurrency counter. One test per mutation
+# path in that section's exhaustive coverage table -- create, PATCH, every
+# change_status_for_* transition family (manual lifecycle here; dispatch/
+# receipt below, confirmed to route through the same shared change_status()
+# function), and soft-delete. `version` is also asserted absent from every
+# write-request schema's accepted input.
+# ---------------------------------------------------------------------------
+
+
+async def test_create_equipment_sets_version_to_one(client, seeded_users):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "AST-PR20B-0001", "equipment_name": "PR20B Create Test"},
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["version"] == 1, "a newly created row's version must be exactly 1, the column default"
+
+
+async def test_update_equipment_increments_version_by_exactly_one(client, seeded_users):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR20B-0002")
+    assert equipment["version"] == 1
+
+    resp = await client.patch(
+        f"/api/v1/equipment/{equipment['id']}",
+        headers=headers,
+        json={"equipment_name": "PR20B Updated Name"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["version"] == 2, "PATCH must advance version by exactly 1"
+
+    resp2 = await client.patch(
+        f"/api/v1/equipment/{equipment['id']}",
+        headers=headers,
+        json={"equipment_name": "PR20B Updated Name Again"},
+    )
+    assert resp2.status_code == 200, resp2.text
+    assert resp2.json()["version"] == 3, "a second PATCH must advance version by exactly 1 more, not reset it"
+
+
+async def test_manual_lifecycle_status_change_increments_version_by_exactly_one(client, seeded_users):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR20B-0003")
+    assert equipment["version"] == 1
+
+    resp = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/status",
+        headers=headers,
+        json={"status": "unavailable_defective", "reason": "PR20B version test"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["version"] == 2, "a manual lifecycle transition must advance version by exactly 1"
+
+
+async def test_dispatch_and_receipt_transitions_increment_version(client, seeded_users):
+    """Design §24: 'Receive/Issue dispatch flows... confirmed to route
+    through the same change_status_for_* functions above, not a separate
+    write path' -- proven here end-to-end via the real borrow/return API,
+    not merely asserted."""
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    nurse_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR20B-0004")
+    assert equipment["version"] == 1
+
+    payload = await _on_demand_borrow_payload(client, headers, equipment["id"], ward_code="W-PR20B-0004")
+    borrow_resp = await client.post("/api/v1/borrow", headers=nurse_headers, json=payload)
+    assert borrow_resp.status_code == 201, borrow_resp.text
+    tx = borrow_resp.json()
+
+    after_dispatch = await client.get(f"/api/v1/equipment/{equipment['id']}", headers=headers)
+    assert after_dispatch.json()["version"] == 2, "dispatch must advance version by exactly 1"
+
+    return_resp = await client.post(
+        f"/api/v1/return/{tx['id']}", headers=nurse_headers, json={"receipt_outcome": "usable"}
+    )
+    assert return_resp.status_code == 200, return_resp.text
+
+    after_receipt = await client.get(f"/api/v1/equipment/{equipment['id']}", headers=headers)
+    assert after_receipt.json()["version"] == 3, "receipt must advance version by exactly 1 more"
+
+
+async def test_delete_equipment_increments_version_before_soft_delete(client, seeded_users, db_session):
+    from app.models.equipment import Equipment
+
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR20B-0005")
+    assert equipment["version"] == 1
+
+    resp = await client.delete(f"/api/v1/equipment/{equipment['id']}", headers=headers)
+    assert resp.status_code == 204, resp.text
+
+    row = (
+        await db_session.execute(select(Equipment).where(Equipment.id == uuid.UUID(equipment["id"])))
+    ).scalar_one()
+    assert row.version == 2, "soft-delete must advance version by exactly 1, not silently bypass it"
+    assert row.deleted_at is not None
+
+
+async def test_equipment_update_schema_never_accepts_a_client_supplied_version(client, seeded_users):
+    """PR20B contract: version is strictly read-only. A client-supplied
+    `version` in a PATCH body must be silently ignored by schema validation
+    (an unknown field to EquipmentUpdate), never applied as the new value
+    and never used as a CAS precondition in this slice."""
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    equipment = await _create_equipment_with_bcm(client, headers, "AST-PR20B-0006")
+    assert equipment["version"] == 1
+
+    resp = await client.patch(
+        f"/api/v1/equipment/{equipment['id']}",
+        headers=headers,
+        json={"equipment_name": "PR20B No Client Version", "version": 999},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["version"] == 2, "server-computed increment must win; a client-supplied version must be ignored"
+
+
+async def test_equipment_create_schema_never_accepts_a_client_supplied_version(client, seeded_users):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={"asset_number": "AST-PR20B-0007", "equipment_name": "PR20B Create No Version", "version": 999},
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["version"] == 1, "a client-supplied version on create must be ignored -- always starts at 1"

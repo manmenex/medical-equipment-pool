@@ -10491,3 +10491,224 @@ async def test_migration_0016_mismatched_fk_definition_fails_closed():
         assert "diverges" in combined, f"failure must explain the mismatch:\n{combined}"
     finally:
         await _drop_scratch_database()
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR20B: migration 0017_equipment_version.py convergence tests,
+# mirroring 0016_import_source_blobs.py's own discipline (see that section's
+# extensive rationale above -- not restated here), scoped to the single
+# `equipment.version` column this migration owns.
+# ---------------------------------------------------------------------------
+
+
+def _load_migration_0017_module():
+    spec = importlib.util.spec_from_file_location(
+        "_migration_0017_equipment_version", _BACKEND_DIR / "alembic" / "versions" / "0017_equipment_version.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_migration_0017 = _load_migration_0017_module()
+
+
+async def _equipment_version_column_snapshot(engine) -> dict | None:
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(
+                text(
+                    "SELECT data_type, udt_name, character_maximum_length, is_nullable, column_default "
+                    "FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'equipment' "
+                    "AND column_name = 'version'"
+                )
+            )
+        ).one_or_none()
+    if row is None:
+        return None
+    return {
+        "data_type": row.data_type,
+        "udt_name": row.udt_name,
+        "character_maximum_length": row.character_maximum_length,
+        "is_nullable": row.is_nullable,
+        "column_default": row.column_default,
+    }
+
+
+_EXPECTED_EQUIPMENT_VERSION_SNAPSHOT = {
+    "data_type": "integer",
+    "udt_name": "int4",
+    "character_maximum_length": None,
+    "is_nullable": "NO",
+    "column_default": "1",
+}
+
+
+async def _insert_minimal_equipment_row(engine, *, equipment_id: str, asset_number: str) -> None:
+    """Raw SQL insert supplying every NOT NULL column that has no
+    database-level default (`0001_initial.py` creates `equipment` via
+    `Base.metadata.create_all()`, so only `created_at`/`updated_at` --
+    `TimestampMixin`'s `server_default=func.now()` -- are populated
+    automatically; `id`/`status`/`metadata` are Python-side ORM defaults
+    only, never DB-level ones, and must be supplied explicitly here)."""
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata) "
+                "VALUES (:id, :asset_number, :equipment_name, :status, :metadata)"
+            ),
+            {
+                "id": equipment_id,
+                "asset_number": asset_number,
+                "equipment_name": "PR20B migration test equipment",
+                "status": "available_at_pool",
+                "metadata": "{}",
+            },
+        )
+
+
+async def test_migration_0017_fresh_database_matches_expected():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            snapshot = await _equipment_version_column_snapshot(engine)
+            assert snapshot == _EXPECTED_EQUIPMENT_VERSION_SNAPSHOT
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0017_fresh_and_historical_schemas_converge():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+    try:
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            fresh_snapshot = await _equipment_version_column_snapshot(engine)
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+    try:
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0016_import_source_blobs")
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            historical_snapshot = await _equipment_version_column_snapshot(engine)
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+    assert fresh_snapshot == historical_snapshot == _EXPECTED_EQUIPMENT_VERSION_SNAPSHOT, (
+        f"fresh-install and historical-upgrade paths must converge on an identical catalog:\n"
+        f"fresh={fresh_snapshot}\nhistorical={historical_snapshot}"
+    )
+
+
+async def test_migration_0017_backfills_existing_rows_to_version_one():
+    """The design contract (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    §24): 'every pre-existing row backfills to 1 at migration time.' Proven
+    here by inserting an equipment row *before* migration 0017 runs (on a
+    schema that stops at 0016, which has no `version` column at all), then
+    upgrading, and reading the same row back."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "0016_import_source_blobs")
+        equipment_id = str(uuid.uuid4())
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            await _insert_minimal_equipment_row(engine, equipment_id=equipment_id, asset_number="PR20B-BACKFILL-0001")
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                version = (
+                    await conn.execute(
+                        text("SELECT version FROM equipment WHERE id = :id"), {"id": equipment_id}
+                    )
+                ).scalar_one()
+            assert version == 1, "a pre-existing row must observably backfill to version = 1, not NULL or 0"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0017_downgrade_re_upgrade_round_trip():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0016_import_source_blobs")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            snapshot = await _equipment_version_column_snapshot(engine)
+            assert snapshot is None, "equipment.version must be fully dropped by downgrade"
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            snapshot = await _equipment_version_column_snapshot(engine)
+            assert snapshot == _EXPECTED_EQUIPMENT_VERSION_SNAPSHOT, "equipment.version must exist again after re-upgrade"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0017_mismatched_column_definition_fails_closed():
+    """A deliberately mismatched pre-existing `equipment.version` column
+    (nullable, no default) must fail the migration closed -- `ADD COLUMN
+    IF NOT EXISTS` is a no-op against it, so only
+    `_verify_schema_convergence()` can catch this."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0016_import_source_blobs")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("ALTER TABLE equipment ADD COLUMN version INTEGER"))
+        finally:
+            await engine.dispose()
+
+        result = _run_alembic_allow_failure("upgrade", "head")
+        assert result.returncode != 0, "a mismatched column definition must fail the migration, not be silently accepted"
+        combined = result.stdout + result.stderr
+        assert "diverges" in combined, f"failure must explain the mismatch:\n{combined}"
+    finally:
+        await _drop_scratch_database()

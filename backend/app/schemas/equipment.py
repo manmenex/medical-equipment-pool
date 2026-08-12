@@ -67,6 +67,13 @@ class EquipmentOut(EquipmentBase):
     status: EquipmentStatus
     created_at: datetime
     updated_at: datetime
+    # Roadmap PR20B (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24):
+    # read-only optimistic-concurrency counter, exposed for client-side
+    # observability/debugging only (e.g. an admin noticing a record changed
+    # between two screen loads) -- never accepted as input by
+    # EquipmentCreate/EquipmentUpdate/EquipmentStatusChange, and not itself
+    # a client-driven CAS mechanism in this slice.
+    version: int
 
     model_config = {"from_attributes": True}
 
