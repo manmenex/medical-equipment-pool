@@ -7445,8 +7445,10 @@ async def test_migration_0013_fresh_database_all_foreign_keys_are_restrict():
                 # import_session_id -> import_sessions, import_jobs.
                 # import_session_id -> import_sessions, import_row_errors.
                 # import_job_id -> import_jobs, and the composite
-                # fk_import_sessions_current_validation_job -> import_jobs.
-                assert len(rows) == 30, f"expected exactly 30 foreign keys, found {len(rows)}: {rows}"
+                # fk_import_sessions_current_validation_job -> import_jobs,
+                # + 1 added by migration 0016 (Roadmap PR20A):
+                # import_source_blobs.import_source_id -> import_sources.
+                assert len(rows) == 31, f"expected exactly 31 foreign keys, found {len(rows)}: {rows}"
                 for conname, confdeltype in rows:
                     assert confdeltype == "r", f"{conname} has confdeltype={confdeltype!r}, expected 'r' (RESTRICT)"
         finally:
