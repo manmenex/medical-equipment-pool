@@ -135,6 +135,36 @@ read-only in `EquipmentOut` (list and detail), never accepted in any
 write request, with every existing/reachable Equipment mutation path
 enumerated in an explicit table as part of PR20B's own acceptance
 contract (§24).
+**Fix round 7** (independent review on head
+`2633b39d9205c49c0757cc03a69e8dc08a8f79c2`, REQUEST CHANGES; CI 4/6 green
+at review time, non-PostgreSQL backend job still running) confirmed
+H10/H11/H12/M3 resolved and raised three new blocking findings: fix round
+6 left §14.4c's hard-crash recovery mechanism as an implementation-time
+choice between two options this design itself had already defined as
+non-equivalent (`on_execution_failure(db, None)` is contractually a
+no-op per §14.4b's own test requirement, so overloading it for recovery
+would contradict that contract for every other caller) — closed by
+specifying one concrete mechanism: a new, additive, default-no-op
+`on_execution_recovery(db, session_id)` hook, invoked from inside
+`recover_session()`'s existing transaction only when the recovered
+`job_type` was `execute`, resolving the adapter via the same
+`get_adapter(session.dataset_type)` pattern already used at the real
+execute/dry-run call sites (verified by reading `recover_session()`,
+`import_execution_service.py`, and `import_job_crud.py` directly)
+(§14.4c, formerly H11R). The "exhaustive" Equipment mutation-path table
+omitted the existing `DELETE /equipment/{id}` → `soft_delete()` path,
+confirmed by reading the function directly to touch only `deleted_at`,
+never `version` — closed by adding it to PR20B's required mutation-path
+coverage and adding a defensive `AND deleted_at IS NULL` clause to
+execute's own CAS predicate (§15.1, §24, formerly H13). The plan
+confirmation `UPDATE` was not actually idempotent — it unconditionally
+overwrote `confirmed_at`/`confirmed_by_user_id` on every call, changing
+the audit record on a retry and letting a second Administrator silently
+replace the original confirmer — closed with a `COALESCE`-paired write
+that preserves the first confirmation, a `RETURNING` clause so the caller
+always sees who actually confirmed first, and a new physical
+pair-consistency `CHECK` on the two columns (§14.2, §14.4a, formerly
+H14).
 **Repository:** Medical Equipment Pool. Not MEMS, not Recall Monitor.
 **Baseline:** `e3156bfc231fcbc126251f41292bc397fdf8ad3f` — the real
 squash-merge SHA of GitHub PR #88 (Post-PR19B Governance Sync), itself on
@@ -1514,6 +1544,11 @@ confirmed_at: UTCDateTime | None  # NEW, fix round 5, H10 -- NULL until
     # implicitly, including immediately after persist_dry_run_plan
 confirmed_by_user_id: UUID | None  # NEW, fix round 5, H10 -- FK users.id,
     # set together with confirmed_at, audit trail for who confirmed
+    # Fix round 7, H14, CHECK ((confirmed_at IS NULL) = (confirmed_by_user_id IS NULL)):
+    # the two columns are physically required to be both NULL or both
+    # set -- the only write path (§14.4a's COALESCE-paired UPDATE) always
+    # sets both together, and this constraint makes that a guarantee, not
+    # merely an application-level convention
 summary_total_rows: int  # CHECK (summary_total_rows >= 0), and likewise
     # for every summary_* column below (fix round 3, H8)
 summary_creates: int  # CHECK (summary_creates >= 0)
@@ -1580,9 +1615,10 @@ fresh-install/historical-upgrade PostgreSQL test pattern already used for
 migration 0015 (§3.1) — the migration is not considered complete without
 a test proving each constraint actually rejects the row it names
 (cross-session job binding, a second concurrent `active` plan, a
-duplicate `source_row_number`, a negative summary count, and a
-CREATE/SKIP row carrying a non-null `target_equipment_id`/
-`expected_equipment_version`, or an UPDATE row missing either).
+duplicate `source_row_number`, a negative summary count, a CREATE/SKIP
+row carrying a non-null `target_equipment_id`/`expected_equipment_version`,
+an UPDATE row missing either, and — fix round 7, H14 — a row with exactly
+one of `confirmed_at`/`confirmed_by_user_id` set and the other `NULL`).
 
 ### 14.3 Write-time mechanics — how a read-only computation becomes a persisted write
 
@@ -1806,17 +1842,34 @@ plan (§14.3) always starts with both `NULL` — **confirmation is never
 implicit or automatic**, including immediately after a dry-run completes.
 
 **Write-time mechanics — a single conditional `UPDATE`, no locking
-needed**:
+needed. Fix-round-7 correction (H14): the fix-round-5 version of this
+statement unconditionally overwrote both columns on every call, which is
+not actually idempotent — a retry would change `confirmed_at`'s value,
+and a second Administrator calling the same endpoint would silently
+replace the original confirmer, contradicting both the "harmless no-op"
+claim and the columns' own documented purpose as an audit record of who/
+when first confirmed. First confirmation is now authoritative and
+preserved by the write itself, using `COALESCE` so the columns are only
+ever set once, atomically, with no read-then-write race:**
 
 ```sql
 UPDATE equipment_master_dry_run_plans
-SET confirmed_at = now(), confirmed_by_user_id = :current_user_id
+SET confirmed_at = COALESCE(confirmed_at, now()),
+    confirmed_by_user_id = COALESCE(confirmed_by_user_id, :current_user_id)
 WHERE id = :plan_id AND import_session_id = :session_id AND status = 'active'
+RETURNING id, confirmed_at, confirmed_by_user_id
 ```
 
-- **If this matches one row**: confirmation succeeds; the endpoint
-  returns the plan's `id` and summary (mirroring §14.6's shape) so the
-  frontend can display an explicit "confirmed" state.
+- **If this matches one row**: confirmation succeeds. The `RETURNING`
+  clause hands back the row's *actual* `confirmed_at`/`confirmed_by_user_id`
+  — on a first confirmation these are the values just written; on a
+  retry or a later confirmation attempt by anyone, `COALESCE` has left
+  the original pair untouched, so the response always reflects who
+  actually confirmed first, never the caller of the current request. The
+  endpoint returns the plan's `id`, its confirmed-by/confirmed-at pair,
+  and summary (mirroring §14.6's shape) so the frontend can display an
+  explicit "confirmed" state, including *by whom* if that differs from
+  the current caller.
 - **If this matches zero rows**: `plan_id` is not the session's current
   `active` plan — either it was already superseded by a newer dry-run
   (**exactly the staleness this section exists to catch**), belongs to a
@@ -1825,15 +1878,33 @@ WHERE id = :plan_id AND import_session_id = :session_id AND status = 'active'
   re-fetch `GET {id}/dry-run-plan` (§14.6) and, if the plan actually
   changed, re-review the new plan's content before confirming again —
   never silently confirming a plan the operator has not seen.
-- **Idempotent re-confirmation**: confirming an already-confirmed,
-  still-`active` plan is a harmless no-op (the `UPDATE` still matches and
-  re-applies the same values) — not an error, since a client retry after
-  a dropped response must not be treated as a staleness conflict.
+- **Idempotent re-confirmation, made precise**: confirming an
+  already-confirmed, still-`active` plan is a true no-op — the `UPDATE`
+  still matches the row (so the caller still gets a `200`, not an error,
+  which matters for a client retry after a dropped response) but
+  `COALESCE` guarantees it writes back exactly the values already
+  present, never overwriting them. This holds **regardless of which user
+  calls it**: if Administrator A confirms first and Administrator B later
+  calls the same endpoint on the same still-active plan, B's request
+  still succeeds (`200`, not an error — B is not blocked from confirming
+  a plan A already confirmed), but the returned/stored
+  `confirmed_by_user_id` remains A's, never silently reassigned to B.
+  This design deliberately chose "first confirmation is authoritative"
+  over "every re-confirmation is a new audit event" — the latter would
+  require append-only confirmation history, a materially bigger schema
+  change this section does not introduce without a demonstrated need.
+- **Physical pair-consistency constraint (§14.2, new)**:
+  `CHECK ((confirmed_at IS NULL) = (confirmed_by_user_id IS NULL))` on
+  `equipment_master_dry_run_plans` — the two columns must be both `NULL`
+  or both set, as a physical constraint, not merely an application
+  convention; the `COALESCE`-paired `UPDATE` above is the only write path
+  that ever sets either column, and it always sets both together.
 - **No row lock required**: this is the same conditional-`UPDATE`
   pattern already used throughout this design (e.g. §6.2's
   register-or-correct semantics) — the `WHERE status = 'active'` clause
   makes the operation atomically self-checking without `SELECT ... FOR
-  UPDATE`.
+  UPDATE`, and `COALESCE` makes the write itself idempotent without a
+  separate read-check-write sequence.
 
 **`precheck_execute`'s role, restated precisely** (§6.3): the new
 adapter hook checks `WHERE import_session_id = ... AND status = 'active'
@@ -1926,13 +1997,21 @@ carry forward to B), `execute()` before B is confirmed is rejected
 pre-admission with zero session mutation; a test proving
 `POST .../confirm` with a `plan_id` that has already been superseded
 returns `409`/`IMPORT_DRY_RUN_PLAN_STALE` and performs no write; a test
-proving re-confirming an already-confirmed, still-active plan is a
-harmless idempotent no-op; a test proving `precheck_execute` rejects
-cleanly, pre-admission, when no plan has ever been confirmed for the
-session; and a test proving a non-terminal session's confirmed plan is
-never selected by the retention sweep, regardless of how much time has
-elapsed since `confirmed_at` (closing the retention-interaction question
-explicitly rather than leaving it implicit).
+proving `precheck_execute` rejects cleanly, pre-admission, when no plan
+has ever been confirmed for the session; a test proving a non-terminal
+session's confirmed plan is never selected by the retention sweep,
+regardless of how much time has elapsed since `confirmed_at` (closing
+the retention-interaction question explicitly rather than leaving it
+implicit); and, fix round 7 (H14) — a test proving the same user
+re-confirming the same still-active plan leaves `confirmed_at`
+byte-for-byte unchanged (not merely equal-valued — the same write is
+never re-issued with a fresh `now()`); a test proving a **different**
+Administrator confirming an already-confirmed, still-active plan
+succeeds (`200`) but leaves `confirmed_by_user_id` as the *original*
+confirmer, never reassigned to the second caller; and a test proving the
+`equipment_master_dry_run_plans` migration's pair-consistency `CHECK`
+rejects any row with exactly one of `confirmed_at`/`confirmed_by_user_id`
+set and the other `NULL`.
 
 ### 14.4b TX2 plan-failure hook contract — surviving TX1 rollback (NEW, fix round 5, H11)
 
@@ -2024,7 +2103,7 @@ raising a bare `AdapterExecutionConflict` with no resource, or a
 different adapter's own unrelated exception) leaves `on_execution_failure`
 a harmless no-op for every adapter that doesn't use this mechanism.
 
-### 14.4c Recovery reconciliation — the case §14.4b's exception-based hook cannot cover (NEW, fix round 6, H11-follow-up)
+### 14.4c Recovery reconciliation — the case §14.4b's exception-based hook cannot cover (fix round 6, H11-follow-up; mechanism made concrete, fix round 7, H11R)
 
 **Gap identified explicitly: §14.4b's mechanism only fires when
 `execute()` itself raises `AdapterExecutionConflict` on a live worker.**
@@ -2040,38 +2119,115 @@ session `failed` while its plan remains `active`/confirmed forever** —
 exactly the "plan left stale while session diverges" inconsistency this
 whole contract exists to prevent.
 
-**Resolution — a query-based reconciliation, not an exception-based
-one**, since recovery has no captured primitive to work from: when
-PR19A's recovery sweep reconciles a session whose in-flight phase was
-`execute`, it additionally resolves that session's own plan via the
-identical, already-established query
-(`WHERE import_session_id = :session_id AND status = 'active'` — no
-`confirmed_at` predicate needed here, since a session that reached
-`executing` admission was necessarily confirmed at that time, per
-§14.4a's precondition) and marks that plan `failed`, in the **same**
-recovery transaction that marks the session `failed`. This reuses the
-same invariant §14.4's resolution logic already depends on (at most one
-`active` plan per session) rather than inventing a second lookup
-mechanism.
+**Fix-round-7 correction: fix round 6 left the exact mechanism as an
+implementation-time choice between two options this design itself had
+already defined as non-equivalent** — §14.4b explicitly specifies that
+`on_execution_failure(db, None)` is a harmless no-op required by its own
+regression test, so a recovery call site that reused that same hook and
+had the adapter interpret `None` as "go resolve the plan yourself" would
+directly contradict that no-op contract for any other caller of the same
+hook (e.g. a different adapter's unrelated `AdapterExecutionConflict`
+with no resource, which must remain a true no-op). **This design now
+specifies one concrete mechanism, not a choice deferred to
+implementation:**
 
-**Implementation-time verification required, stated honestly**: whether
-this is best expressed as the recovery sweep calling
-`on_execution_failure(recovery_db, None)` (with the adapter's own
-implementation interpreting `None` during a recovery-flagged call as "go
-resolve the plan yourself, no primitive is available") or as a distinct,
-dedicated recovery hook is a call-site detail to confirm against the
-actual recovery sweep's code at implementation time — consistent with
-this document's existing discipline of flagging every PR19A framework
-touch point for verification against the real code rather than asserting
-an unconfirmed mechanism. What is fixed by this design, not left open, is
-the **outcome**: a session recovery reconciles to terminal `failed` must
-never complete while its plan is left `active`.
+**Verified against the actual merged recovery code** (`recover_session()`
+in `backend/app/services/import_validation_service.py`, also exposed via
+`POST /import-sessions/{id}/recover` in `import_sessions.py`): the
+function is generic across `job_type` via `import_job_crud.PHASE_STATUS_MAP`
+— it calls `import_job_crud.claim_stale_job()` to atomically claim the
+expired-lease job, then `import_job_crud.transition_session_for_recovery()`
+to transition the owning `ImportSession` row, both in one uncommitted
+transaction, then records an audit event and commits. **It does not
+currently resolve an adapter, build an `AdapterInvocationContext`, or
+invoke any adapter hook at all** — the review is correct that this is a
+real gap in the existing contract, not merely an unconfirmed detail.
+However, `recover_session()` already receives the full `session:
+ImportSession` ORM object as a parameter, which carries `session.dataset_type`
+directly — the exact same value `import_execution_service.py`'s own
+`run_execute`/`run_dry_run` call sites already use with the existing
+`get_adapter(dataset_type)` helper (verified by reading those call sites
+directly) to resolve an adapter. No new context threading is required to
+make this resolution available inside recovery.
+
+**New, additive, default-no-op `ImportAdapter` hook, distinct from
+`on_execution_failure`** (deliberately not reused, per the contradiction
+above):
+
+```python
+# In app.services.import_adapter (PR19A's own module), additive only.
+# Default implementation is a no-op -- every adapter that predates this
+# mechanism, and every non-execute-phase recovery, is unaffected.
+async def on_execution_recovery(self, db: AsyncSession, session_id: uuid.UUID) -> None:
+    """Called by recover_session(), inside its existing recovery
+    transaction, only when the recovered job's job_type was 'execute'.
+    Gives an adapter with a persisted execution-time sub-resource (e.g.
+    PR20's dry-run plan) a chance to reconcile it to a failed state using
+    only the session id -- no exception, no captured primitive, since a
+    hard crash produces neither. Default: no-op."""
+    return
+```
+
+**Exact invocation point, inside `recover_session()`'s existing
+transaction**: after `transition_session_for_recovery()` returns a
+non-`None` `session_row` (i.e. the session transition itself succeeded)
+and only when `claimed_job.job_type == "execute"` — `dry_run`/`validate`
+recovery never needs this call, since §14.3's atomicity already
+guarantees `persist_dry_run_plan` and the session's `dry_run_completed`
+transition commit in the same TX1, so a crash during those phases leaves
+no partial plan artifact to reconcile in the first place. When the
+condition holds: resolve `adapter = get_adapter(session.dataset_type)`
+(the same helper, same call shape as the existing execute/dry-run sites)
+and call `await adapter.on_execution_recovery(db, session.id)`, on the
+same `db` session, **before** the existing `record_audit_event`/
+`db.commit()` calls.
+
+**`EquipmentMasterAdapter.on_execution_recovery`**: issues
+`UPDATE equipment_master_dry_run_plans SET status = 'failed' WHERE
+import_session_id = :session_id AND status = 'active'` — no
+`confirmed_at` predicate needed, since reaching `executing` admission
+already required a confirmed plan (§14.4a's precondition), and this
+reuses the same "at most one active plan per session" invariant §14.4's
+own resolution query depends on, rather than a second lookup mechanism.
+
+**Failure/rollback semantics**: `recover_session()` has no surrounding
+`try/except` around this segment today, so if `on_execution_recovery`
+raises, the exception propagates uncaught and the request-scoped DB
+session rolls back the **entire** transaction — undoing `claim_stale_job`'s
+claim and `transition_session_for_recovery`'s update together. The stale
+job and session are left exactly as they were before this recovery
+attempt (job still `running` with an already-expired lease, session still
+in its running phase status), available for a later recovery call to
+retry from scratch. This mirrors §14.4b step 8's "if the hook itself
+raises, the whole TX2 attempt aborts, falling back to the existing
+generic mechanism" pattern exactly, rather than inventing a second
+failure-handling shape.
+
+**Default behavior for unrelated adapters and unrelated job types**:
+zero change. Any adapter that does not override `on_execution_recovery`
+inherits the no-op default; any recovery whose `claimed_job.job_type` is
+not `"execute"` never calls the hook at all, since the condition gating
+the call is `job_type == "execute"`, checked before resolving the
+adapter.
+
+**Ownership**: adding `on_execution_recovery` to `ImportAdapter`'s ABC
+and wiring the new conditional call into `recover_session()` is PR20E's
+implementation responsibility (the same slice that owns §14.4b's
+`AdapterExecutionConflict` addition to the same PR19A-owned module) —
+not a PR19A change, even though the touched function lives in PR19A's
+existing module, exactly as §14.4b's exception class does.
 
 **Required test coverage (§22)**: a test simulating a hard worker crash
-during `execute()` (no exception ever raised, e.g. by killing the
+during `execute()` (no exception ever raised — e.g. killing the
 process/connection mid-transaction in a PostgreSQL integration test) and
-asserting that after the existing recovery sweep next runs, both the
-session and its plan are `failed` together, never one without the other.
+asserting that after the next recovery pass, both the session and its
+plan land `failed` together, never one without the other; a test proving
+a `dry_run`/`validate`-phase recovery never calls `on_execution_recovery`
+at all (job_type gate); a test proving an adapter without this hook
+recovers cleanly via the inherited no-op with no plan side effect; and a
+test proving a raising `on_execution_recovery` leaves **both** the job
+claim and the session transition rolled back, with a subsequent recovery
+attempt able to retry the same stale job successfully.
 
 ### 14.5 Plan freshness — what makes a plan stale, defined exhaustively, no TTL
 
@@ -2361,10 +2517,13 @@ selects Option B: a new `Equipment.version` integer column**, mirroring
   (this design does not increment `version` in only the paths PR20 itself
   adds and leave every pre-existing path silently non-compliant):
   `PATCH /equipment/{id}` (the general update endpoint), every
-  `change_status_for_*` lifecycle-transition function (§10), and this
-  design's own `execute()` UPDATE path (below). Enumerating this list is
-  itself part of this design's contract — the required test (below)
-  fails closed if any of these paths is later found not to increment
+  `change_status_for_*` lifecycle-transition function (§10), **`DELETE
+  /equipment/{id}` → `equipment_crud.soft_delete()` (added fix round 7,
+  H13 — confirmed by reading the actual function: it currently sets only
+  `deleted_at`, and does not touch `version` at all)**, and this design's
+  own `execute()` UPDATE path (below). Enumerating this list is itself
+  part of this design's contract — the required test (below) fails
+  closed if any of these paths is later found not to increment
   `version`.
 - **PR20A/PR20B ownership boundary, stated explicitly**: introducing
   `Equipment.version` and wiring every *existing* mutation path to
@@ -2386,11 +2545,22 @@ selects Option B: a new `Equipment.version` integer column**, mirroring
 - At `execute` time, the adapter applies each planned update via a
   compare-and-swap predicate using **the row's own persisted token**,
   never a freshly-read one, and atomically advances the counter in the
-  same statement:
+  same statement. **Fix round 7 (H13) adds `AND deleted_at IS NULL` to
+  this predicate, defense-in-depth**: once PR20B wires `soft_delete()` to
+  bump `version`, a soft-deleted row's `version` no longer matches
+  `expected_equipment_version` on its own and the update already fails
+  the token comparison — but excluding `deleted_at IS NOT NULL` rows
+  explicitly, rather than relying solely on the token happening to have
+  advanced, closes the same gap even if a future code path is ever found
+  that soft-deletes a row without going through the enumerated
+  `soft_delete()` increment (the required test below, fix round 7,
+  covers exactly this):
   ```sql
   UPDATE equipment
   SET version = version + 1, ...
-  WHERE id = :target_equipment_id AND version = :expected_equipment_version
+  WHERE id = :target_equipment_id
+    AND version = :expected_equipment_version
+    AND deleted_at IS NULL
   ```
   (the actual implementation may express this as an ORM-level
   `session.execute(update(...).where(...))` with a rowcount check, rather
@@ -2449,22 +2619,31 @@ selects Option B: a new `Equipment.version` integer column**, mirroring
   place, §9 OD-2). (d) *lifecycle/status change* — `change_status_for_*`
   functions persist through the normal ORM update path, which PR20B
   requires to also bump `version`, caught the same way. (e) *Equipment
-  record deleted after dry-run* — the UPDATE's `WHERE id =
-  :target_equipment_id` clause matches zero rows regardless of the
-  token, correctly surfacing as the same conflict path (a soft-deleted
-  row, per `SoftDeleteMixin`, still physically exists with a `deleted_at`
-  set — its own `version` bump from the delete itself, once PR20B covers
-  that path, is still caught by the token comparison before any
-  lookup-scoping question even arises).
+  record soft-deleted after dry-run* — confirmed by reading
+  `equipment_crud.soft_delete()` directly: it is a real, reachable write
+  path (`DELETE /equipment/{id}`) that today sets only `deleted_at`, not
+  `version`. Fix round 7 (H13) closes this two ways, not one: PR20B's
+  enumerated mutation-path list (above) now requires `soft_delete()`
+  itself to bump `version` like every other mutation path, **and** the
+  CAS predicate itself now defensively adds `AND deleted_at IS NULL`
+  (above), so a soft-deleted row is excluded from a match even if the
+  version-bump requirement were somehow violated — this is not a single
+  point of failure resting on one enumerated test passing.
 - **Required test coverage (§22), a hard requirement, not an
   aspiration**: PR20B (below) is not considered complete without a
   dedicated test enumerating every known Equipment write path reachable
   in this codebase today (`PATCH /equipment/{id}`, every
-  `change_status_for_*` lifecycle-transition function) and asserting each
+  `change_status_for_*` lifecycle-transition function, and — fix round 7,
+  H13 — `DELETE /equipment/{id}` → `soft_delete()`) and asserting each
   one actually advances `version` by exactly `1`; PR20E adds the
-  companion test that its own `execute()` UPDATE path does too. Relying
-  on this token without that proof would be exactly the kind of
-  unverified assumption this document otherwise commits to avoiding.
+  companion test that its own `execute()` UPDATE path does too, **plus a
+  new test (fix round 7, H13) proving a persisted UPDATE-action plan row
+  targeting a since-soft-deleted Equipment row is rejected by the
+  `deleted_at IS NULL` predicate specifically** (not merely by a
+  version mismatch that happens to also be present), by constructing a
+  scenario where the token would otherwise still match. Relying on this
+  token without that proof would be exactly the kind of unverified
+  assumption this document otherwise commits to avoiding.
 
 ---
 
@@ -2978,7 +3157,8 @@ rather than assumed:**
     | `POST /equipment` (create) | Row created with `version = 1` (the column default) — not an "increment" but confirmed explicitly | Yes — asserts a newly created row's `version` is `1` |
     | Every `change_status_for_*` lifecycle-transition function (§10) | Same ORM update path already used for the status write | Yes — one test per transition function, or a parameterized test iterating all of them |
     | Receive/Issue dispatch flows that mutate Equipment fields (e.g. status changes as a side effect of a borrow transaction) | Confirmed at implementation time to route through the same `change_status_for_*` functions above, not a separate write path — if a genuinely separate write path is found, it must be added to this table before PR20B merges | Yes — same coverage as the lifecycle-transition row, verified not duplicated |
-    | This design's own `execute()` UPDATE path (§15.1, PR20E) | The CAS `UPDATE ... SET version = version + 1 ...` statement itself | Yes — covered by PR20E's own test suite, not PR20B's (§22) |
+    | `DELETE /equipment/{id}` → `equipment_crud.soft_delete()` (added fix round 7, H13) | **Currently sets only `deleted_at` — confirmed by reading `soft_delete()` directly, not assumed.** PR20B must add `version = version + 1` to this same function | Yes — asserts `version` advances by exactly `1` on soft-delete, **and** a companion PR20E test (§15.1) proving execute's CAS predicate's `AND deleted_at IS NULL` clause independently rejects a soft-deleted target even in a constructed scenario where the version token would otherwise still match |
+    | This design's own `execute()` UPDATE path (§15.1, PR20E) | The CAS `UPDATE ... SET version = version + 1 ... WHERE ... AND deleted_at IS NULL` statement itself | Yes — covered by PR20E's own test suite, not PR20B's (§22) |
     | Any bulk/admin utility mutating `Equipment` directly (e.g. a future data-fix script) | Not currently known to exist in this codebase; if one is found at implementation time, it must be added to this table and covered before PR20B merges | Confirmed absent, or added and covered, before PR20B merges |
 
     This table is itself part of PR20B's acceptance contract — PR20B's
@@ -3358,4 +3538,38 @@ gates.
       evidence for the real source schema or either business policy has
       appeared since fix round 5; all three remain OPEN (§9).
 - [x] **Fix round 6**: did not start PR20A or PR20B or any implementation
+      PR; this remains a design-only document (§26).
+- [x] **Fix round 7 (H11R)**: replaced fix round 6's deferred
+      implementation-time choice with one concrete recovery mechanism —
+      verified `recover_session()`'s actual code (generic across
+      `job_type`, no adapter resolution today) and specified a new,
+      additive, default-no-op `on_execution_recovery(db, session_id)`
+      hook, invoked only for `execute`-phase recovery, resolving the
+      adapter via the same `get_adapter(session.dataset_type)` pattern
+      already used at the real execute/dry-run call sites — deliberately
+      not reusing `on_execution_failure`, since that hook's `None`
+      argument is contractually a no-op per §14.4b's own required test
+      (§14.4c).
+- [x] **Fix round 7 (H13)**: added the previously-omitted
+      `DELETE /equipment/{id}` → `soft_delete()` path to PR20B's required
+      mutation-path coverage (confirmed by reading the function directly:
+      it currently bumps only `deleted_at`, never `version`) and added a
+      defensive `AND deleted_at IS NULL` clause to execute's own CAS
+      predicate so a soft-deleted target is excluded independent of
+      whether the token happens to have advanced (§15.1, §24).
+- [x] **Fix round 7 (H14)**: made the plan-confirmation `UPDATE` actually
+      idempotent — a `COALESCE`-paired write now preserves the first
+      confirmation's `confirmed_at`/`confirmed_by_user_id` on every
+      subsequent call regardless of caller, with a `RETURNING` clause so
+      the response always reflects who confirmed first, plus a new
+      physical pair-consistency `CHECK` on the two columns (§14.2,
+      §14.4a).
+- [x] **Fix round 7**: performed a full-state consistency sweep for the
+      three findings above — confirmed no other section referenced the
+      old unconditional confirmation `UPDATE`, the omitted soft-delete
+      path, or the deferred recovery-hook choice.
+- [x] **Fix round 7**: did not close OD-1/OD-2/OD-3 — no repository
+      evidence for the real source schema or either business policy has
+      appeared since fix round 6; all three remain OPEN (§9).
+- [x] **Fix round 7**: did not start PR20A or PR20B or any implementation
       PR; this remains a design-only document (§26).
