@@ -1,10 +1,10 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.import_session import ImportJob, ImportRowError, ImportSession, ImportSource
+from app.models.import_session import ImportJob, ImportRowError, ImportSession, ImportSource, ImportSourceBlob
 
 # Roadmap PR19A3 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §18).
 # A genuinely new concurrency mechanism -- SELECT ... FOR UPDATE SKIP
@@ -95,6 +95,18 @@ async def redact_session(db: AsyncSession, *, session_id: uuid.UUID, worker_id: 
     await db.execute(
         update(ImportSource).where(ImportSource.import_session_id == session_id).values(filename=None, content_type=None)
     )
+
+    # Roadmap PR20A (design §6.6, fix round 2 H3R): one additional
+    # same-transaction DELETE, not a second retention mechanism. Because
+    # import_source_blobs lives in the same PostgreSQL database as every
+    # other row this function already touches, this either commits with
+    # the rest of this transaction or the whole transaction (redaction
+    # included) rolls back together -- there is no intermediate state
+    # where the metadata claims purged but the blob still exists. A no-op
+    # for a session whose source never had a blob (every dataset_type that
+    # doesn't use PR20A's upload endpoint).
+    source_ids_subq = select(ImportSource.id).where(ImportSource.import_session_id == session_id)
+    await db.execute(delete(ImportSourceBlob).where(ImportSourceBlob.import_source_id.in_(source_ids_subq)))
 
     job_ids_subq = select(ImportJob.id).where(ImportJob.import_session_id == session_id)
     await db.execute(

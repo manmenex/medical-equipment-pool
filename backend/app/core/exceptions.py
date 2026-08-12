@@ -219,6 +219,21 @@ class ImportSourceNotRegisteredError(DomainError):
     status_code = 409
 
 
+class ImportSourceRegistrationMethodNotAllowedError(DomainError):
+    """Roadmap PR20A (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    §6.2) — the existing metadata-only `POST /import-sessions/{id}/source`
+    endpoint was called for a session whose `dataset_type` requires the
+    single authoritative, server-checksummed upload path (`POST
+    /import-sessions/{id}/source/upload`) instead. Raised as the very
+    first step of the existing handler, before any CRUD call, so no
+    database write is reachable — a metadata-only registration can never
+    leave this dataset_type in a `registered` state with no durable blob
+    behind it. Every other `dataset_type` is completely unaffected."""
+
+    code = "IMPORT_SOURCE_REGISTRATION_METHOD_NOT_ALLOWED"
+    status_code = 409
+
+
 class ImportRecoveryRequiredError(DomainError):
     """Roadmap PR19A2 (design §9) — a mutating call hit a stale lease
     (pre-check: the session is `*_RUNNING` and its job's lease has already

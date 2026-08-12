@@ -267,6 +267,105 @@ async def register_or_correct_source(
     )
 
 
+async def register_or_correct_source_pending(
+    db: AsyncSession,
+    *,
+    session_id: uuid.UUID,
+    dataset_type: str,
+    checksum: str,
+    byte_size: int,
+    content_type: str | None,
+    filename: str | None,
+    source_version: str | None,
+) -> tuple[ImportSource, bool]:
+    """Roadmap PR20A (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    §6.2): an additive, non-committing variant of
+    `register_or_correct_source` above, used inside the new upload
+    endpoint's own transaction (§6.2 step 2(c)) so a single `db.commit()`
+    -- issued by the caller, never this function -- finalizes this row
+    and the caller's own `import_source_blobs` write together as one
+    physical transaction. Identical INSERT/CAS-UPDATE logic to
+    `register_or_correct_source`; `register_or_correct_source` itself is
+    completely unmodified and remains the only entry point the existing
+    metadata-only `POST /{id}/source` handler calls, so its own committing
+    behavior is unaffected for every dataset_type. Returns (source,
+    created). Raises `ImportSourceMismatchError` unchanged if the source
+    is already `frozen` with a different identity fingerprint -- the
+    caller must not catch this and commit anyway.
+
+    PR90-H1 fix: this function must never decide the fate of the caller's
+    outer transaction -- a failed INSERT here must not discard whatever
+    else the caller has already written in the same transaction (e.g. a
+    future caller that stages other work before calling this). The
+    conflict-prone INSERT is therefore isolated in its own SAVEPOINT
+    (`db.begin_nested()`): the object construction, `db.add()`, and the
+    `db.flush()` that may raise `IntegrityError` all happen *inside* that
+    block, and the exception is left to propagate out of it uncaught --
+    only then does `begin_nested()`'s own `__aexit__` issue `ROLLBACK TO
+    SAVEPOINT` (undoing only this INSERT), which is caught by the `except`
+    below. Doing the add/flush before entering the SAVEPOINT, or catching
+    the exception before it exits the `async with` block, would instead
+    autoflush/fail outside the SAVEPOINT's protection and mark the whole
+    session's transaction as needing an explicit `db.rollback()` --
+    exactly the caller-transaction-destroying failure mode this fix
+    closes. Verified empirically against both SQLite and PostgreSQL."""
+    fingerprint = _source_fingerprint(
+        checksum=checksum, byte_size=byte_size, dataset_type=dataset_type, filename=filename, source_version=source_version
+    )
+    try:
+        async with db.begin_nested():
+            source = ImportSource(
+                import_session_id=session_id,
+                status="registered",
+                checksum=checksum,
+                byte_size=byte_size,
+                content_type=content_type,
+                filename=filename,
+                source_version=source_version,
+                options_fingerprint=_EMPTY_OPTIONS_FINGERPRINT,
+                source_fingerprint=fingerprint,
+                created_at=datetime.now(timezone.utc),
+            )
+            db.add(source)
+            await db.flush()
+    except IntegrityError:
+        pass
+    else:
+        return source, True
+
+    result = await db.execute(
+        update(ImportSource)
+        .where(ImportSource.import_session_id == session_id, ImportSource.status == "registered")
+        .values(
+            checksum=checksum,
+            byte_size=byte_size,
+            content_type=content_type,
+            filename=filename,
+            source_version=source_version,
+            options_fingerprint=_EMPTY_OPTIONS_FINGERPRINT,
+            source_fingerprint=fingerprint,
+        )
+        .returning(ImportSource)
+    )
+    row = result.scalar_one_or_none()
+    if row is not None:
+        return row, False
+
+    # The CAS UPDATE affected zero rows -- the source is 'frozen'. Frozen
+    # is terminal and never reversed, so a plain SELECT now carries no
+    # race (identical reasoning to `register_or_correct_source` above).
+    existing = (
+        await db.execute(select(ImportSource).where(ImportSource.import_session_id == session_id))
+    ).scalar_one_or_none()
+    if existing is None:
+        raise ImportSourceMismatchError("Source registration state could not be determined; retry.")
+    if existing.source_fingerprint == fingerprint:
+        return existing, False
+    raise ImportSourceMismatchError(
+        "This session's source is already frozen with a different identity fingerprint. The row is never mutated once frozen."
+    )
+
+
 async def freeze_source_and_transition_to_validating(
     db: AsyncSession, *, session_id: uuid.UUID, expected_version: int
 ) -> tuple[bool, ImportSession | None]:
