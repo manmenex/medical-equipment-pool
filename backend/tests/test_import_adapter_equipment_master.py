@@ -54,6 +54,7 @@ from app.services.import_adapters.equipment_master import (
     _GOVERNED_HEADERS,
     _load_sheet1,
     _parse_workbook_sync,
+    _reject_macro_parts,
     _validate_headers,
 )
 from app.services.import_source_reader import SourceDescriptor, VerifiedSourceContent
@@ -245,6 +246,64 @@ def test_excessive_worksheet_count_raises(monkeypatch):
 
 def _load_and_validate(content: bytes) -> dict[str, int]:
     return _validate_headers(_load_sheet1(content))
+
+
+def test_blank_header_column_with_data_underneath_is_rejected():
+    """PR93-H2: `_validate_headers` only inspects non-blank header cells,
+    so a 33rd column whose row-1 cell is blank passes structural header
+    validation even when the same 32 governed headers are otherwise all
+    present exactly once. §7's closed-world contract must still reject
+    that column once it carries data -- an unnamed/blank-header data
+    column must never silently bypass the approved 32-column schema."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = WORKSHEET_NAME
+    ws.append(_HEADERS + [None])  # 33rd header cell deliberately blank
+    row = _valid_row()
+    ws.append([row.get(h) for h in _HEADERS] + ["smuggled extra value"])
+    buf = io.BytesIO()
+    wb.save(buf)
+    with pytest.raises(InvalidInputError, match="outside the approved Equipment Master schema"):
+        _parse_workbook_sync(buf.getvalue())
+
+
+def test_blank_header_column_with_no_data_is_still_accepted():
+    """The fix for PR93-H2 must not become over-eager: a genuinely empty
+    trailing column (blank header, no data in any row) is not itself a
+    schema violation -- only a blank-header column that actually carries
+    data is rejected."""
+    content = _build_workbook_bytes([_valid_row()])
+    records = _parse_workbook_sync(content)
+    assert len(records) == 1
+
+
+def test_macro_enabled_vba_project_part_is_rejected():
+    """PR93-H3: §21 ("never execute workbook formulas or macros") requires
+    more than merely not executing a macro that's present -- a macro-
+    bearing OOXML part must be rejected outright, even though it's a
+    structurally legitimate path under the shared `xl/` allowlist (so the
+    reused PR12 zip-bounds validator alone does not reject it). Simulates
+    a macro-enabled workbook masquerading as a plain `.xlsx` by injecting
+    `xl/vbaProject.bin` into an otherwise valid, governed-schema workbook."""
+    content = _build_workbook_bytes([_valid_row()])
+    buf = io.BytesIO(content)
+    with zipfile.ZipFile(buf, "a") as archive:
+        archive.writestr("xl/vbaProject.bin", b"\x00\x01fake-vba-binary-payload")
+    macro_content = buf.getvalue()
+
+    with pytest.raises(InvalidInputError, match="macro-enabled component"):
+        _reject_macro_parts(macro_content)
+    with pytest.raises(InvalidInputError, match="macro-enabled component"):
+        _load_sheet1(macro_content)
+    with pytest.raises(InvalidInputError, match="macro-enabled component"):
+        _parse_workbook_sync(macro_content)
+
+
+def test_ordinary_workbook_without_macro_parts_is_unaffected():
+    content = _build_workbook_bytes([_valid_row()])
+    _reject_macro_parts(content)  # must not raise
+    records = _parse_workbook_sync(content)
+    assert len(records) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -569,6 +628,35 @@ async def test_update_candidate_status_mismatch_is_warning_and_never_applied(db_
     assert matches[0].severity == "warning"
     await db_session.refresh(existing)
     assert existing.status == EquipmentStatus.UNAVAILABLE_DEFECTIVE, "legacy status must never overwrite live status"
+
+
+async def test_update_candidate_unmappable_status_is_blocking_not_silently_ignored(db_session, seeded_users):
+    """PR93-H1: §10 states the unmappable-status fallback generally ("any
+    legacy status this design cannot safely map produces a blocking
+    ERROR"), not only for CREATE candidates. A non-blank UPDATE-row status
+    value with no entry in STATUS_MAPPING must receive the same blocking
+    CODE_STATUS_UNMAPPABLE a CREATE candidate would -- never silently pass
+    through with zero findings."""
+    existing = await _seed_equipment(
+        db_session, bcm_code="BCM_UNMAP", item_no="ITEM_UNMAP", status=EquipmentStatus.AVAILABLE_AT_POOL
+    )
+    [findings] = await _run_adapter(
+        db_session, [_valid_row(bcm="BCM_UNMAP", item_no="ITEM_UNMAP", status="some totally unrecognized value")]
+    )
+    matches = [f for f in findings if f.error_code == CODE_STATUS_UNMAPPABLE]
+    assert len(matches) == 1
+    assert matches[0].severity == "error"
+    await db_session.refresh(existing)
+    assert existing.status == EquipmentStatus.AVAILABLE_AT_POOL, "an unmappable legacy status is never applied either"
+
+
+async def test_update_candidate_blank_status_is_not_required_and_produces_no_finding(db_session, seeded_users):
+    """§8 row 27: status is "not required for UPDATE" -- a blank cell on
+    an UPDATE candidate must not itself become CODE_STATUS_UNMAPPABLE."""
+    await _seed_equipment(db_session, bcm_code="BCM_BLANKST", item_no="ITEM_BLANKST")
+    [findings] = await _run_adapter(db_session, [_valid_row(bcm="BCM_BLANKST", item_no="ITEM_BLANKST", status=None)])
+    assert CODE_STATUS_UNMAPPABLE not in _codes(findings)
+    assert CODE_STATUS_MISSING not in _codes(findings)
 
 
 # ---------------------------------------------------------------------------

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import io
 import math
+import zipfile
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -253,8 +254,36 @@ def _cell_text(value: object) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _reject_macro_parts(content: bytes) -> None:
+    """§21: "Never execute workbook formulas or macros." The shared PR12
+    `_validate_zip_archive_bounds` bounds the archive's *shape* (entry
+    count/size/ratio, allowed top-level paths) but its `xl/` prefix
+    allowlist does not itself distinguish an ordinary `.xlsx` from a
+    macro-enabled workbook smuggled in under an `.xlsx` filename/content-
+    type -- `xl/vbaProject.bin` (and its optional digital-signature
+    sibling) is a legitimate path under `xl/`. Never merely relying on
+    "openpyxl doesn't execute it" is insufficient defense-in-depth for
+    hostile input (§21): any such part is rejected outright, before
+    `load_workbook` ever touches the archive."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            names = archive.namelist()
+    except zipfile.BadZipFile as exc:
+        raise InvalidInputError(
+            "The uploaded file could not be read as a valid Excel (.xlsx) spreadsheet."
+        ) from exc
+    for name in names:
+        normalized = name.replace("\\", "/").lower()
+        if "vbaproject" in normalized:
+            raise InvalidInputError(
+                "The uploaded file contains a macro-enabled component (VBA project) and cannot "
+                "be accepted as a plain Excel (.xlsx) spreadsheet."
+            )
+
+
 def _load_sheet1(content: bytes) -> Worksheet:
     _validate_zip_archive_bounds(content)
+    _reject_macro_parts(content)
     try:
         workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     except Exception as exc:
@@ -323,10 +352,25 @@ def _parse_rows(worksheet: Worksheet, header_index: dict[str, int]) -> list[RawI
         idx = header_index[header]
         return values[idx] if idx < len(values) else None
 
+    # §7's closed-world header contract must also bind the data rows, not
+    # merely row 1: `_validate_headers` only inspects non-blank header
+    # cells, so a column whose row-1 cell is blank (no name at all) is
+    # invisible to that check and would otherwise let data smuggle through
+    # a column outside the approved 32-column schema. Any non-blank cell
+    # at a column index that isn't one of the 32 governed indices is
+    # therefore rejected here, structurally, the first time it's seen.
+    known_indices = set(header_index.values())
+
     records: list[RawImportRecord] = []
     for row_number, values in enumerate(worksheet.iter_rows(min_row=2, values_only=True), start=2):
         if values is None or all(_cell_text(v) is None for v in values):
             continue  # §7: blank rows skipped, not counted toward total_rows
+        for idx, value in enumerate(values):
+            if idx not in known_indices and _cell_text(value) is not None:
+                raise InvalidInputError(
+                    f"Row {row_number} contains data in a column outside the approved Equipment "
+                    "Master schema (an unnamed/extra column is not permitted)."
+                )
         if len(records) >= MAX_IMPORT_ROWS:
             raise InvalidInputError(
                 f"The uploaded file contains more than {MAX_IMPORT_ROWS} data rows, "
@@ -713,13 +757,28 @@ class EquipmentMasterAdapter(ImportAdapter):
                     )
                 )
 
-        # §9 OD-2 Legacy Lifecycle Policy: legacy status is read for
+        # §9 OD-2 Legacy Lifecycle Policy / §10: legacy status is read for
         # cross-check only -- never applied to the existing record's live
-        # status. A mismatch is informational only (non-blocking).
+        # status. §10 states the unmappable-status fallback generally ("any
+        # legacy status this design cannot safely map produces a blocking
+        # ERROR"), not only for CREATE -- a non-blank UPDATE-row status
+        # value that fails to map to one of the four states is therefore
+        # the same blocking CODE_STATUS_UNMAPPABLE as a CREATE candidate's,
+        # never silently ignored. A *mapped* value that simply differs from
+        # the live status is a separate, non-blocking WARNING only (§8's
+        # UPDATE column: "never overwrites current live status").
         status_raw = record.fields["status"]
         if status_raw is not None:
             mapped = STATUS_MAPPING.get(status_raw.strip().lower())
-            if mapped is not None and mapped != target.status:
+            if mapped is None:
+                findings.append(
+                    FieldError(
+                        field="status",
+                        error_code=CODE_STATUS_UNMAPPABLE,
+                        message=f"Unrecognized equipment status value: '{status_raw}'.",
+                    )
+                )
+            elif mapped != target.status:
                 findings.append(
                     FieldError(
                         field="status",
