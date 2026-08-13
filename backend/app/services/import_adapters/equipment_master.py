@@ -31,6 +31,7 @@ from __future__ import annotations
 import io
 import math
 import zipfile
+import xml.parsers.expat as expat
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -120,32 +121,40 @@ _FIELD_MAX_LENGTHS: dict[str, int] = {
     "serial_number": 100,
 }
 
-# §10: illustrative legacy-status mapping, matching PR12's own
-# ASSET_STATUS_MAPPING precedent -- pending confirmation against the real
-# 4,729-row source content (§9 OD-1's own note: "the exact per-value Thai/
-# English string enumeration remains an implementation-time task for
-# PR20C's own PR ... not a further Owner Decision, because the fallback
-# behavior ... is already fixed"). Keys are lowercased/trimmed for
-# case-insensitive exact-match lookup; any value not listed here is
+# §10, PR93-H1R: authoritative legacy-status mapping, verified against the
+# real Repository-Owner-supplied `export_template.xlsx` (§9 OD-1's own
+# implementation-time task, now closed). The `สถานะเครื่องมือ` column's
+# entire observed vocabulary across all 4,729 source records is exactly
+# these four values -- no other string was observed:
+#
+#   Active        3,873 rows -> AVAILABLE_AT_POOL
+#   Decommission    734 rows -> DECOMMISSIONED
+#   Defective        84 rows -> UNAVAILABLE_DEFECTIVE
+#   Missing          38 rows -> unmappable (blocking ERROR; not a new state)
+#
+# No guessed/illustrative alias is retained (e.g. "available", "faulty",
+# "disposed", "decommissioned", or any of their Thai equivalents this
+# module previously carried) -- none of those strings were observed in the
+# authoritative source, so accepting them would silently widen this
+# mapping beyond what §10's implementation-time evidence requirement
+# actually verified. Keys are lowercased/trimmed for case-insensitive
+# exact-match lookup; any value not listed here (including "Missing") is
 # unmappable by design -- a blocking finding, never a guess.
 STATUS_MAPPING: dict[str, EquipmentStatus] = {
     "active": EquipmentStatus.AVAILABLE_AT_POOL,
-    "available": EquipmentStatus.AVAILABLE_AT_POOL,
-    "พร้อมใช้งาน": EquipmentStatus.AVAILABLE_AT_POOL,
     "defective": EquipmentStatus.UNAVAILABLE_DEFECTIVE,
-    "faulty": EquipmentStatus.UNAVAILABLE_DEFECTIVE,
-    "broken": EquipmentStatus.UNAVAILABLE_DEFECTIVE,
-    "ชำรุด": EquipmentStatus.UNAVAILABLE_DEFECTIVE,
-    "decommissioned": EquipmentStatus.DECOMMISSIONED,
-    "disposed": EquipmentStatus.DECOMMISSIONED,
-    "written off": EquipmentStatus.DECOMMISSIONED,
-    "จำหน่าย": EquipmentStatus.DECOMMISSIONED,
+    "decommission": EquipmentStatus.DECOMMISSIONED,
+    # "Missing" is deliberately absent -- confirmed present in the source
+    # (38 rows) but the Repository Owner has resolved it as UNMAPPABLE /
+    # blocking ERROR, not a silent equivalence to any of the four states.
+    #
     # ISSUED_TO_WARD is intentionally absent -- §9 OD-2's Legacy Lifecycle
     # Policy: PR20 never initializes a CREATE candidate directly into
-    # ISSUED_TO_WARD (no synthetic BorrowTransaction), so no legacy status
-    # string maps to it here; a legacy value that appears to mean
-    # "currently issued" is unmappable-by-design and falls through to the
-    # blocking STATUS_UNMAPPABLE finding below, per §11.
+    # ISSUED_TO_WARD (no synthetic BorrowTransaction), and the authoritative
+    # source itself contains no value the Repository Owner has mapped to
+    # it. A legacy value that appears to mean "currently issued" is
+    # unmappable-by-design and falls through to the blocking
+    # STATUS_UNMAPPABLE finding below, per §11.
 }
 
 # ---------------------------------------------------------------------------
@@ -254,8 +263,133 @@ def _cell_text(value: object) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+# PR93-H3R: substring markers checked against every OOXML *content type*
+# and *relationship type* string this module actually parses out of
+# `[Content_Types].xml` / the package-level and workbook-level `.rels`
+# parts (never against arbitrary file content) -- covers macro-enabled
+# workbook/template/add-in main parts (any format variant: xlsm/xlsb/xltm
+# all declare a content type containing "macroEnabled"), the VBA project
+# part/relationship, VBA digital-signature parts, and legacy macro-sheet
+# content/relationship types. Matching is substring/case-insensitive by
+# design: the OOXML spec's actual macro-related content-type and
+# relationship-type strings all reliably contain one of these tokens, and
+# a broader net here is the correct fail-closed choice over an exact,
+# brittle enumeration that a variant spelling could slip past.
+_FORBIDDEN_OOXML_METADATA_MARKERS = (
+    "macroenabled",
+    "vbaproject",
+    "vbasignature",
+    "macrosheet",
+)
+
+# The package-level and workbook-level metadata parts this module actually
+# inspects for §7's structural classification -- never any other part, and
+# never anything these parts might reference externally (§21: "no
+# external... network access").
+_OOXML_METADATA_PARTS = (
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "xl/_rels/workbook.xml.rels",
+)
+
+
+class _OOXMLMetadataSignals:
+    __slots__ = ("values",)
+
+    def __init__(self) -> None:
+        self.values: set[str] = set()
+
+
+def _collect_ooxml_metadata_signals(part_name: str, data: bytes) -> set[str]:
+    """Parses one OOXML package-metadata XML part with `xml.parsers.expat`
+    (stdlib, no new dependency) and returns every `ContentType`/`Type`
+    attribute value found on an `Override`/`Default`/`Relationship`
+    element. Namespace-*un*aware on purpose: none of these attribute names
+    are ever namespace-prefixed in a conformant OOXML package, so a plain
+    `ParserCreate()` is sufficient and avoids pulling in a namespace layer
+    this check doesn't need.
+
+    Fails closed on anything that would make classification unreliable:
+    a DOCTYPE declaration is rejected outright (§21's "never execute
+    macros" extends to never *resolving* an entity either -- disallowing
+    DOCTYPE entirely defeats both external-entity and entity-expansion
+    ["billion laughs"] attacks without needing a parser flag that stdlib
+    `expat` doesn't expose, and no legitimate `[Content_Types].xml` or
+    `.rels` part ever carries one), and malformed XML raises the same
+    structured `InvalidInputError` §7 already uses for every other
+    workbook-contract failure -- never "could not classify, continue
+    anyway.\""""
+    signals = _OOXMLMetadataSignals()
+
+    def _reject_doctype(*_args: object) -> None:
+        raise InvalidInputError(
+            f"The uploaded file's internal '{part_name}' package metadata is malformed and "
+            "cannot be safely classified as a plain Excel (.xlsx) spreadsheet."
+        )
+
+    def _start_element(name: str, attrs: dict[str, str]) -> None:
+        local = name.rsplit(":", 1)[-1]
+        if local in ("Override", "Default"):
+            content_type = attrs.get("ContentType")
+            if content_type:
+                signals.values.add(content_type)
+        elif local == "Relationship":
+            rel_type = attrs.get("Type")
+            if rel_type:
+                signals.values.add(rel_type)
+
+    parser = expat.ParserCreate()
+    parser.StartDoctypeDeclHandler = _reject_doctype
+    parser.StartElementHandler = _start_element
+    try:
+        parser.Parse(data, True)
+    except InvalidInputError:
+        raise
+    except expat.ExpatError as exc:
+        raise InvalidInputError(
+            f"The uploaded file's internal '{part_name}' package metadata is malformed and "
+            "cannot be safely classified as a plain Excel (.xlsx) spreadsheet."
+        ) from exc
+    return signals.values
+
+
+def _reject_macro_ooxml_structure(content: bytes) -> None:
+    """PR93-H3R: filename-substring detection alone (`_reject_macro_parts`
+    below) misses a macro-enabled OOXML package that declares a
+    macro-enabled *content type* or a VBA *relationship* without ever
+    naming a part `vbaProject...` -- e.g. `[Content_Types].xml` declaring
+    `application/vnd.ms-excel.sheet.macroEnabled.main+xml` for the main
+    workbook part, with no part named `vbaProject` anywhere in the
+    archive. This inspects the package's own declared structure (§21:
+    "reject macro-enabled OOXML STRUCTURE, not merely suspicious
+    filenames") -- `[Content_Types].xml` and the package-level/workbook
+    relationship files -- before `load_workbook` ever touches the
+    archive. A client-supplied filename or MIME type is never consulted
+    here; only the archive's own internal package metadata is."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            names = set(archive.namelist())
+            for part_name in _OOXML_METADATA_PARTS:
+                if part_name not in names:
+                    continue  # optional part legitimately absent from some workbooks
+                data = archive.read(part_name)
+                for value in _collect_ooxml_metadata_signals(part_name, data):
+                    lowered = value.lower()
+                    if any(marker in lowered for marker in _FORBIDDEN_OOXML_METADATA_MARKERS):
+                        raise InvalidInputError(
+                            "The uploaded file declares macro-enabled or VBA-related workbook "
+                            "content and cannot be accepted as a plain Excel (.xlsx) spreadsheet."
+                        )
+    except zipfile.BadZipFile as exc:
+        raise InvalidInputError(
+            "The uploaded file could not be read as a valid Excel (.xlsx) spreadsheet."
+        ) from exc
+
+
 def _reject_macro_parts(content: bytes) -> None:
-    """§21: "Never execute workbook formulas or macros." The shared PR12
+    """§21: "Never execute workbook formulas or macros." Defense-in-depth
+    alongside `_reject_macro_ooxml_structure` above (which inspects the
+    package's own declared content types/relationships): the shared PR12
     `_validate_zip_archive_bounds` bounds the archive's *shape* (entry
     count/size/ratio, allowed top-level paths) but its `xl/` prefix
     allowlist does not itself distinguish an ordinary `.xlsx` from a
@@ -283,6 +417,7 @@ def _reject_macro_parts(content: bytes) -> None:
 
 def _load_sheet1(content: bytes) -> Worksheet:
     _validate_zip_archive_bounds(content)
+    _reject_macro_ooxml_structure(content)
     _reject_macro_parts(content)
     try:
         workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)

@@ -54,6 +54,7 @@ from app.services.import_adapters.equipment_master import (
     _GOVERNED_HEADERS,
     _load_sheet1,
     _parse_workbook_sync,
+    _reject_macro_ooxml_structure,
     _reject_macro_parts,
     _validate_headers,
 )
@@ -304,6 +305,171 @@ def test_ordinary_workbook_without_macro_parts_is_unaffected():
     _reject_macro_parts(content)  # must not raise
     records = _parse_workbook_sync(content)
     assert len(records) == 1
+
+
+# ---------------------------------------------------------------------------
+# PR93-H3R: OOXML macro/VBA STRUCTURE detection ([Content_Types].xml and
+# relationship-file inspection), not merely a suspicious part filename.
+# ---------------------------------------------------------------------------
+
+
+def _replace_zip_entry(content: bytes, entry_name: str, new_data: bytes) -> bytes:
+    """Rebuilds `content`'s zip archive with `entry_name`'s bytes replaced
+    -- `zipfile` has no in-place update, so every other entry is copied
+    through unchanged and only the target entry's content differs."""
+    src = zipfile.ZipFile(io.BytesIO(content))
+    out_buf = io.BytesIO()
+    with zipfile.ZipFile(out_buf, "w") as dst:
+        for info in src.infolist():
+            data = new_data if info.filename == entry_name else src.read(info.filename)
+            dst.writestr(info.filename, data)
+    return out_buf.getvalue()
+
+
+def test_normal_plain_xlsx_passes_macro_structure_check():
+    content = _build_workbook_bytes([_valid_row()])
+    _reject_macro_ooxml_structure(content)  # must not raise
+    records = _parse_workbook_sync(content)
+    assert len(records) == 1
+
+
+def test_macro_enabled_content_type_without_vbaproject_named_part_is_rejected():
+    """The exact reviewer reproduction: `[Content_Types].xml` declares the
+    main workbook part's content type as macro-enabled
+    (`application/vnd.ms-excel.sheet.macroEnabled.main+xml`) while no
+    part in the archive is named `vbaProject...` anywhere -- the
+    filename-substring check (`_reject_macro_parts`) alone would miss
+    this; the content-type-structure check must catch it."""
+    content = _build_workbook_bytes([_valid_row()])
+    src = zipfile.ZipFile(io.BytesIO(content))
+    content_types_xml = src.read("[Content_Types].xml").decode()
+    assert "vbaproject" not in content_types_xml.lower()
+    macro_content_types_xml = content_types_xml.replace(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+        "application/vnd.ms-excel.sheet.macroEnabled.main+xml",
+    )
+    assert macro_content_types_xml != content_types_xml, "the fixture must actually change the main part's content type"
+    macro_content = _replace_zip_entry(content, "[Content_Types].xml", macro_content_types_xml.encode())
+
+    with pytest.raises(InvalidInputError, match="macro-enabled or VBA-related"):
+        _reject_macro_ooxml_structure(macro_content)
+    with pytest.raises(InvalidInputError, match="macro-enabled or VBA-related"):
+        _load_sheet1(macro_content)
+    with pytest.raises(InvalidInputError, match="macro-enabled or VBA-related"):
+        _parse_workbook_sync(macro_content)
+
+
+def test_vba_relationship_type_with_innocuous_target_filename_is_rejected():
+    """A `Relationship` declaring the VBA-project relationship `Type`
+    (the actual OOXML/Microsoft schema URI) pointing at a target filename
+    that itself gives no hint of being a VBA part -- proves detection
+    reads the relationship's declared `Type`, not the target filename."""
+    content = _build_workbook_bytes([_valid_row()])
+    src = zipfile.ZipFile(io.BytesIO(content))
+    rels_xml = src.read("xl/_rels/workbook.xml.rels").decode()
+    injected = rels_xml.replace(
+        "</Relationships>",
+        '<Relationship Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" '
+        'Target="innocuous_name.bin" Id="rIdInjected" /></Relationships>',
+    )
+    assert "vbaproject" not in "innocuous_name.bin", "the target filename itself must carry no 'vbaproject' substring"
+    macro_content = _replace_zip_entry(content, "xl/_rels/workbook.xml.rels", injected.encode())
+
+    with pytest.raises(InvalidInputError, match="macro-enabled or VBA-related"):
+        _reject_macro_ooxml_structure(macro_content)
+
+
+def test_macrosheet_content_type_is_rejected():
+    content = _build_workbook_bytes([_valid_row()])
+    src = zipfile.ZipFile(io.BytesIO(content))
+    content_types_xml = src.read("[Content_Types].xml").decode()
+    injected = content_types_xml.replace(
+        "</Types>",
+        '<Override PartName="/xl/macrosheets/macrosheet1.xml" '
+        'ContentType="application/vnd.ms-excel.macrosheet+xml" /></Types>',
+    )
+    macro_content = _replace_zip_entry(content, "[Content_Types].xml", injected.encode())
+
+    with pytest.raises(InvalidInputError, match="macro-enabled or VBA-related"):
+        _reject_macro_ooxml_structure(macro_content)
+
+
+def test_malformed_content_types_xml_fails_closed():
+    content = _build_workbook_bytes([_valid_row()])
+    malformed_content = _replace_zip_entry(content, "[Content_Types].xml", b"<Types><Override not-well-formed")
+
+    with pytest.raises(InvalidInputError, match="malformed"):
+        _reject_macro_ooxml_structure(malformed_content)
+    with pytest.raises(InvalidInputError, match="malformed"):
+        _load_sheet1(malformed_content)
+
+
+def test_malformed_workbook_rels_xml_fails_closed():
+    content = _build_workbook_bytes([_valid_row()])
+    malformed_content = _replace_zip_entry(
+        content, "xl/_rels/workbook.xml.rels", b"<Relationships><Relationship not-well-formed"
+    )
+
+    with pytest.raises(InvalidInputError, match="malformed"):
+        _reject_macro_ooxml_structure(malformed_content)
+
+
+def test_content_types_xml_with_doctype_is_rejected_fail_closed():
+    """Defends against entity-expansion ("billion laughs") and external-
+    entity attacks: any DOCTYPE at all in a package-metadata part this
+    check parses is rejected outright, since a conformant OOXML
+    `[Content_Types].xml` never legitimately carries one."""
+    content = _build_workbook_bytes([_valid_row()])
+    doctype_content = (
+        b'<?xml version="1.0"?><!DOCTYPE Types [<!ENTITY x "y">]>'
+        + b'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>'
+    )
+    malformed_content = _replace_zip_entry(content, "[Content_Types].xml", doctype_content)
+
+    with pytest.raises(InvalidInputError, match="malformed"):
+        _reject_macro_ooxml_structure(malformed_content)
+
+
+def test_macro_structure_decision_does_not_depend_on_filename_or_extension():
+    """A macro-enabled OOXML package renamed/declared as `.xlsx` (the
+    upload path's own filename/content-type is never consulted by this
+    check -- only the archive's internal package metadata) must still be
+    rejected, proving the decision is structural, not extension-based."""
+    content = _build_workbook_bytes([_valid_row()])
+    src = zipfile.ZipFile(io.BytesIO(content))
+    content_types_xml = src.read("[Content_Types].xml").decode()
+    macro_content_types_xml = content_types_xml.replace(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+        "application/vnd.ms-excel.sheet.macroEnabled.main+xml",
+    )
+    macro_content = _replace_zip_entry(content, "[Content_Types].xml", macro_content_types_xml.encode())
+    # `_reject_macro_ooxml_structure` takes only raw bytes -- there is no
+    # filename/content-type parameter to spoof in the first place.
+    with pytest.raises(InvalidInputError, match="macro-enabled or VBA-related"):
+        _reject_macro_ooxml_structure(macro_content)
+
+
+def test_formula_cells_are_not_confused_with_macro_structure():
+    """§21's formula non-execution and PR93-H3R's macro-structure
+    rejection are two distinct checks -- an ordinary workbook containing
+    formula cells (no macro-enabled content type, no VBA part/
+    relationship) must pass the macro-structure check cleanly, exactly
+    like `test_formula_cell_is_never_executed_treated_as_blank` already
+    proves it's never evaluated."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = WORKSHEET_NAME
+    ws.append(_HEADERS)
+    row = _valid_row()
+    row["ID CODE"] = "=1+1"
+    ws.append([row.get(h) for h in _HEADERS])
+    buf = io.BytesIO()
+    wb.save(buf)
+    content = buf.getvalue()
+
+    _reject_macro_ooxml_structure(content)  # must not raise
+    records = _parse_workbook_sync(content)
+    assert records[0].fields["bcm"].outcome == "blank"
 
 
 # ---------------------------------------------------------------------------
@@ -572,6 +738,97 @@ async def test_create_candidate_status_never_defaults_to_issued_to_ward():
     assert EquipmentStatus.ISSUED_TO_WARD not in STATUS_MAPPING.values(), (
         "§10/§11: a CREATE candidate must never be initialized directly into ISSUED_TO_WARD"
     )
+
+
+# ---------------------------------------------------------------------------
+# PR93-H1R: authoritative status mapping, verified against the real
+# Repository-Owner-supplied `export_template.xlsx` (4,729 source rows).
+# Observed vocabulary: Active (3,873), Decommission (734), Defective (84),
+# Missing (38) -- no other value was observed. STATUS_MAPPING must contain
+# only these, and "Missing" must remain unmappable (blocking ERROR), never
+# a new/fifth lifecycle state.
+# ---------------------------------------------------------------------------
+
+_AUTHORITATIVE_MAPPED_STATUSES = (
+    ("Active", EquipmentStatus.AVAILABLE_AT_POOL),
+    ("Defective", EquipmentStatus.UNAVAILABLE_DEFECTIVE),
+    ("Decommission", EquipmentStatus.DECOMMISSIONED),
+)
+
+
+@pytest.mark.parametrize("source_value,expected_status", _AUTHORITATIVE_MAPPED_STATUSES)
+async def test_authoritative_status_mapping_create_candidate(db_session, seeded_users, source_value, expected_status):
+    """Table-driven proof of the exact Repository-Owner-confirmed mapping
+    for a CREATE candidate: no CODE_STATUS_* blocking/unmappable finding
+    is produced for any of the three mappable authoritative values (the
+    row is still blocked overall by OD-4's unrelated
+    ASSET_NUMBER_REQUIRED_FOR_CREATE, which is not a status finding)."""
+    [findings] = await _run_adapter(
+        db_session, [_valid_row(bcm=f"BCM_AUTH_{source_value}", item_no=f"ITEM_AUTH_{source_value}", status=source_value)]
+    )
+    codes = _codes(findings)
+    assert CODE_STATUS_MISSING not in codes
+    assert CODE_STATUS_UNMAPPABLE not in codes
+    assert STATUS_MAPPING[source_value.strip().lower()] == expected_status
+
+
+async def test_authoritative_status_mapping_missing_is_unmappable_not_a_new_state(db_session, seeded_users):
+    """"Missing" is confirmed present in the real source (38 rows) but the
+    Repository Owner has resolved it as unmappable -- never a fifth
+    lifecycle state, never silently equated with any of the four."""
+    assert "missing" not in STATUS_MAPPING
+    [findings] = await _run_adapter(
+        db_session, [_valid_row(bcm="BCM_MISSING_STATUS", item_no="ITEM_MISSING_STATUS", status="Missing")]
+    )
+    matches = [f for f in findings if f.error_code == CODE_STATUS_UNMAPPABLE]
+    assert len(matches) == 1
+    assert matches[0].severity == "error"
+
+
+async def test_authoritative_status_mapping_missing_is_unmappable_for_update_too(db_session, seeded_users):
+    existing = await _seed_equipment(
+        db_session, bcm_code="BCM_MISSING_UPD", item_no="ITEM_MISSING_UPD", status=EquipmentStatus.AVAILABLE_AT_POOL
+    )
+    [findings] = await _run_adapter(
+        db_session, [_valid_row(bcm="BCM_MISSING_UPD", item_no="ITEM_MISSING_UPD", status="Missing")]
+    )
+    matches = [f for f in findings if f.error_code == CODE_STATUS_UNMAPPABLE]
+    assert len(matches) == 1
+    assert matches[0].severity == "error"
+    await db_session.refresh(existing)
+    assert existing.status == EquipmentStatus.AVAILABLE_AT_POOL
+
+
+@pytest.mark.parametrize("unobserved_value", ["available", "faulty", "broken", "disposed", "written off", "decommissioned"])
+async def test_unobserved_illustrative_aliases_are_no_longer_accepted(db_session, seeded_users, unobserved_value):
+    """PR93-H1R: the prior "illustrative" mapping accepted these strings
+    as aliases (e.g. "decommissioned" -> DECOMMISSIONED, "available" ->
+    AVAILABLE_AT_POOL). None of them was ever observed in the real
+    4,729-row `export_template.xlsx` -- only the authoritative
+    Active/Decommission/Defective/Missing vocabulary is accepted now, so
+    each of these must be unmappable, not silently mapped."""
+    assert unobserved_value not in STATUS_MAPPING
+    identifier_safe = unobserved_value.replace(" ", "_")
+    [findings] = await _run_adapter(
+        db_session, [_valid_row(bcm=f"BCM_UNOBS_{identifier_safe}", item_no=f"ITEM_UNOBS_{identifier_safe}", status=unobserved_value)]
+    )
+    assert CODE_STATUS_UNMAPPABLE in _codes(findings)
+
+
+async def test_status_mapping_is_case_and_whitespace_normalized():
+    """Approved normalization rule (`.strip().lower()`, unchanged by
+    PR93-H1R) still applies to the authoritative vocabulary."""
+    assert STATUS_MAPPING["active"] == EquipmentStatus.AVAILABLE_AT_POOL
+    for variant in (" Active ", "ACTIVE", "AcTiVe", "active"):
+        assert STATUS_MAPPING[variant.strip().lower()] == EquipmentStatus.AVAILABLE_AT_POOL
+
+
+async def test_status_mapping_contains_only_authoritative_vocabulary():
+    """The full observed source vocabulary is exactly four strings;
+    STATUS_MAPPING (which only ever holds *mappable* values -- "Missing"
+    is deliberately absent, see above) must therefore contain exactly the
+    three mappable ones and nothing else."""
+    assert set(STATUS_MAPPING.keys()) == {"active", "defective", "decommission"}
 
 
 async def test_create_candidate_overlength_field_is_blocking(db_session, seeded_users):
