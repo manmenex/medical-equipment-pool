@@ -17,6 +17,14 @@ from app.core.log_context import correlation_id_var, request_id_var
 from app.core.logging import configure_logging, safe_log
 from app.worker.scheduler import start_scheduler, stop_scheduler
 
+# Imported for its module-level `register_adapter(...)` side effect (Roadmap
+# PR20C) -- this is the only place a concrete `ImportAdapter` implementation
+# is guaranteed to load before the app serves any request. Add a further
+# `import app.services.import_adapters.<x>` line here for each future
+# dataset-type adapter (Roadmap PR21+); do not register adapters lazily
+# inside a request handler.
+import app.services.import_adapters.equipment_master  # noqa: E402,F401
+
 # Stable, safe codes for FastAPI/Starlette's own HTTPException, keyed by
 # status code. Anything not listed falls back to the generic HTTP_ERROR code
 # — this intentionally stays a small, fixed set rather than trying to name
