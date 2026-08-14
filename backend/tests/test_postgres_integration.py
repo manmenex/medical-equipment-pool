@@ -7448,7 +7448,18 @@ async def test_migration_0013_fresh_database_all_foreign_keys_are_restrict():
                 # fk_import_sessions_current_validation_job -> import_jobs,
                 # + 1 added by migration 0016 (Roadmap PR20A):
                 # import_source_blobs.import_source_id -> import_sources.
-                assert len(rows) == 31, f"expected exactly 31 foreign keys, found {len(rows)}: {rows}"
+                # + 0 added by migration 0017 (Roadmap PR20B): a new column
+                # only, no new FK.
+                # + 7 added by migration 0018 (Roadmap PR20D):
+                # equipment_master_dry_run_plans.import_session_id ->
+                # import_sessions, .import_source_id -> import_sources,
+                # .confirmed_by_user_id -> users, the two composite
+                # fk_equipment_master_dry_run_plans_accepted_validation_job/
+                # _dry_run_job -> import_jobs, and
+                # equipment_master_dry_run_plan_rows.dry_run_plan_id ->
+                # equipment_master_dry_run_plans, .target_equipment_id ->
+                # equipment.
+                assert len(rows) == 38, f"expected exactly 38 foreign keys, found {len(rows)}: {rows}"
                 for conname, confdeltype in rows:
                     assert confdeltype == "r", f"{conname} has confdeltype={confdeltype!r}, expected 'r' (RESTRICT)"
         finally:
