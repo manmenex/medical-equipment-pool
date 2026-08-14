@@ -290,3 +290,28 @@ class ImportExecutionFailedError(DomainError):
 
     code = "IMPORT_EXECUTION_FAILED"
     status_code = 500
+
+
+class ImportDryRunPlanNotFoundError(DomainError):
+    """Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    §14.6, §21) — no plan matches the requested lookup: either the session
+    has never had a successful dry-run (`GET .../dry-run-plan`, no
+    `active` plan exists), or the path `{plan_id}` does not reference a
+    plan belonging to this session at all (`POST .../confirm`, ownership
+    check). Never leaks a plan id belonging to a different session."""
+
+    code = "IMPORT_DRY_RUN_PLAN_NOT_FOUND"
+    status_code = 404
+
+
+class ImportDryRunPlanStaleError(DomainError):
+    """Roadmap PR20D (design §14.4a) — `POST .../dry-run-plan/{id}/confirm`
+    matched zero rows: the plan is no longer `active` (superseded by a
+    newer dry-run, or already `consumed`/`failed`), or the owning session
+    has moved out of `dry_run_completed` (e.g. `cancelled`). The operator
+    must re-fetch `GET .../dry-run-plan` and review the current plan
+    before confirming again -- never silently retried against the same
+    stale `plan_id`."""
+
+    code = "IMPORT_DRY_RUN_PLAN_STALE"
+    status_code = 409

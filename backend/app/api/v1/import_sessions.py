@@ -6,11 +6,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import ADMINISTRATOR_ONLY_ROLES, require_roles
+from app.core.audit import AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CONFIRMED, AUDIT_ENTITY_IMPORT_SESSION, record_audit_event
 from app.core.exceptions import (
+    ImportDryRunPlanNotFoundError,
+    ImportDryRunPlanStaleError,
     ImportSessionNotFoundError,
     ImportSourceRegistrationMethodNotAllowedError,
     InvalidInputError,
 )
+from app.crud import import_dry_run_plan as import_dry_run_plan_crud
 from app.crud import import_job as import_job_crud
 from app.crud import import_session as import_crud
 from app.crud import import_source_blob as import_source_blob_crud
@@ -18,6 +22,10 @@ from app.db.session import get_db
 from app.models.import_session import ImportJob
 from app.schemas.common import Page
 from app.schemas.import_session import (
+    DryRunPlanConfirmOut,
+    DryRunPlanOut,
+    DryRunPlanRowOut,
+    DryRunPlanSummaryOut,
     ImportRetentionCleanupRequest,
     ImportRetentionCleanupResult,
     ImportSessionCreate,
@@ -316,6 +324,114 @@ async def execute_session(
 ):
     session = await _get_or_404(db, session_id)
     return await import_execution_service.run_execute(db, session=session, actor_id=actor.id, request=request)
+
+
+@router.get("/{session_id}/dry-run-plan", response_model=DryRunPlanOut)
+async def get_dry_run_plan(
+    session_id: uuid.UUID,
+    limit: int = Query(default=25, ge=1, le=200),
+    cursor: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    _actor=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
+):
+    """Roadmap PR20D (design §14.6). Resolves the session's current
+    `active` plan (never a client-supplied plan id -- there is no
+    "dry-run-summary recompute" endpoint, §24) and returns its persisted
+    identity/summary plus a paginated slice of its rows. `404
+    IMPORT_DRY_RUN_PLAN_NOT_FOUND` if the session has never had a
+    successful dry-run."""
+    session = await _get_or_404(db, session_id)
+    plan = await import_dry_run_plan_crud.get_current_plan(db, import_session_id=session.id)
+    if plan is None:
+        raise ImportDryRunPlanNotFoundError(f"Import session '{session_id}' has no persisted dry-run plan.")
+
+    cursor_n = None
+    cursor_uuid = None
+    if cursor:
+        cursor_n, cursor_id = decode_int_cursor(cursor)
+        try:
+            cursor_uuid = uuid.UUID(cursor_id)
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise InvalidInputError("Invalid or malformed pagination cursor.") from exc
+
+    rows, total = await import_dry_run_plan_crud.list_plan_rows(
+        db, plan_id=plan.id, limit=limit, cursor_n=cursor_n, cursor_id=cursor_uuid
+    )
+    next_cursor = None
+    if len(rows) > limit:
+        rows = rows[:limit]
+        last = rows[-1]
+        next_cursor = encode_int_cursor(last.source_row_number, str(last.id))
+
+    return DryRunPlanOut(
+        id=plan.id,
+        import_session_id=plan.import_session_id,
+        import_source_id=plan.import_source_id,
+        status=plan.status,
+        is_current=plan.status == "active",
+        created_at=plan.created_at,
+        confirmed_at=plan.confirmed_at,
+        confirmed_by_user_id=plan.confirmed_by_user_id,
+        summary=DryRunPlanSummaryOut(
+            total_rows=plan.summary_total_rows,
+            creates=plan.summary_creates,
+            updates=plan.summary_updates,
+            skips=plan.summary_skips,
+            warnings=plan.summary_warnings,
+            blocking_conflicts=plan.summary_blocking_conflicts,
+        ),
+        rows=[DryRunPlanRowOut.model_validate(row) for row in rows],
+        rows_next_cursor=next_cursor,
+        rows_total=total,
+    )
+
+
+@router.post("/{session_id}/dry-run-plan/{plan_id}/confirm", response_model=DryRunPlanConfirmOut)
+async def confirm_dry_run_plan(
+    session_id: uuid.UUID,
+    plan_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    actor=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
+):
+    """Roadmap PR20D (design §14.4a). The explicit operator confirmation
+    step -- PR20E's `execute()` will only ever apply a plan that reached
+    this state. A single, atomic, `COALESCE`-guarded conditional `UPDATE`
+    (`app.crud.import_dry_run_plan.confirm_plan`): idempotent for a
+    repeat confirm (first confirmation is authoritative), and requires the
+    owning session still be `dry_run_completed`. Zero rows matched is
+    reported as `404 IMPORT_DRY_RUN_PLAN_NOT_FOUND` (wrong/foreign plan
+    id) or `409 IMPORT_DRY_RUN_PLAN_STALE` (plan no longer `active`, or
+    session moved on) -- distinguished by an explicit ownership re-check,
+    never conflated."""
+    session = await _get_or_404(db, session_id)
+    plan = await import_dry_run_plan_crud.confirm_plan(
+        db, plan_id=plan_id, import_session_id=session.id, current_user_id=actor.id
+    )
+    if plan is None:
+        existing = await import_dry_run_plan_crud.get_plan_by_id(db, plan_id=plan_id, import_session_id=session.id)
+        if existing is None:
+            raise ImportDryRunPlanNotFoundError(
+                f"Dry-run plan '{plan_id}' does not belong to import session '{session_id}'."
+            )
+        raise ImportDryRunPlanStaleError(
+            f"Dry-run plan '{plan_id}' is no longer confirmable (superseded, consumed, or failed, or the "
+            "owning session is no longer 'dry_run_completed')."
+        )
+    await record_audit_event(
+        db,
+        actor_user_id=actor.id,
+        action=AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CONFIRMED,
+        entity_type=AUDIT_ENTITY_IMPORT_SESSION,
+        entity_id=session.id,
+        after={
+            "dry_run_plan_id": str(plan.id),
+            "confirmed_at": plan.confirmed_at.isoformat() if plan.confirmed_at else None,
+        },
+        request=request,
+    )
+    await db.commit()
+    return plan
 
 
 @router.get("/{session_id}/errors", response_model=Page[ValidationFindingOut])

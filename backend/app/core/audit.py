@@ -65,6 +65,19 @@ AUDIT_ACTION_IMPORT_FENCE_LOST = "import_fence_lost"
 # (§18) -- never speculatively, never for a claimed-but-not-yet-purged or
 # fenced-out session (those write AUDIT_ACTION_IMPORT_FENCE_LOST instead).
 AUDIT_ACTION_IMPORT_RETENTION_CLEANUP = "import_retention_cleanup"
+# Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.3,
+# §26): one entry per successfully persisted `EquipmentMasterDryRunPlan`,
+# written by `EquipmentMasterAdapter.persist_dry_run_plan` inside the same
+# transaction as the plan/rows insert -- never speculatively, never for a
+# `plan_dry_run` evaluation that failed before persistence. `after`
+# carries the new plan's id and summary counts only -- never raw source
+# values (§26).
+AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CREATED = "import_dry_run_plan_created"
+# Roadmap PR20D (§14.4a): one entry per successful `POST
+# .../dry-run-plan/{id}/confirm` -- written by the API layer (the plan
+# confirmation endpoint owns its own transaction, distinct from
+# `persist_dry_run_plan`'s).
+AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CONFIRMED = "import_dry_run_plan_confirmed"
 
 # Audit entity-type values, same rationale as the actions above.
 AUDIT_ENTITY_EQUIPMENT = "equipment"

@@ -28,6 +28,7 @@ an authoritative Asset Number source).
 
 from __future__ import annotations
 
+import asyncio
 import io
 import math
 import zipfile
@@ -39,9 +40,12 @@ from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.audit import AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CREATED, AUDIT_ENTITY_IMPORT_SESSION, record_audit_event
 from app.core.exceptions import InvalidInputError
 from app.crud import equipment as equipment_crud
+from app.crud import import_dry_run_plan as import_dry_run_plan_crud
 from app.models.equipment import Equipment, EquipmentStatus
+from app.models.import_session import EquipmentMasterDryRunPlanRow
 from app.services.identifiers import normalize_bcm_code, normalize_item_no
 from app.services.import_adapter import (
     MAX_IMPORT_ROWS,
@@ -51,6 +55,7 @@ from app.services.import_adapter import (
     RawImportRecord,
     register_adapter,
 )
+from app.services.import_adapter_context import get_adapter_invocation_context
 from app.services.import_service import (
     MAX_HEADER_COLUMNS,
     MAX_UPLOAD_BYTES,
@@ -569,11 +574,59 @@ def _rows_with_duplicate_values(values_by_row: dict[int, str]) -> frozenset[int]
     return frozenset(duplicated)
 
 
+# ---------------------------------------------------------------------------
+# Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14, §15.1,
+# §8): `plan_dry_run` row-classification helpers. Field selection mirrors §8's
+# CREATE/UPDATE write-column table exactly -- `bcm_code`/`item_no` are
+# identity fields (CREATE-only, immutable on UPDATE); `status` is CREATE-only
+# (§9 OD-2's Legacy Lifecycle Policy: never overwrites current live status on
+# UPDATE).
+# ---------------------------------------------------------------------------
+
+
+def _finding_payload(finding: FieldError) -> dict[str, Any]:
+    return {"field": finding.field, "error_code": finding.error_code, "message": finding.message, "severity": finding.severity}
+
+
+def _create_normalized_values(record: RawImportRecord) -> dict[str, Any]:
+    values: dict[str, Any] = {
+        "bcm_code": record.fields.get("bcm_normalized"),
+        "item_no": record.fields.get("item_no_normalized"),
+        "equipment_name": record.fields.get("equipment_name"),
+        "brand": record.fields.get("brand"),
+        "model": record.fields.get("model"),
+        "serial_number": record.fields.get("serial_number"),
+        "asset_id": record.fields.get("asset_id"),
+    }
+    status_raw = record.fields.get("status")
+    if status_raw is not None:
+        mapped = STATUS_MAPPING.get(status_raw.strip().lower())
+        if mapped is not None:
+            values["status"] = mapped.value
+    return values
+
+
+def _update_normalized_values(record: RawImportRecord) -> dict[str, Any]:
+    return {
+        "equipment_name": record.fields.get("equipment_name"),
+        "brand": record.fields.get("brand"),
+        "model": record.fields.get("model"),
+        "serial_number": record.fields.get("serial_number"),
+        "asset_id": record.fields.get("asset_id"),
+    }
+
+
 class EquipmentMasterAdapter(ImportAdapter):
-    """Roadmap PR20C. Implements `parse`/`preload_business_context`/
-    `validate_business_rules` only -- `plan_dry_run`/`execute` are left at
-    the base class's `NotImplementedError` default (§9 OD-2's scope
-    boundary; those belong to PR20D/PR20E)."""
+    """Roadmap PR20C/PR20D. Implements `parse`/`preload_business_context`/
+    `validate_business_rules` (PR20C) and `plan_dry_run`/
+    `persist_dry_run_plan` (PR20D) -- `execute` remains at the base
+    class's `NotImplementedError` default; `precheck_execute`/
+    `on_execution_failure`/`on_execution_recovery` (design §14.4a/§14.4b/
+    §14.4c) are PR20E's own future addition to `ImportAdapter`, not yet
+    present (§24's PR20E scope boundary). This adapter never mutates
+    `equipment` -- `plan_dry_run` is a read-only evaluation and
+    `persist_dry_run_plan` writes only to the two PR20D-owned planning
+    tables."""
 
     dataset_type = DATASET_TYPE
     ruleset_version = "1"
@@ -944,8 +997,190 @@ class EquipmentMasterAdapter(ImportAdapter):
                 )
         return findings
 
-    # plan_dry_run / execute: intentionally not overridden (§9 OD-2's scope
-    # boundary; base ImportAdapter's NotImplementedError default applies).
+    async def plan_dry_run(self, db: AsyncSession) -> DryRunPlan:
+        """Roadmap PR20D (design §14, §15.1). Re-runs `parse` ->
+        `preload_business_context` -> `validate_business_rules` against
+        the same frozen, verified source content and the current database
+        state (§6.3) -- entirely read-only; this method itself never
+        writes. Every row resolves to exactly one of CREATE/UPDATE/SKIP
+        (§6): a row carrying any blocking (`severity == "error"`) finding
+        is always SKIP (never an executable CREATE/UPDATE, closing §9
+        OD-4's CREATE Asset Number gate and every other blocking
+        validation finding the same way); a CREATE candidate with no
+        blocking finding would be plan-ed as CREATE, but under the
+        current 32-column source contract this branch is unreachable in
+        practice, since `_validate_create_candidate` unconditionally
+        emits the blocking `ASSET_NUMBER_REQUIRED_FOR_CREATE` finding for
+        every CREATE candidate (§9 OD-4) -- kept so a future, richer
+        source contract can light this path up without a further
+        `plan_dry_run` change. An UPDATE row captures
+        `matched_equipment.version` (PR20B) *now*, at dry-run time, into
+        `expected_equipment_version` -- the only place this value is ever
+        captured (§15.1); it is never re-read at execute time (PR20E)."""
+        ctx = get_adapter_invocation_context()
+        records = await asyncio.to_thread(self.parse, ctx.verified_source_content)
+        context = await self.preload_business_context(db, records)
+
+        rows: list[dict[str, Any]] = []
+        creates = updates = skips = warning_rows = blocking_conflicts = 0
+        for record in records:
+            findings = self.validate_business_rules(record, context)
+            blocking_findings = [f for f in findings if f.severity == "error"]
+            warning_findings = [f for f in findings if f.severity == "warning"]
+
+            bcm = record.fields.get("bcm_normalized")
+            item_no = record.fields.get("item_no_normalized")
+            matched_identity_fields: dict[str, Any] = {}
+            if bcm:
+                matched_identity_fields["bcm_code"] = bcm
+            if item_no:
+                matched_identity_fields["item_no"] = item_no
+
+            equip_by_bcm = context.existing_by_bcm.get(bcm) if bcm else None
+            equip_by_item_no = context.existing_by_item_no.get(item_no) if item_no else None
+            is_create_candidate = equip_by_bcm is None and equip_by_item_no is None
+            is_update_candidate = (
+                equip_by_bcm is not None
+                and equip_by_item_no is not None
+                and equip_by_bcm.id == equip_by_item_no.id
+            )
+
+            if blocking_findings:
+                action = "SKIP"
+                target_equipment_id = None
+                expected_equipment_version = None
+                normalized_values: dict[str, Any] = {}
+                row_warnings = [_finding_payload(f) for f in findings]
+                skips += 1
+                if any(f.error_code == CODE_IDENTITY_CONFLICT for f in blocking_findings):
+                    blocking_conflicts += 1
+            elif is_create_candidate:
+                action = "CREATE"
+                target_equipment_id = None
+                expected_equipment_version = None
+                normalized_values = _create_normalized_values(record)
+                row_warnings = [_finding_payload(f) for f in warning_findings]
+                creates += 1
+            elif is_update_candidate:
+                assert equip_by_bcm is not None
+                action = "UPDATE"
+                target_equipment_id = equip_by_bcm.id
+                expected_equipment_version = equip_by_bcm.version
+                normalized_values = _update_normalized_values(record)
+                row_warnings = [_finding_payload(f) for f in warning_findings]
+                updates += 1
+            else:
+                # Defensive fallback mirroring validate_business_rules'
+                # own cases 3/4/5 identity-conflict branch -- unreachable
+                # today, since that branch always emits a blocking
+                # CODE_IDENTITY_CONFLICT finding already handled above.
+                # Handled explicitly rather than assumed, so a future
+                # validate_business_rules change can never silently leave
+                # this row unclassified.
+                action = "SKIP"
+                target_equipment_id = None
+                expected_equipment_version = None
+                normalized_values = {}
+                row_warnings = [_finding_payload(f) for f in findings]
+                skips += 1
+                blocking_conflicts += 1
+
+            if warning_findings:
+                warning_rows += 1
+
+            rows.append(
+                {
+                    "source_row_number": record.row_number,
+                    "action": action,
+                    "target_equipment_id": target_equipment_id,
+                    "normalized_values": normalized_values,
+                    "matched_identity_fields": matched_identity_fields,
+                    "expected_equipment_version": expected_equipment_version,
+                    "warnings": row_warnings,
+                }
+            )
+
+        summary = {
+            "total_rows": len(rows),
+            "creates": creates,
+            "updates": updates,
+            "skips": skips,
+            "warnings": warning_rows,
+            "blocking_conflicts": blocking_conflicts,
+        }
+        return DryRunPlan(summary={"rows": rows, **summary})
+
+    async def persist_dry_run_plan(self, db: AsyncSession, plan: DryRunPlan) -> None:
+        """Roadmap PR20D (design §14.2, §14.3). Called by the framework on
+        the normal writable session, in the same transaction as the
+        session's `dry_run_completed` fenced-completion write (§14.3's
+        `db.commit()` covers both). Marks any prior `active` plan for this
+        session `superseded`, then inserts the new, `active`,
+        **unconfirmed** (`confirmed_at IS NULL`, §14.4a) plan and its rows
+        -- one immutable artifact per successful dry-run attempt, never
+        updated in place (§10)."""
+        ctx = get_adapter_invocation_context()
+        summary = plan.summary
+        rows_data = summary.get("rows", [])
+
+        await import_dry_run_plan_crud.supersede_active_plan(db, import_session_id=ctx.import_session_id)
+        plan_row = await import_dry_run_plan_crud.insert_plan(
+            db,
+            import_session_id=ctx.import_session_id,
+            import_source_id=ctx.import_source_id,
+            source_checksum=ctx.source_checksum,
+            accepted_validation_job_id=ctx.accepted_validation_job_id,
+            dry_run_job_id=ctx.dry_run_job_id,
+            ruleset_version=ctx.ruleset_version,
+            summary_total_rows=summary["total_rows"],
+            summary_creates=summary["creates"],
+            summary_updates=summary["updates"],
+            summary_skips=summary["skips"],
+            summary_warnings=summary["warnings"],
+            summary_blocking_conflicts=summary["blocking_conflicts"],
+        )
+
+        row_models = [
+            EquipmentMasterDryRunPlanRow(
+                dry_run_plan_id=plan_row.id,
+                source_row_number=row["source_row_number"],
+                action=row["action"],
+                target_equipment_id=row["target_equipment_id"],
+                normalized_values=row["normalized_values"],
+                matched_identity_fields=row["matched_identity_fields"],
+                expected_equipment_version=row["expected_equipment_version"],
+                warnings=row["warnings"],
+            )
+            for row in rows_data
+        ]
+        await import_dry_run_plan_crud.bulk_insert_plan_rows(db, row_models)
+
+        # §26: audit references identity/summary only -- never raw source
+        # values (no row content, no equipment_name/brand/serial_number).
+        await record_audit_event(
+            db,
+            actor_user_id=ctx.actor_user_id,
+            action=AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CREATED,
+            entity_type=AUDIT_ENTITY_IMPORT_SESSION,
+            entity_id=ctx.import_session_id,
+            after={
+                "dry_run_plan_id": str(plan_row.id),
+                "import_source_id": str(ctx.import_source_id),
+                "source_checksum": ctx.source_checksum,
+                "summary_total_rows": plan_row.summary_total_rows,
+                "summary_creates": plan_row.summary_creates,
+                "summary_updates": plan_row.summary_updates,
+                "summary_skips": plan_row.summary_skips,
+                "summary_warnings": plan_row.summary_warnings,
+                "summary_blocking_conflicts": plan_row.summary_blocking_conflicts,
+            },
+        )
+
+    # execute: intentionally not overridden (§24's PR20E scope boundary;
+    # base ImportAdapter's NotImplementedError default applies).
+    # precheck_execute / on_execution_failure / on_execution_recovery
+    # (design §14.4a/§14.4b/§14.4c) do not exist on the base ImportAdapter
+    # class yet -- adding them is itself PR20E's own scope, not PR20D's.
 
 
 register_adapter(EquipmentMasterAdapter())

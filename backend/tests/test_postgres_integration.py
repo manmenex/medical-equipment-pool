@@ -10776,3 +10776,460 @@ async def test_genuine_update_still_advances_version_on_postgres_after_h1_fix(pg
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["version"] == 2, "a genuine supported-field update must still advance version by exactly 1"
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.2,
+# §24): migration 0018_dry_run_plans.py convergence tests, mirroring
+# 0016_import_source_blobs.py's own discipline (see that section's
+# extensive rationale above -- not restated here), applied to both new
+# PR20D tables at once.
+# ---------------------------------------------------------------------------
+
+
+def _load_migration_0018_module():
+    spec = importlib.util.spec_from_file_location(
+        "_migration_0018_dry_run_plans", _BACKEND_DIR / "alembic" / "versions" / "0018_dry_run_plans.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_migration_0018 = _load_migration_0018_module()
+
+
+async def _dry_run_plan_tables_catalog_snapshot(engine) -> dict:
+    result: dict = {}
+    async with engine.connect() as conn:
+        for table in _migration_0018._GOVERNED_TABLES:
+            columns = (
+                await conn.execute(
+                    text(
+                        "SELECT column_name, data_type, udt_name, character_maximum_length, is_nullable, column_default "
+                        "FROM information_schema.columns WHERE table_schema = 'public' AND table_name = :t "
+                        "ORDER BY column_name"
+                    ),
+                    {"t": table},
+                )
+            ).all()
+            constraints = (
+                await conn.execute(
+                    text(
+                        "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint "
+                        "WHERE conrelid = (:t)::regclass ORDER BY conname"
+                    ),
+                    {"t": table},
+                )
+            ).all()
+            indexes = (
+                await conn.execute(
+                    text(
+                        "SELECT indexname, indexdef FROM pg_indexes "
+                        "WHERE schemaname = 'public' AND tablename = :t ORDER BY indexname"
+                    ),
+                    {"t": table},
+                )
+            ).all()
+            result[table] = {
+                "columns": {
+                    c.column_name: {
+                        "data_type": c.data_type,
+                        "udt_name": c.udt_name,
+                        "character_maximum_length": c.character_maximum_length,
+                        "is_nullable": c.is_nullable,
+                        "column_default": c.column_default,
+                    }
+                    for c in columns
+                },
+                "constraints": {name: definition for name, definition in constraints},
+                "indexes": {name: definition for name, definition in indexes},
+            }
+    return result
+
+
+async def test_migration_0018_fresh_database_matches_expected():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                for table in _migration_0018._GOVERNED_TABLES:
+                    exists = (await conn.execute(text(f"SELECT to_regclass('{table}') IS NOT NULL"))).scalar_one()
+                    assert exists, f"{table} must exist on the fresh-install path"
+            snapshot = await _dry_run_plan_tables_catalog_snapshot(engine)
+            for table in _migration_0018._GOVERNED_TABLES:
+                for name, expected_def in _migration_0018._EXPECTED_CONSTRAINTS[table].items():
+                    assert snapshot[table]["constraints"].get(name) == expected_def, f"{table}.{name} mismatch"
+                for name in _migration_0018._EXPECTED_INDEXES[table]:
+                    assert name in snapshot[table]["indexes"], f"{table} missing index {name}"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0018_fresh_and_historical_schemas_converge():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+    try:
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            fresh_snapshot = await _dry_run_plan_tables_catalog_snapshot(engine)
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+    try:
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0017_equipment_version")
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            historical_snapshot = await _dry_run_plan_tables_catalog_snapshot(engine)
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+    assert fresh_snapshot == historical_snapshot, (
+        f"fresh-install and historical-upgrade paths must converge on an identical catalog:\n"
+        f"fresh={fresh_snapshot}\nhistorical={historical_snapshot}"
+    )
+
+
+async def test_migration_0018_downgrade_re_upgrade_round_trip():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0017_equipment_version")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                for table in _migration_0018._GOVERNED_TABLES:
+                    exists = (await conn.execute(text(f"SELECT to_regclass('{table}') IS NOT NULL"))).scalar_one()
+                    assert not exists, f"{table} must be fully dropped by downgrade"
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                for table in _migration_0018._GOVERNED_TABLES:
+                    exists = (await conn.execute(text(f"SELECT to_regclass('{table}') IS NOT NULL"))).scalar_one()
+                    assert exists, f"{table} must exist again after re-upgrade"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0018_mismatched_fk_definition_fails_closed():
+    """A deliberately mismatched pre-existing `equipment_master_dry_run_plan_rows`
+    table (wrong `ON DELETE` action on its plan FK) must fail the migration
+    closed -- `CREATE TABLE IF NOT EXISTS` is a no-op against it, so only
+    `_verify_schema_convergence()` can catch this."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0017_equipment_version")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text(_migration_0018._CREATE_PLANS))
+                await conn.execute(text(_migration_0018._CREATE_PLANS_ONE_ACTIVE_INDEX))
+                await conn.execute(
+                    text(
+                        "CREATE TABLE equipment_master_dry_run_plan_rows ("
+                        "id UUID NOT NULL PRIMARY KEY, "
+                        "dry_run_plan_id UUID NOT NULL REFERENCES equipment_master_dry_run_plans(id) ON DELETE CASCADE, "
+                        "source_row_number INTEGER NOT NULL, "
+                        "action VARCHAR(10) NOT NULL, "
+                        "target_equipment_id UUID REFERENCES equipment(id) ON DELETE RESTRICT, "
+                        "normalized_values JSONB, matched_identity_fields JSONB, "
+                        "expected_equipment_version INTEGER, warnings JSONB, "
+                        "CONSTRAINT ck_equipment_master_dry_run_plan_rows_action CHECK (action IN ('CREATE','UPDATE','SKIP')), "
+                        "CONSTRAINT ck_equipment_master_dry_run_plan_rows_update_target "
+                        "CHECK ((action = 'UPDATE') = (target_equipment_id IS NOT NULL)), "
+                        "CONSTRAINT ck_equipment_master_dry_run_plan_rows_update_expected_version "
+                        "CHECK ((action = 'UPDATE') = (expected_equipment_version IS NOT NULL)), "
+                        "CONSTRAINT uq_equipment_master_dry_run_plan_rows_plan_row_number "
+                        "UNIQUE (dry_run_plan_id, source_row_number))"
+                    )
+                )
+        finally:
+            await engine.dispose()
+
+        result = _run_alembic_allow_failure("upgrade", "head")
+        assert result.returncode != 0, "a mismatched FK ON DELETE action must fail the migration, not be silently accepted"
+        combined = result.stdout + result.stderr
+        assert "diverges" in combined, f"failure must explain the mismatch:\n{combined}"
+    finally:
+        await _drop_scratch_database()
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR20D: DB-level constraint rejection proofs, real PostgreSQL
+# (§29 -- "not considered complete without a test proving each constraint
+# actually rejects the row it names"). Uses the same pg_engine/pg_session/
+# pg_seeded_users fixtures (Base.metadata.create_all(), not the scratch-DB
+# Alembic path) already established above for ORM-level constraint proofs.
+# ---------------------------------------------------------------------------
+
+from app.models.import_session import EquipmentMasterDryRunPlan as _PgDryRunPlan
+from app.models.import_session import EquipmentMasterDryRunPlanRow as _PgDryRunPlanRow
+
+_PG_20D_DATASET_TYPE = "pr20d_pg_test_dataset"
+
+
+async def _pg20d_seed_session_source_jobs(pg_session, actor_id):
+    session = _PgImportSession(dataset_type=_PG_20D_DATASET_TYPE, status="dry_run_completed", version=2, created_by_user_id=actor_id)
+    pg_session.add(session)
+    await pg_session.flush()
+    source = _PgImportSource(
+        import_session_id=session.id,
+        status="frozen",
+        checksum="d" * 64,
+        byte_size=4,
+        options_fingerprint="x",
+        source_fingerprint="y",
+        frozen_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+    )
+    pg_session.add(source)
+    validate_job = _PgImportJob(import_session_id=session.id, job_type="validate", status="succeeded", attempt_number=1, lease_generation=1)
+    pg_session.add(validate_job)
+    dry_run_job = _PgImportJob(import_session_id=session.id, job_type="dry_run", status="succeeded", attempt_number=1, lease_generation=1)
+    pg_session.add(dry_run_job)
+    await pg_session.flush()
+    return session, source, validate_job, dry_run_job
+
+
+def _pg20d_plan_kwargs(session, source, validate_job, dry_run_job, **overrides) -> dict:
+    kwargs = dict(
+        import_session_id=session.id,
+        import_source_id=source.id,
+        source_checksum=source.checksum,
+        accepted_validation_job_id=validate_job.id,
+        dry_run_job_id=dry_run_job.id,
+        ruleset_version="1",
+        status="active",
+        summary_total_rows=0,
+        summary_creates=0,
+        summary_updates=0,
+        summary_skips=0,
+        summary_warnings=0,
+        summary_blocking_conflicts=0,
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+async def test_pr20d_plan_status_check_rejects_invalid_value(pg_session, pg_seeded_users):
+    actor = pg_seeded_users["administrator"]
+    session, source, validate_job, dry_run_job = await _pg20d_seed_session_source_jobs(pg_session, actor.id)
+    pg_session.add(_PgDryRunPlan(**_pg20d_plan_kwargs(session, source, validate_job, dry_run_job, status="bogus")))
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.flush()
+    await pg_session.rollback()
+
+
+async def test_pr20d_plan_confirmed_pair_check_rejects_mismatch(pg_session, pg_seeded_users):
+    actor = pg_seeded_users["administrator"]
+    session, source, validate_job, dry_run_job = await _pg20d_seed_session_source_jobs(pg_session, actor.id)
+    pg_session.add(
+        _PgDryRunPlan(
+            **_pg20d_plan_kwargs(session, source, validate_job, dry_run_job, confirmed_at=datetime.now(timezone.utc), confirmed_by_user_id=None)
+        )
+    )
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.flush()
+    await pg_session.rollback()
+
+
+async def test_pr20d_plan_summary_negative_check_rejects_row(pg_session, pg_seeded_users):
+    actor = pg_seeded_users["administrator"]
+    session, source, validate_job, dry_run_job = await _pg20d_seed_session_source_jobs(pg_session, actor.id)
+    pg_session.add(_PgDryRunPlan(**_pg20d_plan_kwargs(session, source, validate_job, dry_run_job, summary_updates=-1)))
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.flush()
+    await pg_session.rollback()
+
+
+async def test_pr20d_plan_composite_fk_rejects_cross_session_job(pg_session, pg_seeded_users):
+    """§14.2's composite FK proves both job ids actually belong to *this*
+    session -- a real `import_jobs` row that belongs to a different
+    session must still be rejected."""
+    actor = pg_seeded_users["administrator"]
+    session_a, source_a, validate_job_a, dry_run_job_a = await _pg20d_seed_session_source_jobs(pg_session, actor.id)
+    session_b, _source_b, _validate_job_b, dry_run_job_b = await _pg20d_seed_session_source_jobs(pg_session, actor.id)
+    pg_session.add(
+        _PgDryRunPlan(
+            **_pg20d_plan_kwargs(session_a, source_a, validate_job_a, dry_run_job_a, dry_run_job_id=dry_run_job_b.id)
+        )
+    )
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.flush()
+    await pg_session.rollback()
+
+
+async def test_pr20d_plan_one_active_per_session_partial_unique_index_rejects_second(pg_session, pg_seeded_users):
+    actor = pg_seeded_users["administrator"]
+    session, source, validate_job, dry_run_job = await _pg20d_seed_session_source_jobs(pg_session, actor.id)
+    pg_session.add(_PgDryRunPlan(**_pg20d_plan_kwargs(session, source, validate_job, dry_run_job)))
+    await pg_session.commit()
+
+    dry_run_job_2 = _PgImportJob(import_session_id=session.id, job_type="dry_run", status="succeeded", attempt_number=2, lease_generation=1)
+    pg_session.add(dry_run_job_2)
+    await pg_session.flush()
+    pg_session.add(_PgDryRunPlan(**_pg20d_plan_kwargs(session, source, validate_job, dry_run_job_2)))
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.flush()
+    await pg_session.rollback()
+
+
+async def test_pr20d_plan_unique_session_dry_run_job_rejects_duplicate(pg_session, pg_seeded_users):
+    actor = pg_seeded_users["administrator"]
+    session, source, validate_job, dry_run_job = await _pg20d_seed_session_source_jobs(pg_session, actor.id)
+    pg_session.add(_PgDryRunPlan(**_pg20d_plan_kwargs(session, source, validate_job, dry_run_job)))
+    await pg_session.commit()
+
+    pg_session.add(_PgDryRunPlan(**_pg20d_plan_kwargs(session, source, validate_job, dry_run_job, status="superseded")))
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.flush()
+    await pg_session.rollback()
+
+
+async def _pg20d_seed_plan(pg_session, actor_id):
+    session, source, validate_job, dry_run_job = await _pg20d_seed_session_source_jobs(pg_session, actor_id)
+    plan = _PgDryRunPlan(**_pg20d_plan_kwargs(session, source, validate_job, dry_run_job))
+    pg_session.add(plan)
+    await pg_session.flush()
+    return plan
+
+
+async def test_pr20d_plan_row_action_check_rejects_invalid_value(pg_session, pg_seeded_users):
+    actor = pg_seeded_users["administrator"]
+    plan = await _pg20d_seed_plan(pg_session, actor.id)
+    pg_session.add(
+        _PgDryRunPlanRow(dry_run_plan_id=plan.id, source_row_number=1, action="DELETE", normalized_values={}, matched_identity_fields={}, warnings=[])
+    )
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.flush()
+    await pg_session.rollback()
+
+
+async def test_pr20d_plan_row_update_target_check_rejects_update_without_target(pg_session, pg_seeded_users):
+    actor = pg_seeded_users["administrator"]
+    plan = await _pg20d_seed_plan(pg_session, actor.id)
+    pg_session.add(
+        _PgDryRunPlanRow(
+            dry_run_plan_id=plan.id,
+            source_row_number=1,
+            action="UPDATE",
+            target_equipment_id=None,
+            expected_equipment_version=1,
+            normalized_values={},
+            matched_identity_fields={},
+            warnings=[],
+        )
+    )
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.flush()
+    await pg_session.rollback()
+
+
+async def test_pr20d_plan_row_update_target_check_rejects_skip_with_target(pg_session, pg_seeded_users):
+    actor = pg_seeded_users["administrator"]
+    plan = await _pg20d_seed_plan(pg_session, actor.id)
+    equipment = Equipment(asset_number="PR20D-ROW-0001", equipment_name="Target Equipment", status=EquipmentStatus.AVAILABLE_AT_POOL)
+    pg_session.add(equipment)
+    await pg_session.flush()
+    pg_session.add(
+        _PgDryRunPlanRow(
+            dry_run_plan_id=plan.id,
+            source_row_number=1,
+            action="SKIP",
+            target_equipment_id=equipment.id,
+            normalized_values={},
+            matched_identity_fields={},
+            warnings=[],
+        )
+    )
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.flush()
+    await pg_session.rollback()
+
+
+async def test_pr20d_plan_row_update_expected_version_check_rejects_mismatch(pg_session, pg_seeded_users):
+    actor = pg_seeded_users["administrator"]
+    plan = await _pg20d_seed_plan(pg_session, actor.id)
+    equipment = Equipment(asset_number="PR20D-ROW-0002", equipment_name="Target Equipment 2", status=EquipmentStatus.AVAILABLE_AT_POOL)
+    pg_session.add(equipment)
+    await pg_session.flush()
+    pg_session.add(
+        _PgDryRunPlanRow(
+            dry_run_plan_id=plan.id,
+            source_row_number=1,
+            action="UPDATE",
+            target_equipment_id=equipment.id,
+            expected_equipment_version=None,
+            normalized_values={},
+            matched_identity_fields={},
+            warnings=[],
+        )
+    )
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.flush()
+    await pg_session.rollback()
+
+
+async def test_pr20d_plan_row_unique_row_number_per_plan_rejects_duplicate(pg_session, pg_seeded_users):
+    actor = pg_seeded_users["administrator"]
+    plan = await _pg20d_seed_plan(pg_session, actor.id)
+    pg_session.add(
+        _PgDryRunPlanRow(dry_run_plan_id=plan.id, source_row_number=1, action="SKIP", normalized_values={}, matched_identity_fields={}, warnings=[])
+    )
+    await pg_session.commit()
+
+    pg_session.add(
+        _PgDryRunPlanRow(dry_run_plan_id=plan.id, source_row_number=1, action="SKIP", normalized_values={}, matched_identity_fields={}, warnings=[])
+    )
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.flush()
+    await pg_session.rollback()
+
+
+async def test_pr20d_plan_row_fk_restrict_prevents_deleting_referenced_plan(pg_session, pg_seeded_users):
+    actor = pg_seeded_users["administrator"]
+    plan = await _pg20d_seed_plan(pg_session, actor.id)
+    pg_session.add(
+        _PgDryRunPlanRow(dry_run_plan_id=plan.id, source_row_number=1, action="SKIP", normalized_values={}, matched_identity_fields={}, warnings=[])
+    )
+    await pg_session.commit()
+
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.execute(_pg_delete(_PgDryRunPlan).where(_PgDryRunPlan.id == plan.id))
+    await pg_session.rollback()

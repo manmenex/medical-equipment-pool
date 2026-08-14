@@ -212,31 +212,45 @@ async def run_dry_run(
             verified_source_content=verified_source_content,
             dry_run_job_id=job_id,
             accepted_validation_job_id=accepted_validation_job_id,
+            actor_user_id=actor_id,
         )
 
-        async with AsyncSessionLocal() as ro_db:
-            # §16: PostgreSQL's `SET TRANSACTION READ ONLY` is the primary,
-            # safety-critical enforcement mechanism, and design §16
-            # explicitly requires "PostgreSQL tests (PR19A3)" to prove it
-            # -- this is intentionally not replicated on SQLite. SQLite's
-            # nearest equivalent, `PRAGMA query_only`, is a *connection*-
-            # level setting, not transaction-level; this test suite's
-            # SQLite engines use `StaticPool` (one shared connection for
-            # every session in the engine, tests/conftest.py), so setting
-            # it here would leak into unrelated sessions/tests with no
-            # reliable point to safely reset it. SQLite is dev/test-only
-            # in this repository (never production, see
-            # `app.crud.transaction`'s identical documented posture), so
-            # this omission carries no production risk.
-            if ro_db.get_bind().dialect.name == "postgresql":
-                await ro_db.execute(text("SET TRANSACTION READ ONLY"))
-            # §16: computed entirely within the read-only transaction,
-            # then discarded -- only pass/fail feeds the session's own
-            # completion columns below (§16's "Result persistence").
-            # Roadmap PR20A (design §6.4): the contextvar is set/reset
-            # around exactly this call, nothing else.
-            with adapter_invocation_context(invocation_context):
-                await adapter.plan_dry_run(ro_db)
+        # Roadmap PR20D (design §14.3): the contextvar now also wraps the
+        # new `persist_dry_run_plan` write below -- not only `plan_dry_run`
+        # itself -- since `persist_dry_run_plan` resolves the same
+        # session/source identity via this same mechanism (§6.4), never a
+        # second identity-threading path.
+        with adapter_invocation_context(invocation_context):
+            async with AsyncSessionLocal() as ro_db:
+                # §16: PostgreSQL's `SET TRANSACTION READ ONLY` is the
+                # primary, safety-critical enforcement mechanism, and
+                # design §16 explicitly requires "PostgreSQL tests
+                # (PR19A3)" to prove it -- this is intentionally not
+                # replicated on SQLite. SQLite's nearest equivalent,
+                # `PRAGMA query_only`, is a *connection*-level setting,
+                # not transaction-level; this test suite's SQLite engines
+                # use `StaticPool` (one shared connection for every
+                # session in the engine, tests/conftest.py), so setting
+                # it here would leak into unrelated sessions/tests with
+                # no reliable point to safely reset it. SQLite is
+                # dev/test-only in this repository (never production, see
+                # `app.crud.transaction`'s identical documented posture),
+                # so this omission carries no production risk.
+                if ro_db.get_bind().dialect.name == "postgresql":
+                    await ro_db.execute(text("SET TRANSACTION READ ONLY"))
+                # §16: computed entirely within the read-only transaction,
+                # then discarded by `plan_dry_run` itself -- the returned
+                # `DryRunPlan` is what `persist_dry_run_plan` (§14.3)
+                # writes, on the normal writable `db` below, never on
+                # `ro_db`.
+                dry_run_plan = await adapter.plan_dry_run(ro_db)
+
+            # Roadmap PR20D (design §14.3): persisted on the normal
+            # writable session, in the same transaction as
+            # `fenced_phase_success`'s own completion write below --
+            # `db.commit()` covers both. Default no-op for any adapter
+            # that doesn't override this hook (§6.3).
+            await adapter.persist_dry_run_plan(db, dry_run_plan)
 
         final_session = await import_job_crud.fenced_phase_success(
             db,
@@ -401,6 +415,7 @@ async def run_execute(
             verified_source_content=None,
             dry_run_job_id=None,
             accepted_validation_job_id=None,
+            actor_user_id=actor_id,
         )
 
         # §17/§9.4.1 step 3: unlike dry-run, execute must actually write --

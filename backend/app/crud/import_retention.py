@@ -4,7 +4,15 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.import_session import ImportJob, ImportRowError, ImportSession, ImportSource, ImportSourceBlob
+from app.models.import_session import (
+    EquipmentMasterDryRunPlan,
+    EquipmentMasterDryRunPlanRow,
+    ImportJob,
+    ImportRowError,
+    ImportSession,
+    ImportSource,
+    ImportSourceBlob,
+)
 
 # Roadmap PR19A3 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §18).
 # A genuinely new concurrency mechanism -- SELECT ... FOR UPDATE SKIP
@@ -113,6 +121,24 @@ async def redact_session(db: AsyncSession, *, session_id: uuid.UUID, worker_id: 
         update(ImportRowError)
         .where(ImportRowError.import_job_id.in_(job_ids_subq))
         .values(message="[redacted]", field=None)
+    )
+
+    # Roadmap PR20D (design §14.9, fix round 3 H9): one more same-transaction
+    # UPDATE, extending this same claimed/fenced redaction transaction --
+    # not a third retention mechanism. Every plan belonging to this session
+    # (any status: active/superseded/consumed/failed) has its content
+    # columns redacted; the structural columns (id, dry_run_plan_id,
+    # source_row_number, action, target_equipment_id,
+    # expected_equipment_version) are left untouched, matching §6.6's
+    # precedent for import_sources.checksum/byte_size. A no-op for any
+    # session whose dataset_type never persisted a plan (every dataset_type
+    # other than equipment_master, and any equipment_master session that
+    # never reached a successful dry-run).
+    plan_ids_subq = select(EquipmentMasterDryRunPlan.id).where(EquipmentMasterDryRunPlan.import_session_id == session_id)
+    await db.execute(
+        update(EquipmentMasterDryRunPlanRow)
+        .where(EquipmentMasterDryRunPlanRow.dry_run_plan_id.in_(plan_ids_subq))
+        .values(normalized_values=None, matched_identity_fields=None, warnings=None)
     )
 
     now = datetime.now(timezone.utc)

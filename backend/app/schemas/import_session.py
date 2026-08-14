@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -139,3 +140,60 @@ class ImportRetentionCleanupResult(BaseModel):
     purged_count: int
     skipped_count: int
     has_more: bool
+
+
+# Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.2,
+# §14.6, §30). Explicit, typed DTOs -- never raw ORM passthrough -- for the
+# persisted, immutable DryRunPlan artifact. `action` is a plain string here
+# (matching this codebase's existing enum-as-CHECK-constrained-VARCHAR
+# convention, e.g. `ImportSession.status`), not a Python `Enum` type.
+class DryRunPlanRowOut(BaseModel):
+    id: UUIDStr
+    source_row_number: int
+    action: str
+    target_equipment_id: UUIDStr | None
+    normalized_values: dict[str, Any] | None
+    matched_identity_fields: dict[str, Any] | None
+    expected_equipment_version: int | None
+    warnings: list[dict[str, Any]] | None
+
+    model_config = {"from_attributes": True}
+
+
+class DryRunPlanSummaryOut(BaseModel):
+    total_rows: int
+    creates: int
+    updates: int
+    skips: int
+    warnings: int
+    blocking_conflicts: int
+
+
+class DryRunPlanOut(BaseModel):
+    id: UUIDStr
+    import_session_id: UUIDStr
+    import_source_id: UUIDStr
+    status: str
+    # §14.6: a UX convenience only (`true` iff `status == "active"`) --
+    # the *authoritative* staleness enforcement is always PR20E's own
+    # resolution query, never this flag.
+    is_current: bool
+    created_at: datetime
+    confirmed_at: datetime | None
+    confirmed_by_user_id: UUIDStr | None
+    summary: DryRunPlanSummaryOut
+    rows: list[DryRunPlanRowOut]
+    rows_next_cursor: str | None
+    rows_total: int
+
+
+# §14.4a: the confirm endpoint's own minimal response -- plan identity and
+# confirmation state only, not the full row-paginated GET shape above.
+class DryRunPlanConfirmOut(BaseModel):
+    id: UUIDStr
+    import_session_id: UUIDStr
+    status: str
+    confirmed_at: datetime | None
+    confirmed_by_user_id: UUIDStr | None
+
+    model_config = {"from_attributes": True}
