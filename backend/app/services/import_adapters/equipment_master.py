@@ -38,6 +38,7 @@ from typing import Any
 
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CREATED, AUDIT_ENTITY_IMPORT_SESSION, record_audit_event
@@ -45,7 +46,7 @@ from app.core.exceptions import InvalidInputError
 from app.crud import equipment as equipment_crud
 from app.crud import import_dry_run_plan as import_dry_run_plan_crud
 from app.models.equipment import Equipment, EquipmentStatus
-from app.models.import_session import EquipmentMasterDryRunPlanRow
+from app.models.import_session import EquipmentMasterDryRunPlanRow, ImportSession
 from app.services.identifiers import normalize_bcm_code, normalize_item_no
 from app.services.import_adapter import (
     MAX_IMPORT_ROWS,
@@ -1118,10 +1119,25 @@ class EquipmentMasterAdapter(ImportAdapter):
         session `superseded`, then inserts the new, `active`,
         **unconfirmed** (`confirmed_at IS NULL`, §14.4a) plan and its rows
         -- one immutable artifact per successful dry-run attempt, never
-        updated in place (§10)."""
+        updated in place (§10).
+
+        Fix round 2 (PR94-H1): locks the owning `ImportSession` row
+        (`SELECT ... FOR UPDATE`) *before* touching the plan tables below.
+        `app.crud.import_dry_run_plan.confirm_plan` also locks
+        Session-then-Plan, in that same order, before its own conditional
+        `UPDATE` -- without this lock here, this function would instead
+        lock Plan-then-Session (`supersede_active_plan`'s `UPDATE` below,
+        then `fenced_phase_success`'s own `UPDATE` on the session later in
+        this same TX1), the exact opposite order, which is a genuine
+        circular-wait deadlock risk against a concurrent confirmation."""
         ctx = get_adapter_invocation_context()
         summary = plan.summary
         rows_data = summary.get("rows", [])
+
+        session_lock_stmt = select(ImportSession.id).where(ImportSession.id == ctx.import_session_id)
+        if db.get_bind().dialect.name == "postgresql":
+            session_lock_stmt = session_lock_stmt.with_for_update()
+        await db.execute(session_lock_stmt)
 
         await import_dry_run_plan_crud.supersede_active_plan(db, import_session_id=ctx.import_session_id)
         plan_row = await import_dry_run_plan_crud.insert_plan(

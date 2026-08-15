@@ -189,11 +189,17 @@ class DryRunPlanOut(BaseModel):
 
 # §14.4a: the confirm endpoint's own minimal response -- plan identity and
 # confirmation state only, not the full row-paginated GET shape above.
+# Fix round 2 (PR94-M1): includes the plan's own persisted `summary` --
+# the response describes the artifact that was confirmed, so this is
+# always built from the already-loaded, already-persisted plan row
+# returned by `confirm_plan`, never recomputed from Equipment, validation
+# findings, or a fresh adapter invocation.
 class DryRunPlanConfirmOut(BaseModel):
     id: UUIDStr
     import_session_id: UUIDStr
     status: str
     confirmed_at: datetime | None
     confirmed_by_user_id: UUIDStr | None
+    summary: DryRunPlanSummaryOut
 
     model_config = {"from_attributes": True}

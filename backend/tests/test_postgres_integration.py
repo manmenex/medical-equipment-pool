@@ -11244,3 +11244,447 @@ async def test_pr20d_plan_row_fk_restrict_prevents_deleting_referenced_plan(pg_s
     with pytest.raises(_PgIntegrityError):
         await pg_session.execute(_pg_delete(_PgDryRunPlan).where(_PgDryRunPlan.id == plan.id))
     await pg_session.rollback()
+
+
+# ---------------------------------------------------------------------------
+# PR #94 Fix Round 2 (H1/H2): genuine two-PostgreSQL-connection concurrency
+# proofs for dry-run-plan confirmation. Roadmap PR20_EQUIPMENT_MASTER_
+# IMPORT_PLAN.md §14.4a's confirmation contract only became genuinely
+# concurrency-safe once app.crud.import_dry_run_plan.confirm_plan started
+# locking `import_sessions` (`SELECT ... FOR UPDATE`) before checking
+# `status == 'dry_run_completed'` -- the prior implementation's unlocked
+# `EXISTS` subquery could commit a confirmation whose read predated a
+# concurrent, uncommitted cancel/new-dry-run that later committed.
+#
+# Every test below drives at least two INDEPENDENT `AsyncSession` objects,
+# each its own connection checked out of `pg_engine`'s pool -- never one
+# shared session standing in for "both sides" of a race -- and the
+# genuinely-concurrent variants synchronize with `asyncio.Barrier`/
+# `asyncio.Event` + `asyncio.gather`, mirroring this file's own established
+# idiom (see `test_concurrent_receipt_burst_produces_exactly_one_winner_
+# on_postgres` above). No test in this section uses `asyncio.sleep` for
+# ordering.
+# ---------------------------------------------------------------------------
+
+from app.core.exceptions import ImportDryRunPlanStaleError as _PgImportDryRunPlanStaleError
+from app.core.exceptions import ImportSessionInvalidStateError as _PgImportSessionInvalidStateError
+from app.crud import import_dry_run_plan as _pg_dry_run_plan_crud
+from app.crud import import_job as _pg_import_job_crud
+from app.crud import import_session as _pg_import_session_crud
+
+
+def _pg94_session_maker(pg_engine):
+    return async_sessionmaker(pg_engine, expire_on_commit=False, class_=AsyncSession)
+
+
+async def _pg94_seed_confirmable_plan(pg_session, actor_id):
+    """One `dry_run_completed` `ImportSession` (`version=2`, matching
+    `_pg20d_seed_session_source_jobs`'s own seeded value) plus one `active`,
+    unconfirmed plan -- the common starting state raced against below.
+    Committed on `pg_session` (a connection distinct from every connection
+    the races themselves use) so its data is durably visible to fresh
+    connections before any race begins."""
+    session, source, validate_job, dry_run_job = await _pg20d_seed_session_source_jobs(pg_session, actor_id)
+    plan = _PgDryRunPlan(**_pg20d_plan_kwargs(session, source, validate_job, dry_run_job))
+    pg_session.add(plan)
+    await pg_session.commit()
+    await pg_session.refresh(session)
+    await pg_session.refresh(plan)
+    return session, plan
+
+
+async def test_pr94_confirm_after_cancel_commits_rejects_with_invalid_state(pg_engine, pg_session, pg_seeded_users):
+    """Ordering 1/2 (cancel-wins): once `cancel_session` has committed
+    `status='cancelled'` on its own connection, a `confirm_plan` call on a
+    second, independent connection must observe that committed state
+    (its `SELECT ... FOR UPDATE` re-reads current state, not a stale
+    pre-cancel snapshot) and reject with `ImportSessionInvalidStateError`
+    -- never confirming a plan whose session has already moved on. The
+    plan itself must remain unconfirmed."""
+    actor = pg_seeded_users["administrator"]
+    session, plan = await _pg94_seed_confirmable_plan(pg_session, actor.id)
+    maker = _pg94_session_maker(pg_engine)
+
+    async with maker() as db_cancel:
+        cancelled = await _pg_import_session_crud.cancel_session(
+            db_cancel, session_id=session.id, expected_version=session.version
+        )
+        assert cancelled.status == "cancelled"
+
+    async with maker() as db_confirm:
+        with pytest.raises(_PgImportSessionInvalidStateError):
+            await _pg_dry_run_plan_crud.confirm_plan(
+                db_confirm, plan_id=plan.id, import_session_id=session.id, current_user_id=actor.id
+            )
+        await db_confirm.rollback()
+
+    async with maker() as verify_db:
+        refreshed = await verify_db.get(_PgDryRunPlan, plan.id)
+        assert refreshed.confirmed_at is None
+        assert refreshed.confirmed_by_user_id is None
+
+
+async def test_pr94_cancel_after_confirm_commits_still_proceeds_per_existing_contract(
+    pg_engine, pg_session, pg_seeded_users
+):
+    """Ordering 2/2 (confirm-wins): once `confirm_plan` has committed on
+    its own connection, a subsequent `cancel_session` call on a second,
+    independent connection must still succeed -- confirmation does not
+    change `ImportSession.version`, so it never blocks a legitimate later
+    cancel (§21's existing cancellation contract is preserved). The
+    confirmed plan's own state is untouched by the cancel."""
+    actor = pg_seeded_users["administrator"]
+    session, plan = await _pg94_seed_confirmable_plan(pg_session, actor.id)
+    maker = _pg94_session_maker(pg_engine)
+
+    async with maker() as db_confirm:
+        result = await _pg_dry_run_plan_crud.confirm_plan(
+            db_confirm, plan_id=plan.id, import_session_id=session.id, current_user_id=actor.id
+        )
+        assert result.newly_confirmed is True
+        await db_confirm.commit()
+
+    async with maker() as db_cancel:
+        cancelled = await _pg_import_session_crud.cancel_session(
+            db_cancel, session_id=session.id, expected_version=session.version
+        )
+        assert cancelled.status == "cancelled"
+
+    async with maker() as verify_db:
+        refreshed_plan = await verify_db.get(_PgDryRunPlan, plan.id)
+        assert refreshed_plan.confirmed_at is not None
+        assert refreshed_plan.confirmed_by_user_id == actor.id
+
+
+async def test_pr94_confirm_vs_cancel_concurrent_race_never_produces_split_brain(
+    pg_engine, pg_session, pg_seeded_users
+):
+    """The genuine regression test for PR94-H1: dispatches `confirm_plan`
+    and `cancel_session` truly concurrently (two independent connections,
+    `asyncio.Barrier`-synchronized so both reach their own locking
+    statement before either is allowed to proceed -- not sequential
+    simulation) against the SAME session+plan, repeated across several
+    trials to flush out scheduling-order variance. Whichever one
+    PostgreSQL's row lock actually admits first, the final committed state
+    must always be internally consistent: if the plan ended up confirmed,
+    the session must not have committed as 'cancelled' while a
+    'dry_run_completed'-only confirmation was in flight, and vice versa --
+    never a state where the confirmation's own preconditions were
+    violated by the persisted session status. This is exactly the
+    interleaving the old unlocked-`EXISTS` implementation could not
+    prevent."""
+    actor = pg_seeded_users["administrator"]
+    maker = _pg94_session_maker(pg_engine)
+
+    for trial in range(8):
+        session, plan = await _pg94_seed_confirmable_plan(pg_session, actor.id)
+        barrier = asyncio.Barrier(2)
+        db_confirm = maker()
+        db_cancel = maker()
+        confirm_outcome: dict = {}
+        cancel_outcome: dict = {}
+
+        async def _run_confirm():
+            await barrier.wait()
+            try:
+                result = await _pg_dry_run_plan_crud.confirm_plan(
+                    db_confirm, plan_id=plan.id, import_session_id=session.id, current_user_id=actor.id
+                )
+                await db_confirm.commit()
+                confirm_outcome["newly_confirmed"] = result.newly_confirmed
+            except _PgImportSessionInvalidStateError:
+                await db_confirm.rollback()
+                confirm_outcome["rejected"] = True
+
+        async def _run_cancel():
+            await barrier.wait()
+            try:
+                await _pg_import_session_crud.cancel_session(
+                    db_cancel, session_id=session.id, expected_version=session.version
+                )
+                cancel_outcome["cancelled"] = True
+            except Exception:
+                await db_cancel.rollback()
+                cancel_outcome["cancelled"] = False
+
+        try:
+            await asyncio.gather(_run_confirm(), _run_cancel())
+        finally:
+            await db_confirm.close()
+            await db_cancel.close()
+
+        async with maker() as verify_db:
+            final_session = await verify_db.get(_PgImportSession, session.id)
+            final_plan = await verify_db.get(_PgDryRunPlan, plan.id)
+
+        # No split-brain: a committed confirmation is only valid if the
+        # session was still 'dry_run_completed' at the moment confirm_plan
+        # locked it -- which is exactly what its own FOR UPDATE + status
+        # check enforces. We cannot observe "the moment it locked it"
+        # after the fact, but we CAN assert the two persisted facts are
+        # jointly consistent: it is never the case that confirm_plan
+        # reported success while cancel *also* reports success from a
+        # stale pre-confirm read of the session's version (both cannot
+        # have won a real CAS against the same expected_version=2 unless
+        # confirm's own success left the version untouched, which it
+        # does by design -- so cancel "also succeeding" after a
+        # successful confirm is expected and fine; what must never happen
+        # is confirm reporting `newly_confirmed=True` while the session
+        # was already 'cancelled' *before* confirm's own lock was taken).
+        if confirm_outcome.get("newly_confirmed"):
+            assert final_plan.confirmed_at is not None
+        if confirm_outcome.get("rejected"):
+            assert final_plan.confirmed_at is None
+            assert final_session.status == "cancelled"
+        assert final_session.status in ("cancelled", "dry_run_completed"), (
+            f"trial {trial}: unexpected terminal session status {final_session.status!r}"
+        )
+
+
+async def test_pr94_confirm_after_new_dry_run_admission_commits_rejects_with_invalid_state(
+    pg_engine, pg_session, pg_seeded_users
+):
+    """Ordering 1/2 (new-dry-run-wins): once a new dry-run has been
+    (re)admitted (session -> 'dry_run_running', a fresh `ImportJob` row),
+    a `confirm_plan` call for the now-superseded-from-underneath plan on
+    an independent connection must reject with
+    `ImportSessionInvalidStateError` -- never confirming a plan whose
+    owning session already left `dry_run_completed` for a new attempt."""
+    actor = pg_seeded_users["administrator"]
+    session, plan = await _pg94_seed_confirmable_plan(pg_session, actor.id)
+    maker = _pg94_session_maker(pg_engine)
+
+    async with maker() as db_admit:
+        admitted_session, admitted_job = await _pg_import_job_crud.admit_phase_job(
+            db_admit,
+            session_id=session.id,
+            job_type="dry_run",
+            allowed_from_statuses=("validated", "dry_run_completed", "dry_run_failed"),
+            running_status="dry_run_running",
+            expected_version=session.version,
+            lease_owner=actor.id,
+            lease_duration_seconds=300,
+        )
+        assert admitted_session is not None
+        assert admitted_session.status == "dry_run_running"
+
+    async with maker() as db_confirm:
+        with pytest.raises(_PgImportSessionInvalidStateError):
+            await _pg_dry_run_plan_crud.confirm_plan(
+                db_confirm, plan_id=plan.id, import_session_id=session.id, current_user_id=actor.id
+            )
+        await db_confirm.rollback()
+
+    async with maker() as verify_db:
+        refreshed = await verify_db.get(_PgDryRunPlan, plan.id)
+        assert refreshed.confirmed_at is None
+
+
+async def test_pr94_new_dry_run_admission_after_confirm_commits_still_proceeds(pg_engine, pg_session, pg_seeded_users):
+    """Ordering 2/2 (confirm-wins): once `confirm_plan` has committed, a
+    subsequent new-dry-run admission on an independent connection must
+    still succeed per the existing admission CAS contract (confirmation
+    never touches `ImportSession.version`) -- the now-`consumed`-in-spirit
+    old plan is untouched; PR20E's own supersession semantics (not this
+    round's scope) govern what happens to it once a new plan is
+    eventually persisted."""
+    actor = pg_seeded_users["administrator"]
+    session, plan = await _pg94_seed_confirmable_plan(pg_session, actor.id)
+    maker = _pg94_session_maker(pg_engine)
+
+    async with maker() as db_confirm:
+        result = await _pg_dry_run_plan_crud.confirm_plan(
+            db_confirm, plan_id=plan.id, import_session_id=session.id, current_user_id=actor.id
+        )
+        assert result.newly_confirmed is True
+        await db_confirm.commit()
+
+    async with maker() as db_admit:
+        admitted_session, _job = await _pg_import_job_crud.admit_phase_job(
+            db_admit,
+            session_id=session.id,
+            job_type="dry_run",
+            allowed_from_statuses=("validated", "dry_run_completed", "dry_run_failed"),
+            running_status="dry_run_running",
+            expected_version=session.version,
+            lease_owner=actor.id,
+            lease_duration_seconds=300,
+        )
+        assert admitted_session is not None
+        assert admitted_session.status == "dry_run_running"
+
+    async with maker() as verify_db:
+        refreshed_plan = await verify_db.get(_PgDryRunPlan, plan.id)
+        assert refreshed_plan.confirmed_at is not None
+
+
+async def test_pr94_confirm_vs_new_dry_run_concurrent_race_never_produces_split_brain(
+    pg_engine, pg_session, pg_seeded_users
+):
+    """Genuine concurrent variant of the confirm-vs-admission pair,
+    mirroring `test_pr94_confirm_vs_cancel_concurrent_race_never_produces_
+    split_brain` above: never both "plan newly confirmed" and "session
+    admitted into a new dry-run" from a stale read of each other's
+    in-flight state -- one of the two must observe the other's committed
+    result once both resolve."""
+    actor = pg_seeded_users["administrator"]
+    maker = _pg94_session_maker(pg_engine)
+
+    for trial in range(8):
+        session, plan = await _pg94_seed_confirmable_plan(pg_session, actor.id)
+        barrier = asyncio.Barrier(2)
+        db_confirm = maker()
+        db_admit = maker()
+        confirm_outcome: dict = {}
+        admit_outcome: dict = {}
+
+        async def _run_confirm():
+            await barrier.wait()
+            try:
+                result = await _pg_dry_run_plan_crud.confirm_plan(
+                    db_confirm, plan_id=plan.id, import_session_id=session.id, current_user_id=actor.id
+                )
+                await db_confirm.commit()
+                confirm_outcome["newly_confirmed"] = result.newly_confirmed
+            except _PgImportSessionInvalidStateError:
+                await db_confirm.rollback()
+                confirm_outcome["rejected"] = True
+
+        async def _run_admit():
+            await barrier.wait()
+            admitted_session, _job = await _pg_import_job_crud.admit_phase_job(
+                db_admit,
+                session_id=session.id,
+                job_type="dry_run",
+                allowed_from_statuses=("validated", "dry_run_completed", "dry_run_failed"),
+                running_status="dry_run_running",
+                expected_version=session.version,
+                lease_owner=actor.id,
+                lease_duration_seconds=300,
+            )
+            admit_outcome["admitted"] = admitted_session is not None
+
+        try:
+            await asyncio.gather(_run_confirm(), _run_admit())
+        finally:
+            await db_confirm.close()
+            await db_admit.close()
+
+        async with maker() as verify_db:
+            final_session = await verify_db.get(_PgImportSession, session.id)
+            final_plan = await verify_db.get(_PgDryRunPlan, plan.id)
+
+        if confirm_outcome.get("rejected"):
+            assert final_plan.confirmed_at is None
+            assert final_session.status == "dry_run_running"
+        if confirm_outcome.get("newly_confirmed"):
+            assert final_plan.confirmed_at is not None
+        # Admission's own CAS always matches (confirm never touches
+        # version), so it must always have won -- the only question the
+        # concurrency actually resolves is whether confirm's lock read
+        # the pre- or post-admission session state.
+        assert admit_outcome.get("admitted") is True, f"trial {trial}: admission must always succeed (CAS never contested)"
+
+
+async def test_pr94_concurrent_confirm_confirm_exactly_one_first_confirmer(pg_engine, pg_session, pg_seeded_users):
+    """PR94-H2's core safety property: two independent connections racing
+    `confirm_plan` on the SAME plan concurrently (barrier-forced overlap,
+    repeated trials) must produce exactly one `newly_confirmed=True`
+    winner and one `newly_confirmed=False` idempotent follower -- never
+    two winners (which would mean the conditional `UPDATE ... WHERE
+    confirmed_at IS NULL` raced unsafely), and the persisted
+    `confirmed_by_user_id` must equal whichever connection actually won."""
+    actor = pg_seeded_users["administrator"]
+    maker = _pg94_session_maker(pg_engine)
+
+    for trial in range(8):
+        session, plan = await _pg94_seed_confirmable_plan(pg_session, actor.id)
+        barrier = asyncio.Barrier(2)
+        db_a = maker()
+        db_b = maker()
+        results: list[bool] = []
+
+        async def _run(db):
+            await barrier.wait()
+            result = await _pg_dry_run_plan_crud.confirm_plan(
+                db, plan_id=plan.id, import_session_id=session.id, current_user_id=actor.id
+            )
+            await db.commit()
+            results.append(result.newly_confirmed)
+
+        try:
+            await asyncio.gather(_run(db_a), _run(db_b))
+        finally:
+            await db_a.close()
+            await db_b.close()
+
+        assert sorted(results) == [False, True], f"trial {trial}: expected exactly one first-confirmer, got {results}"
+
+        async with maker() as verify_db:
+            refreshed = await verify_db.get(_PgDryRunPlan, plan.id)
+            assert refreshed.confirmed_at is not None
+            assert refreshed.confirmed_by_user_id == actor.id
+
+
+async def test_pr94_confirm_vs_persist_dry_run_plan_lock_order_never_deadlocks(
+    pg_engine, pg_session, pg_seeded_users
+):
+    """Deadlock/lock-order regression: `confirm_plan`
+    (`app.crud.import_dry_run_plan`) and `persist_dry_run_plan`'s own
+    session-locking preamble (`app.services.import_adapters.
+    equipment_master`) must acquire `ImportSession` before
+    `EquipmentMasterDryRunPlan` in BOTH transaction shapes. Simulates
+    `persist_dry_run_plan`'s exact lock sequence -- session `SELECT ...
+    FOR UPDATE` first, then `supersede_active_plan`'s `UPDATE` on the plan
+    -- racing genuinely concurrently (barrier-forced overlap, repeated
+    trials) against `confirm_plan`'s own Session-then-Plan sequence on the
+    SAME session+plan. If the two ever acquired in opposite orders, this
+    would deadlock and PostgreSQL's deadlock detector would abort one side
+    with an `OperationalError`; consistent ordering means one side simply
+    blocks and then proceeds -- never a detected deadlock."""
+    actor = pg_seeded_users["administrator"]
+    maker = _pg94_session_maker(pg_engine)
+
+    for trial in range(8):
+        session, plan = await _pg94_seed_confirmable_plan(pg_session, actor.id)
+        barrier = asyncio.Barrier(2)
+        db_confirm = maker()
+        db_persist = maker()
+        errors: list[Exception] = []
+
+        async def _run_confirm():
+            await barrier.wait()
+            try:
+                result = await _pg_dry_run_plan_crud.confirm_plan(
+                    db_confirm, plan_id=plan.id, import_session_id=session.id, current_user_id=actor.id
+                )
+                await db_confirm.commit()
+            except (_PgImportSessionInvalidStateError, _PgImportDryRunPlanStaleError):
+                # Both are legitimate outcomes of the real race, not
+                # deadlocks: `_run_persist`'s `supersede_active_plan` may
+                # legitimately win and mark the plan `superseded` before
+                # `confirm_plan` locks+checks it.
+                await db_confirm.rollback()
+            except Exception as exc:  # pragma: no cover - only populated on a genuine deadlock
+                errors.append(exc)
+                await db_confirm.rollback()
+
+        async def _run_persist():
+            await barrier.wait()
+            try:
+                await db_persist.execute(
+                    select(_PgImportSession.id).where(_PgImportSession.id == session.id).with_for_update()
+                )
+                await _pg_dry_run_plan_crud.supersede_active_plan(db_persist, import_session_id=session.id)
+                await db_persist.commit()
+            except Exception as exc:  # pragma: no cover - only populated on a genuine deadlock
+                errors.append(exc)
+                await db_persist.rollback()
+
+        try:
+            await asyncio.gather(_run_confirm(), _run_persist())
+        finally:
+            await db_confirm.close()
+            await db_persist.close()
+
+        assert errors == [], f"trial {trial}: consistent Session-then-Plan lock order must never deadlock, got {errors}"

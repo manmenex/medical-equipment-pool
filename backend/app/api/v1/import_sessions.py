@@ -9,7 +9,6 @@ from app.api.v1.deps import ADMINISTRATOR_ONLY_ROLES, require_roles
 from app.core.audit import AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CONFIRMED, AUDIT_ENTITY_IMPORT_SESSION, record_audit_event
 from app.core.exceptions import (
     ImportDryRunPlanNotFoundError,
-    ImportDryRunPlanStaleError,
     ImportSessionNotFoundError,
     ImportSourceRegistrationMethodNotAllowedError,
     InvalidInputError,
@@ -396,42 +395,62 @@ async def confirm_dry_run_plan(
 ):
     """Roadmap PR20D (design §14.4a). The explicit operator confirmation
     step -- PR20E's `execute()` will only ever apply a plan that reached
-    this state. A single, atomic, `COALESCE`-guarded conditional `UPDATE`
-    (`app.crud.import_dry_run_plan.confirm_plan`): idempotent for a
-    repeat confirm (first confirmation is authoritative), and requires the
-    owning session still be `dry_run_completed`. Zero rows matched is
-    reported as `404 IMPORT_DRY_RUN_PLAN_NOT_FOUND` (wrong/foreign plan
-    id) or `409 IMPORT_DRY_RUN_PLAN_STALE` (plan no longer `active`, or
-    session moved on) -- distinguished by an explicit ownership re-check,
-    never conflated."""
+    this state.
+
+    Fix round 2 (PR94-H1/H2/M1): `app.crud.import_dry_run_plan.confirm_plan`
+    now locks the `ImportSession` row then the plan row (in that order,
+    matching `persist_dry_run_plan`'s own lock order -- see that
+    function's docstring) before its conditional `UPDATE`, so this call
+    genuinely serializes against a concurrent `cancel_session` or new
+    dry-run admission instead of racing an unlocked read against their
+    writes. It raises directly rather than returning `None`:
+    `ImportSessionNotFoundError` (`404`, unknown session id),
+    `ImportSessionInvalidStateError` (`409 IMPORT_SESSION_INVALID_STATE`,
+    the session is no longer `dry_run_completed` -- a concurrent cancel or
+    new dry-run won the race; a *different* code from plan-staleness,
+    never conflated), `ImportDryRunPlanNotFoundError` (`404`, wrong/
+    foreign plan id), or `ImportDryRunPlanStaleError` (`409`, plan no
+    longer `active`). The `CONFIRMED` audit event is written only when
+    `result.newly_confirmed` -- a repeat confirm (same user retry, a
+    second user's idempotent re-confirm, or a network retry after a lost
+    response) is reported as the same success but never produces a second
+    audit row, and never re-attributes the persisted `confirmed_by_user_id`
+    away from the original first confirmer. The response's `summary` is
+    the plan's own persisted summary (`result.plan`), never recomputed."""
     session = await _get_or_404(db, session_id)
-    plan = await import_dry_run_plan_crud.confirm_plan(
+    result = await import_dry_run_plan_crud.confirm_plan(
         db, plan_id=plan_id, import_session_id=session.id, current_user_id=actor.id
     )
-    if plan is None:
-        existing = await import_dry_run_plan_crud.get_plan_by_id(db, plan_id=plan_id, import_session_id=session.id)
-        if existing is None:
-            raise ImportDryRunPlanNotFoundError(
-                f"Dry-run plan '{plan_id}' does not belong to import session '{session_id}'."
-            )
-        raise ImportDryRunPlanStaleError(
-            f"Dry-run plan '{plan_id}' is no longer confirmable (superseded, consumed, or failed, or the "
-            "owning session is no longer 'dry_run_completed')."
+    if result.newly_confirmed:
+        await record_audit_event(
+            db,
+            actor_user_id=actor.id,
+            action=AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CONFIRMED,
+            entity_type=AUDIT_ENTITY_IMPORT_SESSION,
+            entity_id=session.id,
+            after={
+                "dry_run_plan_id": str(result.plan.id),
+                "confirmed_at": result.plan.confirmed_at.isoformat() if result.plan.confirmed_at else None,
+            },
+            request=request,
         )
-    await record_audit_event(
-        db,
-        actor_user_id=actor.id,
-        action=AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CONFIRMED,
-        entity_type=AUDIT_ENTITY_IMPORT_SESSION,
-        entity_id=session.id,
-        after={
-            "dry_run_plan_id": str(plan.id),
-            "confirmed_at": plan.confirmed_at.isoformat() if plan.confirmed_at else None,
-        },
-        request=request,
-    )
     await db.commit()
-    return plan
+    plan = result.plan
+    return DryRunPlanConfirmOut(
+        id=plan.id,
+        import_session_id=plan.import_session_id,
+        status=plan.status,
+        confirmed_at=plan.confirmed_at,
+        confirmed_by_user_id=plan.confirmed_by_user_id,
+        summary=DryRunPlanSummaryOut(
+            total_rows=plan.summary_total_rows,
+            creates=plan.summary_creates,
+            updates=plan.summary_updates,
+            skips=plan.summary_skips,
+            warnings=plan.summary_warnings,
+            blocking_conflicts=plan.summary_blocking_conflicts,
+        ),
+    )
 
 
 @router.get("/{session_id}/errors", response_model=Page[ValidationFindingOut])

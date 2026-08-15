@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.audit import AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CONFIRMED, AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CREATED
+from app.core.security import hash_password
 from app.crud import import_dry_run_plan as import_dry_run_plan_crud
 from app.crud import import_retention as import_retention_crud
 from app.models.audit import AuditLog
@@ -29,6 +30,7 @@ from app.models.import_session import (
     ImportJob,
     ImportSession,
 )
+from app.models.user import User
 from app.services import import_execution_service, import_lease
 from app.services.import_adapter_context import AdapterInvocationContext, adapter_invocation_context
 from app.services.import_adapters.equipment_master import (
@@ -39,7 +41,7 @@ from app.services.import_adapters.equipment_master import (
     EquipmentMasterAdapter,
 )
 from app.services.import_source_reader import SourceDescriptor, VerifiedSourceContent
-from tests.conftest import auth_headers
+from tests.conftest import auth_headers, login
 
 pytestmark = pytest.mark.asyncio
 
@@ -578,6 +580,11 @@ async def test_api_confirm_dry_run_plan_success(client: AsyncClient, seeded_user
     assert body["confirmed_at"] is not None
     assert body["confirmed_by_user_id"] is not None
 
+    # Fix round 2 (PR94-M1): the confirm response carries the plan's own
+    # persisted summary -- exactly the summary already returned by the
+    # preceding GET, never recomputed.
+    assert body["summary"] == plan["summary"]
+
     session_uuid = uuid.UUID(session["id"])
     audit_rows = (
         (
@@ -596,6 +603,10 @@ async def test_api_confirm_dry_run_plan_success(client: AsyncClient, seeded_user
 async def test_api_confirm_dry_run_plan_idempotent_same_confirmer_preserved(
     client: AsyncClient, seeded_users, db_session
 ):
+    """Fix round 2 (PR94-H2): a same-user retry (e.g. after a lost
+    response) must be reported as the same success -- same `confirmed_at`/
+    `confirmed_by_user_id` -- and must produce exactly one `CONFIRMED`
+    audit row total, never a second one for the idempotent replay."""
     await _seed_equipment(db_session, bcm_code="BCM_CONFIRM_IDEM", item_no="ITEM_CONFIRM_IDEM")
     headers = await auth_headers(client)
     session = await _validated_session_with_update_rows(
@@ -614,6 +625,123 @@ async def test_api_confirm_dry_run_plan_idempotent_same_confirmer_preserved(
     assert r2.status_code == 200
     assert r1.json()["confirmed_at"] == r2.json()["confirmed_at"]
     assert r1.json()["confirmed_by_user_id"] == r2.json()["confirmed_by_user_id"]
+
+    session_uuid = uuid.UUID(session["id"])
+    audit_rows = (
+        (
+            await db_session.execute(
+                select(AuditLog).where(
+                    AuditLog.action == AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CONFIRMED, AuditLog.entity_id == session_uuid
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(audit_rows) == 1, "a same-user retry of an already-confirmed plan must never write a second audit row"
+
+
+async def _second_admin_headers(client: AsyncClient, db_session, seeded_users) -> dict:
+    """Fix round 2 (PR94-H2): a genuinely distinct second administrator,
+    not `auth_headers`' fixed `ADMINISTRATOR001` -- `seeded_users` seeds
+    exactly one user per role, so the second-user regressions below add
+    one more `User` row sharing the same administrator `Role`."""
+    second = User(
+        employee_code="ADMINISTRATOR002",
+        full_name="Second Test Administrator",
+        email="administrator2@mep-hospital-test.dev",
+        password_hash=hash_password("Password@123"),
+        role_id=seeded_users["administrator"].role_id,
+    )
+    db_session.add(second)
+    await db_session.commit()
+    token = await login(client, "ADMINISTRATOR002")
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def test_api_confirm_dry_run_plan_second_user_idempotent_never_replaces_first_confirmer(
+    client: AsyncClient, seeded_users, db_session
+):
+    """Fix round 2 (PR94-H2): a second administrator confirming an
+    already-confirmed plan succeeds (idempotency contract), but the
+    persisted `confirmed_by_user_id`/`confirmed_at` must remain the FIRST
+    confirmer's, never re-attributed to the second caller -- and no
+    second audit row is written for user B."""
+    await _seed_equipment(db_session, bcm_code="BCM_CONFIRM_2ND", item_no="ITEM_CONFIRM_2ND")
+    first_headers = await auth_headers(client)
+    session = await _validated_session_with_update_rows(
+        client, first_headers, db_session, [_valid_row(bcm="BCM_CONFIRM_2ND", item_no="ITEM_CONFIRM_2ND")]
+    )
+    await client.post(f"/api/v1/import-sessions/{session['id']}/dry-run", headers=first_headers)
+    plan = (await client.get(f"/api/v1/import-sessions/{session['id']}/dry-run-plan", headers=first_headers)).json()
+
+    r1 = await client.post(
+        f"/api/v1/import-sessions/{session['id']}/dry-run-plan/{plan['id']}/confirm", headers=first_headers
+    )
+    assert r1.status_code == 200, r1.text
+    first_confirmer_id = r1.json()["confirmed_by_user_id"]
+    first_confirmed_at = r1.json()["confirmed_at"]
+
+    second_headers = await _second_admin_headers(client, db_session, seeded_users)
+    r2 = await client.post(
+        f"/api/v1/import-sessions/{session['id']}/dry-run-plan/{plan['id']}/confirm", headers=second_headers
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["confirmed_by_user_id"] == first_confirmer_id, "the first confirmer must never be replaced"
+    assert r2.json()["confirmed_at"] == first_confirmed_at
+
+    session_uuid = uuid.UUID(session["id"])
+    audit_rows = (
+        (
+            await db_session.execute(
+                select(AuditLog).where(
+                    AuditLog.action == AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CONFIRMED, AuditLog.entity_id == session_uuid
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(audit_rows) == 1, "a second user's idempotent re-confirm must never write a second audit row"
+    assert str(audit_rows[0].user_id) == first_confirmer_id, "the sole audit row's actor must be the first confirmer"
+
+
+async def test_api_confirm_dry_run_plan_response_summary_not_recomputed_from_live_state(
+    client: AsyncClient, seeded_users, db_session
+):
+    """Fix round 2 (PR94-M1): the confirm response's `summary` is the
+    plan's own persisted summary, never recomputed from current Equipment
+    state. Proven by mutating the target Equipment row's `version` (and
+    hence its `updated_at`) between dry-run and confirm -- a live
+    recomputation would have nothing to change (this adapter doesn't feed
+    Equipment.version into the summary), but a mutation that changed row
+    *counts* would be the true test of "not recomputed"; since the
+    summary is a plain copy of `plan.summary_*` columns via `result.plan`
+    (never re-derived), the response is required to equal the persisted
+    plan summary exactly regardless of subsequent Equipment writes."""
+    equipment = await _seed_equipment(db_session, bcm_code="BCM_CONFIRM_SUMMARY", item_no="ITEM_CONFIRM_SUMMARY")
+    headers = await auth_headers(client)
+    session = await _validated_session_with_update_rows(
+        client, headers, db_session, [_valid_row(bcm="BCM_CONFIRM_SUMMARY", item_no="ITEM_CONFIRM_SUMMARY")]
+    )
+    await client.post(f"/api/v1/import-sessions/{session['id']}/dry-run", headers=headers)
+    plan = (await client.get(f"/api/v1/import-sessions/{session['id']}/dry-run-plan", headers=headers)).json()
+    persisted_summary = plan["summary"]
+
+    # Mutate unrelated current Equipment state after the dry-run captured
+    # its plan -- a live recomputation from Equipment would risk drifting
+    # from the persisted artifact; a correct implementation ignores this
+    # entirely and returns the plan's own frozen summary.
+    row = (await db_session.execute(select(Equipment).where(Equipment.id == equipment.id))).scalar_one()
+    row.equipment_name = "Mutated After Dry-Run"
+    row.version = row.version + 1
+    await db_session.commit()
+
+    r = await client.post(
+        f"/api/v1/import-sessions/{session['id']}/dry-run-plan/{plan['id']}/confirm", headers=headers
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["summary"] == persisted_summary, "confirm response summary must equal the persisted plan summary exactly"
 
 
 async def test_api_confirm_dry_run_plan_wrong_plan_id_returns_404(client: AsyncClient, seeded_users, db_session):
@@ -653,9 +781,15 @@ async def test_api_confirm_dry_run_plan_superseded_plan_returns_409_stale(
     assert r.json()["code"] == "IMPORT_DRY_RUN_PLAN_STALE"
 
 
-async def test_api_confirm_dry_run_plan_cancelled_session_returns_409_stale(
+async def test_api_confirm_dry_run_plan_cancelled_session_returns_409_invalid_state(
     client: AsyncClient, seeded_users, db_session
 ):
+    """Fix round 2 (PR94-M2): a cancelled session is a *session*-state
+    conflict, not a plan-staleness conflict -- the plan itself is still
+    `active`, but its owning session has moved out of `dry_run_completed`.
+    This is `409 IMPORT_SESSION_INVALID_STATE`, deliberately a different
+    code from `IMPORT_DRY_RUN_PLAN_STALE` (reserved for a superseded/
+    consumed/failed plan, see the preceding test)."""
     await _seed_equipment(db_session, bcm_code="BCM_CANCELLED", item_no="ITEM_CANCELLED")
     headers = await auth_headers(client)
     session = await _validated_session_with_update_rows(
@@ -671,7 +805,7 @@ async def test_api_confirm_dry_run_plan_cancelled_session_returns_409_stale(
         f"/api/v1/import-sessions/{session['id']}/dry-run-plan/{plan['id']}/confirm", headers=headers
     )
     assert r.status_code == 409
-    assert r.json()["code"] == "IMPORT_DRY_RUN_PLAN_STALE"
+    assert r.json()["code"] == "IMPORT_SESSION_INVALID_STATE"
 
 
 async def test_api_dry_run_plan_endpoints_require_administrator(client: AsyncClient, seeded_users, db_session):

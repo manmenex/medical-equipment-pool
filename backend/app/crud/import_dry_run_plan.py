@@ -1,17 +1,28 @@
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import (
+    ImportDryRunPlanNotFoundError,
+    ImportDryRunPlanStaleError,
+    ImportSessionInvalidStateError,
+    ImportSessionNotFoundError,
+)
 from app.models.import_session import EquipmentMasterDryRunPlan, EquipmentMasterDryRunPlanRow, ImportSession
 
 # Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.2,
 # §14.3, §14.4a). Every write here composes onto PR19A's existing
 # transaction boundaries (§14.3: `persist_dry_run_plan` writes inside the
-# same TX1 as `fenced_phase_success`'s own write; `confirm_plan` is its
-# own single-statement conditional UPDATE, mirroring §7's CAS discipline)
-# -- this module never calls `db.commit()`/`db.rollback()` itself.
+# same TX1 as `fenced_phase_success`'s own write). Fix round 2
+# (PR94-H1/H2): `confirm_plan` now locks `ImportSession` then
+# `EquipmentMasterDryRunPlan`, in that order, before its conditional
+# `UPDATE` -- the same Session-then-Plan order `persist_dry_run_plan`
+# (`app.services.import_adapters.equipment_master`) now also locks in, so
+# the two transaction shapes can never deadlock against each other -- this
+# module never calls `db.commit()`/`db.rollback()` itself.
 
 
 async def supersede_active_plan(db: AsyncSession, *, import_session_id: uuid.UUID) -> None:
@@ -144,35 +155,105 @@ async def list_plan_rows(
     return rows, total
 
 
+@dataclass
+class ConfirmationResult:
+    """Fix round 2 (PR94-H2): lets the caller (the API endpoint) tell a
+    genuine first confirmation apart from an idempotent replay of an
+    already-confirmed plan, so the `CONFIRMED` audit event -- and only
+    that event -- can be gated on `newly_confirmed`."""
+
+    plan: EquipmentMasterDryRunPlan
+    newly_confirmed: bool
+
+
 async def confirm_plan(
     db: AsyncSession, *, plan_id: uuid.UUID, import_session_id: uuid.UUID, current_user_id: uuid.UUID
-) -> EquipmentMasterDryRunPlan | None:
-    """§14.4a's exact conditional-UPDATE confirmation contract: a single,
-    atomic statement, `COALESCE`-guarded so a repeat confirm is idempotent
-    (first confirmation is authoritative -- a second call by a different
-    user succeeds but never overwrites the original confirmer), plus an
-    `EXISTS` predicate requiring the owning session still be
-    `dry_run_completed` (fix round 8, M4 -- catches a session that moved
-    to `cancelled`/`dry_run_failed` after the plan was created). Zero rows
-    matched (wrong plan id, wrong session, plan not `active`, or the
-    session is no longer `dry_run_completed`) is reported to the caller as
-    `None` -- the caller raises `409 IMPORT_DRY_RUN_PLAN_STALE`, never
-    silently succeeding."""
+) -> ConfirmationResult:
+    """Fix round 2 (PR94-H1/H2): replaces the prior unlocked-`EXISTS`
+    conditional `UPDATE` with an explicit, ordered lock sequence so
+    confirmation genuinely serializes against `cancel_session` and
+    dry-run (re)admission (`_claim_session_and_insert_job`) instead of
+    merely racing an unlocked read against their writes:
+
+    1. `SELECT ... FOR UPDATE` the `ImportSession` row first (never the
+       plan first -- `persist_dry_run_plan` locks in this same
+       Session-then-Plan order for exactly this reason, avoiding a
+       lock-order deadlock between the two transaction shapes).
+       Re-verify `status == 'dry_run_completed'` *after* the lock is
+       held, not before -- a plain pre-lock read could still observe a
+       value that a concurrent, uncommitted cancellation/admission is
+       about to change.
+    2. `SELECT ... FOR UPDATE` the `EquipmentMasterDryRunPlan` row,
+       ownership-checked, and verify it is still `active`.
+    3. If already confirmed, this call is an idempotent replay --
+       return the persisted row as-is (`newly_confirmed=False`), never
+       re-attributing `confirmed_by_user_id` to a later caller.
+    4. Otherwise perform the first-confirm transition via the exact
+       conditional `UPDATE ... WHERE confirmed_at IS NULL RETURNING ...`
+       shape -- redundant with the row lock already held (no other
+       transaction could have raced this write in between), but kept as
+       explicit, self-documenting defense-in-depth matching this
+       codebase's existing CAS discipline.
+
+    Raises `ImportSessionNotFoundError`/`ImportSessionInvalidStateError`/
+    `ImportDryRunPlanNotFoundError`/`ImportDryRunPlanStaleError` directly
+    (mirroring `app.crud.import_session.cancel_session`'s own
+    raise-from-the-CRUD-layer convention) instead of returning `None` for
+    the API layer to reinterpret -- a session that is merely no longer
+    `dry_run_completed` (a cancel or a new dry-run legitimately won the
+    race) is a *different*, already-cataloged conflict
+    (`IMPORT_SESSION_INVALID_STATE`) from a stale/missing plan, never
+    conflated into a single code."""
+    session_row = (
+        await db.execute(
+            select(ImportSession.id, ImportSession.status).where(ImportSession.id == import_session_id).with_for_update()
+            if db.get_bind().dialect.name == "postgresql"
+            else select(ImportSession.id, ImportSession.status).where(ImportSession.id == import_session_id)
+        )
+    ).first()
+    if session_row is None:
+        raise ImportSessionNotFoundError(f"Import session '{import_session_id}' not found.")
+    if session_row.status != "dry_run_completed":
+        raise ImportSessionInvalidStateError(
+            f"Import session '{import_session_id}' is not 'dry_run_completed' (currently "
+            f"'{session_row.status}') -- a concurrent cancellation or new dry-run has moved it on. "
+            "Re-fetch the session before retrying."
+        )
+
+    plan_stmt = select(EquipmentMasterDryRunPlan).where(
+        EquipmentMasterDryRunPlan.id == plan_id, EquipmentMasterDryRunPlan.import_session_id == import_session_id
+    )
+    if db.get_bind().dialect.name == "postgresql":
+        plan_stmt = plan_stmt.with_for_update()
+    plan_row = (await db.execute(plan_stmt)).scalar_one_or_none()
+    if plan_row is None:
+        raise ImportDryRunPlanNotFoundError(
+            f"Dry-run plan '{plan_id}' does not belong to import session '{import_session_id}'."
+        )
+    if plan_row.status != "active":
+        raise ImportDryRunPlanStaleError(
+            f"Dry-run plan '{plan_id}' is no longer confirmable (status='{plan_row.status}'). "
+            "Re-fetch the current plan (GET .../dry-run-plan) before confirming again."
+        )
+
+    if plan_row.confirmed_at is not None:
+        return ConfirmationResult(plan=plan_row, newly_confirmed=False)
+
     now = datetime.now(timezone.utc)
     result = await db.execute(
         update(EquipmentMasterDryRunPlan)
-        .where(
-            EquipmentMasterDryRunPlan.id == plan_id,
-            EquipmentMasterDryRunPlan.import_session_id == import_session_id,
-            EquipmentMasterDryRunPlan.status == "active",
-            select(ImportSession.id)
-            .where(ImportSession.id == EquipmentMasterDryRunPlan.import_session_id, ImportSession.status == "dry_run_completed")
-            .exists(),
-        )
-        .values(
-            confirmed_at=func.coalesce(EquipmentMasterDryRunPlan.confirmed_at, now),
-            confirmed_by_user_id=func.coalesce(EquipmentMasterDryRunPlan.confirmed_by_user_id, current_user_id),
-        )
+        .where(EquipmentMasterDryRunPlan.id == plan_id, EquipmentMasterDryRunPlan.confirmed_at.is_(None))
+        .values(confirmed_at=now, confirmed_by_user_id=current_user_id)
         .returning(EquipmentMasterDryRunPlan)
     )
-    return result.scalar_one_or_none()
+    confirmed_row = result.scalar_one_or_none()
+    if confirmed_row is None:
+        # Unreachable under the row lock held continuously since step 2
+        # above -- no other transaction could have confirmed this plan in
+        # between. Treated as an idempotent replay rather than raised, to
+        # never surface an internal-invariant failure as a user-facing
+        # error for what is, from the caller's perspective, a successful
+        # confirm.
+        refreshed = await db.get(EquipmentMasterDryRunPlan, plan_id)
+        return ConfirmationResult(plan=refreshed, newly_confirmed=False)
+    return ConfirmationResult(plan=confirmed_row, newly_confirmed=True)
