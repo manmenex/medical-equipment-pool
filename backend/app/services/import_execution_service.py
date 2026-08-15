@@ -245,26 +245,42 @@ async def run_dry_run(
                 # `ro_db`.
                 dry_run_plan = await adapter.plan_dry_run(ro_db)
 
+            # Fix round 3 (PR94 TX1 atomicity/lock-order): fenced_phase_
+            # success -- which locks Job first, then Session
+            # (_fence_job_terminal then _fence_session_terminal) -- now
+            # runs BEFORE persist_dry_run_plan, not after. Recovery
+            # (claim_stale_job then transition_session_for_recovery) locks
+            # in this same Job-then-Session order; persist_dry_run_plan
+            # locks Session (reusing the lock already held here, never
+            # re-acquiring it out of order) then Plan. Calling
+            # persist_dry_run_plan first, as before, would have acquired
+            # Session before Job within this same transaction -- the
+            # opposite of recovery's order, and a genuine deadlock risk.
+            # This also means a worker whose fence is already lost here
+            # (a concurrent recovery won first) never reaches
+            # persist_dry_run_plan at all -- it cannot persist a plan on
+            # the strength of in-memory `plan_dry_run` work alone.
+            final_session = await import_job_crud.fenced_phase_success(
+                db,
+                job_id=job_id,
+                lease_owner=lease_owner,
+                lease_generation=lease_generation,
+                session_id=session_id,
+                expected_version=admitted_session_version,
+                running_status="dry_run_running",
+                new_session_status="dry_run_completed",
+                extra_session_values=lambda now: {"dry_run_completed_at": now},
+            )
+            if final_session is None:
+                raise _FenceLostDuringSuccessError()
+
             # Roadmap PR20D (design §14.3): persisted on the normal
             # writable session, in the same transaction as
-            # `fenced_phase_success`'s own completion write below --
-            # `db.commit()` covers both. Default no-op for any adapter
-            # that doesn't override this hook (§6.3).
+            # `fenced_phase_success`'s own completion write above --
+            # `db.commit()` below covers both. Default no-op for any
+            # adapter that doesn't override this hook (§6.3).
             await adapter.persist_dry_run_plan(db, dry_run_plan)
 
-        final_session = await import_job_crud.fenced_phase_success(
-            db,
-            job_id=job_id,
-            lease_owner=lease_owner,
-            lease_generation=lease_generation,
-            session_id=session_id,
-            expected_version=admitted_session_version,
-            running_status="dry_run_running",
-            new_session_status="dry_run_completed",
-            extra_session_values=lambda now: {"dry_run_completed_at": now},
-        )
-        if final_session is None:
-            raise _FenceLostDuringSuccessError()
         await db.commit()
     except Exception as exc:  # noqa: BLE001 -- §9.4.2 treats every exception identically
         domain_exc = exc

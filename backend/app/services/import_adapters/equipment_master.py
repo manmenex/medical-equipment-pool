@@ -1126,10 +1126,25 @@ class EquipmentMasterAdapter(ImportAdapter):
         `app.crud.import_dry_run_plan.confirm_plan` also locks
         Session-then-Plan, in that same order, before its own conditional
         `UPDATE` -- without this lock here, this function would instead
-        lock Plan-then-Session (`supersede_active_plan`'s `UPDATE` below,
-        then `fenced_phase_success`'s own `UPDATE` on the session later in
-        this same TX1), the exact opposite order, which is a genuine
-        circular-wait deadlock risk against a concurrent confirmation."""
+        lock Plan-then-Session, the exact opposite order, a genuine
+        circular-wait deadlock risk against a concurrent confirmation.
+
+        Fix round 3 (PR94, TX1 atomicity/lock-order): the caller
+        (`import_execution_service.run_dry_run`) now calls
+        `import_job_crud.fenced_phase_success` -- which locks the Job row
+        then the Session row -- *before* this function, in the same TX1,
+        so by the time this function's own `SELECT ... FOR UPDATE` above
+        runs, the Session row is normally already locked by this same
+        transaction (a cheap, non-blocking re-affirmation, never a new
+        wait). This keeps the *acquisition* order Job -> Session -> Plan
+        throughout TX1 -- matching `claim_stale_job`/
+        `transition_session_for_recovery`'s own Job-then-Session order for
+        stale-job recovery -- so dry-run completion publication and a
+        concurrent recovery attempt can never deadlock against each
+        other. This function still takes the lock explicitly itself
+        (rather than assuming the caller already did) so it remains
+        correct even if ever reached via a path that hasn't already
+        locked the session."""
         ctx = get_adapter_invocation_context()
         summary = plan.summary
         rows_data = summary.get("rows", [])

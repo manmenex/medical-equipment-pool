@@ -11688,3 +11688,369 @@ async def test_pr94_confirm_vs_persist_dry_run_plan_lock_order_never_deadlocks(
             await db_persist.close()
 
         assert errors == [], f"trial {trial}: consistent Session-then-Plan lock order must never deadlock, got {errors}"
+
+
+# ---------------------------------------------------------------------------
+# PR #94 Fix Round 3: TX1 atomicity for dry-run completion + DryRunPlan
+# persistence. Roadmap PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.3's "same
+# TX1" invariant only holds if `fenced_phase_success` (Job -> Session) and
+# `persist_dry_run_plan` (Session -> Plan) also acquire locks in a
+# consistent order relative to stale-job recovery (`claim_stale_job` ->
+# `transition_session_for_recovery`, itself Job-then-Session) -- otherwise
+# dry-run completion publication and a concurrent recovery attempt can
+# deadlock, or a stale worker could persist a plan after already losing its
+# fence. These tests drive the same CRUD functions
+# `app.services.import_execution_service.run_dry_run` calls, in the same
+# order, directly against real PostgreSQL connections -- the property under
+# test is transaction orchestration/lock order, not adapter parsing (already
+# covered by test_pr20d_dry_run_plan.py).
+# ---------------------------------------------------------------------------
+
+from app.crud import import_dry_run_plan as _pg94r3_plan_crud
+
+
+async def _pg94r3_seed_running_dry_run(pg_session, actor_id, *, lease_expired: bool):
+    """A session mid-dry-run: `dry_run_running`, with a `running` dry_run
+    `ImportJob`. `lease_expired` controls eligibility for
+    `claim_stale_job` (a purely time-based check) -- `fenced_phase_
+    success`'s own fencing check never looks at wall-clock time, only
+    lease_owner/lease_generation/status, so an expired-but-not-yet-
+    reclaimed lease still models a worker that is merely slow (GC pause,
+    network delay), not one that has already lost its identity."""
+    lease_owner = uuid.uuid4()
+    now = datetime.now(timezone.utc)
+    session = _PgImportSession(
+        dataset_type=_PG_20D_DATASET_TYPE, status="dry_run_running", version=2, created_by_user_id=actor_id
+    )
+    pg_session.add(session)
+    await pg_session.flush()
+    source = _PgImportSource(
+        import_session_id=session.id,
+        status="frozen",
+        checksum="e" * 64,
+        byte_size=4,
+        options_fingerprint="x",
+        source_fingerprint="y",
+        frozen_at=now,
+        created_at=now,
+    )
+    pg_session.add(source)
+    validate_job = _PgImportJob(
+        import_session_id=session.id, job_type="validate", status="succeeded", attempt_number=1, lease_generation=1
+    )
+    pg_session.add(validate_job)
+    dry_run_job = _PgImportJob(
+        import_session_id=session.id,
+        job_type="dry_run",
+        status="running",
+        attempt_number=1,
+        lease_owner=lease_owner,
+        lease_generation=1,
+        lease_expires_at=(now - timedelta(hours=1)) if lease_expired else (now + timedelta(hours=1)),
+        heartbeat_at=now,
+        started_at=now,
+    )
+    pg_session.add(dry_run_job)
+    await pg_session.flush()
+    await pg_session.commit()
+    await pg_session.refresh(session)
+    await pg_session.refresh(dry_run_job)
+    return session, source, validate_job, dry_run_job, lease_owner
+
+
+async def test_pr94r3_plan_persistence_failure_rolls_back_job_and_session_completion(
+    pg_engine, pg_session, pg_seeded_users
+):
+    """Fix round 3, §4/§9: a failure injected during DryRunPlan
+    persistence -- AFTER `fenced_phase_success` has prepared the job/
+    session completion updates, still uncommitted in the same TX1 -- must
+    roll back everything: job completion, session completion, and any
+    partial plan/rows. No committed state may ever show job/session
+    'dry-run completed' without a matching, fully-persisted plan."""
+    actor = pg_seeded_users["administrator"]
+    session, source, validate_job, dry_run_job, lease_owner = await _pg94r3_seed_running_dry_run(
+        pg_session, actor.id, lease_expired=False
+    )
+    maker = _pg94_session_maker(pg_engine)
+
+    async with maker() as db:
+        final_session = await _pg_import_job_crud.fenced_phase_success(
+            db,
+            job_id=dry_run_job.id,
+            lease_owner=lease_owner,
+            lease_generation=1,
+            session_id=session.id,
+            expected_version=session.version,
+            running_status="dry_run_running",
+            new_session_status="dry_run_completed",
+            extra_session_values=lambda now: {"dry_run_completed_at": now},
+        )
+        assert final_session is not None
+        assert final_session.status == "dry_run_completed"
+
+        plan = await _pg94r3_plan_crud.insert_plan(
+            db,
+            import_session_id=session.id,
+            import_source_id=source.id,
+            source_checksum=source.checksum,
+            accepted_validation_job_id=validate_job.id,
+            dry_run_job_id=dry_run_job.id,
+            ruleset_version="1",
+            summary_total_rows=1,
+            summary_creates=0,
+            summary_updates=1,
+            summary_skips=0,
+            summary_warnings=0,
+            summary_blocking_conflicts=0,
+        )
+        # Genuine DB-level failure, not a mocked exception: an
+        # UPDATE-action row with no target_equipment_id violates
+        # ck_equipment_master_dry_run_plan_rows_update_target (migration
+        # 0018).
+        with pytest.raises(_PgIntegrityError):
+            await _pg94r3_plan_crud.bulk_insert_plan_rows(
+                db,
+                [
+                    _PgDryRunPlanRow(
+                        dry_run_plan_id=plan.id,
+                        source_row_number=1,
+                        action="UPDATE",
+                        target_equipment_id=None,
+                        expected_equipment_version=None,
+                        normalized_values={},
+                        matched_identity_fields={},
+                        warnings=[],
+                    )
+                ],
+            )
+        await db.rollback()
+
+    async with maker() as verify_db:
+        refreshed_job = await verify_db.get(_PgImportJob, dry_run_job.id)
+        refreshed_session = await verify_db.get(_PgImportSession, session.id)
+        remaining_plans = (
+            (await verify_db.execute(select(_PgDryRunPlan).where(_PgDryRunPlan.import_session_id == session.id)))
+            .scalars()
+            .all()
+        )
+
+        assert refreshed_job.status == "running", "job completion must not survive a rolled-back plan persistence"
+        assert refreshed_session.status == "dry_run_running", (
+            "session completion must not survive a rolled-back plan persistence"
+        )
+        assert remaining_plans == [], "no partial DryRunPlan may survive a rolled-back plan persistence"
+
+
+async def test_pr94r3_completion_commits_before_recovery_finds_nothing_to_claim(
+    pg_engine, pg_session, pg_seeded_users
+):
+    """Ordering 1/2 (completion-wins): once the completion worker's TX1
+    (fenced job+session completion, then plan persistence) has committed,
+    a subsequent stale-job recovery attempt on an independent connection
+    must find nothing to claim -- the job is no longer `running`."""
+    actor = pg_seeded_users["administrator"]
+    session, source, validate_job, dry_run_job, lease_owner = await _pg94r3_seed_running_dry_run(
+        pg_session, actor.id, lease_expired=True
+    )
+    maker = _pg94_session_maker(pg_engine)
+
+    async with maker() as db_complete:
+        final_session = await _pg_import_job_crud.fenced_phase_success(
+            db_complete,
+            job_id=dry_run_job.id,
+            lease_owner=lease_owner,
+            lease_generation=1,
+            session_id=session.id,
+            expected_version=session.version,
+            running_status="dry_run_running",
+            new_session_status="dry_run_completed",
+            extra_session_values=lambda now: {"dry_run_completed_at": now},
+        )
+        assert final_session is not None
+        await _pg94r3_plan_crud.insert_plan(
+            db_complete,
+            import_session_id=session.id,
+            import_source_id=source.id,
+            source_checksum=source.checksum,
+            accepted_validation_job_id=validate_job.id,
+            dry_run_job_id=dry_run_job.id,
+            ruleset_version="1",
+            summary_total_rows=0,
+            summary_creates=0,
+            summary_updates=0,
+            summary_skips=0,
+            summary_warnings=0,
+            summary_blocking_conflicts=0,
+        )
+        await db_complete.commit()
+
+    async with maker() as db_recover:
+        claimed = await _pg_import_job_crud.claim_stale_job(db_recover, session_id=session.id)
+        assert claimed is None, "recovery must find no stale-running job once completion already committed"
+        await db_recover.rollback()
+
+    async with maker() as verify_db:
+        refreshed_job = await verify_db.get(_PgImportJob, dry_run_job.id)
+        refreshed_session = await verify_db.get(_PgImportSession, session.id)
+        assert refreshed_job.status == "succeeded"
+        assert refreshed_session.status == "dry_run_completed"
+
+
+async def test_pr94r3_recovery_commits_before_completion_fence_is_lost(pg_engine, pg_session, pg_seeded_users):
+    """Ordering 2/2 (recovery-wins): once stale-job recovery has
+    committed, the original completion worker's `fenced_phase_success`
+    call must be fenced out (returns `None`) -- it must never publish
+    success or persist a plan on the strength of in-memory
+    `plan_dry_run` work alone."""
+    actor = pg_seeded_users["administrator"]
+    session, source, validate_job, dry_run_job, lease_owner = await _pg94r3_seed_running_dry_run(
+        pg_session, actor.id, lease_expired=True
+    )
+    maker = _pg94_session_maker(pg_engine)
+
+    async with maker() as db_recover:
+        claimed = await _pg_import_job_crud.claim_stale_job(db_recover, session_id=session.id)
+        assert claimed is not None
+        recovered_session = await _pg_import_job_crud.transition_session_for_recovery(
+            db_recover, session_id=session.id, running_status="dry_run_running", failure_status="dry_run_failed"
+        )
+        assert recovered_session is not None
+        await db_recover.commit()
+
+    async with maker() as db_complete:
+        final_session = await _pg_import_job_crud.fenced_phase_success(
+            db_complete,
+            job_id=dry_run_job.id,
+            lease_owner=lease_owner,
+            lease_generation=1,
+            session_id=session.id,
+            expected_version=session.version,
+            running_status="dry_run_running",
+            new_session_status="dry_run_completed",
+            extra_session_values=lambda now: {"dry_run_completed_at": now},
+        )
+        assert final_session is None, "the completion worker must be fenced out once recovery already claimed the job"
+        await db_complete.rollback()
+
+    async with maker() as verify_db:
+        refreshed_job = await verify_db.get(_PgImportJob, dry_run_job.id)
+        refreshed_session = await verify_db.get(_PgImportSession, session.id)
+        remaining_plans = (
+            (await verify_db.execute(select(_PgDryRunPlan).where(_PgDryRunPlan.import_session_id == session.id)))
+            .scalars()
+            .all()
+        )
+        assert refreshed_job.status == "abandoned"
+        assert refreshed_session.status == "dry_run_failed"
+        assert remaining_plans == [], "a fenced-out completion worker must never have persisted a plan"
+
+
+async def test_pr94r3_completion_vs_recovery_concurrent_race_never_produces_split_brain(
+    pg_engine, pg_session, pg_seeded_users
+):
+    """The genuine two-connection regression: dispatches completion
+    (`fenced_phase_success` + `persist_dry_run_plan`'s CRUD equivalent)
+    and stale-job recovery truly concurrently (`asyncio.Barrier`-forced
+    overlap, repeated trials) against the SAME job/session. Whichever
+    wins, the final committed state must be fully self-consistent: either
+    completion won (job succeeded, session dry_run_completed, exactly one
+    persisted plan, and recovery found nothing to claim) or recovery won
+    (job abandoned, session dry_run_failed, no plan ever persisted, and
+    completion was fenced out) -- never a mix of the two, and never both
+    claiming success."""
+    actor = pg_seeded_users["administrator"]
+    maker = _pg94_session_maker(pg_engine)
+
+    for trial in range(8):
+        session, source, validate_job, dry_run_job, lease_owner = await _pg94r3_seed_running_dry_run(
+            pg_session, actor.id, lease_expired=True
+        )
+        barrier = asyncio.Barrier(2)
+        db_complete = maker()
+        db_recover = maker()
+        complete_outcome: dict = {}
+        recover_outcome: dict = {}
+
+        async def _run_complete():
+            await barrier.wait()
+            final_session = await _pg_import_job_crud.fenced_phase_success(
+                db_complete,
+                job_id=dry_run_job.id,
+                lease_owner=lease_owner,
+                lease_generation=1,
+                session_id=session.id,
+                expected_version=session.version,
+                running_status="dry_run_running",
+                new_session_status="dry_run_completed",
+                extra_session_values=lambda now: {"dry_run_completed_at": now},
+            )
+            if final_session is None:
+                await db_complete.rollback()
+                complete_outcome["fenced_out"] = True
+                return
+            await _pg94r3_plan_crud.insert_plan(
+                db_complete,
+                import_session_id=session.id,
+                import_source_id=source.id,
+                source_checksum=source.checksum,
+                accepted_validation_job_id=validate_job.id,
+                dry_run_job_id=dry_run_job.id,
+                ruleset_version="1",
+                summary_total_rows=0,
+                summary_creates=0,
+                summary_updates=0,
+                summary_skips=0,
+                summary_warnings=0,
+                summary_blocking_conflicts=0,
+            )
+            await db_complete.commit()
+            complete_outcome["succeeded"] = True
+
+        async def _run_recover():
+            await barrier.wait()
+            claimed = await _pg_import_job_crud.claim_stale_job(db_recover, session_id=session.id)
+            if claimed is None:
+                await db_recover.rollback()
+                recover_outcome["nothing_to_recover"] = True
+                return
+            recovered = await _pg_import_job_crud.transition_session_for_recovery(
+                db_recover, session_id=session.id, running_status="dry_run_running", failure_status="dry_run_failed"
+            )
+            if recovered is None:
+                await db_recover.rollback()
+                recover_outcome["nothing_to_recover"] = True
+                return
+            await db_recover.commit()
+            recover_outcome["recovered"] = True
+
+        try:
+            await asyncio.gather(_run_complete(), _run_recover())
+        finally:
+            await db_complete.close()
+            await db_recover.close()
+
+        async with maker() as verify_db:
+            final_job = await verify_db.get(_PgImportJob, dry_run_job.id)
+            final_session_row = await verify_db.get(_PgImportSession, session.id)
+            plans = (
+                (await verify_db.execute(select(_PgDryRunPlan).where(_PgDryRunPlan.import_session_id == session.id)))
+                .scalars()
+                .all()
+            )
+
+        if complete_outcome.get("succeeded"):
+            assert recover_outcome.get("nothing_to_recover") is True, (
+                f"trial {trial}: completion and recovery both claimed success"
+            )
+            assert final_job.status == "succeeded"
+            assert final_session_row.status == "dry_run_completed"
+            assert len(plans) == 1
+        elif recover_outcome.get("recovered"):
+            assert complete_outcome.get("fenced_out") is True, (
+                f"trial {trial}: recovery won but completion was not fenced out"
+            )
+            assert final_job.status == "abandoned"
+            assert final_session_row.status == "dry_run_failed"
+            assert plans == [], f"trial {trial}: a fenced-out completion must never leave a persisted plan"
+        else:
+            pytest.fail(f"trial {trial}: neither completion nor recovery won: complete={complete_outcome} recover={recover_outcome}")
