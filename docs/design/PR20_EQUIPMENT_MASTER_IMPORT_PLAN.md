@@ -11,13 +11,19 @@ and PR20F (real frontend integration, GitHub PR #96) are all merged into
 `claude/medical-equipment-pool-0c7fz0`, current baseline
 `2743af849702ef551927b9c362421df08c80b5d9`. See
 `docs/DECISION_LOG.md` ("Roadmap PR20 complete: PR20A–PR20F merged") and
-`docs/ROADMAP.md`'s PR20 note for the full slice-by-slice record. This
-implementation-status line is the only part of this document updated by
-that governance sync — the rest of this document (including the original
-"Design only. Not implemented." framing below, each Owner Decision's
-resolution record, and every fix-round entry) is preserved unedited as
-the authoritative historical design/decision record; it must not be
-read as describing the current implementation state.
+`docs/ROADMAP.md`'s PR20 note for the full slice-by-slice record. **This
+governance sync updated this status/current-state annotation and the §24
+slice/readiness table below (marking every slice merged, with its own
+GitHub PR/squash SHA) to reflect the merged state — it did not redesign
+or reinterpret any normative technical contract.** The rest of this
+document — including the original "Design only. Not implemented."
+framing immediately below, every Owner Decision's resolution record (§9
+OD-1–OD-4), the full technical design (§1–§23, §25), and every historical
+fix-round entry (including PR20E's own post-implementation correction
+round, "Fix round 11") — is preserved unedited as the authoritative
+historical design/decision record and must not be read as describing the
+current implementation state on its own; only this Status section and §24
+speak to current state.
 
 **Original status (as authored, now historical for current-state
 purposes — see above):** Design only. Not implemented. This document defines the

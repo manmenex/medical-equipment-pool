@@ -113,9 +113,12 @@ persisted finding despite TX1 rollback semantics); final reviewed head
 The real squash-merge SHA, `04f5bf5c76b51744981d1cc8072c074e604224e9`, is
 distinct from that final reviewed feature-branch head, per this
 repository's standard squash-merge SHA-retrieval practice — the reviewed
-head is never treated as the merged baseline. `04f5bf5c...` is now the
-current authoritative base-branch tip, superseding `7f13a1e...` for
-current-state purposes. PR19B's frontend types/mock fixtures were
+head is never treated as the merged baseline. `04f5bf5c...` was, as of
+this entry, the current authoritative base-branch tip, superseding
+`7f13a1e...` for current-state purposes at that time. **Superseded by the
+entry above:** `04f5bf5c...` is itself now historical/intermediate — the
+current authoritative baseline is `2743af849702ef551927b9c362421df08c80b5d9`
+(PR20F), per "Roadmap PR20 complete: PR20A–PR20F merged" above. PR19B's frontend types/mock fixtures were
 reconciled against PR19A's merged public contracts (nullable
 `imported_rows`, the `failure_reason` field); its terminal-outcome
 presentation (`LegacyImportResultSummary`) now renders truthfully per

@@ -1803,10 +1803,14 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   as a whole is now fully complete.** The Exception Record governing the
   Roadmap PR19 split ("Roadmap PR19 approved split" above, Part B) is
   **CLOSED** — all seven required closure steps are satisfied and recorded
-  there. `04f5bf5c76b51744981d1cc8072c074e604224e9` is the current
-  authoritative base-branch tip, superseding
-  `7f13a1e85e9b6a4828170c4b12bc2be27b15de39` for current-state purposes
-  (the latter remains accurate as historical provenance for Roadmap PR19A).
+  there. `04f5bf5c76b51744981d1cc8072c074e604224e9` was the current
+  authoritative base-branch tip as of this entry, superseding
+  `7f13a1e85e9b6a4828170c4b12bc2be27b15de39` for current-state purposes at
+  that time (the latter remains accurate as historical provenance for
+  Roadmap PR19A). **Superseded by later entries in this log:**
+  `04f5bf5c...` is itself now historical/intermediate — the current
+  authoritative baseline is `2743af849702ef551927b9c362421df08c80b5d9`
+  (PR20F), per "Roadmap PR20 complete: PR20A–PR20F merged" below.
 - **Consequences:**
   - **Roadmap PR19 is complete, but concrete legacy dataset import is
     not.** PR19B remains a frontend-only workflow-review skeleton: no real
@@ -2499,12 +2503,22 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   repository's established post-merge documentation-only governance-sync
   pattern (mirroring the PR18F/PR19-completion syncs before it). Branch
   `docs/post-pr20-governance-sync`, based on `2743af849702ef551927b9c362421df08c80b5d9`.
-- **Source:** `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` (Status
-  line updated in place; technical design and historical fix-round record
-  preserved unedited); `docs/ROADMAP.md`; `docs/ROADMAP_STATUS.md`;
+- **Source:** `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` — status/
+  current-state annotation updated in place, and the §24 slice/readiness
+  table updated to mark every slice merged (with its own GitHub PR/squash
+  SHA); the normative technical design (§1–§23, §25), every Owner
+  Decision's resolution record (OD-1–OD-4, all remain RESOLVED, none
+  reopened), and every historical fix-round entry are preserved unedited.
+  No concurrency/lock-order contract (PR20D/PR20E's Job → Session →
+  Plan/adapter-resource ordering, exact confirmed-`DryRunPlan` execution,
+  persisted `expected_equipment_version`, freshness-before-no-op, TX1/TX2,
+  `resolved_resource_id` precedence, lease/heartbeat/fencing/recovery) was
+  changed. `docs/ROADMAP.md`; `docs/ROADMAP_STATUS.md`;
   `knowledge/CONTEXT.md`; `knowledge/PROJECT_MEMORY.md`;
   `knowledge/CHANGE_HISTORY.md`;
-  `docs/audits/04-consolidated-implementation-plan.md`.
+  `docs/audits/04-consolidated-implementation-plan.md` — all updated for
+  current-state/baseline/status only, no normative technical content
+  changed in any of them.
 - **Status:** Documentation-only. No backend, frontend, migration, test,
   or CI file was modified to produce this entry. **Roadmap PR21 (Legacy
   Receive and Issue History Import) is the next planned Roadmap item, not
