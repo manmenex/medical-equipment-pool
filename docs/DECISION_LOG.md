@@ -2524,3 +2524,86 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   Receive and Issue History Import) is the next planned Roadmap item, not
   started by this entry** — its dependencies (PR19A, PR20) are both now
   satisfied.
+
+## 2026-08-16 — Roadmap PR21: Legacy Receive and Issue History Import — Design started, not implemented (Draft GitHub PR pending)
+
+- **Decision/record:** Design/contract-only work has started on Roadmap
+  PR21 (Legacy Receive and Issue History Import), per
+  `docs/audits/04-consolidated-implementation-plan.md`'s authoritative
+  scope (import AppSheet Receive/Issue history; preserve legacy BME names
+  for later user mapping; normalize/map Ward values; detect duplicate
+  transaction rows; retain transaction source references — Equipment
+  Verify Checklist history explicitly out of Version 1 scope). No runtime
+  code, migration, test, or frontend file was created or modified. PR21 is
+  **not implemented** by this entry.
+- **Owner Decisions opened (none resolved):**
+  - **OD-PR21-0 (blocking):** no real AppSheet Issue History or Receive
+    History source artifact (workbook, CSV, or column-level schema
+    description) exists anywhere in this repository as of this baseline —
+    confirmed by repository-wide search. The only source-adjacent file,
+    `frontend/src/services/legacyImportFixtures.ts`, is explicitly
+    labeled by its own header comment as invented UI-mock data, not real
+    hospital data, and is not used as evidence anywhere in the design.
+    Field-level source mapping (the PR21 analogue of PR20's OD-1) cannot
+    proceed until the Repository Owner supplies the real export(s),
+    mirroring exactly how PR20's OD-1 was resolved only after a real
+    `export_template.xlsx` was supplied.
+  - **OD-PR21-1:** unmatched historical ISSUE-row policy (import as
+    historical OPEN vs. block/reconcile) — not resolved; architectural
+    recommendation is to block/reconcile by default, since an imported
+    historical OPEN transaction would compete with live dispatch for the
+    same equipment via the `idx_tx_one_active_borrow` partial unique
+    index.
+  - **OD-PR21-2:** unmatched historical RECEIVE-row policy — not
+    resolved; recommendation is a reconciliation finding, never a
+    fabricated paired issue.
+  - **OD-PR21-3:** boundary of the later legacy-BME-name-to-User mapping
+    procedure (this design preserves raw names safely but does not design
+    that later procedure) — not resolved.
+  - **OD-PR21-4:** ownership/curation of the proposed Ward alias-mapping
+    table (no such table exists anywhere in the codebase today) — not
+    resolved.
+  - **OD-PR21-5:** historical `transaction_no` policy, since the column
+    is NOT NULL/UNIQUE and normally sequence-generated — not resolved,
+    contingent on OD-PR21-0.
+  - **OD-PR21-6:** patient/clinical free-text handling — contingent
+    entirely on OD-PR21-0; cannot be evaluated without the real source.
+- **What this design addresses without a blocking Owner Decision:** a
+  full `BorrowTransaction` schema compatibility analysis (no column
+  requires fabricating a value — `borrower_user_id`/`received_by_user_id`
+  are nullable, so no fake `User` rows are ever needed); the architectural
+  separation between historical import and live dispatch/receipt
+  (import never mutates `Equipment.status`, never calls the live
+  dispatch/receipt service functions, never introduces a new
+  `BorrowTransaction.status` value beyond the existing OPEN/CLOSED pair);
+  reuse of PR19's dry-run/execute/claim/lease/heartbeat/fencing/recovery/
+  audit/retention mechanisms unmodified, with a new PR21-owned persisted
+  dry-run-plan schema proposed (not created) because the existing
+  Equipment-Master dry-run-plan tables are upsert-oriented and do not fit
+  an insert-oriented transaction import; and a proposed (not created)
+  additive schema gap-analysis for legacy-actor-name provenance,
+  source-traceability, and the Ward alias table.
+- **What PR21 explicitly does not deliver:** any Receive/Issue parser,
+  any validation rule implementation, any migration, any dry-run/execute
+  runtime code, any frontend change. PR22 (cross-import validation,
+  reconciliation, source-traceability verification, duplicate review,
+  unified legacy/new history validation) is explicitly not absorbed into
+  this design.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6 (Design
+  PR Policy) and §7 (Owner Decision Policy). Following PR19A's and PR20's
+  own design-PR precedent, this entry and the new design document are the
+  full governance-update scope for a design-only PR — the broader
+  `docs/ROADMAP.md`/`docs/ROADMAP_STATUS.md`/`knowledge/*` six-file sweep
+  is intentionally deferred to the post-implementation governance sync
+  (`docs/ENGINEERING_WORKFLOW.md` §14), exactly as it was for PR19A and
+  PR20's own design PRs. Branch `design/pr21-legacy-transaction-history-import`,
+  based on `4cab688708320f1e8523a906f5a5ce17ad1e5d9a` (GitHub PR #97).
+- **Source:** `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+  (new document).
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this entry. PR21 implementation has
+  **not** started. GitHub PR #97's accepted non-blocking P2 follow-up
+  (precise wording of the PR20 design-edit-scope description) is
+  explicitly **not** touched or closed by this entry or by the new PR21
+  design document — it remains open, tracked separately, for a future
+  governance/editorial pass.
