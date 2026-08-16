@@ -2111,4 +2111,402 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   distinction) — all updated in place.
 - **Status:** Documentation-only. No backend, frontend, migration, test,
   or CI file was modified to produce this entry or the design-doc
-  update. PR20C has not been started by this entry.
+  update. PR20C has not been started by this entry (see the entries
+  below for its subsequent implementation and merge).
+
+## 2026-08-12 — Roadmap PR20A: Source Artifact Infrastructure (GitHub PR #90)
+
+- **Decision:** Implement the source-ingestion/verification/retention
+  infrastructure slice only, per `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md`
+  §6.2, §6.4, §6.5, §18, §21 — no XLSX parser, field mapping, Equipment
+  mutation, or `DryRunPlan` content, and no adapter registered for
+  `equipment_master` (§24 PR20A scope boundary).
+- **What was built:** `import_source_blobs` table (migration `0016`),
+  colocated in PostgreSQL with `import_sources` so registration is a
+  single physical transaction; `POST /import-sessions/{id}/source/upload`
+  with server-authoritative checksum/byte-size, reusing PR12's
+  upload-bounds/zip-bounds validation; the metadata-only
+  `POST /{id}/source` now rejects `dataset_type=equipment_master`
+  (`IMPORT_SOURCE_REGISTRATION_METHOD_NOT_ALLOWED`), every other
+  `dataset_type` unaffected; `ImportSourceReader`/`VerifiedSourceContent`
+  read-time checksum/length re-verification, wired into
+  `run_validation`/`run_dry_run` via a blob-existence check (never a
+  hardcoded `dataset_type` comparison); `AdapterInvocationContext`
+  (contextvar-based session/source identity for `plan_dry_run`/`execute`);
+  retention (`redact_session`) deletes the blob in the same transaction as
+  the existing PR19A redaction.
+- **Fixes folded into the same PR before merge:** **PR90-H1** —
+  `register_or_correct_source_pending`'s duplicate-conflict path called
+  `db.rollback()` on the caller's outer session, discarding whatever else
+  the caller had already written in the same transaction; the
+  conflict-prone INSERT is now isolated in its own `SAVEPOINT`
+  (`db.begin_nested()`), verified on both SQLite and PostgreSQL to
+  preserve the caller's other uncommitted work. **PR90-H2** — the upload
+  endpoint's multipart `source_version`/`content_type` were not bounded to
+  their model column widths at the API boundary; `source_version` is now
+  bounded via FastAPI's `Form(max_length=100)`, `content_type` explicitly
+  checked against 255 before any registration write.
+- **Tests:** `backend/tests/test_pr20a_source_artifact_infrastructure.py`
+  (registration, blob/DB failure atomicity, `VerifiedSourceContent`,
+  adapter context wiring, security/resource bounds, retention, RBAC,
+  regression), plus PostgreSQL-specific migration-convergence and
+  real-transaction/concurrency tests in `test_postgres_integration.py`.
+- **Source:** `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` §6.2,
+  §6.4, §6.5, §18, §21.
+- **Status:** Merged as GitHub PR #90, real squash-merge SHA
+  `1de3db1eaef81ead2e20cdbf4758aebfdf9f55a0`, on top of the PR20 design
+  merge (`9c2342a1a9f2ec1143aa588a7c329dda3dcfbf08`, GitHub PR #89). No
+  Equipment mutation anywhere in this slice.
+
+## 2026-08-13 — Roadmap PR20B: `Equipment.version` Optimistic-Concurrency Column (GitHub PR #91)
+
+- **Decision:** Add `Equipment.version`, an `INTEGER NOT NULL DEFAULT 1`
+  counter incremented by exactly 1 at every mutation path (create defaults
+  to 1; update, manual lifecycle/dispatch/receipt status transitions, and
+  soft-delete each increment by 1), exposed read-only in `EquipmentOut`.
+  Not gated by OD-1/OD-2/OD-3 — a general Equipment-domain improvement
+  independent of Equipment Master's own field-mapping/policy questions,
+  required as a prerequisite for PR20E's later CAS predicate.
+- **What was built:** Migration `0017` adds the column via a single fast
+  PostgreSQL 11+ `ADD COLUMN ... NOT NULL DEFAULT` statement, backfilling
+  every pre-existing row to `version = 1` with no separate `UPDATE`. No
+  Equipment Master parser, field mapping, or write path shipped with this
+  slice.
+- **Fix (PR91-H1) — closed before merge:** clients could bump `version`
+  without a genuine mutation. Two-layer fix, per the explicit "no single
+  layer of trust" instruction: `EquipmentUpdate` now rejects any
+  undeclared field (`extra: "forbid"`, the same technique already
+  established for `BorrowRequest`/`ReturnRequest`/`WardCorrectionRequest`)
+  — `{"version": 999}` and `{"unknown": "x"}` now fail with the existing
+  centralized 422 `VALIDATION_ERROR`, never silently accepted;
+  `equipment_crud.update()` only increments `Equipment.version` when
+  `data` is non-empty; `update_equipment()` skips the
+  `AUDIT_ACTION_UPDATE` write for an empty `update_data`, since no genuine
+  mutation occurred (a supported field supplied with its existing,
+  unchanged value still counts as a genuine update, matching this
+  codebase's existing PATCH semantics). No migration change — this was
+  purely an API/CRUD-layer defect.
+- **Source:** `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` §24.
+- **Status:** Merged as GitHub PR #91, real squash-merge SHA
+  `bd47701917207479f3d91a349961f3d61ef707c2`.
+
+## 2026-08-14 — Roadmap PR20C: Parse/Normalize/Validate Adapter (GitHub PR #93)
+
+- **Decision:** Implement the read-only Equipment Master
+  parse/normalize/validate slice against OD-1–OD-4's resolved contract
+  (§9). No Equipment mutation, no migration.
+- **What was built:** Sheet1 workbook contract and 32-column header
+  mapping; BCM/Item No. normalization; the OD-3 identity matrix; the OD-4
+  fail-closed CREATE Asset Number policy (a CREATE candidate lacking an
+  authoritative `asset_number` receives a blocking
+  `ASSET_NUMBER_REQUIRED_FOR_CREATE` finding, never a placeholder value);
+  authoritative legacy status mapping (**PR93-H1R**); OOXML macro/VBA
+  structural rejection (**PR93-H3R**); bounded batch Equipment lookup.
+- **Files:** `backend/app/services/import_adapters/equipment_master.py`
+  (951 lines) and its test suite,
+  `backend/tests/test_import_adapter_equipment_master.py` (1,209 lines) —
+  2,173 lines added, no other production file changed beyond
+  `app/main.py` (adapter registration) and
+  `app/services/import_adapters/__init__.py`.
+- **Source:** `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` (OD-1–OD-4).
+- **Status:** Merged as GitHub PR #93, real squash-merge SHA
+  `1d04672ab6d767e35f5be63f765da0a94033b324`.
+
+## 2026-08-15 — Roadmap PR20D: Persisted, Immutable Equipment Master DryRunPlan (GitHub PR #94)
+
+- **Decision:** Implement `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md`
+  §14 — a persisted, immutable dry-run planning artifact bound to
+  session/source/checksum/validation-snapshot/mapping-version identity
+  (§14.1), so the plan an operator reviews and confirms is the exact
+  artifact PR20E later executes, never a live recomputation.
+- **What was built:** Migration `0018`
+  (`equipment_master_dry_run_plans`/`equipment_master_dry_run_plan_rows`,
+  full constraint set per §14.2: composite ownership FKs, a partial unique
+  "one active plan per session" index, CHECK constraints for
+  status/action/UPDATE-row shape); `EquipmentMasterAdapter.plan_dry_run`/
+  `persist_dry_run_plan` (classifies each row CREATE/UPDATE/SKIP, captures
+  `Equipment.version` into `expected_equipment_version` once at dry-run
+  time per §15.1, never refreshed; OD-4 keeps every CREATE candidate
+  non-executable); `GET /import-sessions/{id}/dry-run-plan` (paginated
+  rows) and `POST .../dry-run-plan/{plan_id}/confirm` (§14.4a's
+  idempotent, session-state-checked confirmation contract); retention
+  redaction extended to the two new tables.
+- **Review rounds, all resolved before merge:**
+  - **Round 2 (H1/H2/M1/M2):** **H1** — `confirm_plan` now locks
+    `ImportSession` (`SELECT ... FOR UPDATE`) before re-checking
+    `dry_run_completed`, then locks the `DryRunPlan` row, instead of
+    racing an unlocked `EXISTS` subquery against a concurrent
+    cancel/new-dry-run `UPDATE`; `persist_dry_run_plan` takes the same
+    Session-then-Plan lock order so the two transaction shapes can never
+    deadlock against each other. **H2** — `confirm_plan` returns
+    `ConfirmationResult(plan, newly_confirmed)` instead of
+    `Optional[Plan]`, and raises the specific domain exceptions directly
+    (matching `cancel_session`'s existing raise-from-CRUD convention); the
+    `CONFIRMED` audit event is now written only when `newly_confirmed`, so
+    a retry never produces a duplicate audit row or re-attributes the
+    first confirmer. **M1** — `DryRunPlanConfirmOut` now includes the
+    plan's own persisted summary, never recomputed. **M2** — catalogs
+    `IMPORT_DRY_RUN_PLAN_NOT_FOUND`/`IMPORT_DRY_RUN_PLAN_STALE` in
+    `docs/api/ERROR_CODES.md`, and splits a session that moved out of
+    `dry_run_completed` into the existing `IMPORT_SESSION_INVALID_STATE`
+    code, distinct from plan-staleness (later unified — see Round 4).
+  - **Round 3:** fixed a lock-order regression Round 2's H1 fix
+    introduced — `persist_dry_run_plan` locked `ImportSession` before
+    `fenced_phase_success` locked `Job`, the opposite of stale-job
+    recovery's Job-then-Session order. `run_dry_run` now calls
+    `fenced_phase_success` (Job → Session) before `persist_dry_run_plan`
+    (reuses the already-held Session lock, then locks Plan), establishing
+    a consistent Job → Session → Plan order across completion, recovery,
+    and confirmation.
+  - **Round 4:** unified a session that moved out of `dry_run_completed`
+    into the same `409 IMPORT_DRY_RUN_PLAN_STALE` contract as a
+    superseded plan — the authoritative design (§14.4a) is explicit the
+    confirm endpoint's stale-plan contract does not distinguish sub-cases
+    by different codes; Round 2's split into two codes deviated from that.
+    `IMPORT_SESSION_INVALID_STATE` remains unchanged for every endpoint
+    whose operation is not "confirm this specific persisted plan" (e.g.
+    `cancel_session`'s own CAS rejection).
+  - **Round 5 (test-only):** added a `dry_run_failed` companion regression
+    proving `confirm_plan` already routes that status through the unified
+    `IMPORT_DRY_RUN_PLAN_STALE` contract, never
+    `IMPORT_SESSION_INVALID_STATE` — no production code change needed.
+  - **Round 6:** unified a missing or foreign (belonging to a different
+    session) `plan_id` into the same `409 IMPORT_DRY_RUN_PLAN_STALE`
+    bucket too, per §14.4a — `confirm_plan` previously raised
+    `ImportDryRunPlanNotFoundError` (404) for this case, which also let a
+    caller infer, via status code, whether a given `plan_id` exists under
+    another session. `IMPORT_DRY_RUN_PLAN_NOT_FOUND`/404 remains unchanged
+    for `GET .../dry-run-plan`'s own read-path lookup. A mandatory
+    foreign-session-plan regression proves session isolation: confirming
+    session A's real `plan_id` through session B's route returns the same
+    stale response as a nonexistent id, never leaking that the plan
+    exists.
+- **Tests:** genuine two-PostgreSQL-connection concurrency tests (confirm
+  vs cancel, confirm vs new-dry-run admission, confirm vs confirm, a
+  lock-order/deadlock regression, completion-vs-recovery both orderings,
+  persistence-failure rollback, and the foreign-session-plan isolation
+  case), plus same-user-retry, second-user-retry, and
+  persisted-summary-not-recomputed regressions.
+- **Source:** `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` §14,
+  §14.2, §14.3, §14.4a, §15.1.
+- **Status:** Merged as GitHub PR #94, real squash-merge SHA
+  `c72baa19888edcfb2fa2fcb593c649ae2ac35bec`. No Equipment mutation
+  anywhere in this slice — `execute()`/`precheck_execute` remain PR20E's
+  own scope. Migration head remains `0018_dry_run_plans` throughout every
+  review round (no schema change after the initial migration).
+
+## 2026-08-16 — Roadmap PR20E: `execute()` — CREATE/UPDATE Mutation (GitHub PR #95)
+
+- **Decision:** Execute exactly the persisted, confirmed `DryRunPlan` a
+  session confirmed (PR20D) — never a live recomputation. Reuse PR19A3's
+  execution claim, lease/fencing, TX1/TX2, recovery, and audit machinery
+  unchanged; add only the Equipment-Master-specific mutation.
+- **What was built:** The adapter's `execute()`/`precheck_execute`/
+  `on_execution_failure`/`on_execution_recovery` hooks (design §14.4a/
+  §14.4b/§14.4c), performing the exact CREATE/UPDATE each confirmed plan
+  row specifies against `Equipment`, with `expected_equipment_version`
+  (captured once at PR20D's own dry-run time) enforced as the optimistic-
+  concurrency predicate at execute time.
+- **Review rounds, both resolved before merge:**
+  - **Round 1 (H1–H3):** **H1** — global lock ordering: execute-phase
+    locking now follows a consistent Job → Session → adapter-owned
+    resource order everywhere, closing a deadlock risk between execution
+    and concurrent recovery/cancel paths (the same Job → Session → Plan
+    pattern PR20D's own Round 3 fix established, extended to PR20E's
+    adapter-owned Equipment resource). **H2** — `resolved_resource_id`
+    (the target Equipment a CREATE resolved to) now survives a rollback:
+    recorded via the execution context as the primary source, with the
+    exception-carried `AdapterExecutionConflict.resolved_resource_id`
+    field restored as an explicit, approved fallback consulted only when
+    the context recorded nothing — the context-recorded value always
+    takes precedence when both are present. **H3** — UPDATE execution now
+    validates freshness (the plan's captured `expected_equipment_version`
+    against the row's current, live `Equipment.version`) *before*
+    accepting a same-value write as a no-op, closing a gap where a stale
+    apparent no-op could bypass the CAS check entirely.
+  - **Round 2 (H4–H5):** **H4** — confirmed the H2 fallback's exact
+    precedence contract (context-recorded value always wins when both the
+    context and the exception carry a value) with a dedicated regression.
+    **H5** — a full-document consistency sweep of
+    `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` for
+    `mark_plan_consumed`, `on_execution_failure`, `on_execution_recovery`,
+    `on_execution_success`, `AdapterExecutionConflict`,
+    `resolved_resource_id`, `record_resolved_execution_resource`,
+    `fenced_phase_success`, `fenced_phase_failure`, lock-order, and
+    execute-ownership language — corrected the design document's §6.3
+    adapter pseudocode, §14.4/§14.4b/§14.4c framing, and §15.1's
+    freshness-before-no-op rule to match the actually-merged/pushed
+    runtime, verified directly against
+    `backend/app/services/import_adapter.py`,
+    `import_adapter_context.py`, `import_adapters/equipment_master.py`,
+    `import_execution_service.py`, and `app/crud/equipment.py` rather than
+    assumed; prior fix-round historical entries in that document were
+    preserved unedited, consistent with the document's own established
+    practice.
+- **Tests:** two genuine two-PostgreSQL-connection completion-vs-recovery
+  race tests (both winner orders), a barrier-only uncertain-winner race,
+  three post-resolution failure-injection regressions, an
+  exception-only-transport regression, a context-precedence regression, a
+  stale-apparent-no-op regression, and a valid-no-op regression — all
+  passing alongside the full existing PostgreSQL and non-PostgreSQL
+  suites.
+- **Source:** `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` §6.3,
+  §14.4, §14.4a, §14.4b, §14.4c, §15.1.
+- **Status:** Merged as GitHub PR #95, real squash-merge SHA
+  `698c34d9c280b2ca2ea4f299bd186517c9fb26a8`. Did not close/reopen
+  OD-1/OD-2/OD-3/OD-4 (§9) — all four remain RESOLVED. Did not modify the
+  frontend, did not add or change any Alembic migration (migration
+  `0018_dry_run_plans` already supported every plan-status value this
+  slice needed), and did not start PR21 or any Ward/BME-scoped work.
+
+## 2026-08-16 — Roadmap PR20F: Frontend Real API Integration (GitHub PR #96)
+
+- **Decision:** Replace the PR19B mock Equipment Master import workflow
+  with real frontend calls against the now-merged backend (PR20A–E). The
+  frontend is a pure display/orchestration layer — it never classifies
+  rows, matches identity, decides validity, or computes a plan; it only
+  calls the approved endpoints and renders exactly what the backend
+  returns. Receive History and Issue History remain unimplemented,
+  frontend-only mock placeholders (unchanged PR19B `MockImportClient`
+  path), dispatched away from the real Equipment Master endpoints by a
+  UUID-shaped-session-id check (`isBackendSessionId`) — every real backend
+  `ImportSession.id` is a UUID; every mock/fixture id deliberately is not.
+- **What was built:** backend-shaped DTOs (`types/legacyImportApi.ts`)
+  mirroring the real Pydantic schemas field-for-field; a dedicated real
+  API client (`services/equipmentMasterImportClient.ts`); an interactive
+  workflow panel (`components/EquipmentMasterWorkflowPanel.tsx` +
+  `EquipmentMasterDryRunPlanSummary`/`EquipmentMasterExecuteAction`/
+  `EquipmentMasterPlanRowsTable`) driving create session → upload/register
+  `.xlsx` source → validate → persisted `DryRunPlan` → confirm exact plan
+  → execute → committed result; centralized error-code mapping with a
+  unified stale-plan UX (`utils/legacyImportApiErrors.ts`); wiring into
+  `LegacyImportCreatePage` (real session + upload for `equipment_master`
+  only), `LegacyImportSessionDetailPage` (UUID-based dispatch to the real
+  panel), and `LegacyImportListPage` (merges cursor-paginated real
+  `equipment_master` sessions with filtered mock Receive/Issue sessions).
+- **Review round 1 (REQUEST CHANGES, reviewed head
+  `e4c258648951616c61b7c58910c6fe1823a41697`) — four findings, all
+  resolved (fix head `c4cdc8eb34c1da16da584b153589d0f6fc1ec131`):**
+  **P1** — the panel fetched and accumulated `plan.rows` but rendered only
+  summary counters, defeating the purpose of persisted `DryRunPlan`
+  confirmation; fixed by a new `EquipmentMasterPlanRowsTable` rendering
+  every persisted row's action/BCM/Item No./target Equipment
+  reference/normalized values/warnings, plus the plan ID and created
+  timestamp on `EquipmentMasterDryRunPlanSummary` (never the session ID as
+  a stand-in), and a pagination-visibility bug fix ("Load more" read a
+  stale `rows_next_cursor` off the first fetched page instead of
+  react-query's own `hasNextPage` for the current accumulated result).
+  **P1** — a worker crash/tab close/refresh could land the operator
+  directly on a running status (`validating`/`dry_run_running`/
+  `executing`) with no local error to hang a recovery button off of;
+  fixed by always offering a "ตรวจสอบ/กู้คืนงาน" recovery action during
+  every running state, calling the real `/recover` endpoint (the backend
+  remains the sole authority on eligibility; a lease-still-active
+  rejection renders as a normal, non-fatal message). **P1** — the session
+  list fetched a single unbounded `limit: 50` page of real
+  `equipment_master` sessions, silently hiding history beyond the first
+  page; fixed with `useInfiniteQuery` cursor pagination, mirroring the
+  pattern already used for `DryRunPlan` rows and equipment transaction
+  history. **P2** — a failed findings request rendered an empty findings
+  table, indistinguishable from a genuine zero-findings result and
+  potentially letting the operator proceed without ever seeing what the
+  backend flagged; fixed with a distinct error state with retry, and
+  dry-run disabled until a retry succeeds.
+- **Review round 2 (incremental, reviewed head
+  `38c6d33c15ed13929392d0736b9accda0886fa2e`) — one finding, resolved:**
+  paginated `DryRunPlan` pages were merged by concatenating `rows` without
+  verifying every fetched page still belonged to the same plan `id`; since
+  the backend resolves a session's current active plan independently per
+  page request, a later dry-run could supersede the plan between page
+  fetches, risking a mixed-generation row set. Fixed: every fetched
+  page's `id` is now checked against the first page's before merging; on
+  any mismatch, the frontend fails closed (no rows rendered, confirm
+  action unavailable) and offers an explicit reset that discards the
+  stale pages and refetches from page one via `queryClient.resetQueries`.
+  No blocking or non-blocking finding remained after this fix; neither
+  review round produced a GitHub-native review object (review feedback
+  was delivered as direct conversational review, not a GitHub PR review)
+  — no GitHub APPROVE is claimed for either round, only that no finding
+  remained outstanding and CI was green (6/6) on the final exact head.
+- **Tests:** 22 targeted tests in `EquipmentMasterWorkflowPanel.test.tsx`
+  (successful end-to-end flow, validation error, structural validation
+  failure, `DryRunPlan` row/pagination rendering, cross-plan-pagination
+  fail-closed guard, running-state recovery table-driven across all three
+  statuses, backend recovery rejection as non-fatal, findings
+  error/retry/genuine-empty/loading states) plus 10 in
+  `LegacyImportListPage.test.tsx` (including real-session cursor
+  pagination); full frontend regression suite 388/388 passed (28 files);
+  TypeScript typecheck and production Vite build both clean;
+  `git diff --check` clean on every pushed head.
+- **Source:** frontend-only; consumes the existing, already-merged
+  PR20A-E backend routes exactly as documented in
+  `backend/app/api/v1/import_sessions.py` /
+  `backend/app/schemas/import_session.py` / `docs/api/ERROR_CODES.md`. No
+  backend, `alembic/`, database, or migration file was modified to
+  produce this slice.
+- **Status:** Merged as GitHub PR #96, real squash-merge SHA
+  `2743af849702ef551927b9c362421df08c80b5d9`, on top of PR20E
+  (`698c34d9c280b2ca2ea4f299bd186517c9fb26a8`) — CI green (6/6) on the
+  final exact reviewed head `38c6d33...` before merge, independently
+  verified (the squash commit's tree is byte-identical to that exact
+  head; `git diff 38c6d33...2743af8 --stat` is empty). Did not implement
+  Receive History or Issue History import, did not start PR21, MEMS, or
+  Recall Monitor.
+
+## 2026-08-16 — Roadmap PR20 complete: PR20A–PR20F merged
+
+- **Decision/record:** With PR20F merged, all six implementation slices of
+  Roadmap PR20 (Equipment Master Import) are now merged:
+  - Design: GitHub PR #89, squash SHA `9c2342a1a9f2ec1143aa588a7c329dda3dcfbf08`.
+  - PR20A (source artifact infrastructure): GitHub PR #90, squash SHA
+    `1de3db1eaef81ead2e20cdbf4758aebfdf9f55a0`.
+  - PR20B (`Equipment.version`): GitHub PR #91, squash SHA
+    `bd47701917207479f3d91a349961f3d61ef707c2`.
+  - Owner Decisions OD-1–OD-4 resolution: GitHub PR #92, squash SHA
+    `120319afb44f12340790a74dfaf53fa5068591ee`.
+  - PR20C (parse/normalize/validate): GitHub PR #93, squash SHA
+    `1d04672ab6d767e35f5be63f765da0a94033b324`.
+  - PR20D (persisted `DryRunPlan`): GitHub PR #94, squash SHA
+    `c72baa19888edcfb2fa2fcb593c649ae2ac35bec`.
+  - PR20E (`execute()`): GitHub PR #95, squash SHA
+    `698c34d9c280b2ca2ea4f299bd186517c9fb26a8`.
+  - PR20F (frontend real API integration): GitHub PR #96, squash SHA
+    `2743af849702ef551927b9c362421df08c80b5d9` — the current authoritative
+    baseline.
+  - Interleaved documentation-only governance sync recording Roadmap
+    PR19's completion: GitHub PR #88, squash SHA
+    `e3156bfc231fcbc126251f41292bc397fdf8ad3f` (precedes PR20's own design
+    merge; recorded in the prior governance sync, not repeated here).
+- **What PR20 delivers, end-to-end:** source artifact registration/upload
+  (PR20A); `Equipment.version` optimistic concurrency (PR20B); an
+  authoritative 32-column Equipment Master XLSX parse/normalize/validate
+  contract per Owner Decisions OD-1–OD-4, all RESOLVED (PR20C); persisted,
+  immutable `DryRunPlan` generation and idempotent confirmation with a
+  unified stale-plan contract (PR20D); confirmed-plan execution with
+  CREATE/UPDATE mutation, full concurrency/fencing/recovery protection,
+  and `resolved_resource_id` survival across rollback (PR20E); and real,
+  operator-facing frontend integration replacing the PR19B mock workflow
+  for this dataset type, including a fail-closed guard against combining
+  rows from two different plan generations across pagination (PR20F).
+- **What PR20 explicitly does not deliver:** Receive History import,
+  Issue History import (both remain PR19B frontend-only mock placeholders
+  and unimplemented backend scope — future Roadmap PR21), Roadmap PR21
+  itself, MEMS integration, or Recall Monitor. `asset_number`-lacking
+  CREATE candidates remain fail-closed (`ASSET_NUMBER_REQUIRED_FOR_CREATE`)
+  pending a future authoritative Asset Number source, per OD-4 — this is
+  an intentional, resolved business rule, not a PR20 implementation gap.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §7, as this
+  repository's established post-merge documentation-only governance-sync
+  pattern (mirroring the PR18F/PR19-completion syncs before it). Branch
+  `docs/post-pr20-governance-sync`, based on `2743af849702ef551927b9c362421df08c80b5d9`.
+- **Source:** `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` (Status
+  line updated in place; technical design and historical fix-round record
+  preserved unedited); `docs/ROADMAP.md`; `docs/ROADMAP_STATUS.md`;
+  `knowledge/CONTEXT.md`; `knowledge/PROJECT_MEMORY.md`;
+  `knowledge/CHANGE_HISTORY.md`;
+  `docs/audits/04-consolidated-implementation-plan.md`.
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this entry. **Roadmap PR21 (Legacy
+  Receive and Issue History Import) is the next planned Roadmap item, not
+  started by this entry** — its dependencies (PR19A, PR20) are both now
+  satisfied.

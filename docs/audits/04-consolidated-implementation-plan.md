@@ -449,23 +449,33 @@ PR19B merged with real squash-merge SHA
 ("Roadmap PR19B merged: Exception Record closed; Roadmap PR19 fully
 complete") for the full chronology. **Roadmap PR19 (Legacy Import
 Foundation, backend + frontend skeleton) as a whole is now fully
-complete.** `04f5bf5c76b51744981d1cc8072c074e604224e9` is the current
-authoritative base-branch baseline (superseding
-`7f13a1e85e9b6a4828170c4b12bc2be27b15de39` and `729d1aa...` above for
-current-state purposes; both SHAs are retained here as this entry's
-historical provenance references). PR19B remains a frontend-only
-workflow-review skeleton — no real file upload, parsing,
-validation/dry-run/import execution, or production legacy dataset adapter
-is implemented; concrete legacy dataset import (Equipment Master, Receive
-History, Issue History) remains unimplemented, future Roadmap PR20/PR21
-scope. PR20's dependency on PR19A only (not PR19B, see its Dependencies
-bullet below) is unchanged by PR19B's merge. Before PR19B merged, a
-separate question of relative work sequencing (never a hard dependency)
-between PR19B and PR20 had not been fixed by an Owner Decision
-(`docs/ROADMAP_STATUS.md`); PR19B has since merged, which settles which of
-the two came first without this entry creating a new Owner Decision.
-**PR20 is the next planned Roadmap item, not started by this entry**, and
-is not qualified or blocked by that now-historical sequencing question.
+complete.** `04f5bf5c76b51744981d1cc8072c074e604224e9` was the
+authoritative base-branch baseline at the time this entry was written
+(superseding `7f13a1e85e9b6a4828170c4b12bc2be27b15de39` and `729d1aa...`
+above for current-state purposes at that time; all three SHAs are
+retained here as historical provenance references). PR19B was, at the
+time of this entry, a frontend-only workflow-review skeleton with no real
+file upload, parsing, validation/dry-run/import execution, or production
+legacy dataset adapter.
+
+**Update — Roadmap PR20 (Equipment Master Import) has since fully
+completed:** all six implementation slices — PR20A (source artifact
+infrastructure, GitHub PR #90), PR20B (`Equipment.version`, GitHub PR
+#91), PR20C (parse/normalize/validate, GitHub PR #93), PR20D (persisted
+`DryRunPlan`, GitHub PR #94), PR20E (execute, GitHub PR #95), and PR20F
+(real frontend integration, GitHub PR #96) — are merged, plus the
+architecture-approved design (GitHub PR #89) and two documentation-only
+governance syncs (GitHub PR #88, #92). The current authoritative
+base-branch baseline is `2743af849702ef551927b9c362421df08c80b5d9`
+(GitHub PR #96's real squash-merge SHA) — see `docs/ROADMAP.md` and
+`docs/DECISION_LOG.md` ("Roadmap PR20 complete: PR20A–PR20F merged") for
+the full record. Concrete legacy dataset import beyond Equipment Master
+(Receive History, Issue History) remains unimplemented, future Roadmap
+PR21 scope. PR20's dependency on PR19A only (not PR19B) was unchanged by
+PR19B's merge, as this entry originally stated. **Roadmap PR21 (Legacy
+Receive and Issue History Import) is now the next planned Roadmap item,
+not started** — its Dependencies bullet below (PR19A, PR20) is now fully
+satisfied.
 
 #### PR19A — Legacy Import Foundation (backend)
 - **Objective:** Provide a staged, validation-first, traceable import framework.
