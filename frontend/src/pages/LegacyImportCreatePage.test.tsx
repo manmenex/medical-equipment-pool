@@ -16,6 +16,13 @@ vi.mock("@/services/legacyImportClient", () => ({
   ImportSessionNotFoundError: class ImportSessionNotFoundError extends Error {},
 }));
 
+const createEquipmentMasterSession = vi.fn();
+const uploadEquipmentMasterSource = vi.fn();
+vi.mock("@/services/equipmentMasterImportClient", () => ({
+  createEquipmentMasterSession: (...args: unknown[]) => createEquipmentMasterSession(...args),
+  uploadEquipmentMasterSource: (...args: unknown[]) => uploadEquipmentMasterSource(...args),
+}));
+
 let mockUser: UserProfile | null = null;
 vi.mock("@/hooks/useAuth", async () => {
   const actual = await vi.importActual<typeof import("@/hooks/useAuth")>("@/hooks/useAuth");
@@ -133,6 +140,61 @@ describe("LegacyImportCreatePage", () => {
     expect(api.get).not.toHaveBeenCalled();
 
     expect(await screen.findByText("session detail page")).toBeInTheDocument();
+  });
+
+  it("continuing for equipment_master creates a real session, uploads the file through the real API, never touches the mock client, and navigates to the created session", async () => {
+    createEquipmentMasterSession.mockResolvedValue({ id: "11111111-1111-4111-8111-111111111111" });
+    uploadEquipmentMasterSource.mockResolvedValue({ id: "source-1" });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByLabelText(/ข้อมูลหลักเครื่องมือ/));
+    await user.click(screen.getByRole("button", { name: "ถัดไป" }));
+    await user.upload(screen.getByLabelText("เลือกไฟล์สำหรับนำเข้าข้อมูลเดิม"), makeTestFile("equipment.xlsx", 4096));
+    await screen.findByText("equipment.xlsx");
+
+    await user.click(screen.getByRole("button", { name: "ตรวจสอบข้อมูล" }));
+
+    await waitFor(() => expect(uploadEquipmentMasterSource).toHaveBeenCalledTimes(1));
+    expect(createEquipmentMasterSession).toHaveBeenCalledTimes(1);
+    const [sessionIdArg, fileArg] = uploadEquipmentMasterSource.mock.calls[0] as [string, File];
+    expect(sessionIdArg).toBe("11111111-1111-4111-8111-111111111111");
+    expect(fileArg.name).toBe("equipment.xlsx");
+    expect(createPreviewSession).not.toHaveBeenCalled();
+
+    expect(await screen.findByText("session detail page")).toBeInTheDocument();
+  });
+
+  it("retries an equipment_master upload against the same session instead of creating a second one", async () => {
+    createEquipmentMasterSession.mockResolvedValue({ id: "22222222-2222-4222-8222-222222222222" });
+    uploadEquipmentMasterSource.mockRejectedValueOnce(new Error("network error"));
+    uploadEquipmentMasterSource.mockResolvedValueOnce({ id: "source-1" });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByLabelText(/ข้อมูลหลักเครื่องมือ/));
+    await user.click(screen.getByRole("button", { name: "ถัดไป" }));
+    await user.upload(screen.getByLabelText("เลือกไฟล์สำหรับนำเข้าข้อมูลเดิม"), makeTestFile("equipment.xlsx"));
+    await screen.findByText("equipment.xlsx");
+
+    await user.click(screen.getByRole("button", { name: "ตรวจสอบข้อมูล" }));
+    await screen.findByRole("alert");
+    await user.click(screen.getByRole("button", { name: "ตรวจสอบข้อมูล" }));
+
+    await waitFor(() => expect(uploadEquipmentMasterSource).toHaveBeenCalledTimes(2));
+    expect(createEquipmentMasterSession).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("session detail page")).toBeInTheDocument();
+  });
+
+  it("does not show the prototype-only notice for equipment_master, and shows it for receive_history", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByLabelText(/ข้อมูลหลักเครื่องมือ/));
+    expect(screen.queryByText(/ยังไม่มีการอัปโหลด ตรวจสอบ หรือนำเข้าข้อมูลจริง/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByLabelText(/ประวัติการรับคืน/));
+    expect(screen.getByText(/ยังไม่มีการอัปโหลด ตรวจสอบ หรือนำเข้าข้อมูลจริง/)).toBeInTheDocument();
   });
 
   it("shows a back-navigation control between steps", async () => {

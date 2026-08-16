@@ -21,6 +21,11 @@ vi.mock("@/services/legacyImportClient", () => {
   };
 });
 
+const getEquipmentMasterSession = vi.fn();
+vi.mock("@/services/equipmentMasterImportClient", () => ({
+  getEquipmentMasterSession: (...args: unknown[]) => getEquipmentMasterSession(...args),
+}));
+
 let mockUser: UserProfile | null = null;
 vi.mock("@/hooks/useAuth", async () => {
   const actual = await vi.importActual<typeof import("@/hooks/useAuth")>("@/hooks/useAuth");
@@ -83,6 +88,36 @@ function makeDetail(overrides: Partial<ImportSessionDetail> = {}): ImportSession
   };
   assertImportSessionInvariants(detail);
   return detail;
+}
+
+const REAL_SESSION_ID = "11111111-1111-4111-8111-111111111111";
+
+function makeRealSummary(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: REAL_SESSION_ID,
+    dataset_type: "equipment_master",
+    status: "created",
+    version: 1,
+    created_by_user_id: "user-1",
+    idempotency_key: null,
+    notes: null,
+    terminal_at: null,
+    failure_reason: null,
+    created_at: "2026-07-20T03:00:00Z",
+    updated_at: "2026-07-20T03:00:00Z",
+    validated_at: null,
+    total_rows: null,
+    valid_rows: null,
+    invalid_rows: null,
+    warning_rows: null,
+    dry_run_completed_at: null,
+    executed_at: null,
+    imported_rows: null,
+    jobs: [],
+    finding_count: 0,
+    validation_attempt_id: null,
+    ...overrides,
+  };
 }
 
 beforeEach(() => {
@@ -188,5 +223,40 @@ describe("LegacyImportSessionDetailPage", () => {
 
     expect(await screen.findByText("คุณไม่มีสิทธิ์เข้าถึงหน้านำเข้าข้อมูลเดิม")).toBeInTheDocument();
     expect(getSession).not.toHaveBeenCalled();
+  });
+
+  // Roadmap PR20F design §41 "category dispatch" + "reload" tests: a UUID
+  // session id routes to the real EquipmentMasterWorkflowPanel (and its own
+  // real API client) instead of the PR19B mock view -- purely from the
+  // session id shape in the URL, with no reliance on any prior in-memory
+  // navigation state (design §39: a direct reload/URL visit must recover
+  // fully from backend truth).
+  describe("real Equipment Master session (UUID id)", () => {
+    it("routes a UUID session id to the real workflow panel, never the mock client", async () => {
+      getEquipmentMasterSession.mockResolvedValue(makeRealSummary());
+      renderPage(REAL_SESSION_ID);
+
+      expect(await screen.findByText("นำเข้าข้อมูลหลักเครื่องมือ")).toBeInTheDocument();
+      expect(getEquipmentMasterSession).toHaveBeenCalledWith(REAL_SESSION_ID);
+      expect(getSession).not.toHaveBeenCalled();
+    });
+
+    it("renders correctly when the UUID route is loaded directly (no prior create-flow state)", async () => {
+      getEquipmentMasterSession.mockResolvedValue(
+        makeRealSummary({ status: "dry_run_completed", total_rows: 500, valid_rows: 500, invalid_rows: 0, warning_rows: 0 })
+      );
+      renderPage(REAL_SESSION_ID);
+
+      expect(await screen.findByText("นำเข้าข้อมูลหลักเครื่องมือ")).toBeInTheDocument();
+      expect(screen.getByText(REAL_SESSION_ID, { exact: false })).toBeInTheDocument();
+    });
+
+    it("shows a permission-denied state for a non-administrator on a real session id, and never calls the real client", async () => {
+      mockUser = makeUser("read_only");
+      renderPage(REAL_SESSION_ID);
+
+      expect(await screen.findByText("คุณไม่มีสิทธิ์เข้าถึงหน้านำเข้าข้อมูลเดิม")).toBeInTheDocument();
+      expect(getEquipmentMasterSession).not.toHaveBeenCalled();
+    });
   });
 });

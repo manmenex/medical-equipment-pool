@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LegacyImportListPage } from "@/pages/LegacyImportListPage";
 import type { ImportSessionPage, ImportSessionSummary } from "@/types/legacyImport";
+import type { Page } from "@/types";
+import type { ImportSessionOut } from "@/types/legacyImportApi";
 import type { UserProfile as _UserProfile } from "@/types";
 
 const listSessions = vi.fn();
@@ -14,6 +16,11 @@ vi.mock("@/services/legacyImportClient", () => ({
     listSessions: (...args: unknown[]) => listSessions(...args),
   },
   ImportSessionNotFoundError: class ImportSessionNotFoundError extends Error {},
+}));
+
+const listEquipmentMasterSessions = vi.fn();
+vi.mock("@/services/equipmentMasterImportClient", () => ({
+  listEquipmentMasterSessions: (...args: unknown[]) => listEquipmentMasterSessions(...args),
 }));
 
 let mockUser: _UserProfile | null = null;
@@ -52,9 +59,14 @@ function makePage(items: ImportSessionSummary[]): ImportSessionPage {
   return { items, nextCursor: null, total: items.length };
 }
 
+function makeRealPage(items: ImportSessionOut[]): Page<ImportSessionOut> {
+  return { items, next_cursor: null, total: items.length };
+}
+
 beforeEach(() => {
   mockUser = makeUser("administrator");
   listSessions.mockResolvedValue(makePage([makeSummary()]));
+  listEquipmentMasterSessions.mockResolvedValue(makeRealPage([]));
 });
 
 afterEach(() => {
@@ -75,9 +87,9 @@ function renderPage() {
 }
 
 describe("LegacyImportListPage", () => {
-  it("shows the skeleton indicator", async () => {
+  it("shows the Receive/Issue History prototype notice", async () => {
     renderPage();
-    expect(await screen.findByText(/ต้นแบบหน้าจอ/)).toBeInTheDocument();
+    expect(await screen.findByText(/ประวัติการรับคืนและประวัติการเบิกยังเป็นต้นแบบ/)).toBeInTheDocument();
   });
 
   it("shows a loading state while sessions are being fetched", async () => {
@@ -123,5 +135,41 @@ describe("LegacyImportListPage", () => {
     renderPage();
     expect(await screen.findByText("คุณไม่มีสิทธิ์เข้าถึงหน้านำเข้าข้อมูลเดิม")).toBeInTheDocument();
     expect(listSessions).not.toHaveBeenCalled();
+    expect(listEquipmentMasterSessions).not.toHaveBeenCalled();
+  });
+
+  it("merges real equipment_master sessions with mock Receive/Issue sessions, excluding any mock equipment_master row", async () => {
+    listSessions.mockResolvedValue(
+      makePage([makeSummary({ id: "mock-receive-1", datasetType: "receive_history", filename: "receive.xlsx" })])
+    );
+    listEquipmentMasterSessions.mockResolvedValue(
+      makeRealPage([
+        {
+          id: "11111111-1111-4111-8111-111111111111",
+          dataset_type: "equipment_master",
+          status: "completed",
+          version: 3,
+          created_by_user_id: "22222222-2222-4222-8222-222222222222",
+          idempotency_key: null,
+          notes: null,
+          terminal_at: "2026-07-21T00:00:00Z",
+          failure_reason: null,
+          created_at: "2026-07-21T00:00:00Z",
+          updated_at: "2026-07-21T00:00:00Z",
+          validated_at: "2026-07-20T00:00:00Z",
+          total_rows: 500,
+          valid_rows: 500,
+          invalid_rows: 0,
+          warning_rows: 0,
+          dry_run_completed_at: "2026-07-20T01:00:00Z",
+          executed_at: "2026-07-21T00:00:00Z",
+          imported_rows: 500,
+        },
+      ])
+    );
+    renderPage();
+    expect(await screen.findByText("receive.xlsx")).toBeInTheDocument();
+    expect(await screen.findByText("500 แถว")).toBeInTheDocument();
+    expect(screen.getByText("22222222-2222-4222-8222-222222222222")).toBeInTheDocument();
   });
 });
