@@ -315,3 +315,17 @@ class ImportDryRunPlanStaleError(DomainError):
 
     code = "IMPORT_DRY_RUN_PLAN_STALE"
     status_code = 409
+
+
+class ImportNoConfirmedPlanError(DomainError):
+    """Roadmap PR20E (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    §14.4a) -- raised by `precheck_execute`, before `admit_phase_job`
+    runs, so no session state changes -- the session has no `active`
+    plan with `confirmed_at IS NOT NULL`, either because the operator
+    never confirmed a plan or because their confirmed plan has since
+    been superseded by a newer, not-yet-confirmed dry-run. The operator
+    must confirm the current plan (`POST .../dry-run-plan/{plan_id}/confirm`)
+    before retrying `POST .../execute`."""
+
+    code = "IMPORT_NO_CONFIRMED_PLAN"
+    status_code = 409

@@ -40,8 +40,12 @@ from app.crud import import_source_blob as import_source_blob_crud
 from app.db.session import AsyncSessionLocal
 from app.models.import_session import ImportSession
 from app.services import import_lease
-from app.services.import_adapter import ImportAdapter, get_adapter
-from app.services.import_adapter_context import AdapterInvocationContext, adapter_invocation_context
+from app.services.import_adapter import AdapterExecutionConflict, ImportAdapter, get_adapter
+from app.services.import_adapter_context import (
+    AdapterInvocationContext,
+    adapter_invocation_context,
+    get_resolved_execution_resource,
+)
 from app.services.import_source_reader import ImportSourceReader, SourceDescriptor
 
 logger = logging.getLogger(__name__)
@@ -377,6 +381,38 @@ async def run_execute(
     if type(adapter).execute is ImportAdapter.execute:
         raise ImportAdapterNotImplementedError(f"Adapter for dataset_type '{dataset_type}' does not implement execute.")
 
+    # Roadmap PR20E (design §14.4a): identity-only context, built once and
+    # reused for both `precheck_execute` (below, pre-admission) and
+    # `execute()` itself (post-admission) -- never a second, potentially
+    # divergent construction. `verified_source_content`/`dry_run_job_id`/
+    # `accepted_validation_job_id` are always `None`, since `execute()`
+    # never re-reads or re-parses the source and resolves its own
+    # confirmed plan internally.
+    source = await import_session_crud.get_source(db, session_id=session_id)
+    if source is None:
+        raise ImportSourceNotRegisteredError(
+            f"Import session '{session_id}' has no registered source despite being admitted for execute."
+        )
+    invocation_context = AdapterInvocationContext(
+        import_session_id=session_id,
+        import_source_id=source.id,
+        dataset_type=dataset_type,
+        source_checksum=source.checksum,
+        source_fingerprint=source.source_fingerprint,
+        ruleset_version=adapter.ruleset_version,
+        verified_source_content=None,
+        dry_run_job_id=None,
+        accepted_validation_job_id=None,
+        actor_user_id=actor_id,
+    )
+
+    # Roadmap PR20E (design §14.4a): a read-only, non-mutating rejection
+    # -- called strictly BEFORE admit_phase_job, so a session with no
+    # confirmed plan never has any state touched at all. Default no-op
+    # for every adapter that predates this mechanism.
+    with adapter_invocation_context(invocation_context):
+        await adapter.precheck_execute(db)
+
     lease_owner = uuid.uuid4()
     lease_generation = 1
     session_row, job_row = await import_job_crud.admit_phase_job(
@@ -407,37 +443,28 @@ async def run_execute(
 
     domain_exc: Exception | None = None
     final_session: ImportSession | None = None
+    # Roadmap PR20E fix round 2 (PR #95 review, §H2): captured
+    # unconditionally, immediately after `adapter.execute(db)` returns --
+    # whether it returned normally or raised -- via the same contextvar
+    # mechanism `record_resolved_execution_resource` writes to. This
+    # local variable, not the exception object, is what the rest of this
+    # function (fenced completion, `on_execution_success`, and TX2's
+    # `on_execution_failure`) relies on -- so a failure that happens
+    # *after* `execute()` already returned successfully (fenced
+    # completion, `on_execution_success` itself, audit, commit) still
+    # carries the correct resolved id into TX2, never `None` merely
+    # because `execute()` itself didn't raise.
+    resolved_resource_id: uuid.UUID | None = None
     try:
-        # Roadmap PR20A (design §6.4): identity-only context for `execute`
-        # -- `verified_source_content`/`dry_run_job_id`/
-        # `accepted_validation_job_id` are always `None` here, since
-        # `execute()` never re-reads or re-parses the source and resolves
-        # its own confirmed plan internally (design §14.4, a later slice).
-        # `import_session_id` is retained only for audit-logging purposes;
-        # neither `plan_dry_run` nor `execute` writes to
-        # `import_sessions`/`import_jobs` itself.
-        source = await import_session_crud.get_source(db, session_id=session_id)
-        if source is None:
-            raise ImportSourceNotRegisteredError(
-                f"Import session '{session_id}' has no registered source despite being admitted for execute."
-            )
-        invocation_context = AdapterInvocationContext(
-            import_session_id=session_id,
-            import_source_id=source.id,
-            dataset_type=dataset_type,
-            source_checksum=source.checksum,
-            source_fingerprint=source.source_fingerprint,
-            ruleset_version=adapter.ruleset_version,
-            verified_source_content=None,
-            dry_run_job_id=None,
-            accepted_validation_job_id=None,
-            actor_user_id=actor_id,
-        )
-
         # §17/§9.4.1 step 3: unlike dry-run, execute must actually write --
-        # the normal read-write session, inside this same TX1.
+        # the normal read-write session, inside this same TX1. Reuses the
+        # same `invocation_context` `precheck_execute` already used above
+        # -- never a second, potentially divergent construction.
         with adapter_invocation_context(invocation_context):
-            imported_rows = await adapter.execute(db)
+            try:
+                imported_rows = await adapter.execute(db)
+            finally:
+                resolved_resource_id = get_resolved_execution_resource()
         final_session = await import_job_crud.fenced_phase_success(
             db,
             job_id=job_id,
@@ -451,6 +478,16 @@ async def run_execute(
         )
         if final_session is None:
             raise _FenceLostDuringSuccessError()
+        # Roadmap PR20E fix round 2 (PR #95 review, §H1): the plan
+        # transition happens here -- on TX1's own session, *after*
+        # `fenced_phase_success` above has already locked Job then
+        # Session -- never before. This is the fix for PR95-H1: the
+        # global lock order is now Job -> Session -> Plan on every path
+        # (this success path, TX2 failure publication below, and
+        # recovery's existing Job -> Session -> Plan order), so a
+        # completion and a concurrent recovery attempt can never acquire
+        # these three resources in opposite orders.
+        await adapter.on_execution_success(db, resolved_resource_id)
         # §9.4.1 step 5 / §19: one AUDIT_ACTION_IMPORT entry, same TX1,
         # fresh success only -- never for an idempotent replay or a
         # cleanly-recorded failure.
@@ -466,6 +503,20 @@ async def run_execute(
     except Exception as exc:  # noqa: BLE001 -- §9.4.2 treats every exception identically
         domain_exc = exc
         final_session = None
+        # Roadmap PR20E fix round 3 (PR #95 review, §H4): the context-
+        # recorded `resolved_resource_id` above is the primary mechanism
+        # and takes precedence -- but `AdapterExecutionConflict.
+        # resolved_resource_id` remains an approved, independent
+        # contract of its own (§14.4b), and an adapter is still allowed
+        # to raise it directly without ever calling `record_resolved_
+        # execution_resource` first. This fallback only ever fires when
+        # the context recorded nothing at all (`None`) -- it never
+        # overwrites an already-recorded value, so an adapter that does
+        # call `record_resolved_execution_resource` (Equipment Master
+        # does, as soon as it resolves its plan) is never affected by
+        # this branch.
+        if resolved_resource_id is None and isinstance(exc, AdapterExecutionConflict):
+            resolved_resource_id = exc.resolved_resource_id
         if not isinstance(exc, _FenceLostDuringSuccessError):
             logger.exception("Execute attempt %s crashed", job_id)
     finally:
@@ -482,6 +533,15 @@ async def run_execute(
     )
     try:
         async with AsyncSessionLocal() as tx2:
+            # Roadmap PR20E fix round 2 (PR #95 review, §H1): Job/Session
+            # fencing runs *first* here too -- the same Job -> Session ->
+            # Plan order the success path above and recovery both use.
+            # `on_execution_failure` (Plan) below only ever runs once
+            # this fence has actually succeeded on THIS attempt; a
+            # fenced-out attempt never touches the plan at all (whichever
+            # path actually won the fence -- a later attempt, or
+            # recovery via `on_execution_recovery` -- owns that
+            # transition instead).
             failed_session = await import_job_crud.fenced_phase_failure(
                 tx2,
                 job_id=job_id,
@@ -502,6 +562,15 @@ async def run_execute(
                 raise ImportRecoveryRequiredError(
                     "This execute attempt was superseded by a recovery claim or a later attempt."
                 )
+            # Roadmap PR20E (design §14.4b, fix round 2 §H1/§H2): runs on
+            # TX2's own session, only after the Job/Session fence above
+            # has already succeeded, *before* this same transaction
+            # commits -- session-failure and plan-failure land together,
+            # or neither does. `resolved_resource_id` is `None` (a
+            # harmless no-op) for every adapter that predates this
+            # mechanism, or when `execute()` never resolved anything
+            # before failing.
+            await adapter.on_execution_failure(tx2, resolved_resource_id)
             await tx2.commit()
     except ImportRecoveryRequiredError:
         raise

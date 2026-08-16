@@ -104,6 +104,101 @@ async def get_current_plan(db: AsyncSession, *, import_session_id: uuid.UUID) ->
     ).scalar_one_or_none()
 
 
+async def get_active_confirmed_for_session(
+    db: AsyncSession, *, import_session_id: uuid.UUID
+) -> EquipmentMasterDryRunPlan | None:
+    """Roadmap PR20E (design §14.4, §14.4a). The exact resolution query
+    both `precheck_execute` and `execute()` use: `status = 'active' AND
+    confirmed_at IS NOT NULL`. Deliberately distinct from
+    `get_current_plan` above (`GET .../dry-run-plan`'s own lookup, which
+    returns a merely-`active` plan regardless of confirmation state) --
+    an `active`-but-unconfirmed plan is a normal, expected state (§14.4a)
+    that must never be treated as executable. The partial unique index on
+    `(import_session_id) WHERE status = 'active'` guarantees this query
+    returns at most one row, deterministically -- no "pick the newest"
+    heuristic."""
+    return (
+        await db.execute(
+            select(EquipmentMasterDryRunPlan).where(
+                EquipmentMasterDryRunPlan.import_session_id == import_session_id,
+                EquipmentMasterDryRunPlan.status == "active",
+                EquipmentMasterDryRunPlan.confirmed_at.isnot(None),
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def mark_plan_consumed(db: AsyncSession, *, plan_id: uuid.UUID) -> None:
+    """Roadmap PR20E (design §14.4). Called by `execute()` itself, inside
+    its own TX1, on successful completion -- the plan's final resting
+    state after a genuinely-applied execution. A successfully executed
+    plan is never executable again (§14.4/§14.5's exhaustive staleness
+    list -- a `consumed` plan is never returned by
+    `get_active_confirmed_for_session` above)."""
+    await db.execute(
+        update(EquipmentMasterDryRunPlan)
+        .where(EquipmentMasterDryRunPlan.id == plan_id)
+        .values(status="consumed")
+    )
+
+
+async def mark_plan_failed(db: AsyncSession, *, plan_id: uuid.UUID) -> None:
+    """Roadmap PR20E (design §14.4b). Called by
+    `EquipmentMasterAdapter.on_execution_failure`, on the framework's own
+    TX2 session, immediately before `fenced_phase_failure`'s write
+    commits -- session-failure and plan-failure land together, or
+    neither does (TX2 is one transaction)."""
+    await db.execute(
+        update(EquipmentMasterDryRunPlan)
+        .where(EquipmentMasterDryRunPlan.id == plan_id)
+        .values(status="failed")
+    )
+
+
+async def mark_active_plan_failed_for_session(db: AsyncSession, *, import_session_id: uuid.UUID) -> None:
+    """Roadmap PR20E (design §14.4c). Called by
+    `EquipmentMasterAdapter.on_execution_recovery`, on
+    `recover_session()`'s own recovery transaction, only when the
+    recovered job's `job_type` was `'execute'` -- reconciles the case
+    §14.4b's exception-based hook cannot cover (a hard worker crash that
+    never raised anything for `on_execution_failure` to catch). No
+    `confirmed_at` predicate needed: reaching `executing` admission
+    already required a confirmed plan (§14.4a's precondition), and this
+    reuses the same "at most one active plan per session" invariant
+    `get_active_confirmed_for_session` above depends on, rather than a
+    second lookup mechanism."""
+    await db.execute(
+        update(EquipmentMasterDryRunPlan)
+        .where(
+            EquipmentMasterDryRunPlan.import_session_id == import_session_id,
+            EquipmentMasterDryRunPlan.status == "active",
+        )
+        .values(status="failed")
+    )
+
+
+async def list_all_plan_rows(db: AsyncSession, *, plan_id: uuid.UUID) -> list[EquipmentMasterDryRunPlanRow]:
+    """Roadmap PR20E (design §15). Unpaginated -- `execute()`'s own
+    internal consumption of one confirmed plan's rows, never an API
+    response (contrast `list_plan_rows` below, `GET .../dry-run-plan`'s
+    cursor-paginated read path). Bounded by `MAX_IMPORT_ROWS=5000`
+    (`app.services.import_adapter`), well within a single query's normal
+    tolerances -- no chunking needed (design §15). Ordered by
+    `source_row_number` for deterministic, reviewable execution order,
+    matching the plan's own display order."""
+    return list(
+        (
+            await db.execute(
+                select(EquipmentMasterDryRunPlanRow)
+                .where(EquipmentMasterDryRunPlanRow.dry_run_plan_id == plan_id)
+                .order_by(EquipmentMasterDryRunPlanRow.source_row_number.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
 async def get_plan_by_id(
     db: AsyncSession, *, plan_id: uuid.UUID, import_session_id: uuid.UUID
 ) -> EquipmentMasterDryRunPlan | None:

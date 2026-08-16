@@ -242,6 +242,69 @@ remaining stale "OD-1/OD-2 open," "blocked on," "conditional on," and
 "exactly seven cases" language with the now-current RESOLVED state.
 PR20C is marked READY (§24) on this completed basis. Also recorded in
 `docs/DECISION_LOG.md`.
+**Fix round 11** (implementation-time correction, GitHub PR #95 review —
+PR20E, Equipment Master Execution, is now implemented and this round's
+findings are against that actual runtime, not a further design-stage
+review) closed four merge-blocking findings discovered only once
+`execute()`/`run_execute` existed as real code, none of which touch
+OD-1/OD-2/OD-3/OD-4: **PR95-H1** — the success-completion path's
+plan-consumption write (previously specified in §14.4/§14.4 code comment
+as happening inside `execute()` itself, "marks the plan `consumed` in
+the same transaction on success") acquired the Plan row *before* the
+framework's own Job→Session completion fence (`fenced_phase_success`),
+the exact opposite of stale-job recovery's Job→Session→Plan order — a
+genuine PostgreSQL deadlock/split-brain risk under a real race around
+lease expiry. Closed by establishing **one explicit global execution
+lock order, Job → Session → adapter-owned resource, on every path**
+(success completion, TX2 failure publication, and recovery), and moving
+plan consumption into a new `on_execution_success` adapter hook, called
+by the framework only *after* `fenced_phase_success` has already
+succeeded (§14.4b, rewritten below). **PR95-H2** — §14.4b's original
+mechanism captured the resolved plan id *only* from the
+`AdapterExecutionConflict` exception `execute()` raised; a failure
+occurring *after* `execute()` had already returned successfully (during
+fenced completion, plan consumption, audit, or commit — all still inside
+TX1) left that id `None`, so TX2's `on_execution_failure(None)` was
+contractually a no-op, risking a session marked `failed` while its plan
+stayed `active` forever. Closed by a new, additive framework mechanism —
+`record_resolved_execution_resource`/`get_resolved_execution_resource`
+(a per-invocation contextvar, reset on every `adapter_invocation_context`
+entry) — that lets an adapter record its resolved sub-resource id
+unconditionally, immediately upon resolution and before any mutation,
+so the framework can retain it for the entire remainder of TX1 and for
+TX2 failure publication regardless of *where* the eventual failure
+occurs. **PR95-H3** — `_apply_update_row`'s no-op determination compared
+writable field values first and returned early on an empty diff
+*without* first validating `expected_equipment_version` against the
+row's current `version` — a plan whose writable fields happened to
+already match the row's current values (because some other field
+changed, or a writable field changed and was then reverted to its
+original value) would be silently accepted as a no-op even though the
+row is genuinely stale relative to what the plan was dry-run against.
+Closed by requiring freshness validation *before* any no-op
+determination is made (§15.1, rewritten below) — "no-op" means "no
+version bump," never "skip the optimistic-concurrency check" — and by
+row-locking every UPDATE target (ordered by id, `FOR UPDATE` on
+PostgreSQL) for the remainder of the transaction. **PR95-H4** — the H2
+fix's context-recorded mechanism, if treated as the *only* transport,
+would silently break an adapter that raises `AdapterExecutionConflict`
+carrying `resolved_resource_id` directly without ever calling
+`record_resolved_execution_resource` first (the original, still-approved
+§14.4b contract) — such an adapter's resolved id would be lost. Closed
+by keeping `AdapterExecutionConflict.resolved_resource_id` as an
+explicit, approved fallback, consulted only when the context recorded
+nothing (`None`) — **the context-recorded value always takes precedence
+over the exception-carried one when both are present.** Genuine
+two-PostgreSQL-connection tests prove the corrected lock order under
+real concurrent completion-vs-recovery races (both winner orders, plus a
+barrier-only uncertain-winner race); targeted regressions prove each of
+the three post-resolution failure-injection points (after Equipment
+writes, during plan consumption, during audit) still fail Session+Plan
+together; and targeted regressions prove both the stale-apparent-no-op
+rejection and the valid-fresh-no-op acceptance. This round does not
+start PR21 or any Ward/BME-scoped work, does not modify the frontend,
+and requires no new Alembic migration — migration `0018_dry_run_plans`
+already supports every plan-status value this correction needs.
 **Repository:** Medical Equipment Pool. Not MEMS, not Recall Monitor.
 **Baseline:** `e3156bfc231fcbc126251f41292bc397fdf8ad3f` — the real
 squash-merge SHA of GitHub PR #88 (Post-PR19B Governance Sync), itself on
@@ -856,24 +919,73 @@ class EquipmentMasterAdapter(ImportAdapter):
         # point indicates a framework-level invariant violation (not a
         # client-correctable error, since `precheck_execute` already
         # confirmed one existed) and is raised as a genuine, unexpected
-        # failure via `EquipmentExecutionConflict` (fix round 5, H11,
-        # §14.4b), never silently tolerated. Applies each plan row's
-        # planned action: UPDATE rows via the CAS predicate using that
-        # row's own persisted concurrency token (§15.1, never a
-        # freshly-read one); CREATE rows (authorized per §9 OD-2, and
-        # only ever reaching this point with a genuine, non-fabricated
-        # asset_number per §9 OD-4 — no row lacking one is ever plan-ed
-        # as CREATE) via a plain insert guarded by the existing unique
-        # constraints (§16).
+        # failure via `AdapterExecutionConflict` (fix round 5, H11,
+        # §14.4b), never silently tolerated.
+        #
+        # **Fix round 11 (PR95-H2) correction**: immediately upon
+        # resolving `plan.id` -- before applying any row, before any
+        # mutation is attempted -- calls
+        # `record_resolved_execution_resource(plan.id)` (§14.4b). This is
+        # the *primary* mechanism by which the framework learns the
+        # resolved plan id; it makes that id available unconditionally,
+        # on both the success and failure return paths, for the entire
+        # remainder of TX1 and for TX2 failure publication -- not only
+        # when this method raises `AdapterExecutionConflict` itself.
+        #
+        # Applies each plan row's planned action: UPDATE rows via the CAS
+        # predicate using that row's own persisted concurrency token
+        # (§15.1, never a freshly-read one, and only *after* freshness is
+        # validated -- fix round 11, PR95-H3, below); CREATE rows
+        # (authorized per §9 OD-2, and only ever reaching this point with
+        # a genuine, non-fabricated asset_number per §9 OD-4 — no row
+        # lacking one is ever plan-ed as CREATE) via a plain insert
+        # guarded by the existing unique constraints (§16).
+        #
         # Any conflict (stale token, missing plan, unique violation)
-        # raises `EquipmentExecutionConflict(resolved_resource_id=
-        # plan.id)` (§14.4b) rather than a bare exception, so the
-        # framework's TX2 failure path can mark the plan `failed` using
-        # only that primitive id. Marks the plan `consumed` in the same
-        # transaction on success. Returns imported_rows count. Exact
-        # write content: RESOLVED, §9 OD-1/OD-2. (PR20E's own
-        # implementation, not PR20C's — execute() belongs to that later
-        # slice.)
+        # raises `AdapterExecutionConflict(resolved_resource_id=
+        # plan.id)` (§14.4b) rather than a bare exception -- this remains
+        # an approved, independent transport the framework still honors
+        # as a fallback (fix round 11, PR95-H4) whenever the context
+        # recorded nothing, but is no longer this adapter's *only* way of
+        # surfacing the resolved id.
+        #
+        # **Fix round 11 (PR95-H1) correction: this method does NOT mark
+        # the plan `consumed`.** Doing so here would lock the Plan row
+        # *before* the framework has obtained its own Job → Session
+        # completion fence (`fenced_phase_success`) — the exact
+        # Plan → Job → Session lock-order violation PR95-H1 identified,
+        # the reverse of stale-job recovery's Job → Session → Plan order,
+        # and a genuine PostgreSQL deadlock/split-brain risk. Plan
+        # consumption is now `on_execution_success`'s responsibility
+        # (below), invoked by the framework only *after*
+        # `fenced_phase_success` has already succeeded. Returns
+        # imported_rows count. Exact write content: RESOLVED, §9
+        # OD-1/OD-2. (PR20E's own implementation, not PR20C's — execute()
+        # belongs to that later slice.)
+        ...
+
+    async def on_execution_success(
+        self, db: AsyncSession, resolved_resource_id: uuid.UUID | None
+    ) -> None:
+        # NEW, additive, default-no-op ImportAdapter hook (fix round 11,
+        # PR95-H1, §14.4b) -- called by the framework on TX1's own
+        # session, immediately after `fenced_phase_success` has already
+        # succeeded (Job → Session already locked) but *before* TX1's own
+        # commit -- never before that fence succeeds, and never at all if
+        # it did not (a worker fenced out during its own success
+        # publication must not touch this plan; whichever path actually
+        # won the fence -- a later attempt, or recovery -- owns that
+        # transition instead, §14.4c). This is where plan consumption
+        # actually happens: issues
+        # `UPDATE equipment_master_dry_run_plans SET status = 'consumed'
+        # WHERE id = :resolved_resource_id` on the TX1 session.
+        # `resolved_resource_id` is the same value `execute()` recorded
+        # via `record_resolved_execution_resource` -- `None` only for the
+        # framework-invariant-violation case where no plan could be
+        # resolved at all (harmless no-op). If this raises, the exception
+        # propagates to TX1's own generic failure handling (rollback,
+        # then TX2 failure publication using this same
+        # `resolved_resource_id`) -- never partially applied.
         ...
 
     async def on_execution_failure(
@@ -881,24 +993,59 @@ class EquipmentMasterAdapter(ImportAdapter):
     ) -> None:
         # NEW, additive, default-no-op ImportAdapter hook (fix round 5,
         # H11, §14.4b) -- called by the framework inside TX2, on TX2's
-        # own session, immediately before `fenced_phase_failure`'s write
-        # commits, **only** when the exception `execute()` raised was an
-        # `EquipmentExecutionConflict` (or the framework's generic
-        # equivalent protocol, §14.4b) carrying a non-`None`
-        # `resolved_resource_id`. Never receives an ORM object -- only
-        # the bare plan-id primitive, since TX1 has already rolled back
-        # by this point and any ORM-bound reference from `execute()` is
-        # detached/invalid. Issues
-        # `UPDATE equipment_master_dry_run_plans SET status = 'failed'
-        # WHERE id = :resolved_resource_id` on the TX2 session -- if this
-        # raises, TX2 itself aborts, and the session/plan pair falls back
-        # to PR19A's existing generic fence-loss/recovery sweep (§3.3)
-        # rather than a new PR20-specific recovery mechanism.
+        # own session. **Fix round 11 (PR95-H1) correction: called
+        # *after* `fenced_phase_failure` has already succeeded** (Job →
+        # Session already locked), not before -- the same Job → Session →
+        # Plan order `on_execution_success` above and recovery
+        # (§14.4c) both use. A worker whose own failure publication was
+        # itself fenced out must never touch this plan; whichever path
+        # actually won the fence owns that transition instead. Called
+        # whenever `execute()` raised, regardless of exception type --
+        # not only `AdapterExecutionConflict` (fix round 11, PR95-H2: a
+        # failure occurring *after* `execute()` already returned
+        # successfully is covered too, using the `resolved_resource_id`
+        # `execute()` recorded via `record_resolved_execution_resource`).
+        # Never receives an ORM object -- only the bare plan-id primitive,
+        # since TX1 has already rolled back by this point and any
+        # ORM-bound reference from `execute()` is detached/invalid.
+        # Issues `UPDATE equipment_master_dry_run_plans SET status =
+        # 'failed' WHERE id = :resolved_resource_id` on the TX2 session --
+        # if this raises, TX2 itself aborts, and the session/plan pair
+        # falls back to PR19A's existing generic fence-loss/recovery
+        # sweep (§3.3) rather than a new PR20-specific recovery
+        # mechanism.
         ...
 
 
 register_adapter(EquipmentMasterAdapter())
 ```
+
+**Global execution lock order (fix round 11, PR95-H1)**: the framework
+now enforces exactly one lock-acquisition order across every path that
+can transition a phase's `ImportJob`/`ImportSession` and an adapter's own
+owned resource together:
+
+```
+Job → Session → adapter-owned resource
+```
+
+For Equipment Master, that resource is the confirmed `DryRunPlan`:
+
+```
+Job → Session → DryRunPlan
+```
+
+This applies to success completion (`fenced_phase_success` before
+`on_execution_success`), failure publication (`fenced_phase_failure`
+before `on_execution_failure`), and recovery (`claim_stale_job` →
+`transition_session_for_recovery` before `on_execution_recovery`,
+unchanged from fix round 7 — recovery already used this order and is the
+reference this correction brings the other two paths into agreement
+with). No normative path in this document may describe a
+Plan → Job, Plan → Session, or adapter-resource → Job acquisition where
+those locks can overlap with a concurrent attempt on the other path —
+that is exactly the shape that produced PR95-H1's genuine
+deadlock/split-brain risk.
 
 Note the registration call: the real `register_adapter(adapter:
 ImportAdapter) -> None` takes only the adapter instance — it reads
@@ -2325,8 +2472,10 @@ async def execute(self, db: AsyncSession) -> int:
     # admission -- which the race-freedom argument above rules out for
     # anything routed through the existing admission CAS -- so a None
     # result here is a genuine framework-invariant violation, raised as
-    # `EquipmentExecutionConflict(resolved_resource_id=None)` (§14.4b),
-    # never silently tolerated.
+    # `AdapterExecutionConflict(resolved_resource_id=None)` (§14.4b),
+    # never silently tolerated. When `plan` IS resolved, `plan.id` is
+    # recorded via `record_resolved_execution_resource` (fix round 11,
+    # PR95-H2, §14.4b) immediately, before any mutation.
     ...
 ```
 
@@ -2364,9 +2513,18 @@ session `failed`, the resolved plan's own `status` is also updated to
 `'failed'` (§14.2) via the mechanism §14.4b defines — it must never be
 left `active` once its owning session has terminally failed.
 
-On successful completion, `execute()` marks the plan `consumed` in the
-same transaction as the rest of its writes (§15), exactly as prior
-revisions already specified.
+**Fix round 11 (PR95-H1) correction, superseding the sentence prior
+revisions specified here**: `execute()` itself does **not** mark the
+plan `consumed`. On successful completion, the framework's
+`on_execution_success` hook (§14.4b) does so — invoked only *after* the
+framework's own Job → Session completion fence (`fenced_phase_success`)
+has already succeeded, in the same TX1 as the rest of `execute()`'s
+writes (§15), never before. The prior "marks the plan `consumed` in the
+same transaction on success" language described `execute()` performing
+this write directly, which would lock the Plan row ahead of the
+Job/Session fence — the exact lock-order violation this fix round
+closes (see the "Global execution lock order" statement in §6.3 above
+and the rewritten §14.4b below).
 
 **Required test coverage, revised (§22)**: a test proving the resolved
 plan always matches the operator's most recently *confirmed* plan (§14.4a)
@@ -2629,7 +2787,7 @@ performs no write, and a companion test for the `dry_run_failed` case
 before its own `persist_dry_run_plan` write, leaving an earlier plan
 `active` while the session itself is no longer `dry_run_completed`).
 
-### 14.4b TX2 plan-failure hook contract — surviving TX1 rollback (NEW, fix round 5, H11)
+### 14.4b Plan success/failure hook contract — surviving TX1 rollback, correct global lock order (NEW, fix round 5, H11; success hook and lock-order correction added fix round 11, PR95-H1/H2/H4)
 
 **Fix-round-5 finding: §14.4's "the plan's status is set to `'failed'` in
 the same TX2 write" was asserted without specifying how a plan identity
@@ -2664,73 +2822,157 @@ class AdapterExecutionConflict(RuntimeError):
         self.resolved_resource_id = resolved_resource_id
 ```
 
-**Framework-side change, additive to `run_execute`'s existing exception
-handling** (confirmed at implementation time against the actual TX1/TX2
-call site, §3.3 — the shape below is this design's proposed contract, to
-be verified against the real code exactly as every other framework
-touchpoint in this document has been): when the exception `execute()`
-raised is an `AdapterExecutionConflict`, the framework captures
-`exc.resolved_resource_id` (a bare UUID, safe to hold across the
-rollback) *before* building TX2; then, inside TX2, **before**
-`fenced_phase_failure()`'s own write commits, it calls
-`await adapter.on_execution_failure(tx2_db, exc.resolved_resource_id)`
-— giving the adapter a chance to mark its own resource `failed` using
-only that primitive, in the same transaction. If `resolved_resource_id`
-is `None` (the exception carries no resource, or the raising adapter
-doesn't use this mechanism), the hook is still called with `None` and the
-default no-op implementation does nothing — fully backward compatible
-with every adapter that predates this mechanism.
+**Fix round 11 (PR95-H1/H2/H4) correction — this subsection's original
+"Framework-side change"/"Ordering" text below described an
+exception-only transport and an ordering that placed the adapter's own
+resource-failure write (Plan) *before* the framework's own Job → Session
+failure fence (`fenced_phase_failure`). Both are corrected here,
+in place — the text that follows is the current, authoritative
+contract, not merely a note appended alongside the old one.**
 
-**Ordering and failure semantics, stated explicitly (per the review's
-request)**:
+**Resource-id transport: two supported mechanisms, explicit precedence.**
+The **primary** mechanism (fix round 11, PR95-H2) is a new, additive,
+per-invocation contextvar pair in `app.services.import_adapter_context`
+(PR19A's own module): `record_resolved_execution_resource(resource_id)`,
+called by an adapter's own `execute()` immediately upon resolving its
+persisted sub-resource, *before* any mutation is attempted; and
+`get_resolved_execution_resource()`, the framework's own read side.
+`adapter_invocation_context` resets this value to `None` on every entry,
+so a value recorded during one `execute()` invocation can never leak
+into a later, unrelated one on the same task. This makes the resolved id
+available to the framework unconditionally — on both `execute()`'s
+success and failure return paths — for the entire remainder of TX1 and
+for TX2 failure publication, not only when `execute()` itself raises.
 
-1. `execute()` raises `AdapterExecutionConflict(msg, resolved_resource_id=plan.id)`.
-2. TX1 rolls back (existing, unmodified PR19A behavior).
-3. The framework captures the primitive `resolved_resource_id` from the
-   caught exception (not from any ORM state).
-4. TX2 opens (existing, unmodified PR19A mechanism).
-5. `await adapter.on_execution_failure(tx2_db, resolved_resource_id)` runs
-   — for `EquipmentMasterAdapter`, this issues `UPDATE
-   equipment_master_dry_run_plans SET status = 'failed' WHERE id =
-   :resolved_resource_id` on `tx2_db`.
-6. `fenced_phase_failure()` runs on the same `tx2_db` (existing,
-   unmodified PR19A mechanism), writing the session's own terminal
+The **compatibility fallback** (the original mechanism, still fully
+supported, fix round 5's H11) is `AdapterExecutionConflict.
+resolved_resource_id` itself — an adapter is still permitted to raise
+that exception carrying a resource id directly, without ever calling
+`record_resolved_execution_resource` first. `run_execute`'s exception
+handler consults this fallback **only when the context recorded
+nothing** (`get_resolved_execution_resource()` returned `None`) — a
+non-`None` context-recorded value always takes precedence and is never
+overwritten by an exception-carried one. `EquipmentMasterAdapter` uses
+the primary mechanism (it calls `record_resolved_execution_resource` as
+soon as it resolves its plan, §14.4); the fallback exists for any other
+adapter that raises `AdapterExecutionConflict` without adopting that
+mechanism, and remains part of this contract precisely so such an
+adapter's resolved id is never silently lost.
+
+**Global lock order governs both the success and failure hooks (fix
+round 11, PR95-H1)**: `Job → Session → adapter-owned resource` (stated
+in full in §6.3 above) applies to failure publication exactly as it
+applies to success completion and recovery — `on_execution_failure`
+(this section) runs *after* `fenced_phase_failure` has already
+succeeded, never before, mirroring `on_execution_success`'s own
+(§6.3) placement *after* `fenced_phase_success`. A worker whose own
+failure publication was itself fenced out (`fenced_phase_failure`
+returned `None` — superseded by a later attempt or by recovery) must
+never touch the plan at all; whichever path actually won the fence owns
+that transition instead.
+
+**Ordering and failure semantics, stated explicitly, for both terminal
+outcomes**:
+
+*Success* (§6.3's `execute()`/`on_execution_success` code block):
+
+1. `execute()` resolves the plan and calls
+   `record_resolved_execution_resource(plan.id)` immediately — before
+   applying any row.
+2. `execute()` applies every row and returns normally.
+3. The framework reads `get_resolved_execution_resource()` right after
+   `execute()` returns (still inside TX1) into a local primitive.
+4. `fenced_phase_success()` runs on TX1's session (existing, unmodified
+   PR19A mechanism) — Job, then Session.
+5. Only if step 4 succeeds: `await adapter.on_execution_success(db,
+   resolved_resource_id)` runs — for `EquipmentMasterAdapter`, this
+   issues `UPDATE equipment_master_dry_run_plans SET status =
+   'consumed' WHERE id = :resolved_resource_id` on the same TX1 session.
+6. The framework's own audit-event write and `db.commit()` follow, same
+   TX1.
+7. **If step 4 returns `None`** (this attempt was fenced out): the
+   framework raises its own internal fence-lost signal, skips step 5
+   entirely, and falls through to the *Failure* sequence below — the
+   plan is never touched by a fenced-out success attempt.
+8. **If step 5, or anything after it, raises**: TX1 rolls back in full
+   (including step 5's uncommitted write, if it ran), and the framework
+   falls through to the *Failure* sequence below, using the same
+   `resolved_resource_id` captured in step 3.
+
+*Failure* (this section):
+
+1. TX1 rolls back (existing, unmodified PR19A behavior) — triggered
+   either by `execute()` raising, or by a later failure in the success
+   sequence above.
+2. The framework already holds `resolved_resource_id` as a plain local
+   primitive (captured in the success sequence's step 3, which runs
+   unconditionally right after `execute()` returns) — falling back to
+   `exc.resolved_resource_id` only if that local is still `None` and the
+   caught exception is an `AdapterExecutionConflict` (the precedence
+   rule above).
+3. TX2 opens (existing, unmodified PR19A mechanism).
+4. `fenced_phase_failure()` runs on `tx2_db` (existing, unmodified PR19A
+   mechanism) — Job, then Session, writing the session's own terminal
    `failed` state and bounded failure message.
+5. **Only if step 4 succeeds** (this attempt actually won the failure
+   fence): `await adapter.on_execution_failure(tx2_db,
+   resolved_resource_id)` runs — for `EquipmentMasterAdapter`, this
+   issues `UPDATE equipment_master_dry_run_plans SET status = 'failed'
+   WHERE id = :resolved_resource_id` on `tx2_db`.
+6. **If step 4 returns `None`** (this attempt was itself fenced out —
+   superseded by a later attempt or by recovery): TX2 rolls back, a
+   fence-lost audit entry is written, and step 5 never runs — the plan
+   is never touched by a fenced-out failure attempt; whichever path
+   actually won owns that transition.
 7. TX2 commits — session-failure and plan-failure land together, or
    neither does.
 8. **If step 5 itself raises**: TX2 aborts entirely (it never reaches
-   step 6's commit). This is treated identically to any other TX2
+   step 7's commit). This is treated identically to any other TX2
    infrastructure failure this codebase already has to tolerate — the
    session/plan pair falls back to PR19A's existing generic
    fence-loss/recovery sweep (§3.3), which is designed exactly for "a
    worker died mid-failure-publication" scenarios; this is not a new
    PR20-specific recovery mechanism, and this design does not invent one.
 
-**Required test coverage (§22)**: a test proving TX1's rollback leaves
-the plan's `status` completely unchanged (still `active`) — the plan is
-only ever touched inside TX2, never TX1; a test proving a successful TX2
+**Required test coverage (§22, extended fix round 11)**: a test proving
+TX1's rollback leaves the plan's `status` completely unchanged (still
+`active`) — the plan is only ever touched inside TX1 (on success, via
+`on_execution_success`) or TX2 (on failure, via `on_execution_failure`),
+never by a rolled-back TX1 itself; a test proving a successful TX2
 commits both the session's `failed` state and the plan's `failed` status
 together; a test proving a forced failure inside `on_execution_failure`
 itself leaves **both** the session and the plan un-updated (still
 whatever they were before the failed TX2 attempt), and that a subsequent
 recovery pass (existing PR19A mechanism) can still reconcile the session
-correctly; and a test proving `resolved_resource_id=None` (an adapter
+correctly; a test proving `resolved_resource_id=None` (an adapter
 raising a bare `AdapterExecutionConflict` with no resource, or a
 different adapter's own unrelated exception) leaves `on_execution_failure`
-a harmless no-op for every adapter that doesn't use this mechanism.
+a harmless no-op for every adapter that doesn't use this mechanism; a
+test proving an adapter that raises `AdapterExecutionConflict` directly
+without ever calling `record_resolved_execution_resource` still has its
+exception-carried id reach `on_execution_failure` (the fallback path);
+a test proving a non-`None` context-recorded id is never overwritten by
+a differently-valued exception-carried one (the precedence rule); and
+two genuine two-PostgreSQL-connection tests proving the corrected
+Job → Session → Plan order holds under a real completion-vs-recovery
+race for both possible winners, plus a third, barrier-only test proving
+no deadlock and no split-brain state under a genuinely uncertain race.
 
-### 14.4c Recovery reconciliation — the case §14.4b's exception-based hook cannot cover (fix round 6, H11-follow-up; mechanism made concrete, fix round 7, H11R)
+### 14.4c Recovery reconciliation — the case §14.4b's execute()-driven hooks cannot cover (fix round 6, H11-follow-up; mechanism made concrete, fix round 7, H11R)
 
-**Gap identified explicitly: §14.4b's mechanism only fires when
-`execute()` itself raises `AdapterExecutionConflict` on a live worker.**
-A worker that crashes outright — the process dies mid-`execute()`, before
-raising anything — never reaches that exception handler at all. PR19A's
-existing generic recovery sweep (§3.3) is what reconciles this case: it
-independently discovers a session whose lease/fence expired mid-phase and
-marks it terminally `failed` via its own generic mechanism, entirely
-without any adapter-supplied exception or `resolved_resource_id` (there
-is nothing to capture — the crashed worker produced no exception for
-anything to catch). **Without an additional step, this leaves the
+**Gap identified explicitly: §14.4b's mechanisms only fire when
+`execute()` itself runs to completion (success or a caught exception) on
+a live worker.** A worker that crashes outright — the process dies
+mid-`execute()`, before returning or raising anything — never reaches
+`on_execution_success`, `on_execution_failure`, or either resource-id
+transport mechanism (fix round 11: neither the context-recorded value
+nor an `AdapterExecutionConflict`, since nothing captures or raises
+either). PR19A's existing generic recovery sweep (§3.3) is what
+reconciles this case: it independently discovers a session whose
+lease/fence expired mid-phase and marks it terminally `failed` via its
+own generic mechanism, entirely without any adapter-supplied exception
+or `resolved_resource_id` (there is nothing to capture — the crashed
+worker produced neither). **Without an additional step, this leaves the
 session `failed` while its plan remains `active`/confirmed forever** —
 exactly the "plan left stale while session diverges" inconsistency this
 whole contract exists to prevent.
@@ -3192,6 +3434,35 @@ selects Option B: a new `Equipment.version` integer column**, mirroring
   a genuine staleness conflict, never silently proceed as if nothing
   needed to change, never silently refresh the token and retry, and never
   overwrite newer data by relaxing the predicate.
+- **Freshness must be validated before any no-op determination is made,
+  never after (fix round 11, PR95-H3 correction).** A separate,
+  same-value-update no-op rule exists (§9 OD-2): if none of the row's
+  writable fields actually differ from the target Equipment record's
+  current values, `execute()` must not write and must not bump `version`
+  (the CAS UPDATE above is never even issued). **The bug this closes**:
+  computing that "no writable field differs" comparison *before*
+  checking `expected_equipment_version` against the row's current
+  `version` lets a genuinely stale plan through undetected whenever its
+  writable values happen to already match the row's current state —
+  because some other, non-writable field changed (bumping `version`), or
+  because a writable field changed and was then reverted to its original
+  value. "No-op" means "no version bump, no write" — it does **not**
+  mean "skip the optimistic-concurrency check." The correct order,
+  applied to every UPDATE candidate: (1) load the target Equipment row
+  (locked, ordered by id, for the remainder of the transaction — the
+  same deterministic per-row locking discipline this design already
+  uses elsewhere, e.g. §14.3's session lock before plan-table writes);
+  (2) compare `expected_equipment_version` against that row's current
+  `version` — a mismatch is an immediate, genuine conflict, exactly as
+  the zero-rows-affected case above, raised *before* any diff is ever
+  computed; (3) only once freshness is confirmed, compare the plan's
+  proposed writable values against the row's current values; (4) an
+  empty diff is now a *genuine* no-op (freshness already established) —
+  no write, no version bump; (5) a non-empty diff proceeds to the CAS
+  UPDATE above exactly as already specified. `execute()` must never
+  "refresh" `expected_equipment_version` to the row's current value or
+  otherwise recompute the plan at this point — a stale plan is rejected,
+  not silently repaired.
 - **CREATE-row concurrency, defined explicitly**: if another actor
   creates a conflicting BCM/Item No after the plan was confirmed (a
   planned CREATE now collides), the database's own unique constraints
@@ -4396,3 +4667,74 @@ dependent implementation may begin.
       on the now-completed OD-1/OD-2/OD-3/OD-4 basis; CREATE *execution*
       for rows lacking an authoritative Asset Number remains explicitly
       NOT ready and is not claimed to be, per OD-4.
+- [x] **Fix round 11 (PR95-H1)**: closed a genuine PostgreSQL
+      deadlock/split-brain risk — the success-completion path acquired
+      the adapter's own resource lock (Plan) *before* the framework's
+      Job → Session completion fence, the reverse of recovery's
+      Job → Session → Plan order. Established one explicit global
+      execution lock order, `Job → Session → adapter-owned resource`,
+      applying to success completion, failure publication, and recovery
+      alike; moved plan consumption out of `execute()` into a new
+      `on_execution_success` hook, invoked only after the Job/Session
+      fence has already succeeded (§6.3, §14.4, §14.4b).
+- [x] **Fix round 11 (PR95-H2)**: closed the gap where a failure
+      occurring *after* `execute()` already returned successfully
+      (during fenced completion, plan consumption, audit, or commit)
+      left `resolved_resource_id=None`, making TX2's `on_execution_
+      failure` a no-op and risking a session marked `failed` with its
+      plan left `active` forever. Added a new, additive per-invocation
+      contextvar mechanism (`record_resolved_execution_resource`/
+      `get_resolved_execution_resource`) as the primary transport,
+      captured by the framework unconditionally right after `execute()`
+      returns, independent of whether or where it later fails (§14.4b).
+- [x] **Fix round 11 (PR95-H3)**: closed the gap where the no-op
+      determination for an UPDATE row compared writable values *before*
+      validating `expected_equipment_version`, letting a plan whose
+      writable fields happened to already match the row's current
+      values through undetected even when genuinely stale. Freshness is
+      now validated before any no-op decision; UPDATE targets are
+      row-locked (ordered by id, `FOR UPDATE` on PostgreSQL) for the
+      remainder of the transaction (§15.1).
+- [x] **Fix round 11 (PR95-H4)**: closed the gap where the H2 fix's
+      context-recorded mechanism, if treated as the sole transport,
+      would silently lose the resolved id for an adapter that raises
+      `AdapterExecutionConflict` carrying `resolved_resource_id` directly
+      without adopting `record_resolved_execution_resource`. Restored
+      `AdapterExecutionConflict.resolved_resource_id` as an explicit,
+      approved fallback — consulted only when the context recorded
+      nothing, with the context-recorded value always taking precedence
+      when both are present (§14.4b).
+- [x] **Fix round 11**: performed a full-document consistency sweep for
+      `mark_plan_consumed`, `on_execution_failure`, `on_execution_
+      recovery`, `on_execution_success`, `AdapterExecutionConflict`,
+      `resolved_resource_id`, `record_resolved_execution_resource`,
+      `fenced_phase_success`, `fenced_phase_failure`, lock-order, and
+      execute-ownership language — corrected §6.3's adapter pseudocode
+      and added its global-lock-order statement, §14.4's "execute()
+      marks the plan consumed" sentence, §14.4b's transport/ordering
+      contract and section title, §14.4c's "exception-based hook"
+      framing, and §15.1's freshness-before-no-op rule; prior fix-round
+      historical entries above are preserved unedited as historical
+      record, not rewritten, consistent with this document's own
+      established practice (fix round 9).
+- [x] **Fix round 11**: this round corrects PR20E's already-implemented
+      runtime (GitHub PR #95, `manmenex/medical-equipment-pool`), not a
+      pre-implementation design proposal — verified against the actual
+      merged/pushed code (`backend/app/services/import_adapter.py`,
+      `import_adapter_context.py`, `import_adapters/equipment_master.py`,
+      `import_execution_service.py`, `app/crud/equipment.py`) rather than
+      assumed. Proven with two genuine two-PostgreSQL-connection
+      completion-vs-recovery race tests (both winner orders) plus a
+      barrier-only uncertain-winner race, three post-resolution
+      failure-injection regressions, an exception-only-transport
+      regression, a context-precedence regression, a stale-apparent-no-op
+      regression, and a valid-no-op regression — all passing alongside
+      the full existing PostgreSQL and non-PostgreSQL suites.
+- [x] **Fix round 11**: did not close/reopen OD-1/OD-2/OD-3/OD-4 — no
+      change to source schema, create/update policy, identity policy, or
+      Asset Number policy (§9); all four remain RESOLVED as of fix
+      round 10.
+- [x] **Fix round 11**: did not modify the frontend, did not add or
+      change any Alembic migration (migration `0018_dry_run_plans`
+      already supports every plan-status value this correction needs),
+      and did not start PR21 or any Ward/BME-scoped work.
