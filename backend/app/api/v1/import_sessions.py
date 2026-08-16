@@ -404,18 +404,26 @@ async def confirm_dry_run_plan(
     genuinely serializes against a concurrent `cancel_session` or new
     dry-run admission instead of racing an unlocked read against their
     writes. It raises directly rather than returning `None`:
-    `ImportSessionNotFoundError` (`404`, unknown session id) or
-    `ImportDryRunPlanNotFoundError` (`404`, wrong/foreign plan id).
+    `ImportSessionNotFoundError` (`404`, unknown session id) -- the only
+    `404` this endpoint ever returns.
 
-    Fix round 4 (PR20 design §14.4a, fix round 8/M4): every other
-    plan-invalidating condition -- the plan no longer `active`
-    (superseded/consumed/failed), *and* the owning session no longer
-    `dry_run_completed` (a concurrent cancel or new dry-run won the race)
-    -- raises the SAME `ImportDryRunPlanStaleError` (`409
-    IMPORT_DRY_RUN_PLAN_STALE`). The design doc is explicit that this
-    endpoint's stale-plan contract does not distinguish these sub-cases
-    with different codes; all of them mean the same thing to the client:
-    re-fetch `GET .../dry-run-plan` and re-check before confirming again.
+    Fix round 4 (PR20 design §14.4a, fix round 8/M4) and fix round 6:
+    every other plan-invalidating condition -- the plan no longer
+    `active` (superseded/consumed/failed), the plan id not existing at
+    all, the plan id belonging to a *different* session, and the owning
+    session no longer `dry_run_completed` (a concurrent cancel or new
+    dry-run won the race) -- raises the SAME `ImportDryRunPlanStaleError`
+    (`409 IMPORT_DRY_RUN_PLAN_STALE`). The design doc's own zero-rows-
+    matched list is explicit that this endpoint's stale-plan contract
+    does not distinguish these sub-cases with different codes; all of
+    them mean the same thing to the client: re-fetch `GET
+    .../dry-run-plan` and re-check before confirming again. This also
+    closes an information-boundary leak a split contract would otherwise
+    have: a caller can never learn from this endpoint's response alone
+    whether a given `plan_id` belongs to a different session. Contrast
+    `GET .../dry-run-plan` above, whose resource-lookup semantics are
+    unaffected -- it still returns `404 IMPORT_DRY_RUN_PLAN_NOT_FOUND`
+    when the session has no persisted plan at all.
     `IMPORT_SESSION_INVALID_STATE` remains reserved for endpoints whose
     operation is not "confirm this specific persisted plan" (e.g.
     `cancel_session`'s own CAS rejection) -- never for this endpoint.

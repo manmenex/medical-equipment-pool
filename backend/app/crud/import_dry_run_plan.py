@@ -6,7 +6,6 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import (
-    ImportDryRunPlanNotFoundError,
     ImportDryRunPlanStaleError,
     ImportSessionNotFoundError,
 )
@@ -194,18 +193,30 @@ async def confirm_plan(
        explicit, self-documenting defense-in-depth matching this
        codebase's existing CAS discipline.
 
-    Raises `ImportSessionNotFoundError`/`ImportDryRunPlanNotFoundError`/
-    `ImportDryRunPlanStaleError` directly (mirroring
-    `app.crud.import_session.cancel_session`'s own raise-from-the-
-    CRUD-layer convention) instead of returning `None` for the API layer
-    to reinterpret. Fix round 4 (PR20 design §14.4a, fix round 8/M4):
-    the owning session no longer being `dry_run_completed` (a concurrent
-    cancel or a new dry-run legitimately won the race) is reported as
-    `ImportDryRunPlanStaleError`, the SAME unified code as every other
-    plan-invalidating condition -- the design doc is explicit that "this
-    design does not attempt to distinguish these sub-cases with different
-    error codes; all of them mean the same thing to the client: re-fetch
-    and re-check before proceeding." `ImportSessionInvalidStateError`
+    Raises `ImportSessionNotFoundError`/`ImportDryRunPlanStaleError`
+    directly (mirroring `app.crud.import_session.cancel_session`'s own
+    raise-from-the-CRUD-layer convention) instead of returning `None` for
+    the API layer to reinterpret. Fix round 4 (PR20 design §14.4a, fix
+    round 8/M4): the owning session no longer being `dry_run_completed`
+    (a concurrent cancel or a new dry-run legitimately won the race) is
+    reported as `ImportDryRunPlanStaleError`, the SAME unified code as
+    every other plan-invalidating condition. Fix round 6: so is a
+    `plan_id` that doesn't exist at all, or that exists but belongs to a
+    *different* session -- the design doc's own zero-rows-matched list is
+    explicit that "either it was already superseded... belongs to a
+    different session, does not exist, or... the owning session is no
+    longer `dry_run_completed`... this design does not attempt to
+    distinguish these sub-cases with different error codes." Collapsing
+    missing and foreign-session plan ids into the same stale response
+    also closes an information-boundary leak this endpoint would
+    otherwise have: a caller could never learn "this plan id belongs to a
+    different session" (a 404) from "this plan id never existed" (also a
+    404, before this fix -- so no leak there) versus "this plan is merely
+    stale" (a 409) -- three distinguishable outcomes from one probe.
+    `ImportDryRunPlanNotFoundError`/`404` remains exactly as-is for
+    `get_plan_by_id`'s own read-path callers (`GET .../dry-run-plan`) --
+    resource-lookup semantics are unaffected; only this write/confirm
+    path's zero-rows-matched handling changes. `ImportSessionInvalidStateError`
     remains reserved for endpoints whose semantic operation is not
     "validate/confirm/use this specific persisted DryRunPlan" (e.g.
     `cancel_session`'s own CAS rejection) -- never for this sub-case."""
@@ -232,8 +243,14 @@ async def confirm_plan(
         plan_stmt = plan_stmt.with_for_update()
     plan_row = (await db.execute(plan_stmt)).scalar_one_or_none()
     if plan_row is None:
-        raise ImportDryRunPlanNotFoundError(
-            f"Dry-run plan '{plan_id}' does not belong to import session '{import_session_id}'."
+        # Fix round 6: the SAME unified stale-plan response as every other
+        # zero-rows-matched condition -- never IMPORT_DRY_RUN_PLAN_NOT_FOUND
+        # here, which would let a caller distinguish "wrong id" from
+        # "foreign session's id" from "genuinely stale", leaking whether a
+        # plan id belongs to another session.
+        raise ImportDryRunPlanStaleError(
+            f"Dry-run plan '{plan_id}' is not confirmable: it does not exist, or does not belong to import "
+            f"session '{import_session_id}'. Re-fetch the current plan (GET .../dry-run-plan) before confirming."
         )
     if plan_row.status != "active":
         raise ImportDryRunPlanStaleError(

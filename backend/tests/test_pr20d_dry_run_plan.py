@@ -744,7 +744,15 @@ async def test_api_confirm_dry_run_plan_response_summary_not_recomputed_from_liv
     assert r.json()["summary"] == persisted_summary, "confirm response summary must equal the persisted plan summary exactly"
 
 
-async def test_api_confirm_dry_run_plan_wrong_plan_id_returns_404(client: AsyncClient, seeded_users, db_session):
+async def test_api_confirm_dry_run_plan_nonexistent_plan_id_returns_409_stale(
+    client: AsyncClient, seeded_users, db_session
+):
+    """Fix round 6 (PR20 design §14.4a's zero-rows-matched list): a
+    `plan_id` that never existed at all is the SAME unified `409
+    IMPORT_DRY_RUN_PLAN_STALE` contract as every other plan-invalidating
+    condition, never `404 IMPORT_DRY_RUN_PLAN_NOT_FOUND` -- that code is
+    reserved for `GET .../dry-run-plan`'s own read-path lookup (see
+    `test_api_get_dry_run_plan_404_when_never_dry_run` above)."""
     await _seed_equipment(db_session, bcm_code="BCM_WRONGID", item_no="ITEM_WRONGID")
     headers = await auth_headers(client)
     session = await _validated_session_with_update_rows(
@@ -756,8 +764,49 @@ async def test_api_confirm_dry_run_plan_wrong_plan_id_returns_404(client: AsyncC
     r = await client.post(
         f"/api/v1/import-sessions/{session['id']}/dry-run-plan/{bogus_plan_id}/confirm", headers=headers
     )
-    assert r.status_code == 404
-    assert r.json()["code"] == "IMPORT_DRY_RUN_PLAN_NOT_FOUND"
+    assert r.status_code == 409
+    assert r.json()["code"] == "IMPORT_DRY_RUN_PLAN_STALE"
+    assert r.json()["code"] != "IMPORT_DRY_RUN_PLAN_NOT_FOUND"
+
+
+async def test_api_confirm_dry_run_plan_foreign_session_plan_id_returns_409_stale(
+    client: AsyncClient, seeded_users, db_session
+):
+    """Fix round 6, mandatory regression: a `plan_id` that genuinely
+    exists but belongs to a DIFFERENT session must return the same `409
+    IMPORT_DRY_RUN_PLAN_STALE` as a nonexistent id -- never `404`, never
+    `IMPORT_SESSION_INVALID_STATE`, and never any response distinguishable
+    from the nonexistent-id case, so a caller can never learn that the
+    plan id exists at all, let alone under which session."""
+    await _seed_equipment(db_session, bcm_code="BCM_FOREIGN_A", item_no="ITEM_FOREIGN_A")
+    await _seed_equipment(db_session, bcm_code="BCM_FOREIGN_B", item_no="ITEM_FOREIGN_B")
+    headers = await auth_headers(client)
+
+    session_a = await _validated_session_with_update_rows(
+        client, headers, db_session, [_valid_row(bcm="BCM_FOREIGN_A", item_no="ITEM_FOREIGN_A")]
+    )
+    await client.post(f"/api/v1/import-sessions/{session_a['id']}/dry-run", headers=headers)
+    plan_a = (await client.get(f"/api/v1/import-sessions/{session_a['id']}/dry-run-plan", headers=headers)).json()
+
+    session_b = await _validated_session_with_update_rows(
+        client, headers, db_session, [_valid_row(bcm="BCM_FOREIGN_B", item_no="ITEM_FOREIGN_B")]
+    )
+    await client.post(f"/api/v1/import-sessions/{session_b['id']}/dry-run", headers=headers)
+
+    # Plan A's real, existing plan_id, confirmed through session B's route.
+    r = await client.post(
+        f"/api/v1/import-sessions/{session_b['id']}/dry-run-plan/{plan_a['id']}/confirm", headers=headers
+    )
+    assert r.status_code == 409
+    assert r.json()["code"] == "IMPORT_DRY_RUN_PLAN_STALE"
+    assert r.json()["code"] not in ("IMPORT_DRY_RUN_PLAN_NOT_FOUND", "IMPORT_SESSION_INVALID_STATE")
+
+    # Plan A itself must remain untouched by the misdirected attempt.
+    plan_a_after = (
+        await db_session.execute(select(EquipmentMasterDryRunPlan).where(EquipmentMasterDryRunPlan.id == uuid.UUID(plan_a["id"])))
+    ).scalar_one()
+    assert plan_a_after.confirmed_at is None
+    assert plan_a_after.confirmed_by_user_id is None
 
 
 async def test_api_confirm_dry_run_plan_superseded_plan_returns_409_stale(
