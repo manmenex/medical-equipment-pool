@@ -756,3 +756,228 @@ async def test_recovery_for_dry_run_phase_never_touches_plan(client: AsyncClient
         .all()
     )
     assert plans == [], "a session with no successful dry-run has no plan to touch in the first place"
+
+
+# ---------------------------------------------------------------------------
+# PR #95 review, fix round -- PR95-H2: `resolved_resource_id` must remain
+# available to the execution framework for the entire remainder of TX1
+# (fenced completion, plan transition, audit, commit) and for TX2 failure
+# publication -- not only when `execute()` itself raises
+# `AdapterExecutionConflict`. These three tests inject a failure at each
+# of the three points a failure can occur *after* `execute()` has already
+# returned successfully, and assert Session+Plan always fail together
+# (never a state where the plan is left `active`/`consumed` while the
+# session is `failed`), and that the in-flight Equipment mutation always
+# rolls back entirely.
+# ---------------------------------------------------------------------------
+
+
+async def _pr95h2_raise(*args, **kwargs):
+    raise RuntimeError("simulated infrastructure failure (PR95 review §H2 regression)")
+
+
+async def test_execute_failure_after_equipment_write_before_fenced_completion_fails_session_and_plan_together(
+    client: AsyncClient, seeded_users, db_session, monkeypatch
+):
+    """§H2 case A: a failure injected after `adapter.execute()` has
+    already mutated Equipment (still uncommitted, same TX1) but before
+    the framework's own `fenced_phase_success` succeeds. Before this
+    fix, `resolved_resource_id` was only ever captured via the
+    `AdapterExecutionConflict` exception path -- a failure here
+    (`execute()` itself already returned successfully) would leave
+    `resolved_resource_id=None`, so TX2's `on_execution_failure(None)`
+    would be a no-op and the plan would be left `active` while the
+    session became `failed`. The fix captures `resolved_resource_id`
+    unconditionally right after `execute()` returns, so this must now
+    fail Session+Plan together."""
+    headers = await auth_headers(client)
+    session, equipment, _confirmed = await _confirmed_update_session(
+        client, headers, db_session, equipment_name="Should Roll Back A", bcm="BCM_H2A", item_no="ITEM_H2A"
+    )
+    equipment_id = equipment.id
+    original_name = equipment.equipment_name
+    original_version = equipment.version
+
+    monkeypatch.setattr(import_job_crud, "fenced_phase_success", _pr95h2_raise)
+
+    r = await client.post(f"/api/v1/import-sessions/{session['id']}/execute", headers=headers)
+    assert r.status_code == 500, r.text
+    assert r.json()["code"] == "IMPORT_EXECUTION_FAILED"
+
+    db_session.expire_all()
+    refreshed = (await db_session.execute(select(Equipment).where(Equipment.id == equipment_id))).scalar_one()
+    assert refreshed.equipment_name == original_name, "the in-flight Equipment mutation must roll back entirely"
+    assert refreshed.version == original_version, "no version bump from a rolled-back attempt"
+
+    session_uuid = uuid.UUID(session["id"])
+    final_session = (await db_session.execute(select(ImportSession).where(ImportSession.id == session_uuid))).scalar_one()
+    assert final_session.status == "failed"
+    plan_row = (
+        await db_session.execute(select(EquipmentMasterDryRunPlan).where(EquipmentMasterDryRunPlan.import_session_id == session_uuid))
+    ).scalar_one()
+    assert plan_row.status == "failed", "the plan must be marked failed in the same TX2 as the session, never left active"
+
+
+async def test_execute_failure_during_plan_consumption_fails_session_and_plan_together(
+    client: AsyncClient, seeded_users, db_session, monkeypatch
+):
+    """§H2 case B: a failure injected inside `on_execution_success`
+    itself (plan-consumption/finalization) -- after `fenced_phase_
+    success` has ALREADY succeeded (uncommitted, same TX1). Must roll
+    back the Job/Session fence too (TX1 is all-or-nothing), and TX2 must
+    still mark Session+Plan failed together using the
+    `resolved_resource_id` captured before this failure."""
+    headers = await auth_headers(client)
+    session, equipment, _confirmed = await _confirmed_update_session(
+        client, headers, db_session, equipment_name="Should Roll Back B", bcm="BCM_H2B", item_no="ITEM_H2B"
+    )
+    equipment_id = equipment.id
+    original_name = equipment.equipment_name
+    original_version = equipment.version
+
+    monkeypatch.setattr(import_dry_run_plan_crud, "mark_plan_consumed", _pr95h2_raise)
+
+    r = await client.post(f"/api/v1/import-sessions/{session['id']}/execute", headers=headers)
+    assert r.status_code == 500, r.text
+    assert r.json()["code"] == "IMPORT_EXECUTION_FAILED"
+
+    db_session.expire_all()
+    refreshed = (await db_session.execute(select(Equipment).where(Equipment.id == equipment_id))).scalar_one()
+    assert refreshed.equipment_name == original_name, "a rolled-back TX1 must never leave the Equipment mutation in place"
+    assert refreshed.version == original_version
+
+    session_uuid = uuid.UUID(session["id"])
+    final_session = (await db_session.execute(select(ImportSession).where(ImportSession.id == session_uuid))).scalar_one()
+    assert final_session.status == "failed"
+    plan_row = (
+        await db_session.execute(select(EquipmentMasterDryRunPlan).where(EquipmentMasterDryRunPlan.import_session_id == session_uuid))
+    ).scalar_one()
+    assert plan_row.status == "failed", "plan-consumption failure must still mark the plan failed, never left active"
+
+
+async def test_execute_failure_during_audit_after_plan_consumption_fails_session_and_plan_together(
+    client: AsyncClient, seeded_users, db_session, monkeypatch
+):
+    """§H2 case C: a failure injected AFTER `execute()` already returned
+    successfully AND `on_execution_success` already marked the plan
+    consumed (still uncommitted, same TX1) -- during the framework's own
+    post-adapter audit-event write. TX1 must still roll back everything
+    (including the plan-consumed write, which never actually commits),
+    and TX2 must mark Session+Plan failed together -- never a state
+    where the plan is stuck `consumed` while the session is `failed`."""
+    headers = await auth_headers(client)
+    session, equipment, _confirmed = await _confirmed_update_session(
+        client, headers, db_session, equipment_name="Should Roll Back C", bcm="BCM_H2C", item_no="ITEM_H2C"
+    )
+    equipment_id = equipment.id
+    original_name = equipment.equipment_name
+    original_version = equipment.version
+
+    monkeypatch.setattr(import_execution_service, "record_audit_event", _pr95h2_raise)
+
+    r = await client.post(f"/api/v1/import-sessions/{session['id']}/execute", headers=headers)
+    assert r.status_code == 500, r.text
+    assert r.json()["code"] == "IMPORT_EXECUTION_FAILED"
+
+    db_session.expire_all()
+    refreshed = (await db_session.execute(select(Equipment).where(Equipment.id == equipment_id))).scalar_one()
+    assert refreshed.equipment_name == original_name
+    assert refreshed.version == original_version
+
+    session_uuid = uuid.UUID(session["id"])
+    final_session = (await db_session.execute(select(ImportSession).where(ImportSession.id == session_uuid))).scalar_one()
+    assert final_session.status == "failed"
+    plan_row = (
+        await db_session.execute(select(EquipmentMasterDryRunPlan).where(EquipmentMasterDryRunPlan.import_session_id == session_uuid))
+    ).scalar_one()
+    assert plan_row.status == "failed", (
+        "a failure after the plan-consumed write already happened in the rolled-back TX1 must still leave the "
+        "plan failed, never stuck 'consumed' while the session is 'failed'"
+    )
+
+
+# ---------------------------------------------------------------------------
+# PR #95 review, fix round -- PR95-H3: freshness (`expected_equipment_
+# version`) must be validated for every UPDATE candidate BEFORE a no-op
+# decision is made. "No-op" means "no version bump" -- it does NOT mean
+# "skip the optimistic-concurrency check".
+# ---------------------------------------------------------------------------
+
+
+async def test_execute_stale_apparent_noop_update_is_rejected_not_silently_consumed(
+    client: AsyncClient, seeded_users, db_session
+):
+    """§H3: a plan captures `expected_equipment_version=N` with a
+    genuine writable diff at dry-run time (`equipment_name` "Original
+    Name" -> "Renamed By Import"); before execute runs, a *different*,
+    legitimate mutation ALSO changes `equipment_name` to exactly
+    "Renamed By Import" (and bumps version to N+1) -- so the plan's
+    proposed value now coincidentally equals the row's *current* value.
+    The bug this regresses: comparing writable values first would see an
+    empty diff and silently accept this as a no-op, consuming a plan
+    that is genuinely stale relative to what it was dry-run against. The
+    fix validates `expected_equipment_version` *before* ever computing
+    the diff -- this must be rejected as a stale-version conflict, never
+    silently accepted as a no-op."""
+    headers = await auth_headers(client)
+    session, equipment, _confirmed = await _confirmed_update_session(
+        client, headers, db_session, equipment_name="Renamed By Import", bcm="BCM_STALENOOP", item_no="ITEM_STALENOOP"
+    )
+    equipment_id = equipment.id
+
+    live = (await db_session.execute(select(Equipment).where(Equipment.id == equipment_id))).scalar_one()
+    assert live.equipment_name == "Original Name"
+    # A different, legitimate mutation coincidentally lands on the exact
+    # same value the plan itself proposes -- the apparent-no-op trap.
+    live.equipment_name = "Renamed By Import"
+    live.version += 1
+    await db_session.commit()
+    conflicting_version = live.version
+
+    r = await client.post(f"/api/v1/import-sessions/{session['id']}/execute", headers=headers)
+    assert r.status_code == 500, r.text
+    assert r.json()["code"] == "IMPORT_EXECUTION_FAILED"
+
+    db_session.expire_all()
+    refreshed = (await db_session.execute(select(Equipment).where(Equipment.id == equipment_id))).scalar_one()
+    assert refreshed.version == conflicting_version, "no import-driven version bump on a rejected apparent no-op"
+    assert refreshed.equipment_name == "Renamed By Import", "the concurrent mutation's own data must never be clobbered"
+
+    session_uuid = uuid.UUID(session["id"])
+    final_session = (await db_session.execute(select(ImportSession).where(ImportSession.id == session_uuid))).scalar_one()
+    assert final_session.status == "failed"
+    plan_row = (
+        await db_session.execute(select(EquipmentMasterDryRunPlan).where(EquipmentMasterDryRunPlan.import_session_id == session_uuid))
+    ).scalar_one()
+    assert plan_row.status == "failed", "a stale apparent no-op plan must be marked failed, never silently consumed"
+
+
+async def test_execute_valid_noop_update_still_does_not_bump_version(client: AsyncClient, seeded_users, db_session):
+    """§H3's preserved counterpart: `Equipment.version` still matches the
+    plan's persisted `expected_equipment_version` (no concurrent
+    mutation occurred) AND the writable values already equal the plan's
+    proposed values -- a genuine no-op. Freshness passes, then the
+    (empty) diff is correctly treated as a no-op: no write, no version
+    bump, no conflict. Distinguishes "no-op" from "skip the freshness
+    check" -- this case must still succeed, not regress into a false
+    conflict."""
+    headers = await auth_headers(client)
+    session, equipment, _confirmed = await _confirmed_update_session(
+        client, headers, db_session, equipment_name="Original Name", bcm="BCM_VALIDNOOP", item_no="ITEM_VALIDNOOP"
+    )
+    original_version = equipment.version
+    equipment_id = equipment.id
+
+    r = await client.post(f"/api/v1/import-sessions/{session['id']}/execute", headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["imported_rows"] == 0, "a genuine same-value update must not count as an imported row"
+
+    db_session.expire_all()
+    refreshed = (await db_session.execute(select(Equipment).where(Equipment.id == equipment_id))).scalar_one()
+    assert refreshed.version == original_version, "a valid (fresh-version) no-op must never bump Equipment.version"
+
+    session_uuid = uuid.UUID(session["id"])
+    plan_row = (
+        await db_session.execute(select(EquipmentMasterDryRunPlan).where(EquipmentMasterDryRunPlan.import_session_id == session_uuid))
+    ).scalar_one()
+    assert plan_row.status == "consumed", "a valid no-op must still be a successful, consuming execution"

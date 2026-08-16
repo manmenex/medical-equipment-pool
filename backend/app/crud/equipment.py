@@ -139,16 +139,31 @@ async def get_by_serial_numbers(db: AsyncSession, values: Sequence[str]) -> dict
     return {e.serial_number: e for e in result.scalars().all()}
 
 
-async def get_by_ids(db: AsyncSession, values: Sequence[uuid.UUID]) -> dict[uuid.UUID, Equipment]:
+async def get_by_ids(
+    db: AsyncSession, values: Sequence[uuid.UUID], *, for_update: bool = False
+) -> dict[uuid.UUID, Equipment]:
     """Roadmap PR20E: bulk primary-key lookup for a batch of `UPDATE`-row
     execution targets -- one `IN (...)` query for an entire confirmed
     plan, mirroring `get_by_bcm_codes`'s own no-N+1 discipline (Roadmap
-    PR12 review PR12-H2) rather than one `get_by_id` call per row."""
+    PR12 review PR12-H2) rather than one `get_by_id` call per row.
+
+    `for_update=True` (PR95 review fix round, §H3) locks every matched
+    row for the remainder of the caller's transaction, ordered by `id`
+    for a single deterministic lock-acquisition order across every
+    concurrent execution touching an overlapping row set -- the same
+    "lock in one consistent order" discipline this module's other
+    `.with_for_update()` call sites already follow. PostgreSQL only
+    (SQLite's `SELECT ... FOR UPDATE` support is not relied upon
+    elsewhere in this codebase either); on any other dialect this is a
+    plain, unlocked read."""
     if not values:
         return {}
-    result = await db.execute(
-        select(Equipment).where(Equipment.id.in_(values), Equipment.deleted_at.is_(None))
-    )
+    stmt = select(Equipment).where(Equipment.id.in_(values), Equipment.deleted_at.is_(None))
+    if for_update:
+        stmt = stmt.order_by(Equipment.id)
+        if db.get_bind().dialect.name == "postgresql":
+            stmt = stmt.with_for_update()
+    result = await db.execute(stmt)
     return {e.id: e for e in result.scalars().all()}
 
 

@@ -60,7 +60,7 @@ from app.services.import_adapter import (
     RawImportRecord,
     register_adapter,
 )
-from app.services.import_adapter_context import get_adapter_invocation_context
+from app.services.import_adapter_context import get_adapter_invocation_context, record_resolved_execution_resource
 from app.services.import_service import (
     MAX_HEADER_COLUMNS,
     MAX_UPLOAD_BYTES,
@@ -1287,6 +1287,15 @@ class EquipmentMasterAdapter(ImportAdapter):
         # the real conflict being reported). Every conflict raised below
         # uses this primitive, never a live `plan.id` attribute access.
         plan_id = plan.id
+        # Roadmap PR20E fix round 2 (PR #95 review, §H2): recorded
+        # unconditionally, before any mutation is attempted, so the
+        # framework can retain this primitive for the entire remainder
+        # of TX1 -- including a failure that happens *after* this
+        # method has already returned successfully (fenced completion,
+        # `on_execution_success` below, audit, commit) -- and for TX2
+        # failure publication, not only when this method itself raises
+        # `AdapterExecutionConflict`.
+        record_resolved_execution_resource(plan_id)
         # §14.4: defensive, post-admission re-check -- structurally
         # guaranteed by §6.2's immutable-once-frozen source, but checked,
         # not assumed.
@@ -1311,14 +1320,34 @@ class EquipmentMasterAdapter(ImportAdapter):
                 f"Plan '{plan_id}' execution failed: {exc}", resolved_resource_id=plan_id
             ) from exc
 
-        await import_dry_run_plan_crud.mark_plan_consumed(db, plan_id=plan_id)
+        # Roadmap PR20E fix round 2 (PR #95 review, §H1): plan
+        # consumption deliberately does NOT happen here -- doing so
+        # would lock the Plan row *before* the framework has obtained
+        # its own Job -> Session completion fence, the exact Plan ->
+        # Job -> Session lock-order violation PR95-H1 identified
+        # (recovery, and this adapter's own `on_execution_failure`, both
+        # acquire Job -> Session -> Plan). `on_execution_success` below
+        # -- called by the framework only *after* `fenced_phase_success`
+        # has already succeeded -- performs that transition instead, in
+        # the same TX1, under the correct global lock order.
         return imported_rows
 
     async def _apply_plan_rows(self, db: AsyncSession, plan_id: uuid.UUID) -> int:
         rows = await import_dry_run_plan_crud.list_all_plan_rows(db, plan_id=plan_id)
 
         update_target_ids = {row.target_equipment_id for row in rows if row.action == "UPDATE"}
-        current_by_id = await equipment_crud.get_by_ids(db, list(update_target_ids)) if update_target_ids else {}
+        # PR95 review fix round, §H3: `for_update=True` locks every
+        # UPDATE target (ordered by id, so two concurrent executions
+        # touching overlapping rows always acquire in the same order)
+        # for the rest of this transaction -- `_apply_update_row` below
+        # relies on this same snapshot to validate freshness *before*
+        # ever treating a row as a no-op, not only when it performs a
+        # genuine CAS write.
+        current_by_id = (
+            await equipment_crud.get_by_ids(db, sorted(update_target_ids), for_update=True)
+            if update_target_ids
+            else {}
+        )
 
         imported_rows = 0
         for row in rows:
@@ -1410,6 +1439,28 @@ class EquipmentMasterAdapter(ImportAdapter):
                 f"Plan row {row_id}'s target Equipment '{target_equipment_id}' no longer exists.",
                 resolved_resource_id=plan_id,
             )
+        # PR95 review fix round, §H3: freshness MUST be validated before
+        # a no-op decision is ever made -- "no-op" means "no version
+        # bump", never "skip the optimistic-concurrency check". Without
+        # this, a plan whose writable descriptive fields happen to
+        # already match the row's *current* values (e.g. another
+        # legitimate mutation changed a protected field, or changed and
+        # then reverted a writable one) would be silently accepted and
+        # the plan consumed, even though the row is genuinely stale
+        # relative to what this plan was dry-run against. `current` was
+        # loaded (and, on PostgreSQL, row-locked) in the SAME transaction
+        # by `_apply_plan_rows`'s bulk `get_by_ids(..., for_update=True)`
+        # call -- never re-read here, so this comparison is against the
+        # exact snapshot the rest of this row's processing also uses.
+        current_version = current.version
+        expected_version = row.expected_equipment_version
+        if current_version != expected_version:
+            raise AdapterExecutionConflict(
+                f"Plan row {row_id}'s target Equipment '{target_equipment_id}' has changed since the "
+                "dry-run -- expected_equipment_version no longer matches. A new dry-run is required.",
+                resolved_resource_id=plan_id,
+            )
+
         candidate = row.normalized_values or {}
         # §9 OD-2: only the approved UPDATE-writable fields are ever
         # considered -- protected fields (identity, version, lifecycle/
@@ -1423,11 +1474,11 @@ class EquipmentMasterAdapter(ImportAdapter):
         }
         if not diff:
             # §9 OD-2 / PR91-H1: a same-value update is a no-op -- no
-            # write, no version bump. Not a conflict: the plan's
-            # proposed values already match the record's current state.
+            # write, no version bump. Freshness has already been
+            # validated above -- this is a genuine no-op, never a stale
+            # plan silently accepted.
             return 0
 
-        expected_version = row.expected_equipment_version
         updated = await equipment_crud.update_with_cas(
             db,
             equipment_id=target_equipment_id,
@@ -1442,12 +1493,37 @@ class EquipmentMasterAdapter(ImportAdapter):
             )
         return 1
 
+    async def on_execution_success(self, db: AsyncSession, resolved_resource_id) -> None:
+        """Roadmap PR20E fix round 2 (PR #95 review, §H1). Called by the
+        framework on TX1's own session, only *after*
+        `fenced_phase_success` has already locked Job then Session --
+        marks the plan `consumed` here, never inside `execute()` itself,
+        so the Plan row is only ever touched after that fence succeeds
+        (Job -> Session -> Plan, the same order recovery and
+        `on_execution_failure` below use). `resolved_resource_id` is the
+        plan's own id, recorded by `execute()` via
+        `record_resolved_execution_resource` -- `None` only for the
+        framework-invariant-violation case where no plan could be
+        resolved at all (harmless no-op)."""
+        if resolved_resource_id is None:
+            return
+        await import_dry_run_plan_crud.mark_plan_consumed(db, plan_id=resolved_resource_id)
+
     async def on_execution_failure(self, db: AsyncSession, resolved_resource_id) -> None:
         """Roadmap PR20E (design §14.4b). Called by the framework inside
-        TX2, only when `execute()` raised `AdapterExecutionConflict`.
-        `resolved_resource_id` is the plan's own id (or `None`, a
-        harmless no-op, for the framework-invariant-violation case where
-        no plan could be resolved at all)."""
+        TX2, only *after* `fenced_phase_failure` has already succeeded
+        (fix round 2, §H1: Job -> Session -> Plan, the same order
+        `on_execution_success` above and recovery use -- a worker whose
+        own failure publication was itself fenced out must never touch
+        this plan; whichever path actually won the fence owns that
+        transition instead). Called whenever `execute()` raised,
+        regardless of whether it raised `AdapterExecutionConflict`
+        itself or the failure happened later in the framework's own
+        TX1 work (fix round 2, §H2) -- `resolved_resource_id` is always
+        the value `execute()` recorded via
+        `record_resolved_execution_resource`, or `None` for the
+        framework-invariant-violation case where no plan could be
+        resolved at all (harmless no-op)."""
         if resolved_resource_id is None:
             return
         await import_dry_run_plan_crud.mark_plan_failed(db, plan_id=resolved_resource_id)

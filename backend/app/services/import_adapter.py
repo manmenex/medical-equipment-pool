@@ -189,23 +189,70 @@ class ImportAdapter(abc.ABC):
         `AdapterExecutionConflict` to carry a `resolved_resource_id`
         through TX1's rollback into `on_execution_failure` (§14.4b),
         rather than a bare exception, whenever a genuine execution-time
-        conflict must also mark an adapter-owned sub-resource `failed`."""
+        conflict must also mark an adapter-owned sub-resource `failed`.
+
+        Roadmap PR20E fix round 2 (PR #95 review, §H1/§H2): an adapter
+        with a persisted execution-time sub-resource (e.g. PR20's
+        confirmed DryRunPlan) must call `app.services.import_adapter_
+        context.record_resolved_execution_resource(resource_id)`
+        immediately after resolving that resource, *before* attempting
+        any mutation -- never at the end, and never only inside an
+        exception handler. This makes the resolved id available to the
+        framework unconditionally, on both the success and failure
+        return paths, for the rest of TX1 and for TX2 failure
+        publication. It must never mutate that sub-resource itself
+        (e.g. mark a plan `consumed`) -- that transition belongs to
+        `on_execution_success` below, called only after the framework's
+        own Job/Session completion fence has already succeeded, so the
+        global lock order stays Job -> Session -> resource, matching
+        recovery and TX2 failure publication exactly."""
         raise NotImplementedError
+
+    async def on_execution_success(self, db: AsyncSession, resolved_resource_id: uuid.UUID | None) -> None:
+        """Roadmap PR20E fix round 2 (PR #95 review, §H1). Called by the
+        framework on TX1's own session, immediately after
+        `fenced_phase_success` has already succeeded (the Job/Session
+        completion fence is locked and about to commit) but *before*
+        TX1's own commit -- never before that fence succeeds, and never
+        if it did not (a worker fenced out during its own success
+        publication must not touch this sub-resource; the winner that
+        actually fenced it -- a later attempt, or recovery -- owns that
+        transition instead). This ordering is the fix for PR95-H1: an
+        adapter that also locks a sub-resource row (e.g. marking a plan
+        `consumed`) must do so *after* Job -> Session, never before,
+        keeping one global lock order shared with recovery and TX2
+        failure publication (`on_execution_failure` below). Receives the
+        same `resolved_resource_id` `execute()` recorded via
+        `record_resolved_execution_resource` -- `None` for every adapter
+        that predates this mechanism. Default: a no-op. If this raises,
+        the exception propagates to TX1's own generic failure handling
+        (rollback, then TX2 failure publication using this same
+        `resolved_resource_id`) -- never partially applied."""
+        return
 
     async def on_execution_failure(self, db: AsyncSession, resolved_resource_id: uuid.UUID | None) -> None:
         """Roadmap PR20E (design §14.4b). Called by the framework inside
-        TX2, on TX2's own session, immediately before the framework's own
-        fenced-failure write commits, **only** when the exception
-        `execute()` raised was an `AdapterExecutionConflict`. Receives
-        only the bare primitive `resolved_resource_id` (never an ORM
-        object -- TX1 has already rolled back, so any ORM-bound reference
-        from `execute()` is detached/invalid). Default: a no-op -- every
-        adapter that predates this mechanism, and any `AdapterExecutionConflict`
-        carrying `resolved_resource_id=None`, is unaffected. If this
-        raises, TX2 itself aborts (the framework does not catch it) and
-        the session/plan pair falls back to the existing generic
-        fence-loss/recovery sweep -- never a new PR20-specific recovery
-        mechanism."""
+        TX2, on TX2's own session, **after** `fenced_phase_failure` has
+        already succeeded (fix round 2, §H1: the same Job -> Session ->
+        resource lock order `on_execution_success` above uses -- a
+        worker whose own failure publication was itself fenced out must
+        never touch this sub-resource; whichever path actually won the
+        fence owns that transition instead), immediately before TX2's
+        own commit. Called whenever `execute()` raised, regardless of
+        exception type -- not only `AdapterExecutionConflict` -- since
+        fix round 2 also covers a failure occurring *after* `execute()`
+        already returned successfully (still using the
+        `resolved_resource_id` `execute()` recorded via
+        `record_resolved_execution_resource`, never only a value carried
+        by the exception itself). Receives only the bare primitive
+        `resolved_resource_id` (never an ORM object -- TX1 has already
+        rolled back, so any ORM-bound reference from `execute()` is
+        detached/invalid). Default: a no-op -- every adapter that
+        predates this mechanism, and any `None` resolved id, is
+        unaffected. If this raises, TX2 itself aborts (the framework
+        does not catch it) and the session/plan pair falls back to the
+        existing generic fence-loss/recovery sweep -- never a new
+        PR20-specific recovery mechanism."""
         return
 
     async def on_execution_recovery(self, db: AsyncSession, session_id: uuid.UUID) -> None:

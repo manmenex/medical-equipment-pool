@@ -40,8 +40,12 @@ from app.crud import import_source_blob as import_source_blob_crud
 from app.db.session import AsyncSessionLocal
 from app.models.import_session import ImportSession
 from app.services import import_lease
-from app.services.import_adapter import AdapterExecutionConflict, ImportAdapter, get_adapter
-from app.services.import_adapter_context import AdapterInvocationContext, adapter_invocation_context
+from app.services.import_adapter import ImportAdapter, get_adapter
+from app.services.import_adapter_context import (
+    AdapterInvocationContext,
+    adapter_invocation_context,
+    get_resolved_execution_resource,
+)
 from app.services.import_source_reader import ImportSourceReader, SourceDescriptor
 
 logger = logging.getLogger(__name__)
@@ -439,6 +443,17 @@ async def run_execute(
 
     domain_exc: Exception | None = None
     final_session: ImportSession | None = None
+    # Roadmap PR20E fix round 2 (PR #95 review, §H2): captured
+    # unconditionally, immediately after `adapter.execute(db)` returns --
+    # whether it returned normally or raised -- via the same contextvar
+    # mechanism `record_resolved_execution_resource` writes to. This
+    # local variable, not the exception object, is what the rest of this
+    # function (fenced completion, `on_execution_success`, and TX2's
+    # `on_execution_failure`) relies on -- so a failure that happens
+    # *after* `execute()` already returned successfully (fenced
+    # completion, `on_execution_success` itself, audit, commit) still
+    # carries the correct resolved id into TX2, never `None` merely
+    # because `execute()` itself didn't raise.
     resolved_resource_id: uuid.UUID | None = None
     try:
         # §17/§9.4.1 step 3: unlike dry-run, execute must actually write --
@@ -448,13 +463,8 @@ async def run_execute(
         with adapter_invocation_context(invocation_context):
             try:
                 imported_rows = await adapter.execute(db)
-            except AdapterExecutionConflict as exc:
-                # Roadmap PR20E (design §14.4b): capture the bare
-                # primitive *before* TX1's rollback below -- any
-                # ORM-bound reference `execute()` held is detached/
-                # invalid once that happens.
-                resolved_resource_id = exc.resolved_resource_id
-                raise
+            finally:
+                resolved_resource_id = get_resolved_execution_resource()
         final_session = await import_job_crud.fenced_phase_success(
             db,
             job_id=job_id,
@@ -468,6 +478,16 @@ async def run_execute(
         )
         if final_session is None:
             raise _FenceLostDuringSuccessError()
+        # Roadmap PR20E fix round 2 (PR #95 review, §H1): the plan
+        # transition happens here -- on TX1's own session, *after*
+        # `fenced_phase_success` above has already locked Job then
+        # Session -- never before. This is the fix for PR95-H1: the
+        # global lock order is now Job -> Session -> Plan on every path
+        # (this success path, TX2 failure publication below, and
+        # recovery's existing Job -> Session -> Plan order), so a
+        # completion and a concurrent recovery attempt can never acquire
+        # these three resources in opposite orders.
+        await adapter.on_execution_success(db, resolved_resource_id)
         # §9.4.1 step 5 / §19: one AUDIT_ACTION_IMPORT entry, same TX1,
         # fresh success only -- never for an idempotent replay or a
         # cleanly-recorded failure.
@@ -499,15 +519,15 @@ async def run_execute(
     )
     try:
         async with AsyncSessionLocal() as tx2:
-            # Roadmap PR20E (design §14.4b, steps 4-5): runs on TX2's own
-            # session, *before* fenced_phase_failure's write below commits
-            # -- session-failure and plan-failure land together, or
-            # neither does. `resolved_resource_id` is `None` (a harmless
-            # no-op for every adapter that predates this mechanism, or
-            # when execute() raised something other than
-            # AdapterExecutionConflict) unless execute() raised
-            # AdapterExecutionConflict above.
-            await adapter.on_execution_failure(tx2, resolved_resource_id)
+            # Roadmap PR20E fix round 2 (PR #95 review, §H1): Job/Session
+            # fencing runs *first* here too -- the same Job -> Session ->
+            # Plan order the success path above and recovery both use.
+            # `on_execution_failure` (Plan) below only ever runs once
+            # this fence has actually succeeded on THIS attempt; a
+            # fenced-out attempt never touches the plan at all (whichever
+            # path actually won the fence -- a later attempt, or
+            # recovery via `on_execution_recovery` -- owns that
+            # transition instead).
             failed_session = await import_job_crud.fenced_phase_failure(
                 tx2,
                 job_id=job_id,
@@ -528,6 +548,15 @@ async def run_execute(
                 raise ImportRecoveryRequiredError(
                     "This execute attempt was superseded by a recovery claim or a later attempt."
                 )
+            # Roadmap PR20E (design §14.4b, fix round 2 §H1/§H2): runs on
+            # TX2's own session, only after the Job/Session fence above
+            # has already succeeded, *before* this same transaction
+            # commits -- session-failure and plan-failure land together,
+            # or neither does. `resolved_resource_id` is `None` (a
+            # harmless no-op) for every adapter that predates this
+            # mechanism, or when `execute()` never resolved anything
+            # before failing.
+            await adapter.on_execution_failure(tx2, resolved_resource_id)
             await tx2.commit()
     except ImportRecoveryRequiredError:
         raise
