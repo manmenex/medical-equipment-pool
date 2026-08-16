@@ -25,7 +25,15 @@ from app.models.audit import AuditLog
 from app.models.import_session import ImportJob, ImportRowError, ImportSession, ImportSource
 from app.models.user import User
 from app.services import import_execution_service, import_lease
-from app.services.import_adapter import DryRunPlan, FieldError, ImportAdapter, RawImportRecord, register_adapter, unregister_adapter
+from app.services.import_adapter import (
+    AdapterExecutionConflict,
+    DryRunPlan,
+    FieldError,
+    ImportAdapter,
+    RawImportRecord,
+    register_adapter,
+    unregister_adapter,
+)
 from tests.conftest import auth_headers
 
 pytestmark = pytest.mark.asyncio
@@ -65,6 +73,45 @@ class _FullPipelineAdapter(ImportAdapter):
         if self.execute_raises:
             raise RuntimeError("simulated execute business failure")
         return self.execute_imported_rows
+
+
+class _ExceptionOnlyResourceAdapter(ImportAdapter):
+    """Roadmap PR20E fix round 3 (PR #95 review, §H4). Deliberately never
+    calls `record_resolved_execution_resource` -- `execute()` raises
+    `AdapterExecutionConflict` carrying `resolved_resource_id` directly,
+    modeling an adapter that predates (or simply never adopted) the
+    context-recording mechanism, exercising the framework's fallback
+    path (`run_execute`'s own `except Exception` handler) rather than
+    Equipment Master's specific behavior."""
+
+    dataset_type = DATASET_TYPE
+    ruleset_version = "1"
+
+    def __init__(self, *, resource_id: uuid.UUID):
+        self.resource_id = resource_id
+        self.dry_run_calls = 0
+        self.execute_calls = 0
+        self.on_execution_failure_calls: list[uuid.UUID | None] = []
+
+    def parse(self, raw_input):
+        return [RawImportRecord(row_number=1, fields={})]
+
+    def validate_business_rules(self, record, context):
+        return []
+
+    async def plan_dry_run(self, db):
+        self.dry_run_calls += 1
+        return DryRunPlan()
+
+    async def execute(self, db):
+        self.execute_calls += 1
+        raise AdapterExecutionConflict(
+            "simulated execute conflict, resolved_resource_id carried only by the exception itself",
+            resolved_resource_id=self.resource_id,
+        )
+
+    async def on_execution_failure(self, db, resolved_resource_id):
+        self.on_execution_failure_calls.append(resolved_resource_id)
 
 
 class _ValidateOnlyAdapter(ImportAdapter):
@@ -322,6 +369,87 @@ async def test_execute_business_failure_returns_500_and_terminal_failed(client: 
             )
         ).scalar_one()
         assert job.status == "failed"
+    finally:
+        unregister_adapter(DATASET_TYPE)
+
+
+async def test_execute_exception_only_resolved_resource_id_reaches_on_execution_failure(
+    client: AsyncClient, seeded_users, db_session
+):
+    """Roadmap PR20E fix round 3 (PR #95 review, §H4). An adapter that
+    never calls `record_resolved_execution_resource` and instead raises
+    `AdapterExecutionConflict(resolved_resource_id=...)` directly must
+    still have that id reach `on_execution_failure` -- the context-
+    recording mechanism is the primary path, but the exception-carried
+    id remains an approved, independent fallback (§14.4b's original
+    contract), not something this adapter is required to have adopted.
+    TX1 must still roll back correctly and the session must still reach
+    a coherent `failed` terminal state."""
+    resource_id = uuid.uuid4()
+    adapter = _ExceptionOnlyResourceAdapter(resource_id=resource_id)
+    register_adapter(adapter)
+    try:
+        headers = await auth_headers(client)
+        session = await _create_dry_run_completed_session(client, headers)
+        r = await client.post(f"/api/v1/import-sessions/{session['id']}/execute", headers=headers)
+        assert r.status_code == 500, r.text
+        assert r.json()["code"] == "IMPORT_EXECUTION_FAILED"
+
+        assert adapter.on_execution_failure_calls == [resource_id], (
+            "the exception-carried resolved_resource_id must reach on_execution_failure exactly once, "
+            f"got {adapter.on_execution_failure_calls}"
+        )
+
+        row = (
+            await db_session.execute(select(ImportSession).where(ImportSession.id == uuid.UUID(session["id"])))
+        ).scalar_one()
+        assert row.status == "failed"
+        assert row.terminal_at is not None
+        job = (
+            await db_session.execute(
+                select(ImportJob).where(ImportJob.import_session_id == row.id, ImportJob.job_type == "execute")
+            )
+        ).scalar_one()
+        assert job.status == "failed"
+    finally:
+        unregister_adapter(DATASET_TYPE)
+
+
+async def test_execute_context_recorded_resource_id_takes_precedence_over_exception(
+    client: AsyncClient, seeded_users, db_session
+):
+    """§H4 precedence: when the context *has* already recorded a
+    resolved resource id (the primary mechanism), a differently-valued
+    id carried by the raised `AdapterExecutionConflict` must never
+    overwrite it -- `run_execute`'s fallback only ever fires when the
+    context recorded nothing at all."""
+    from app.services.import_adapter_context import record_resolved_execution_resource
+
+    context_id = uuid.uuid4()
+    exception_id = uuid.uuid4()
+    assert context_id != exception_id
+
+    class _BothMechanismsAdapter(_ExceptionOnlyResourceAdapter):
+        async def execute(self, db):
+            self.execute_calls += 1
+            record_resolved_execution_resource(context_id)
+            raise AdapterExecutionConflict(
+                "simulated conflict -- context already recorded a different id",
+                resolved_resource_id=exception_id,
+            )
+
+    adapter = _BothMechanismsAdapter(resource_id=exception_id)
+    register_adapter(adapter)
+    try:
+        headers = await auth_headers(client)
+        session = await _create_dry_run_completed_session(client, headers)
+        r = await client.post(f"/api/v1/import-sessions/{session['id']}/execute", headers=headers)
+        assert r.status_code == 500, r.text
+
+        assert adapter.on_execution_failure_calls == [context_id], (
+            "a non-None context-recorded id must take precedence over the exception-carried id, "
+            f"got {adapter.on_execution_failure_calls}"
+        )
     finally:
         unregister_adapter(DATASET_TYPE)
 

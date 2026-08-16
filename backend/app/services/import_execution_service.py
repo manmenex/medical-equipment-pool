@@ -40,7 +40,7 @@ from app.crud import import_source_blob as import_source_blob_crud
 from app.db.session import AsyncSessionLocal
 from app.models.import_session import ImportSession
 from app.services import import_lease
-from app.services.import_adapter import ImportAdapter, get_adapter
+from app.services.import_adapter import AdapterExecutionConflict, ImportAdapter, get_adapter
 from app.services.import_adapter_context import (
     AdapterInvocationContext,
     adapter_invocation_context,
@@ -503,6 +503,20 @@ async def run_execute(
     except Exception as exc:  # noqa: BLE001 -- §9.4.2 treats every exception identically
         domain_exc = exc
         final_session = None
+        # Roadmap PR20E fix round 3 (PR #95 review, §H4): the context-
+        # recorded `resolved_resource_id` above is the primary mechanism
+        # and takes precedence -- but `AdapterExecutionConflict.
+        # resolved_resource_id` remains an approved, independent
+        # contract of its own (§14.4b), and an adapter is still allowed
+        # to raise it directly without ever calling `record_resolved_
+        # execution_resource` first. This fallback only ever fires when
+        # the context recorded nothing at all (`None`) -- it never
+        # overwrites an already-recorded value, so an adapter that does
+        # call `record_resolved_execution_resource` (Equipment Master
+        # does, as soon as it resolves its plan) is never affected by
+        # this branch.
+        if resolved_resource_id is None and isinstance(exc, AdapterExecutionConflict):
+            resolved_resource_id = exc.resolved_resource_id
         if not isinstance(exc, _FenceLostDuringSuccessError):
             logger.exception("Execute attempt %s crashed", job_id)
     finally:
