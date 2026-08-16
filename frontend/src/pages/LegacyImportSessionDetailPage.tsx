@@ -8,24 +8,28 @@ import { LegacyImportResultSummary } from "@/components/LegacyImportResultSummar
 import { LegacyImportSkeletonBanner } from "@/components/LegacyImportSkeletonBanner";
 import { LegacyImportStatusBadge } from "@/components/LegacyImportStatusBadge";
 import { LegacyImportValidationSummary } from "@/components/LegacyImportValidationSummary";
+import { EquipmentMasterWorkflowPanel } from "@/components/EquipmentMasterWorkflowPanel";
 import { canManageLegacyImport, useAuth } from "@/hooks/useAuth";
 import { ImportSessionNotFoundError, legacyImportClient } from "@/services/legacyImportClient";
 import { formatDateTimeInTimezone } from "@/utils/printFormat";
 import { IMPORT_CATEGORY_LABELS, formatFileSize } from "@/utils/legacyImportLabels";
+import { isBackendSessionId } from "@/utils/legacyImportSessionId";
 
-// PR19B "Import session details": a read-only skeleton panel. Every
-// section renders mocked state from LegacyImportClient (see
-// services/legacyImportClient.ts) -- nothing here is computed, parsed, or
-// re-validated on the frontend, and no PR19B code path calls the real,
-// now-merged PR19A /dry-run or /execute endpoints.
+// PR19B "Import session details" (mock path) + PR20F "Equipment Master
+// real workflow" (real path). Which path renders is decided purely by
+// `isBackendSessionId(sessionId)` (utils/legacyImportSessionId.ts) --
+// routing only, never a business decision. The mock path below is
+// unchanged from PR19B and continues to serve Receive/Issue History,
+// which remain frontend-only placeholders (design §34).
 export function LegacyImportSessionDetailPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const { user } = useAuth();
+  const isRealSession = isBackendSessionId(sessionId);
 
   const { data: session, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["legacy-import", "session", sessionId],
     queryFn: () => legacyImportClient.getSession(sessionId as string),
-    enabled: Boolean(sessionId) && canManageLegacyImport(user),
+    enabled: Boolean(sessionId) && canManageLegacyImport(user) && !isRealSession,
     retry: false,
   });
 
@@ -34,6 +38,21 @@ export function LegacyImportSessionDetailPage() {
   // the real backend's own confirm-gate status (design §5) -- not an
   // invented "awaiting confirmation" status.
   const isAwaitingConfirmation = session?.status === "dry_run_completed";
+
+  if (isRealSession) {
+    return (
+      <LegacyImportAccessGate>
+        <div className="flex flex-col gap-4">
+          <div>
+            <Link to="/imports" className="text-sm text-status-borrowed hover:underline">
+              ← กลับไปยังรายการนำเข้าข้อมูล
+            </Link>
+          </div>
+          <EquipmentMasterWorkflowPanel sessionId={sessionId as string} />
+        </div>
+      </LegacyImportAccessGate>
+    );
+  }
 
   return (
     <LegacyImportAccessGate>
