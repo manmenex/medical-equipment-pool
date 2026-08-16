@@ -404,13 +404,23 @@ async def confirm_dry_run_plan(
     genuinely serializes against a concurrent `cancel_session` or new
     dry-run admission instead of racing an unlocked read against their
     writes. It raises directly rather than returning `None`:
-    `ImportSessionNotFoundError` (`404`, unknown session id),
-    `ImportSessionInvalidStateError` (`409 IMPORT_SESSION_INVALID_STATE`,
-    the session is no longer `dry_run_completed` -- a concurrent cancel or
-    new dry-run won the race; a *different* code from plan-staleness,
-    never conflated), `ImportDryRunPlanNotFoundError` (`404`, wrong/
-    foreign plan id), or `ImportDryRunPlanStaleError` (`409`, plan no
-    longer `active`). The `CONFIRMED` audit event is written only when
+    `ImportSessionNotFoundError` (`404`, unknown session id) or
+    `ImportDryRunPlanNotFoundError` (`404`, wrong/foreign plan id).
+
+    Fix round 4 (PR20 design §14.4a, fix round 8/M4): every other
+    plan-invalidating condition -- the plan no longer `active`
+    (superseded/consumed/failed), *and* the owning session no longer
+    `dry_run_completed` (a concurrent cancel or new dry-run won the race)
+    -- raises the SAME `ImportDryRunPlanStaleError` (`409
+    IMPORT_DRY_RUN_PLAN_STALE`). The design doc is explicit that this
+    endpoint's stale-plan contract does not distinguish these sub-cases
+    with different codes; all of them mean the same thing to the client:
+    re-fetch `GET .../dry-run-plan` and re-check before confirming again.
+    `IMPORT_SESSION_INVALID_STATE` remains reserved for endpoints whose
+    operation is not "confirm this specific persisted plan" (e.g.
+    `cancel_session`'s own CAS rejection) -- never for this endpoint.
+
+    The `CONFIRMED` audit event is written only when
     `result.newly_confirmed` -- a repeat confirm (same user retry, a
     second user's idempotent re-confirm, or a network retry after a lost
     response) is reported as the same success but never produces a second

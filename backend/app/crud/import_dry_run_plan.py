@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import (
     ImportDryRunPlanNotFoundError,
     ImportDryRunPlanStaleError,
-    ImportSessionInvalidStateError,
     ImportSessionNotFoundError,
 )
 from app.models.import_session import EquipmentMasterDryRunPlan, EquipmentMasterDryRunPlanRow, ImportSession
@@ -195,15 +194,21 @@ async def confirm_plan(
        explicit, self-documenting defense-in-depth matching this
        codebase's existing CAS discipline.
 
-    Raises `ImportSessionNotFoundError`/`ImportSessionInvalidStateError`/
-    `ImportDryRunPlanNotFoundError`/`ImportDryRunPlanStaleError` directly
-    (mirroring `app.crud.import_session.cancel_session`'s own
-    raise-from-the-CRUD-layer convention) instead of returning `None` for
-    the API layer to reinterpret -- a session that is merely no longer
-    `dry_run_completed` (a cancel or a new dry-run legitimately won the
-    race) is a *different*, already-cataloged conflict
-    (`IMPORT_SESSION_INVALID_STATE`) from a stale/missing plan, never
-    conflated into a single code."""
+    Raises `ImportSessionNotFoundError`/`ImportDryRunPlanNotFoundError`/
+    `ImportDryRunPlanStaleError` directly (mirroring
+    `app.crud.import_session.cancel_session`'s own raise-from-the-
+    CRUD-layer convention) instead of returning `None` for the API layer
+    to reinterpret. Fix round 4 (PR20 design §14.4a, fix round 8/M4):
+    the owning session no longer being `dry_run_completed` (a concurrent
+    cancel or a new dry-run legitimately won the race) is reported as
+    `ImportDryRunPlanStaleError`, the SAME unified code as every other
+    plan-invalidating condition -- the design doc is explicit that "this
+    design does not attempt to distinguish these sub-cases with different
+    error codes; all of them mean the same thing to the client: re-fetch
+    and re-check before proceeding." `ImportSessionInvalidStateError`
+    remains reserved for endpoints whose semantic operation is not
+    "validate/confirm/use this specific persisted DryRunPlan" (e.g.
+    `cancel_session`'s own CAS rejection) -- never for this sub-case."""
     session_row = (
         await db.execute(
             select(ImportSession.id, ImportSession.status).where(ImportSession.id == import_session_id).with_for_update()
@@ -214,10 +219,10 @@ async def confirm_plan(
     if session_row is None:
         raise ImportSessionNotFoundError(f"Import session '{import_session_id}' not found.")
     if session_row.status != "dry_run_completed":
-        raise ImportSessionInvalidStateError(
-            f"Import session '{import_session_id}' is not 'dry_run_completed' (currently "
-            f"'{session_row.status}') -- a concurrent cancellation or new dry-run has moved it on. "
-            "Re-fetch the session before retrying."
+        raise ImportDryRunPlanStaleError(
+            f"Dry-run plan '{plan_id}' is no longer confirmable: import session '{import_session_id}' is not "
+            f"'dry_run_completed' (currently '{session_row.status}') -- a concurrent cancellation or new "
+            "dry-run has moved it on. Re-fetch the current plan (GET .../dry-run-plan) before confirming again."
         )
 
     plan_stmt = select(EquipmentMasterDryRunPlan).where(

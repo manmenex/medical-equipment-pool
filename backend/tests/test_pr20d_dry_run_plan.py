@@ -781,15 +781,17 @@ async def test_api_confirm_dry_run_plan_superseded_plan_returns_409_stale(
     assert r.json()["code"] == "IMPORT_DRY_RUN_PLAN_STALE"
 
 
-async def test_api_confirm_dry_run_plan_cancelled_session_returns_409_invalid_state(
+async def test_api_confirm_dry_run_plan_cancelled_session_returns_409_stale(
     client: AsyncClient, seeded_users, db_session
 ):
-    """Fix round 2 (PR94-M2): a cancelled session is a *session*-state
-    conflict, not a plan-staleness conflict -- the plan itself is still
-    `active`, but its owning session has moved out of `dry_run_completed`.
-    This is `409 IMPORT_SESSION_INVALID_STATE`, deliberately a different
-    code from `IMPORT_DRY_RUN_PLAN_STALE` (reserved for a superseded/
-    consumed/failed plan, see the preceding test)."""
+    """Fix round 4 (PR20 design §14.4a, fix round 8/M4): a cancelled
+    session is reported as the SAME unified `409 IMPORT_DRY_RUN_PLAN_STALE`
+    contract as every other plan-invalidating condition -- the plan itself
+    is still `active`, but its owning session has moved out of
+    `dry_run_completed`. The design doc is explicit that this endpoint
+    never distinguishes this sub-case with a different code (never
+    `IMPORT_SESSION_INVALID_STATE`, which remains reserved for endpoints
+    whose operation is not "confirm this specific persisted plan")."""
     await _seed_equipment(db_session, bcm_code="BCM_CANCELLED", item_no="ITEM_CANCELLED")
     headers = await auth_headers(client)
     session = await _validated_session_with_update_rows(
@@ -805,7 +807,30 @@ async def test_api_confirm_dry_run_plan_cancelled_session_returns_409_invalid_st
         f"/api/v1/import-sessions/{session['id']}/dry-run-plan/{plan['id']}/confirm", headers=headers
     )
     assert r.status_code == 409
-    assert r.json()["code"] == "IMPORT_SESSION_INVALID_STATE"
+    assert r.json()["code"] == "IMPORT_DRY_RUN_PLAN_STALE"
+
+
+async def test_api_double_cancel_unrelated_to_dry_run_plan_still_returns_409_invalid_state(
+    client: AsyncClient, seeded_users, db_session
+):
+    """Fix round 4 scope guard: this fix collapses session-moved-on into
+    `IMPORT_DRY_RUN_PLAN_STALE` only for the DryRunPlan confirmation path
+    -- it does not broaden `IMPORT_SESSION_INVALID_STATE` away from every
+    other endpoint. `cancel_session`'s own CAS rejection (cancelling an
+    already-cancelled session) is not a "confirm this persisted plan"
+    operation, so it must keep returning `IMPORT_SESSION_INVALID_STATE`
+    unchanged."""
+    await _seed_equipment(db_session, bcm_code="BCM_DBLCANCEL", item_no="ITEM_DBLCANCEL")
+    headers = await auth_headers(client)
+    session = await _validated_session_with_update_rows(
+        client, headers, db_session, [_valid_row(bcm="BCM_DBLCANCEL", item_no="ITEM_DBLCANCEL")]
+    )
+    first_cancel = await client.post(f"/api/v1/import-sessions/{session['id']}/cancel", headers=headers)
+    assert first_cancel.status_code == 200, first_cancel.text
+
+    second_cancel = await client.post(f"/api/v1/import-sessions/{session['id']}/cancel", headers=headers)
+    assert second_cancel.status_code == 409
+    assert second_cancel.json()["code"] == "IMPORT_SESSION_INVALID_STATE"
 
 
 async def test_api_dry_run_plan_endpoints_require_administrator(client: AsyncClient, seeded_users, db_session):

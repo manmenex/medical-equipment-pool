@@ -11267,7 +11267,6 @@ async def test_pr20d_plan_row_fk_restrict_prevents_deleting_referenced_plan(pg_s
 # ---------------------------------------------------------------------------
 
 from app.core.exceptions import ImportDryRunPlanStaleError as _PgImportDryRunPlanStaleError
-from app.core.exceptions import ImportSessionInvalidStateError as _PgImportSessionInvalidStateError
 from app.crud import import_dry_run_plan as _pg_dry_run_plan_crud
 from app.crud import import_job as _pg_import_job_crud
 from app.crud import import_session as _pg_import_session_crud
@@ -11293,12 +11292,14 @@ async def _pg94_seed_confirmable_plan(pg_session, actor_id):
     return session, plan
 
 
-async def test_pr94_confirm_after_cancel_commits_rejects_with_invalid_state(pg_engine, pg_session, pg_seeded_users):
+async def test_pr94_confirm_after_cancel_commits_rejects_as_stale(pg_engine, pg_session, pg_seeded_users):
     """Ordering 1/2 (cancel-wins): once `cancel_session` has committed
     `status='cancelled'` on its own connection, a `confirm_plan` call on a
     second, independent connection must observe that committed state
     (its `SELECT ... FOR UPDATE` re-reads current state, not a stale
-    pre-cancel snapshot) and reject with `ImportSessionInvalidStateError`
+    pre-cancel snapshot) and reject with `ImportDryRunPlanStaleError`
+    (fix round 4, PR20 design §14.4a: session-moved-on is the SAME
+    unified stale-plan contract, never `ImportSessionInvalidStateError`)
     -- never confirming a plan whose session has already moved on. The
     plan itself must remain unconfirmed."""
     actor = pg_seeded_users["administrator"]
@@ -11312,7 +11313,7 @@ async def test_pr94_confirm_after_cancel_commits_rejects_with_invalid_state(pg_e
         assert cancelled.status == "cancelled"
 
     async with maker() as db_confirm:
-        with pytest.raises(_PgImportSessionInvalidStateError):
+        with pytest.raises(_PgImportDryRunPlanStaleError):
             await _pg_dry_run_plan_crud.confirm_plan(
                 db_confirm, plan_id=plan.id, import_session_id=session.id, current_user_id=actor.id
             )
@@ -11392,7 +11393,7 @@ async def test_pr94_confirm_vs_cancel_concurrent_race_never_produces_split_brain
                 )
                 await db_confirm.commit()
                 confirm_outcome["newly_confirmed"] = result.newly_confirmed
-            except _PgImportSessionInvalidStateError:
+            except _PgImportDryRunPlanStaleError:
                 await db_confirm.rollback()
                 confirm_outcome["rejected"] = True
 
@@ -11441,15 +11442,17 @@ async def test_pr94_confirm_vs_cancel_concurrent_race_never_produces_split_brain
         )
 
 
-async def test_pr94_confirm_after_new_dry_run_admission_commits_rejects_with_invalid_state(
+async def test_pr94_confirm_after_new_dry_run_admission_commits_rejects_as_stale(
     pg_engine, pg_session, pg_seeded_users
 ):
     """Ordering 1/2 (new-dry-run-wins): once a new dry-run has been
     (re)admitted (session -> 'dry_run_running', a fresh `ImportJob` row),
     a `confirm_plan` call for the now-superseded-from-underneath plan on
     an independent connection must reject with
-    `ImportSessionInvalidStateError` -- never confirming a plan whose
-    owning session already left `dry_run_completed` for a new attempt."""
+    `ImportDryRunPlanStaleError` (fix round 4: the SAME unified
+    stale-plan contract as every other plan-invalidating condition) --
+    never confirming a plan whose owning session already left
+    `dry_run_completed` for a new attempt."""
     actor = pg_seeded_users["administrator"]
     session, plan = await _pg94_seed_confirmable_plan(pg_session, actor.id)
     maker = _pg94_session_maker(pg_engine)
@@ -11469,7 +11472,7 @@ async def test_pr94_confirm_after_new_dry_run_admission_commits_rejects_with_inv
         assert admitted_session.status == "dry_run_running"
 
     async with maker() as db_confirm:
-        with pytest.raises(_PgImportSessionInvalidStateError):
+        with pytest.raises(_PgImportDryRunPlanStaleError):
             await _pg_dry_run_plan_crud.confirm_plan(
                 db_confirm, plan_id=plan.id, import_session_id=session.id, current_user_id=actor.id
             )
@@ -11546,7 +11549,7 @@ async def test_pr94_confirm_vs_new_dry_run_concurrent_race_never_produces_split_
                 )
                 await db_confirm.commit()
                 confirm_outcome["newly_confirmed"] = result.newly_confirmed
-            except _PgImportSessionInvalidStateError:
+            except _PgImportDryRunPlanStaleError:
                 await db_confirm.rollback()
                 confirm_outcome["rejected"] = True
 
@@ -11659,11 +11662,13 @@ async def test_pr94_confirm_vs_persist_dry_run_plan_lock_order_never_deadlocks(
                     db_confirm, plan_id=plan.id, import_session_id=session.id, current_user_id=actor.id
                 )
                 await db_confirm.commit()
-            except (_PgImportSessionInvalidStateError, _PgImportDryRunPlanStaleError):
-                # Both are legitimate outcomes of the real race, not
-                # deadlocks: `_run_persist`'s `supersede_active_plan` may
-                # legitimately win and mark the plan `superseded` before
-                # `confirm_plan` locks+checks it.
+            except _PgImportDryRunPlanStaleError:
+                # A legitimate outcome of the real race, not a deadlock:
+                # `_run_persist`'s `supersede_active_plan` may legitimately
+                # win and mark the plan `superseded` before `confirm_plan`
+                # locks+checks it (fix round 4: this is the same unified
+                # stale-plan code, whether the plan itself was superseded
+                # or the session moved on).
                 await db_confirm.rollback()
             except Exception as exc:  # pragma: no cover - only populated on a genuine deadlock
                 errors.append(exc)
