@@ -15,10 +15,17 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.types import JSON
 
 from app.db.base import Base
 from app.models.mixins import TimestampMixin, UTCDateTime, UUIDPKMixin
+
+# Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.2):
+# same PostgreSQL-JSONB/SQLite-JSON variant type already used by
+# app.models.equipment/audit/notification/user -- not a new pattern.
+_DryRunPlanJSONType = JSONB().with_variant(JSON(), "sqlite")
 
 # Roadmap PR19A1 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §4).
 # Every enum-shaped column below is a plain VARCHAR with an explicitly
@@ -235,3 +242,135 @@ class ImportRowError(UUIDPKMixin, Base):
     error_code: Mapped[str] = mapped_column(String(100), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
     severity: Mapped[str] = mapped_column(String(10), nullable=False, default="error", server_default=text("'error'"))
+
+
+class EquipmentMasterDryRunPlan(UUIDPKMixin, Base):
+    """Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    §14.2). One persisted, immutable dry-run plan header per successful
+    Equipment Master dry-run attempt that reached a countable result --
+    the exact artifact an operator reviews and confirms; PR20E's
+    `execute()` resolves and applies this exact row, never a live
+    recomputation (§14.1's five-identity invariant). Never updated in
+    place except for its own `status`/`confirmed_at`/`confirmed_by_user_id`
+    transitions (§10/§14.4a) -- its identity/summary columns are written
+    exactly once, by `persist_dry_run_plan` (§14.3)."""
+
+    __tablename__ = "equipment_master_dry_run_plans"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active','superseded','consumed','failed')",
+            name="ck_equipment_master_dry_run_plans_status",
+        ),
+        CheckConstraint(
+            "(confirmed_at IS NULL) = (confirmed_by_user_id IS NULL)",
+            name="ck_equipment_master_dry_run_plans_confirmed_pair",
+        ),
+        CheckConstraint("summary_total_rows >= 0", name="ck_equipment_master_dry_run_plans_summary_total_rows"),
+        CheckConstraint("summary_creates >= 0", name="ck_equipment_master_dry_run_plans_summary_creates"),
+        CheckConstraint("summary_updates >= 0", name="ck_equipment_master_dry_run_plans_summary_updates"),
+        CheckConstraint("summary_skips >= 0", name="ck_equipment_master_dry_run_plans_summary_skips"),
+        CheckConstraint("summary_warnings >= 0", name="ck_equipment_master_dry_run_plans_summary_warnings"),
+        CheckConstraint(
+            "summary_blocking_conflicts >= 0", name="ck_equipment_master_dry_run_plans_summary_blocking_conflicts"
+        ),
+        # §14.2's composite-FK "ownership" pair -- proves both job ids
+        # actually belong to *this* session, not merely that some
+        # import_jobs row with that id exists somewhere (mirrors
+        # ImportSession.current_validation_job_id's own composite FK above).
+        ForeignKeyConstraint(
+            ["import_session_id", "accepted_validation_job_id"],
+            ["import_jobs.import_session_id", "import_jobs.id"],
+            name="fk_equipment_master_dry_run_plans_accepted_validation_job",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["import_session_id", "dry_run_job_id"],
+            ["import_jobs.import_session_id", "import_jobs.id"],
+            name="fk_equipment_master_dry_run_plans_dry_run_job",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "import_session_id", "dry_run_job_id", name="uq_equipment_master_dry_run_plans_session_dry_run_job"
+        ),
+        # §14.2/§11: at most one `active` plan per session -- a partial
+        # unique index (not a plain UNIQUE(import_session_id)), since
+        # `superseded`/`consumed`/`failed` plans for the same session
+        # coexist as historical rows.
+        Index(
+            "uq_equipment_master_dry_run_plans_one_active_per_session",
+            "import_session_id",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+            sqlite_where=text("status = 'active'"),
+        ),
+    )
+
+    import_session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("import_sessions.id", ondelete="RESTRICT"), nullable=False
+    )
+    import_source_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("import_sources.id", ondelete="RESTRICT"), nullable=False
+    )
+    # Defense-in-depth copy -- must match import_sources.checksum (§14.2);
+    # never itself a source of truth, never read instead of import_sources.
+    source_checksum: Mapped[str] = mapped_column(String(128), nullable=False)
+    # No plain FK to import_jobs.id alone -- see the composite
+    # ForeignKeyConstraint pair above, which additionally proves session
+    # ownership.
+    accepted_validation_job_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    dry_run_job_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    ruleset_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active", server_default=text("'active'"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, server_default=func.now())
+    # NULL until an explicit POST .../confirm (§14.4a) -- never set
+    # implicitly by persist_dry_run_plan.
+    confirmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    confirmed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    # §14-15: derived from, and must always match, this plan's own
+    # persisted rows -- never computed from unrelated current DB state.
+    summary_total_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    summary_creates: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    summary_updates: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    summary_skips: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    summary_warnings: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    summary_blocking_conflicts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+
+
+class EquipmentMasterDryRunPlanRow(UUIDPKMixin, Base):
+    """§14.2. One planned action row, belonging to exactly one
+    `EquipmentMasterDryRunPlan`. Immutable once committed (§10) -- never
+    updated in place; a superseding plan gets entirely new rows. Content
+    columns (`normalized_values`/`matched_identity_fields`/`warnings`) are
+    redacted (set NULL) by retention cleanup (§14.9) -- the structural
+    columns (`action`/`target_equipment_id`/`expected_equipment_version`/
+    `source_row_number`) are explicitly preserved."""
+
+    __tablename__ = "equipment_master_dry_run_plan_rows"
+    __table_args__ = (
+        CheckConstraint("action IN ('CREATE','UPDATE','SKIP')", name="ck_equipment_master_dry_run_plan_rows_action"),
+        CheckConstraint(
+            "(action = 'UPDATE') = (target_equipment_id IS NOT NULL)",
+            name="ck_equipment_master_dry_run_plan_rows_update_target",
+        ),
+        CheckConstraint(
+            "(action = 'UPDATE') = (expected_equipment_version IS NOT NULL)",
+            name="ck_equipment_master_dry_run_plan_rows_update_expected_version",
+        ),
+        UniqueConstraint(
+            "dry_run_plan_id", "source_row_number", name="uq_equipment_master_dry_run_plan_rows_plan_row_number"
+        ),
+        Index("ix_equipment_master_dry_run_plan_rows_plan_id", "dry_run_plan_id"),
+    )
+
+    dry_run_plan_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("equipment_master_dry_run_plans.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_row_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    action: Mapped[str] = mapped_column(String(10), nullable=False)
+    target_equipment_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("equipment.id", ondelete="RESTRICT"))
+    normalized_values: Mapped[dict | None] = mapped_column(_DryRunPlanJSONType)
+    matched_identity_fields: Mapped[dict | None] = mapped_column(_DryRunPlanJSONType)
+    expected_equipment_version: Mapped[int | None] = mapped_column(Integer)
+    warnings: Mapped[list | None] = mapped_column(_DryRunPlanJSONType)

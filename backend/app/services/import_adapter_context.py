@@ -65,6 +65,15 @@ class AdapterInvocationContext:
     # (`ImportSession.current_validation_job_id`, existing PR19A field).
     # `None` for `execute`.
     accepted_validation_job_id: uuid.UUID | None
+    # Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §26):
+    # the acting user, for audit-event attribution only -- both
+    # `run_dry_run`/`run_execute` already receive this as their own
+    # `actor_id` parameter, so no new identity resolution is introduced.
+    # Read by `EquipmentMasterAdapter.persist_dry_run_plan` to attribute
+    # the `import_dry_run_plan_created` audit event; every other adapter
+    # method that doesn't call `get_adapter_invocation_context()` is
+    # unaffected.
+    actor_user_id: uuid.UUID | None
 
 
 _adapter_invocation_context: contextvars.ContextVar[AdapterInvocationContext | None] = contextvars.ContextVar(

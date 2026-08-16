@@ -6,11 +6,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import ADMINISTRATOR_ONLY_ROLES, require_roles
+from app.core.audit import AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CONFIRMED, AUDIT_ENTITY_IMPORT_SESSION, record_audit_event
 from app.core.exceptions import (
+    ImportDryRunPlanNotFoundError,
     ImportSessionNotFoundError,
     ImportSourceRegistrationMethodNotAllowedError,
     InvalidInputError,
 )
+from app.crud import import_dry_run_plan as import_dry_run_plan_crud
 from app.crud import import_job as import_job_crud
 from app.crud import import_session as import_crud
 from app.crud import import_source_blob as import_source_blob_crud
@@ -18,6 +21,10 @@ from app.db.session import get_db
 from app.models.import_session import ImportJob
 from app.schemas.common import Page
 from app.schemas.import_session import (
+    DryRunPlanConfirmOut,
+    DryRunPlanOut,
+    DryRunPlanRowOut,
+    DryRunPlanSummaryOut,
     ImportRetentionCleanupRequest,
     ImportRetentionCleanupResult,
     ImportSessionCreate,
@@ -316,6 +323,152 @@ async def execute_session(
 ):
     session = await _get_or_404(db, session_id)
     return await import_execution_service.run_execute(db, session=session, actor_id=actor.id, request=request)
+
+
+@router.get("/{session_id}/dry-run-plan", response_model=DryRunPlanOut)
+async def get_dry_run_plan(
+    session_id: uuid.UUID,
+    limit: int = Query(default=25, ge=1, le=200),
+    cursor: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    _actor=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
+):
+    """Roadmap PR20D (design §14.6). Resolves the session's current
+    `active` plan (never a client-supplied plan id -- there is no
+    "dry-run-summary recompute" endpoint, §24) and returns its persisted
+    identity/summary plus a paginated slice of its rows. `404
+    IMPORT_DRY_RUN_PLAN_NOT_FOUND` if the session has never had a
+    successful dry-run."""
+    session = await _get_or_404(db, session_id)
+    plan = await import_dry_run_plan_crud.get_current_plan(db, import_session_id=session.id)
+    if plan is None:
+        raise ImportDryRunPlanNotFoundError(f"Import session '{session_id}' has no persisted dry-run plan.")
+
+    cursor_n = None
+    cursor_uuid = None
+    if cursor:
+        cursor_n, cursor_id = decode_int_cursor(cursor)
+        try:
+            cursor_uuid = uuid.UUID(cursor_id)
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise InvalidInputError("Invalid or malformed pagination cursor.") from exc
+
+    rows, total = await import_dry_run_plan_crud.list_plan_rows(
+        db, plan_id=plan.id, limit=limit, cursor_n=cursor_n, cursor_id=cursor_uuid
+    )
+    next_cursor = None
+    if len(rows) > limit:
+        rows = rows[:limit]
+        last = rows[-1]
+        next_cursor = encode_int_cursor(last.source_row_number, str(last.id))
+
+    return DryRunPlanOut(
+        id=plan.id,
+        import_session_id=plan.import_session_id,
+        import_source_id=plan.import_source_id,
+        status=plan.status,
+        is_current=plan.status == "active",
+        created_at=plan.created_at,
+        confirmed_at=plan.confirmed_at,
+        confirmed_by_user_id=plan.confirmed_by_user_id,
+        summary=DryRunPlanSummaryOut(
+            total_rows=plan.summary_total_rows,
+            creates=plan.summary_creates,
+            updates=plan.summary_updates,
+            skips=plan.summary_skips,
+            warnings=plan.summary_warnings,
+            blocking_conflicts=plan.summary_blocking_conflicts,
+        ),
+        rows=[DryRunPlanRowOut.model_validate(row) for row in rows],
+        rows_next_cursor=next_cursor,
+        rows_total=total,
+    )
+
+
+@router.post("/{session_id}/dry-run-plan/{plan_id}/confirm", response_model=DryRunPlanConfirmOut)
+async def confirm_dry_run_plan(
+    session_id: uuid.UUID,
+    plan_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    actor=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
+):
+    """Roadmap PR20D (design §14.4a). The explicit operator confirmation
+    step -- PR20E's `execute()` will only ever apply a plan that reached
+    this state.
+
+    Fix round 2 (PR94-H1/H2/M1): `app.crud.import_dry_run_plan.confirm_plan`
+    now locks the `ImportSession` row then the plan row (in that order,
+    matching `persist_dry_run_plan`'s own lock order -- see that
+    function's docstring) before its conditional `UPDATE`, so this call
+    genuinely serializes against a concurrent `cancel_session` or new
+    dry-run admission instead of racing an unlocked read against their
+    writes. It raises directly rather than returning `None`:
+    `ImportSessionNotFoundError` (`404`, unknown session id) -- the only
+    `404` this endpoint ever returns.
+
+    Fix round 4 (PR20 design §14.4a, fix round 8/M4) and fix round 6:
+    every other plan-invalidating condition -- the plan no longer
+    `active` (superseded/consumed/failed), the plan id not existing at
+    all, the plan id belonging to a *different* session, and the owning
+    session no longer `dry_run_completed` (a concurrent cancel or new
+    dry-run won the race) -- raises the SAME `ImportDryRunPlanStaleError`
+    (`409 IMPORT_DRY_RUN_PLAN_STALE`). The design doc's own zero-rows-
+    matched list is explicit that this endpoint's stale-plan contract
+    does not distinguish these sub-cases with different codes; all of
+    them mean the same thing to the client: re-fetch `GET
+    .../dry-run-plan` and re-check before confirming again. This also
+    closes an information-boundary leak a split contract would otherwise
+    have: a caller can never learn from this endpoint's response alone
+    whether a given `plan_id` belongs to a different session. Contrast
+    `GET .../dry-run-plan` above, whose resource-lookup semantics are
+    unaffected -- it still returns `404 IMPORT_DRY_RUN_PLAN_NOT_FOUND`
+    when the session has no persisted plan at all.
+    `IMPORT_SESSION_INVALID_STATE` remains reserved for endpoints whose
+    operation is not "confirm this specific persisted plan" (e.g.
+    `cancel_session`'s own CAS rejection) -- never for this endpoint.
+
+    The `CONFIRMED` audit event is written only when
+    `result.newly_confirmed` -- a repeat confirm (same user retry, a
+    second user's idempotent re-confirm, or a network retry after a lost
+    response) is reported as the same success but never produces a second
+    audit row, and never re-attributes the persisted `confirmed_by_user_id`
+    away from the original first confirmer. The response's `summary` is
+    the plan's own persisted summary (`result.plan`), never recomputed."""
+    session = await _get_or_404(db, session_id)
+    result = await import_dry_run_plan_crud.confirm_plan(
+        db, plan_id=plan_id, import_session_id=session.id, current_user_id=actor.id
+    )
+    if result.newly_confirmed:
+        await record_audit_event(
+            db,
+            actor_user_id=actor.id,
+            action=AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CONFIRMED,
+            entity_type=AUDIT_ENTITY_IMPORT_SESSION,
+            entity_id=session.id,
+            after={
+                "dry_run_plan_id": str(result.plan.id),
+                "confirmed_at": result.plan.confirmed_at.isoformat() if result.plan.confirmed_at else None,
+            },
+            request=request,
+        )
+    await db.commit()
+    plan = result.plan
+    return DryRunPlanConfirmOut(
+        id=plan.id,
+        import_session_id=plan.import_session_id,
+        status=plan.status,
+        confirmed_at=plan.confirmed_at,
+        confirmed_by_user_id=plan.confirmed_by_user_id,
+        summary=DryRunPlanSummaryOut(
+            total_rows=plan.summary_total_rows,
+            creates=plan.summary_creates,
+            updates=plan.summary_updates,
+            skips=plan.summary_skips,
+            warnings=plan.summary_warnings,
+            blocking_conflicts=plan.summary_blocking_conflicts,
+        ),
+    )
 
 
 @router.get("/{session_id}/errors", response_model=Page[ValidationFindingOut])

@@ -126,6 +126,17 @@ class ImportAdapter(abc.ABC):
         calling this default and catching the exception."""
         raise NotImplementedError
 
+    async def persist_dry_run_plan(self, db: AsyncSession, plan: "DryRunPlan") -> None:
+        """Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+        §14.3, §6.3). Called by the framework on the normal *writable*
+        session, immediately after `plan_dry_run`'s read-only evaluation
+        succeeds and closes, in the same transaction as the session's
+        `dry_run_completed` fenced-completion write. Default: a no-op --
+        an adapter that has nothing to persist (every adapter that
+        predates this mechanism, and any future adapter with no
+        persisted-plan concept of its own) is unaffected."""
+        return
+
     async def execute(self, db: AsyncSession) -> int:
         """Roadmap PR19A3 (design §17). Called against the normal,
         read-write session, inside the single-winner execution's own `TX1`

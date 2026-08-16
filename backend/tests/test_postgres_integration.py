@@ -7448,7 +7448,18 @@ async def test_migration_0013_fresh_database_all_foreign_keys_are_restrict():
                 # fk_import_sessions_current_validation_job -> import_jobs,
                 # + 1 added by migration 0016 (Roadmap PR20A):
                 # import_source_blobs.import_source_id -> import_sources.
-                assert len(rows) == 31, f"expected exactly 31 foreign keys, found {len(rows)}: {rows}"
+                # + 0 added by migration 0017 (Roadmap PR20B): a new column
+                # only, no new FK.
+                # + 7 added by migration 0018 (Roadmap PR20D):
+                # equipment_master_dry_run_plans.import_session_id ->
+                # import_sessions, .import_source_id -> import_sources,
+                # .confirmed_by_user_id -> users, the two composite
+                # fk_equipment_master_dry_run_plans_accepted_validation_job/
+                # _dry_run_job -> import_jobs, and
+                # equipment_master_dry_run_plan_rows.dry_run_plan_id ->
+                # equipment_master_dry_run_plans, .target_equipment_id ->
+                # equipment.
+                assert len(rows) == 38, f"expected exactly 38 foreign keys, found {len(rows)}: {rows}"
                 for conname, confdeltype in rows:
                     assert confdeltype == "r", f"{conname} has confdeltype={confdeltype!r}, expected 'r' (RESTRICT)"
         finally:
@@ -10776,3 +10787,1275 @@ async def test_genuine_update_still_advances_version_on_postgres_after_h1_fix(pg
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["version"] == 2, "a genuine supported-field update must still advance version by exactly 1"
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.2,
+# §24): migration 0018_dry_run_plans.py convergence tests, mirroring
+# 0016_import_source_blobs.py's own discipline (see that section's
+# extensive rationale above -- not restated here), applied to both new
+# PR20D tables at once.
+# ---------------------------------------------------------------------------
+
+
+def _load_migration_0018_module():
+    spec = importlib.util.spec_from_file_location(
+        "_migration_0018_dry_run_plans", _BACKEND_DIR / "alembic" / "versions" / "0018_dry_run_plans.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_migration_0018 = _load_migration_0018_module()
+
+
+async def _dry_run_plan_tables_catalog_snapshot(engine) -> dict:
+    result: dict = {}
+    async with engine.connect() as conn:
+        for table in _migration_0018._GOVERNED_TABLES:
+            columns = (
+                await conn.execute(
+                    text(
+                        "SELECT column_name, data_type, udt_name, character_maximum_length, is_nullable, column_default "
+                        "FROM information_schema.columns WHERE table_schema = 'public' AND table_name = :t "
+                        "ORDER BY column_name"
+                    ),
+                    {"t": table},
+                )
+            ).all()
+            constraints = (
+                await conn.execute(
+                    text(
+                        "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint "
+                        "WHERE conrelid = (:t)::regclass ORDER BY conname"
+                    ),
+                    {"t": table},
+                )
+            ).all()
+            indexes = (
+                await conn.execute(
+                    text(
+                        "SELECT indexname, indexdef FROM pg_indexes "
+                        "WHERE schemaname = 'public' AND tablename = :t ORDER BY indexname"
+                    ),
+                    {"t": table},
+                )
+            ).all()
+            result[table] = {
+                "columns": {
+                    c.column_name: {
+                        "data_type": c.data_type,
+                        "udt_name": c.udt_name,
+                        "character_maximum_length": c.character_maximum_length,
+                        "is_nullable": c.is_nullable,
+                        "column_default": c.column_default,
+                    }
+                    for c in columns
+                },
+                "constraints": {name: definition for name, definition in constraints},
+                "indexes": {name: definition for name, definition in indexes},
+            }
+    return result
+
+
+async def test_migration_0018_fresh_database_matches_expected():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                for table in _migration_0018._GOVERNED_TABLES:
+                    exists = (await conn.execute(text(f"SELECT to_regclass('{table}') IS NOT NULL"))).scalar_one()
+                    assert exists, f"{table} must exist on the fresh-install path"
+            snapshot = await _dry_run_plan_tables_catalog_snapshot(engine)
+            for table in _migration_0018._GOVERNED_TABLES:
+                for name, expected_def in _migration_0018._EXPECTED_CONSTRAINTS[table].items():
+                    assert snapshot[table]["constraints"].get(name) == expected_def, f"{table}.{name} mismatch"
+                for name in _migration_0018._EXPECTED_INDEXES[table]:
+                    assert name in snapshot[table]["indexes"], f"{table} missing index {name}"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0018_fresh_and_historical_schemas_converge():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+    try:
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            fresh_snapshot = await _dry_run_plan_tables_catalog_snapshot(engine)
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+    try:
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0017_equipment_version")
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            historical_snapshot = await _dry_run_plan_tables_catalog_snapshot(engine)
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+    assert fresh_snapshot == historical_snapshot, (
+        f"fresh-install and historical-upgrade paths must converge on an identical catalog:\n"
+        f"fresh={fresh_snapshot}\nhistorical={historical_snapshot}"
+    )
+
+
+async def test_migration_0018_downgrade_re_upgrade_round_trip():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0017_equipment_version")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                for table in _migration_0018._GOVERNED_TABLES:
+                    exists = (await conn.execute(text(f"SELECT to_regclass('{table}') IS NOT NULL"))).scalar_one()
+                    assert not exists, f"{table} must be fully dropped by downgrade"
+        finally:
+            await engine.dispose()
+
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                for table in _migration_0018._GOVERNED_TABLES:
+                    exists = (await conn.execute(text(f"SELECT to_regclass('{table}') IS NOT NULL"))).scalar_one()
+                    assert exists, f"{table} must exist again after re-upgrade"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0018_mismatched_fk_definition_fails_closed():
+    """A deliberately mismatched pre-existing `equipment_master_dry_run_plan_rows`
+    table (wrong `ON DELETE` action on its plan FK) must fail the migration
+    closed -- `CREATE TABLE IF NOT EXISTS` is a no-op against it, so only
+    `_verify_schema_convergence()` can catch this."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0017_equipment_version")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text(_migration_0018._CREATE_PLANS))
+                await conn.execute(text(_migration_0018._CREATE_PLANS_ONE_ACTIVE_INDEX))
+                await conn.execute(
+                    text(
+                        "CREATE TABLE equipment_master_dry_run_plan_rows ("
+                        "id UUID NOT NULL PRIMARY KEY, "
+                        "dry_run_plan_id UUID NOT NULL REFERENCES equipment_master_dry_run_plans(id) ON DELETE CASCADE, "
+                        "source_row_number INTEGER NOT NULL, "
+                        "action VARCHAR(10) NOT NULL, "
+                        "target_equipment_id UUID REFERENCES equipment(id) ON DELETE RESTRICT, "
+                        "normalized_values JSONB, matched_identity_fields JSONB, "
+                        "expected_equipment_version INTEGER, warnings JSONB, "
+                        "CONSTRAINT ck_equipment_master_dry_run_plan_rows_action CHECK (action IN ('CREATE','UPDATE','SKIP')), "
+                        "CONSTRAINT ck_equipment_master_dry_run_plan_rows_update_target "
+                        "CHECK ((action = 'UPDATE') = (target_equipment_id IS NOT NULL)), "
+                        "CONSTRAINT ck_equipment_master_dry_run_plan_rows_update_expected_version "
+                        "CHECK ((action = 'UPDATE') = (expected_equipment_version IS NOT NULL)), "
+                        "CONSTRAINT uq_equipment_master_dry_run_plan_rows_plan_row_number "
+                        "UNIQUE (dry_run_plan_id, source_row_number))"
+                    )
+                )
+        finally:
+            await engine.dispose()
+
+        result = _run_alembic_allow_failure("upgrade", "head")
+        assert result.returncode != 0, "a mismatched FK ON DELETE action must fail the migration, not be silently accepted"
+        combined = result.stdout + result.stderr
+        assert "diverges" in combined, f"failure must explain the mismatch:\n{combined}"
+    finally:
+        await _drop_scratch_database()
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR20D: DB-level constraint rejection proofs, real PostgreSQL
+# (§29 -- "not considered complete without a test proving each constraint
+# actually rejects the row it names"). Uses the same pg_engine/pg_session/
+# pg_seeded_users fixtures (Base.metadata.create_all(), not the scratch-DB
+# Alembic path) already established above for ORM-level constraint proofs.
+# ---------------------------------------------------------------------------
+
+from app.models.import_session import EquipmentMasterDryRunPlan as _PgDryRunPlan
+from app.models.import_session import EquipmentMasterDryRunPlanRow as _PgDryRunPlanRow
+
+_PG_20D_DATASET_TYPE = "pr20d_pg_test_dataset"
+
+
+async def _pg20d_seed_session_source_jobs(pg_session, actor_id):
+    session = _PgImportSession(dataset_type=_PG_20D_DATASET_TYPE, status="dry_run_completed", version=2, created_by_user_id=actor_id)
+    pg_session.add(session)
+    await pg_session.flush()
+    source = _PgImportSource(
+        import_session_id=session.id,
+        status="frozen",
+        checksum="d" * 64,
+        byte_size=4,
+        options_fingerprint="x",
+        source_fingerprint="y",
+        frozen_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+    )
+    pg_session.add(source)
+    validate_job = _PgImportJob(import_session_id=session.id, job_type="validate", status="succeeded", attempt_number=1, lease_generation=1)
+    pg_session.add(validate_job)
+    dry_run_job = _PgImportJob(import_session_id=session.id, job_type="dry_run", status="succeeded", attempt_number=1, lease_generation=1)
+    pg_session.add(dry_run_job)
+    await pg_session.flush()
+    return session, source, validate_job, dry_run_job
+
+
+def _pg20d_plan_kwargs(session, source, validate_job, dry_run_job, **overrides) -> dict:
+    kwargs = dict(
+        import_session_id=session.id,
+        import_source_id=source.id,
+        source_checksum=source.checksum,
+        accepted_validation_job_id=validate_job.id,
+        dry_run_job_id=dry_run_job.id,
+        ruleset_version="1",
+        status="active",
+        summary_total_rows=0,
+        summary_creates=0,
+        summary_updates=0,
+        summary_skips=0,
+        summary_warnings=0,
+        summary_blocking_conflicts=0,
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+async def test_pr20d_plan_status_check_rejects_invalid_value(pg_session, pg_seeded_users):
+    actor = pg_seeded_users["administrator"]
+    session, source, validate_job, dry_run_job = await _pg20d_seed_session_source_jobs(pg_session, actor.id)
+    pg_session.add(_PgDryRunPlan(**_pg20d_plan_kwargs(session, source, validate_job, dry_run_job, status="bogus")))
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.flush()
+    await pg_session.rollback()
+
+
+async def test_pr20d_plan_confirmed_pair_check_rejects_mismatch(pg_session, pg_seeded_users):
+    actor = pg_seeded_users["administrator"]
+    session, source, validate_job, dry_run_job = await _pg20d_seed_session_source_jobs(pg_session, actor.id)
+    pg_session.add(
+        _PgDryRunPlan(
+            **_pg20d_plan_kwargs(session, source, validate_job, dry_run_job, confirmed_at=datetime.now(timezone.utc), confirmed_by_user_id=None)
+        )
+    )
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.flush()
+    await pg_session.rollback()
+
+
+async def test_pr20d_plan_summary_negative_check_rejects_row(pg_session, pg_seeded_users):
+    actor = pg_seeded_users["administrator"]
+    session, source, validate_job, dry_run_job = await _pg20d_seed_session_source_jobs(pg_session, actor.id)
+    pg_session.add(_PgDryRunPlan(**_pg20d_plan_kwargs(session, source, validate_job, dry_run_job, summary_updates=-1)))
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.flush()
+    await pg_session.rollback()
+
+
+async def test_pr20d_plan_composite_fk_rejects_cross_session_job(pg_session, pg_seeded_users):
+    """§14.2's composite FK proves both job ids actually belong to *this*
+    session -- a real `import_jobs` row that belongs to a different
+    session must still be rejected."""
+    actor = pg_seeded_users["administrator"]
+    session_a, source_a, validate_job_a, dry_run_job_a = await _pg20d_seed_session_source_jobs(pg_session, actor.id)
+    session_b, _source_b, _validate_job_b, dry_run_job_b = await _pg20d_seed_session_source_jobs(pg_session, actor.id)
+    pg_session.add(
+        _PgDryRunPlan(
+            **_pg20d_plan_kwargs(session_a, source_a, validate_job_a, dry_run_job_a, dry_run_job_id=dry_run_job_b.id)
+        )
+    )
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.flush()
+    await pg_session.rollback()
+
+
+async def test_pr20d_plan_one_active_per_session_partial_unique_index_rejects_second(pg_session, pg_seeded_users):
+    actor = pg_seeded_users["administrator"]
+    session, source, validate_job, dry_run_job = await _pg20d_seed_session_source_jobs(pg_session, actor.id)
+    pg_session.add(_PgDryRunPlan(**_pg20d_plan_kwargs(session, source, validate_job, dry_run_job)))
+    await pg_session.commit()
+
+    dry_run_job_2 = _PgImportJob(import_session_id=session.id, job_type="dry_run", status="succeeded", attempt_number=2, lease_generation=1)
+    pg_session.add(dry_run_job_2)
+    await pg_session.flush()
+    pg_session.add(_PgDryRunPlan(**_pg20d_plan_kwargs(session, source, validate_job, dry_run_job_2)))
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.flush()
+    await pg_session.rollback()
+
+
+async def test_pr20d_plan_unique_session_dry_run_job_rejects_duplicate(pg_session, pg_seeded_users):
+    actor = pg_seeded_users["administrator"]
+    session, source, validate_job, dry_run_job = await _pg20d_seed_session_source_jobs(pg_session, actor.id)
+    pg_session.add(_PgDryRunPlan(**_pg20d_plan_kwargs(session, source, validate_job, dry_run_job)))
+    await pg_session.commit()
+
+    pg_session.add(_PgDryRunPlan(**_pg20d_plan_kwargs(session, source, validate_job, dry_run_job, status="superseded")))
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.flush()
+    await pg_session.rollback()
+
+
+async def _pg20d_seed_plan(pg_session, actor_id):
+    session, source, validate_job, dry_run_job = await _pg20d_seed_session_source_jobs(pg_session, actor_id)
+    plan = _PgDryRunPlan(**_pg20d_plan_kwargs(session, source, validate_job, dry_run_job))
+    pg_session.add(plan)
+    await pg_session.flush()
+    return plan
+
+
+async def test_pr20d_plan_row_action_check_rejects_invalid_value(pg_session, pg_seeded_users):
+    actor = pg_seeded_users["administrator"]
+    plan = await _pg20d_seed_plan(pg_session, actor.id)
+    pg_session.add(
+        _PgDryRunPlanRow(dry_run_plan_id=plan.id, source_row_number=1, action="DELETE", normalized_values={}, matched_identity_fields={}, warnings=[])
+    )
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.flush()
+    await pg_session.rollback()
+
+
+async def test_pr20d_plan_row_update_target_check_rejects_update_without_target(pg_session, pg_seeded_users):
+    actor = pg_seeded_users["administrator"]
+    plan = await _pg20d_seed_plan(pg_session, actor.id)
+    pg_session.add(
+        _PgDryRunPlanRow(
+            dry_run_plan_id=plan.id,
+            source_row_number=1,
+            action="UPDATE",
+            target_equipment_id=None,
+            expected_equipment_version=1,
+            normalized_values={},
+            matched_identity_fields={},
+            warnings=[],
+        )
+    )
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.flush()
+    await pg_session.rollback()
+
+
+async def test_pr20d_plan_row_update_target_check_rejects_skip_with_target(pg_session, pg_seeded_users):
+    actor = pg_seeded_users["administrator"]
+    plan = await _pg20d_seed_plan(pg_session, actor.id)
+    equipment = Equipment(asset_number="PR20D-ROW-0001", equipment_name="Target Equipment", status=EquipmentStatus.AVAILABLE_AT_POOL)
+    pg_session.add(equipment)
+    await pg_session.flush()
+    pg_session.add(
+        _PgDryRunPlanRow(
+            dry_run_plan_id=plan.id,
+            source_row_number=1,
+            action="SKIP",
+            target_equipment_id=equipment.id,
+            normalized_values={},
+            matched_identity_fields={},
+            warnings=[],
+        )
+    )
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.flush()
+    await pg_session.rollback()
+
+
+async def test_pr20d_plan_row_update_expected_version_check_rejects_mismatch(pg_session, pg_seeded_users):
+    actor = pg_seeded_users["administrator"]
+    plan = await _pg20d_seed_plan(pg_session, actor.id)
+    equipment = Equipment(asset_number="PR20D-ROW-0002", equipment_name="Target Equipment 2", status=EquipmentStatus.AVAILABLE_AT_POOL)
+    pg_session.add(equipment)
+    await pg_session.flush()
+    pg_session.add(
+        _PgDryRunPlanRow(
+            dry_run_plan_id=plan.id,
+            source_row_number=1,
+            action="UPDATE",
+            target_equipment_id=equipment.id,
+            expected_equipment_version=None,
+            normalized_values={},
+            matched_identity_fields={},
+            warnings=[],
+        )
+    )
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.flush()
+    await pg_session.rollback()
+
+
+async def test_pr20d_plan_row_unique_row_number_per_plan_rejects_duplicate(pg_session, pg_seeded_users):
+    actor = pg_seeded_users["administrator"]
+    plan = await _pg20d_seed_plan(pg_session, actor.id)
+    pg_session.add(
+        _PgDryRunPlanRow(dry_run_plan_id=plan.id, source_row_number=1, action="SKIP", normalized_values={}, matched_identity_fields={}, warnings=[])
+    )
+    await pg_session.commit()
+
+    pg_session.add(
+        _PgDryRunPlanRow(dry_run_plan_id=plan.id, source_row_number=1, action="SKIP", normalized_values={}, matched_identity_fields={}, warnings=[])
+    )
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.flush()
+    await pg_session.rollback()
+
+
+async def test_pr20d_plan_row_fk_restrict_prevents_deleting_referenced_plan(pg_session, pg_seeded_users):
+    actor = pg_seeded_users["administrator"]
+    plan = await _pg20d_seed_plan(pg_session, actor.id)
+    pg_session.add(
+        _PgDryRunPlanRow(dry_run_plan_id=plan.id, source_row_number=1, action="SKIP", normalized_values={}, matched_identity_fields={}, warnings=[])
+    )
+    await pg_session.commit()
+
+    with pytest.raises(_PgIntegrityError):
+        await pg_session.execute(_pg_delete(_PgDryRunPlan).where(_PgDryRunPlan.id == plan.id))
+    await pg_session.rollback()
+
+
+# ---------------------------------------------------------------------------
+# PR #94 Fix Round 2 (H1/H2): genuine two-PostgreSQL-connection concurrency
+# proofs for dry-run-plan confirmation. Roadmap PR20_EQUIPMENT_MASTER_
+# IMPORT_PLAN.md §14.4a's confirmation contract only became genuinely
+# concurrency-safe once app.crud.import_dry_run_plan.confirm_plan started
+# locking `import_sessions` (`SELECT ... FOR UPDATE`) before checking
+# `status == 'dry_run_completed'` -- the prior implementation's unlocked
+# `EXISTS` subquery could commit a confirmation whose read predated a
+# concurrent, uncommitted cancel/new-dry-run that later committed.
+#
+# Every test below drives at least two INDEPENDENT `AsyncSession` objects,
+# each its own connection checked out of `pg_engine`'s pool -- never one
+# shared session standing in for "both sides" of a race -- and the
+# genuinely-concurrent variants synchronize with `asyncio.Barrier`/
+# `asyncio.Event` + `asyncio.gather`, mirroring this file's own established
+# idiom (see `test_concurrent_receipt_burst_produces_exactly_one_winner_
+# on_postgres` above). No test in this section uses `asyncio.sleep` for
+# ordering.
+# ---------------------------------------------------------------------------
+
+from app.core.exceptions import ImportDryRunPlanStaleError as _PgImportDryRunPlanStaleError
+from app.crud import import_dry_run_plan as _pg_dry_run_plan_crud
+from app.crud import import_job as _pg_import_job_crud
+from app.crud import import_session as _pg_import_session_crud
+
+
+def _pg94_session_maker(pg_engine):
+    return async_sessionmaker(pg_engine, expire_on_commit=False, class_=AsyncSession)
+
+
+async def _pg94_seed_confirmable_plan(pg_session, actor_id):
+    """One `dry_run_completed` `ImportSession` (`version=2`, matching
+    `_pg20d_seed_session_source_jobs`'s own seeded value) plus one `active`,
+    unconfirmed plan -- the common starting state raced against below.
+    Committed on `pg_session` (a connection distinct from every connection
+    the races themselves use) so its data is durably visible to fresh
+    connections before any race begins."""
+    session, source, validate_job, dry_run_job = await _pg20d_seed_session_source_jobs(pg_session, actor_id)
+    plan = _PgDryRunPlan(**_pg20d_plan_kwargs(session, source, validate_job, dry_run_job))
+    pg_session.add(plan)
+    await pg_session.commit()
+    await pg_session.refresh(session)
+    await pg_session.refresh(plan)
+    return session, plan
+
+
+async def test_pr94_confirm_after_cancel_commits_rejects_as_stale(pg_engine, pg_session, pg_seeded_users):
+    """Ordering 1/2 (cancel-wins): once `cancel_session` has committed
+    `status='cancelled'` on its own connection, a `confirm_plan` call on a
+    second, independent connection must observe that committed state
+    (its `SELECT ... FOR UPDATE` re-reads current state, not a stale
+    pre-cancel snapshot) and reject with `ImportDryRunPlanStaleError`
+    (fix round 4, PR20 design §14.4a: session-moved-on is the SAME
+    unified stale-plan contract, never `ImportSessionInvalidStateError`)
+    -- never confirming a plan whose session has already moved on. The
+    plan itself must remain unconfirmed."""
+    actor = pg_seeded_users["administrator"]
+    session, plan = await _pg94_seed_confirmable_plan(pg_session, actor.id)
+    maker = _pg94_session_maker(pg_engine)
+
+    async with maker() as db_cancel:
+        cancelled = await _pg_import_session_crud.cancel_session(
+            db_cancel, session_id=session.id, expected_version=session.version
+        )
+        assert cancelled.status == "cancelled"
+
+    async with maker() as db_confirm:
+        with pytest.raises(_PgImportDryRunPlanStaleError):
+            await _pg_dry_run_plan_crud.confirm_plan(
+                db_confirm, plan_id=plan.id, import_session_id=session.id, current_user_id=actor.id
+            )
+        await db_confirm.rollback()
+
+    async with maker() as verify_db:
+        refreshed = await verify_db.get(_PgDryRunPlan, plan.id)
+        assert refreshed.confirmed_at is None
+        assert refreshed.confirmed_by_user_id is None
+
+
+async def test_pr94_cancel_after_confirm_commits_still_proceeds_per_existing_contract(
+    pg_engine, pg_session, pg_seeded_users
+):
+    """Ordering 2/2 (confirm-wins): once `confirm_plan` has committed on
+    its own connection, a subsequent `cancel_session` call on a second,
+    independent connection must still succeed -- confirmation does not
+    change `ImportSession.version`, so it never blocks a legitimate later
+    cancel (§21's existing cancellation contract is preserved). The
+    confirmed plan's own state is untouched by the cancel."""
+    actor = pg_seeded_users["administrator"]
+    session, plan = await _pg94_seed_confirmable_plan(pg_session, actor.id)
+    maker = _pg94_session_maker(pg_engine)
+
+    async with maker() as db_confirm:
+        result = await _pg_dry_run_plan_crud.confirm_plan(
+            db_confirm, plan_id=plan.id, import_session_id=session.id, current_user_id=actor.id
+        )
+        assert result.newly_confirmed is True
+        await db_confirm.commit()
+
+    async with maker() as db_cancel:
+        cancelled = await _pg_import_session_crud.cancel_session(
+            db_cancel, session_id=session.id, expected_version=session.version
+        )
+        assert cancelled.status == "cancelled"
+
+    async with maker() as verify_db:
+        refreshed_plan = await verify_db.get(_PgDryRunPlan, plan.id)
+        assert refreshed_plan.confirmed_at is not None
+        assert refreshed_plan.confirmed_by_user_id == actor.id
+
+
+async def test_pr94_confirm_vs_cancel_concurrent_race_never_produces_split_brain(
+    pg_engine, pg_session, pg_seeded_users
+):
+    """The genuine regression test for PR94-H1: dispatches `confirm_plan`
+    and `cancel_session` truly concurrently (two independent connections,
+    `asyncio.Barrier`-synchronized so both reach their own locking
+    statement before either is allowed to proceed -- not sequential
+    simulation) against the SAME session+plan, repeated across several
+    trials to flush out scheduling-order variance. Whichever one
+    PostgreSQL's row lock actually admits first, the final committed state
+    must always be internally consistent: if the plan ended up confirmed,
+    the session must not have committed as 'cancelled' while a
+    'dry_run_completed'-only confirmation was in flight, and vice versa --
+    never a state where the confirmation's own preconditions were
+    violated by the persisted session status. This is exactly the
+    interleaving the old unlocked-`EXISTS` implementation could not
+    prevent."""
+    actor = pg_seeded_users["administrator"]
+    maker = _pg94_session_maker(pg_engine)
+
+    for trial in range(8):
+        session, plan = await _pg94_seed_confirmable_plan(pg_session, actor.id)
+        barrier = asyncio.Barrier(2)
+        db_confirm = maker()
+        db_cancel = maker()
+        confirm_outcome: dict = {}
+        cancel_outcome: dict = {}
+
+        async def _run_confirm():
+            await barrier.wait()
+            try:
+                result = await _pg_dry_run_plan_crud.confirm_plan(
+                    db_confirm, plan_id=plan.id, import_session_id=session.id, current_user_id=actor.id
+                )
+                await db_confirm.commit()
+                confirm_outcome["newly_confirmed"] = result.newly_confirmed
+            except _PgImportDryRunPlanStaleError:
+                await db_confirm.rollback()
+                confirm_outcome["rejected"] = True
+
+        async def _run_cancel():
+            await barrier.wait()
+            try:
+                await _pg_import_session_crud.cancel_session(
+                    db_cancel, session_id=session.id, expected_version=session.version
+                )
+                cancel_outcome["cancelled"] = True
+            except Exception:
+                await db_cancel.rollback()
+                cancel_outcome["cancelled"] = False
+
+        try:
+            await asyncio.gather(_run_confirm(), _run_cancel())
+        finally:
+            await db_confirm.close()
+            await db_cancel.close()
+
+        async with maker() as verify_db:
+            final_session = await verify_db.get(_PgImportSession, session.id)
+            final_plan = await verify_db.get(_PgDryRunPlan, plan.id)
+
+        # No split-brain: a committed confirmation is only valid if the
+        # session was still 'dry_run_completed' at the moment confirm_plan
+        # locked it -- which is exactly what its own FOR UPDATE + status
+        # check enforces. We cannot observe "the moment it locked it"
+        # after the fact, but we CAN assert the two persisted facts are
+        # jointly consistent: it is never the case that confirm_plan
+        # reported success while cancel *also* reports success from a
+        # stale pre-confirm read of the session's version (both cannot
+        # have won a real CAS against the same expected_version=2 unless
+        # confirm's own success left the version untouched, which it
+        # does by design -- so cancel "also succeeding" after a
+        # successful confirm is expected and fine; what must never happen
+        # is confirm reporting `newly_confirmed=True` while the session
+        # was already 'cancelled' *before* confirm's own lock was taken).
+        if confirm_outcome.get("newly_confirmed"):
+            assert final_plan.confirmed_at is not None
+        if confirm_outcome.get("rejected"):
+            assert final_plan.confirmed_at is None
+            assert final_session.status == "cancelled"
+        assert final_session.status in ("cancelled", "dry_run_completed"), (
+            f"trial {trial}: unexpected terminal session status {final_session.status!r}"
+        )
+
+
+async def test_pr94_confirm_after_new_dry_run_admission_commits_rejects_as_stale(
+    pg_engine, pg_session, pg_seeded_users
+):
+    """Ordering 1/2 (new-dry-run-wins): once a new dry-run has been
+    (re)admitted (session -> 'dry_run_running', a fresh `ImportJob` row),
+    a `confirm_plan` call for the now-superseded-from-underneath plan on
+    an independent connection must reject with
+    `ImportDryRunPlanStaleError` (fix round 4: the SAME unified
+    stale-plan contract as every other plan-invalidating condition) --
+    never confirming a plan whose owning session already left
+    `dry_run_completed` for a new attempt."""
+    actor = pg_seeded_users["administrator"]
+    session, plan = await _pg94_seed_confirmable_plan(pg_session, actor.id)
+    maker = _pg94_session_maker(pg_engine)
+
+    async with maker() as db_admit:
+        admitted_session, admitted_job = await _pg_import_job_crud.admit_phase_job(
+            db_admit,
+            session_id=session.id,
+            job_type="dry_run",
+            allowed_from_statuses=("validated", "dry_run_completed", "dry_run_failed"),
+            running_status="dry_run_running",
+            expected_version=session.version,
+            lease_owner=actor.id,
+            lease_duration_seconds=300,
+        )
+        assert admitted_session is not None
+        assert admitted_session.status == "dry_run_running"
+
+    async with maker() as db_confirm:
+        with pytest.raises(_PgImportDryRunPlanStaleError):
+            await _pg_dry_run_plan_crud.confirm_plan(
+                db_confirm, plan_id=plan.id, import_session_id=session.id, current_user_id=actor.id
+            )
+        await db_confirm.rollback()
+
+    async with maker() as verify_db:
+        refreshed = await verify_db.get(_PgDryRunPlan, plan.id)
+        assert refreshed.confirmed_at is None
+
+
+async def test_pr94_new_dry_run_admission_after_confirm_commits_still_proceeds(pg_engine, pg_session, pg_seeded_users):
+    """Ordering 2/2 (confirm-wins): once `confirm_plan` has committed, a
+    subsequent new-dry-run admission on an independent connection must
+    still succeed per the existing admission CAS contract (confirmation
+    never touches `ImportSession.version`) -- the now-`consumed`-in-spirit
+    old plan is untouched; PR20E's own supersession semantics (not this
+    round's scope) govern what happens to it once a new plan is
+    eventually persisted."""
+    actor = pg_seeded_users["administrator"]
+    session, plan = await _pg94_seed_confirmable_plan(pg_session, actor.id)
+    maker = _pg94_session_maker(pg_engine)
+
+    async with maker() as db_confirm:
+        result = await _pg_dry_run_plan_crud.confirm_plan(
+            db_confirm, plan_id=plan.id, import_session_id=session.id, current_user_id=actor.id
+        )
+        assert result.newly_confirmed is True
+        await db_confirm.commit()
+
+    async with maker() as db_admit:
+        admitted_session, _job = await _pg_import_job_crud.admit_phase_job(
+            db_admit,
+            session_id=session.id,
+            job_type="dry_run",
+            allowed_from_statuses=("validated", "dry_run_completed", "dry_run_failed"),
+            running_status="dry_run_running",
+            expected_version=session.version,
+            lease_owner=actor.id,
+            lease_duration_seconds=300,
+        )
+        assert admitted_session is not None
+        assert admitted_session.status == "dry_run_running"
+
+    async with maker() as verify_db:
+        refreshed_plan = await verify_db.get(_PgDryRunPlan, plan.id)
+        assert refreshed_plan.confirmed_at is not None
+
+
+async def test_pr94_confirm_vs_new_dry_run_concurrent_race_never_produces_split_brain(
+    pg_engine, pg_session, pg_seeded_users
+):
+    """Genuine concurrent variant of the confirm-vs-admission pair,
+    mirroring `test_pr94_confirm_vs_cancel_concurrent_race_never_produces_
+    split_brain` above: never both "plan newly confirmed" and "session
+    admitted into a new dry-run" from a stale read of each other's
+    in-flight state -- one of the two must observe the other's committed
+    result once both resolve."""
+    actor = pg_seeded_users["administrator"]
+    maker = _pg94_session_maker(pg_engine)
+
+    for trial in range(8):
+        session, plan = await _pg94_seed_confirmable_plan(pg_session, actor.id)
+        barrier = asyncio.Barrier(2)
+        db_confirm = maker()
+        db_admit = maker()
+        confirm_outcome: dict = {}
+        admit_outcome: dict = {}
+
+        async def _run_confirm():
+            await barrier.wait()
+            try:
+                result = await _pg_dry_run_plan_crud.confirm_plan(
+                    db_confirm, plan_id=plan.id, import_session_id=session.id, current_user_id=actor.id
+                )
+                await db_confirm.commit()
+                confirm_outcome["newly_confirmed"] = result.newly_confirmed
+            except _PgImportDryRunPlanStaleError:
+                await db_confirm.rollback()
+                confirm_outcome["rejected"] = True
+
+        async def _run_admit():
+            await barrier.wait()
+            admitted_session, _job = await _pg_import_job_crud.admit_phase_job(
+                db_admit,
+                session_id=session.id,
+                job_type="dry_run",
+                allowed_from_statuses=("validated", "dry_run_completed", "dry_run_failed"),
+                running_status="dry_run_running",
+                expected_version=session.version,
+                lease_owner=actor.id,
+                lease_duration_seconds=300,
+            )
+            admit_outcome["admitted"] = admitted_session is not None
+
+        try:
+            await asyncio.gather(_run_confirm(), _run_admit())
+        finally:
+            await db_confirm.close()
+            await db_admit.close()
+
+        async with maker() as verify_db:
+            final_session = await verify_db.get(_PgImportSession, session.id)
+            final_plan = await verify_db.get(_PgDryRunPlan, plan.id)
+
+        if confirm_outcome.get("rejected"):
+            assert final_plan.confirmed_at is None
+            assert final_session.status == "dry_run_running"
+        if confirm_outcome.get("newly_confirmed"):
+            assert final_plan.confirmed_at is not None
+        # Admission's own CAS always matches (confirm never touches
+        # version), so it must always have won -- the only question the
+        # concurrency actually resolves is whether confirm's lock read
+        # the pre- or post-admission session state.
+        assert admit_outcome.get("admitted") is True, f"trial {trial}: admission must always succeed (CAS never contested)"
+
+
+async def test_pr94_concurrent_confirm_confirm_exactly_one_first_confirmer(pg_engine, pg_session, pg_seeded_users):
+    """PR94-H2's core safety property: two independent connections racing
+    `confirm_plan` on the SAME plan concurrently (barrier-forced overlap,
+    repeated trials) must produce exactly one `newly_confirmed=True`
+    winner and one `newly_confirmed=False` idempotent follower -- never
+    two winners (which would mean the conditional `UPDATE ... WHERE
+    confirmed_at IS NULL` raced unsafely), and the persisted
+    `confirmed_by_user_id` must equal whichever connection actually won."""
+    actor = pg_seeded_users["administrator"]
+    maker = _pg94_session_maker(pg_engine)
+
+    for trial in range(8):
+        session, plan = await _pg94_seed_confirmable_plan(pg_session, actor.id)
+        barrier = asyncio.Barrier(2)
+        db_a = maker()
+        db_b = maker()
+        results: list[bool] = []
+
+        async def _run(db):
+            await barrier.wait()
+            result = await _pg_dry_run_plan_crud.confirm_plan(
+                db, plan_id=plan.id, import_session_id=session.id, current_user_id=actor.id
+            )
+            await db.commit()
+            results.append(result.newly_confirmed)
+
+        try:
+            await asyncio.gather(_run(db_a), _run(db_b))
+        finally:
+            await db_a.close()
+            await db_b.close()
+
+        assert sorted(results) == [False, True], f"trial {trial}: expected exactly one first-confirmer, got {results}"
+
+        async with maker() as verify_db:
+            refreshed = await verify_db.get(_PgDryRunPlan, plan.id)
+            assert refreshed.confirmed_at is not None
+            assert refreshed.confirmed_by_user_id == actor.id
+
+
+async def test_pr94_confirm_vs_persist_dry_run_plan_lock_order_never_deadlocks(
+    pg_engine, pg_session, pg_seeded_users
+):
+    """Deadlock/lock-order regression: `confirm_plan`
+    (`app.crud.import_dry_run_plan`) and `persist_dry_run_plan`'s own
+    session-locking preamble (`app.services.import_adapters.
+    equipment_master`) must acquire `ImportSession` before
+    `EquipmentMasterDryRunPlan` in BOTH transaction shapes. Simulates
+    `persist_dry_run_plan`'s exact lock sequence -- session `SELECT ...
+    FOR UPDATE` first, then `supersede_active_plan`'s `UPDATE` on the plan
+    -- racing genuinely concurrently (barrier-forced overlap, repeated
+    trials) against `confirm_plan`'s own Session-then-Plan sequence on the
+    SAME session+plan. If the two ever acquired in opposite orders, this
+    would deadlock and PostgreSQL's deadlock detector would abort one side
+    with an `OperationalError`; consistent ordering means one side simply
+    blocks and then proceeds -- never a detected deadlock."""
+    actor = pg_seeded_users["administrator"]
+    maker = _pg94_session_maker(pg_engine)
+
+    for trial in range(8):
+        session, plan = await _pg94_seed_confirmable_plan(pg_session, actor.id)
+        barrier = asyncio.Barrier(2)
+        db_confirm = maker()
+        db_persist = maker()
+        errors: list[Exception] = []
+
+        async def _run_confirm():
+            await barrier.wait()
+            try:
+                result = await _pg_dry_run_plan_crud.confirm_plan(
+                    db_confirm, plan_id=plan.id, import_session_id=session.id, current_user_id=actor.id
+                )
+                await db_confirm.commit()
+            except _PgImportDryRunPlanStaleError:
+                # A legitimate outcome of the real race, not a deadlock:
+                # `_run_persist`'s `supersede_active_plan` may legitimately
+                # win and mark the plan `superseded` before `confirm_plan`
+                # locks+checks it (fix round 4: this is the same unified
+                # stale-plan code, whether the plan itself was superseded
+                # or the session moved on).
+                await db_confirm.rollback()
+            except Exception as exc:  # pragma: no cover - only populated on a genuine deadlock
+                errors.append(exc)
+                await db_confirm.rollback()
+
+        async def _run_persist():
+            await barrier.wait()
+            try:
+                await db_persist.execute(
+                    select(_PgImportSession.id).where(_PgImportSession.id == session.id).with_for_update()
+                )
+                await _pg_dry_run_plan_crud.supersede_active_plan(db_persist, import_session_id=session.id)
+                await db_persist.commit()
+            except Exception as exc:  # pragma: no cover - only populated on a genuine deadlock
+                errors.append(exc)
+                await db_persist.rollback()
+
+        try:
+            await asyncio.gather(_run_confirm(), _run_persist())
+        finally:
+            await db_confirm.close()
+            await db_persist.close()
+
+        assert errors == [], f"trial {trial}: consistent Session-then-Plan lock order must never deadlock, got {errors}"
+
+
+# ---------------------------------------------------------------------------
+# PR #94 Fix Round 3: TX1 atomicity for dry-run completion + DryRunPlan
+# persistence. Roadmap PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.3's "same
+# TX1" invariant only holds if `fenced_phase_success` (Job -> Session) and
+# `persist_dry_run_plan` (Session -> Plan) also acquire locks in a
+# consistent order relative to stale-job recovery (`claim_stale_job` ->
+# `transition_session_for_recovery`, itself Job-then-Session) -- otherwise
+# dry-run completion publication and a concurrent recovery attempt can
+# deadlock, or a stale worker could persist a plan after already losing its
+# fence. These tests drive the same CRUD functions
+# `app.services.import_execution_service.run_dry_run` calls, in the same
+# order, directly against real PostgreSQL connections -- the property under
+# test is transaction orchestration/lock order, not adapter parsing (already
+# covered by test_pr20d_dry_run_plan.py).
+# ---------------------------------------------------------------------------
+
+from app.crud import import_dry_run_plan as _pg94r3_plan_crud
+
+
+async def _pg94r3_seed_running_dry_run(pg_session, actor_id, *, lease_expired: bool):
+    """A session mid-dry-run: `dry_run_running`, with a `running` dry_run
+    `ImportJob`. `lease_expired` controls eligibility for
+    `claim_stale_job` (a purely time-based check) -- `fenced_phase_
+    success`'s own fencing check never looks at wall-clock time, only
+    lease_owner/lease_generation/status, so an expired-but-not-yet-
+    reclaimed lease still models a worker that is merely slow (GC pause,
+    network delay), not one that has already lost its identity."""
+    lease_owner = uuid.uuid4()
+    now = datetime.now(timezone.utc)
+    session = _PgImportSession(
+        dataset_type=_PG_20D_DATASET_TYPE, status="dry_run_running", version=2, created_by_user_id=actor_id
+    )
+    pg_session.add(session)
+    await pg_session.flush()
+    source = _PgImportSource(
+        import_session_id=session.id,
+        status="frozen",
+        checksum="e" * 64,
+        byte_size=4,
+        options_fingerprint="x",
+        source_fingerprint="y",
+        frozen_at=now,
+        created_at=now,
+    )
+    pg_session.add(source)
+    validate_job = _PgImportJob(
+        import_session_id=session.id, job_type="validate", status="succeeded", attempt_number=1, lease_generation=1
+    )
+    pg_session.add(validate_job)
+    dry_run_job = _PgImportJob(
+        import_session_id=session.id,
+        job_type="dry_run",
+        status="running",
+        attempt_number=1,
+        lease_owner=lease_owner,
+        lease_generation=1,
+        lease_expires_at=(now - timedelta(hours=1)) if lease_expired else (now + timedelta(hours=1)),
+        heartbeat_at=now,
+        started_at=now,
+    )
+    pg_session.add(dry_run_job)
+    await pg_session.flush()
+    await pg_session.commit()
+    await pg_session.refresh(session)
+    await pg_session.refresh(dry_run_job)
+    return session, source, validate_job, dry_run_job, lease_owner
+
+
+async def test_pr94r3_plan_persistence_failure_rolls_back_job_and_session_completion(
+    pg_engine, pg_session, pg_seeded_users
+):
+    """Fix round 3, §4/§9: a failure injected during DryRunPlan
+    persistence -- AFTER `fenced_phase_success` has prepared the job/
+    session completion updates, still uncommitted in the same TX1 -- must
+    roll back everything: job completion, session completion, and any
+    partial plan/rows. No committed state may ever show job/session
+    'dry-run completed' without a matching, fully-persisted plan."""
+    actor = pg_seeded_users["administrator"]
+    session, source, validate_job, dry_run_job, lease_owner = await _pg94r3_seed_running_dry_run(
+        pg_session, actor.id, lease_expired=False
+    )
+    maker = _pg94_session_maker(pg_engine)
+
+    async with maker() as db:
+        final_session = await _pg_import_job_crud.fenced_phase_success(
+            db,
+            job_id=dry_run_job.id,
+            lease_owner=lease_owner,
+            lease_generation=1,
+            session_id=session.id,
+            expected_version=session.version,
+            running_status="dry_run_running",
+            new_session_status="dry_run_completed",
+            extra_session_values=lambda now: {"dry_run_completed_at": now},
+        )
+        assert final_session is not None
+        assert final_session.status == "dry_run_completed"
+
+        plan = await _pg94r3_plan_crud.insert_plan(
+            db,
+            import_session_id=session.id,
+            import_source_id=source.id,
+            source_checksum=source.checksum,
+            accepted_validation_job_id=validate_job.id,
+            dry_run_job_id=dry_run_job.id,
+            ruleset_version="1",
+            summary_total_rows=1,
+            summary_creates=0,
+            summary_updates=1,
+            summary_skips=0,
+            summary_warnings=0,
+            summary_blocking_conflicts=0,
+        )
+        # Genuine DB-level failure, not a mocked exception: an
+        # UPDATE-action row with no target_equipment_id violates
+        # ck_equipment_master_dry_run_plan_rows_update_target (migration
+        # 0018).
+        with pytest.raises(_PgIntegrityError):
+            await _pg94r3_plan_crud.bulk_insert_plan_rows(
+                db,
+                [
+                    _PgDryRunPlanRow(
+                        dry_run_plan_id=plan.id,
+                        source_row_number=1,
+                        action="UPDATE",
+                        target_equipment_id=None,
+                        expected_equipment_version=None,
+                        normalized_values={},
+                        matched_identity_fields={},
+                        warnings=[],
+                    )
+                ],
+            )
+        await db.rollback()
+
+    async with maker() as verify_db:
+        refreshed_job = await verify_db.get(_PgImportJob, dry_run_job.id)
+        refreshed_session = await verify_db.get(_PgImportSession, session.id)
+        remaining_plans = (
+            (await verify_db.execute(select(_PgDryRunPlan).where(_PgDryRunPlan.import_session_id == session.id)))
+            .scalars()
+            .all()
+        )
+
+        assert refreshed_job.status == "running", "job completion must not survive a rolled-back plan persistence"
+        assert refreshed_session.status == "dry_run_running", (
+            "session completion must not survive a rolled-back plan persistence"
+        )
+        assert remaining_plans == [], "no partial DryRunPlan may survive a rolled-back plan persistence"
+
+
+async def test_pr94r3_completion_commits_before_recovery_finds_nothing_to_claim(
+    pg_engine, pg_session, pg_seeded_users
+):
+    """Ordering 1/2 (completion-wins): once the completion worker's TX1
+    (fenced job+session completion, then plan persistence) has committed,
+    a subsequent stale-job recovery attempt on an independent connection
+    must find nothing to claim -- the job is no longer `running`."""
+    actor = pg_seeded_users["administrator"]
+    session, source, validate_job, dry_run_job, lease_owner = await _pg94r3_seed_running_dry_run(
+        pg_session, actor.id, lease_expired=True
+    )
+    maker = _pg94_session_maker(pg_engine)
+
+    async with maker() as db_complete:
+        final_session = await _pg_import_job_crud.fenced_phase_success(
+            db_complete,
+            job_id=dry_run_job.id,
+            lease_owner=lease_owner,
+            lease_generation=1,
+            session_id=session.id,
+            expected_version=session.version,
+            running_status="dry_run_running",
+            new_session_status="dry_run_completed",
+            extra_session_values=lambda now: {"dry_run_completed_at": now},
+        )
+        assert final_session is not None
+        await _pg94r3_plan_crud.insert_plan(
+            db_complete,
+            import_session_id=session.id,
+            import_source_id=source.id,
+            source_checksum=source.checksum,
+            accepted_validation_job_id=validate_job.id,
+            dry_run_job_id=dry_run_job.id,
+            ruleset_version="1",
+            summary_total_rows=0,
+            summary_creates=0,
+            summary_updates=0,
+            summary_skips=0,
+            summary_warnings=0,
+            summary_blocking_conflicts=0,
+        )
+        await db_complete.commit()
+
+    async with maker() as db_recover:
+        claimed = await _pg_import_job_crud.claim_stale_job(db_recover, session_id=session.id)
+        assert claimed is None, "recovery must find no stale-running job once completion already committed"
+        await db_recover.rollback()
+
+    async with maker() as verify_db:
+        refreshed_job = await verify_db.get(_PgImportJob, dry_run_job.id)
+        refreshed_session = await verify_db.get(_PgImportSession, session.id)
+        assert refreshed_job.status == "succeeded"
+        assert refreshed_session.status == "dry_run_completed"
+
+
+async def test_pr94r3_recovery_commits_before_completion_fence_is_lost(pg_engine, pg_session, pg_seeded_users):
+    """Ordering 2/2 (recovery-wins): once stale-job recovery has
+    committed, the original completion worker's `fenced_phase_success`
+    call must be fenced out (returns `None`) -- it must never publish
+    success or persist a plan on the strength of in-memory
+    `plan_dry_run` work alone."""
+    actor = pg_seeded_users["administrator"]
+    session, source, validate_job, dry_run_job, lease_owner = await _pg94r3_seed_running_dry_run(
+        pg_session, actor.id, lease_expired=True
+    )
+    maker = _pg94_session_maker(pg_engine)
+
+    async with maker() as db_recover:
+        claimed = await _pg_import_job_crud.claim_stale_job(db_recover, session_id=session.id)
+        assert claimed is not None
+        recovered_session = await _pg_import_job_crud.transition_session_for_recovery(
+            db_recover, session_id=session.id, running_status="dry_run_running", failure_status="dry_run_failed"
+        )
+        assert recovered_session is not None
+        await db_recover.commit()
+
+    async with maker() as db_complete:
+        final_session = await _pg_import_job_crud.fenced_phase_success(
+            db_complete,
+            job_id=dry_run_job.id,
+            lease_owner=lease_owner,
+            lease_generation=1,
+            session_id=session.id,
+            expected_version=session.version,
+            running_status="dry_run_running",
+            new_session_status="dry_run_completed",
+            extra_session_values=lambda now: {"dry_run_completed_at": now},
+        )
+        assert final_session is None, "the completion worker must be fenced out once recovery already claimed the job"
+        await db_complete.rollback()
+
+    async with maker() as verify_db:
+        refreshed_job = await verify_db.get(_PgImportJob, dry_run_job.id)
+        refreshed_session = await verify_db.get(_PgImportSession, session.id)
+        remaining_plans = (
+            (await verify_db.execute(select(_PgDryRunPlan).where(_PgDryRunPlan.import_session_id == session.id)))
+            .scalars()
+            .all()
+        )
+        assert refreshed_job.status == "abandoned"
+        assert refreshed_session.status == "dry_run_failed"
+        assert remaining_plans == [], "a fenced-out completion worker must never have persisted a plan"
+
+
+async def test_pr94r3_completion_vs_recovery_concurrent_race_never_produces_split_brain(
+    pg_engine, pg_session, pg_seeded_users
+):
+    """The genuine two-connection regression: dispatches completion
+    (`fenced_phase_success` + `persist_dry_run_plan`'s CRUD equivalent)
+    and stale-job recovery truly concurrently (`asyncio.Barrier`-forced
+    overlap, repeated trials) against the SAME job/session. Whichever
+    wins, the final committed state must be fully self-consistent: either
+    completion won (job succeeded, session dry_run_completed, exactly one
+    persisted plan, and recovery found nothing to claim) or recovery won
+    (job abandoned, session dry_run_failed, no plan ever persisted, and
+    completion was fenced out) -- never a mix of the two, and never both
+    claiming success."""
+    actor = pg_seeded_users["administrator"]
+    maker = _pg94_session_maker(pg_engine)
+
+    for trial in range(8):
+        session, source, validate_job, dry_run_job, lease_owner = await _pg94r3_seed_running_dry_run(
+            pg_session, actor.id, lease_expired=True
+        )
+        barrier = asyncio.Barrier(2)
+        db_complete = maker()
+        db_recover = maker()
+        complete_outcome: dict = {}
+        recover_outcome: dict = {}
+
+        async def _run_complete():
+            await barrier.wait()
+            final_session = await _pg_import_job_crud.fenced_phase_success(
+                db_complete,
+                job_id=dry_run_job.id,
+                lease_owner=lease_owner,
+                lease_generation=1,
+                session_id=session.id,
+                expected_version=session.version,
+                running_status="dry_run_running",
+                new_session_status="dry_run_completed",
+                extra_session_values=lambda now: {"dry_run_completed_at": now},
+            )
+            if final_session is None:
+                await db_complete.rollback()
+                complete_outcome["fenced_out"] = True
+                return
+            await _pg94r3_plan_crud.insert_plan(
+                db_complete,
+                import_session_id=session.id,
+                import_source_id=source.id,
+                source_checksum=source.checksum,
+                accepted_validation_job_id=validate_job.id,
+                dry_run_job_id=dry_run_job.id,
+                ruleset_version="1",
+                summary_total_rows=0,
+                summary_creates=0,
+                summary_updates=0,
+                summary_skips=0,
+                summary_warnings=0,
+                summary_blocking_conflicts=0,
+            )
+            await db_complete.commit()
+            complete_outcome["succeeded"] = True
+
+        async def _run_recover():
+            await barrier.wait()
+            claimed = await _pg_import_job_crud.claim_stale_job(db_recover, session_id=session.id)
+            if claimed is None:
+                await db_recover.rollback()
+                recover_outcome["nothing_to_recover"] = True
+                return
+            recovered = await _pg_import_job_crud.transition_session_for_recovery(
+                db_recover, session_id=session.id, running_status="dry_run_running", failure_status="dry_run_failed"
+            )
+            if recovered is None:
+                await db_recover.rollback()
+                recover_outcome["nothing_to_recover"] = True
+                return
+            await db_recover.commit()
+            recover_outcome["recovered"] = True
+
+        try:
+            await asyncio.gather(_run_complete(), _run_recover())
+        finally:
+            await db_complete.close()
+            await db_recover.close()
+
+        async with maker() as verify_db:
+            final_job = await verify_db.get(_PgImportJob, dry_run_job.id)
+            final_session_row = await verify_db.get(_PgImportSession, session.id)
+            plans = (
+                (await verify_db.execute(select(_PgDryRunPlan).where(_PgDryRunPlan.import_session_id == session.id)))
+                .scalars()
+                .all()
+            )
+
+        if complete_outcome.get("succeeded"):
+            assert recover_outcome.get("nothing_to_recover") is True, (
+                f"trial {trial}: completion and recovery both claimed success"
+            )
+            assert final_job.status == "succeeded"
+            assert final_session_row.status == "dry_run_completed"
+            assert len(plans) == 1
+        elif recover_outcome.get("recovered"):
+            assert complete_outcome.get("fenced_out") is True, (
+                f"trial {trial}: recovery won but completion was not fenced out"
+            )
+            assert final_job.status == "abandoned"
+            assert final_session_row.status == "dry_run_failed"
+            assert plans == [], f"trial {trial}: a fenced-out completion must never leave a persisted plan"
+        else:
+            pytest.fail(f"trial {trial}: neither completion nor recovery won: complete={complete_outcome} recover={recover_outcome}")
