@@ -102,6 +102,7 @@ export function EquipmentMasterWorkflowPanel({ sessionId }: { sessionId: string 
   const [recovering, setRecovering] = useState(false);
 
   const sessionQueryKey = ["legacy-import", "equipment-master", "session", sessionId];
+  const planQueryKey = ["legacy-import", "equipment-master", "dry-run-plan", sessionId];
 
   const {
     data: session,
@@ -127,7 +128,7 @@ export function EquipmentMasterWorkflowPanel({ sessionId }: { sessionId: string 
     isFetchingNextPage: isFetchingNextPlanPage,
     refetch: refetchPlan,
   } = useInfiniteQuery({
-    queryKey: ["legacy-import", "equipment-master", "dry-run-plan", sessionId],
+    queryKey: planQueryKey,
     queryFn: ({ pageParam }) => getEquipmentMasterDryRunPlan(sessionId, { limit: 50, cursor: pageParam }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.rows_next_cursor,
@@ -145,9 +146,18 @@ export function EquipmentMasterWorkflowPanel({ sessionId }: { sessionId: string 
   // loaded. Visibility itself is driven by react-query's own `hasNextPage`
   // below, never by this field directly, but the merged object is kept
   // internally consistent regardless.
-  const plan = planPages?.pages[0]
+  const firstPlanPage = planPages?.pages[0];
+  // A pagination cursor identifies a row position, not the DryRunPlan. The
+  // backend resolves the session's current active plan independently for
+  // every page request, so another dry run can supersede the plan between
+  // page fetches. Never combine or confirm pages from different persisted
+  // artifacts: fail closed and require a reset from page one instead.
+  const planIdentityMismatch = Boolean(
+    firstPlanPage && planPages.pages.some((page) => page.id !== firstPlanPage.id),
+  );
+  const plan = firstPlanPage && !planIdentityMismatch
     ? {
-        ...planPages.pages[0],
+        ...firstPlanPage,
         rows: planPages.pages.flatMap((p) => p.rows),
         rows_next_cursor: planPages.pages[planPages.pages.length - 1].rows_next_cursor,
       }
@@ -188,6 +198,11 @@ export function EquipmentMasterWorkflowPanel({ sessionId }: { sessionId: string 
       queryClient.invalidateQueries({ queryKey: ["legacy-import", "equipment-master", "dry-run-plan", sessionId] }),
       queryClient.invalidateQueries({ queryKey: ["legacy-import", "equipment-master", "findings", sessionId] }),
     ]);
+  }
+
+  async function refreshPlanFromFirstPage() {
+    setActionError(null);
+    await queryClient.resetQueries({ queryKey: planQueryKey, exact: true });
   }
 
   async function handleValidate() {
@@ -453,6 +468,22 @@ export function EquipmentMasterWorkflowPanel({ sessionId }: { sessionId: string 
             className="mt-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium"
           >
             ลองใหม่
+          </button>
+        </div>
+      )}
+
+      {shouldFetchPlan && planIdentityMismatch && (
+        <div role="alert" className="surface rounded-xl border border-status-repair/40 bg-status-repair/5 p-4">
+          <p className="text-sm font-medium text-status-repair">แผนการนำเข้ามีการเปลี่ยนแปลงระหว่างโหลดรายละเอียด</p>
+          <p className="mt-1 text-sm text-[var(--text-muted)]">
+            ระบบจะไม่รวมข้อมูลจากคนละแผน กรุณาโหลดแผนปัจจุบันใหม่ก่อนตรวจสอบและยืนยัน
+          </p>
+          <button
+            type="button"
+            onClick={refreshPlanFromFirstPage}
+            className="mt-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium"
+          >
+            โหลดแผนปัจจุบันใหม่
           </button>
         </div>
       )}

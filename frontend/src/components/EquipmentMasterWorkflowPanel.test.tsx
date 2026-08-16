@@ -461,6 +461,69 @@ describe("EquipmentMasterWorkflowPanel", () => {
       expect(screen.getByText("แสดง 2 จาก 2 รายการ")).toBeInTheDocument();
       expect(getEquipmentMasterDryRunPlan).toHaveBeenLastCalledWith(SESSION_ID, expect.objectContaining({ cursor: "rows-page-2" }));
     });
+
+    it("fails closed when a later page belongs to a superseding plan and refetches from page one", async () => {
+      getEquipmentMasterSession.mockResolvedValue(
+        baseSession({ status: "dry_run_completed", dry_run_completed_at: "2026-07-20T03:20:00Z" }),
+      );
+      let firstPageRequests = 0;
+      getEquipmentMasterDryRunPlan.mockImplementation(async (_sessionId: string, params?: { cursor?: string | null }) => {
+        if (params?.cursor) {
+          return basePlan({
+            id: "plan-new",
+            rows: [basePlanRow({ id: "row-new-2", source_row_number: 602 })],
+            rows_next_cursor: null,
+            rows_total: 2,
+          });
+        }
+        firstPageRequests += 1;
+        return firstPageRequests === 1
+          ? basePlan({
+              id: "plan-old",
+              rows: [basePlanRow({ id: "row-old-1", source_row_number: 501 })],
+              rows_next_cursor: "old-plan-page-2",
+              rows_total: 2,
+            })
+          : basePlan({
+              id: "plan-new",
+              rows: [basePlanRow({ id: "row-new-1", source_row_number: 601 })],
+              rows_next_cursor: null,
+              rows_total: 1,
+            });
+      });
+      confirmEquipmentMasterDryRunPlan.mockResolvedValue({
+        id: "plan-new",
+        import_session_id: SESSION_ID,
+        status: "confirmed",
+        confirmed_at: "now",
+        confirmed_by_user_id: "user-1",
+        summary: basePlan().summary,
+      });
+
+      const user = userEvent.setup();
+      renderPanel();
+
+      await screen.findByText("plan-old");
+      await user.click(screen.getByRole("button", { name: "โหลดรายละเอียดเพิ่มเติม" }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("แผนการนำเข้ามีการเปลี่ยนแปลงระหว่างโหลดรายละเอียด");
+      expect(screen.queryByText("plan-old")).not.toBeInTheDocument();
+      expect(screen.queryByText("601", { exact: false })).not.toBeInTheDocument();
+      expect(screen.queryByText("602", { exact: false })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "ยืนยันแผนการนำเข้า" })).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "โหลดแผนปัจจุบันใหม่" }));
+
+      await screen.findByText("plan-new");
+      expect(screen.queryByText("plan-old")).not.toBeInTheDocument();
+      expect(screen.getAllByText("601", { exact: false }).length).toBeGreaterThan(0);
+      expect(screen.queryByText("602", { exact: false })).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "ยืนยันแผนการนำเข้า" }));
+      await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "ยืนยัน" }));
+      await waitFor(() => expect(confirmEquipmentMasterDryRunPlan).toHaveBeenCalledWith(SESSION_ID, "plan-new"));
+      expect(confirmEquipmentMasterDryRunPlan).not.toHaveBeenCalledWith(SESSION_ID, "plan-old");
+    });
   });
 
   it("confirm always targets the current backend plan identity, never a plan superseded by a later dry-run", async () => {
