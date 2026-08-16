@@ -781,6 +781,73 @@ async def test_api_confirm_dry_run_plan_superseded_plan_returns_409_stale(
     assert r.json()["code"] == "IMPORT_DRY_RUN_PLAN_STALE"
 
 
+async def test_api_confirm_dry_run_plan_dry_run_failed_session_returns_409_stale(
+    client: AsyncClient, seeded_users, db_session
+):
+    """Fix round 5 companion regression (PR20 design §14.4a): a session
+    whose LATER dry-run attempt failed (`status='dry_run_failed'`) while
+    an EARLIER dry-run's plan is still `active` -- `persist_dry_run_plan`
+    is never called on a failed attempt, so the earlier plan survives
+    unsuperseded -- is the SAME unified `409 IMPORT_DRY_RUN_PLAN_STALE`
+    contract as every other plan-invalidating condition, never
+    `IMPORT_SESSION_INVALID_STATE`. Companion to the cancelled/superseded
+    cases above and to `test_import_execution.py`'s own
+    `test_recover_dry_run_running_becomes_dry_run_failed`, whose public
+    `/recover` path this test reuses to reach `dry_run_failed`."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.crud import import_job as import_job_crud
+
+    await _seed_equipment(db_session, bcm_code="BCM_DRYFAIL", item_no="ITEM_DRYFAIL")
+    headers = await auth_headers(client)
+    session = await _validated_session_with_update_rows(
+        client, headers, db_session, [_valid_row(bcm="BCM_DRYFAIL", item_no="ITEM_DRYFAIL")]
+    )
+    await client.post(f"/api/v1/import-sessions/{session['id']}/dry-run", headers=headers)
+    plan = (await client.get(f"/api/v1/import-sessions/{session['id']}/dry-run-plan", headers=headers)).json()
+
+    # A second dry-run attempt is admitted (dry_run_completed ->
+    # dry_run_running, allowed per _DRY_RUN_ALLOWED_FROM_STATUSES), then
+    # its lease is forced to expire and /recover is called -- the same
+    # public recovery path test_import_execution.py's own dry-run-failure
+    # regression uses -- transitioning the session to dry_run_failed
+    # without ever running persist_dry_run_plan (recovery never invokes
+    # the adapter), so the first plan above remains the session's sole
+    # `active` plan, now orphaned.
+    session_uuid = uuid.UUID(session["id"])
+    current = (
+        await db_session.execute(select(ImportSession).where(ImportSession.id == session_uuid))
+    ).scalar_one()
+    _s, job = await import_job_crud.admit_phase_job(
+        db_session,
+        session_id=session_uuid,
+        job_type="dry_run",
+        allowed_from_statuses=("dry_run_completed",),
+        running_status="dry_run_running",
+        expected_version=current.version,
+        lease_owner=uuid.uuid4(),
+        lease_duration_seconds=300,
+    )
+    assert job is not None, "the second dry-run attempt must be admittable from dry_run_completed"
+    await db_session.execute(
+        ImportJob.__table__.update()
+        .where(ImportJob.id == job.id)
+        .values(lease_expires_at=datetime.now(timezone.utc) - timedelta(seconds=1))
+    )
+    await db_session.commit()
+
+    recover_resp = await client.post(f"/api/v1/import-sessions/{session['id']}/recover", headers=headers)
+    assert recover_resp.status_code == 200, recover_resp.text
+    assert recover_resp.json()["status"] == "dry_run_failed"
+
+    r = await client.post(
+        f"/api/v1/import-sessions/{session['id']}/dry-run-plan/{plan['id']}/confirm", headers=headers
+    )
+    assert r.status_code == 409, r.text
+    assert r.json()["code"] == "IMPORT_DRY_RUN_PLAN_STALE"
+    assert r.json()["code"] != "IMPORT_SESSION_INVALID_STATE"
+
+
 async def test_api_confirm_dry_run_plan_cancelled_session_returns_409_stale(
     client: AsyncClient, seeded_users, db_session
 ):
