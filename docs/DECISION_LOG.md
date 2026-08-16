@@ -2607,3 +2607,109 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   explicitly **not** touched or closed by this entry or by the new PR21
   design document — it remains open, tracked separately, for a future
   governance/editorial pass.
+
+## 2026-08-16 — Roadmap PR21 design Fix Round 1: architecture corrections (H1–H4, M1, L1) — still not implemented
+
+- **Decision/record:** Independent architecture review (REQUEST CHANGES)
+  identified four merge-blocking findings (H1–H4) and two non-blocking
+  findings (M1, L1) in the PR21 design document. This entry records the
+  **architecture directions selected** in response — it does **not**
+  resolve any of the seven Owner Decisions (OD-PR21-0 through
+  OD-PR21-6) already open on Roadmap PR21; none of them were awaiting
+  architecture-level analysis, and none is claimed resolved here. PR21
+  implementation remains **not started**.
+- **H1 (source/session topology) — remains a blocking Owner Decision,
+  not resolved.** The design document previously assumed a single
+  `import_source_id`/checksum/source-row was sufficient provenance for a
+  historical transaction, which is incorrect given PR19's
+  `ImportSession → exactly one ImportSource` topology and PR21's need to
+  reason across two datasets (Issue History, Receive History). Three
+  topology options were analyzed (one workbook/one session; one session
+  with multiple sources, requiring a PR19 foundation extension; two
+  sessions plus a staging/pairing layer). A conditional recommendation
+  (one workbook, if the real export supports it) is recorded, but the
+  actual decision remains blocked on the same missing source evidence as
+  OD-PR21-0 — this fix round expands OD-PR21-0's scope to explicitly
+  cover topology confirmation.
+- **H2 (validation/dry-run alignment) — architecture selected: All-
+  or-Nothing Validation Gate.** The design previously contradicted
+  itself, classifying findings as blocking `ERROR` while also describing
+  those rows as appearing inside a `DryRunPlan`. This is now corrected:
+  per PR19's actual, unmodified runtime behavior, any blocking `ERROR`
+  anywhere in a validation batch moves the whole session to
+  `validation_failed`, and no `DryRunPlan` is created for that session.
+  PR21 does not support partial import in V1. Every row-level condition
+  in the design (unmapped Ward, unresolved equipment, ambiguous
+  Issue/Receive pairing, duplicate source event, unmatched Issue/Receive)
+  is now consistently classified as this all-or-nothing-blocking `ERROR`
+  or non-blocking `WARNING`, with no third severity and no
+  "blocking-but-still-a-candidate" contradiction remaining.
+- **H3 (checksum/replay/event-identity) — corrected, and a new blocking
+  gap identified.** The design previously implied
+  `ImportSource.checksum` prevents replay across sessions. Verified
+  against `backend/app/models/import_session.py:125-141`: the column
+  carries a regular index (`ix_import_sources_checksum`), not a unique
+  constraint — a new `ImportSession` can register the same checksum
+  again. Checksum provides integrity/fingerprint evidence only, not
+  database-enforced replay prevention. Separately, `ImportSource.id` +
+  `row_number` was identified as unsafe as a stable historical-event
+  identity, since a corrected re-export can shift row numbers or use a
+  new `ImportSource` for the same underlying event. A database-enforced
+  stable identity (a source-native row key, reference ID, or event UUID)
+  is required; if the real source provides none, that is itself folded
+  into OD-PR21-0 as a blocking question, not assumed away.
+- **H4 (persisted-plan API) — architecture selected: generalize the
+  existing generic transport, dispatch by `dataset_type` to
+  adapter-owned plan providers, keep persistence adapter-specific.**
+  Verified that the current `GET/POST .../dry-run-plan` endpoints
+  (`backend/app/api/v1/import_sessions.py`) and
+  `backend/app/crud/import_dry_run_plan.py` operate on
+  `EquipmentMasterDryRunPlan`/`Row` by concrete type throughout — they
+  are not a dataset-agnostic API today, contrary to what the prior design
+  revision implied by proposing new PR21 plan tables without addressing
+  how the existing endpoints would reach them. The selected direction
+  mirrors the existing `register_adapter()`/`get_adapter()` pattern
+  already used for parse/validate/execute. This requires real,
+  independently-reviewable work on shared PR19/PR20 infrastructure,
+  recorded as its own proposed implementation slice ("PR21-Foundation")
+  rather than assumed to be free inside PR21A.
+- **M1 (retention integration) — corrected wording, direction
+  selected.** The design previously said retention is "unchanged."
+  Verified that `backend/app/crud/import_retention.py`'s
+  `redact_session()` explicitly imports and updates
+  `EquipmentMasterDryRunPlanRow` by name (lines 9, 139–140) with no
+  generic dispatch mechanism — PR21's new plan/provenance content would
+  not be redacted without extension. Corrected wording: the 180-day
+  retention **policy** is unchanged; the retention **implementation**
+  requires additive PR21 integration (a generic adapter retention hook,
+  selected for symmetry with the existing execution-hook pattern). The
+  atomicity invariant (redaction + `ImportSession` retention-state
+  advancement in one caller-owned transaction) is unchanged from PR19A's
+  existing contract.
+- **L1 (cross-reference consistency) — fixed.** The design document was
+  renumbered from 40 to 50 sections to accommodate this round's new
+  content (source/session topology, 1:N provenance contract, the
+  generalized plan API and its shape/pagination/RBAC/audit/persistence
+  sections, and the corrected retention section); every internal `§N`
+  cross-reference was verified against the actual final section numbers
+  (including the specific dangling `§41` references the review
+  identified, which pointed past the document's own final section at the
+  time).
+- **What this fix round does not do:** it does not resolve OD-PR21-0
+  through OD-PR21-6; it does not begin PR21A or any other implementation
+  slice; it does not modify `backend/**`, `frontend/**`, `alembic/**`,
+  `tests/**`, or `.github/**`; it does not touch GitHub PR #97's P2
+  follow-up or any PR20-related content in this file or in
+  `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md`.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7,
+  same governance-update scope as the design-started entry above (this
+  entry plus the revised design document only — no
+  `ROADMAP.md`/`ROADMAP_STATUS.md`/`knowledge/*` change).
+- **Source:** `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+  (revised — see its own §7, §15, §24, §29, §36 for the H1–H4/M1
+  corrections in full, and §50 for the current, unchanged set of
+  Mandatory STOP conditions).
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this entry. PR21 implementation
+  remains **not started**. GitHub PR #97's P2 follow-up remains open and
+  untouched.
