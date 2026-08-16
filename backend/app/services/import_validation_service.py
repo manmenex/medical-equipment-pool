@@ -304,6 +304,20 @@ async def recover_session(
         await db.rollback()
         raise ImportSessionInvalidStateError("Nothing to recover: the session already moved on for another reason.")
 
+    # Roadmap PR20E (design §14.4c): reconciles the case §14.4b's
+    # exception-based hook cannot cover -- a hard worker crash during
+    # execute() that never raised anything at all. Only `execute`-phase
+    # recovery needs this; `dry_run`/`validate` recovery never calls it
+    # (§14.3's own same-TX1 atomicity already leaves no partial artifact
+    # for those phases to reconcile). If this raises, the exception
+    # propagates uncaught -- the caller's entire transaction (including
+    # the claim/transition above) rolls back, exactly like every other
+    # failure path in this function.
+    if claimed_job.job_type == "execute":
+        adapter = get_adapter(session.dataset_type)
+        if adapter is not None:
+            await adapter.on_execution_recovery(db, session.id)
+
     await record_audit_event(
         db,
         actor_user_id=actor_id,

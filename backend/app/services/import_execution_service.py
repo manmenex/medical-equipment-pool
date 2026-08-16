@@ -40,7 +40,7 @@ from app.crud import import_source_blob as import_source_blob_crud
 from app.db.session import AsyncSessionLocal
 from app.models.import_session import ImportSession
 from app.services import import_lease
-from app.services.import_adapter import ImportAdapter, get_adapter
+from app.services.import_adapter import AdapterExecutionConflict, ImportAdapter, get_adapter
 from app.services.import_adapter_context import AdapterInvocationContext, adapter_invocation_context
 from app.services.import_source_reader import ImportSourceReader, SourceDescriptor
 
@@ -377,6 +377,38 @@ async def run_execute(
     if type(adapter).execute is ImportAdapter.execute:
         raise ImportAdapterNotImplementedError(f"Adapter for dataset_type '{dataset_type}' does not implement execute.")
 
+    # Roadmap PR20E (design §14.4a): identity-only context, built once and
+    # reused for both `precheck_execute` (below, pre-admission) and
+    # `execute()` itself (post-admission) -- never a second, potentially
+    # divergent construction. `verified_source_content`/`dry_run_job_id`/
+    # `accepted_validation_job_id` are always `None`, since `execute()`
+    # never re-reads or re-parses the source and resolves its own
+    # confirmed plan internally.
+    source = await import_session_crud.get_source(db, session_id=session_id)
+    if source is None:
+        raise ImportSourceNotRegisteredError(
+            f"Import session '{session_id}' has no registered source despite being admitted for execute."
+        )
+    invocation_context = AdapterInvocationContext(
+        import_session_id=session_id,
+        import_source_id=source.id,
+        dataset_type=dataset_type,
+        source_checksum=source.checksum,
+        source_fingerprint=source.source_fingerprint,
+        ruleset_version=adapter.ruleset_version,
+        verified_source_content=None,
+        dry_run_job_id=None,
+        accepted_validation_job_id=None,
+        actor_user_id=actor_id,
+    )
+
+    # Roadmap PR20E (design §14.4a): a read-only, non-mutating rejection
+    # -- called strictly BEFORE admit_phase_job, so a session with no
+    # confirmed plan never has any state touched at all. Default no-op
+    # for every adapter that predates this mechanism.
+    with adapter_invocation_context(invocation_context):
+        await adapter.precheck_execute(db)
+
     lease_owner = uuid.uuid4()
     lease_generation = 1
     session_row, job_row = await import_job_crud.admit_phase_job(
@@ -407,37 +439,22 @@ async def run_execute(
 
     domain_exc: Exception | None = None
     final_session: ImportSession | None = None
+    resolved_resource_id: uuid.UUID | None = None
     try:
-        # Roadmap PR20A (design §6.4): identity-only context for `execute`
-        # -- `verified_source_content`/`dry_run_job_id`/
-        # `accepted_validation_job_id` are always `None` here, since
-        # `execute()` never re-reads or re-parses the source and resolves
-        # its own confirmed plan internally (design §14.4, a later slice).
-        # `import_session_id` is retained only for audit-logging purposes;
-        # neither `plan_dry_run` nor `execute` writes to
-        # `import_sessions`/`import_jobs` itself.
-        source = await import_session_crud.get_source(db, session_id=session_id)
-        if source is None:
-            raise ImportSourceNotRegisteredError(
-                f"Import session '{session_id}' has no registered source despite being admitted for execute."
-            )
-        invocation_context = AdapterInvocationContext(
-            import_session_id=session_id,
-            import_source_id=source.id,
-            dataset_type=dataset_type,
-            source_checksum=source.checksum,
-            source_fingerprint=source.source_fingerprint,
-            ruleset_version=adapter.ruleset_version,
-            verified_source_content=None,
-            dry_run_job_id=None,
-            accepted_validation_job_id=None,
-            actor_user_id=actor_id,
-        )
-
         # §17/§9.4.1 step 3: unlike dry-run, execute must actually write --
-        # the normal read-write session, inside this same TX1.
+        # the normal read-write session, inside this same TX1. Reuses the
+        # same `invocation_context` `precheck_execute` already used above
+        # -- never a second, potentially divergent construction.
         with adapter_invocation_context(invocation_context):
-            imported_rows = await adapter.execute(db)
+            try:
+                imported_rows = await adapter.execute(db)
+            except AdapterExecutionConflict as exc:
+                # Roadmap PR20E (design §14.4b): capture the bare
+                # primitive *before* TX1's rollback below -- any
+                # ORM-bound reference `execute()` held is detached/
+                # invalid once that happens.
+                resolved_resource_id = exc.resolved_resource_id
+                raise
         final_session = await import_job_crud.fenced_phase_success(
             db,
             job_id=job_id,
@@ -482,6 +499,15 @@ async def run_execute(
     )
     try:
         async with AsyncSessionLocal() as tx2:
+            # Roadmap PR20E (design §14.4b, steps 4-5): runs on TX2's own
+            # session, *before* fenced_phase_failure's write below commits
+            # -- session-failure and plan-failure land together, or
+            # neither does. `resolved_resource_id` is `None` (a harmless
+            # no-op for every adapter that predates this mechanism, or
+            # when execute() raised something other than
+            # AdapterExecutionConflict) unless execute() raised
+            # AdapterExecutionConflict above.
+            await adapter.on_execution_failure(tx2, resolved_resource_id)
             failed_session = await import_job_crud.fenced_phase_failure(
                 tx2,
                 job_id=job_id,

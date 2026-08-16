@@ -12059,3 +12059,273 @@ async def test_pr94r3_completion_vs_recovery_concurrent_race_never_produces_spli
             assert plans == [], f"trial {trial}: a fenced-out completion must never leave a persisted plan"
         else:
             pytest.fail(f"trial {trial}: neither completion nor recovery won: complete={complete_outcome} recover={recover_outcome}")
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR20E (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.4,
+# §15, §15.1, §16, §18, §19, §20). Genuine two-PostgreSQL-connection
+# concurrency proofs for the two races that specifically require real
+# database-level locking/uniqueness -- §54: "Use real PostgreSQL for: CAS,
+# unique collision, concurrent execution... SQLite cannot prove real
+# database-level race resolution." Every other PR20E behavior
+# (precheck_execute, protected fields, no-op update, TX1 atomicity,
+# on_execution_failure/on_execution_recovery, idempotency) is already
+# covered on SQLite in tests/test_pr20e_equipment_master_execution.py.
+#
+# Each race calls `EquipmentMasterAdapter().execute(db)` directly inside
+# `adapter_invocation_context(...)` on two independent connections
+# (`pg_engine`'s pool, never one shared session standing in for both
+# sides), `asyncio.Barrier`-forced to overlap so PostgreSQL's own
+# row-level locking/uniqueness resolves the race, mirroring this file's
+# own established idiom (see the PR94 sections above). This deliberately
+# bypasses the PR19 admission/lease framework (which already has its own
+# dedicated single-winner-execution-claim concurrency proofs elsewhere in
+# this file and in test_pr20e_equipment_master_execution.py) to isolate
+# the Equipment-domain CAS/uniqueness property under test. Because the
+# framework's own TX2 (`on_execution_failure`) is not exercised by this
+# direct-call idiom, a losing connection's plan is asserted to remain
+# `active` (its own transaction rolled back before `mark_plan_consumed`
+# ever ran) rather than `failed` -- the `on_execution_failure`
+# plan-failure-marking contract itself is already proved on SQLite.
+# ---------------------------------------------------------------------------
+
+from app.services.import_adapter import AdapterExecutionConflict as _PgAdapterExecutionConflict
+from app.services.import_adapter_context import AdapterInvocationContext as _PgAdapterInvocationContext
+from app.services.import_adapter_context import adapter_invocation_context as _pg_adapter_invocation_context
+from app.services.import_adapters.equipment_master import DATASET_TYPE as _PG_EQUIPMENT_MASTER_DATASET_TYPE
+from app.services.import_adapters.equipment_master import EquipmentMasterAdapter as _PgEquipmentMasterAdapter
+
+
+async def _pg20e_seed_confirmed_plan(pg_session, actor_id, *, rows_data: list[dict]):
+    """One confirmed, `active` `EquipmentMasterDryRunPlan` bound to its own
+    fresh `ImportSession`/`ImportSource` -- reuses PR20D's own
+    `_pg20d_seed_session_source_jobs`/`_pg20d_plan_kwargs` helpers
+    (already established above), extended with `confirmed_at`/
+    `confirmed_by_user_id` (`execute()`'s own
+    `get_active_confirmed_for_session` query requires both). Committed on
+    `pg_session` -- a connection distinct from every connection either
+    race itself uses -- so the seeded state is durably visible to fresh
+    connections before any race begins."""
+    session, source, validate_job, dry_run_job = await _pg20d_seed_session_source_jobs(pg_session, actor_id)
+    plan = _PgDryRunPlan(
+        **_pg20d_plan_kwargs(
+            session,
+            source,
+            validate_job,
+            dry_run_job,
+            confirmed_at=datetime.now(timezone.utc),
+            confirmed_by_user_id=actor_id,
+        )
+    )
+    pg_session.add(plan)
+    await pg_session.flush()
+    for row_kwargs in rows_data:
+        pg_session.add(_PgDryRunPlanRow(dry_run_plan_id=plan.id, **row_kwargs))
+    await pg_session.commit()
+    await pg_session.refresh(session)
+    await pg_session.refresh(source)
+    await pg_session.refresh(plan)
+    return session, source, plan
+
+
+def _pg20e_invocation_context(session, source, actor_id) -> _PgAdapterInvocationContext:
+    return _PgAdapterInvocationContext(
+        import_session_id=session.id,
+        import_source_id=source.id,
+        dataset_type=_PG_EQUIPMENT_MASTER_DATASET_TYPE,
+        source_checksum=source.checksum,
+        source_fingerprint=source.source_fingerprint,
+        ruleset_version="1",
+        verified_source_content=None,
+        dry_run_job_id=None,
+        accepted_validation_job_id=None,
+        actor_user_id=actor_id,
+    )
+
+
+async def test_pr20e_concurrent_update_cas_race_exactly_one_winner(pg_engine, pg_session, pg_seeded_users):
+    """§16/§18/§19's core safety property, proved against real PostgreSQL
+    row locking: two independently confirmed plans (two different import
+    sessions -- e.g. two overlapping import attempts, §19) each propose an
+    UPDATE to the SAME Equipment row, both captured against the SAME
+    `expected_equipment_version` (the "both dry-run against version N"
+    scenario §18/§19 describe). Dispatched via two independent
+    connections, `asyncio.Barrier`-forced to overlap, repeated across
+    trials. Exactly one connection's `execute()` must succeed
+    (`imported_rows == 1`, `Equipment.version` bumped exactly once); the
+    other must raise `AdapterExecutionConflict` from a genuine
+    zero-rows-affected CAS failure -- never both succeeding (a lost
+    update) and never both failing."""
+    actor = pg_seeded_users["administrator"]
+    maker = _pg94_session_maker(pg_engine)
+
+    for trial in range(5):
+        unique = uuid.uuid4().hex[:10].upper()
+        equipment = Equipment(
+            asset_number=f"PR20E-CAS-{unique}",
+            bcm_code=f"BCM-CAS-{unique}",
+            item_no=f"ITEM-CAS-{unique}",
+            equipment_name="Original Name",
+            status=EquipmentStatus.AVAILABLE_AT_POOL,
+        )
+        pg_session.add(equipment)
+        await pg_session.commit()
+        await pg_session.refresh(equipment)
+        equipment_id = equipment.id
+        original_version = equipment.version
+
+        base_row = dict(
+            source_row_number=1,
+            action="UPDATE",
+            target_equipment_id=equipment_id,
+            matched_identity_fields={},
+            expected_equipment_version=original_version,
+            warnings=[],
+        )
+        session_a, source_a, plan_a = await _pg20e_seed_confirmed_plan(
+            pg_session, actor.id, rows_data=[{**base_row, "normalized_values": {"equipment_name": "Winner A"}}]
+        )
+        session_b, source_b, plan_b = await _pg20e_seed_confirmed_plan(
+            pg_session, actor.id, rows_data=[{**base_row, "normalized_values": {"equipment_name": "Winner B"}}]
+        )
+        plan_a_id, plan_b_id = plan_a.id, plan_b.id
+
+        barrier = asyncio.Barrier(2)
+        db_a = maker()
+        db_b = maker()
+        outcomes: dict[str, dict] = {}
+
+        async def _run(db, session, source, label):
+            await barrier.wait()
+            ctx = _pg20e_invocation_context(session, source, actor.id)
+            try:
+                with _pg_adapter_invocation_context(ctx):
+                    imported = await _PgEquipmentMasterAdapter().execute(db)
+                await db.commit()
+                outcomes[label] = {"succeeded": True, "imported": imported}
+            except _PgAdapterExecutionConflict:
+                await db.rollback()
+                outcomes[label] = {"succeeded": False}
+
+        try:
+            await asyncio.gather(
+                _run(db_a, session_a, source_a, "a"),
+                _run(db_b, session_b, source_b, "b"),
+            )
+        finally:
+            await db_a.close()
+            await db_b.close()
+
+        winners = [label for label, outcome in outcomes.items() if outcome["succeeded"]]
+        losers = [label for label, outcome in outcomes.items() if not outcome["succeeded"]]
+        assert len(winners) == 1, f"trial {trial}: expected exactly one winner, got {outcomes}"
+        assert len(losers) == 1, f"trial {trial}: expected exactly one loser, got {outcomes}"
+        assert outcomes[winners[0]]["imported"] == 1
+
+        async with maker() as verify_db:
+            refreshed = await verify_db.get(Equipment, equipment_id)
+            assert refreshed.version == original_version + 1, f"trial {trial}: version must bump exactly once, never twice"
+            expected_name = "Winner A" if winners[0] == "a" else "Winner B"
+            assert refreshed.equipment_name == expected_name
+
+            winner_plan_id = plan_a_id if winners[0] == "a" else plan_b_id
+            loser_plan_id = plan_b_id if winners[0] == "a" else plan_a_id
+            winner_plan = await verify_db.get(_PgDryRunPlan, winner_plan_id)
+            loser_plan = await verify_db.get(_PgDryRunPlan, loser_plan_id)
+            assert winner_plan.status == "consumed", f"trial {trial}: winning plan must be marked consumed"
+            assert loser_plan.status == "active", (
+                f"trial {trial}: losing plan's own transaction rolled back before mark_plan_consumed ran -- "
+                "it must never show as consumed"
+            )
+
+
+async def test_pr20e_create_identity_race_exactly_one_winner(pg_engine, pg_session, pg_seeded_users):
+    """§12/§20's core safety property, proved against real PostgreSQL
+    uniqueness enforcement: two independently confirmed plans each propose
+    a CREATE with the SAME `bcm_code` (the "two plans may contain CREATE
+    for same BCM/Item Number/asset_number" race §20 describes -- dry-run
+    availability does not guarantee execute-time availability). Dispatched
+    via two independent connections, `asyncio.Barrier`-forced to overlap,
+    repeated across trials. Exactly one connection's `execute()` must
+    succeed, creating exactly one Equipment row with that `bcm_code`; the
+    other must raise `AdapterExecutionConflict` from the database's own
+    unique-constraint rejection (classified via `classify_integrity_error`,
+    never a raw 500) -- never two Equipment rows with the same identity,
+    and never both failing."""
+    actor = pg_seeded_users["administrator"]
+    maker = _pg94_session_maker(pg_engine)
+
+    for trial in range(5):
+        unique = uuid.uuid4().hex[:10].upper()
+        shared_bcm = f"BCM-RACE-{unique}"
+
+        def _create_row(label: str) -> dict:
+            return dict(
+                source_row_number=1,
+                action="CREATE",
+                target_equipment_id=None,
+                matched_identity_fields={"bcm_code": shared_bcm},
+                expected_equipment_version=None,
+                warnings=[],
+                normalized_values={
+                    "asset_number": f"PR20E-CREATE-{label}-{unique}",
+                    "item_no": f"ITEM-CREATE-{label}-{unique}",
+                    "bcm_code": shared_bcm,
+                    "equipment_name": f"Created By {label}",
+                    "status": EquipmentStatus.AVAILABLE_AT_POOL.value,
+                },
+            )
+
+        session_a, source_a, plan_a = await _pg20e_seed_confirmed_plan(pg_session, actor.id, rows_data=[_create_row("A")])
+        session_b, source_b, plan_b = await _pg20e_seed_confirmed_plan(pg_session, actor.id, rows_data=[_create_row("B")])
+        plan_a_id, plan_b_id = plan_a.id, plan_b.id
+
+        barrier = asyncio.Barrier(2)
+        db_a = maker()
+        db_b = maker()
+        outcomes: dict[str, dict] = {}
+
+        async def _run(db, session, source, label):
+            await barrier.wait()
+            ctx = _pg20e_invocation_context(session, source, actor.id)
+            try:
+                with _pg_adapter_invocation_context(ctx):
+                    imported = await _PgEquipmentMasterAdapter().execute(db)
+                await db.commit()
+                outcomes[label] = {"succeeded": True, "imported": imported}
+            except _PgAdapterExecutionConflict:
+                await db.rollback()
+                outcomes[label] = {"succeeded": False}
+
+        try:
+            await asyncio.gather(
+                _run(db_a, session_a, source_a, "a"),
+                _run(db_b, session_b, source_b, "b"),
+            )
+        finally:
+            await db_a.close()
+            await db_b.close()
+
+        winners = [label for label, outcome in outcomes.items() if outcome["succeeded"]]
+        losers = [label for label, outcome in outcomes.items() if not outcome["succeeded"]]
+        assert len(winners) == 1, f"trial {trial}: expected exactly one winner, got {outcomes}"
+        assert len(losers) == 1, f"trial {trial}: expected exactly one loser, got {outcomes}"
+        assert outcomes[winners[0]]["imported"] == 1
+
+        async with maker() as verify_db:
+            created = (
+                (await verify_db.execute(select(Equipment).where(Equipment.bcm_code == shared_bcm))).scalars().all()
+            )
+            assert len(created) == 1, f"trial {trial}: exactly one Equipment row must exist for the raced bcm_code"
+            expected_name = "Created By A" if winners[0] == "a" else "Created By B"
+            assert created[0].equipment_name == expected_name
+
+            winner_plan_id = plan_a_id if winners[0] == "a" else plan_b_id
+            loser_plan_id = plan_b_id if winners[0] == "a" else plan_a_id
+            winner_plan = await verify_db.get(_PgDryRunPlan, winner_plan_id)
+            loser_plan = await verify_db.get(_PgDryRunPlan, loser_plan_id)
+            assert winner_plan.status == "consumed", f"trial {trial}: winning plan must be marked consumed"
+            assert loser_plan.status == "active", (
+                f"trial {trial}: losing plan's own transaction rolled back before mark_plan_consumed ran -- "
+                "it must never show as consumed"
+            )

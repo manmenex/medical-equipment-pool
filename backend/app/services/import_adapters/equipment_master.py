@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import io
 import math
+import uuid
 import zipfile
 import xml.parsers.expat as expat
 from dataclasses import dataclass, field
@@ -39,10 +40,12 @@ from typing import Any
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CREATED, AUDIT_ENTITY_IMPORT_SESSION, record_audit_event
-from app.core.exceptions import InvalidInputError
+from app.core.db_errors import IntegrityViolationKind, classify_integrity_error
+from app.core.exceptions import ImportNoConfirmedPlanError, InvalidInputError
 from app.crud import equipment as equipment_crud
 from app.crud import import_dry_run_plan as import_dry_run_plan_crud
 from app.models.equipment import Equipment, EquipmentStatus
@@ -50,6 +53,7 @@ from app.models.import_session import EquipmentMasterDryRunPlanRow, ImportSessio
 from app.services.identifiers import normalize_bcm_code, normalize_item_no
 from app.services.import_adapter import (
     MAX_IMPORT_ROWS,
+    AdapterExecutionConflict,
     DryRunPlan,
     FieldError,
     ImportAdapter,
@@ -1207,11 +1211,267 @@ class EquipmentMasterAdapter(ImportAdapter):
             },
         )
 
-    # execute: intentionally not overridden (§24's PR20E scope boundary;
-    # base ImportAdapter's NotImplementedError default applies).
-    # precheck_execute / on_execution_failure / on_execution_recovery
-    # (design §14.4a/§14.4b/§14.4c) do not exist on the base ImportAdapter
-    # class yet -- adding them is itself PR20E's own scope, not PR20D's.
+    async def precheck_execute(self, db: AsyncSession) -> None:
+        """Roadmap PR20E (design §14.4a). Called by the framework
+        **before** `admit_phase_job` runs -- a read-only rejection, no
+        session state touched. Verifies the session has an `active`,
+        **confirmed** plan; if not (never confirmed, or confirmed but
+        since superseded by a newer, not-yet-confirmed dry-run), raises
+        `ImportNoConfirmedPlanError` (`409 IMPORT_NO_CONFIRMED_PLAN`) --
+        a cheap, retryable rejection, never a terminal execute failure."""
+        ctx = get_adapter_invocation_context()
+        plan = await import_dry_run_plan_crud.get_active_confirmed_for_session(
+            db, import_session_id=ctx.import_session_id
+        )
+        if plan is None:
+            raise ImportNoConfirmedPlanError(
+                f"Import session '{ctx.import_session_id}' has no confirmed dry-run plan to execute. "
+                "Confirm the current plan (POST .../dry-run-plan/{plan_id}/confirm) first."
+            )
+
+    async def execute(self, db: AsyncSession) -> int:
+        """Roadmap PR20E (design §14.4, §14.4a, §15, §15.1). Resolves the
+        session's `active`, confirmed plan internally -- **no plan
+        identity is threaded through the invocation context** (design
+        §14.4, fix round 4 H6) -- re-running the identical query
+        `precheck_execute` already used. The two calls are separated only
+        by `admit_phase_job`'s own atomic admission, so a `None` result
+        here indicates a framework-invariant violation, never a
+        client-correctable input error (§14.4).
+
+        Applies every plan row's already-persisted action, exactly as
+        planned: `CREATE` via a plain insert guarded by Equipment's
+        existing unique constraints (§16) -- a row lacking a genuine,
+        non-fabricated `asset_number` (§9 OD-4) or an approved
+        `status` mapping (§9 OD-2, never `ISSUED_TO_WARD` -- creating
+        Equipment directly into that state without a `BorrowTransaction`
+        would violate the ledger invariant, so this is refused exactly
+        like every other unauthorized CREATE) is refused, never
+        fabricated. `UPDATE` via the row's own persisted
+        `expected_equipment_version` compare-and-swap (§15.1) -- never a
+        freshly re-read version. A same-value UPDATE (no writable field
+        actually differs from the record's current value) is a no-op:
+        no write, no version bump (§9 OD-2, reusing `equipment_crud.
+        update()`'s own empty-`data` guard).
+
+        Any conflict -- missing plan, source-binding mismatch, a CREATE
+        row with no authoritative `asset_number`/status, a unique-
+        constraint violation, a missing UPDATE target, or a stale
+        `expected_equipment_version` -- raises `AdapterExecutionConflict`
+        carrying the resolved plan's own id, so the framework's TX2
+        failure path can mark the plan `failed` (§14.4b) using only that
+        primitive. Never calls `db.commit()`/`db.rollback()` itself --
+        the caller's TX1 owns the boundary (§15): if any row conflicts,
+        the entire attempt rolls back, never partially applying the
+        other, non-conflicting rows. On success, marks the plan
+        `consumed` in the same transaction and returns the count of rows
+        that resulted in a genuine Equipment mutation (skips and no-op
+        updates are not "imported")."""
+        ctx = get_adapter_invocation_context()
+        plan = await import_dry_run_plan_crud.get_active_confirmed_for_session(
+            db, import_session_id=ctx.import_session_id
+        )
+        if plan is None:
+            raise AdapterExecutionConflict(
+                f"Import session '{ctx.import_session_id}' has no confirmed active plan at execute time "
+                "despite precheck_execute succeeding -- a framework-invariant violation.",
+                resolved_resource_id=None,
+            )
+        # Captured as a primitive immediately, before any write is
+        # attempted below: on PostgreSQL, a failed flush deactivates the
+        # whole Session's transaction (an aborted transaction rejects any
+        # further command), which implicitly expires every already-loaded
+        # object's attributes -- so `plan.id` itself becomes unsafe to
+        # read from an exception handler after that point (it would
+        # trigger a reload that raises `PendingRollbackError`, masking
+        # the real conflict being reported). Every conflict raised below
+        # uses this primitive, never a live `plan.id` attribute access.
+        plan_id = plan.id
+        # §14.4: defensive, post-admission re-check -- structurally
+        # guaranteed by §6.2's immutable-once-frozen source, but checked,
+        # not assumed.
+        if plan.import_source_id != ctx.import_source_id or plan.source_checksum != ctx.source_checksum:
+            raise AdapterExecutionConflict(
+                f"Persisted plan '{plan_id}' source binding does not match the current session's frozen source.",
+                resolved_resource_id=plan_id,
+            )
+
+        try:
+            imported_rows = await self._apply_plan_rows(db, plan_id)
+        except AdapterExecutionConflict:
+            raise
+        except Exception as exc:
+            # Any other exception while a live worker is applying a known
+            # plan must still mark that plan `failed` (§14.4: "it must
+            # never be left `active` once its owning session has
+            # terminally failed") -- only a genuine hard crash (the
+            # process dies mid-transaction, never reaching this handler
+            # at all) falls through to §14.4c's on_execution_recovery gap.
+            raise AdapterExecutionConflict(
+                f"Plan '{plan_id}' execution failed: {exc}", resolved_resource_id=plan_id
+            ) from exc
+
+        await import_dry_run_plan_crud.mark_plan_consumed(db, plan_id=plan_id)
+        return imported_rows
+
+    async def _apply_plan_rows(self, db: AsyncSession, plan_id: uuid.UUID) -> int:
+        rows = await import_dry_run_plan_crud.list_all_plan_rows(db, plan_id=plan_id)
+
+        update_target_ids = {row.target_equipment_id for row in rows if row.action == "UPDATE"}
+        current_by_id = await equipment_crud.get_by_ids(db, list(update_target_ids)) if update_target_ids else {}
+
+        imported_rows = 0
+        for row in rows:
+            if row.action == "SKIP":
+                continue
+            if row.action == "CREATE":
+                imported_rows += await self._apply_create_row(db, plan_id, row)
+            elif row.action == "UPDATE":
+                imported_rows += await self._apply_update_row(db, plan_id, row, current_by_id)
+        return imported_rows
+
+    async def _apply_create_row(self, db: AsyncSession, plan_id: uuid.UUID, row: EquipmentMasterDryRunPlanRow) -> int:
+        # Captured as a primitive before the `create` flush below, for the
+        # same reason `plan_id` is captured in `execute()` -- once that
+        # flush fails with `IntegrityError`, PostgreSQL has aborted the
+        # whole transaction, and re-reading a live ORM attribute (even one
+        # already loaded, like `row.id`) requires a reload that raises
+        # `PendingRollbackError` instead, masking the real conflict.
+        row_id = row.id
+        values = row.normalized_values or {}
+        # §9 OD-4: this codebase's own PR20C parser never persists this
+        # key today (no authoritative source exists under the current
+        # 32-column contract, §9 OD-4) -- kept as a real, enforced check
+        # (never assumed unreachable) so a future, richer source contract
+        # can light this path up safely, and so a plan row that somehow
+        # reached this point despite upstream validation fails closed
+        # rather than fabricating a placeholder.
+        asset_number = values.get("asset_number")
+        if not asset_number:
+            raise AdapterExecutionConflict(
+                f"Plan row {row_id} is a CREATE action with no authoritative asset_number -- refusing to "
+                "fabricate one.",
+                resolved_resource_id=plan_id,
+            )
+        status_raw = values.get("status")
+        try:
+            status = EquipmentStatus(status_raw) if status_raw is not None else None
+        except ValueError:
+            status = None
+        # §9 OD-2 Legacy Lifecycle Policy / §22: ISSUED_TO_WARD is
+        # deliberately excluded here -- creating Equipment directly into
+        # that state with no corresponding BorrowTransaction would
+        # violate the invariant that ISSUED_TO_WARD equipment always has
+        # an active transaction. STATUS_MAPPING (above) already never
+        # produces this value for a real parsed row; this is enforced
+        # again here, defensively, for any row reaching execute() by
+        # another path.
+        if status not in _CREATE_ALLOWED_STATUSES:
+            raise AdapterExecutionConflict(
+                f"Plan row {row_id} is a CREATE action with an unauthorized or missing status value.",
+                resolved_resource_id=plan_id,
+            )
+
+        create_data = {
+            "asset_number": asset_number,
+            "item_no": values.get("item_no"),
+            "bcm_code": values.get("bcm_code"),
+            "equipment_name": values.get("equipment_name"),
+            "brand": values.get("brand"),
+            "model": values.get("model"),
+            "serial_number": values.get("serial_number"),
+            "asset_id": values.get("asset_id"),
+            "status": status,
+            # §9 OD-2 Location Policy: category_id/department_owner_id/
+            # current_location_id are deliberately omitted -- left at
+            # the model's own NULL default, never populated on CREATE
+            # (no approved legacy-name-to-UUID matching algorithm).
+        }
+        try:
+            await equipment_crud.create(db, data=create_data)
+        except IntegrityError as exc:
+            kind = classify_integrity_error(exc)
+            if kind is not IntegrityViolationKind.UNIQUE:
+                raise
+            raise AdapterExecutionConflict(
+                f"Plan row {row_id}'s CREATE conflicts with an existing Equipment identifier.",
+                resolved_resource_id=plan_id,
+            ) from exc
+        return 1
+
+    async def _apply_update_row(
+        self, db: AsyncSession, plan_id: uuid.UUID, row: EquipmentMasterDryRunPlanRow, current_by_id: dict
+    ) -> int:
+        row_id = row.id
+        target_equipment_id = row.target_equipment_id
+        current = current_by_id.get(target_equipment_id)
+        if current is None:
+            raise AdapterExecutionConflict(
+                f"Plan row {row_id}'s target Equipment '{target_equipment_id}' no longer exists.",
+                resolved_resource_id=plan_id,
+            )
+        candidate = row.normalized_values or {}
+        # §9 OD-2: only the approved UPDATE-writable fields are ever
+        # considered -- protected fields (identity, version, lifecycle/
+        # status, current operational location) are never in this set,
+        # so they can never appear in `diff` below regardless of what
+        # `normalized_values` happens to contain.
+        diff = {
+            field_name: value
+            for field_name, value in candidate.items()
+            if field_name in _UPDATE_WRITABLE_FIELDS and getattr(current, field_name) != value
+        }
+        if not diff:
+            # §9 OD-2 / PR91-H1: a same-value update is a no-op -- no
+            # write, no version bump. Not a conflict: the plan's
+            # proposed values already match the record's current state.
+            return 0
+
+        expected_version = row.expected_equipment_version
+        updated = await equipment_crud.update_with_cas(
+            db,
+            equipment_id=target_equipment_id,
+            expected_version=expected_version,
+            data=diff,
+        )
+        if updated is None:
+            raise AdapterExecutionConflict(
+                f"Plan row {row_id}'s target Equipment '{target_equipment_id}' has changed since the "
+                "dry-run -- expected_equipment_version no longer matches. A new dry-run is required.",
+                resolved_resource_id=plan_id,
+            )
+        return 1
+
+    async def on_execution_failure(self, db: AsyncSession, resolved_resource_id) -> None:
+        """Roadmap PR20E (design §14.4b). Called by the framework inside
+        TX2, only when `execute()` raised `AdapterExecutionConflict`.
+        `resolved_resource_id` is the plan's own id (or `None`, a
+        harmless no-op, for the framework-invariant-violation case where
+        no plan could be resolved at all)."""
+        if resolved_resource_id is None:
+            return
+        await import_dry_run_plan_crud.mark_plan_failed(db, plan_id=resolved_resource_id)
+
+    async def on_execution_recovery(self, db: AsyncSession, session_id) -> None:
+        """Roadmap PR20E (design §14.4c). Called by `recover_session()`
+        only when the recovered job's `job_type` was `'execute'` --
+        reconciles the case §14.4b's exception-based hook cannot cover: a
+        hard worker crash that never raised anything at all."""
+        await import_dry_run_plan_crud.mark_active_plan_failed_for_session(db, import_session_id=session_id)
+
+
+# §9 OD-2 Legacy Lifecycle Policy / §22: ISSUED_TO_WARD is deliberately
+# excluded -- see EquipmentMasterAdapter._apply_create_row's docstring.
+_CREATE_ALLOWED_STATUSES = frozenset(
+    {EquipmentStatus.AVAILABLE_AT_POOL, EquipmentStatus.UNAVAILABLE_DEFECTIVE, EquipmentStatus.DECOMMISSIONED}
+)
+
+# §9 OD-2: the exact UPDATE-writable field list, mirroring
+# `_update_normalized_values`'s own key set above -- never bcm_code/
+# item_no (identity), status (lifecycle), current_location_id/
+# department_owner_id (operational location), or version (handled only
+# by `equipment_crud.update_with_cas`'s own CAS predicate).
+_UPDATE_WRITABLE_FIELDS = frozenset({"equipment_name", "brand", "model", "serial_number", "asset_id"})
 
 
 register_adapter(EquipmentMasterAdapter())

@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from datetime import datetime, timezone
 
 from sqlalchemy import String, and_, case, cast, func, or_, select
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import InvalidInputError, InvalidStatusTransitionError
@@ -136,6 +137,19 @@ async def get_by_serial_numbers(db: AsyncSession, values: Sequence[str]) -> dict
         select(Equipment).where(Equipment.serial_number.in_(values), Equipment.deleted_at.is_(None))
     )
     return {e.serial_number: e for e in result.scalars().all()}
+
+
+async def get_by_ids(db: AsyncSession, values: Sequence[uuid.UUID]) -> dict[uuid.UUID, Equipment]:
+    """Roadmap PR20E: bulk primary-key lookup for a batch of `UPDATE`-row
+    execution targets -- one `IN (...)` query for an entire confirmed
+    plan, mirroring `get_by_bcm_codes`'s own no-N+1 discipline (Roadmap
+    PR12 review PR12-H2) rather than one `get_by_id` call per row."""
+    if not values:
+        return {}
+    result = await db.execute(
+        select(Equipment).where(Equipment.id.in_(values), Equipment.deleted_at.is_(None))
+    )
+    return {e.id: e for e in result.scalars().all()}
 
 
 async def get_by_asset_ids(db: AsyncSession, values: Sequence[str]) -> dict[str, Equipment]:
@@ -348,6 +362,47 @@ async def update(db: AsyncSession, equipment: Equipment, *, data: dict) -> Equip
         equipment.version += 1
     await db.flush()
     return equipment
+
+
+async def update_with_cas(
+    db: AsyncSession, *, equipment_id: uuid.UUID, expected_version: int, data: dict
+) -> Equipment | None:
+    """Roadmap PR20E (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    §15.1). The compare-and-swap counterpart to `update()` above --
+    exclusively for Equipment Master execute()'s UPDATE-row path, never
+    for the ordinary `PATCH /equipment/{id}` caller, which already holds
+    an authoritative, already-loaded ORM object and uses `update()`
+    instead. `expected_version` must be the row's own persisted
+    `expected_equipment_version` captured at dry-run time -- never a
+    freshly re-read current value, which would defeat the entire purpose
+    of this check (§15.1's fix round 2 correction). `AND deleted_at IS
+    NULL` (fix round 7, H13) is defense-in-depth: a soft-deleted row's
+    `version` already independently fails to match once `soft_delete()`
+    bumps it, but this predicate closes the same gap even if a future
+    code path were ever found that soft-deletes a row without going
+    through the enumerated increment.
+
+    `data` must be non-empty and contain only fields that actually
+    change -- the caller decides no-op-ness (comparing the plan's
+    persisted values against a freshly-loaded current row) *before*
+    calling this function; a no-op is never represented as a call here,
+    matching PR91-H1's "no supported mutation -> no version bump"
+    contract (`update()`'s own identical guard). Returns `None` if zero
+    rows matched: the token is stale, the row was soft-deleted, or the
+    row no longer exists -- the caller must treat this as a genuine
+    conflict, never a silent no-op, never a fresh-version retry, and
+    never a relaxed predicate."""
+    result = await db.execute(
+        sa_update(Equipment)
+        .where(
+            Equipment.id == equipment_id,
+            Equipment.version == expected_version,
+            Equipment.deleted_at.is_(None),
+        )
+        .values(version=Equipment.version + 1, **data)
+        .returning(Equipment)
+    )
+    return result.scalar_one_or_none()
 
 
 async def soft_delete(db: AsyncSession, equipment: Equipment) -> None:

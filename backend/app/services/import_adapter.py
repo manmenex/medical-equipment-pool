@@ -12,6 +12,7 @@ future slice registers one.
 from __future__ import annotations
 
 import abc
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -47,6 +48,26 @@ class DryRunPlan:
     without changing this contract."""
 
     summary: dict[str, Any] = field(default_factory=dict)
+
+
+class AdapterExecutionConflict(RuntimeError):
+    """Roadmap PR20E (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    §14.4b). Raised by `execute()` to signal a genuine execution-time
+    conflict that must also mark an adapter-owned sub-resource `failed`,
+    inside the same TX2 write the framework already performs on any
+    execute failure. `resolved_resource_id` is an opaque, adapter-defined
+    primitive (never an ORM object -- TX1 has already rolled back by the
+    time it is consumed, so any ORM-bound reference `execute()` held is
+    detached/invalid) -- the framework never interprets its value, only
+    passes it back to the adapter's own `on_execution_failure` hook.
+    `None` means either no resource was resolved yet, or the raising
+    adapter doesn't use this mechanism -- `on_execution_failure` is still
+    called with `None` and its default no-op implementation does
+    nothing."""
+
+    def __init__(self, message: str, resolved_resource_id: uuid.UUID | None = None) -> None:
+        super().__init__(message)
+        self.resolved_resource_id = resolved_resource_id
 
 
 @dataclass(frozen=True)
@@ -137,6 +158,22 @@ class ImportAdapter(abc.ABC):
         persisted-plan concept of its own) is unaffected."""
         return
 
+    async def precheck_execute(self, db: AsyncSession) -> None:
+        """Roadmap PR20E (design §14.4a). Called by the framework in
+        `run_execute`, **before** `admit_phase_job` runs, on a read-only
+        basis -- never mutates anything, so a caller may run this on
+        either session type. Session/source identity via the same
+        contextvar (§6.4) `execute()` itself uses. Default: a no-op --
+        an adapter with no persisted-plan concept of its own (every
+        adapter that predates this mechanism) is unaffected. A concrete
+        override raises a structural, non-mutating rejection (its own
+        domain error) if execution cannot possibly succeed for a reason
+        knowable before any session state changes -- e.g. no confirmed
+        plan exists yet -- so the framework can surface a cheap,
+        retryable 4xx before ever touching `import_sessions`/
+        `import_jobs`."""
+        return
+
     async def execute(self, db: AsyncSession) -> int:
         """Roadmap PR19A3 (design §17). Called against the normal,
         read-write session, inside the single-winner execution's own `TX1`
@@ -148,8 +185,44 @@ class ImportAdapter(abc.ABC):
         outside the provided session" is a documented obligation this
         foundation cannot force a misbehaving adapter to comply with, but
         never itself violates). Default: not implemented -- see
-        `plan_dry_run`'s docstring for the same rationale."""
+        `plan_dry_run`'s docstring for the same rationale. May raise
+        `AdapterExecutionConflict` to carry a `resolved_resource_id`
+        through TX1's rollback into `on_execution_failure` (§14.4b),
+        rather than a bare exception, whenever a genuine execution-time
+        conflict must also mark an adapter-owned sub-resource `failed`."""
         raise NotImplementedError
+
+    async def on_execution_failure(self, db: AsyncSession, resolved_resource_id: uuid.UUID | None) -> None:
+        """Roadmap PR20E (design §14.4b). Called by the framework inside
+        TX2, on TX2's own session, immediately before the framework's own
+        fenced-failure write commits, **only** when the exception
+        `execute()` raised was an `AdapterExecutionConflict`. Receives
+        only the bare primitive `resolved_resource_id` (never an ORM
+        object -- TX1 has already rolled back, so any ORM-bound reference
+        from `execute()` is detached/invalid). Default: a no-op -- every
+        adapter that predates this mechanism, and any `AdapterExecutionConflict`
+        carrying `resolved_resource_id=None`, is unaffected. If this
+        raises, TX2 itself aborts (the framework does not catch it) and
+        the session/plan pair falls back to the existing generic
+        fence-loss/recovery sweep -- never a new PR20-specific recovery
+        mechanism."""
+        return
+
+    async def on_execution_recovery(self, db: AsyncSession, session_id: uuid.UUID) -> None:
+        """Roadmap PR20E (design §14.4c). Called by `recover_session()`
+        (`app.services.import_validation_service`), inside its existing
+        recovery transaction, only when the recovered job's `job_type`
+        was `"execute"` -- `dry_run`/`validate` recovery never needs this
+        call. Gives an adapter with a persisted execution-time
+        sub-resource (e.g. PR20's dry-run plan) a chance to reconcile it
+        to a failed state using only the session id -- no exception, no
+        captured primitive, since a hard worker crash (the case this hook
+        exists for) produces neither. Default: a no-op. If this raises,
+        the exception propagates uncaught and the caller's entire
+        recovery transaction rolls back -- the stale job/session are left
+        exactly as they were before this recovery attempt, available for
+        a later recovery call to retry from scratch."""
+        return
 
 
 # §26/§10: production ships with no concrete adapter registered for any
