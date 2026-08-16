@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import type { DryRunPlanOut } from "@/types/legacyImportApi";
+import { formatDateTimeInTimezone } from "@/utils/printFormat";
 
 interface EquipmentMasterDryRunPlanSummaryProps {
   plan: DryRunPlanOut;
@@ -38,6 +39,19 @@ export function EquipmentMasterDryRunPlanSummary({
   return (
     <div className="flex flex-col gap-3">
       <h3 className="text-sm font-semibold">แผนการนำเข้า (ทดลองนำเข้าโดยยังไม่บันทึก)</h3>
+      {/* Roadmap PR20F review round 1 (P1 "Plan ID"): the operator must be
+          able to tell exactly which immutable, persisted plan they are
+          reviewing -- never the session id, never inferred. */}
+      <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+        <div>
+          <dt className="text-xs text-[var(--text-muted)]">รหัสแผนการนำเข้า</dt>
+          <dd className="break-all font-mono text-xs">{plan.id}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-[var(--text-muted)]">เวลาที่สร้างแผน</dt>
+          <dd>{formatDateTimeInTimezone(plan.created_at, "Asia/Bangkok")}</dd>
+        </div>
+      </dl>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         {cards.map((card) => (
           <div key={card.label} className="surface flex flex-col gap-1 rounded-xl border p-3">

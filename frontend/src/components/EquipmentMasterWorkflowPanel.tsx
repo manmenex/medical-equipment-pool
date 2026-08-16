@@ -3,6 +3,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-quer
 
 import { EquipmentMasterDryRunPlanSummary } from "@/components/EquipmentMasterDryRunPlanSummary";
 import { EquipmentMasterExecuteAction } from "@/components/EquipmentMasterExecuteAction";
+import { EquipmentMasterPlanRowsTable } from "@/components/EquipmentMasterPlanRowsTable";
 import { LegacyImportIssuesTable } from "@/components/LegacyImportIssuesTable";
 import { LegacyImportResultSummary } from "@/components/LegacyImportResultSummary";
 import { LegacyImportStatusBadge } from "@/components/LegacyImportStatusBadge";
@@ -136,8 +137,20 @@ export function EquipmentMasterWorkflowPanel({ sessionId }: { sessionId: string 
   // Every page shares the same plan identity/summary/status; only `rows`
   // accumulates across pages (design §16: backend cursor pagination, never
   // a client-computed full fetch).
+  //
+  // Review round 1 (P1 pagination bug): `rows_next_cursor` must come from
+  // the LAST fetched page, not `pages[0]` -- the first page's own cursor
+  // stays truthy forever once spread onto the merged object, which kept
+  // "โหลดรายละเอียดเพิ่มเติม" visible even after every row had already been
+  // loaded. Visibility itself is driven by react-query's own `hasNextPage`
+  // below, never by this field directly, but the merged object is kept
+  // internally consistent regardless.
   const plan = planPages?.pages[0]
-    ? { ...planPages.pages[0], rows: planPages.pages.flatMap((p) => p.rows) }
+    ? {
+        ...planPages.pages[0],
+        rows: planPages.pages.flatMap((p) => p.rows),
+        rows_next_cursor: planPages.pages[planPages.pages.length - 1].rows_next_cursor,
+      }
     : undefined;
   const planNotFound =
     planIsError && describeEquipmentMasterImportError(planError).kind === "plan_not_found";
@@ -146,17 +159,28 @@ export function EquipmentMasterWorkflowPanel({ sessionId }: { sessionId: string 
   const {
     data: findingPages,
     isLoading: findingsLoading,
+    isError: findingsIsError,
     fetchNextPage: fetchNextFindingsPage,
     hasNextPage: hasNextFindingsPage,
     isFetchingNextPage: isFetchingNextFindingsPage,
+    refetch: refetchFindings,
   } = useInfiniteQuery({
     queryKey: ["legacy-import", "equipment-master", "findings", sessionId],
     queryFn: ({ pageParam }) => listEquipmentMasterValidationFindings(sessionId, { limit: 50, cursor: pageParam }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.next_cursor,
     enabled: shouldFetchFindings,
+    retry: false,
   });
   const findings = findingPages?.pages.flatMap((p) => p.items) ?? [];
+  // Review round 1 (P2 "Findings request failure must not look empty"): the
+  // backend already told us (finding_count > 0) that findings exist for
+  // this session -- if the request for them then fails, rendering an empty
+  // table would falsely read as "no issues" and could let the operator
+  // proceed without ever seeing what the backend flagged. This never
+  // substitutes an empty array; it gates progression instead (see the
+  // dry-run button below), until a retry actually succeeds.
+  const findingsBlockProgression = shouldFetchFindings && findingsIsError;
 
   async function refreshAll() {
     await Promise.all([
@@ -303,17 +327,43 @@ export function EquipmentMasterWorkflowPanel({ sessionId }: { sessionId: string 
             <button
               type="button"
               onClick={handleDryRun}
-              disabled={dryRunning}
+              disabled={dryRunning || findingsBlockProgression}
               className="rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-medium disabled:opacity-50"
             >
               {dryRunning ? "กำลังทดลองนำเข้า..." : session.status === "validated" ? "ทดลองนำเข้า" : "ทดลองนำเข้าอีกครั้ง"}
             </button>
           )}
         </div>
-        {POLLING_STATUSES.has(session.status) && (
-          <p role="status" aria-live="polite" className="mt-2 text-xs text-[var(--text-muted)]">
-            กำลังดำเนินการอยู่ กรุณารอสักครู่...
+        {findingsBlockProgression && DRY_RUN_ADMISSIBLE_STATUSES.has(session.status) && (
+          <p className="mt-2 text-xs text-status-repair">
+            ต้องโหลดรายการที่ต้องตรวจสอบให้สำเร็จก่อนจึงจะทดลองนำเข้าต่อได้ (ดูด้านล่าง)
           </p>
+        )}
+        {POLLING_STATUSES.has(session.status) && (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <p role="status" aria-live="polite" className="text-xs text-[var(--text-muted)]">
+              กำลังดำเนินการอยู่ กรุณารอสักครู่...
+            </p>
+            {/* Review round 1 (P1 "Recovery must be reachable from running
+                states after reload"): a worker crash, tab close, or lost
+                connection can leave the session showing a running status
+                with no local error to hang a recover button off of --
+                reloading straight into this state must still let the
+                operator attempt recovery, without the frontend guessing
+                lease staleness itself. The backend is the sole authority:
+                it either recovers a genuinely stale job or rejects this as
+                IMPORT_SESSION_INVALID_STATE ("nothing to recover, lease
+                still active"), which renders as a normal, non-fatal error
+                banner below -- never treated as a workflow failure. */}
+            <button
+              type="button"
+              onClick={handleRecover}
+              disabled={recovering}
+              className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+            >
+              {recovering ? "กำลังตรวจสอบ..." : "ตรวจสอบ/กู้คืนงาน"}
+            </button>
+          </div>
         )}
       </div>
 
@@ -359,6 +409,19 @@ export function EquipmentMasterWorkflowPanel({ sessionId }: { sessionId: string 
           <h3 className="mb-3 text-sm font-semibold">รายการที่ต้องตรวจสอบ</h3>
           {findingsLoading ? (
             <p className="text-sm text-[var(--text-muted)]">กำลังโหลดรายการ...</p>
+          ) : findingsIsError ? (
+            // Review round 1 (P2): a distinct, explicit failure state --
+            // never rendered as if it were a genuine zero-findings result.
+            <div role="alert" className="flex flex-col items-start gap-2">
+              <p className="text-sm text-status-repair">ไม่สามารถโหลดรายการที่ต้องตรวจสอบได้ (มี {session.finding_count.toLocaleString()} รายการ)</p>
+              <button
+                type="button"
+                onClick={() => refetchFindings()}
+                className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium"
+              >
+                ลองใหม่
+              </button>
+            </div>
           ) : (
             <>
               <LegacyImportIssuesTable findings={findings.map(toImportFinding)} />
@@ -402,21 +465,34 @@ export function EquipmentMasterWorkflowPanel({ sessionId }: { sessionId: string 
             confirming={confirming}
             alreadyConfirmed={plan.confirmed_at !== null}
           />
-          {plan.rows_next_cursor && (
-            <button
-              type="button"
-              onClick={() => fetchNextPlanPage()}
-              disabled={isFetchingNextPlanPage}
-              className="mt-3 rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium disabled:opacity-50"
-            >
-              {isFetchingNextPlanPage ? "กำลังโหลด..." : "โหลดรายละเอียดเพิ่มเติม"}
-            </button>
-          )}
-          {!hasNextPlanPage && plan.rows.length > 0 && (
-            <p className="mt-2 text-xs text-[var(--text-muted)]">
-              แสดง {plan.rows.length.toLocaleString()} จาก {plan.rows_total.toLocaleString()} รายการ
-            </p>
-          )}
+
+          {/* Review round 1 (P1 "Render the ACTUAL DryRunPlan being
+              confirmed"): the operator must see the actual persisted rows
+              -- not just aggregate counters -- before confirming/executing.
+              `plan.rows` is exactly what the backend returned, accumulated
+              page-by-page; nothing here is recomputed. */}
+          <div className="mt-4 border-t border-[var(--border)] pt-4">
+            <h4 className="mb-3 text-sm font-semibold">รายละเอียดแผนการนำเข้า (รายแถว)</h4>
+            <EquipmentMasterPlanRowsTable rows={plan.rows} />
+            {/* Review round 1 (P1 pagination bug): visibility is driven by
+                react-query's own `hasNextPage` for the CURRENT accumulated
+                result, never by a single page's own cursor field. */}
+            {hasNextPlanPage && (
+              <button
+                type="button"
+                onClick={() => fetchNextPlanPage()}
+                disabled={isFetchingNextPlanPage}
+                className="mt-3 rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium disabled:opacity-50"
+              >
+                {isFetchingNextPlanPage ? "กำลังโหลด..." : "โหลดรายละเอียดเพิ่มเติม"}
+              </button>
+            )}
+            {!hasNextPlanPage && plan.rows.length > 0 && (
+              <p className="mt-2 text-xs text-[var(--text-muted)]">
+                แสดง {plan.rows.length.toLocaleString()} จาก {plan.rows_total.toLocaleString()} รายการ
+              </p>
+            )}
+          </div>
 
           {plan.confirmed_at !== null && EXECUTE_ADMISSIBLE_STATUSES.has(session.status) && (
             <div className="mt-4 border-t border-[var(--border)] pt-4">

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
 import { LegacyImportAccessGate } from "@/components/LegacyImportAccessGate";
@@ -36,17 +36,33 @@ export function LegacyImportListPage() {
   // mirrors the rest of this codebase's "don't call a lookup a role can't
   // use" convention (e.g. AdminPage never mounts InventoryImportPanel
   // unless canImportInventory(user) is already true).
+  // Review round 1 (P1 "Legacy Import session list must paginate"): a
+  // single limit:50 fetch silently hid every real Equipment Master session
+  // beyond the first page. useInfiniteQuery follows the backend's own
+  // next_cursor through an explicit "โหลดเพิ่มเติม" action instead of
+  // discarding it -- mirroring the same cursor pattern already used for
+  // equipment transaction history (EquipmentDetailPage) and DryRunPlan rows
+  // (EquipmentMasterWorkflowPanel). The mock Receive/Issue list has no
+  // pagination concern of its own -- MockImportClient.listSessions() always
+  // returns its full, small fixture set in one page (nextCursor: null).
   const {
-    data: realPage,
+    data: realPages,
     isLoading: realLoading,
     isError: realIsError,
     error: realError,
     refetch: refetchReal,
-  } = useQuery({
+    fetchNextPage: fetchNextRealPage,
+    hasNextPage: hasNextRealPage,
+    isFetchingNextPage: isFetchingNextRealPage,
+  } = useInfiniteQuery({
     queryKey: ["legacy-import", "equipment-master", "sessions"],
-    queryFn: () => listEquipmentMasterSessions({ limit: 50 }),
+    queryFn: ({ pageParam }) => listEquipmentMasterSessions({ limit: 50, cursor: pageParam }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.next_cursor,
     enabled: canManageLegacyImport(user),
   });
+  const realItems = realPages?.pages.flatMap((p) => p.items) ?? [];
+  const realTotal = realPages?.pages[0]?.total ?? null;
   const {
     data: mockPage,
     isLoading: mockLoading,
@@ -84,7 +100,7 @@ export function LegacyImportListPage() {
   // display name (only created_by_user_id, a user id reference with no
   // name-resolution endpoint in this contract) -- both rendered honestly
   // as "-"/the raw id rather than fetched per-row or fabricated.
-  const realRows: MergedImportRow[] = (realPage?.items ?? []).map((session) => ({
+  const realRows: MergedImportRow[] = realItems.map((session) => ({
     id: session.id,
     categoryLabel: IMPORT_CATEGORY_LABELS.equipment_master,
     filename: "-",
@@ -184,6 +200,21 @@ export function LegacyImportListPage() {
                 </tbody>
               </table>
             </div>
+          )}
+          {!isLoading && !isError && hasNextRealPage && (
+            <button
+              type="button"
+              onClick={() => fetchNextRealPage()}
+              disabled={isFetchingNextRealPage}
+              className="mt-3 rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium disabled:opacity-50"
+            >
+              {isFetchingNextRealPage ? "กำลังโหลด..." : "โหลดเพิ่มเติม"}
+            </button>
+          )}
+          {!isLoading && !isError && !hasNextRealPage && realTotal !== null && realItems.length > 0 && (
+            <p className="mt-2 text-xs text-[var(--text-muted)]">
+              ข้อมูลหลักเครื่องมือ: แสดง {realItems.length.toLocaleString()} จาก {realTotal.toLocaleString()} รายการ
+            </p>
           )}
         </div>
       </div>
