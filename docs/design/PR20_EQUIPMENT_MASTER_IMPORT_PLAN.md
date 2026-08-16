@@ -1,6 +1,32 @@
 # Roadmap PR20 — Equipment Master Import: Design Specification
 
-**Status:** Design only. Not implemented. This document defines the
+**Status (updated by the Post-PR20 Governance Sync):** **DESIGN:
+finalized. IMPLEMENTATION: PR20A–PR20F all merged. CURRENT STATE:
+Equipment Master import is available end-to-end**, from source artifact
+registration through operator-facing frontend execution — PR20A (source
+artifact infrastructure, GitHub PR #90), PR20B (`Equipment.version`,
+GitHub PR #91), PR20C (parse/normalize/validate, GitHub PR #93), PR20D
+(persisted `DryRunPlan`, GitHub PR #94), PR20E (execute, GitHub PR #95),
+and PR20F (real frontend integration, GitHub PR #96) are all merged into
+`claude/medical-equipment-pool-0c7fz0`, current baseline
+`2743af849702ef551927b9c362421df08c80b5d9`. See
+`docs/DECISION_LOG.md` ("Roadmap PR20 complete: PR20A–PR20F merged") and
+`docs/ROADMAP.md`'s PR20 note for the full slice-by-slice record. **This
+governance sync updated this status/current-state annotation and the §24
+slice/readiness table below (marking every slice merged, with its own
+GitHub PR/squash SHA) to reflect the merged state — it did not redesign
+or reinterpret any normative technical contract.** The rest of this
+document — including the original "Design only. Not implemented."
+framing immediately below, every Owner Decision's resolution record (§9
+OD-1–OD-4), the full technical design (§1–§23, §25), and every historical
+fix-round entry (including PR20E's own post-implementation correction
+round, "Fix round 11") — is preserved unedited as the authoritative
+historical design/decision record and must not be read as describing the
+current implementation state on its own; only this Status section and §24
+speak to current state.
+
+**Original status (as authored, now historical for current-state
+purposes — see above):** Design only. Not implemented. This document defines the
 architecture and contract for PR20. Four Owner Decisions were opened by
 this document (§9): **OD-1 (source schema), OD-2 (create/update field
 policy), OD-3 (BCM/Item Number identity policy), and OD-4 (CREATE Asset
@@ -15,7 +41,8 @@ Validate) readiness is distinct from CREATE-execution readiness**: PR20C
 may be implemented once its own contract is complete (§7, §8, §9), but
 actual CREATE execution for any row lacking an authoritative
 `asset_number` remains blocked per OD-4 until the Repository Owner
-supplies that source — see §24 for the exact readiness statement.
+supplies that source — see §24 for the exact readiness statement (as
+originally authored; all six slices below have since merged).
 **Fix round 1** (independent review 4903718985, REQUEST CHANGES on head
 `41a9430637d772ed355708a76e1a46baf4366af2`) resolved five technical design
 gaps this revision closes without touching OD-1/OD-2/OD-3: the adapter
@@ -4184,17 +4211,19 @@ rather than assumed:**
   predecessor, the PR19B governance sync, did) — not performed by this
   Design PR itself (§25).
 
-**Summary — which slice can start now, which is blocked, and by what:**
+**Summary — which slice can start now, which is blocked, and by what (as
+originally authored; see the Status line at the top of this document for
+the current, post-merge state — all six slices below have since merged):**
 
 | Slice | Owner-Decision-blocked? | Depends on | Ready now? |
 |---|---|---|---|
 | PR20A | No | This design's own review/approval | **Yes — merged, GitHub PR #90** |
 | PR20B | No | None | **Yes — merged, GitHub PR #91** |
-| PR20C (parse + validation) | **No — OD-1, OD-2, OD-3, OD-4 all RESOLVED (§9)** | PR20A (merged) | **Yes** |
-| PR20D (persisted plan) | No (RESOLVED) | PR20C (not yet merged) | No — sequencing only |
-| PR20E (execution) | No (RESOLVED for identity/field policy) — **but CREATE-execution for any row lacking an authoritative `asset_number` remains blocked by OD-4** until the Repository Owner supplies that source; UPDATE execution and CREATE execution for rows with an authoritative `asset_number` are not blocked by OD-4 | PR20B (merged) and PR20D (not yet merged) | No — sequencing only, plus OD-4's narrower CREATE-execution gate |
-| PR20F | No (indirectly gated by having something real to integrate) | PR20A, PR20C, PR20D, PR20E | No |
-| PR20G | No | All of the above merged | No |
+| PR20C (parse + validation) | **No — OD-1, OD-2, OD-3, OD-4 all RESOLVED (§9)** | PR20A (merged) | **Yes — merged, GitHub PR #93** |
+| PR20D (persisted plan) | No (RESOLVED) | PR20C | **Yes — merged, GitHub PR #94** |
+| PR20E (execution) | No (RESOLVED for identity/field policy) — CREATE-execution for any row lacking an authoritative `asset_number` remains blocked by OD-4 until the Repository Owner supplies that source; UPDATE execution and CREATE execution for rows with an authoritative `asset_number` are not blocked by OD-4 | PR20B and PR20D | **Yes — merged, GitHub PR #95** |
+| PR20F | Frontend integration over PR20A/C/D/E | PR20A, PR20C, PR20D, PR20E | **Yes — merged, GitHub PR #96** |
+| PR20G (governance sync) | No | All of the above merged | This document's own Status line above is that governance sync's update |
 
 **Parse/validation readiness is not CREATE-execution readiness.** PR20C
 is READY as parser/validation work: it can deterministically classify

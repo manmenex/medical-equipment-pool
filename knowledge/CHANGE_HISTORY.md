@@ -7,6 +7,98 @@
 
 This file tracks *what changed in the shared mental model* over time, one line of context per concept. For the PR-by-PR rationale behind each change, see `docs/DECISION_LOG.md` (from Roadmap PR5 onward) and `docs/PROJECT_MEMORY.md` (Roadmap PR1 through Governance Pack v1.0).
 
+## Roadmap PR20 complete: PR20A–PR20F merged (GitHub PR #90, #91, #93, #94, #95, #96)
+
+Roadmap PR20 (Equipment Master Import) is now fully complete — the legacy
+Equipment Master import workflow exists end-to-end, from source artifact
+ingestion through operator-facing frontend execution, replacing the
+PR19B mock workflow for this dataset type. Six implementation slices
+merged, in order, each a real squash-merge SHA on `claude/medical-equipment-pool-0c7fz0`
+(reviewed feature-branch heads, where independently re-reviewed at an
+exact head, are distinct from and never treated as these baselines):
+
+- **PR20A** (GitHub PR #90, squash SHA `1de3db1eaef81ead2e20cdbf4758aebfdf9f55a0`)
+  — source artifact infrastructure: `import_source_blobs` table (migration
+  `0016`), `POST /import-sessions/{id}/source/upload` with
+  server-authoritative checksum/byte-size, `ImportSourceReader`/
+  `VerifiedSourceContent` read-time re-verification, and
+  `AdapterInvocationContext`. No parser, field mapping, or Equipment
+  mutation shipped in this slice.
+- **PR20B** (GitHub PR #91, squash SHA `bd47701917207479f3d91a349961f3d61ef707c2`)
+  — `Equipment.version`, an `INTEGER NOT NULL DEFAULT 1` optimistic-
+  concurrency counter (migration `0017`) incremented by exactly 1 at
+  every genuine mutation path, exposed read-only in `EquipmentOut`;
+  closed finding PR91-H1 (clients could bump `version` without a genuine
+  mutation) with a two-layer fix (`EquipmentUpdate` rejects undeclared
+  fields; the CRUD layer only increments `version` when there is
+  something to set).
+- **Owner Decisions OD-1–OD-4** (GitHub PR #89 design, GitHub PR #92
+  resolution) — all RESOLVED: OD-1 (the 32-column `export_template.xlsx`
+  source schema), OD-2 (exact CREATE-writable/UPDATE-writable/immutable
+  field lists), OD-3 (BCM/Item Number identity-matching policy), and OD-4
+  (`asset_number` is never fabricated or derived; CREATE requires an
+  authoritative source, absent which a blocking
+  `ASSET_NUMBER_REQUIRED_FOR_CREATE` finding applies — never a
+  placeholder value).
+- **PR20C** (GitHub PR #93, squash SHA `1d04672ab6d767e35f5be63f765da0a94033b324`)
+  — the read-only Equipment Master parse/normalize/validate adapter
+  implementing OD-1–OD-4: Sheet1 workbook contract, 32-column header
+  mapping, BCM/Item No. normalization, the OD-3 identity matrix, the OD-4
+  fail-closed CREATE Asset Number policy, authoritative legacy status
+  mapping, and OOXML macro/VBA structural rejection. No Equipment
+  mutation, no migration.
+- **PR20D** (GitHub PR #94, squash SHA `c72baa19888edcfb2fa2fcb593c649ae2ac35bec`)
+  — a persisted, immutable `DryRunPlan` artifact (migration `0018`) bound
+  to session/source/checksum/validation-snapshot/mapping-version identity,
+  so the plan an operator reviews and confirms is the exact artifact
+  PR20E later executes, never a live recomputation; `GET
+  .../dry-run-plan` and `POST .../dry-run-plan/{plan_id}/confirm`.
+  Multiple review rounds hardened global lock ordering (Job → Session →
+  Plan, closing a deadlock risk between dry-run completion and concurrent
+  recovery), `ConfirmationResult`/`newly_confirmed` idempotent-confirm
+  semantics, and a single unified `409 IMPORT_DRY_RUN_PLAN_STALE` contract
+  covering every plan-invalidation sub-case (superseded, session moved on,
+  missing, or foreign to another session) — the confirm endpoint never
+  distinguishes these by a different code.
+- **PR20E** (GitHub PR #95, squash SHA `698c34d9c280b2ca2ea4f299bd186517c9fb26a8`)
+  — executes exactly the persisted, confirmed `DryRunPlan` PR20D produced,
+  never a live recomputation; reuses PR19A3's execution claim/lease/
+  fencing/TX1/TX2/recovery/audit machinery unchanged, adding only the
+  Equipment-Master-specific CREATE/UPDATE mutation. Two independent review
+  rounds hardened global lock ordering (Job → Session → adapter-owned
+  resource), `resolved_resource_id` survival across rollback
+  (context-recorded primary with an exception-carried fallback, explicit
+  precedence when both are present), and UPDATE freshness-before-no-op
+  validation against `Equipment.version`.
+- **PR20F** (GitHub PR #96, squash SHA `2743af849702ef551927b9c362421df08c80b5d9`)
+  — replaces the PR19B mock Equipment Master workflow with real frontend
+  calls against PR20A–E: a dedicated `equipmentMasterImportClient`, a new
+  interactive workflow panel rendering the actual persisted `DryRunPlan`
+  (plan ID, timestamp, every row's CREATE/UPDATE/SKIP action, BCM/Item
+  No., normalized values, warnings — never just aggregate counters),
+  cursor-paginated plan rows/findings/session lists, a fail-closed guard
+  against combining rows from two different plan generations across
+  pagination, always-reachable recovery from a running state after
+  reload, and a distinct findings-fetch-failure state that never
+  masquerades as a genuine empty result. Receive History and Issue
+  History remain unimplemented frontend-only placeholders (unchanged PR19B
+  mock path), dispatched away from the real Equipment Master endpoints by
+  a UUID-shaped-session-id check. Two independent review rounds: round 1
+  (REQUEST CHANGES, four findings — render the actual plan rows and fix a
+  pagination-visibility bug, reach running-state recovery after reload,
+  paginate the session list, distinguish a findings-fetch failure from a
+  genuine empty result) and round 2 (the cross-plan-pagination identity
+  guard; no finding remaining), CI green (6/6) on the final exact head.
+
+**PR20 does not implement Receive History import, Issue History import,
+PR21, MEMS, or Recall Monitor.** Those remain future Roadmap PR21+ scope.
+**Roadmap PR21 (Legacy Receive and Issue History Import) is the next
+planned Roadmap item, not started by this entry** — it depends on PR19A
+and PR20, both now complete, per
+`docs/audits/04-consolidated-implementation-plan.md` Part D. See
+`docs/DECISION_LOG.md` ("Roadmap PR20 complete: PR20A–PR20F merged") for
+the full slice-by-slice record.
+
 ## Roadmap PR19B merged: Exception Record closed; Roadmap PR19 fully complete (GitHub PR #80)
 
 Roadmap PR19B (Legacy Import Frontend Skeleton) merged after three
@@ -21,9 +113,12 @@ persisted finding despite TX1 rollback semantics); final reviewed head
 The real squash-merge SHA, `04f5bf5c76b51744981d1cc8072c074e604224e9`, is
 distinct from that final reviewed feature-branch head, per this
 repository's standard squash-merge SHA-retrieval practice — the reviewed
-head is never treated as the merged baseline. `04f5bf5c...` is now the
-current authoritative base-branch tip, superseding `7f13a1e...` for
-current-state purposes. PR19B's frontend types/mock fixtures were
+head is never treated as the merged baseline. `04f5bf5c...` was, as of
+this entry, the current authoritative base-branch tip, superseding
+`7f13a1e...` for current-state purposes at that time. **Superseded by the
+entry above:** `04f5bf5c...` is itself now historical/intermediate — the
+current authoritative baseline is `2743af849702ef551927b9c362421df08c80b5d9`
+(PR20F), per "Roadmap PR20 complete: PR20A–PR20F merged" above. PR19B's frontend types/mock fixtures were
 reconciled against PR19A's merged public contracts (nullable
 `imported_rows`, the `failure_reason` field); its terminal-outcome
 presentation (`LegacyImportResultSummary`) now renders truthfully per
