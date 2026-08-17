@@ -177,17 +177,31 @@ historical `OPEN` rows are the risk case, gated by Owner Decision (§16).
 
 **Source Evidence Update.** The Owner supplied the actual production
 Equipment Pool AppSheet workbook, `บันทึกข้อมูล Equipment Pool.xlsx`
-(28 sheets, ~20.7 MB). This session inspected it **directly** with
-`openpyxl` (headers, sample rows, full row counts, date ranges, and
-uniqueness/referential-integrity checks) — not transcribed from a
-description. The frontend mock fixture
-(`frontend/src/services/legacyImportFixtures.ts`) remains **unused as
-evidence anywhere in this document.** The workbook file itself is a
-session upload for design-review purposes and is **not committed to
-this repository** by this PR (it contains real staff names and ward
-assignments; scope is `docs/**` only, §51) — the real import at
+(28 sheets, 20,690,045 bytes). This session inspected it **directly**
+with `openpyxl` (headers, sample rows, full row counts, date ranges,
+and uniqueness/referential-integrity checks computed fresh against the
+real data) — not transcribed from a description. The frontend mock
+fixture (`frontend/src/services/legacyImportFixtures.ts`) remains
+**unused as evidence anywhere in this document.** The workbook file
+itself is a session upload for design-review purposes and is **not
+committed to this repository** by this PR (it contains real staff names
+and ward assignments; scope is `docs/**` only, §51) — the real import at
 implementation time will require the Owner to supply it again through
 PR21's own upload flow.
+
+**Immutable evidence binding.** Every workbook-derived claim in this
+document (§6 through §14, §24) is based on the workbook identified by:
+
+- **SHA-256:** `8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`
+- **Sanitized evidence manifest:**
+  `docs/evidence/pr21/equipment-pool-workbook-manifest.json` (machine-
+  readable, structural metadata and aggregate counts only) and its
+  companion `docs/evidence/pr21/equipment-pool-workbook-manifest.md`
+  (human-readable summary) — committed alongside this design document.
+  No row-level values, personnel names, patient identifiers, or
+  free-text notes appear in either file. A future re-inspection of a
+  workbook that does not hash to the SHA-256 above is a **different**
+  file, and the claims below do not automatically transfer to it.
 
 ### 6.1 Closed-world sheet classification (all 28 sheets, directly inspected)
 
@@ -234,7 +248,7 @@ it** (§6.3):
 
 | Sheet | Open question |
 |---|---|
-| `ข้อมูลการส่ง SDC`, `ข้อมูลการรับ SDC` | Structurally near-identical to the canonical line-item tables (same columns minus the checklist/qty/notes/time/BME/User fields), and cross-checked rows for a shared order number match exactly — but total row counts diverge sharply: 28,078 vs. `ข้อมูลส่งเครื่องมือ`'s 19,912 (Issue), and 51,444 vs. `ข้อมูลรับเครื่องมือ`'s 19,768 (Receive, **2.6× more rows**). "SDC" is not a term defined anywhere in this repository's documentation. This is not guessed — it is recorded as an open question. |
+| `ข้อมูลการส่ง SDC`, `ข้อมูลการรับ SDC` | Structurally near-identical to the canonical line-item tables (same columns minus the checklist/qty/notes/time/BME/User fields). Total row counts diverge sharply from the canonical sheets (28,078 vs. `ข้อมูลส่งเครื่องมือ`'s 19,912; 51,444 vs. `ข้อมูลรับเครื่องมือ`'s 19,768), but re-measurement (`sdc_sheets_evidence` in the manifest, §6) shows the **non-blank** row counts and **distinct** order-reference/`ME.Code` counts are identical to the canonical sheets' own counts — the divergence is fully attributable to large trailing blocks of blank rows (8,207 and 31,694 respectively), not additional real data. This is aggregate-count evidence, not a row-by-row diff. "SDC" is not a term defined anywhere in this repository's documentation. **Narrowed, not resolved** — recorded as an open question, not guessed. |
 
 ### 6.2 Canonical source correction (supersedes this task's own suggestion)
 
@@ -252,10 +266,10 @@ for this conclusion:
 - Every `เลขที่ใบส่ง`/`เลขที่ใบรับเครื่อง` value on a line-item row
   matches a `เลขที่ใบยืม`/`เลขที่ใบคืน` value on the corresponding
   order-header sheet — verified by direct set-membership check: of
-  5,677 distinct Issue order references, **5,676 resolve** (only one,
-  `'Borrow1000000005'`, does not — an apparent truncated/malformed
-  value, itself a concrete example of the orphan-reference `ERROR`
-  finding §15 already specifies, not a structural problem).
+  5,677 distinct Issue order references, **all but one resolve**
+  (only one, `'Borrow1000000005'`, does not — an apparent truncated/
+  malformed value, itself a concrete example of the orphan-reference
+  `ERROR` finding §15 already specifies, not a structural problem).
 - Order numbers are **100% unique** within their header sheet (5,685
   distinct `เลขที่ใบยืม` values for 5,685 non-null rows; 6,158 for
   6,158 `เลขที่ใบคืน`) — a genuine, stable, per-transaction key.
@@ -266,9 +280,11 @@ for this conclusion:
 four canonical sheets — this is a material advance over "conceptual
 fields only." **The field-contract gate remains open** for two reasons,
 neither guessed around: (a) the `ข้อมูลการส่ง SDC`/`ข้อมูลการรับ SDC`
-ambiguity (§6.1) must be resolved — if these represent a distinct
-equipment sub-fleet not otherwise captured, the canonical-source
-selection in §6.2 would be incomplete; (b) full PR21B/C-grade field
+ambiguity (§6.1) — narrowed by re-measurement (their non-blank/distinct
+counts match the canonical sheets exactly, consistent with trailing
+blank rows rather than a distinct equipment sub-fleet) but not fully
+closed without Owner confirmation, since a full row-by-row diff was not
+performed; (b) full PR21B/C-grade field
 mapping (exact validation rules, exact `ERROR`/`WARNING` code list) is
 implementation-slice work, not finalized by a design document per this
 Roadmap's own convention (mirroring PR20's own OD-1/§7/§8 split between
@@ -1533,13 +1549,23 @@ import is simply not needed (the recommended default).
 
 ## 45. Required Owner Decisions
 
-- **OD-PR21-0 — topology component RESOLVED; field-mapping component
-  still open.** Real source workbook supplied and directly inspected
-  (§6). **Topology: RESOLVED — Option A** (§7). **Still open:** the
-  `ข้อมูลการส่ง SDC`/`ข้อมูลการรับ SDC` ambiguity (§6.1), full
-  confirmation that the `ลำดับ` row key is re-export-durable (§24), and
-  Issue↔Receive pairing policy, now backed by a confirmed-negative
-  finding rather than an inspection gap (§11).
+- **OD-PR21-0 — PARTIALLY RESOLVED: topology resolved;
+  source-schema/event-identity/pairing components remain open.** Real
+  source workbook supplied and directly inspected (§6), bound to its
+  SHA-256 identity `8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`
+  and the sanitized evidence manifest at
+  `docs/evidence/pr21/equipment-pool-workbook-manifest.json`.
+  **RESOLVED component: source topology** — one workbook snapshot → one
+  `ImportSession` → one `ImportSource` → whitelisted sheets within that
+  source (Option A, §7). **Still OPEN components:** exact field-level
+  contract where not yet proven (the `ข้อมูลการส่ง SDC`/
+  `ข้อมูลการรับ SDC` ambiguity, narrowed but not closed, §6.1/§6.3);
+  stable event identity (the `ลำดับ` row key's re-export durability not
+  yet confirmed, §24); Issue↔Receive pairing (confirmed no deterministic
+  shared key exists — a negative finding, not an inspection gap, §11);
+  and any other source-dependent policy not proven by evidence. This
+  Owner Decision is **not** fully resolved — only its topology
+  sub-component is.
 - **OD-PR21-1.** Unmatched historical ISSUE-row policy (§16) —
   recommendation: block/reconcile by default (`ERROR`-severity per §15).
   Not resolved by the Source Evidence Update — the real source confirms
@@ -1628,11 +1654,16 @@ merges.
   ref-table cardinality (§8's refinement) is still PR21A's own design
   work. **Blocked on:** OD-PR21-3/4/5, and on PR21-Foundation's provider
   interface existing to register against.
-- **PR21B — Issue History Parser + Validation.** **Blocked on:**
-  OD-PR21-0, §4's identifier case matrix, §15's frozen error-code list,
-  §24's stable identity.
-- **PR21C — Receive History Parser + Matching/Validation.** **Blocked
-  on:** OD-PR21-0, OD-PR21-1, OD-PR21-2, §11's finalized matching keys.
+- **PR21B — Issue History Parser + Validation.** Not blocked by
+  topology (§7, resolved). **Blocked on:** the SDC-sheet clarification
+  (§6.1/§6.3), §4's finalized identifier case matrix, §15's frozen
+  error-code list, §24's stable event identity (re-export durability
+  not yet confirmed).
+- **PR21C — Receive History Parser + Matching/Validation.** Not blocked
+  by topology. **Blocked on:** the SDC-sheet clarification, OD-PR21-1,
+  OD-PR21-2, §11's Issue↔Receive pairing policy (confirmed no
+  deterministic key exists — an explicit Owner Decision is required
+  before this slice can proceed).
 - **PR21D — Persisted Dry-run + Historical Transaction Execution.**
   **Blocked on:** PR21A–C (and, transitively, PR21-Foundation).
 - **PR21E — Frontend Real Integration.** **Blocked on:** PR21D.
@@ -1640,8 +1671,13 @@ merges.
   `docs/ENGINEERING_WORKFLOW.md` §14 — not performed by this Design PR
   (§50).
 
-These names and this split remain provisional until topology (§7) is
-resolved — do not mark PR21A ready.
+**Source Evidence Update correction:** these names and this split are no
+longer provisional *on topology* — §7 is resolved. They remain
+provisional on the **real remaining blockers**: the SDC-sheet
+clarification, stable event-identity confirmation, Issue↔Receive
+pairing policy, and OD-PR21-3/4/5. **Do not mark PR21A ready merely
+because topology is now known** — the blockers above are independent of
+topology and still apply in full.
 
 ---
 
@@ -1651,7 +1687,7 @@ resolved — do not mark PR21A ready.
 |---|---|---|---|
 | Source topology (§7) | **RESOLVED — Option A, confirmed against the real workbook** | NO | — |
 | Canonical Issue/Receive sheet selection (§6.2) | RESOLVED — `Orders`+line-item pairs, verified by direct inspection | NO | — |
-| SDC sheet ambiguity (§6.1) | NOT RESOLVED — requires Owner clarification | YES (if SDC represents an uncaptured equipment sub-fleet) | Before PR21B/C's field contract is finalized |
+| SDC sheet ambiguity (§6.1) | NARROWED (aggregate counts match canonical sheets) but NOT RESOLVED — requires Owner clarification | YES (if SDC represents an uncaptured equipment sub-fleet) | Before PR21B/C's field contract is finalized |
 | Stable event identity / replay semantics (§24) | Strong candidates found (order no. + row key), re-export durability NOT CONFIRMED; **owned by a later source-dependent slice, not PR21-Foundation** | YES | Before PR21B/C/D's write-time idempotency |
 | Issue↔Receive pairing (§11) | Confirmed NO explicit linking field exists (negative finding, not an inspection gap) | YES | Before PR21C |
 | Validation/dry-run semantics (§15, §28) | RESOLVED: all-or-nothing PR19 gate; dry-run never contains ERROR-severity rows | NO | — |
@@ -1731,19 +1767,30 @@ notes.
 ## 50. Governance update (this Design PR's own scope)
 
 Per `docs/ENGINEERING_WORKFLOW.md` §6/§7 and PR19A/PR20's own design-PR
-precedent, this Fix Round's governance-update scope remains limited to:
-this design document, and a new `docs/DECISION_LOG.md` entry recording
-the architecture decisions made in this fix round (H2R's dry-run/
-validation consistency correction, H4R's PR20-compatible provider
-architecture, H5's Foundation-scope clarification, M1's fail-closed
-retention direction) — **without** claiming any Owner Decision in §45 is
-resolved. **Not performed:** any change to `docs/ROADMAP.md`,
+precedent, this PR's governance-update scope is limited to: this design
+document, a sanitized evidence manifest under `docs/evidence/pr21/`
+(§6), and a new `docs/DECISION_LOG.md` entry.
+
+**PR99 Source Evidence Update, current truth (supersedes the prior
+Fix-Round entries' "resolves no Owner Decision" framing, which is now
+historical for those specific rounds — H2R/H4R/H5/M1 genuinely resolved
+no Owner Decision when written):** this update **records the inspected
+workbook's evidence, bound to its SHA-256 identity**
+(`8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`,
+§6); **resolves the topology component of OD-PR21-0** (§7, §45); leaves
+OD-PR21-0's field-mapping/event-identity/pairing components, and
+OD-PR21-1 through OD-PR21-6 in full, open (§45); records this partial
+resolution in a new `docs/DECISION_LOG.md` entry; and does **not** start
+PR21-Foundation or any other runtime implementation.
+
+**Not performed:** any change to `docs/ROADMAP.md`,
 `docs/ROADMAP_STATUS.md`, `knowledge/*`, or
 `docs/audits/04-consolidated-implementation-plan.md`. **GitHub PR #97's
-accepted non-blocking P2 follow-up remains untouched and unresolved by
-this PR** — this fix round edits neither
-`docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` nor the PR20-related
-content of `docs/DECISION_LOG.md`.
+accepted non-blocking P2 follow-up, and GitHub PR #98's P2-A/P2-B
+follow-ups, remain untouched and unresolved by this PR** — this update
+edits neither `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` nor the
+PR20-related content of `docs/DECISION_LOG.md`, and does not rewrite any
+prior dated `DECISION_LOG.md` entry's own historical record.
 
 ---
 
