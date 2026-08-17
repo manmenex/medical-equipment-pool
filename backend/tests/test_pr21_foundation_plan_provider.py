@@ -8,9 +8,15 @@ regression it must preserve exactly). Does not re-test PR20D's own
 plan/row/confirmation contract (see test_pr20d_dry_run_plan.py) or PR19A3's
 own claim/fencing mechanics (see test_import_execution.py) -- both are
 reused unchanged here. This slice adds no PR21 public API, schema, or
-source-dependent parser -- see the design doc's §46 scope list."""
+source-dependent parser -- see the design doc's §46 scope list.
+
+PR100-H1/H2 fix round: adds a neutral-shape fake provider proving Foundation
+never depends on Equipment Master's field vocabulary, plus foreign-session/
+cross-plan-cursor/valid-pagination regressions for `list_plan_rows`'s
+now-mandatory ownership and cursor-binding checks."""
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -19,6 +25,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.exceptions import ImportDryRunPlanNotFoundError, InvalidInputError
 from app.crud import import_dry_run_plan as import_dry_run_plan_crud
 from app.crud import import_retention as import_retention_crud
 from app.models.import_session import (
@@ -31,8 +38,10 @@ from app.services import import_execution_service, import_lease
 from app.services.import_adapters.equipment_master import DATASET_TYPE as EQUIPMENT_MASTER_DATASET_TYPE
 from app.services.import_plan_provider import (
     DryRunPlanProvider,
+    Page,
     PlanProviderAlreadyRegisteredError,
     PlanProviderNotRegisteredError,
+    encode_plan_row_cursor,
     get_plan_provider,
     register_plan_provider,
     unregister_plan_provider,
@@ -66,8 +75,8 @@ class _NoopPlanProvider(DryRunPlanProvider):
     async def get_current_plan(self, db, *, import_session_id):
         return None
 
-    async def list_plan_rows(self, db, *, plan_id, limit, cursor_n, cursor_id):
-        return [], 0
+    async def list_plan_rows(self, db, *, import_session_id, plan_id, limit, cursor):
+        return Page(rows=[], total=0, next_cursor=None)
 
     async def confirm_plan(self, db, *, plan_id, import_session_id, current_user_id):
         raise NotImplementedError
@@ -82,14 +91,61 @@ class _RaisingPlanProvider(DryRunPlanProvider):
     async def get_current_plan(self, db, *, import_session_id):
         return None
 
-    async def list_plan_rows(self, db, *, plan_id, limit, cursor_n, cursor_id):
-        return [], 0
+    async def list_plan_rows(self, db, *, import_session_id, plan_id, limit, cursor):
+        return Page(rows=[], total=0, next_cursor=None)
 
     async def confirm_plan(self, db, *, plan_id, import_session_id, current_user_id):
         raise NotImplementedError
 
     async def redact_plan_artifacts(self, db, *, import_session_id):
         raise RuntimeError("simulated provider redaction failure")
+
+
+@dataclass(frozen=True)
+class _FakePlan:
+    """Deliberately not Equipment Master's vocabulary -- no `status`,
+    `summary_*`, or `confirmed_*` fields, proving `DryRunPlanProvider`
+    itself never requires them (PR100-H1)."""
+
+    label: str
+
+
+@dataclass(frozen=True)
+class _FakeRow:
+    """Deliberately not Equipment Master's row vocabulary -- no `action`,
+    `target_equipment_id`, `normalized_values`, or
+    `matched_identity_fields`."""
+
+    payload: str
+
+
+@dataclass(frozen=True)
+class _FakeConfirm:
+    """Deliberately a different shape than `ConfirmationResult` -- proves
+    `confirm_plan`'s return type is provider-opaque, not a shared DTO."""
+
+    accepted: bool
+
+
+class _NeutralShapePlanProvider(DryRunPlanProvider[_FakePlan, _FakeRow, _FakeConfirm]):
+    """A fake provider whose Plan/Row/Confirm shapes share zero field
+    names with Equipment Master's -- if Foundation's interface or registry
+    machinery ever read a field off these objects, this provider would
+    raise `AttributeError` immediately."""
+
+    dataset_type = _FAKE_DATASET_TYPE
+
+    async def get_current_plan(self, db, *, import_session_id) -> _FakePlan | None:
+        return _FakePlan(label="neutral-plan")
+
+    async def list_plan_rows(self, db, *, import_session_id, plan_id, limit, cursor) -> Page[_FakeRow]:
+        return Page(rows=[_FakeRow(payload="neutral-row")], total=1, next_cursor=None)
+
+    async def confirm_plan(self, db, *, plan_id, import_session_id, current_user_id) -> _FakeConfirm:
+        return _FakeConfirm(accepted=True)
+
+    async def redact_plan_artifacts(self, db, *, import_session_id) -> None:
+        return
 
 
 async def _get_user_id(db_session: AsyncSession) -> uuid.UUID:
@@ -200,6 +256,9 @@ def test_unregister_unknown_dataset_type_is_a_safe_noop():
 
 
 async def test_equipment_master_provider_get_current_plan_matches_crud(client: AsyncClient, seeded_users, db_session):
+    """PR100-H1: the provider now returns the CRUD layer's own ORM object
+    directly (no parallel mapping dataclass), so this proves identity, not
+    just field-by-field equality."""
     await _seed_equipment(db_session, bcm_code="BCM_PROV1", item_no="ITEM_PROV1")
     headers = await auth_headers(client)
     session = await _validated_session_with_update_rows(
@@ -210,13 +269,13 @@ async def test_equipment_master_provider_get_current_plan_matches_crud(client: A
 
     crud_plan = await import_dry_run_plan_crud.get_current_plan(db_session, import_session_id=session_uuid)
     provider = EquipmentMasterDryRunPlanProvider()
-    provider_record = await provider.get_current_plan(db_session, import_session_id=session_uuid)
+    provider_plan = await provider.get_current_plan(db_session, import_session_id=session_uuid)
 
-    assert provider_record is not None
-    assert provider_record.id == crud_plan.id
-    assert provider_record.status == crud_plan.status
-    assert provider_record.summary.total_rows == crud_plan.summary_total_rows
-    assert provider_record.summary.creates == crud_plan.summary_creates
+    assert provider_plan is not None
+    assert provider_plan.id == crud_plan.id
+    assert provider_plan.status == crud_plan.status
+    assert provider_plan.summary_total_rows == crud_plan.summary_total_rows
+    assert provider_plan.summary_creates == crud_plan.summary_creates
 
 
 async def test_equipment_master_provider_confirm_plan_matches_crud_first_confirm(
@@ -251,6 +310,156 @@ async def test_equipment_master_provider_confirm_plan_matches_crud_first_confirm
     )
     assert replay.newly_confirmed is False
     assert replay.plan.confirmed_at == result.plan.confirmed_at
+
+
+# ---------------------------------------------------------------------------
+# PR100-H1: Foundation is provider-neutral, not lossy-common-DTO
+# ---------------------------------------------------------------------------
+
+
+async def test_neutral_shape_provider_round_trips_its_own_types_unmodified(db_session):
+    """A provider whose Plan/Row/Confirm shapes share no field names with
+    Equipment Master registers and works through the exact same
+    `DryRunPlanProvider` interface -- proving Foundation's contract does
+    not require, read, or coerce any Equipment-Master-specific field."""
+    register_plan_provider(_NeutralShapePlanProvider())
+    try:
+        provider = get_plan_provider(_FAKE_DATASET_TYPE)
+        assert provider is not None
+
+        plan = await provider.get_current_plan(db_session, import_session_id=uuid.uuid4())
+        assert plan == _FakePlan(label="neutral-plan")
+
+        page = await provider.list_plan_rows(
+            db_session, import_session_id=uuid.uuid4(), plan_id=uuid.uuid4(), limit=25, cursor=None
+        )
+        assert page.rows == [_FakeRow(payload="neutral-row")]
+        assert page.total == 1
+        assert page.next_cursor is None
+
+        confirmation = await provider.confirm_plan(
+            db_session, plan_id=uuid.uuid4(), import_session_id=uuid.uuid4(), current_user_id=uuid.uuid4()
+        )
+        assert confirmation == _FakeConfirm(accepted=True)
+    finally:
+        unregister_plan_provider(_FAKE_DATASET_TYPE)
+
+
+def test_shared_page_envelope_carries_no_equipment_master_field():
+    """§5's "Equipment Master compatibility": Equipment Master's provider
+    may still internally expose `creates`/`target_equipment_id`/etc -- just
+    as attributes of its own domain object, never as required fields of
+    the shared `DryRunPlanProvider` contract itself. The generic `Page`
+    envelope is the only shared return-shape primitive Foundation defines;
+    confirm it carries only pagination metadata."""
+    import dataclasses
+
+    page_fields = {f.name for f in dataclasses.fields(Page)}
+    assert page_fields == {"rows", "total", "next_cursor"}
+
+
+# ---------------------------------------------------------------------------
+# PR100-H2: list_plan_rows ownership + cursor binding
+# ---------------------------------------------------------------------------
+
+
+async def test_list_plan_rows_rejects_foreign_session_plan_id(client: AsyncClient, seeded_users, db_session):
+    """A `plan_id` that genuinely exists, but does not belong to the
+    `import_session_id` the caller supplied, must be rejected before any
+    row is ever queried -- the same "never leaked across sessions"
+    guarantee `confirm_plan`/`redact_plan_artifacts` already have."""
+    await _seed_equipment(db_session, bcm_code="BCM_H2_A", item_no="ITEM_H2_A")
+    headers = await auth_headers(client)
+    session_a = await _validated_session_with_update_rows(
+        client, headers, db_session, [_valid_row(bcm="BCM_H2_A", item_no="ITEM_H2_A")]
+    )
+    await client.post(f"/api/v1/import-sessions/{session_a['id']}/dry-run", headers=headers)
+    session_a_uuid = uuid.UUID(session_a["id"])
+    plan_a = await import_dry_run_plan_crud.get_current_plan(db_session, import_session_id=session_a_uuid)
+
+    await _seed_equipment(db_session, bcm_code="BCM_H2_B", item_no="ITEM_H2_B")
+    session_b = await _validated_session_with_update_rows(
+        client, headers, db_session, [_valid_row(bcm="BCM_H2_B", item_no="ITEM_H2_B")]
+    )
+    await client.post(f"/api/v1/import-sessions/{session_b['id']}/dry-run", headers=headers)
+    session_b_uuid = uuid.UUID(session_b["id"])
+
+    provider = EquipmentMasterDryRunPlanProvider()
+    with pytest.raises(ImportDryRunPlanNotFoundError):
+        await provider.list_plan_rows(
+            db_session, import_session_id=session_b_uuid, plan_id=plan_a.id, limit=25, cursor=None
+        )
+
+
+async def test_list_plan_rows_rejects_cross_plan_cursor(client: AsyncClient, seeded_users, db_session):
+    """A cursor issued while paging Plan A must never be silently
+    reinterpreted as an anchor into Plan B, even when `plan_id=B` itself
+    passes ownership validation for the caller's own session."""
+    await _seed_equipment(db_session, bcm_code="BCM_H2_C", item_no="ITEM_H2_C")
+    headers = await auth_headers(client)
+    session_a = await _validated_session_with_update_rows(
+        client, headers, db_session, [_valid_row(bcm="BCM_H2_C", item_no="ITEM_H2_C")]
+    )
+    await client.post(f"/api/v1/import-sessions/{session_a['id']}/dry-run", headers=headers)
+    session_a_uuid = uuid.UUID(session_a["id"])
+    plan_a = await import_dry_run_plan_crud.get_current_plan(db_session, import_session_id=session_a_uuid)
+    row_a = (
+        await db_session.execute(
+            select(EquipmentMasterDryRunPlanRow).where(EquipmentMasterDryRunPlanRow.dry_run_plan_id == plan_a.id)
+        )
+    ).scalar_one()
+    cursor_for_plan_a = encode_plan_row_cursor(plan_id=plan_a.id, sort_value=row_a.source_row_number, row_id=row_a.id)
+
+    await _seed_equipment(db_session, bcm_code="BCM_H2_D", item_no="ITEM_H2_D")
+    session_b = await _validated_session_with_update_rows(
+        client, headers, db_session, [_valid_row(bcm="BCM_H2_D", item_no="ITEM_H2_D")]
+    )
+    await client.post(f"/api/v1/import-sessions/{session_b['id']}/dry-run", headers=headers)
+    session_b_uuid = uuid.UUID(session_b["id"])
+    plan_b = await import_dry_run_plan_crud.get_current_plan(db_session, import_session_id=session_b_uuid)
+
+    provider = EquipmentMasterDryRunPlanProvider()
+    with pytest.raises(InvalidInputError):
+        await provider.list_plan_rows(
+            db_session, import_session_id=session_b_uuid, plan_id=plan_b.id, limit=25, cursor=cursor_for_plan_a
+        )
+
+
+async def test_list_plan_rows_valid_pagination_still_works(client: AsyncClient, seeded_users, db_session):
+    """The happy path is unharmed by H2's new checks: same session, same
+    plan, a cursor obtained from that plan's own previous page -- the
+    second page must succeed with no duplicate/skip."""
+    await _seed_equipment(db_session, bcm_code="BCM_H2_E1", item_no="ITEM_H2_E1")
+    await _seed_equipment(db_session, bcm_code="BCM_H2_E2", item_no="ITEM_H2_E2")
+    headers = await auth_headers(client)
+    session = await _validated_session_with_update_rows(
+        client,
+        headers,
+        db_session,
+        [
+            _valid_row(bcm="BCM_H2_E1", item_no="ITEM_H2_E1"),
+            _valid_row(bcm="BCM_H2_E2", item_no="ITEM_H2_E2"),
+        ],
+    )
+    await client.post(f"/api/v1/import-sessions/{session['id']}/dry-run", headers=headers)
+    session_uuid = uuid.UUID(session["id"])
+    plan = await import_dry_run_plan_crud.get_current_plan(db_session, import_session_id=session_uuid)
+
+    provider = EquipmentMasterDryRunPlanProvider()
+    page_1 = await provider.list_plan_rows(
+        db_session, import_session_id=session_uuid, plan_id=plan.id, limit=1, cursor=None
+    )
+    assert len(page_1.rows) == 1
+    assert page_1.total == 2
+    assert page_1.next_cursor is not None
+
+    page_2 = await provider.list_plan_rows(
+        db_session, import_session_id=session_uuid, plan_id=plan.id, limit=1, cursor=page_1.next_cursor
+    )
+    assert len(page_2.rows) == 1
+    assert page_2.total == 2
+    assert page_2.next_cursor is None
+    assert page_2.rows[0].id != page_1.rows[0].id, "second page must not repeat the first page's row"
 
 
 # ---------------------------------------------------------------------------
