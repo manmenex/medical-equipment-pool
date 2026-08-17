@@ -2524,3 +2524,366 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   Receive and Issue History Import) is the next planned Roadmap item, not
   started by this entry** — its dependencies (PR19A, PR20) are both now
   satisfied.
+
+## 2026-08-16 — Roadmap PR21: Legacy Receive and Issue History Import — Design started, not implemented (Draft GitHub PR pending)
+
+- **Decision/record:** Design/contract-only work has started on Roadmap
+  PR21 (Legacy Receive and Issue History Import), per
+  `docs/audits/04-consolidated-implementation-plan.md`'s authoritative
+  scope (import AppSheet Receive/Issue history; preserve legacy BME names
+  for later user mapping; normalize/map Ward values; detect duplicate
+  transaction rows; retain transaction source references — Equipment
+  Verify Checklist history explicitly out of Version 1 scope). No runtime
+  code, migration, test, or frontend file was created or modified. PR21 is
+  **not implemented** by this entry.
+- **Owner Decisions opened (none resolved):**
+  - **OD-PR21-0 (blocking):** no real AppSheet Issue History or Receive
+    History source artifact (workbook, CSV, or column-level schema
+    description) exists anywhere in this repository as of this baseline —
+    confirmed by repository-wide search. The only source-adjacent file,
+    `frontend/src/services/legacyImportFixtures.ts`, is explicitly
+    labeled by its own header comment as invented UI-mock data, not real
+    hospital data, and is not used as evidence anywhere in the design.
+    Field-level source mapping (the PR21 analogue of PR20's OD-1) cannot
+    proceed until the Repository Owner supplies the real export(s),
+    mirroring exactly how PR20's OD-1 was resolved only after a real
+    `export_template.xlsx` was supplied.
+  - **OD-PR21-1:** unmatched historical ISSUE-row policy (import as
+    historical OPEN vs. block/reconcile) — not resolved; architectural
+    recommendation is to block/reconcile by default, since an imported
+    historical OPEN transaction would compete with live dispatch for the
+    same equipment via the `idx_tx_one_active_borrow` partial unique
+    index.
+  - **OD-PR21-2:** unmatched historical RECEIVE-row policy — not
+    resolved; recommendation is a reconciliation finding, never a
+    fabricated paired issue.
+  - **OD-PR21-3:** boundary of the later legacy-BME-name-to-User mapping
+    procedure (this design preserves raw names safely but does not design
+    that later procedure) — not resolved.
+  - **OD-PR21-4:** ownership/curation of the proposed Ward alias-mapping
+    table (no such table exists anywhere in the codebase today) — not
+    resolved.
+  - **OD-PR21-5:** historical `transaction_no` policy, since the column
+    is NOT NULL/UNIQUE and normally sequence-generated — not resolved,
+    contingent on OD-PR21-0.
+  - **OD-PR21-6:** patient/clinical free-text handling — contingent
+    entirely on OD-PR21-0; cannot be evaluated without the real source.
+- **What this design addresses without a blocking Owner Decision:** a
+  full `BorrowTransaction` schema compatibility analysis (no column
+  requires fabricating a value — `borrower_user_id`/`received_by_user_id`
+  are nullable, so no fake `User` rows are ever needed); the architectural
+  separation between historical import and live dispatch/receipt
+  (import never mutates `Equipment.status`, never calls the live
+  dispatch/receipt service functions, never introduces a new
+  `BorrowTransaction.status` value beyond the existing OPEN/CLOSED pair);
+  reuse of PR19's dry-run/execute/claim/lease/heartbeat/fencing/recovery/
+  audit/retention mechanisms unmodified, with a new PR21-owned persisted
+  dry-run-plan schema proposed (not created) because the existing
+  Equipment-Master dry-run-plan tables are upsert-oriented and do not fit
+  an insert-oriented transaction import; and a proposed (not created)
+  additive schema gap-analysis for legacy-actor-name provenance,
+  source-traceability, and the Ward alias table.
+- **What PR21 explicitly does not deliver:** any Receive/Issue parser,
+  any validation rule implementation, any migration, any dry-run/execute
+  runtime code, any frontend change. PR22 (cross-import validation,
+  reconciliation, source-traceability verification, duplicate review,
+  unified legacy/new history validation) is explicitly not absorbed into
+  this design.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6 (Design
+  PR Policy) and §7 (Owner Decision Policy). Following PR19A's and PR20's
+  own design-PR precedent, this entry and the new design document are the
+  full governance-update scope for a design-only PR — the broader
+  `docs/ROADMAP.md`/`docs/ROADMAP_STATUS.md`/`knowledge/*` six-file sweep
+  is intentionally deferred to the post-implementation governance sync
+  (`docs/ENGINEERING_WORKFLOW.md` §14), exactly as it was for PR19A and
+  PR20's own design PRs. Branch `design/pr21-legacy-transaction-history-import`,
+  based on `4cab688708320f1e8523a906f5a5ce17ad1e5d9a` (GitHub PR #97).
+- **Source:** `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+  (new document).
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this entry. PR21 implementation has
+  **not** started. GitHub PR #97's accepted non-blocking P2 follow-up
+  (precise wording of the PR20 design-edit-scope description) is
+  explicitly **not** touched or closed by this entry or by the new PR21
+  design document — it remains open, tracked separately, for a future
+  governance/editorial pass.
+
+## 2026-08-16 — Roadmap PR21 design Fix Round 1: architecture corrections (H1–H4, M1, L1) — still not implemented
+
+- **Decision/record:** Independent architecture review (REQUEST CHANGES)
+  identified four merge-blocking findings (H1–H4) and two non-blocking
+  findings (M1, L1) in the PR21 design document. This entry records the
+  **architecture directions selected** in response — it does **not**
+  resolve any of the seven Owner Decisions (OD-PR21-0 through
+  OD-PR21-6) already open on Roadmap PR21; none of them were awaiting
+  architecture-level analysis, and none is claimed resolved here. PR21
+  implementation remains **not started**.
+- **H1 (source/session topology) — remains a blocking Owner Decision,
+  not resolved.** The design document previously assumed a single
+  `import_source_id`/checksum/source-row was sufficient provenance for a
+  historical transaction, which is incorrect given PR19's
+  `ImportSession → exactly one ImportSource` topology and PR21's need to
+  reason across two datasets (Issue History, Receive History). Three
+  topology options were analyzed (one workbook/one session; one session
+  with multiple sources, requiring a PR19 foundation extension; two
+  sessions plus a staging/pairing layer). A conditional recommendation
+  (one workbook, if the real export supports it) is recorded, but the
+  actual decision remains blocked on the same missing source evidence as
+  OD-PR21-0 — this fix round expands OD-PR21-0's scope to explicitly
+  cover topology confirmation.
+- **H2 (validation/dry-run alignment) — architecture selected: All-
+  or-Nothing Validation Gate.** The design previously contradicted
+  itself, classifying findings as blocking `ERROR` while also describing
+  those rows as appearing inside a `DryRunPlan`. This is now corrected:
+  per PR19's actual, unmodified runtime behavior, any blocking `ERROR`
+  anywhere in a validation batch moves the whole session to
+  `validation_failed`, and no `DryRunPlan` is created for that session.
+  PR21 does not support partial import in V1. Every row-level condition
+  in the design (unmapped Ward, unresolved equipment, ambiguous
+  Issue/Receive pairing, duplicate source event, unmatched Issue/Receive)
+  is now consistently classified as this all-or-nothing-blocking `ERROR`
+  or non-blocking `WARNING`, with no third severity and no
+  "blocking-but-still-a-candidate" contradiction remaining.
+- **H3 (checksum/replay/event-identity) — corrected, and a new blocking
+  gap identified.** The design previously implied
+  `ImportSource.checksum` prevents replay across sessions. Verified
+  against `backend/app/models/import_session.py:125-141`: the column
+  carries a regular index (`ix_import_sources_checksum`), not a unique
+  constraint — a new `ImportSession` can register the same checksum
+  again. Checksum provides integrity/fingerprint evidence only, not
+  database-enforced replay prevention. Separately, `ImportSource.id` +
+  `row_number` was identified as unsafe as a stable historical-event
+  identity, since a corrected re-export can shift row numbers or use a
+  new `ImportSource` for the same underlying event. A database-enforced
+  stable identity (a source-native row key, reference ID, or event UUID)
+  is required; if the real source provides none, that is itself folded
+  into OD-PR21-0 as a blocking question, not assumed away.
+- **H4 (persisted-plan API) — architecture selected: generalize the
+  existing generic transport, dispatch by `dataset_type` to
+  adapter-owned plan providers, keep persistence adapter-specific.**
+  Verified that the current `GET/POST .../dry-run-plan` endpoints
+  (`backend/app/api/v1/import_sessions.py`) and
+  `backend/app/crud/import_dry_run_plan.py` operate on
+  `EquipmentMasterDryRunPlan`/`Row` by concrete type throughout — they
+  are not a dataset-agnostic API today, contrary to what the prior design
+  revision implied by proposing new PR21 plan tables without addressing
+  how the existing endpoints would reach them. The selected direction
+  mirrors the existing `register_adapter()`/`get_adapter()` pattern
+  already used for parse/validate/execute. This requires real,
+  independently-reviewable work on shared PR19/PR20 infrastructure,
+  recorded as its own proposed implementation slice ("PR21-Foundation")
+  rather than assumed to be free inside PR21A.
+- **M1 (retention integration) — corrected wording, direction
+  selected.** The design previously said retention is "unchanged."
+  Verified that `backend/app/crud/import_retention.py`'s
+  `redact_session()` explicitly imports and updates
+  `EquipmentMasterDryRunPlanRow` by name (lines 9, 139–140) with no
+  generic dispatch mechanism — PR21's new plan/provenance content would
+  not be redacted without extension. Corrected wording: the 180-day
+  retention **policy** is unchanged; the retention **implementation**
+  requires additive PR21 integration (a generic adapter retention hook,
+  selected for symmetry with the existing execution-hook pattern). The
+  atomicity invariant (redaction + `ImportSession` retention-state
+  advancement in one caller-owned transaction) is unchanged from PR19A's
+  existing contract.
+- **L1 (cross-reference consistency) — fixed.** The design document was
+  renumbered from 40 to 50 sections to accommodate this round's new
+  content (source/session topology, 1:N provenance contract, the
+  generalized plan API and its shape/pagination/RBAC/audit/persistence
+  sections, and the corrected retention section); every internal `§N`
+  cross-reference was verified against the actual final section numbers
+  (including the specific dangling `§41` references the review
+  identified, which pointed past the document's own final section at the
+  time).
+- **What this fix round does not do:** it does not resolve OD-PR21-0
+  through OD-PR21-6; it does not begin PR21A or any other implementation
+  slice; it does not modify `backend/**`, `frontend/**`, `alembic/**`,
+  `tests/**`, or `.github/**`; it does not touch GitHub PR #97's P2
+  follow-up or any PR20-related content in this file or in
+  `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md`.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7,
+  same governance-update scope as the design-started entry above (this
+  entry plus the revised design document only — no
+  `ROADMAP.md`/`ROADMAP_STATUS.md`/`knowledge/*` change).
+- **Source:** `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+  (revised — see its own §7, §15, §24, §29, §36 for the H1–H4/M1
+  corrections in full, and §50 for the current, unchanged set of
+  Mandatory STOP conditions).
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this entry. PR21 implementation
+  remains **not started**. GitHub PR #97's P2 follow-up remains open and
+  untouched.
+
+## 2026-08-16 — Roadmap PR21 design Fix Round 2: dry-run/validation consistency, PR20 wire compatibility, Foundation-scope clarification, retention fail-closed (PR98-H2R, PR98-H4R, PR98-H5, M1) — still not implemented
+
+- **Decision/record:** A second independent architecture review
+  (REQUEST CHANGES) identified two merge-blocking findings (PR98-H2R,
+  PR98-H4R), one merge-blocking gate contradiction (PR98-H5), and one
+  non-blocking finding (M1, retention fail-closed semantics) in the
+  Fix-Round-1 PR21 design document, on top of confirming H1's
+  topology/1:N-provenance direction and H3's checksum/event-identity
+  direction as improved. This entry records the **architecture
+  corrections selected** in response. None of the seven Owner Decisions
+  (OD-PR21-0 through OD-PR21-6) are resolved by this round. PR21
+  implementation remains **not started**.
+- **PR98-H2R (all-or-nothing validation fully consistent) —
+  corrected.** The design had already selected the all-or-nothing
+  validation gate (Fix Round 1), but its dry-run-contract section still
+  listed `ERROR`-severity conditions (duplicate rows, unmapped Wards,
+  unresolved equipment) as content a `DryRunPlan` shows — self-
+  contradicting the gate it had just selected, since any of those
+  conditions means the session never reaches `validation_failed`'s
+  successor state at all. Corrected: a `DryRunPlan` is now stated,
+  consistently everywhere it is discussed, to exist only for a session
+  whose validation snapshot passed with zero blocking `ERROR` findings;
+  the dry-run summary contract now explicitly excludes any "blocked
+  ERROR rows" category, and the unmatched-Issue/unmatched-Receive
+  sections now state explicitly that those rows are visible only as
+  validation findings, never as dry-run plan rows.
+- **PR98-H4R (PR20 wire compatibility) — corrected, with a fuller
+  architecture.** The prior round's generic-API direction risked
+  renaming PR20's live wire contract to generic names (`plan_id`,
+  `session_id`, `state`). Verified the actual, currently-shipping field
+  names (`backend/app/schemas/import_session.py:172-203`): `DryRunPlanOut`
+  (`id`, `import_session_id`, `import_source_id`, `status`,
+  `is_current`, `created_at`, `confirmed_at`, `confirmed_by_user_id`,
+  `summary`, `rows`, `rows_next_cursor`, `rows_total`) and
+  `DryRunPlanConfirmOut` (`id`, `import_session_id`, `status`,
+  `confirmed_at`, `confirmed_by_user_id`, `summary`) are the
+  authoritative PR20F frontend contract and are not renamed. Selected
+  architecture: a generic transport dispatches by `dataset_type` to a
+  per-dataset `DryRunPlanProvider`; Equipment Master's provider wraps
+  the existing CRUD and returns its existing schemas byte/field
+  unchanged; PR21's provider returns its own, separately-named schema
+  (a discriminated response, not a shared generic envelope, since
+  PR20's upsert-oriented row shape has no meaningful PR21 equivalent).
+  Cursor binding, 404/foreign-plan/409-stale semantics, RBAC, and a
+  single audit-write owner (the transport layer, matching where the
+  audit write already happens today,
+  `backend/app/api/v1/import_sessions.py:443-446`) are all specified to
+  preserve PR20's existing, already-reviewed behavior exactly.
+- **PR98-H5 (implementation gate contradiction) — resolved.** The prior
+  round said "no slice below is ready today" while also describing
+  PR21-Foundation as startable, and its readiness table referenced a
+  "PR21-Foundation idempotency check" that duplicated ownership of
+  stable event identity (a source-dependent concern). Corrected to one
+  coherent model: PR21-Foundation is scoped to genuinely
+  topology-independent generic plumbing only (the generic provider
+  interface, transport dispatch, PR20 compatibility verification,
+  generic pagination/error plumbing, and the retention-hook
+  *abstraction*) and explicitly excludes any PR21 schema, provenance
+  table, source-topology assumption, event-identity/idempotency
+  constraint, parser, pairing logic, or the Ward-alias/BME-provenance
+  tables — all of which remain blocked on OD-PR21-0. The corrected gate
+  statement is "no **source-dependent** PR21 implementation slice may
+  start," not "no implementation slice may start" — PR21-Foundation may
+  begin once this Design PR merges.
+- **M1 (retention fail-closed) — non-blocking, direction strengthened.**
+  The previously-selected generic adapter retention hook now has an
+  explicit fail-closed contract: if a dataset's provider is missing/
+  unregistered, its redaction callback raises, or it cannot positively
+  confirm its artifacts are redacted, the entire per-session redaction
+  transaction rolls back — `retention_purged_at` is never set and
+  session retention completion is never published for a partially-
+  redacted session. An unknown/missing provider is treated as a
+  retryable operational error, never a silent skip; a dataset with
+  genuinely no provider-owned artifacts must declare that explicitly.
+- **What this fix round does not do:** it does not resolve OD-PR21-0
+  through OD-PR21-6; it does not begin PR21-Foundation or any other
+  implementation slice; it does not modify `backend/**`, `frontend/**`,
+  `alembic/**`, `tests/**`, or `.github/**`; it does not touch GitHub
+  PR #97's P2 follow-up or any PR20-related content in this file or in
+  `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md`.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7,
+  same governance-update scope as the two entries above (this entry plus
+  the revised design document only).
+- **Source:** `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+  (revised, renumbered from 50 to 52 sections — see its own §15/§28 for
+  the H2R correction, §29-§36 for the H4R architecture, §46/§47 for the
+  H5 gate correction, and §38 for the M1 fail-closed contract).
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this entry. PR21 implementation
+  remains **not started**. GitHub PR #97's P2 follow-up remains open and
+  untouched.
+
+## 2026-08-16 — Roadmap PR21 design Fix Round 3: static FastAPI/OpenAPI route boundary, confirmation-audit semantics corrected (PR98-H4R2, PR98-H4R3) — still not implemented
+
+- **Decision/record:** A third independent architecture review (REQUEST
+  CHANGES) confirmed Fix Round 2's H2R (all-or-nothing validation/
+  dry-run), H5 (Foundation gate/scope), and M1 (fail-closed retention)
+  corrections as resolved, and confirmed H1's topology/1:N-provenance
+  direction and H3's checksum/event-identity direction as improved and
+  unchanged. It identified two further merge-blocking findings in the
+  generic-plan-API architecture (PR98-H4R2, PR98-H4R3). This entry
+  records the **architecture corrections selected** in response. None of
+  the seven Owner Decisions (OD-PR21-0 through OD-PR21-6) are resolved
+  by this round. PR21 implementation remains **not started**.
+- **PR98-H4R2 (implementable FastAPI/OpenAPI response boundary) —
+  corrected.** Fix Round 2's direction — a single existing route
+  dispatching to one of two response schemas selected by
+  `dataset_type` — is not expressible through FastAPI's static,
+  decorator-declared `response_model` mechanism without either a
+  `Union[DryRunPlanOut, LegacyHistoryDryRunPlanOut]` response model
+  (which would change the generated OpenAPI schema for the
+  already-shipping PR20 route) or an untyped `Any`/`dict`/
+  `response_model=None` escape hatch (which would silently discard
+  PR20's existing response-schema guarantee) — both explicitly rejected.
+  Corrected architecture: **PR20's existing routes
+  (`GET .../dry-run-plan` → `response_model=DryRunPlanOut`,
+  `POST .../confirm` → `response_model=DryRunPlanConfirmOut`) are never
+  touched — path, HTTP semantics, response field names/nullability,
+  enum values, pagination semantics, and OpenAPI schema all unchanged.**
+  PR21 will get its **own new, separate, statically-typed routes**
+  later (illustrative paths under
+  `/import-sessions/{session_id}/legacy-history/...`), added by a
+  source-dependent implementation slice, never by PR21-Foundation. Only
+  the **internal** provider/service layer behind these routes is
+  generalized (a `DryRunPlanProvider` interface used by route handlers
+  internally) — it never owns or dynamically selects a FastAPI
+  `response_model`.
+- **PR98-H4R3 (confirmation-audit semantics) — corrected.** The prior
+  round's "the transport layer... invoked exactly once per confirm
+  call" was wrong. Verified against the actual runtime
+  (`backend/app/crud/import_dry_run_plan.py:252-259, 262-376` and
+  `backend/app/api/v1/import_sessions.py:388-452`): confirmation already
+  returns a `ConfirmationResult` (`plan`, `newly_confirmed: bool`), and
+  the confirmation-audit event (`AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CONFIRMED`)
+  is written **only when `result.newly_confirmed` is true** — a repeat
+  confirm (retry, second actor, network-retry replay) returns the
+  original persisted `confirmed_at`/`confirmed_by_user_id` unchanged and
+  produces **no** additional audit row, and never re-attributes the
+  persisted confirmer to a later caller. Corrected wording, and a
+  generic `ConfirmPlanResult` contract specified for any future provider
+  (Equipment Master's existing one and PR21's future one): audit is
+  written exactly once **per first successful confirmation**, never once
+  per HTTP call; a concurrent-confirmation race resolves to exactly one
+  winner (`newly_confirmed=true`) and exactly one audit row, regardless
+  of how many callers raced. Transaction atomicity (the plan's CAS state
+  transition and the conditional audit write sharing one caller-owned,
+  request-scoped transaction) is stated as an existing invariant to be
+  preserved, not redesigned.
+- **Foundation scope, re-confirmed and narrowed further.** PR21-Foundation's
+  explicit exclusion list now also names "any PR21 public response
+  schema or route" — PR21's own `LegacyHistoryDryRunPlanOut` and its
+  routes belong to a later, source-dependent slice, never to Foundation.
+  This is consistent with, not a reversal of, Fix Round 2's H5
+  correction: Foundation remains startable once this Design PR merges,
+  scoped strictly to internal provider plumbing, PR20 compatibility
+  verification, and the retention-hook abstraction.
+- **What this fix round does not do:** it does not resolve OD-PR21-0
+  through OD-PR21-6; it does not begin PR21-Foundation or any other
+  implementation slice; it does not modify `backend/**`, `frontend/**`,
+  `alembic/**`, `tests/**`, or `.github/**`; it does not touch GitHub
+  PR #97's P2 follow-up or any PR20-related content in this file or in
+  `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md`.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7,
+  same governance-update scope as the three entries above (this entry
+  plus the revised design document only).
+- **Source:** `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+  (revised — section count unchanged at 52; see its own §29-§31 for the
+  H4R2 static-route correction and §35 for the H4R3 confirmation-audit
+  correction).
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this entry. PR21 implementation
+  remains **not started**. GitHub PR #97's P2 follow-up remains open and
+  untouched.
