@@ -1,22 +1,33 @@
 # Roadmap PR21 — Legacy Receive and Issue History Import: Design Specification
 
-**Status:** Design only. Not implemented. **Source Evidence Update**
-applied on top of Fix Round 3 (PR98-H4R2/PR98-H4R3), Fix Round 2
+**Status:** Design only. Not implemented (except PR21-Foundation, §46,
+which is genuinely topology-independent generic plumbing and merged
+separately as GitHub PR #100, squash SHA `7b99e5866df4b71ffa1aa09d265baa2bc7033c33`
+— it implements no PR21 database schema, public route, parser, or
+business policy, so it does not depend on, or resolve, any Owner
+Decision below). **Owner Decision Closure Round 1** applied on top of
+the Source Evidence Fix Round (PR99-H1/PR99-H2), the Source Evidence
+Update, Fix Round 3 (PR98-H4R2/PR98-H4R3), Fix Round 2
 (PR98-H2R/PR98-H4R/PR98-H5, non-blocking M1), and Fix Round 1
-(H1–H4/M1/L1). The Owner has supplied the real production Equipment
-Pool workbook (`บันทึกข้อมูล Equipment Pool.xlsx`), independently
-inspected directly by this session (not transcribed from a description)
-— see §6. **OD-PR21-0's topology component is now RESOLVED** (§7): one
-workbook, one `ImportSession`, one `ImportSource`, multiple whitelisted
-sheets. Field-level mapping, stable event identity, and Issue↔Receive
-pairing remain open — real evidence narrows but does not fully close
-them (§6, §11, §24). This document opens Owner Decisions (§45) and
-encounters mandatory STOP conditions (§52). No implementation,
-migration, or runtime change is made by this PR.
+(H1–H4/M1/L1). **This round RESOLVES OD-PR21-1, OD-PR21-2, OD-PR21-3,
+OD-PR21-4, and OD-PR21-6; PARTIALLY RESOLVES OD-PR21-5 (direction
+only, exact format deferred); and explicitly does NOT resolve
+OD-PR21-0's stable-event-identity or Issue↔Receive-pairing
+sub-components** (§45, §54) — the Owner's own instruction for this
+round is that `ลำดับ`'s re-export durability is not something this
+session may decide unilaterally; an explicit interim policy (require
+re-export stability evidence before approving it as a durable identity)
+is adopted instead of guessing. **No source-dependent PR21
+implementation slice (PR21A–F) is unblocked by this round** — see §54
+for the precise readiness reassessment. This document remains
+design/decision-only: no schema, migration, backend, frontend, or test
+file is touched (§51).
 
-**Baseline:** `5d4b1d3a7f79e9b9e6d281a1eea1f7b5bc862217` (GitHub PR #98,
-PR21 Design Phase 1 squash merge, on
-`claude/medical-equipment-pool-0c7fz0`).
+**Baseline:** `7b99e5866df4b71ffa1aa09d265baa2bc7033c33` (GitHub PR
+#100, PR21-Foundation squash merge, on
+`claude/medical-equipment-pool-0c7fz0`). Prior design baseline:
+`5d4b1d3a7f79e9b9e6d281a1eea1f7b5bc862217` (GitHub PR #98, PR21 Design
+Phase 1 squash merge).
 
 **Roadmap authority:** `docs/audits/04-consolidated-implementation-plan.md`
 is Level 4 in the source-of-truth hierarchy
@@ -97,6 +108,19 @@ given throughout this document):
 - `backend/app/api/v1/transactions.py`, `backend/app/schemas/transaction.py`
 - Repository-wide search for any real legacy Receive/Issue workbook, CSV,
   fixture, or column-level schema description (see §6).
+- **Owner Decision Closure Round 1 (this round), additionally:**
+  `docs/evidence/pr21/equipment-pool-workbook-manifest.json`/`.md`
+  (re-read, to re-verify the exact row/reference/`ME.Code` counts cited
+  in this round's own instructions against the committed evidence,
+  §10.1); `backend/app/models/transaction.py` (re-verified §12's
+  `BorrowTransaction` column table is still accurate — unchanged);
+  `backend/app/models/master_data.py` (`Ward`, re-verified §14);
+  `backend/app/models/user.py` (`User.password_hash` NOT NULL,
+  re-verified §13); the merged PR21-Foundation runtime
+  (`backend/app/services/import_plan_provider.py`,
+  `backend/app/services/import_plan_providers/equipment_master.py`,
+  `backend/app/crud/import_retention.py`, GitHub PR #100) — confirmed
+  complete and unaffected by this round's decisions.
 
 ---
 
@@ -510,6 +534,57 @@ actual matching keys are **not** established by the source structure
 (§6.4) — this is a confirmed negative finding, not an unresolved
 inspection gap.
 
+### 10.1 Field-level contract classification (Owner Decision Closure Round 1)
+
+Every real, verified column (§6.1, §9, §10) on the four canonical
+sheets, classified per this round's own required categories:
+**imported business fact** (reaches a `BorrowTransaction` column, via
+mapping/validation), **provenance only** (stored per §8's source-ref
+model, never a `BorrowTransaction` column), **validation-only**
+(consulted to accept/reject a row, never persisted as such),
+**ignored** (not carried forward at all), or **privacy-blocked**
+(withheld pending OD-PR21-6, §42). No field beyond what the Roadmap
+objective (§1) already names is promoted into a new
+`BorrowTransaction` schema column (§9, unchanged).
+
+**Issue side (`Orders ยืมเครื่อง` + `ข้อมูลส่งเครื่องมือ`):**
+
+| Field | Classification |
+|---|---|
+| ลำดับ | Validation-only / provenance — identity candidate pending §24.1; never a `BorrowTransaction` column |
+| วันที่, เวลา | Imported business fact — `borrowed_at` date/time components |
+| เลขที่ใบส่ง / เลขที่ใบยืม | Imported business fact (transaction_no legacy-namespace source, §20) + provenance (§8) |
+| SCAN CODE ส่ง, Barcode ส่งเครื่อง | Validation-only — equipment-identity cross-check candidates (§4); `ME.Code` remains primary |
+| ME.Code | Imported business fact — resolves `equipment_id` (§4) |
+| Equipment, Brand, Model, Serial no. | Provenance only — descriptive, not identity-bearing (§9) |
+| รูปเครื่อง (photo reference) | Ignored — not a data field this design imports |
+| แผนกที่ส่ง | Imported business fact — `ward_id` via OD-PR21-4 (§14) |
+| 3 equipment-condition checklist columns | Provenance only — candidate for provenance capture, never fabricated into a schema column (§9) |
+| จำนวน | Ignored — not import-relevant (§12) |
+| หมายเหตุ | **Privacy-blocked** — OD-PR21-6 (§42), never permanent |
+| ชื่อ BME, ชื่อ (User) | Imported business fact / provenance — per-ref legacy operator names, `ISSUE`-tagged (§8, §13) |
+
+**Receive side (`Orders คืนเครื่อง` + `ข้อมูลรับเครื่องมือ`):** identical
+treatment, mirrored: ลำดับ (validation-only/provenance);
+วันที่/เวลา (`returned_at` components); เลขที่ใบรับเครื่อง/เลขที่ใบคืน
+(business fact + provenance); SCAN CODE รับ/Barcode รับเครื่อง
+(validation-only); ME.Code (business fact); Equipment/Brand/Model/Serial
+no. (provenance only); รูปเครื่อง (ignored); แผนกที่รับ (business fact,
+`ward_id`); 3 checklist columns (provenance only, `condition_on_return`
+candidate per §10); จำนวน (ignored); หมายเหตุ (**privacy-blocked**,
+OD-PR21-6); ชื่อ BME/ชื่อ (User) (business fact/provenance,
+`RECEIVE`-tagged).
+
+**What remains genuinely unresolved by this classification:** the
+`ข้อมูลการส่ง SDC`/`ข้อมูลการรับ SDC` sheet ambiguity (§6.1) — this
+classification covers only the confirmed canonical sheets; if the Owner
+later confirms SDC sheets represent additional, distinct transaction
+data (not a trailing-blank-row artifact of the canonical sheets, §6.1),
+this classification does not automatically transfer to them. **This
+classification does not resolve OD-PR21-0's field-contract sub-component
+in full** — it settles the canonical-sheet portion; the SDC question
+remains open exactly as §45/§54 record.
+
 ---
 
 ## 11. Issue ↔ Receive matching — architecture and validation treatment
@@ -553,6 +628,67 @@ all-or-nothing gate — an ambiguous pair anywhere in a batch blocks that
 entire validation snapshot from producing a dry-run (§28), not just that
 one row.
 
+### 11.1 Owner Decision Closure Round 1 — an architecture fork raised, not resolved
+
+§11's original recommendation, **(B) paired into historical
+`BorrowTransaction` rows**, implicitly assumed *some* deterministic
+pairing rule would eventually be found or approved for the large
+majority of rows. §11's own confirmed-negative finding (no explicit
+linking field exists) means that assumption cannot be taken for
+granted, and this round's own evidence review does not identify any
+combination of `ME.Code`/order-number/timestamp/Ward fields that
+constitutes a deterministic (non-heuristic) pairing rule — every
+candidate combination still requires either an exact-timestamp
+coincidence or a "nearest" comparison, which is exactly the heuristic
+this document has already ruled out without explicit Owner approval
+(§11, unchanged).
+
+This creates a genuine, previously-unstated architecture fork that
+**this round does not resolve** (per this Owner Decision Closure
+round's own instruction: raise the fork explicitly rather than change
+architecture silently):
+
+- **Fork (i) — approve a specific deterministic, non-fuzzy pairing
+  rule**, if the Owner can identify one this document's evidence review
+  did not find (e.g. a business-process guarantee such as "one
+  equipment unit is never issued twice before being received," which
+  would make Issue/Receive events for the same `ME.Code` pair
+  deterministically by chronological adjacency without needing a
+  "nearest" *heuristic* comparison across ambiguous candidates — this
+  is offered as an illustration of the *kind* of rule that would
+  qualify, not a pre-approved rule). §11's original option (B)
+  architecture stands unmodified if this fork is chosen.
+- **Fork (ii) — adopt event-first staging.** Import each Issue/Receive
+  historical source row as an independent historical
+  event/provenance record first (§11's original option (A)), with
+  actual paired-`BorrowTransaction` construction deferred to a later,
+  explicitly-scoped reconciliation step — which may fall inside a
+  revised PR21D, or may belong to PR22's own chartered reconciliation
+  work (§1's PR22 boundary) if the Owner decides pairing is better
+  treated as post-import reconciliation rather than an import-time
+  gate. Choosing this fork is an **architecture change** from §11's
+  current recommendation (B), not a mechanical implementation detail —
+  it changes what a "historical transaction" means at import time
+  (an unpaired event record vs. a paired open/closed transaction) and
+  therefore requires its own explicit Owner/architecture sign-off
+  before PR21C/D may proceed, exactly as this section's own governing
+  instruction requires.
+
+**Both OD-PR21-1 and OD-PR21-2 (§16, §17) are resolved by this round
+independently of this fork** — their resolution (block unmatched
+ISSUE/RECEIVE as `ERROR`) holds under *either* fork: under fork (i), an
+unmatched row after a deterministic pairing attempt is still blocked;
+under fork (ii), "unmatched" is redefined as "no historical event
+record was ever expected to pair," and whether that changes OD-PR21-1/2's
+blocking treatment is itself part of what choosing fork (ii) would need
+to settle. This dependency is stated here explicitly so a future reader
+does not treat OD-PR21-1/2's resolution as implying this fork is closed.
+
+**Status: OPEN.** Folded into OD-PR21-0's pairing sub-component (§45).
+Blocks PR21C regardless of which fork the Owner eventually selects,
+since PR21C's own parser/validation design differs materially between
+the two forks.
+
 ---
 
 ## 12. BorrowTransaction compatibility analysis
@@ -562,7 +698,7 @@ Full column inventory of `borrow_transactions`
 
 | Column | Type / constraint | Classification |
 |---|---|---|
-| `transaction_no` | `String(30)` NOT NULL, **UNIQUE**, indexed; normally sequence-generated | Requires explicit historical policy — §20 (OD-PR21-5). |
+| `transaction_no` | `String(30)` NOT NULL, **UNIQUE**, indexed; normally sequence-generated | Direction resolved, exact format deferred — §20 (OD-PR21-5, PARTIALLY RESOLVED). |
 | `equipment_id` | UUID FK NOT NULL | Derivable if source identifier resolves (§4); otherwise blocks. |
 | `quantity` | Integer NOT NULL, default 1 | Not import-relevant; default suffices. |
 | `borrowed_at` | `UTCDateTime` NOT NULL | Derivable from source issue timestamp, once normalized to aware UTC (§22). |
@@ -574,7 +710,7 @@ Full column inventory of `borrow_transactions`
 | `department_id`, `phone_number`, `pickup_location_id`, `dropoff_location_id` | nullable | Not named in the Roadmap objective — leave NULL. |
 | `condition_on_return` | `String(30)`, unconstrained, nullable | Derivable if source states a receive condition (§10). |
 | `notes` | `Text`, nullable | Derivable if source has a notes field (§42 privacy caveat applies). |
-| `status` | NOT NULL, default `OPEN`; exactly `OPEN`/`CLOSED` | Derivable from pairing outcome (§11): `CLOSED` for matched pairs, `OPEN` only if §16 explicitly permits. |
+| `status` | NOT NULL, default `OPEN`; exactly `OPEN`/`CLOSED` | Derivable from pairing outcome (§11). **OD-PR21-1's resolution (§16: unmatched ISSUE is `ERROR`-severity, whole session blocked) means PR21 V1 never imports an `OPEN` historical row at all** — every row that reaches execution has already passed the all-or-nothing validation gate (§15), which requires a matched pair (barring §11.1's still-open pairing-architecture fork); it is therefore always `CLOSED`. §44's "historical `OPEN` import is the one case that cannot be guaranteed safe by architecture alone" risk (`idx_tx_one_active_borrow` collision) does not arise for V1 under this resolved policy. |
 | `dispatch_type`, `routine_round` | nullable | Never inferred (§23) — leave NULL unless source states them. |
 | `legacy_status` | `String(20)`, nullable, provenance-only | Direct precedent for the "preserve exact original value, never read by live workflow" pattern reused in §43. |
 
@@ -585,6 +721,21 @@ fabricate exists.
 ---
 
 ## 13. Legacy BME name preservation policy
+
+**OD-PR21-3 — RESOLVED (Owner Decision Closure Round 1).** The Owner
+has explicitly accepted the recommended V1 policy: preserve the exact
+legacy BME text permanently as historical provenance; never create
+`User` accounts from it; never auto-map by display-name similarity; an
+optional mapping to a current `User` is nullable and explicit
+(Administrator-driven, out of PR21 V1's own scope per §13's existing
+"later mapping procedure is not designed here" boundary); import
+succeeds whether or not a current-user mapping exists; the import actor
+(who ran the import) remains structurally separate from the historical
+BME actor (who performed the original transaction), exactly as §21
+already requires. This resolves the mapping-*procedure-boundary*
+question §13 originally left open — the boundary is: PR21 V1 captures
+and preserves the raw text only; the mapping procedure itself remains
+future, separately-approved work, never blocking import.
 
 No auto-created `User` accounts (`User.password_hash` is NOT NULL —
 `backend/app/models/user.py:72-99` — structurally impossible without
@@ -613,13 +764,33 @@ materially useful evidence for OD-PR21-3's later-mapping-procedure
 boundary decision: a roster this small makes a future manual
 name-to-`User` mapping step tractable (8 names to reconcile, not
 hundreds), even though this document still does not design that
-procedure. It does **not** resolve OD-PR21-3 — the roster is a name
-*list*, not a mapping to existing `User` rows, and this document
-continues to treat that mapping as future, Owner-approved work.
+procedure. **Historical note (Source Evidence Update, superseded):**
+this roster evidence, on its own, did not resolve OD-PR21-3 at the time
+it was found — a name *list* is not a mapping to existing `User` rows.
+**Current truth (Owner Decision Closure Round 1): OD-PR21-3 is now
+RESOLVED** (§13 above) — not by this roster evidence, but by the
+Owner's separate, explicit acceptance of the preserve-raw-text/
+no-auto-mapping policy. The roster remains useful evidence for a
+possible *future* manual mapping step; it does not itself constitute
+that mapping, which remains out of PR21 V1's scope exactly as §13
+already states.
 
 ---
 
 ## 14. Ward normalization / mapping design
+
+**OD-PR21-4 — RESOLVED (Owner Decision Closure Round 1).** The Owner
+has explicitly accepted the recommended ownership/curation policy:
+Administrator owns the `legacy_ward_aliases` mapping table; every
+mapping is explicit, auditable, and persisted (an operator action, not
+an automatic inference); exact canonical-string match resolves
+automatically; a known alias resolves via the explicit mapping table; an
+unknown or ambiguous Ward is a validation `ERROR` (§15), never a
+silently-created `Ward` row and never a fuzzy/similarity match; the raw
+legacy Ward text is always preserved regardless of match outcome (§26).
+This resolves the alias table's *ownership* question §14 originally left
+open — the architecture itself (§14's diagram below) was already
+resolved and is unchanged by this round.
 
 No alias/mapping table exists for Ward anywhere in the codebase
 (`backend/app/models/master_data.py:25-35`). PR20 explicitly deferred
@@ -660,8 +831,14 @@ alias table needed for a smaller edge-case set than originally assumed
 — **not a guarantee**, since this observation is from a small sample,
 not a full cross-check against the live `Ward` table's exact `code`/
 `name` values (out of scope for a design document; that comparison
-belongs to PR21A/B's implementation). Does not resolve OD-PR21-4's
-ownership question.
+belongs to PR21A/B's implementation). **Historical note (Source
+Evidence Update, superseded):** this reference-list evidence, on its
+own, did not resolve OD-PR21-4's ownership question at the time it was
+found — a 52-entry reference list is evidence of *lower ambiguity*, not
+a decision about *who* curates the alias table. **Current truth (Owner
+Decision Closure Round 1): OD-PR21-4 is now RESOLVED** (§14 above) —
+not by this reference-list evidence, but by the Owner's separate,
+explicit acceptance of the Administrator-ownership policy.
 
 ---
 
@@ -698,8 +875,8 @@ claimed as already supported anywhere in this design.
 | Ambiguous Issue↔Receive pairing (§11) | ERROR | Session → `validation_failed`, no dry-run |
 | Duplicate source row/event (§25) | ERROR | Session → `validation_failed`, no dry-run |
 | Missing required source identity (§24) | ERROR | Session → `validation_failed`, no dry-run |
-| Unmatched ISSUE (§16) | ERROR (default, pending OD-PR21-1) | Session → `validation_failed`, no dry-run |
-| Unmatched RECEIVE (§17) | ERROR (default, pending OD-PR21-2) | Session → `validation_failed`, no dry-run |
+| Unmatched ISSUE (§16) | ERROR (RESOLVED, OD-PR21-1) | Session → `validation_failed`, no dry-run |
+| Unmatched RECEIVE (§17) | ERROR (RESOLVED, OD-PR21-2) | Session → `validation_failed`, no dry-run |
 | Unknown BME name (mapping intentionally deferred) | WARNING | Non-blocking — expected, since BME mapping is a later step (§13), not an import precondition |
 | Malformed source structure (wrong sheet, missing headers) | ERROR | Session → `validation_failed`, no dry-run |
 
@@ -720,33 +897,46 @@ consistent with §9/§10.
 
 ## 16. Unmatched historical ISSUE — Owner Decision required
 
-**OD-PR21-1.** Per §15, this is explicitly an `ERROR`-severity finding
-by default — any unmatched issue row blocks the entire session's
-validation, not merely "is excluded from execution." The underlying
-danger: `idx_tx_one_active_borrow` allows at most one `OPEN` transaction
-per equipment (§3); importing an unmatched issue as `OPEN` risks
-blocking today's live dispatch for a reason no current operator caused.
+**OD-PR21-1 — RESOLVED (Owner Decision Closure Round 1).** The Owner
+has explicitly accepted the recommended safest V1 policy exactly as
+proposed: an unmatched historical ISSUE row is `ERROR`-severity (§15);
+the whole session becomes `validation_failed`; no `DryRunPlan` is ever
+created for that session (§28); PR21 never imports an unmatched issue
+as a live `OPEN` transaction, and never fabricates a synthetic receive
+to force a pairing. Rationale, as stated by the Owner: historical import
+must not fabricate transactions or affect live `OPEN` uniqueness.
 
-**Architectural recommendation: do not allow unresolved legacy history
-to alter current operational eligibility.** If the Owner later approves
-representing some unmatched issues as genuinely still-open, that
-requires either a separate historical-state representation or an
-explicit, reviewed exclusion from the live uniqueness constraint —
-neither proposed here. Because this is `ERROR`-severity, a session
-containing an unmatched issue row never produces a `DryRunPlan` at all
-(§28) — it is visible only as a validation finding, never as a "blocked
-plan row." Also **Mandatory STOP condition** (§52).
+The underlying danger this closes: `idx_tx_one_active_borrow` allows at
+most one `OPEN` transaction per equipment (§3); importing an unmatched
+issue as `OPEN` would have risked blocking today's live dispatch for a
+reason no current operator caused. Because this is `ERROR`-severity, a
+session containing an unmatched issue row never produces a `DryRunPlan`
+at all (§28) — it is visible only as a validation finding, never as a
+"blocked plan row." A direct, resolved consequence: **PR21 V1 never
+imports a historical `OPEN` `BorrowTransaction`** (§12's `status` row,
+§44) — every row that reaches execution has already passed pairing
+(barring §11.1's still-open architecture fork). §52's Mandatory STOP
+condition on this point is now closed by explicit Owner decision.
 
 ---
 
 ## 17. Legacy RECEIVE without ISSUE — Owner Decision required
 
-**OD-PR21-2.** Per §15, also `ERROR`-severity by default. No synthetic
-issue event is ever fabricated to force a pairing. Same treatment as
-§16 — `ERROR`-severity means the whole session's validation fails and
-no `DryRunPlan` is created (§28); an unmatched receive row is visible
-only as a validation finding, never as a plan row. Also **Mandatory
-STOP condition** (§52).
+**OD-PR21-2 — RESOLVED (Owner Decision Closure Round 1).** Same
+treatment and same Owner acceptance as §16: an unmatched historical
+RECEIVE row is `ERROR`-severity (§15); the whole session's validation
+fails and no `DryRunPlan` is created (§28); an unmatched receive row is
+visible only as a validation finding, never as a plan row; no synthetic
+issue event is ever fabricated to force a pairing. §52's Mandatory STOP
+condition on this point is now closed by explicit Owner decision.
+
+**Dependency on §11.1, stated explicitly:** both OD-PR21-1 and
+OD-PR21-2's resolution here define what happens to a row that fails to
+pair *given* §11's current pairing architecture (option B). If the
+Owner later selects §11.1's fork (ii) (event-first staging), "unmatched"
+may need to be redefined for that architecture — this resolution does
+not pre-empt that future decision; it resolves V1's behavior under the
+architecture as it stands today.
 
 ---
 
@@ -770,17 +960,46 @@ for current lifecycle state (§3). No additional lifecycle states.
 
 ## 20. Transaction number policy — Owner Decision required
 
-**OD-PR21-5.** `transaction_no` is `String(30)` NOT NULL, UNIQUE,
-normally sequence-generated. Options: preserve the legacy reference
-separately (§8 already captures a source reference ID if present) and
-populate `transaction_no` with a distinguishable historical-format
-value; use the legacy source's own number directly if it is safe
-(globally unique, stable, non-colliding with the live sequence); or
-generate a new current-format number — not recommended without
-reviewing reporting/API expectations first, since a contemporary-looking
-number on a decades-old event is misleading. Not resolved — depends on
-§6. Source reference is preserved regardless (§26). Also **Mandatory
-STOP condition** (§52), since it touches a NOT NULL/UNIQUE constraint.
+**OD-PR21-5 — PARTIALLY RESOLVED (Owner Decision Closure Round 1):
+direction adopted, exact format deferred to PR21A/D.** `transaction_no`
+is confirmed `String(30)` NOT NULL, UNIQUE, indexed
+(`backend/app/models/transaction.py`, re-verified this round — §12),
+normally sequence-generated. The Owner has accepted the recommended
+**direction**: PR21 must **not** generate a normal contemporary
+live-format `transaction_no` for imported history — doing so would
+imply the transaction occurred in the current system today. Instead:
+
+- The legacy `เลขที่ใบส่ง`/`เลขที่ใบรับเครื่อง` order references are
+  preserved as source references (§8, §26) — this is unconditional and
+  does not depend on the rest of this decision.
+- An internal historical transaction identity (the row's own UUID
+  primary key, already present on every `BorrowTransaction`) is
+  sufficient for database identity — `transaction_no` does not need to
+  *be* the identity, only to satisfy the existing NOT NULL/UNIQUE
+  constraint.
+- `transaction_no` itself is populated only with a value from a
+  **clearly segregated LEGACY namespace** (e.g. a deterministic,
+  visually-distinguishable prefix), never a value indistinguishable from
+  a live-generated one.
+
+**What remains open, and why:** the **exact namespace/prefix format**
+(e.g. the specific string pattern, and how it is deterministically
+derived from the legacy order reference without colliding with the live
+sequence or with itself across a corrected re-export, §25) is
+implementation-grade work this round does not decide — this task's own
+governing instruction is explicit that the exact format must not be
+fixed without first inspecting the current constraint (done, above) and
+reporting/API expectations (not yet reviewed) and, per §46's own
+recommendation, only "if Owner approves." No such format-level approval
+was requested or given this round. **This sub-decision therefore blocks
+PR21D (execution), not PR21A** (§46's own scope for PR21A is provenance/
+alias/plan-table schema, not `BorrowTransaction`-write logic) — see §54.
+Source reference preservation (§26) is unconditional and already
+resolved regardless of this remaining sub-decision. **Mandatory STOP
+condition** (§52) narrowed accordingly: the NOT NULL/UNIQUE constraint
+itself no longer blocks design-level progress, since a non-fabricating
+direction is now settled; only the exact value format remains open,
+scoped to PR21D.
 
 ---
 
@@ -904,6 +1123,45 @@ invent an identity without explicit reviewed design. Folded into
 OD-PR21-0 (§45). This event-identity work belongs to a later,
 source-dependent implementation slice — **not** to PR21-Foundation
 (§46's H5 clarification).
+
+### 24.1 Owner Decision Closure Round 1 — interim evidentiary policy adopted, identity itself still OPEN
+
+Four ways this document could treat `ลำดับ` were evaluated: **(A)**
+treat it as an immutable AppSheet/source row key outright; **(B)** use a
+composite identity involving the order/slip reference; **(C)** generate
+a fingerprint from multiple source fields; **(D)** require explicit
+re-export stability evidence before choosing among (A)-(C).
+
+**This round explicitly does not choose (A), (B), or (C).** Uniqueness
+within one workbook snapshot (verified: 19,871/19,871 Issue,
+19,750/19,750 Receive non-null values, zero duplicates — §24 above) is
+evidence of *uniqueness*, not of *durability across a corrected/
+re-exported file* — the two are different claims, and this document has
+already stated (§24 above) that durability is unconfirmed. No Owner
+evidence resolving AppSheet's row-ID re-export behavior was supplied to
+this round.
+
+**Adopted this round: interim policy (D), as the explicit default.**
+Until one of the following is supplied, `ลำดับ` (alone or in any
+composite) may **not** be approved as PR21's database-enforced stable
+event identity, and no PR21 implementation slice may encode a unique
+constraint on it as if it were durable:
+
+- explicit Owner confirmation of AppSheet's row-ID behavior across a
+  corrected/re-exported file (i.e., a business/vendor-level statement
+  that this key does not regenerate on re-export), **or**
+- direct comparison of two exports of the same underlying data taken at
+  different times, showing the same historical events retain the same
+  `ลำดับ` values.
+
+This is a decision **about the evidentiary bar**, adopted as explicit
+Owner-endorsed default policy this round — it is not a decision that
+resolves the underlying factual question of whether `ลำดับ` is durable,
+which remains genuinely unknown and is not guessed here. **OD-PR21-0's
+event-identity sub-component therefore remains OPEN** (§45, §54);
+PR21B/C/D may not proceed past this point until (D)'s evidentiary bar is
+met and the Owner then makes an explicit (A)/(B)/(C)-style choice based
+on it.
 
 ---
 
@@ -1511,15 +1769,34 @@ touched by this Design PR (§51).
 
 ## 42. Security / privacy assessment
 
-None of PR21's conceptual fields (§9, §10) are patient-related. **Cannot
-be fully assessed without the real source file (§6)** — a free-text
-`notes` field, if present, could plausibly contain patient names,
-HN/MRN, or clinical free-text incidentally entered by staff. Explicit
-policy, pending source-file review: patient-identifying data is out of
-scope and never silently imported; if found present, a reject/redact/
-ignore policy requires explicit Owner approval before any free-text
-field reaches the database. **OD-PR21-6** (§45), **Mandatory STOP
-condition** (§52), contingent on §6.
+**OD-PR21-6 — RESOLVED (Owner Decision Closure Round 1).** The Owner
+has explicitly accepted the recommended safest V1 policy: the real
+`หมายเหตุ` (notes) columns, now confirmed present on both canonical
+line-item sheets and both order-header sheets (§9, §10), are **not
+imported into permanent `borrow_transactions.notes` by default.**
+Structural presence of the field may still be validated (e.g. length
+bounds), but its content is never copied into permanent historical
+provenance. The raw notes value remains only inside the temporary
+source artifact, governed entirely by PR19's existing 180-day
+redact-in-place retention policy (§38, §39) — it is never treated as
+permanent transaction history. **This content was never inspected for
+patient-identifying data by any session** (no free-text sampling was
+performed, consistent with §42's own original caveat that such review
+requires explicit, separately-scoped privacy handling, not incidental
+inspection while reading structure) — the resolution here is a policy
+choice made *because* the content is unreviewed, not a claim that
+review found it safe.
+
+**Alternative preserved for the future, not adopted now:** if the Owner
+later wants some or all notes content imported, that requires an
+explicit allowlist/redaction policy adopted only after an explicit,
+separately-scoped privacy-sampling review — not proposed or performed
+by this round. §52's Mandatory STOP condition on this point is now
+closed by explicit Owner decision (import notes permanently: never,
+by default, until a future explicit review changes this).
+
+None of PR21's conceptual fields (§9, §10) are otherwise
+patient-related.
 
 ---
 
@@ -1563,59 +1840,81 @@ import is simply not needed (the recommended default).
 
 ## 45. Required Owner Decisions
 
-- **OD-PR21-0 — PARTIALLY RESOLVED: topology resolved;
-  source-schema/event-identity/pairing components remain open.** Real
-  source workbook supplied and directly inspected (§6), bound to its
-  SHA-256 identity `8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`
-  and the sanitized evidence manifest at
-  `docs/evidence/pr21/equipment-pool-workbook-manifest.json`.
-  **RESOLVED component: source topology** — one workbook snapshot → one
-  `ImportSession` → one `ImportSource` → whitelisted sheets within that
-  source (Option A, §7). **Still OPEN components:** exact field-level
-  contract where not yet proven (the `ข้อมูลการส่ง SDC`/
-  `ข้อมูลการรับ SDC` ambiguity, narrowed but not closed, §6.1/§6.3);
-  stable event identity (the `ลำดับ` row key's re-export durability not
-  yet confirmed, §24); Issue↔Receive pairing (confirmed no deterministic
-  shared key exists — a negative finding, not an inspection gap, §11);
-  and any other source-dependent policy not proven by evidence. This
-  Owner Decision is **not** fully resolved — only its topology
-  sub-component is.
-- **OD-PR21-1.** Unmatched historical ISSUE-row policy (§16) —
-  recommendation: block/reconcile by default (`ERROR`-severity per §15).
-  Not resolved by the Source Evidence Update — the real source confirms
-  no explicit pairing field exists (§11), which sharpens why this
-  decision matters but does not answer it.
-- **OD-PR21-2.** Unmatched historical RECEIVE-row policy (§17) — same
-  treatment.
-- **OD-PR21-3.** Legacy BME-name mapping-procedure boundary (§13) — a
-  small, closed 8-name roster was found (§13.1), narrowing the practical
-  scope of a future mapping step without resolving the boundary
-  question itself.
-- **OD-PR21-4.** Ward alias-mapping table ownership/curation (§14) — a
-  52-entry canonical reference list was found (§14.1), with evidence
-  suggesting lower real-world ambiguity than originally feared, without
-  resolving the ownership question itself.
-- **OD-PR21-5.** Historical `transaction_no` policy (§20) — no longer
-  fully contingent on OD-PR21-0 (the real order-number fields, §9/§10,
-  are now known), but still requires an explicit Owner choice among the
-  three options §20 already lays out.
-- **OD-PR21-6.** Patient/clinical free-text handling (§42) — the real
-  `หมายเหตุ` (notes) columns are now known to exist on both canonical
-  line-item sheets (§9/§10); their actual content was not scanned for
-  patient-identifying data by this session (that review is a
-  privacy-sensitive task requiring explicit scoping, not performed
-  incidentally while inspecting structure) — still open, now with a
-  concrete field to review rather than an unknown.
+- **OD-PR21-0 — PARTIALLY RESOLVED, further narrowed this round.**
+  Real source workbook supplied and directly inspected (§6), bound to
+  its SHA-256 identity
+  `8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c` and
+  the sanitized evidence manifest at
+  `docs/evidence/pr21/equipment-pool-workbook-manifest.json`. Four
+  sub-components, tracked independently:
+  - **Topology — RESOLVED** (Source Evidence Update): one workbook
+    snapshot → one `ImportSession` → one `ImportSource` → whitelisted
+    sheets within that source (Option A, §7).
+  - **Field-level contract — PARTIALLY RESOLVED this round** (§10.1):
+    every canonical-sheet field is now classified (imported business
+    fact / provenance-only / validation-only / ignored /
+    privacy-blocked). **Still open:** the `ข้อมูลการส่ง SDC`/
+    `ข้อมูลการรับ SDC` ambiguity (§6.1/§6.3) — this classification does
+    not extend to those sheets until the Owner clarifies whether they
+    represent additional transaction data.
+  - **Stable event identity — still OPEN, interim evidentiary policy
+    now explicit** (§24.1, this round): Option (D) adopted as the
+    default — `ลำดับ` may not be approved as a durable event identity
+    until explicit re-export stability evidence (Owner confirmation of
+    AppSheet row-ID behavior, or a two-export comparison) is supplied.
+    This round deliberately does **not** decide whether `ลำดับ` is
+    durable — that determination is the Owner's / the source evidence's
+    to make, not this session's, per this round's own explicit
+    instruction.
+  - **Issue↔Receive pairing — still OPEN, architecture fork now
+    explicit** (§11.1, this round): confirmed no deterministic shared
+    key exists (unchanged from the Source Evidence Update); this round
+    additionally surfaces a previously-implicit architecture choice
+    (approve a specific deterministic pairing rule vs. adopt event-first
+    staging with pairing deferred to reconciliation) that the Owner has
+    not yet been asked to resolve, and this round does not resolve it
+    unilaterally.
+- **OD-PR21-1 — RESOLVED (Owner Decision Closure Round 1).** Unmatched
+  historical ISSUE-row policy (§16): `ERROR`-severity, whole-session
+  block, no `DryRunPlan`, no fabricated pairing — the Owner has
+  explicitly accepted this recommendation.
+- **OD-PR21-2 — RESOLVED (Owner Decision Closure Round 1).** Unmatched
+  historical RECEIVE-row policy (§17) — same treatment, same explicit
+  Owner acceptance.
+- **OD-PR21-3 — RESOLVED (Owner Decision Closure Round 1).** Legacy
+  BME-name preservation/mapping-procedure boundary (§13): preserve raw
+  text permanently; no auto-created `User` accounts; no display-name
+  auto-mapping; optional nullable mapping only, later, explicit,
+  Administrator-driven; import never blocked on mapping existing.
+- **OD-PR21-4 — RESOLVED (Owner Decision Closure Round 1).** Ward
+  alias-mapping table ownership/curation (§14): Administrator-owned,
+  explicit, auditable, persisted mappings; exact match auto-resolves;
+  unknown/ambiguous is `ERROR`; no silent Ward creation; no fuzzy match.
+- **OD-PR21-5 — PARTIALLY RESOLVED (Owner Decision Closure Round 1).**
+  Historical `transaction_no` policy (§20): **direction** resolved (no
+  contemporary-looking number; legacy reference preserved separately;
+  internal UUID sufficient for DB identity; a clearly segregated LEGACY
+  namespace populates the NOT NULL/UNIQUE column). **Exact
+  namespace/prefix format** remains open, deferred to PR21D
+  specifically (not a PR21A blocker, §54) — no format-level approval
+  was requested or given this round.
+- **OD-PR21-6 — RESOLVED (Owner Decision Closure Round 1).** Patient/
+  clinical free-text handling (§42): `หมายเหตุ` is not imported into
+  permanent transaction history by default; raw value survives only
+  inside the temporary, 180-day-redacted source artifact; a future
+  allowlist/redaction policy requires its own explicit, separately-
+  scoped privacy review before any change to this default.
 
-**Net effect of the Source Evidence Update:** one sub-component of one
-Owner Decision (OD-PR21-0's topology) is genuinely resolved. No other
-Owner Decision is resolved — several are narrowed by real evidence
-(OD-PR21-3, OD-PR21-4, OD-PR21-5) or sharpened by a confirmed-negative
-finding (OD-PR21-1, OD-PR21-2, via §11), but none is answered on the
-Owner's behalf. This document continues to select and document
-**architecture** where the repository's own runtime behavior or the
-real source's own structure already answers a question — it does not
-invent business-policy answers.
+**Net effect of Owner Decision Closure Round 1:** OD-PR21-1, OD-PR21-2,
+OD-PR21-3, OD-PR21-4, and OD-PR21-6 are now fully **RESOLVED**.
+OD-PR21-5 is **PARTIALLY RESOLVED** (direction only). OD-PR21-0 gains a
+resolved field-contract sub-component (canonical sheets only) but its
+stable-event-identity and pairing sub-components remain **OPEN by
+explicit design** — this round adopts interim evidentiary/architecture-
+disclosure policies for both rather than guessing an answer, exactly per
+this round's own governing instruction not to decide `ลำดับ`'s
+durability unilaterally. See §54 for the full readiness reassessment
+this implies for PR21A–F.
 
 ---
 
@@ -1662,22 +1961,36 @@ merges.
   schema.
 - **PR21A — Historical Transaction Schema / Provenance Foundation.**
   §8's 1:N provenance tables, §14's `legacy_ward_aliases`, §36's PR21
-  plan tables (registered against PR21-Foundation's provider interface
-  once both exist). §7's topology is now resolved (Option A), so table
-  shape no longer depends on an open topology question — but the exact
-  ref-table cardinality (§8's refinement) is still PR21A's own design
-  work. **Blocked on:** OD-PR21-3/4/5, and on PR21-Foundation's provider
-  interface existing to register against.
+  plan tables (registered against PR21-Foundation's provider interface,
+  which now exists — merged as GitHub PR #100). §7's topology is
+  resolved (Option A), so table shape no longer depends on an open
+  topology question. **Owner Decision Closure Round 1 update:**
+  OD-PR21-3 and OD-PR21-4 are now RESOLVED — no longer blockers.
+  OD-PR21-5 is only PARTIALLY resolved, but its open remainder (exact
+  `transaction_no` format) is scoped to PR21D, not PR21A (§20, §54).
+  **Still blocked on: OD-PR21-0's stable-event-identity sub-component**
+  (§24.1) — PR21A's own provenance/plan-table schema must accommodate
+  whatever identity mechanism is eventually approved, and a table
+  designed around an unconfirmed identity risks a rework once §24.1's
+  evidentiary bar is met. The exact ref-table cardinality (§8's
+  refinement) remains PR21A's own design work once unblocked.
 - **PR21B — Issue History Parser + Validation.** Not blocked by
-  topology (§7, resolved). **Blocked on:** the SDC-sheet clarification
-  (§6.1/§6.3), §4's finalized identifier case matrix, §15's frozen
-  error-code list, §24's stable event identity (re-export durability
-  not yet confirmed).
+  topology (§7, resolved) or by OD-PR21-1 (now resolved, §16) directly,
+  since PR21B does not itself perform pairing. **Blocked on:** the
+  SDC-sheet clarification (§6.1/§6.3), §4's finalized identifier case
+  matrix, §15's frozen error-code list, and OD-PR21-0's stable event
+  identity (§24.1, re-export durability not yet confirmed) for
+  write-time idempotency (§25).
 - **PR21C — Receive History Parser + Matching/Validation.** Not blocked
-  by topology. **Blocked on:** the SDC-sheet clarification, OD-PR21-1,
-  OD-PR21-2, §11's Issue↔Receive pairing policy (confirmed no
-  deterministic key exists — an explicit Owner Decision is required
-  before this slice can proceed).
+  by topology. **Owner Decision Closure Round 1 update:** OD-PR21-1 and
+  OD-PR21-2 are now RESOLVED — no longer blockers on their own. **Still
+  blocked on:** the SDC-sheet clarification, and §11.1's Issue↔Receive
+  pairing **architecture fork** (confirmed no deterministic key exists,
+  and this round surfaces — without resolving — a choice between a
+  still-undiscovered deterministic pairing rule and event-first staging;
+  an explicit Owner/architecture decision is required before this slice
+  can proceed, since the two forks imply materially different parser/
+  validation designs).
 - **PR21D — Persisted Dry-run + Historical Transaction Execution.**
   **Blocked on:** PR21A–C (and, transitively, PR21-Foundation).
 - **PR21E — Frontend Real Integration.** **Blocked on:** PR21D.
@@ -1685,13 +1998,17 @@ merges.
   `docs/ENGINEERING_WORKFLOW.md` §14 — not performed by this Design PR
   (§50).
 
-**Source Evidence Update correction:** these names and this split are no
-longer provisional *on topology* — §7 is resolved. They remain
-provisional on the **real remaining blockers**: the SDC-sheet
-clarification, stable event-identity confirmation, Issue↔Receive
-pairing policy, and OD-PR21-3/4/5. **Do not mark PR21A ready merely
-because topology is now known** — the blockers above are independent of
-topology and still apply in full.
+**Source Evidence Update correction, updated by Owner Decision Closure
+Round 1:** these names and this split are no longer provisional *on
+topology* — §7 is resolved. **OD-PR21-1/2/3/4/6 are now RESOLVED and
+OD-PR21-5 PARTIALLY RESOLVED** (§45) — they are no longer part of the
+remaining blocker set. They remain provisional on the **real remaining
+blockers**: the SDC-sheet clarification (§6.1), OD-PR21-0's
+stable-event-identity sub-component (§24.1), and OD-PR21-0's
+Issue↔Receive-pairing sub-component (§11.1). **Do not mark PR21A ready
+merely because topology is now known, or because most Owner Decisions
+are now resolved** — the three blockers above are independent of both
+and still apply in full (§53).
 
 ---
 
@@ -1701,25 +2018,26 @@ topology and still apply in full.
 |---|---|---|---|
 | Source topology (§7) | **RESOLVED — Option A, confirmed against the real workbook** | NO | — |
 | Canonical Issue/Receive sheet selection (§6.2) | RESOLVED — `Orders`+line-item pairs, verified by direct inspection | NO | — |
+| Field-level contract, canonical sheets (§10.1) | **RESOLVED this round** — every canonical-sheet field classified | NO | — |
 | SDC sheet ambiguity (§6.1) | NARROWED (aggregate counts match canonical sheets) but NOT RESOLVED — requires Owner clarification | YES (if SDC represents an uncaptured equipment sub-fleet) | Before PR21B/C's field contract is finalized |
-| Stable event identity / replay semantics (§24) | Strong candidates found (order no. + row key), re-export durability NOT CONFIRMED; **owned by a later source-dependent slice, not PR21-Foundation** | YES | Before PR21B/C/D's write-time idempotency |
-| Issue↔Receive pairing (§11) | Confirmed NO explicit linking field exists (negative finding, not an inspection gap) | YES | Before PR21C |
+| Stable event identity / replay semantics (§24, §24.1) | Strong candidates found (order no. + row key); interim evidentiary policy (Option D) ADOPTED this round; durability itself still NOT CONFIRMED — **owned by a later source-dependent slice, not PR21-Foundation** | YES | Before PR21A/B/C/D's write-time idempotency |
+| Issue↔Receive pairing (§11, §11.1) | Confirmed NO explicit linking field exists; architecture fork (deterministic rule vs. event-first staging) surfaced this round, NOT RESOLVED | YES | Before PR21C |
 | Validation/dry-run semantics (§15, §28) | RESOLVED: all-or-nothing PR19 gate; dry-run never contains ERROR-severity rows | NO | — |
 | Generic persisted-plan API design (§29-§32) | RESOLVED design contract, PR20 wire-compatible | NO (design) | — |
-| Generic persisted-plan API implementation (PR21-Foundation) | Design resolved; implementation is a real, startable slice | NO — not blocked on OD-PR21-0 | May start now (post Design PR merge) |
+| Generic persisted-plan API implementation (PR21-Foundation) | **RESOLVED — implemented and merged (GitHub PR #100, squash `7b99e586...`)** | NO | — |
 | Retention integration design (§38) | RESOLVED design direction, fail-closed | NO (design) | — |
-| Retention hook implementation (PR21-Foundation, abstraction only) | Design resolved; abstraction implementation is startable | NO — not blocked on OD-PR21-0 | May start now (post Design PR merge) |
-| Unmatched ISSUE/RECEIVE policy (§16/§17) | NOT RESOLVED | YES | Before PR21C |
-| Ward mapping ownership (§14) | Architecture resolved; 52-entry reference list found (§14.1); ownership NOT RESOLVED | Partially | Before PR21A's alias table is operational |
-| BME mapping-procedure boundary (§13) | Architecture resolved; 8-name roster found (§13.1); boundary NOT RESOLVED | Partially | Before PR21B/C |
-| Patient/clinical data handling (§42) | Real `หมายเหตุ` fields now identified (§9/§10); content not yet reviewed for patient data | YES (if source contains such data) | Before PR21B/C |
+| Retention hook implementation (PR21-Foundation, abstraction only) | **RESOLVED — implemented and merged (GitHub PR #100)**; fail-closed behavior test-covered | NO | — |
+| Unmatched ISSUE/RECEIVE policy (§16/§17) | **RESOLVED this round** — `ERROR`-severity, whole-session block, Owner-accepted | NO | — |
+| Ward mapping ownership (§14) | **RESOLVED this round** — Administrator-owned, explicit/auditable/persisted; 52-entry reference list found (§14.1) | NO | — |
+| BME mapping-procedure boundary (§13) | **RESOLVED this round** — preserve raw text, optional later mapping, never blocking | NO | — |
+| Historical `transaction_no` policy (§20) | **PARTIALLY RESOLVED this round** — direction settled; exact format open | Partially | Exact format needed before PR21D (not PR21A) |
+| Patient/clinical data handling (§42) | **RESOLVED this round** — notes never imported into permanent history by default; content still unreviewed, but the default policy no longer depends on that review | NO | — |
 
-**PR21 overall readiness: no source-dependent PR21 implementation slice
-(PR21A through PR21F) may start** until the blockers above close —
-topology resolving does not by itself unblock them. **PR21-Foundation
-may start once this Design PR merges** — it is genuinely
-topology-independent and does not touch PR21's own data model, source
-assumptions, or event identity.
+**PR21 overall readiness, reassessed:** no source-dependent PR21
+implementation slice (PR21A through PR21F) may start **on the
+identity/pairing blockers alone** — see §54 for the precise per-slice
+reassessment. **PR21-Foundation is complete** (merged, GitHub PR #100)
+— the two rows above are no longer "may start," they are done.
 
 ---
 
@@ -1782,20 +2100,29 @@ notes.
 
 Per `docs/ENGINEERING_WORKFLOW.md` §6/§7 and PR19A/PR20's own design-PR
 precedent, this PR's governance-update scope is limited to: this design
-document, a sanitized evidence manifest under `docs/evidence/pr21/`
-(§6), and a new `docs/DECISION_LOG.md` entry.
+document and a new `docs/DECISION_LOG.md` entry.
 
-**PR99 Source Evidence Update, current truth (supersedes the prior
-Fix-Round entries' "resolves no Owner Decision" framing, which is now
-historical for those specific rounds — H2R/H4R/H5/M1 genuinely resolved
-no Owner Decision when written):** this update **records the inspected
-workbook's evidence, bound to its SHA-256 identity**
-(`8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`,
-§6); **resolves the topology component of OD-PR21-0** (§7, §45); leaves
-OD-PR21-0's field-mapping/event-identity/pairing components, and
-OD-PR21-1 through OD-PR21-6 in full, open (§45); records this partial
-resolution in a new `docs/DECISION_LOG.md` entry; and does **not** start
-PR21-Foundation or any other runtime implementation.
+**PR99 Source Evidence Update, historical record (unchanged from when
+written):** records the inspected workbook's evidence, bound to its
+SHA-256 identity (`8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`,
+§6); resolves the topology component of OD-PR21-0 (§7, §45).
+
+**Owner Decision Closure Round 1, current truth (this round):** records
+the Owner's explicit acceptance of OD-PR21-1, OD-PR21-2, OD-PR21-3,
+OD-PR21-4, and OD-PR21-6 (§45, all RESOLVED); records the Owner's
+explicit acceptance of OD-PR21-5's direction only (PARTIALLY RESOLVED,
+§20, §45); records the field-level contract for the canonical sheets
+(§10.1, narrowing OD-PR21-0's field-mapping sub-component); records an
+explicit interim evidentiary policy for OD-PR21-0's stable-event-identity
+sub-component (§24.1, Option D adopted, identity itself still open, per
+the Owner's own explicit instruction not to decide `ลำดับ`'s durability
+unilaterally); records an explicit, previously-implicit architecture
+fork for OD-PR21-0's Issue↔Receive-pairing sub-component (§11.1,
+neither fork selected); records this round's outcome in a new
+`docs/DECISION_LOG.md` entry; and does **not** start, or otherwise
+touch, PR21A/B/C/D/E (PR21-Foundation is separately complete — merged
+as GitHub PR #100, squash SHA `7b99e5866df4b71ffa1aa09d265baa2bc7033c33`
+— and this round does not modify it).
 
 **Not performed:** any change to `docs/ROADMAP.md`,
 `docs/ROADMAP_STATUS.md`, `knowledge/*`, or
@@ -1811,14 +2138,15 @@ prior dated `DECISION_LOG.md` entry's own historical record.
 ## 51. Scope guard for this PR
 
 **Touched:** `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
-(revised), `docs/DECISION_LOG.md` (one new entry recording the Source
-Evidence Update's findings and topology resolution). **Not touched:**
+(revised), `docs/DECISION_LOG.md` (one new entry recording Owner
+Decision Closure Round 1's findings and resolutions). **Not touched:**
 `backend/**`, `frontend/**`, `alembic/**`, `tests/**`, `.github/**`,
 Docker/runtime configuration, `docs/ROADMAP.md`,
 `docs/ROADMAP_STATUS.md`, `knowledge/**`,
-`docs/audits/04-consolidated-implementation-plan.md`. The uploaded
-workbook itself is **not** added to this repository (§6). No PR21
-runtime implementation is performed.
+`docs/audits/04-consolidated-implementation-plan.md`,
+`docs/evidence/pr21/**` (unchanged, still bound to the same SHA-256).
+No workbook re-upload occurs in this round. No PR21 runtime
+implementation (PR21A–F) is performed by this PR.
 
 ---
 
@@ -1831,50 +2159,113 @@ runtime implementation is performed.
   question, not a full recurrence of this STOP condition.
 - **Source topology unknown — RESOLVED** (§7: Option A, confirmed
   against the real workbook).
-- **Source event identity unknown — STRONGLY NARROWED, not fully
-  resolved** (§24: two concrete, verified candidates found; re-export
-  durability not confirmable from a single snapshot).
-- **Issue↔Receive deterministic matching unknown — ENCOUNTERED, now
-  a confirmed negative finding rather than an inspection gap** (§11:
-  direct inspection confirms no linking field exists).
-- **Unmatched ISSUE policy unknown — ENCOUNTERED** (§16, OD-PR21-1).
-- **Unmatched RECEIVE policy unknown — ENCOUNTERED** (§17, OD-PR21-2).
-- **Ward mapping policy — architecture RESOLVED, operational ownership
-  NOT RESOLVED, real reference list found** (§14, §14.1, OD-PR21-4) —
-  not a full stop on the architecture itself.
-- **Historical operator representation — architecture RESOLVED, later
-  mapping-procedure boundary NOT RESOLVED, real 8-name roster found**
-  (§13, §13.1, OD-PR21-3) — not a full stop on the architecture itself.
+- **Field-level contract unknown — RESOLVED for canonical sheets this
+  round** (§10.1); SDC-sheet field contract remains open, scoped
+  narrowly to that ambiguity.
+- **Source event identity unknown — STRONGLY NARROWED, evidentiary bar
+  now explicit, still not fully resolved** (§24, §24.1: two concrete,
+  verified candidates found; re-export durability not confirmable from
+  a single snapshot; interim Option-D policy adopted this round rather
+  than guessing).
+- **Issue↔Receive deterministic matching unknown — ENCOUNTERED, now a
+  confirmed negative finding with an explicit architecture fork raised
+  (not resolved)** (§11, §11.1: direct inspection confirms no linking
+  field exists; this round surfaces, without resolving, the choice
+  between a still-undiscovered deterministic pairing rule and
+  event-first staging).
+- **Unmatched ISSUE policy unknown — RESOLVED this round** (§16,
+  OD-PR21-1: `ERROR`-severity, whole-session block, Owner-accepted).
+- **Unmatched RECEIVE policy unknown — RESOLVED this round** (§17,
+  OD-PR21-2: same treatment, same Owner acceptance).
+- **Ward mapping policy — RESOLVED this round, architecture and
+  ownership both** (§14, §14.1, OD-PR21-4: Administrator-owned,
+  explicit/auditable/persisted; 52-entry reference list found).
+- **Historical operator representation — RESOLVED this round,
+  architecture and mapping-procedure boundary both** (§13, §13.1,
+  OD-PR21-3: preserve raw text permanently, optional later mapping,
+  never blocking; real 8-name roster found).
 - **BorrowTransaction schema cannot represent history without
   fabrication — NOT ENCOUNTERED**; §12 confirms no column requires
   fabricating a value.
-- **Live transaction uniqueness can be affected — risk identified and
-  contained** by OD-PR21-1's default recommendation (§16, §44); not an
-  unresolved stop on its own, but downstream of OD-PR21-1.
+- **Live transaction uniqueness can be affected — RESOLVED (eliminated
+  for V1) by OD-PR21-1's resolution** (§16, §44): PR21 V1 never imports
+  a historical `OPEN` transaction, so `idx_tx_one_active_borrow` cannot
+  be affected by legacy import at all in V1.
 - **Patient/HN/MRN data present without an approved handling policy —
-  STILL CONTINGENT, now on a concrete, identified field** (§9/§10's real
-  `หมายเหตุ` columns) rather than an unknown source structure; content
-  was not scanned for patient data by this session (§42, OD-PR21-6).
+  RESOLVED this round (default policy adopted; content itself still
+  unreviewed)** (§42, OD-PR21-6: notes are never imported into permanent
+  history by default; the policy no longer depends on content review to
+  take effect, though the content itself remains unscanned pending any
+  future decision to import it).
 - **A new transaction lifecycle state appears necessary — NOT
   ENCOUNTERED** (§18).
+- **Historical `transaction_no` cannot satisfy NOT NULL/UNIQUE without
+  fabrication — RESOLVED (direction), exact format still open, scoped to
+  PR21D** (§20, OD-PR21-5).
 - **PR21 requiring a change to PR19/PR20 safety semantics — NOT
   ENCOUNTERED**; every safety mechanism (§37, §38) is reused unmodified,
   and PR20's existing route, response model, and wire contract are
-  verified unchanged (§29-§32). §30's internal provider generalization
-  and §38's retention hook are additive extensions to shared
-  *infrastructure*, not changes to *safety semantics* or *external API
-  contracts* — no lock order, fencing, claim, audit contract, PR20
-  response field, or PR20 route is altered.
+  verified unchanged (§29-§32), and remain so after PR21-Foundation's
+  actual merge (GitHub PR #100) — no lock order, fencing, claim, audit
+  contract, PR20 response field, or PR20 route was altered by that
+  implementation.
 
-**Net effect: no source-dependent PR21 implementation slice is ready.**
-OD-PR21-0's **topology** component is resolved (§7); its **field-mapping**
-component (SDC ambiguity, event-identity re-export durability) and
-OD-PR21-1/OD-PR21-2 (pairing/unmatched-row policy, now backed by a
-confirmed-negative finding, §11) must still resolve before PR21A/B/C can
-begin. **PR21-Foundation (§46) is ready to start once this Design PR
-merges** — it is not blocked by source evidence and does not touch
-PR21's own data model, but it has not started, and this Design PR
-itself performs no implementation (§51).
+**Net effect: no source-dependent PR21 implementation slice is fully
+unblocked, but the remaining blocker set is now much smaller.**
+OD-PR21-1 through OD-PR21-4 and OD-PR21-6 are RESOLVED; OD-PR21-5 is
+PARTIALLY RESOLVED (PR21D-scoped remainder only). What remains blocking
+PR21A/B/C is narrowly: OD-PR21-0's stable-event-identity sub-component
+(§24.1) and its Issue↔Receive-pairing sub-component (§11.1), plus the
+SDC-sheet ambiguity (§6.1) for PR21B/C's field contract. **PR21-Foundation
+is complete** (§46, §47 — merged as GitHub PR #100, squash SHA
+`7b99e5866df4b71ffa1aa09d265baa2bc7033c33`). See §53 for the precise,
+per-slice readiness reassessment this round produces.
+
+---
+
+## 53. Owner Decision Closure Round 1 — readiness reassessment
+
+**PR21A (Historical Transaction Schema / Provenance Foundation):
+STILL BLOCKED.** OD-PR21-3/4 (now resolved) and PR21-Foundation's
+provider interface (now merged) are no longer blockers. **Blocking
+remainder: OD-PR21-0's stable-event-identity sub-component (§24.1)** —
+PR21A's own provenance/plan-table schema needs to know the identity
+mechanism before it can be designed without risking rework.
+
+**PR21B (Issue History Parser + Validation): STILL BLOCKED.**
+**Blocking remainder:** SDC-sheet clarification (§6.1/§6.3), §4's
+identifier case matrix, §15's frozen error-code list, and OD-PR21-0's
+stable-event-identity sub-component (§24.1, needed for write-time
+idempotency, §25).
+
+**PR21C (Receive History Parser + Matching/Validation): STILL
+BLOCKED.** OD-PR21-1/2 (now resolved) are no longer blockers on their
+own. **Blocking remainder:** SDC-sheet clarification, and §11.1's
+Issue↔Receive pairing architecture fork (deterministic rule vs.
+event-first staging) — an explicit Owner/architecture decision this
+round raises but does not make.
+
+**PR21D (Persisted Dry-run + Historical Transaction Execution):
+STILL BLOCKED**, transitively on PR21A–C, plus its own additional,
+narrower blocker: OD-PR21-5's exact `transaction_no` namespace/format
+(§20) — the one remaining piece of OD-PR21-5 this round leaves open.
+
+**PR21E (Frontend Real Integration): STILL BLOCKED**, transitively on
+PR21D, unchanged.
+
+**PR21F (Governance Sync): STILL BLOCKED**, transitively on all
+approved slices merging, unchanged.
+
+**What this round does NOT do, stated explicitly (per this round's own
+scope guard, §51):** it does not implement PR21A/B/C/D/E; it does not
+add a migration; it does not modify `backend/**`, `frontend/**`,
+`alembic/**`, `tests/**`, or `.github/**`; it does not merge without
+independent review; it does not decide `ลำดับ`'s re-export durability
+(§24.1) or select an Issue↔Receive pairing rule (§11.1) — both are
+explicitly left to the Owner, per this round's own governing
+instruction; it does not touch GitHub PR #97's P2 follow-up or PR #98's
+P2-A/P2-B follow-ups (unchanged, still accepted/non-blocking/unresolved
+in their existing recorded wording).
 
 ---
 
