@@ -2887,3 +2887,204 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   or CI file was modified to produce this entry. PR21 implementation
   remains **not started**. GitHub PR #97's P2 follow-up remains open and
   untouched.
+
+## 2026-08-17 — Roadmap PR21 design Source Evidence Update: OD-PR21-0 topology RESOLVED against the real production workbook — still not implemented
+
+- **Decision/record:** The Owner supplied the real production Equipment
+  Pool AppSheet workbook (`บันทึกข้อมูล Equipment Pool.xlsx`, 28 sheets).
+  This session inspected it **directly** with `openpyxl` — headers,
+  sample rows, full row counts (verified via `iter_rows`), date ranges,
+  and uniqueness/referential-integrity checks against the real data —
+  not transcribed from a description. The workbook file itself is a
+  session upload and is **not** committed to this repository (contains
+  real staff names and ward assignments; this entry's scope is
+  documentation only).
+- **OD-PR21-0 — topology component RESOLVED: Option A.** The real
+  workbook is confirmed to be exactly one `.xlsx` file containing both
+  Issue and Receive sheets among its 28 tabs. PR21's `ImportSession` →
+  exactly one `ImportSource`, matching PR19's existing, unmodified
+  topology — zero PR19 foundation changes required. Options B (multiple
+  sources per session) and C (two independent sessions plus a staging
+  layer) are formally rejected — the evidence needed to choose between
+  them never arises, since Option A is what the real deliverable
+  actually is.
+- **Canonical source correction (supersedes the source-evidence task's
+  own suggested sheets).** Direct inspection identified the true
+  canonical Issue/Receive sources as a two-level Order-header +
+  line-item structure — `Orders ยืมเครื่อง` (Issue order header) +
+  `ข้อมูลส่งเครื่องมือ` (Issue line items), `Orders คืนเครื่อง` (Receive
+  order header) + `ข้อมูลรับเครื่องมือ` (Receive line items) — **not**
+  the `BMEส่งเมื่อว่าน`/presentation sheets originally suggested. Those
+  sheets' own header rows literally contain an AppSheet query string
+  (`SELECT B,E,G,... WHERE B=DATE '2026-07-28'`), confirming they are
+  rolling single-day derived views, not canonical historical data. The
+  genuine canonical tables span the full available history
+  (2026-01-01 through 2026-07-28), and their order-number fields
+  (`เลขที่ใบยืม`/`เลขที่ใบคืน`) are verified 100% unique with 5,676/5,677
+  line-item references resolving to a real header row (the one
+  exception, `'Borrow1000000005'`, is an apparent truncated value — a
+  concrete example of the orphan-reference `ERROR` finding the design
+  already specifies, not a structural gap).
+- **Field-level mapping — narrowed, not fully closed.** §9/§10 of the
+  design document now carry real, verified column lists for all four
+  canonical sheets (including confirmation that `ME.Code` is the
+  governing equipment-identifying field). The field-contract gate
+  remains open for two reasons: (a) `ข้อมูลการส่ง SDC`/
+  `ข้อมูลการรับ SDC` are structurally near-identical to the canonical
+  tables but diverge sharply in row count (28,078 vs. 19,912 Issue;
+  51,444 vs. 19,768 Receive, 2.6× more) — "SDC" is undefined anywhere in
+  this repository, and this is recorded as an open question requiring
+  Owner clarification, not guessed; (b) implementation-grade validation
+  rules and the frozen error-code list remain PR21B/C work per this
+  Roadmap's own design/implementation split.
+- **Stable event identity — strong candidates found, not fully
+  confirmed.** Two verified candidates: the order number
+  (`เลขที่ใบยืม`/`เลขที่ใบคืน`, 100% unique) at the order level, and the
+  `ลำดับ` column on the line-item sheets (an 8-character hex-like
+  AppSheet-generated row key, 100% unique among non-null values —
+  19,871/19,871 Issue, 19,750/19,750 Receive — but blank on ~0.2% of
+  rows). Re-export durability of the `ลำดับ` key cannot be confirmed
+  from a single snapshot and is not claimed as resolved.
+- **Issue↔Receive pairing — confirmed negative finding.** Direct
+  inspection confirms **no explicit linking field** exists between an
+  issue and its eventual return anywhere in the workbook. This
+  Owner Decision (OD-PR21-1/OD-PR21-2's underlying pairing question)
+  remains open, now backed by verified evidence rather than an
+  inspection gap — nearest-timestamp/equipment-based heuristic matching
+  is not adopted without explicit Owner approval.
+- **Reference tables found:** `ชื่อ BME` (BME staff roster, exactly 8
+  names) and `แผนก` (Ward reference list, 52 entries) — both narrow the
+  practical scope of OD-PR21-3 and OD-PR21-4 without resolving their
+  ownership/procedure questions.
+- **What this update does not do:** it does not resolve OD-PR21-1
+  through OD-PR21-6; it does not begin PR21-Foundation or any other
+  implementation slice; it does not modify `backend/**`, `frontend/**`,
+  `alembic/**`, `tests/**`, or `.github/**`; it does not commit the
+  uploaded workbook to this repository; it does not touch GitHub PR
+  #97's P2 follow-up, PR #98's P2-A/P2-B follow-ups, or any PR20-related
+  content in this file or in
+  `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md`.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7, same
+  governance-update scope as the four PR21 design entries above (this
+  entry plus the revised design document only — no
+  `ROADMAP.md`/`ROADMAP_STATUS.md`/`knowledge/*` change).
+- **Source:** `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+  (revised — section count unchanged at 52; see its own §6, §6.1-§6.4,
+  §7 for the topology resolution and full sheet classification, §9/§10
+  for the real field lists, §11 for the pairing negative finding, §24
+  for the event-identity candidates, and §45/§47/§52 for the updated
+  Owner Decision/readiness/STOP-condition status).
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this entry. PR21 implementation
+  remains **not started**. GitHub PR #97's P2 follow-up and PR #98's
+  P2-A/P2-B follow-ups remain open and untouched.
+
+## 2026-08-17 — Roadmap PR21 design Source Evidence Fix Round: sanitized evidence manifest committed, OD-PR21-0 recorded PARTIALLY RESOLVED (PR99-H1, PR99-H2) — still not implemented
+
+- **Decision/record:** An independent architecture review of the Source
+  Evidence Update (REQUEST CHANGES) identified two merge-blocking
+  findings — PR99-H1 (source conclusions not independently auditable)
+  and PR99-H2 (stale governance text contradicting the partial OD-PR21-0
+  resolution) — plus two non-blocking wording inconsistencies. This
+  entry records the corrections. No Owner Decision beyond OD-PR21-0's
+  topology sub-component is resolved by this round. PR21 implementation
+  remains **not started**.
+- **PR99-H1 — resolved: sanitized evidence manifest committed, bound to
+  an immutable SHA-256.** The workbook actually inspected for this PR
+  was re-opened and its SHA-256 computed fresh from its raw bytes (not
+  reused from a prior transcription): **`8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`**,
+  size **20,690,045 bytes**. A committed, sanitized evidence manifest —
+  `docs/evidence/pr21/equipment-pool-workbook-manifest.json` (machine-
+  readable) and `docs/evidence/pr21/equipment-pool-workbook-manifest.md`
+  (human-readable) — now records, for all 28 sheets: visibility state,
+  dimensions, non-empty row counts, detected header row and header
+  names (column labels only, never row content), classification
+  (`AUTHORITATIVE_INPUT_CANDIDATE`/`PRESENTATION_DERIVED`/
+  `EQUIPMENT_MASTER_OUT_OF_SCOPE`/`VERIFY_CHECKLIST_OUT_OF_SCOPE`/
+  `HELPER_OTHER`/`UNKNOWN_REQUIRES_REVIEW`), and — for the six
+  candidate transaction-input sheets — duplicate-header/unnamed-column
+  counts, blank-row-key counts, date/time parseability, and
+  present/blank/distinct/duplicate-occurrence aggregate statistics for
+  each candidate identifier field. **No row-level value, personnel
+  name, patient identifier, or free-text note appears anywhere in
+  either file** — verified by an explicit post-generation scan of the
+  staged diff against every personnel name observed during inspection,
+  in addition to the manifest's own structural-metadata-only design.
+  One real defect was caught and fixed during manifest generation
+  itself: an early script draft mistakenly captured `CODE QR`'s actual
+  row-1 data (a real BCM code, QR URL, and numeric code — that sheet has
+  no genuine header row) as if it were header vocabulary; corrected to
+  an explicit `NO_HEADER_ROW_DETECTED` note before anything was
+  committed.
+  - **Re-measurement finding (new, from building the manifest):** the
+    `ข้อมูลการส่ง SDC`/`ข้อมูลการรับ SDC` sheets' non-blank row counts and
+    distinct order-reference/`ME.Code` counts are **identical** to the
+    canonical sheets' own counts; their higher total row counts are
+    fully attributable to large trailing blocks of blank rows (8,207
+    and 31,694 respectively). This narrows, but does not fully close,
+    the SDC open question — a full row-by-row diff was not performed,
+    and Owner clarification is still required.
+  - **What was honestly not measured:** merged-cell ranges, hidden-
+    column counts, and formula-cell counts for the candidate sheets —
+    a non-read-only full workbook load (required to expose this data)
+    exceeded an 85-second timeout for this 20.7 MB, 28-sheet file in
+    this environment. Recorded as `NOT_MEASURED_IMPRACTICAL_IN_ENVIRONMENT`
+    in the manifest, not fabricated or estimated.
+  - **FK-resolution scope, stated explicitly:** all identifier/Ward
+    matching statistics are workbook-internal structural evidence only.
+    This inspection environment had no authoritative current database
+    snapshot (live `Ward`/`User` tables) to check against — no
+    database-level FK-resolution claim is made anywhere.
+  - The design document's every workbook-derived claim now cites this
+    SHA-256 and manifest path explicitly (§6).
+- **PR99-H2 — resolved: stale governance text corrected.** §50 of the
+  design document previously stated this update "records H2R/H4R/H5/M1...
+  resolves no Owner Decision" — true when written for those specific
+  fix rounds, but left standing as current-normative text after the
+  Source Evidence Update resolved OD-PR21-0's topology component,
+  creating a direct contradiction. Corrected to state current PR #99
+  truth precisely: this update records evidence bound to the SHA-256
+  above, resolves the **topology component only** of OD-PR21-0, leaves
+  the field-mapping/event-identity/pairing components (and OD-PR21-1
+  through OD-PR21-6 in full) open, and does not start implementation.
+  Historical fix-round prose is preserved where it describes what that
+  specific round actually did at the time.
+- **Non-blocking cleanup A:** "of 5,677 distinct Issue order references,
+  5,676 resolve" corrected to "all but one resolve" — the measured count
+  itself (5,677 distinct, 1 orphan) was not changed, only the prose.
+- **Non-blocking cleanup B:** removed stale "remain provisional until
+  topology is resolved" gate language for PR21B/PR21C in §46, now that
+  topology is resolved — replaced with the real remaining blockers
+  (SDC clarification, stable event identity, Issue↔Receive pairing,
+  OD-PR21-3/4/5), stated explicitly so topology is never cited as a
+  remaining blocker again.
+- **OD-PR21-0 wording, made precise:** now stated everywhere as
+  **"PARTIALLY RESOLVED: topology resolved; source-schema/event-
+  identity/pairing components remain open"** rather than a bare
+  "topology component RESOLVED" framing that risked being read as
+  fuller resolution than warranted.
+- **Foundation status:** unchanged — PR21-Foundation's approved
+  architecture is not touched by this round; it remains source-
+  independent generic internal plumbing, not started, and topology
+  resolving does not make source-dependent PR21A ready.
+- **What this fix round does not do:** it does not resolve OD-PR21-1
+  through OD-PR21-6, or OD-PR21-0's non-topology components; it does not
+  begin PR21-Foundation or any other implementation slice; it does not
+  modify `backend/**`, `frontend/**`, `alembic/**`, `tests/**`, or
+  `.github/**`; it does not commit the raw workbook; it does not touch
+  GitHub PR #97's P2 follow-up or PR #98's P2-A/P2-B follow-ups, and
+  does not rewrite any prior dated `DECISION_LOG.md` entry's own
+  historical record.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7, same
+  governance-update scope as the design entries above (this entry, the
+  revised design document, and the new evidence-manifest files only).
+- **Source:** `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+  (revised — section count unchanged at 52) and
+  `docs/evidence/pr21/equipment-pool-workbook-manifest.{json,md}` (new).
+  This committed manifest is the reviewable evidence artifact — this
+  entry does not itself claim independent review of the workbook has
+  occurred.
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this entry. PR21 implementation
+  remains **not started**. GitHub PR #97's P2 follow-up and PR #98's
+  P2-A/P2-B follow-ups remain open and untouched.

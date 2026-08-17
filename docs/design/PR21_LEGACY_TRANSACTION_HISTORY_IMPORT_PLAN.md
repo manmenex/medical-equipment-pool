@@ -1,17 +1,21 @@
 # Roadmap PR21 — Legacy Receive and Issue History Import: Design Specification
 
-**Status:** Design only. Not implemented. **Fix Round 3** (architecture
-review, findings PR98-H4R2/PR98-H4R3) applied on top of Fix Round 2
-(PR98-H2R/PR98-H4R/PR98-H5, non-blocking M1) and Fix Round 1
-(H1–H4/M1/L1). This document opens Owner Decisions (§45) and encounters
-mandatory STOP conditions (§52) because no real Receive/Issue source
-artifact exists in this repository, and because Fix Round 1's own
-findings (H1, H3) surfaced additional evidence-dependent architecture
-questions that cannot be finalized without that same source artifact.
-No implementation, migration, or runtime change is made by this PR.
+**Status:** Design only. Not implemented. **Source Evidence Update**
+applied on top of Fix Round 3 (PR98-H4R2/PR98-H4R3), Fix Round 2
+(PR98-H2R/PR98-H4R/PR98-H5, non-blocking M1), and Fix Round 1
+(H1–H4/M1/L1). The Owner has supplied the real production Equipment
+Pool workbook (`บันทึกข้อมูล Equipment Pool.xlsx`), independently
+inspected directly by this session (not transcribed from a description)
+— see §6. **OD-PR21-0's topology component is now RESOLVED** (§7): one
+workbook, one `ImportSession`, one `ImportSource`, multiple whitelisted
+sheets. Field-level mapping, stable event identity, and Issue↔Receive
+pairing remain open — real evidence narrows but does not fully close
+them (§6, §11, §24). This document opens Owner Decisions (§45) and
+encounters mandatory STOP conditions (§52). No implementation,
+migration, or runtime change is made by this PR.
 
-**Baseline:** `4cab688708320f1e8523a906f5a5ce17ad1e5d9a` (GitHub PR #97,
-Post-PR20 Governance Sync squash merge, on
+**Baseline:** `5d4b1d3a7f79e9b9e6d281a1eea1f7b5bc862217` (GitHub PR #98,
+PR21 Design Phase 1 squash merge, on
 `claude/medical-equipment-pool-0c7fz0`).
 
 **Roadmap authority:** `docs/audits/04-consolidated-implementation-plan.md`
@@ -133,12 +137,27 @@ PR20's `backend/app/services/identifiers.py`
 directly reusable by PR21's adapter for resolving a legacy row's stated
 identifier(s) to `equipment_id`. PR20's §9 OD-3 case-matrix pattern
 ("never fabricate a missing identifier") is the governing principle PR21
-reuses; the exact case matrix for Receive/Issue rows is blocked on §6/§7.
+reuses.
+
+**Source Evidence Update.** Direct inspection (§6.1, §6.2) confirms
+**`ME.Code`** is the identifying field present on every canonical
+Issue/Receive line-item row, alongside a `SCAN CODE`-family URL column
+(`http://nsmart.nhealth-asia.com/mtdqrcode/asset_mast_show.php?code=...`)
+and a `Barcode ส่ง/รับเครื่อง` column (a `*BCM-formatted*` wrapped
+string). `ME.Code` values observed (e.g. `BCM01078`, `BCM03171`) match
+the `Equipment BCM`-family identifier already used by
+`ข้อมูลเครื่องEquipment Pool` (Equipment Master, §6.1) and by PR20's own
+BCM concept — the closest and most natural mapping is `ME.Code` →
+PR20's BCM identity path via `normalize_bcm_code()`. The full case
+matrix (whether `SCAN CODE`/`Barcode` ever disagree with `ME.Code`,
+exact conflict precedence) is not exhaustively verified by this
+design-level inspection and remains PR21B/C implementation-grade work
+(§6.3) — but the *governing identifying field* is no longer unknown.
 
 | Question | Answer |
 |---|---|
-| Which legacy field identifies Equipment? | **Unknown — blocked on §6.** |
-| Can rows have only one of BCM/Item Number? | **Unknown — blocked on §6.** |
+| Which legacy field identifies Equipment? | **`ME.Code`** (§6.1/§6.2), mapped via `normalize_bcm_code()`. |
+| Can rows have only one of BCM/Item Number? | Every sampled row carries `ME.Code` + a `SCAN CODE` URL + a `Barcode` column together; exhaustive conflict/blank-case analysis deferred to PR21B/C (§6.3). |
 | Identifier points to no Equipment? | Blocking finding (§15) — row not imported. |
 | BCM and Item Number conflict? | Blocking finding (§15); never silently prefer one. |
 | Can PR21 import an orphan transaction? | **No.** `equipment_id` is a NOT NULL FK — orphan rows are validation findings, never imported rows. |
@@ -154,42 +173,151 @@ historical `OPEN` rows are the risk case, gated by Owner Decision (§16).
 
 ---
 
-## 6. Source file contract — STOP: no real source artifact exists
+## 6. Source file contract — real workbook supplied and directly inspected
 
-A repository-wide search confirmed no real legacy AppSheet Receive
-History or Issue History workbook, CSV, or column-level schema
-description exists anywhere in this repository. The only source-adjacent
-file, `frontend/src/services/legacyImportFixtures.ts`, is explicitly
-labeled by its own header comment as invented UI-mock data, not real
-hospital data — **not used as evidence anywhere in this document.**
+**Source Evidence Update.** The Owner supplied the actual production
+Equipment Pool AppSheet workbook, `บันทึกข้อมูล Equipment Pool.xlsx`
+(28 sheets, 20,690,045 bytes). This session inspected it **directly**
+with `openpyxl` (headers, sample rows, full row counts, date ranges,
+and uniqueness/referential-integrity checks computed fresh against the
+real data) — not transcribed from a description. The frontend mock
+fixture (`frontend/src/services/legacyImportFixtures.ts`) remains
+**unused as evidence anywhere in this document.** The workbook file
+itself is a session upload for design-review purposes and is **not
+committed to this repository** by this PR (it contains real staff names
+and ward assignments; scope is `docs/**` only, §51) — the real import at
+implementation time will require the Owner to supply it again through
+PR21's own upload flow.
 
-By contrast, PR20's own OD-1 was resolved only once the Owner supplied a
-real `export_template.xlsx` (32-column header list, verified against
-4,729 real records). No equivalent evidence exists for Receive/Issue
-History.
+**Immutable evidence binding.** Every workbook-derived claim in this
+document (§6 through §14, §24) is based on the workbook identified by:
 
-**This is a mandatory STOP on field-level mapping.** §9/§10 describe
-only conceptual fields, not a binding source contract. **Fix Round 1
-adds:** this STOP also blocks §7's topology decision and §24's stable
-event-identity decision — both require inspecting the actual source
-artifact's structure (one workbook vs. two, presence/absence of a stable
-per-row reference ID), not just its column semantics. §7, §24, and every
-section downstream of them are explicitly marked **NOT READY** until this
-resolves.
+- **SHA-256:** `8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`
+- **Sanitized evidence manifest:**
+  `docs/evidence/pr21/equipment-pool-workbook-manifest.json` (machine-
+  readable, structural metadata and aggregate counts only) and its
+  companion `docs/evidence/pr21/equipment-pool-workbook-manifest.md`
+  (human-readable summary) — committed alongside this design document.
+  No row-level values, personnel names, patient identifiers, or
+  free-text notes appear in either file. A future re-inspection of a
+  workbook that does not hash to the SHA-256 above is a **different**
+  file, and the claims below do not automatically transfer to it.
 
-**Required from the Owner (OD-PR21-0, §45):** the real AppSheet Issue
-History export and Receive History export (workbook/CSV or exact
-column-level description), exact sheet/tab name(s), header row location,
-and a representative row-count sample — plus, per Fix Round 1's findings,
-confirmation of whether Issue History and Receive History are delivered
-as **one workbook** (e.g. two sheets/tabs) or **two separate files**, and
-whether each row carries any stable identifier (legacy row key,
-transaction/reference ID, or event UUID) that survives a corrected
-re-export.
+### 6.1 Closed-world sheet classification (all 28 sheets, directly inspected)
+
+**AUTHORITATIVE TRANSACTION INPUT** (canonical — see §6.2 for why these,
+not the sheets originally suggested, are canonical):
+
+| Sheet | Role |
+|---|---|
+| `Orders ยืมเครื่อง` | Issue **order header** — one row per borrow transaction. Columns: วันที่ (date), เลขที่ใบยืม (order no.), แผนกที่ยืม (ward), ผู้ส่งเครื่องยืม (User), ผู้ส่งเครื่องยืม (BME), เวลา (time), จำนวนเครื่องส่งทั้งหมด (total qty), หมายเหตุ (notes). |
+| `ข้อมูลส่งเครื่องมือ` | Issue **order line items** — one row per equipment unit within an order, FK'd to `Orders ยืมเครื่อง` via เลขที่ใบส่ง = เลขที่ใบยืม. Columns: ลำดับ (row key, §6.4), วันที่, เลขที่ใบส่ง, SCAN CODE ส่ง, ME.Code, Barcode ส่งเครื่อง, Equipment, Brand, Model, Serial no., รูปเครื่อง, แผนกที่ส่ง, 3 checklist columns, จำนวน, หมายเหตุ, เวลา, ชื่อ BME, ชื่อ (User). |
+| `Orders คืนเครื่อง` | Receive **order header**. Columns: วันที่, เลขที่ใบคืน, แผนกที่คืน, ผู้ส่งเครื่องคืน (User), ผู้รับเครื่องคืน (BME), เวลา, จำนวนเครื่องรับคืนทั้งหมด, หมายเหตุ. |
+| `ข้อมูลรับเครื่องมือ` | Receive **order line items**, FK'd via เลขที่ใบรับเครื่อง = เลขที่ใบคืน. Columns: ลำดับ, วันที่, เลขที่ใบรับเครื่อง, SCAN CODE รับ, ME.Code, Barcode รับเครื่อง, Equipment, Brand, Model, Serial no., แผนกที่รับ, รูปเครื่อง, 3 checklist columns, จำนวน, หมายเหตุ, เวลา, ชื่อ BME, ชื่อ (User). |
+
+**DERIVED/PRESENTATION** (not parsed — confirmed by direct inspection
+to be AppSheet-generated, not source data):
+
+| Sheet | Why derived |
+|---|---|
+| `BMEส่ง`, ` BMEส่งเมื่อว่าน`, `BMEรับ`, `BMEรับเมื่อว่าน` | Each sheet's own header row literally contains an AppSheet query string, e.g. `SELECT B,E,G,L,M,N,O,P,R,S,T,Q WHERE B=DATE '2026-07-28'` — a rolling "today"/"yesterday" date-filtered **view** over the line-item tables, hardcoded to whatever date the workbook was last opened. **This directly contradicts this task's own suggestion that `BMEส่งเมื่อว่าน` is "materially more suitable as canonical migration input"** — direct inspection shows the opposite: it is a derived, single-day slice, not a canonical historical table. |
+| `สแกนจ่ายเครื่องที่ส่งวันนี้`, `สแกนรับเครื่องวันนี้` | Same pattern — header row contains `SELECT A,B,C,D,L,J,K WHERE L=DATE '2026-07-28'` etc. Scan-verification-focused derived views. |
+| ` แบบบันทึกส่งเครื่อง`, `แบบบันทึกรับเครื่อง`, `แบบบันทึกส่งเครื่องเมื่อวาน`, ` แบบบันทึกรับเครื่องเมื่อวาน` | Print-form layouts — mostly empty cells, a title label (`ส่งเครื่อง`/`รับเครื่อง`), a single hardcoded date value. Not tabular data. |
+
+**OUT OF PR21 V1 SCOPE** (per the Roadmap's own boundary, confirmed
+present in the real workbook):
+
+| Sheet | Why out of scope |
+|---|---|
+| `ข้อมูลเครื่องEquipment Pool` | Equipment Master (SCAN CODE, ID CODE, Barcode เครื่อง, Equipment BCM, หน่วยงาน, Brand, Model, Serial no., images) — PR20's domain, not PR21's. |
+| `Equioment Verify Checklist`, ` Equioment Verify Checklist เมื`, `Verify Checklist 01`, `Verify Checklist 02` | Real checklist transaction data exists (Date, ME.Code, Cleaner, Function Test, Run Test, Battery Check, Status, Technician, Remark) — explicitly out of the Roadmap's V1 boundary (§1) unless a later approved decision adds it. |
+
+**IGNORED/HELPER/OTHER** (reference or aggregate data, not transaction
+history):
+
+| Sheet | Role |
+|---|---|
+| `CODE QR`, `Barcode ` | BCM → QR/barcode-image reference lookups. |
+| `ชื่อ BME` | **BME staff roster** — header `ชื่อพนักงาน`, exactly **8 names**. Directly relevant to OD-PR21-3 (§13.1). |
+| `แผนก` | **Ward reference list** — header `แผนก`, **52 entries** (e.g. `Ward 11A`, `Ward 10A`). Directly relevant to OD-PR21-4 (§14.1). |
+| `ฝึกงานข้อมูลรับ`, `ฝึกงาน` | Aggregate dashboard rollups by equipment category (totals/available/borrowed-today/received-today) — not row-level transactions. |
+| `Sheet32` | Empty. |
+
+**REQUIRES OWNER CLARIFICATION — not selected as canonical without
+it** (§6.3):
+
+| Sheet | Open question |
+|---|---|
+| `ข้อมูลการส่ง SDC`, `ข้อมูลการรับ SDC` | Structurally near-identical to the canonical line-item tables (same columns minus the checklist/qty/notes/time/BME/User fields). Total row counts diverge sharply from the canonical sheets (28,078 vs. `ข้อมูลส่งเครื่องมือ`'s 19,912; 51,444 vs. `ข้อมูลรับเครื่องมือ`'s 19,768), but re-measurement (`sdc_sheets_evidence` in the manifest, §6) shows the **non-blank** row counts and **distinct** order-reference/`ME.Code` counts are identical to the canonical sheets' own counts — the divergence is fully attributable to large trailing blocks of blank rows (8,207 and 31,694 respectively), not additional real data. This is aggregate-count evidence, not a row-by-row diff. "SDC" is not a term defined anywhere in this repository's documentation. **Narrowed, not resolved** — recorded as an open question, not guessed. |
+
+### 6.2 Canonical source correction (supersedes this task's own suggestion)
+
+The task's own framing suggested `BMEส่งเมื่อว่าน` (Issue) and the
+`แบบบันทึกรับเครื่องเมื่อวาน` presentation sheet (Receive) as candidates.
+**Direct inspection shows both are derived, single-day, AppSheet-generated
+views — not canonical.** The genuinely canonical sources, verified by
+direct inspection (§6.1's first table), are the **Orders-header +
+line-item pairs**: `Orders ยืมเครื่อง` + `ข้อมูลส่งเครื่องมือ` for Issue,
+`Orders คืนเครื่อง` + `ข้อมูลรับเครื่องมือ` for Receive. Verified evidence
+for this conclusion:
+
+- Both line-item tables span the **full available history**: 2026-01-01
+  through 2026-07-28 (~7 months), not a single day.
+- **Reference resolution (distinct-value basis, not a row-level count —
+  full detail in the evidence manifest, §6):** of the 5,677 **distinct**
+  `เลขที่ใบส่ง` reference values present on the Issue line-item sheet,
+  **all but one (5,676 of 5,677) resolve** by set membership against
+  the `Orders ยืมเครื่อง` header sheet's own distinct
+  `เลขที่ใบยืม` values; the one exception, `'Borrow1000000005'`, does
+  not resolve — an apparent truncated/malformed value, itself a
+  concrete example of the orphan-reference `ERROR` finding §15 already
+  specifies, not a structural problem. On the Receive side, all 6,141
+  distinct `เลขที่ใบรับเครื่อง` reference values resolve against
+  `Orders คืนเครื่อง`'s distinct `เลขที่ใบคืน` values — zero orphans
+  measured. **This distinct-reference-resolution metric is unrelated
+  to, and must not be confused with, the `ลำดับ` row-key uniqueness
+  figures in §24** (a different basis: uniqueness within one sheet, not
+  resolution against a different sheet).
+- Order numbers are **100% unique** within their own header sheet
+  (5,685 distinct `เลขที่ใบยืม` values for 5,685 non-null rows; 6,158
+  for 6,158 `เลขที่ใบคืน`) — a genuine, stable, per-transaction key.
+  This is a separate claim from reference *resolution* above (whether a
+  line-item's reference value finds a matching header row).
+
+### 6.3 Field-level mapping — still not fully closed
+
+§9/§10 are updated below with the real, verified column lists for the
+four canonical sheets — this is a material advance over "conceptual
+fields only." **The field-contract gate remains open** for two reasons,
+neither guessed around: (a) the `ข้อมูลการส่ง SDC`/`ข้อมูลการรับ SDC`
+ambiguity (§6.1) — narrowed by re-measurement (their non-blank/distinct
+counts match the canonical sheets exactly, consistent with trailing
+blank rows rather than a distinct equipment sub-fleet) but not fully
+closed without Owner confirmation, since a full row-by-row diff was not
+performed; (b) full PR21B/C-grade field
+mapping (exact validation rules, exact `ERROR`/`WARNING` code list) is
+implementation-slice work, not finalized by a design document per this
+Roadmap's own convention (mirroring PR20's own OD-1/§7/§8 split between
+"schema resolved" and "implementation-grade mapping written in the
+parser slice").
+
+### 6.4 What remains open despite the new evidence
+
+- **Stable event identity (§24):** direct evidence found — see §24 for
+  the full analysis. Strengthened, not yet fully resolved.
+- **Issue↔Receive pairing (§11):** direct evidence found — **no
+  explicit linking field exists** between an issue and its eventual
+  return anywhere in the workbook (verified: neither header carries a
+  reference to the other's order number). Remains genuinely open.
+- **SDC sheet ambiguity (§6.1):** requires Owner clarification, not
+  guessed.
+
+**OD-PR21-0's topology component is RESOLVED (§7). Its field-mapping
+component is narrowed but not fully closed**, pending the above.
 
 ---
 
-## 7. Source/session topology (H1) — BLOCKED, options analyzed
+## 7. Source/session topology (H1) — RESOLVED: Option A
 
 **The problem.** PR19's foundation is `ImportSession → exactly one
 ImportSource` (`docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md` §3-4;
@@ -202,49 +330,59 @@ issue row and a receive row (§8). A design that quietly assumes a single
 `import_source_id`/checksum/source-row is sufficient for that transaction
 is incorrect.
 
-**Three topology options, evaluated:**
+**Three topology options were evaluated** (A: one workbook/one
+`ImportSession`/one `ImportSource`; B: one session with multiple
+sources, requiring a PR19 foundation extension; C: two independent
+sessions plus a staging/pairing layer) — full evaluation preserved
+below for record.
+
+**RESOLVED (Source Evidence Update): Option (A).** The Owner-supplied
+real workbook (§6) is confirmed to be **exactly this shape** — one
+`.xlsx` file containing all Issue and Receive sheets (among 28 total),
+including both canonical Issue/Receive pairs (§6.2). This is not a
+hypothetical anymore:
+
+- PR21's `ImportSession` → exactly one `ImportSource`, matching PR19's
+  existing, unmodified topology — **zero PR19 foundation changes
+  required.**
+- PR21's adapter's `parse()` step selects and parses the whitelisted
+  sheets (§6.1) from this one source, exactly as PR20's adapter already
+  selects one sheet from one workbook.
+- Options (B) and (C) are formally rejected — the evidence needed to
+  choose between them never arises, since (A) is what the real
+  deliverable actually is.
+
+**OD-PR21-0's topology component is RESOLVED.** §9, §10 below now carry
+real, verified field lists (§6.1) rather than conceptual placeholders.
+§24's stable-identity analysis and the final table names in §8 and
+§32/§36 are **still narrowed but not fully finalized** — see §6.4 for
+exactly what remains open.
+
+<details>
+<summary>Full three-option evaluation (preserved for record; (B)/(C) are rejected, not deleted, so the reasoning remains auditable)</summary>
 
 - **(A) One workbook / one `ImportSession` / one `ImportSource`**
   containing both Issue and Receive sheets. Fits PR19's existing
-  topology with **zero foundation changes** — the adapter's `parse()`
-  step simply selects and parses two sheets from one source, exactly as
-  PR20's adapter already selects one sheet from one workbook (source
-  contract's "exact sheet/tab selection," §6). Lowest implementation
-  risk; requires the real export to actually be delivered this way.
+  topology with zero foundation changes — the adapter's `parse()` step
+  simply selects and parses whitelisted sheets from one source, exactly
+  as PR20's adapter already selects one sheet from one workbook.
+  Lowest implementation risk. **Selected — confirmed to match the real
+  deliverable.**
 - **(B) One `ImportSession` with multiple `ImportSource`s.** Would
-  require an explicit, reviewed **PR19 foundation extension** (today's
+  require an explicit, reviewed PR19 foundation extension (today's
   schema and `AdapterInvocationContext` are built around exactly one
   source per session) — out of scope for a PR21-only design and a
   materially larger risk surface, since it touches shared infrastructure
   every other dataset type (including the merged PR20) also depends on.
+  **Rejected — not needed; the real workbook is one file.**
 - **(C) Two `ImportSession`s / two `ImportSource`s**, plus an explicit
   staging/pairing/reconciliation model to join rows across the two
-  independent sessions. Fits PR19's topology with no foundation change,
-  but pushes real complexity into a new PR21-owned staging/pairing layer
-  that has to reconcile two independently-lifecycled sessions (each with
-  its own validate/dry-run/execute state machine) into one set of
-  historical transactions — a materially harder implementation problem
-  than (A), and one that risks quietly re-implementing part of what PR22
-  is chartered to own (cross-import reconciliation) inside PR21 instead.
+  independent sessions. Would push real complexity into a new
+  PR21-owned staging/pairing layer and risk quietly re-implementing part
+  of what PR22 is chartered to own. **Rejected — not needed; the real
+  workbook is one file.**
 
-**Recommended default, contingent on OD-PR21-0: Option (A).** If the
-real export turns out to be one workbook with separate Issue/Receive
-sheets, (A) applies with no PR19 foundation change and no new
-staging/pairing layer — the lowest-risk path, and the one most
-consistent with this design's repeated preference to reuse PR19/PR20
-mechanisms unmodified wherever possible. If the real export is delivered
-as two genuinely separate files, the fallback is (C), not (B) — (B)'s
-foundation-extension cost should only be paid if neither (A) nor (C) can
-represent the real deliverable, which cannot be evaluated without seeing
-it.
-
-**This is not a final decision.** Topology remains a **blocking Owner
-Decision** (folded into OD-PR21-0, §45) until the real source artifact
-confirms which structure applies. §9, §10, §24's stable-identity design,
-and the final table names in §8 and §32/§36 are **NOT READY** and are
-not finalized by this document — only their required *shape* (§8's 1:N
-requirement) is fixed regardless of which topology option is ultimately
-selected.
+</details>
 
 ---
 
@@ -275,42 +413,102 @@ Each source ref must retain, at minimum:
   name captured per ref (§13) is attributable to the correct role
   (issuer vs. receiver) without a separate flat-column scheme.
 
-**Table names are not finalized** — they depend on §7's topology
-resolution (a two-session topology, option C, would need the ref's
-`import_session_id`/`import_source_id` to actually vary per row within
-one transaction's pair; a one-session topology, option A, would have
-both refs share the same `import_session_id`/`import_source_id` and
-differ only in sheet/row/event-type). **The 1:N shape itself is
-required regardless of which topology option is ultimately selected** —
-this is not itself blocked by §7, only the concrete table/column
-definition is.
+**Table names are not finalized**, but §7's topology resolution (Option
+A) fixes one dimension: every source ref shares the same
+`import_session_id`/`import_source_id` (one workbook, one source) and
+differs only in sheet/row/event-type — the two-session variable
+`import_session_id`/`import_source_id` case (former option C) no longer
+applies.
+
+**Source Evidence Update refinement:** §6.1's real structure is
+**two-level per event side** (an `Orders` header row plus a line-item
+row), not the single flat row per event this section originally
+modeled. A historical transaction's full provenance may therefore span
+up to **four** source rows — Issue-order-header, Issue-line-item,
+Receive-order-header, Receive-line-item — not two. Whether the
+order-header row needs its own persisted provenance ref, or whether the
+line-item row (which already carries equipment/ward/time/BME/user
+fields, §6.1) is sufficient and the header is only consulted for
+order-level aggregate fields (total quantity, order-level notes) not
+otherwise required by `BorrowTransaction` (§12), is left to PR21A's own
+implementation-grade design — this document fixes the requirement (1:N,
+richer than originally modeled) without prematurely fixing the exact
+ref-table cardinality.
 
 ---
 
-## 9. Issue History semantics (provisional — NOT READY, blocked on §6/§7)
+## 9. Issue History semantics (real fields verified; parse-rule detail deferred to PR21B)
 
-Based solely on the Roadmap objective's wording and the existing
-`BorrowTransaction` schema, the conceptual fields a legacy ISSUE row is
-expected to carry: equipment identity (§4), issue timestamp (→
-`borrowed_at`), receiving Ward (→ `ward_id` via §14), legacy BME/operator
-name (→ per-ref provenance, §8/§13), source reference ID if present (→
-§8), issue type/routine-vs-on-demand if present, notes if present,
-historical status if present (→ provenance-only, mirroring
-`BorrowTransaction.legacy_status`). No field is fabricated that the
-Roadmap objective does not name. This section is not a binding parse
-contract — it is deferred to PR21B, after §7/OD-PR21-0 resolve.
+**Source Evidence Update.** Real, directly-verified field lists from
+the canonical sheets (§6.1, §6.2) — this replaces the prior
+conceptual-only placeholder:
+
+**`Orders ยืมเครื่อง` (order header, one row per transaction):**
+วันที่ (date) → candidate `borrowed_at` date component; เลขที่ใบยืม
+(order no., 100% unique, §6.2) → stable order-level identity candidate
+(§24); แผนกที่ยืม (ward) → `ward_id` via §14; ผู้ส่งเครื่องยืม (User)
+and ผู้ส่งเครื่องยืม (BME) (two named actors) → per-ref provenance
+(§8/§13); เวลา (time) → combines with วันที่ for the full `borrowed_at`
+timestamp; จำนวนเครื่องส่งทั้งหมด (total qty) → order-level aggregate,
+not directly mapped to any single `BorrowTransaction` column; หมายเหตุ
+(notes) → candidate `notes`, subject to the §42 privacy caveat.
+
+**`ข้อมูลส่งเครื่องมือ` (order line item, one row per equipment unit):**
+ลำดับ (row key, near-100%-unique — §24) → stable row-level identity
+candidate; วันที่, เลขที่ใบส่ง (= parent order's เลขที่ใบยืม, §6.2);
+SCAN CODE ส่ง / ME.Code / Barcode ส่งเครื่อง (§4's equipment-identity
+candidates — `ME.Code` is the closest analogue to PR20's BCM concept
+and warrants the same normalize-and-match treatment,
+`identifiers.py`); Equipment / Brand / Model / Serial no. → descriptive,
+not identity-bearing on their own; แผนกที่ส่ง (ward, line-level —
+may differ from the order header's, requiring an explicit precedence
+rule at implementation time); three checklist columns (equipment-
+condition checks, e.g. "ตัวเครื่องหน้าจอไม่แตกร้าว") → not named in the
+Roadmap objective, candidate for `notes`/provenance-only, not fabricated
+into a schema column; จำนวน (qty, line-level, usually 1) → not
+import-relevant per §12; หมายเหตุ → candidate `notes`; เวลา (line-level
+time, may differ from order header's); ชื่อ BME / ชื่อ (User) → per-ref
+provenance (§8/§13, cross-checked against the `ชื่อ BME` roster, §6.1).
+
+No field beyond what the Roadmap objective already names (§1) is
+promoted into a `BorrowTransaction` column — checklist/qty/image fields
+remain candidates for provenance-only capture, not new schema. Final
+`ERROR`/`WARNING` code assignment and the line-vs-header precedence
+rule for fields present on both (date, ward, time) are implementation-
+grade decisions deferred to PR21B, consistent with this Roadmap's own
+design/implementation split (§6.3).
 
 ---
 
-## 10. Receive History semantics (provisional — NOT READY, blocked on §6/§7)
+## 10. Receive History semantics (real fields verified; parse-rule detail deferred to PR21C)
 
-Same treatment as §9. Conceptual fields: equipment identity (§4), receive
-timestamp (→ `returned_at`), legacy BME/operator name (→ §8/§13),
-received condition/outcome if present (→ `condition_on_return`, already
-free-text-tolerant), source reference ID (§8), Ward/origin if present,
-notes if present. Whether receive records explicitly identify their
-matching issue record is unknown without the real source file — §11
-defines the matching architecture, not the actual matching keys.
+**Source Evidence Update.** Same treatment as §9, from the Receive
+canonical pair:
+
+**`Orders คืนเครื่อง` (order header):** วันที่ → candidate `returned_at`
+date component; เลขที่ใบคืน (order no., 100% unique) → stable
+order-level identity candidate (§24); แผนกที่คืน (ward); ผู้ส่งเครื่องคืน
+(User) and ผู้รับเครื่องคืน (BME) (two named actors — note the receive
+side's own labeling: the *User* is the one returning/sending back, the
+*BME* is the one receiving it at the pool, consistent with §21's
+import-actor-vs-historical-operator distinction); เวลา; จำนวนเครื่องรับคืนทั้งหมด
+(total qty, order-level aggregate); หมายเหตุ.
+
+**`ข้อมูลรับเครื่องมือ` (order line item):** ลำดับ (row key candidate,
+§24); วันที่; เลขที่ใบรับเครื่อง (= parent order's เลขที่ใบคืน); SCAN
+CODE รับ / ME.Code / Barcode รับเครื่อง (§4); Equipment/Brand/Model/
+Serial no.; แผนกที่รับ (ward, line-level); รูปเครื่อง; three checklist
+columns → candidate `condition_on_return`/provenance-only (already
+free-text-tolerant per §12), not fabricated into new schema; จำนวน;
+หมายเหตุ; เวลา; ชื่อ BME / ชื่อ (User) → per-ref provenance.
+
+**Whether receive records explicitly identify their matching issue
+record: confirmed NO** by direct inspection — neither `Orders คืนเครื่อง`
+nor `ข้อมูลรับเครื่องมือ` carries any field referencing the originating
+`เลขที่ใบยืม`/Issue order. §11 defines the matching architecture; the
+actual matching keys are **not** established by the source structure
+(§6.4) — this is a confirmed negative finding, not an unresolved
+inspection gap.
 
 ---
 
@@ -324,14 +522,36 @@ existing single-row-per-transaction schema and existing
 search/reporting queries); **(C) a separate approved historical model**
 (not recommended — fragments unified transaction history, §27).
 
-**Recommendation: (B).** Architectural, not resolved — the deterministic
-matching keys actually available depend on §6/§7.
+**Recommendation: (B).** Architectural, not resolved.
 
-**Validation treatment:** ambiguous pairing is a blocking `ERROR`
-finding (§15), **never** a fuzzy/temporal heuristic match, and — per
-§15's all-or-nothing gate — an ambiguous pair anywhere in a batch blocks
-that entire validation snapshot from producing a dry-run (§28), not just
-that one row.
+**Source Evidence Update — matching keys confirmed NOT present.**
+§7's topology is resolved and §9/§10's field lists are now real, but
+direct inspection of both the Issue and Receive canonical sheets
+(`Orders ยืมเครื่อง`/`ข้อมูลส่งเครื่องมือ`,
+`Orders คืนเครื่อง`/`ข้อมูลรับเครื่องมือ`) confirms **no explicit,
+deterministic Issue↔Receive linking field exists** — an issue's order
+number (`เลขที่ใบยืม`, e.g. `Borrow1000000009210`) and its eventual
+return's order number (`เลขที่ใบคืน`, e.g. `Return100000009892`) are
+independent numbering series with no cross-reference column on either
+side. The only shared attribute between a given piece of equipment's
+issue and receive events is `ME.Code`/`SCAN CODE` (equipment identity)
+plus timestamps — which is exactly the "nearest-previous-event"
+heuristic this task explicitly forbids without Owner approval (§7 of
+the source-evidence task: *"Do not assume Issue and Receive pair merely
+by nearest timestamp... If absent, retain matching as a blocking Owner
+Decision. No fuzzy pairing."*). **Pairing therefore remains a blocking
+Owner Decision — now backed by a confirmed negative finding rather than
+an inspection gap.** If the Owner determines temporal/equipment-based
+matching is acceptable business policy despite the risk of ambiguity
+(e.g. equipment double-borrowed the same day), that is an explicit,
+reviewed policy decision this document does not make unilaterally.
+
+**Validation treatment (unchanged):** ambiguous pairing is a blocking
+`ERROR` finding (§15), **never** a fuzzy/temporal heuristic match unless
+and until the Owner explicitly approves one, and — per §15's
+all-or-nothing gate — an ambiguous pair anywhere in a batch blocks that
+entire validation snapshot from producing a dry-run (§28), not just that
+one row.
 
 ---
 
@@ -385,6 +605,18 @@ Owner-approved later mapping step resolves them (§21).
 The later mapping procedure itself is **not** designed here — out of
 PR21's Version 1 boundary (OD-PR21-3, §45).
 
+### 13.1 Source Evidence Update — BME roster found
+
+The workbook's `ชื่อ BME` sheet (§6.1) is a small, closed roster —
+header `ชื่อพนักงาน` ("employee name"), **exactly 8 entries**. This is
+materially useful evidence for OD-PR21-3's later-mapping-procedure
+boundary decision: a roster this small makes a future manual
+name-to-`User` mapping step tractable (8 names to reconcile, not
+hundreds), even though this document still does not design that
+procedure. It does **not** resolve OD-PR21-3 — the roster is a name
+*list*, not a mapping to existing `User` rows, and this document
+continues to treat that mapping as future, Owner-approved work.
+
 ---
 
 ## 14. Ward normalization / mapping design
@@ -412,6 +644,24 @@ explicit mapping; unknown/ambiguous/blank is a validation finding (§15),
 never a silently-created Ward, never a fuzzy match. Original source Ward
 text is preserved regardless of match outcome (§26). Ownership of the
 alias table's ongoing curation is **OD-PR21-4** (§45).
+
+### 14.1 Source Evidence Update — Ward reference list found, lower ambiguity than feared
+
+The workbook's `แผนก` sheet (§6.1) is a canonical Ward reference list —
+header `แผนก` ("department/ward"), **52 entries** (e.g. `Ward 11A`,
+`Ward 10A`). Spot-checking actual transaction rows against this list
+(`ICU3`, `Ward 5A`, `Recovery Room`, `Emergency/Trauma Center`, `Labor
+and Delivery Room` — all observed directly in `Orders`/line-item sample
+rows, §6.1) shows the source data already uses names that read as
+already-canonical/current-format strings, not obviously legacy or
+inconsistently-formatted variants. This is evidence the exact-match path
+of §14's architecture may resolve the large majority of rows, with the
+alias table needed for a smaller edge-case set than originally assumed
+— **not a guarantee**, since this observation is from a small sample,
+not a full cross-check against the live `Ward` table's exact `code`/
+`name` values (out of scope for a design document; that comparison
+belongs to PR21A/B's implementation). Does not resolve OD-PR21-4's
+ownership question.
 
 ---
 
@@ -554,13 +804,23 @@ business data captured per §8/§13, never conflated with `AuditLog.user_id`.
 `reporting_time.business_date_and_shift()` requires an aware UTC
 `datetime` and raises on naive/non-UTC input
 (`backend/app/core/reporting_time.py:96-101`) — timestamp normalization
-to aware UTC is mandatory before any row is written. Source timezone
-(working assumption: Asia/Bangkok, consistent with the existing Day/Night
-shift boundaries), whether Excel cells are timezone-naive, ambiguous
-date formats, seconds precision, date-only values, and malformed
-timestamps are all open questions pending §6 — **ambiguous dates are
-never interpreted heuristically**; malformed timestamps are `ERROR`
-findings (§15).
+to aware UTC is mandatory before any row is written.
+
+**Source Evidence Update.** Direct inspection confirms the canonical
+sheets store `วันที่` (date) and `เวลา` (time) as **separate native
+Excel date/time cells** (read back by `openpyxl` as Python
+`datetime.datetime`/`datetime.time` objects, not text strings) — a
+parser combines the two per row into one timestamp. **Still open, not
+guessed:** the workbook's date/time values carry no embedded timezone
+information (Excel date/time cells are inherently timezone-naive) — the
+working assumption remains Asia/Bangkok (consistent with the existing
+Day/Night shift boundaries), pending explicit Owner confirmation, since
+this design does not assume hospital operational timezone without it.
+Seconds precision is present (`เวลา` values observed to the second,
+e.g. `datetime.time(0, 28, 55)`). No malformed timestamps were
+encountered in the sampled rows, though this is not an exhaustive
+full-dataset validation pass. **Ambiguous dates are never interpreted
+heuristically**; malformed timestamps are `ERROR` findings (§15).
 
 ---
 
@@ -596,15 +856,52 @@ rows, or contain the same historical event registered under a brand-new
 `ImportSource`. This must be a **database-enforced** identity, not an
 assumption.
 
-**Candidate stable identity fields** (to be evaluated once §6 resolves):
-an AppSheet row key, a transaction/reference ID, an event UUID, or
-another immutable source record identifier. **None of the following are
-acceptable as a universal event identity without explicit source
-evidence:** timestamp alone; equipment + timestamp alone; row number
-alone; checksum + row number alone. **If the real source provides no
-stable per-row identifier of any kind, this is itself a blocking Owner
-Decision** — folded into OD-PR21-0 (§45), since it cannot be resolved
-without seeing the source. This event-identity work belongs to a later,
+**Candidate stable identity fields:** an AppSheet row key, a
+transaction/reference ID, an event UUID, or another immutable source
+record identifier. **None of the following are acceptable as a
+universal event identity without explicit source evidence:** timestamp
+alone; equipment + timestamp alone; row number alone; checksum + row
+number alone.
+
+**Source Evidence Update — strong candidates found, not yet fully
+confirmed.** Direct inspection of the canonical sheets (§6.1, §6.2)
+found two concrete candidates, verified by direct uniqueness/integrity
+checks, not assumed:
+
+- **Order-level identity:** `เลขที่ใบยืม`/`เลขที่ใบคืน` (the order/slip
+  number on `Orders ยืมเครื่อง`/`Orders คืนเครื่อง`) is **100% unique**
+  within its sheet — verified by direct count (5,685 distinct values
+  for 5,685 non-null Issue-order rows; 6,158 for 6,158 Receive-order
+  rows) — and functions as a real business document number (values like
+  `Borrow1000000009210`, `Return100000009892`), not an
+  AppSheet-internal artifact.
+- **Row-level identity:** the `ลำดับ` column on
+  `ข้อมูลส่งเครื่องมือ`/`ข้อมูลรับเครื่องมือ` (line items) holds an
+  8-character hex-like string (e.g. `b7f7169c`) rather than the
+  sequential number its Thai label ("sequence/order number") would
+  suggest — consistent with an AppSheet auto-generated row key. Verified
+  **100% unique among non-null values, within its own sheet**
+  (19,871/19,871 distinct for Issue; 19,750/19,750 for Receive), but
+  **not fully populated**: 41 of 19,912 Issue rows and 18 of 19,768
+  Receive rows have a blank `ลำดับ` — a validation-finding case (§15),
+  not silently skippable. **This row-key-uniqueness figure is a
+  different metric, on a different basis, from §6.2's distinct-
+  reference-resolution figures (5,676/5,677 Issue, 6,141/6,141
+  Receive) — the two must never be read as the same denominator.**
+
+**Still not fully resolved, and not claimed as such:** (a) whether this
+row key is AppSheet's genuinely stable, re-export-durable identifier, or
+one that could be regenerated on a future export, cannot be determined
+from a single snapshot — that requires either explicit Owner
+confirmation of AppSheet's row-ID behavior, or comparing two exports
+taken at different times, neither of which this document fabricates;
+(b) the ~0.2% blank-`ลำดับ` rows need an explicit policy (fall back to
+order-number + line-position? blocking `ERROR`? — not decided here).
+**This is not invented as a resolved hash identity** — it is reported as
+strong, verified, positive evidence, with the specific remaining
+confirmation named precisely, per this task's own instruction not to
+invent an identity without explicit reviewed design. Folded into
+OD-PR21-0 (§45). This event-identity work belongs to a later,
 source-dependent implementation slice — **not** to PR21-Foundation
 (§46's H5 clarification).
 
@@ -1266,30 +1563,59 @@ import is simply not needed (the recommended default).
 
 ## 45. Required Owner Decisions
 
-- **OD-PR21-0 (blocking).** Real Issue/Receive History source
-  artifact(s). Scope includes confirming (a) §7's source/session
-  topology (one workbook vs. two files) and (b) §24's stable per-row
-  event identity (does one exist in the real source, and if so which
-  field). Every other field-level or evidence-dependent decision below
-  remains provisional until this resolves.
+- **OD-PR21-0 — PARTIALLY RESOLVED: topology resolved;
+  source-schema/event-identity/pairing components remain open.** Real
+  source workbook supplied and directly inspected (§6), bound to its
+  SHA-256 identity `8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`
+  and the sanitized evidence manifest at
+  `docs/evidence/pr21/equipment-pool-workbook-manifest.json`.
+  **RESOLVED component: source topology** — one workbook snapshot → one
+  `ImportSession` → one `ImportSource` → whitelisted sheets within that
+  source (Option A, §7). **Still OPEN components:** exact field-level
+  contract where not yet proven (the `ข้อมูลการส่ง SDC`/
+  `ข้อมูลการรับ SDC` ambiguity, narrowed but not closed, §6.1/§6.3);
+  stable event identity (the `ลำดับ` row key's re-export durability not
+  yet confirmed, §24); Issue↔Receive pairing (confirmed no deterministic
+  shared key exists — a negative finding, not an inspection gap, §11);
+  and any other source-dependent policy not proven by evidence. This
+  Owner Decision is **not** fully resolved — only its topology
+  sub-component is.
 - **OD-PR21-1.** Unmatched historical ISSUE-row policy (§16) —
   recommendation: block/reconcile by default (`ERROR`-severity per §15).
+  Not resolved by the Source Evidence Update — the real source confirms
+  no explicit pairing field exists (§11), which sharpens why this
+  decision matters but does not answer it.
 - **OD-PR21-2.** Unmatched historical RECEIVE-row policy (§17) — same
   treatment.
-- **OD-PR21-3.** Legacy BME-name mapping-procedure boundary (§13).
-- **OD-PR21-4.** Ward alias-mapping table ownership/curation (§14).
-- **OD-PR21-5.** Historical `transaction_no` policy (§20), contingent on
-  OD-PR21-0.
-- **OD-PR21-6.** Patient/clinical free-text handling (§42), contingent
-  on OD-PR21-0.
+- **OD-PR21-3.** Legacy BME-name mapping-procedure boundary (§13) — a
+  small, closed 8-name roster was found (§13.1), narrowing the practical
+  scope of a future mapping step without resolving the boundary
+  question itself.
+- **OD-PR21-4.** Ward alias-mapping table ownership/curation (§14) — a
+  52-entry canonical reference list was found (§14.1), with evidence
+  suggesting lower real-world ambiguity than originally feared, without
+  resolving the ownership question itself.
+- **OD-PR21-5.** Historical `transaction_no` policy (§20) — no longer
+  fully contingent on OD-PR21-0 (the real order-number fields, §9/§10,
+  are now known), but still requires an explicit Owner choice among the
+  three options §20 already lays out.
+- **OD-PR21-6.** Patient/clinical free-text handling (§42) — the real
+  `หมายเหตุ` (notes) columns are now known to exist on both canonical
+  line-item sheets (§9/§10); their actual content was not scanned for
+  patient-identifying data by this session (that review is a
+  privacy-sensitive task requiring explicit scoping, not performed
+  incidentally while inspecting structure) — still open, now with a
+  concrete field to review rather than an unknown.
 
-No Owner Decision above is resolved by Fix Round 2. This round selected
-and documented **architecture** (H2R's dry-run/validation consistency,
-H4R's PR20-compatible generic provider direction, H5's Foundation-scope
-clarification, M1's fail-closed retention direction) where the
-repository's own runtime behavior already answers the question — it did
-not invent business-policy answers that depend on evidence this
-repository does not have.
+**Net effect of the Source Evidence Update:** one sub-component of one
+Owner Decision (OD-PR21-0's topology) is genuinely resolved. No other
+Owner Decision is resolved — several are narrowed by real evidence
+(OD-PR21-3, OD-PR21-4, OD-PR21-5) or sharpened by a confirmed-negative
+finding (OD-PR21-1, OD-PR21-2, via §11), but none is answered on the
+Owner's behalf. This document continues to select and document
+**architecture** where the repository's own runtime behavior or the
+real source's own structure already answers a question — it does not
+invent business-policy answers.
 
 ---
 
@@ -1319,10 +1645,11 @@ merges.
   and the retention-hook **abstraction** (the fail-closed provider-
   dispatch mechanism itself, §38) — but registering PR21's *own*
   redaction callback is not in this slice, since PR21 has no artifacts
-  yet. **Explicitly out of scope for PR21-Foundation (Fix Round 3
-  additions in bold):** any PR21 database schema or migration; PR21's
-  provenance tables (§8, §43); any source-topology assumption (§7);
-  event-identity/idempotency constraints (§24 — this is a later,
+  yet. **Explicitly out of scope for PR21-Foundation:** any PR21
+  database schema or migration; PR21's provenance tables (§8, §43),
+  whose concrete shape follows §7's now-resolved topology but is still
+  PR21A's job, not Foundation's; event-identity/idempotency constraints
+  (§24 — this is a later,
   source-dependent slice's responsibility, not Foundation's); Issue/
   Receive parsers (§9, §10); pairing logic (§11); PR21's own
   idempotency keys (§25); the `legacy_ward_aliases` table (§14); legacy
@@ -1336,14 +1663,21 @@ merges.
 - **PR21A — Historical Transaction Schema / Provenance Foundation.**
   §8's 1:N provenance tables, §14's `legacy_ward_aliases`, §36's PR21
   plan tables (registered against PR21-Foundation's provider interface
-  once both exist). **Blocked on:** §7 topology resolution (table shape
-  depends on it), OD-PR21-3/4/5, and on PR21-Foundation's provider
+  once both exist). §7's topology is now resolved (Option A), so table
+  shape no longer depends on an open topology question — but the exact
+  ref-table cardinality (§8's refinement) is still PR21A's own design
+  work. **Blocked on:** OD-PR21-3/4/5, and on PR21-Foundation's provider
   interface existing to register against.
-- **PR21B — Issue History Parser + Validation.** **Blocked on:**
-  OD-PR21-0, §4's identifier case matrix, §15's frozen error-code list,
-  §24's stable identity.
-- **PR21C — Receive History Parser + Matching/Validation.** **Blocked
-  on:** OD-PR21-0, OD-PR21-1, OD-PR21-2, §11's finalized matching keys.
+- **PR21B — Issue History Parser + Validation.** Not blocked by
+  topology (§7, resolved). **Blocked on:** the SDC-sheet clarification
+  (§6.1/§6.3), §4's finalized identifier case matrix, §15's frozen
+  error-code list, §24's stable event identity (re-export durability
+  not yet confirmed).
+- **PR21C — Receive History Parser + Matching/Validation.** Not blocked
+  by topology. **Blocked on:** the SDC-sheet clarification, OD-PR21-1,
+  OD-PR21-2, §11's Issue↔Receive pairing policy (confirmed no
+  deterministic key exists — an explicit Owner Decision is required
+  before this slice can proceed).
 - **PR21D — Persisted Dry-run + Historical Transaction Execution.**
   **Blocked on:** PR21A–C (and, transitively, PR21-Foundation).
 - **PR21E — Frontend Real Integration.** **Blocked on:** PR21D.
@@ -1351,8 +1685,13 @@ merges.
   `docs/ENGINEERING_WORKFLOW.md` §14 — not performed by this Design PR
   (§50).
 
-These names and this split remain provisional until topology (§7) is
-resolved — do not mark PR21A ready.
+**Source Evidence Update correction:** these names and this split are no
+longer provisional *on topology* — §7 is resolved. They remain
+provisional on the **real remaining blockers**: the SDC-sheet
+clarification, stable event-identity confirmation, Issue↔Receive
+pairing policy, and OD-PR21-3/4/5. **Do not mark PR21A ready merely
+because topology is now known** — the blockers above are independent of
+topology and still apply in full.
 
 ---
 
@@ -1360,23 +1699,27 @@ resolved — do not mark PR21A ready.
 
 | Area | Status | Blocking? | Required before slice |
 |---|---|---|---|
-| Source topology (§7) | BLOCKED BY OD-PR21-0 | YES | Before PR21A's table shape, PR21B/C |
-| Stable event identity / replay semantics (§24) | BLOCKED pending source evidence; **owned by a later source-dependent slice, not PR21-Foundation** | YES | Before PR21B/C/D's write-time idempotency |
+| Source topology (§7) | **RESOLVED — Option A, confirmed against the real workbook** | NO | — |
+| Canonical Issue/Receive sheet selection (§6.2) | RESOLVED — `Orders`+line-item pairs, verified by direct inspection | NO | — |
+| SDC sheet ambiguity (§6.1) | NARROWED (aggregate counts match canonical sheets) but NOT RESOLVED — requires Owner clarification | YES (if SDC represents an uncaptured equipment sub-fleet) | Before PR21B/C's field contract is finalized |
+| Stable event identity / replay semantics (§24) | Strong candidates found (order no. + row key), re-export durability NOT CONFIRMED; **owned by a later source-dependent slice, not PR21-Foundation** | YES | Before PR21B/C/D's write-time idempotency |
+| Issue↔Receive pairing (§11) | Confirmed NO explicit linking field exists (negative finding, not an inspection gap) | YES | Before PR21C |
 | Validation/dry-run semantics (§15, §28) | RESOLVED: all-or-nothing PR19 gate; dry-run never contains ERROR-severity rows | NO | — |
 | Generic persisted-plan API design (§29-§32) | RESOLVED design contract, PR20 wire-compatible | NO (design) | — |
 | Generic persisted-plan API implementation (PR21-Foundation) | Design resolved; implementation is a real, startable slice | NO — not blocked on OD-PR21-0 | May start now (post Design PR merge) |
 | Retention integration design (§38) | RESOLVED design direction, fail-closed | NO (design) | — |
 | Retention hook implementation (PR21-Foundation, abstraction only) | Design resolved; abstraction implementation is startable | NO — not blocked on OD-PR21-0 | May start now (post Design PR merge) |
 | Unmatched ISSUE/RECEIVE policy (§16/§17) | NOT RESOLVED | YES | Before PR21C |
-| Ward mapping ownership (§14) | Architecture resolved; ownership NOT RESOLVED | Partially | Before PR21A's alias table is operational |
-| BME mapping-procedure boundary (§13) | Architecture resolved; boundary NOT RESOLVED | Partially | Before PR21B/C |
-| Patient/clinical data handling (§42) | CONTINGENT on OD-PR21-0 | YES (if source contains such data) | Before PR21B/C |
+| Ward mapping ownership (§14) | Architecture resolved; 52-entry reference list found (§14.1); ownership NOT RESOLVED | Partially | Before PR21A's alias table is operational |
+| BME mapping-procedure boundary (§13) | Architecture resolved; 8-name roster found (§13.1); boundary NOT RESOLVED | Partially | Before PR21B/C |
+| Patient/clinical data handling (§42) | Real `หมายเหตุ` fields now identified (§9/§10); content not yet reviewed for patient data | YES (if source contains such data) | Before PR21B/C |
 
 **PR21 overall readiness: no source-dependent PR21 implementation slice
-(PR21A through PR21F) may start** until the blockers above close.
-**PR21-Foundation may start once this Design PR merges** — it is
-genuinely topology-independent and does not touch PR21's own data
-model, source assumptions, or event identity.
+(PR21A through PR21F) may start** until the blockers above close —
+topology resolving does not by itself unblock them. **PR21-Foundation
+may start once this Design PR merges** — it is genuinely
+topology-independent and does not touch PR21's own data model, source
+assumptions, or event identity.
 
 ---
 
@@ -1438,50 +1781,70 @@ notes.
 ## 50. Governance update (this Design PR's own scope)
 
 Per `docs/ENGINEERING_WORKFLOW.md` §6/§7 and PR19A/PR20's own design-PR
-precedent, this Fix Round's governance-update scope remains limited to:
-this design document, and a new `docs/DECISION_LOG.md` entry recording
-the architecture decisions made in this fix round (H2R's dry-run/
-validation consistency correction, H4R's PR20-compatible provider
-architecture, H5's Foundation-scope clarification, M1's fail-closed
-retention direction) — **without** claiming any Owner Decision in §45 is
-resolved. **Not performed:** any change to `docs/ROADMAP.md`,
+precedent, this PR's governance-update scope is limited to: this design
+document, a sanitized evidence manifest under `docs/evidence/pr21/`
+(§6), and a new `docs/DECISION_LOG.md` entry.
+
+**PR99 Source Evidence Update, current truth (supersedes the prior
+Fix-Round entries' "resolves no Owner Decision" framing, which is now
+historical for those specific rounds — H2R/H4R/H5/M1 genuinely resolved
+no Owner Decision when written):** this update **records the inspected
+workbook's evidence, bound to its SHA-256 identity**
+(`8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`,
+§6); **resolves the topology component of OD-PR21-0** (§7, §45); leaves
+OD-PR21-0's field-mapping/event-identity/pairing components, and
+OD-PR21-1 through OD-PR21-6 in full, open (§45); records this partial
+resolution in a new `docs/DECISION_LOG.md` entry; and does **not** start
+PR21-Foundation or any other runtime implementation.
+
+**Not performed:** any change to `docs/ROADMAP.md`,
 `docs/ROADMAP_STATUS.md`, `knowledge/*`, or
 `docs/audits/04-consolidated-implementation-plan.md`. **GitHub PR #97's
-accepted non-blocking P2 follow-up remains untouched and unresolved by
-this PR** — this fix round edits neither
-`docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` nor the PR20-related
-content of `docs/DECISION_LOG.md`.
+accepted non-blocking P2 follow-up, and GitHub PR #98's P2-A/P2-B
+follow-ups, remain untouched and unresolved by this PR** — this update
+edits neither `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` nor the
+PR20-related content of `docs/DECISION_LOG.md`, and does not rewrite any
+prior dated `DECISION_LOG.md` entry's own historical record.
 
 ---
 
 ## 51. Scope guard for this PR
 
 **Touched:** `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
-(revised), `docs/DECISION_LOG.md` (one new entry, this fix round's
-architecture decisions only). **Not touched:** `backend/**`,
-`frontend/**`, `alembic/**`, `tests/**`, `.github/**`, Docker/runtime
-configuration, `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`,
-`knowledge/**`, `docs/audits/04-consolidated-implementation-plan.md`. No
-PR21 runtime implementation is performed.
+(revised), `docs/DECISION_LOG.md` (one new entry recording the Source
+Evidence Update's findings and topology resolution). **Not touched:**
+`backend/**`, `frontend/**`, `alembic/**`, `tests/**`, `.github/**`,
+Docker/runtime configuration, `docs/ROADMAP.md`,
+`docs/ROADMAP_STATUS.md`, `knowledge/**`,
+`docs/audits/04-consolidated-implementation-plan.md`. The uploaded
+workbook itself is **not** added to this repository (§6). No PR21
+runtime implementation is performed.
 
 ---
 
 ## 52. Mandatory STOP conditions encountered
 
-- **Actual Receive/Issue source schema unavailable — ENCOUNTERED** (§6).
-- **Source topology unknown — ENCOUNTERED** (§7, folded into OD-PR21-0).
-- **Source event identity unknown — ENCOUNTERED** (§24, folded into
-  OD-PR21-0).
-- **Issue↔Receive deterministic matching unknown — ENCOUNTERED**
-  (§11, depends on §6/§7).
+- **Actual Receive/Issue source schema unavailable — RESOLVED.** Real
+  workbook supplied and directly inspected (§6); canonical sheets
+  identified and their real fields verified (§6.2, §9, §10). The SDC
+  sheet ambiguity (§6.1) remains a narrower, explicitly-scoped open
+  question, not a full recurrence of this STOP condition.
+- **Source topology unknown — RESOLVED** (§7: Option A, confirmed
+  against the real workbook).
+- **Source event identity unknown — STRONGLY NARROWED, not fully
+  resolved** (§24: two concrete, verified candidates found; re-export
+  durability not confirmable from a single snapshot).
+- **Issue↔Receive deterministic matching unknown — ENCOUNTERED, now
+  a confirmed negative finding rather than an inspection gap** (§11:
+  direct inspection confirms no linking field exists).
 - **Unmatched ISSUE policy unknown — ENCOUNTERED** (§16, OD-PR21-1).
 - **Unmatched RECEIVE policy unknown — ENCOUNTERED** (§17, OD-PR21-2).
 - **Ward mapping policy — architecture RESOLVED, operational ownership
-  NOT RESOLVED** (§14, OD-PR21-4) — not a full stop on the architecture
-  itself.
+  NOT RESOLVED, real reference list found** (§14, §14.1, OD-PR21-4) —
+  not a full stop on the architecture itself.
 - **Historical operator representation — architecture RESOLVED, later
-  mapping-procedure boundary NOT RESOLVED** (§13, OD-PR21-3) — not a
-  full stop on the architecture itself.
+  mapping-procedure boundary NOT RESOLVED, real 8-name roster found**
+  (§13, §13.1, OD-PR21-3) — not a full stop on the architecture itself.
 - **BorrowTransaction schema cannot represent history without
   fabrication — NOT ENCOUNTERED**; §12 confirms no column requires
   fabricating a value.
@@ -1489,7 +1852,9 @@ PR21 runtime implementation is performed.
   contained** by OD-PR21-1's default recommendation (§16, §44); not an
   unresolved stop on its own, but downstream of OD-PR21-1.
 - **Patient/HN/MRN data present without an approved handling policy —
-  CONTINGENT, cannot be evaluated without §6** (§42, OD-PR21-6).
+  STILL CONTINGENT, now on a concrete, identified field** (§9/§10's real
+  `หมายเหตุ` columns) rather than an unknown source structure; content
+  was not scanned for patient data by this session (§42, OD-PR21-6).
 - **A new transaction lifecycle state appears necessary — NOT
   ENCOUNTERED** (§18).
 - **PR21 requiring a change to PR19/PR20 safety semantics — NOT
@@ -1502,12 +1867,14 @@ PR21 runtime implementation is performed.
   response field, or PR20 route is altered.
 
 **Net effect: no source-dependent PR21 implementation slice is ready.**
-OD-PR21-0 (covering topology and stable event identity) and
-OD-PR21-1/OD-PR21-2 must resolve before PR21A/B/C can begin.
-**PR21-Foundation (§46) is ready to start once this Design PR merges** —
-it is not blocked by source evidence and does not touch PR21's own data
-model, but it has not started, and this Design PR itself performs no
-implementation (§51).
+OD-PR21-0's **topology** component is resolved (§7); its **field-mapping**
+component (SDC ambiguity, event-identity re-export durability) and
+OD-PR21-1/OD-PR21-2 (pairing/unmatched-row policy, now backed by a
+confirmed-negative finding, §11) must still resolve before PR21A/B/C can
+begin. **PR21-Foundation (§46) is ready to start once this Design PR
+merges** — it is not blocked by source evidence and does not touch
+PR21's own data model, but it has not started, and this Design PR
+itself performs no implementation (§51).
 
 ---
 
