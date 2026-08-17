@@ -1,10 +1,11 @@
 # Roadmap PR21 — Legacy Receive and Issue History Import: Design Specification
 
-**Status:** Design only. Not implemented. **Fix Round 1** (architecture
-review, findings H1–H4/M1/L1) applied. This document opens Owner
-Decisions (§43) and encounters mandatory STOP conditions (§50) because no
-real Receive/Issue source artifact exists in this repository, and because
-this round's own findings (H1, H3) surfaced additional evidence-dependent
+**Status:** Design only. Not implemented. **Fix Round 2** (architecture
+review, findings PR98-H2R/PR98-H4R/PR98-H5, non-blocking M1) applied on
+top of Fix Round 1 (H1–H4/M1/L1). This document opens Owner Decisions
+(§45) and encounters mandatory STOP conditions (§52) because no real
+Receive/Issue source artifact exists in this repository, and because
+Fix Round 1's own findings (H1, H3) surfaced additional evidence-dependent
 architecture questions that cannot be finalized without that same source
 artifact. No implementation, migration, or runtime change is made by this
 PR.
@@ -84,7 +85,11 @@ given throughout this document):
   `backend/app/services/identifiers.py`
 - `backend/app/api/v1/import_sessions.py`, `backend/app/crud/import_dry_run_plan.py`,
   `backend/app/crud/import_retention.py` (Fix Round 1: read specifically
-  to verify H3/H4/M1's claims — see §24, §29, §36)
+  to verify H3/H4/M1's claims — see §24, §29, §38)
+- `backend/app/schemas/import_session.py` (Fix Round 2: read specifically
+  to verify PR98-H4R's exact wire field names — `DryRunPlanOut`,
+  `DryRunPlanRowOut`, `DryRunPlanSummaryOut`, `DryRunPlanConfirmOut` —
+  see §29-§36)
 - `backend/app/api/v1/transactions.py`, `backend/app/schemas/transaction.py`
 - Repository-wide search for any real legacy Receive/Issue workbook, CSV,
   fixture, or column-level schema description (see §6).
@@ -140,7 +145,7 @@ reuses; the exact case matrix for Receive/Issue rows is blocked on §6/§7.
 
 ---
 
-## 5. Equipment lifecycle and operational safety (summary; full detail §19, §42)
+## 5. Equipment lifecycle and operational safety (summary; full detail §19, §44)
 
 No lifecycle state is added. No `Equipment.status` mutation occurs
 during import. Historical `CLOSED` transactions are always safe with
@@ -172,10 +177,10 @@ per-row reference ID), not just its column semantics. §7, §24, and every
 section downstream of them are explicitly marked **NOT READY** until this
 resolves.
 
-**Required from the Owner (OD-PR21-0, §43):** the real AppSheet Issue
+**Required from the Owner (OD-PR21-0, §45):** the real AppSheet Issue
 History export and Receive History export (workbook/CSV or exact
 column-level description), exact sheet/tab name(s), header row location,
-and a representative row-count sample — plus, per this round's findings,
+and a representative row-count sample — plus, per Fix Round 1's findings,
 confirmation of whether Issue History and Receive History are delivered
 as **one workbook** (e.g. two sheets/tabs) or **two separate files**, and
 whether each row carries any stable identifier (legacy row key,
@@ -195,8 +200,7 @@ logically distinct datasets (Issue History, Receive History), and one
 historical `BorrowTransaction` may need provenance from **both** an
 issue row and a receive row (§8). A design that quietly assumes a single
 `import_source_id`/checksum/source-row is sufficient for that transaction
-is incorrect — this round's review correctly identified that the
-previous revision of this document did exactly that.
+is incorrect.
 
 **Three topology options, evaluated:**
 
@@ -227,20 +231,20 @@ previous revision of this document did exactly that.
 real export turns out to be one workbook with separate Issue/Receive
 sheets, (A) applies with no PR19 foundation change and no new
 staging/pairing layer — the lowest-risk path, and the one most
-consistent with this task's own repeated instruction to reuse PR19/PR20
+consistent with this design's repeated preference to reuse PR19/PR20
 mechanisms unmodified wherever possible. If the real export is delivered
 as two genuinely separate files, the fallback is (C), not (B) — (B)'s
 foundation-extension cost should only be paid if neither (A) nor (C) can
 represent the real deliverable, which cannot be evaluated without seeing
 it.
 
-**This is not a final decision.** Per this round's own instruction,
-topology remains a **blocking Owner Decision** (folded into OD-PR21-0,
-§43) until the real source artifact confirms which structure applies.
-§9, §10, §24's stable-identity design, and the final table names in §8
-and §30/§34 are **NOT READY** and are not finalized by this document —
-only their required *shape* (§8's 1:N requirement) is fixed regardless
-of which topology option is ultimately selected.
+**This is not a final decision.** Topology remains a **blocking Owner
+Decision** (folded into OD-PR21-0, §45) until the real source artifact
+confirms which structure applies. §9, §10, §24's stable-identity design,
+and the final table names in §8 and §32/§36 are **NOT READY** and are
+not finalized by this document — only their required *shape* (§8's 1:N
+requirement) is fixed regardless of which topology option is ultimately
+selected.
 
 ---
 
@@ -323,11 +327,11 @@ search/reporting queries); **(C) a separate approved historical model**
 **Recommendation: (B).** Architectural, not resolved — the deterministic
 matching keys actually available depend on §6/§7.
 
-**Validation treatment (Fix Round 1 correction):** ambiguous pairing is
-a blocking `ERROR` finding (§15), **never** a fuzzy/temporal heuristic
-match, and — per §15's all-or-nothing gate — an ambiguous pair anywhere
-in a batch blocks that entire validation snapshot from producing a
-dry-run, not just that one row.
+**Validation treatment:** ambiguous pairing is a blocking `ERROR`
+finding (§15), **never** a fuzzy/temporal heuristic match, and — per
+§15's all-or-nothing gate — an ambiguous pair anywhere in a batch blocks
+that entire validation snapshot from producing a dry-run (§28), not just
+that one row.
 
 ---
 
@@ -349,10 +353,10 @@ Full column inventory of `borrow_transactions`
 | `ward_id` | UUID FK, nullable at DB level | Derivable once Ward mapping resolves (§14); unmapped is a validation finding, not silent NULL. |
 | `department_id`, `phone_number`, `pickup_location_id`, `dropoff_location_id` | nullable | Not named in the Roadmap objective — leave NULL. |
 | `condition_on_return` | `String(30)`, unconstrained, nullable | Derivable if source states a receive condition (§10). |
-| `notes` | `Text`, nullable | Derivable if source has a notes field (§40 privacy caveat applies). |
+| `notes` | `Text`, nullable | Derivable if source has a notes field (§42 privacy caveat applies). |
 | `status` | NOT NULL, default `OPEN`; exactly `OPEN`/`CLOSED` | Derivable from pairing outcome (§11): `CLOSED` for matched pairs, `OPEN` only if §16 explicitly permits. |
 | `dispatch_type`, `routine_round` | nullable | Never inferred (§23) — leave NULL unless source states them. |
-| `legacy_status` | `String(20)`, nullable, provenance-only | Direct precedent for the "preserve exact original value, never read by live workflow" pattern reused in §41. |
+| `legacy_status` | `String(20)`, nullable, provenance-only | Direct precedent for the "preserve exact original value, never read by live workflow" pattern reused in §43. |
 
 **No existing column is a blocking gap on its own.** No current `User`
 row is ever fabricated (both actor FKs nullable) — no structural need to
@@ -366,11 +370,11 @@ No auto-created `User` accounts (`User.password_hash` is NOT NULL —
 `backend/app/models/user.py:72-99` — structurally impossible without
 fabricating credentials). No display-name-similarity auto-mapping.
 
-**Fix Round 1 refinement:** given §8's 1:N provenance requirement, the
-raw legacy operator name is most naturally captured **per source ref**
-(tagged by that ref's `event_type` — `ISSUE` actor vs. `RECEIVE` actor),
-not as two independent flat columns directly on `borrow_transactions`.
-Whether a denormalized convenience copy is also kept directly on
+Given §8's 1:N provenance requirement, the raw legacy operator name is
+most naturally captured **per source ref** (tagged by that ref's
+`event_type` — `ISSUE` actor vs. `RECEIVE` actor), not as two
+independent flat columns directly on `borrow_transactions`. Whether a
+denormalized convenience copy is also kept directly on
 `borrow_transactions` (for query simplicity) is an implementation-time
 schema-shape choice, not a normative requirement of this design — the
 minimum requirement is that the raw text survives verbatim, attributed
@@ -379,7 +383,7 @@ to the correct role, per historical event. `borrower_user_id`/
 Owner-approved later mapping step resolves them (§21).
 
 The later mapping procedure itself is **not** designed here — out of
-PR21's Version 1 boundary (OD-PR21-3, §43).
+PR21's Version 1 boundary (OD-PR21-3, §45).
 
 ---
 
@@ -407,7 +411,7 @@ Exact match resolves automatically; alias-table hit resolves via the
 explicit mapping; unknown/ambiguous/blank is a validation finding (§15),
 never a silently-created Ward, never a fuzzy match. Original source Ward
 text is preserved regardless of match outcome (§26). Ownership of the
-alias table's ongoing curation is **OD-PR21-4** (§43).
+alias table's ongoing curation is **OD-PR21-4** (§45).
 
 ---
 
@@ -416,25 +420,22 @@ alias table's ongoing curation is **OD-PR21-4** (§43).
 **Current PR19 runtime behavior is authoritative and is not modified by
 PR21:** if validation contains a blocking `ERROR`, the session becomes
 `validation_failed`; dry-run is not admitted from `validation_failed`
-(`docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md` §13). The previous
-revision of this document contradicted itself — classifying rows as
-`ERROR` while also describing them as appearing inside a `DryRunPlan`.
-Fix Round 1 resolves this by selecting a single architecture:
+(`docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md` §13).
 
 **Selected: ALL-OR-NOTHING VALIDATION GATE.** Any blocking `ERROR`
 anywhere in the batch → the whole session becomes `validation_failed`;
 findings remain visible in the validation result; **no `DryRunPlan` is
 created for that session.** A `DryRunPlan` only ever exists for a
-session whose validation snapshot passed with zero blocking errors. This
+session whose validation snapshot passed with zero blocking errors —
+see §28 for the exact, corrected downstream contract this implies. This
 preserves PR19's state machine completely unmodified and is the
 lowest-risk choice for a V1 implementation.
 
-**Confirmation: PR21 does not support partial import in V1.** If the
-Owner later wants partial import (some rows proceed to dry-run/execute
-while others are excluded), that requires a separate, explicitly
-approved change to PR19's own validation semantics — out of this
-document's scope, and not claimed as already supported anywhere in this
-design.
+**PR21 does not support partial import in V1.** If the Owner later
+wants partial import (some rows proceed to dry-run/execute while others
+are excluded), that requires a separate, explicitly approved change to
+PR19's own validation semantics — out of this document's scope, and not
+claimed as already supported anywhere in this design.
 
 **Consistent severity classification (no condition may read as
 "blocking but still a candidate"):**
@@ -453,7 +454,9 @@ design.
 | Malformed source structure (wrong sheet, missing headers) | ERROR | Session → `validation_failed`, no dry-run |
 
 **Exactly two severities — no third tier**, matching PR19A's own
-taxonomy. `WARNING` never blocks. **Reporting convention preserved:**
+taxonomy. `WARNING` never blocks, and a row carrying only `WARNING`
+findings is the *only* kind of row that may appear in a dry-run plan
+with attached warning context (§28). **Reporting convention preserved:**
 `valid_rows = total_rows - invalid_rows` is retained as an informational
 count inside the validation result (visible even when the session as a
 whole is `validation_failed`, so the operator can see how close the
@@ -467,28 +470,33 @@ consistent with §9/§10.
 
 ## 16. Unmatched historical ISSUE — Owner Decision required
 
-**OD-PR21-1.** Per §15, this is now explicitly an `ERROR`-severity
-finding by default — any unmatched issue row blocks the entire session's
+**OD-PR21-1.** Per §15, this is explicitly an `ERROR`-severity finding
+by default — any unmatched issue row blocks the entire session's
 validation, not merely "is excluded from execution." The underlying
-danger is unchanged from the prior revision: `idx_tx_one_active_borrow`
-allows at most one `OPEN` transaction per equipment (§3); importing an
-unmatched issue as `OPEN` risks blocking today's live dispatch for a
-reason no current operator caused.
+danger: `idx_tx_one_active_borrow` allows at most one `OPEN` transaction
+per equipment (§3); importing an unmatched issue as `OPEN` risks
+blocking today's live dispatch for a reason no current operator caused.
 
-**Architectural recommendation unchanged: do not allow unresolved legacy
-history to alter current operational eligibility.** If the Owner later
-approves representing some unmatched issues as genuinely still-open,
-that requires either a separate historical-state representation or an
+**Architectural recommendation: do not allow unresolved legacy history
+to alter current operational eligibility.** If the Owner later approves
+representing some unmatched issues as genuinely still-open, that
+requires either a separate historical-state representation or an
 explicit, reviewed exclusion from the live uniqueness constraint —
-neither proposed here. Also **Mandatory STOP condition** (§50).
+neither proposed here. Because this is `ERROR`-severity, a session
+containing an unmatched issue row never produces a `DryRunPlan` at all
+(§28) — it is visible only as a validation finding, never as a "blocked
+plan row." Also **Mandatory STOP condition** (§52).
 
 ---
 
 ## 17. Legacy RECEIVE without ISSUE — Owner Decision required
 
 **OD-PR21-2.** Per §15, also `ERROR`-severity by default. No synthetic
-issue event is ever fabricated to force a pairing. Also **Mandatory STOP
-condition** (§50).
+issue event is ever fabricated to force a pairing. Same treatment as
+§16 — `ERROR`-severity means the whole session's validation fails and
+no `DryRunPlan` is created (§28); an unmatched receive row is visible
+only as a validation finding, never as a plan row. Also **Mandatory
+STOP condition** (§52).
 
 ---
 
@@ -522,7 +530,7 @@ generate a new current-format number — not recommended without
 reviewing reporting/API expectations first, since a contemporary-looking
 number on a decades-old event is misleading. Not resolved — depends on
 §6. Source reference is preserved regardless (§26). Also **Mandatory
-STOP condition** (§50), since it touches a NOT NULL/UNIQUE constraint.
+STOP condition** (§52), since it touches a NOT NULL/UNIQUE constraint.
 
 ---
 
@@ -571,9 +579,7 @@ NULL-propagation) — no special casing needed.
 
 ## 24. Stable historical event identity and checksum semantics (H3)
 
-**Corrected checksum semantics.** The prior revision of this document
-incorrectly implied `ImportSource.checksum` alone prevents cross-session
-replay. Verified against the actual schema
+**Corrected checksum semantics.** Verified against the actual schema
 (`backend/app/models/import_session.py:125-141`):
 `checksum: Mapped[str] = mapped_column(String(128), nullable=False)`,
 with `Index("ix_import_sources_checksum", "checksum")` — **a regular
@@ -581,8 +587,7 @@ index, not a unique constraint.** A new `ImportSession` can register the
 same file/checksum again; nothing in the database prevents it.
 `ImportSource.checksum` provides source integrity/fingerprint and
 comparison evidence — **it does not provide database-enforced global
-replay prevention.** Any prior wording in this document implying
-otherwise is superseded by this section.
+replay prevention.**
 
 **Stable historical event identity must not be `ImportSource.id` +
 `row_number`.** That identity is only stable inside one exact source
@@ -598,14 +603,16 @@ acceptable as a universal event identity without explicit source
 evidence:** timestamp alone; equipment + timestamp alone; row number
 alone; checksum + row number alone. **If the real source provides no
 stable per-row identifier of any kind, this is itself a blocking Owner
-Decision** — folded into OD-PR21-0 (§43), since it cannot be resolved
-without seeing the source.
+Decision** — folded into OD-PR21-0 (§45), since it cannot be resolved
+without seeing the source. This event-identity work belongs to a later,
+source-dependent implementation slice — **not** to PR21-Foundation
+(§46's H5 clarification).
 
 ---
 
 ## 25. Duplicate detection and re-import / idempotency (corrected-export policy)
 
-Three cases this design distinguishes, per Fix Round 1's correction:
+Three cases this design distinguishes:
 
 - **(A) Exact same source artifact replayed** — same `ImportSource`
   checksum re-registered. Detectable at the source level, but §24
@@ -629,14 +636,13 @@ mechanism is implemented — it states the requirement (database-enforced
 stable identity, checked at write time) and defers the concrete key to
 PR21A, gated on OD-PR21-0.
 
-Other cases, unchanged from the prior revision: duplicate ISSUE/RECEIVE
-row within one file (§15 `ERROR`, in-workbook duplicate); duplicate
-against already-imported legacy history (a database check against
-already-*executed* transactions, not just already-uploaded sources);
-mapping changes after an earlier dry-run (Ward/BME mapping added later)
-— per PR20's persisted-plan immutability contract, a changed mapping
-supersedes the prior plan and requires a fresh dry-run, never an
-in-place mutation.
+Other cases, unchanged: duplicate ISSUE/RECEIVE row within one file
+(§15 `ERROR`, in-workbook duplicate); duplicate against already-imported
+legacy history (a database check against already-*executed*
+transactions, not just already-uploaded sources); mapping changes after
+an earlier dry-run (Ward/BME mapping added later) — per PR20's
+persisted-plan immutability contract, a changed mapping supersedes the
+prior plan and requires a fresh dry-run, never an in-place mutation.
 
 ---
 
@@ -647,7 +653,7 @@ row via §8's provenance refs: `ImportSession.id`, `ImportSource.id`,
 `ImportSource.checksum`, sheet/tab identifier, source row number, and
 source reference/event ID if present. Normalized provenance is
 sufficient — no unnecessary full raw-row dump — consistent with PR19A's
-redaction policy (§36).
+redaction policy (§38).
 
 ---
 
@@ -671,23 +677,59 @@ concrete need.
 
 ## 28. Dry-run contract
 
-Per §15, a `DryRunPlan` is only ever created from a session whose
-validation snapshot passed with zero blocking errors — never a
-mixed/partial plan. PR19/PR20's persisted-plan *pattern* (immutable
-header + rows, `active`/`superseded`/`consumed`/`failed` lifecycle,
-explicit confirm gate) is reused; the concrete tables are PR21-owned
-(§34), since the existing `EquipmentMasterDryRunPlan`/`Row` tables are
-upsert-oriented (`action IN ('CREATE','UPDATE','SKIP')`,
-`target_equipment_id`, `expected_equipment_version`) and do not fit an
-insert-oriented transaction import. The dry-run shows historical import
-effects (paired transactions, duplicate rows, unmapped Wards, unresolved
-equipment, preserved legacy BME names) without writing any
-`borrow_transactions` row, via PR19's existing `READ ONLY` transaction
-enforcement.
+Per §15's all-or-nothing gate, any blocking `ERROR` anywhere in a
+validation batch means the session becomes `validation_failed` and **no
+`DryRunPlan` is created at all** — not a plan containing only the
+passing rows, and not a plan that also carries the blocked rows for
+visibility. A `DryRunPlan` therefore only ever exists for a session
+whose validation snapshot passed with **zero** blocking `ERROR`
+findings.
+
+**Conceptual flow (restated precisely, no exceptions):**
+
+```
+parse
+  -> validate all rows -> findings + counters
+
+IF any ERROR finding exists anywhere in the batch:
+    session -> validation_failed
+    findings remain exposed via the validation-findings result/endpoint
+    STOP -- no DryRunPlan is created
+
+ELSE (zero ERROR findings; WARNING findings may still exist):
+    session -> validated
+    dry-run is admitted
+    the resulting DryRunPlan contains only rows drawn from this
+    fully-passing snapshot, plus non-blocking WARNING context
+    attached to those rows (e.g. an unknown BME name pending later
+    mapping, §13) -- never a row that failed validation
+```
+
+**Dry-run summary contract.** The persisted plan's summary may report
+only rows/counts that survived validation: issue events accepted,
+receive events accepted, historical transactions planned (paired per
+§11), non-blocking warning counts, and no-op/skip categories only if a
+later slice's design explicitly defines one. **It must never include a
+"blocked ERROR rows" category** — there is no such category, because a
+batch containing any `ERROR` never produces a plan. If the frontend
+needs to show validation errors to the operator, it reads the
+validation-findings result for that session (already exposed by PR19's
+existing validate-phase contract), never the dry-run plan — the two are
+different artifacts for different states (`validation_failed` vs.
+`validated`/`dry_run_completed`).
+
+PR19/PR20's persisted-plan *pattern* (immutable header + rows,
+`active`/`superseded`/`consumed`/`failed` lifecycle, explicit confirm
+gate) is reused; the concrete tables are PR21-owned (§36), since the
+existing `EquipmentMasterDryRunPlan`/`Row` tables are upsert-oriented
+(`action IN ('CREATE','UPDATE','SKIP')`, `target_equipment_id`,
+`expected_equipment_version`) and do not fit an insert-oriented
+transaction import. No `borrow_transactions` row is ever written during
+dry-run, via PR19's existing `READ ONLY` transaction enforcement.
 
 ---
 
-## 29. Generic persisted-plan API architecture (H4)
+## 29. Generic persisted-plan API architecture (H4) — PR20 wire compatibility is mandatory
 
 **Verified: the current PR20 GET/confirm endpoints are hardcoded to
 Equipment Master, not a generic import-session plan API.**
@@ -697,13 +739,25 @@ type in every function (`get_current_plan`, `list_plan_rows`,
 `confirm_plan`, etc. — lines 12, 32-234). `backend/app/api/v1/import_sessions.py`'s
 `GET /{session_id}/dry-run-plan` (line 328) and
 `POST /{session_id}/dry-run-plan/{plan_id}/confirm` (line 388) call this
-CRUD module directly. **PR21 cannot simply create new PR21 plan tables
-and claim these endpoints "reuse" — they would need to be extended to
-even know PR21's tables exist.**
+CRUD module directly.
 
-**Selected architecture: generalize the existing generic transport,
-dispatch to adapter-owned plan providers, keep persistence
-dataset-specific.** Concretely:
+**Fix Round 2 (PR98-H4R) correction: the generic-API generalization must
+not drift PR20's existing wire contract.** Verified the exact current
+response field names (`backend/app/schemas/import_session.py:172-203`):
+`DryRunPlanOut` carries `id`, `import_session_id`, `import_source_id`,
+`status`, `is_current`, `created_at`, `confirmed_at`,
+`confirmed_by_user_id`, `summary` (itself `total_rows`, `creates`,
+`updates`, `skips`, `warnings`, `blocking_conflicts`), `rows`,
+`rows_next_cursor`, `rows_total`; `DryRunPlanConfirmOut` carries `id`,
+`import_session_id`, `status`, `confirmed_at`, `confirmed_by_user_id`,
+`summary`. **These exact field names are the authoritative, currently-
+shipping PR20F frontend contract and must not be renamed on the wire** —
+Fix Round 1's proposed generic vocabulary (`plan_id`, `session_id`,
+`state`) is **internal-only**, never exposed as PR20's actual response
+shape.
+
+**Selected architecture: generalize the transport (routing/dispatch),
+never the wire shape.**
 
 ```
 GET  /import-sessions/{session_id}/dry-run-plan
@@ -711,53 +765,134 @@ POST /import-sessions/{session_id}/dry-run-plan/{plan_id}/confirm
    |
    +--> generic route handler (existing, in import_sessions.py)
    |         reads ImportSession.dataset_type
-   +--> dispatches to a per-dataset-type plan-provider
+   +--> dispatches to a per-dataset-type DryRunPlanProvider (§30)
              (EquipmentMaster's existing behavior becomes the first/
-              default case; PR21 registers its own provider)
+              default provider, returning DryRunPlanOut/
+              DryRunPlanConfirmOut byte-for-field unchanged;
+              PR21 registers its own provider returning its own
+              schemas, §31)
 ```
 
 This mirrors the pattern already established for parse/validate/execute
 via `register_adapter()`/`get_adapter()` (`import_adapter.py:285-295`) —
-a per-dataset-type provider lookup, not a duplicated endpoint family.
-**This requires real, non-trivial work on shared PR19/PR20 infrastructure**
-(`import_dry_run_plan_crud` and the two endpoints above are not
-dataset-agnostic today) — this is flagged explicitly as its own
-implementation-slice question in §44, not something PR21A gets for free.
-Duplicating a whole second endpoint family (e.g.
-`/legacy-history-dry-run-plan`) is rejected as the default — it would
-fragment the API surface without a compelling reason, and this design
-does not identify one.
+a per-dataset-type provider lookup, not a duplicated endpoint family,
+and not a lossy common DTO that would force both datasets' genuinely
+different row shapes (§28's upsert-vs-insert distinction) into one
+schema. This requires real, non-trivial, independently-reviewable work
+on shared PR19/PR20 infrastructure, recorded as its own proposed
+implementation slice ("PR21-Foundation," §46), not something PR21A gets
+for free. Duplicating a whole second endpoint family (e.g.
+`/legacy-history-dry-run-plan`) remains rejected as the default.
 
 ---
 
-## 30. Plan and plan-row contract shape
+## 30. Generic provider interface
 
-**Plan summary response:** `plan_id`, `session_id`, `dataset_type`,
-`created_at`, current/superseded/confirmed state, aggregate counts,
-warning counts. **Plan-row response:** stable row ID, plan ID,
-display/action category, safe normalized presentation fields, pagination
-cursor. **Exact-plan identity is always `session_id` + `plan_id`** —
-never inferred as "the latest plan." Every page of a paginated row list
-must be scoped to the same immutable `plan_id`.
+Internal service-layer contract (exact names may differ to match
+repository conventions; this is the conceptual shape):
+
+```
+DryRunPlanProvider (per dataset_type)
+  - get_plan(session_id) -> provider-owned plan identity/state
+  - get_plan_rows(session_id, plan_id, cursor, limit) -> provider-owned rows
+  - confirm_plan(session_id, plan_id, actor) -> provider-owned confirm result
+  - redact_plan_artifacts(session_id) -> retention hook (§38)
+  - execute_plan(...) -- owned by §37's execution contract, not this
+    interface directly
+```
+
+Provider selection is based on `ImportSession.dataset_type`, via the
+same registration mechanism already used for adapters
+(`register_adapter()`/`get_adapter()`).
+
+- **Equipment Master provider:** a thin wrapper around the existing
+  `import_dry_run_plan_crud` functions and `EquipmentMasterDryRunPlan`/
+  `Row` — returns `DryRunPlanOut`/`DryRunPlanConfirmOut`/
+  `DryRunPlanRowOut` **exactly as they exist today**, unchanged.
+- **PR21 provider:** wraps PR21's own plan/row tables (§36) — returns
+  PR21-specific schemas (§31).
+
+**Do not force both datasets into one lossy common DTO** — PR20's row
+shape (`action IN ('CREATE','UPDATE','SKIP')`, `target_equipment_id`,
+`expected_equipment_version`) has no meaningful PR21 equivalent (§28);
+attempting a shared row schema would either drop PR20 fields or add
+meaningless nullable fields to PR21's rows. The provider interface
+exists precisely so each dataset's provider owns its own response
+serialization.
 
 ---
 
-## 31. Pagination contract
+## 31. Wire contract strategy — discriminated response, PR20 payload unchanged
+
+**Selected: Option A, a dataset-discriminated response.**
+
+```
+GET /import-sessions/{session_id}/dry-run-plan
+
+returns one of, selected by ImportSession.dataset_type:
+  - DryRunPlanOut              (Equipment Master -- unchanged from today)
+  - LegacyHistoryDryRunPlanOut (PR21 -- new schema, §32)
+```
+
+Each dataset-specific schema preserves its own field names in full;
+neither is forced through a shared generic envelope. **Option B (a
+stable generic envelope with a dataset-specific payload) was evaluated
+and rejected** — it would only be viable if PR20's current wire shape
+could remain byte/field-compatible through a compatibility-serialization
+layer, and no such layer exists today; introducing one purely to satisfy
+a generic envelope would be strictly more implementation risk than
+Option A for no compatibility benefit. **No generic shape is invented
+that renames any existing PR20 field.**
+
+---
+
+## 32. Plan and plan-row contract shape
+
+**Internal invariant (never exposed as renamed wire fields):**
+exact-plan identity is always the pair (`ImportSession.id`,
+plan's own `id`) — the same pair `DryRunPlanOut.import_session_id` +
+`DryRunPlanOut.id` already represent today; never inferred as "the
+latest plan."
+
+**PR20 (Equipment Master):** `DryRunPlanOut`/`DryRunPlanRowOut`/
+`DryRunPlanSummaryOut`/`DryRunPlanConfirmOut` remain **exactly as
+verified in §29** — no field added, renamed, or removed by this design.
+
+**PR21 (new `LegacyHistoryDryRunPlanOut`/`LegacyHistoryDryRunPlanRowOut`,
+exact final names TBD in PR21A):** mirrors the same overall shape
+(`id`, `import_session_id`, `status`, `is_current`-equivalent,
+`created_at`, `confirmed_at`, `confirmed_by_user_id`, a summary object,
+paginated rows, cursor) but with PR21-specific row fields instead of
+Equipment Master's upsert-oriented ones — historical transaction
+action/category (§28's `IMPORT_OPEN`/`IMPORT_CLOSED`/`SKIP`),
+issue/receive source refs (§8), mapped Ward, legacy BME display text
+(§13), source timestamps, and non-blocking warning indicators (§15).
+These are additive, PR21-owned fields on a PR21-owned schema — **not**
+added to `DryRunPlanRowOut` itself.
+
+---
+
+## 33. Pagination contract
 
 Cursor pagination with a validated limit; cursor binds to the exact
-`plan_id` it was issued for; a malformed cursor returns a structured
-client error; a cursor issued for a different plan is rejected, not
-silently reinterpreted. No unbounded/thousands-of-rows single response —
-matches PR20's existing `list_plan_rows` cursor-pagination shape
-(`import_dry_run_plan.py:222-234`), generalized per §29.
+plan it was issued for. **Fix Round 2 addition (PR98-H4R):** for PR21's
+provider, the cursor must bind to session, plan ID, **and provider/
+dataset_type** — a cursor issued for one provider's plan is rejected by
+another provider's `get_plan_rows`, not silently reinterpreted. A
+malformed cursor returns a structured client error. No unbounded/
+thousands-of-rows single response — matches PR20's existing
+`list_plan_rows` cursor-pagination shape (`import_dry_run_plan.py:222-234`)
+for Equipment Master, unchanged; PR21's provider implements the
+equivalent contract for its own rows.
 
 ---
 
-## 32. Missing / foreign / stale plan semantics
+## 34. Missing / foreign / stale plan semantics
 
 Preserves PR20's existing, already-verified semantics
-(`backend/app/api/v1/import_sessions.py:328-425`), generalized per §29
-rather than reinvented:
+(`backend/app/api/v1/import_sessions.py:328-425`) for Equipment Master
+unchanged, and PR21's provider adopts the identical security semantics
+(no documented reason to diverge):
 
 - **READ** (`GET .../dry-run-plan`): missing/never-existed plan → `404
   IMPORT_DRY_RUN_PLAN_NOT_FOUND` (verified: `import_sessions.py:339-342`).
@@ -767,38 +902,55 @@ rather than reinvented:
   `import_sessions.py:407-425` docstring). No foreign-plan existence is
   ever leaked through a distinct error shape.
 
+**Provider layer must not expose whether a foreign plan exists** — the
+generic transport's unified error responses are what the caller sees;
+a provider's internal lookup failure for a foreign-session plan must
+produce the same `409 IMPORT_DRY_RUN_PLAN_STALE` the transport already
+returns for every other stale/missing case, not a distinct signal.
+
 ---
 
-## 33. Confirmation RBAC / audit
+## 35. Confirmation RBAC / audit
 
 **RBAC:** Administrator-only, via the existing
 `require_roles(*ADMINISTRATOR_ONLY_ROLES)` dependency already applied to
 every import-session endpoint including confirm (verified:
-`import_sessions.py:394`) — reused as-is, no new permission contract
-invented. **Audit:** confirmation records actor, import session, plan
-ID, dataset type, and timestamp, with no raw source payload — via the
-existing `record_audit_event()`/`AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CONFIRMED`
-mechanism (§38), not a second audit framework.
+`import_sessions.py:394`) — enforced once, at the generic transport
+layer, for every dataset_type. No new permission contract invented.
+
+**Audit — single owner, no double-audit.** Verified: today, the confirm
+endpoint itself (`import_sessions.py:443-446`), not the CRUD/provider
+layer, calls `record_audit_event(..., action=AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CONFIRMED, ...)`
+after `import_dry_run_plan_crud.confirm_plan()` returns. **Selected:
+the generic transport layer remains the sole audit-write owner for
+confirmation**, invoked exactly once per confirm call using the plan
+identity the provider's `confirm_plan()` returns (actor, import
+session, plan ID, dataset type, timestamp, no raw source payload).
+Providers (Equipment Master's existing one and PR21's new one) **must
+not** independently write a second, duplicate audit event inside their
+own `confirm_plan()` implementation — this is the single point of
+ownership PR98-H4R's finding 13 requires.
 
 ---
 
-## 34. Plan persistence ownership decision
+## 36. Plan persistence ownership decision
 
-**Selected: fully adapter-specific plan tables, behind the generalized
-generic API from §29** — the same shape the existing
+**Selected: fully adapter/provider-specific plan tables, behind the
+generalized transport from §29.** This is the same shape the existing
 `EquipmentMasterDryRunPlan`/`Row` tables already use (they are not a
-shared generic header table today; each adapter owns its own plan
+shared generic header table today; each provider owns its own plan
 tables). PR21 introduces its own header/row tables (§8's provenance
 model attaches to the row level), reachable through the same generic
 `GET`/`confirm` routes once §29's dispatch layer exists. This preserves:
-immutable plan, exact plan confirmation (§30), pagination (§31),
-adapter ownership, retention (§36), execution reuse (§35), and creates
+immutable plan, exact plan confirmation (§32), pagination (§33),
+provider ownership, retention (§38), execution reuse (§37), and creates
 **no PR20 regression** — Equipment Master's existing behavior becomes
-the dispatch layer's default/first case, unchanged.
+the dispatch layer's default/first provider, byte-for-field unchanged
+per §29/§31/§32's verified wire contract.
 
 ---
 
-## 35. Execution contract
+## 37. Execution contract
 
 Reuses PR19's claim, idempotency, lease, heartbeat, fencing, recovery,
 audit, and retention mechanisms unmodified (PR19A's own design doc: no
@@ -807,57 +959,90 @@ implements the same `on_execution_success`/`on_execution_failure`/
 `on_execution_recovery` hook triple PR20E's design maintains for the
 **Job → Session → Plan/sub-resource** lock order
 (`equipment_master.py:1496-1536`), applied to PR21's own dry-run-plan
-sub-resource (§28/§34). Execution never mutates `Equipment` (§3, §19)
+sub-resource (§28/§36). Execution never mutates `Equipment` (§3, §19)
 and never invokes live dispatch/receipt transitions (§3). Confirmation
-flows through §29's generalized confirm endpoint (§33).
+flows through §29-§36's generalized confirm endpoint.
 
 ---
 
-## 36. Retention design (M1) — policy vs. implementation
+## 38. Retention design (M1) — policy, implementation, and fail-closed semantics
 
 **PR19's 180-day retention POLICY is reused unmodified**
 (`docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md` §18: 180-day
 post-terminal, redact-in-place, `IMPORT_RETENTION_DAYS`-configurable, no
 V1 Administrator UI, no legal/manual hold).
 
-**Fix Round 1 correction — this is not "unchanged" at the implementation
-level.** Verified: `backend/app/crud/import_retention.py`'s
-`redact_session()` explicitly imports `EquipmentMasterDryRunPlanRow`
-(line 9) and issues a direct `update(EquipmentMasterDryRunPlanRow)...`
-statement against it (lines 139-140) — it has **no generic/dataset-type
-dispatch mechanism today.** PR21's new plan/provenance content (§8, §34)
-would **not** be redacted by the existing retention runtime unless
-extended.
+**This is not "unchanged" at the implementation level.** Verified:
+`backend/app/crud/import_retention.py`'s `redact_session()` explicitly
+imports `EquipmentMasterDryRunPlanRow` (line 9) and issues a direct
+`update(EquipmentMasterDryRunPlanRow)...` statement against it
+(lines 139-140) — it has **no generic/dataset-type dispatch mechanism
+today.** PR21's new plan/provenance content (§8, §36) would **not** be
+redacted by the existing retention runtime unless extended.
 
 **Selected direction: generic adapter retention hook**, for symmetry
 with the existing `ImportAdapter` hook pattern
-(`on_execution_success`/`failure`/`recovery`) — each adapter registers a
-redaction callback, invoked by `redact_session()` within the same
-transaction, rather than `import_retention_service.py` needing to know
-every dataset type by name as new ones are added (the alternative —
-explicit additive PR21-specific redaction logic bolted directly onto
-`redact_session`, parallel to the existing Equipment-Master-specific
-block — was also evaluated and rejected as not scaling past two dataset
-types).
+(`on_execution_success`/`failure`/`recovery`) — each adapter/provider
+registers a redaction callback, invoked by `redact_session()` within
+the same transaction, rather than `import_retention_service.py` needing
+to know every dataset type by name as new ones are added.
 
-**Required invariant, restated precisely:** retention redaction of PR21
-artifacts **and** `ImportSession` retention-state advancement must be
-atomic in one caller-owned transaction — matching the existing
-all-or-nothing per-session redaction transaction `redact_session()`
-already provides for Equipment Master.
+**Fix Round 2 (M1) — fail-closed contract.** Retention redaction must
+never silently succeed for a session whose dataset-owned artifacts were
+not actually confirmed redacted:
 
-**Corrected summary wording, replacing "retention unchanged":**
-*retention policy is unchanged; retention implementation requires
-additive PR21 integration (a new adapter retention hook, or equivalent),
-which is real, non-trivial work — not automatic reuse.*
+```
+BEGIN
+  -> core import redaction (existing, unchanged: ImportSession/
+     ImportSource/ImportRowError fields, per PR19A's existing contract)
+  -> provider-specific artifact redaction (the new hook, §above)
+  -> verify provider redaction actually succeeded
+  -> set retention_purged_at
+COMMIT
+
+Any failure anywhere in this sequence (provider missing/unregistered
+for a dataset_type that requires provider-owned redaction, provider
+callback raises, or provider cannot positively confirm its artifacts
+are redacted):
+  -> ROLLBACK the entire transaction
+  -> retention_purged_at is NOT set
+  -> session retention completion is NOT published
+  -> artifacts remain eligible for retry on the next retention pass
+```
+
+**No partial "purged" marker is ever written.** A session cannot end up
+with `retention_purged_at` set while its provider-owned artifacts (e.g.
+PR21's plan/provenance tables) remain unredacted.
+
+**Unknown/missing provider registration is a retention failure, not a
+silent skip.** For any dataset_type whose provider owns retention-
+relevant artifacts, a missing/unregistered provider at redaction time
+must be treated as a retryable operational error — never silently
+treated as "nothing to redact." If a dataset type genuinely has no
+provider-owned artifacts requiring redaction, its provider contract
+must **explicitly declare that** (an intentional no-op registration),
+rather than the retention runtime inferring it from the absence of a
+registration.
+
+**Required invariant, restated precisely:** retention redaction of
+provider-owned artifacts **and** `ImportSession` retention-state
+advancement (`retention_purged_at`) must be atomic in one caller-owned
+transaction, with the fail-closed rollback behavior above — matching
+and extending the existing all-or-nothing per-session redaction
+transaction `redact_session()` already provides for Equipment Master.
+
+**Corrected summary wording:** *retention policy is unchanged; retention
+implementation requires additive PR21 integration (a new fail-closed
+adapter retention hook), which is real, non-trivial work — not
+automatic reuse, and never a partial or silently-skipped redaction.*
 
 ---
 
-## 37. Retention boundary — temporary vs. permanent provenance
+## 39. Retention boundary — temporary vs. permanent provenance
 
-**Temporary import artifact retention** (180-day policy, §36) governs
+**Temporary import artifact retention** (180-day policy, §38) governs
 `ImportSession`/`ImportSource`/`ImportRowError`/PR21's own dry-run-plan
-tables (§34) — the *import process's* artifacts.
+tables (§36) — the *import process's* artifacts.
 
 **Permanent historical transaction/provenance retention:** once a legacy
 row executes into `borrow_transactions` plus its §8/§13 provenance refs,
@@ -878,9 +1063,9 @@ not propose storing full raw rows, §26, so there is little beyond
 
 ---
 
-## 38. Audit design
+## 40. Audit design
 
-Restated from §21/§33: audit records the import actor (`AuditLog.user_id`
+Restated from §21/§35: audit records the import actor (`AuditLog.user_id`
 via `record_audit_event()`), never the historical operator (which is
 business data, §8/§13). Batch/session/source and execution outcome
 recorded via the existing `AUDIT_ACTION_IMPORT`/
@@ -888,23 +1073,27 @@ recorded via the existing `AUDIT_ACTION_IMPORT`/
 `AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CREATED`/
 `AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CONFIRMED` constants
 (`backend/app/core/audit.py:48-80`), `entity_type="import_session"`. No
-new audit-action constant proposed.
+new audit-action constant proposed. Confirmation audit-write ownership
+is exactly as specified in §35 — one write, at the transport layer.
 
 ---
 
-## 39. Frontend
+## 41. Frontend
 
 PR19B already previewed Receive History and Issue History as categories
 in the Legacy Import UI (mock/placeholder data). PR21's frontend slice
-(PR21E, §44) reuses that existing architecture and replaces the mocks
-with real PR21 APIs (via §29's generalized endpoints) — no frontend
-redesign. Thai-first, mobile-first, minimal typing, large touch targets,
-Administrator-controlled workflow all preserved. No frontend file is
-touched by this Design PR (§49).
+(PR21E, §46) reuses that existing architecture and replaces the mocks
+with real PR21 APIs (via §29-§36's generalized endpoints and PR21's own
+discriminated response schema, §31) — no frontend redesign, and no
+change whatsoever to the existing PR20F Equipment Master frontend
+integration, since its wire contract is verified unchanged (§29). Thai-
+first, mobile-first, minimal typing, large touch targets, Administrator-
+controlled workflow all preserved. No frontend file is touched by this
+Design PR (§51).
 
 ---
 
-## 40. Security / privacy assessment
+## 42. Security / privacy assessment
 
 None of PR21's conceptual fields (§9, §10) are patient-related. **Cannot
 be fully assessed without the real source file (§6)** — a free-text
@@ -913,12 +1102,12 @@ HN/MRN, or clinical free-text incidentally entered by staff. Explicit
 policy, pending source-file review: patient-identifying data is out of
 scope and never silently imported; if found present, a reject/redact/
 ignore policy requires explicit Owner approval before any free-text
-field reaches the database. **OD-PR21-6** (§43), **Mandatory STOP
-condition** (§50), contingent on §6.
+field reaches the database. **OD-PR21-6** (§45), **Mandatory STOP
+condition** (§52), contingent on §6.
 
 ---
 
-## 41. Schema assessment (gap analysis)
+## 43. Schema assessment (gap analysis)
 
 No migration is created by this Design PR.
 
@@ -926,25 +1115,26 @@ No migration is created by this Design PR.
 |---|---|
 | `HistoricalTransactionSourceRef`-shaped 1:N provenance table(s) (§8), including per-ref legacy operator-name capture (§13) | No existing link from a transaction row back to import provenance exists at all; a flat single-provenance-per-transaction design cannot represent §8's required 1:N shape. |
 | `legacy_ward_aliases` mapping table (§14) | Confirmed absent from `master_data.py`. |
-| PR21-owned dry-run plan header/row tables (§34) | Existing `EquipmentMasterDryRunPlan`/`Row` are upsert-oriented and Equipment-specific; do not fit an insert-oriented transaction import. |
-| Generic dry-run-plan API dispatch layer (§29) — code change, not schema, but listed here as a real prerequisite | `import_dry_run_plan_crud` and the two `import_sessions.py` endpoints are hardcoded to Equipment Master today; no dataset-type dispatch exists. |
-| Adapter retention hook (§36) — code change, not schema | `redact_session()` is hardcoded to `EquipmentMasterDryRunPlanRow` today; no generic dispatch exists. |
+| PR21-owned dry-run plan header/row tables (§36) | Existing `EquipmentMasterDryRunPlan`/`Row` are upsert-oriented and Equipment-specific; do not fit an insert-oriented transaction import, and are not reused directly per §30/§31's discriminated-provider decision. |
+| Generic dry-run-plan transport dispatch + provider interface (§29-§30) — code change, not schema, but listed here as a real prerequisite | `import_dry_run_plan_crud` and the two `import_sessions.py` endpoints are hardcoded to Equipment Master today; no dataset-type dispatch exists. |
+| Fail-closed adapter retention hook (§38) — code change, not schema | `redact_session()` is hardcoded to `EquipmentMasterDryRunPlanRow` today; no generic dispatch, and no fail-closed provider-verification step, exists. |
 | Historical-sentinel handling for `transaction_no` (§20) | NOT NULL/UNIQUE with no historical-import carve-out today; exact mechanism pending OD-PR21-5/§6. |
 
 Every schema addition is additive; none of it alters or constrains any
-existing live-workflow column.
+existing live-workflow column, and none of it renames or removes any
+existing PR20 wire field (§29-§32).
 
 ---
 
-## 42. Concurrency / live safety
+## 44. Concurrency / live safety
 
 Imported historical `CLOSED` records never interfere with current `OPEN`
 transactions (`idx_tx_one_active_borrow` only constrains `status='open'`,
 §3). Unique constraints (`transaction_no`, §20) never collide with the
 live sequence by using a distinct historical scheme. **Write-time
 idempotency is required, using §24's stable event identity — this is
-not deferred to PR22** (§1). PR19's execution single-winner claim is
-reused unmodified (§35).
+not deferred to PR22** (§1), and is not owned by PR21-Foundation (§46).
+PR19's execution single-winner claim is reused unmodified (§37).
 
 **Historical `OPEN` import (§16) is the one case that cannot be
 guaranteed safe by architecture alone** — if ever approved, it directly
@@ -955,90 +1145,116 @@ import is simply not needed (the recommended default).
 
 ---
 
-## 43. Required Owner Decisions
+## 45. Required Owner Decisions
 
 - **OD-PR21-0 (blocking).** Real Issue/Receive History source
-  artifact(s). **Fix Round 1 expands this decision's scope**: it now
-  also requires confirming (a) §7's source/session topology (one
-  workbook vs. two files) and (b) §24's stable per-row event identity
-  (does one exist in the real source, and if so which field). Every
-  other field-level or evidence-dependent decision below remains
-  provisional until this resolves.
+  artifact(s). Scope includes confirming (a) §7's source/session
+  topology (one workbook vs. two files) and (b) §24's stable per-row
+  event identity (does one exist in the real source, and if so which
+  field). Every other field-level or evidence-dependent decision below
+  remains provisional until this resolves.
 - **OD-PR21-1.** Unmatched historical ISSUE-row policy (§16) —
-  recommendation: block/reconcile by default (now `ERROR`-severity per
-  §15, not merely an execution-time exclusion).
+  recommendation: block/reconcile by default (`ERROR`-severity per §15).
 - **OD-PR21-2.** Unmatched historical RECEIVE-row policy (§17) — same
   treatment.
 - **OD-PR21-3.** Legacy BME-name mapping-procedure boundary (§13).
 - **OD-PR21-4.** Ward alias-mapping table ownership/curation (§14).
 - **OD-PR21-5.** Historical `transaction_no` policy (§20), contingent on
   OD-PR21-0.
-- **OD-PR21-6.** Patient/clinical free-text handling (§40), contingent
+- **OD-PR21-6.** Patient/clinical free-text handling (§42), contingent
   on OD-PR21-0.
 
-No Owner Decision above is resolved by this Fix Round. This round
-selected and documented **architecture** (H2's validation model, H3's
-corrected checksum semantics, H4's generic plan API direction, M1's
-retention-hook direction) where the repository's own runtime behavior
-already answers the question — it did not invent business-policy answers
-that depend on evidence this repository does not have.
+No Owner Decision above is resolved by Fix Round 2. This round selected
+and documented **architecture** (H2R's dry-run/validation consistency,
+H4R's PR20-compatible generic provider direction, H5's Foundation-scope
+clarification, M1's fail-closed retention direction) where the
+repository's own runtime behavior already answers the question — it did
+not invent business-policy answers that depend on evidence this
+repository does not have.
 
 ---
 
-## 44. Proposed implementation slices (provisional)
+## 46. Proposed implementation slices (provisional)
 
-**Design Gate 1 (prerequisite to any slice below): source evidence
-(OD-PR21-0) and the Owner Decisions in §43 that depend on it.** No slice
-below is "ready today."
+**Fix Round 2 (PR98-H5) correction.** The prior revision contradicted
+itself: it said "no slice below is ready today" while also describing
+PR21-Foundation as not-blocked/startable, and its readiness table
+referenced a "PR21-Foundation idempotency check" that was never actually
+in Foundation's own scope. This is corrected below with one coherent
+model.
 
-- **PR21-Foundation (new, Fix Round 1 addition)** — the shared-
-  infrastructure work identified by H4/M1: generalizing the
-  dry-run-plan API dispatch layer (§29) and adding the adapter retention
-  hook (§36). This touches `import_dry_run_plan_crud`,
-  `import_sessions.py`, and `import_retention_service.py`/
-  `import_retention.py` — shared PR19/PR20 infrastructure, not
-  PR21-specific data — and carries **PR20-regression risk** that
-  deserves isolated review separate from PR21's own dataset-specific
-  schema. Not blocked on OD-PR21-0 — this slice's scope does not depend
-  on Receive/Issue field-level detail.
+**Corrected gate wording:** it is **not** true that "no implementation
+slice may start." The precise statement is: **"no source-dependent PR21
+implementation slice may start."** PR21-Foundation, being genuinely
+topology-independent generic plumbing, may start once this Design PR
+merges.
+
+- **PR21-Foundation** — generic plumbing only. **In scope:** the
+  generic provider interface (§30), generic transport dispatch by
+  `dataset_type` (§29), PR20 compatibility wrappers/verification (§29,
+  §31 — proving Equipment Master's wire contract is unchanged),
+  cursor/pagination/error-response generic plumbing (§33, §34), and the
+  retention-hook **abstraction** (the fail-closed dispatch mechanism
+  itself, §38) — but registering PR21's *own* redaction callback is not
+  in this slice, since PR21 has no artifacts yet. **Explicitly out of
+  scope for PR21-Foundation:** any PR21 database schema or migration;
+  PR21's provenance tables (§8, §43); any source-topology assumption
+  (§7); event-identity/idempotency constraints (§24 — this is a later,
+  source-dependent slice's responsibility, not Foundation's); Issue/
+  Receive parsers (§9, §10); pairing logic (§11); PR21's own
+  idempotency keys (§25); the `legacy_ward_aliases` table (§14); legacy
+  BME persistence (§13). All of these remain blocked on OD-PR21-0. This
+  slice carries **PR20-regression risk** (it touches shared PR19/PR20
+  infrastructure) and deserves isolated, independent review separate
+  from PR21's own dataset-specific schema.
 - **PR21A — Historical Transaction Schema / Provenance Foundation.**
-  §8's 1:N provenance tables, §14's `legacy_ward_aliases`, §34's plan
-  tables. **Blocked on:** §7 topology resolution (table shape depends on
-  it), OD-PR21-3/4/5.
+  §8's 1:N provenance tables, §14's `legacy_ward_aliases`, §36's PR21
+  plan tables (registered against PR21-Foundation's provider interface
+  once both exist). **Blocked on:** §7 topology resolution (table shape
+  depends on it), OD-PR21-3/4/5, and on PR21-Foundation's provider
+  interface existing to register against.
 - **PR21B — Issue History Parser + Validation.** **Blocked on:**
   OD-PR21-0, §4's identifier case matrix, §15's frozen error-code list,
   §24's stable identity.
 - **PR21C — Receive History Parser + Matching/Validation.** **Blocked
   on:** OD-PR21-0, OD-PR21-1, OD-PR21-2, §11's finalized matching keys.
 - **PR21D — Persisted Dry-run + Historical Transaction Execution.**
-  **Blocked on:** PR21-Foundation, PR21A–C.
+  **Blocked on:** PR21A–C (and, transitively, PR21-Foundation).
 - **PR21E — Frontend Real Integration.** **Blocked on:** PR21D.
 - **PR21F — Governance Sync.** After all approved slices merge, per
   `docs/ENGINEERING_WORKFLOW.md` §14 — not performed by this Design PR
-  (§48).
+  (§50).
+
+These names and this split remain provisional until topology (§7) is
+resolved — do not mark PR21A ready.
 
 ---
 
-## 45. Readiness table
+## 47. Readiness table
 
 | Area | Status | Blocking? | Required before slice |
 |---|---|---|---|
 | Source topology (§7) | BLOCKED BY OD-PR21-0 | YES | Before PR21A's table shape, PR21B/C |
-| Stable event identity / replay semantics (§24) | BLOCKED pending source evidence | YES | Before PR21B/C, PR21-Foundation's idempotency check |
-| Validation semantics (§15) | RESOLVED: all-or-nothing PR19 gate | NO | — |
-| Generic persisted-plan API (§29) | RESOLVED design contract | NO (design); YES the *implementation* is a real prerequisite slice (PR21-Foundation) | Before PR21D |
-| Retention integration (§36) | RESOLVED design direction | NO (design); YES the *implementation* is a real prerequisite slice (PR21-Foundation) | Before PR21D |
+| Stable event identity / replay semantics (§24) | BLOCKED pending source evidence; **owned by a later source-dependent slice, not PR21-Foundation** | YES | Before PR21B/C/D's write-time idempotency |
+| Validation/dry-run semantics (§15, §28) | RESOLVED: all-or-nothing PR19 gate; dry-run never contains ERROR-severity rows | NO | — |
+| Generic persisted-plan API design (§29-§32) | RESOLVED design contract, PR20 wire-compatible | NO (design) | — |
+| Generic persisted-plan API implementation (PR21-Foundation) | Design resolved; implementation is a real, startable slice | NO — not blocked on OD-PR21-0 | May start now (post Design PR merge) |
+| Retention integration design (§38) | RESOLVED design direction, fail-closed | NO (design) | — |
+| Retention hook implementation (PR21-Foundation, abstraction only) | Design resolved; abstraction implementation is startable | NO — not blocked on OD-PR21-0 | May start now (post Design PR merge) |
 | Unmatched ISSUE/RECEIVE policy (§16/§17) | NOT RESOLVED | YES | Before PR21C |
 | Ward mapping ownership (§14) | Architecture resolved; ownership NOT RESOLVED | Partially | Before PR21A's alias table is operational |
 | BME mapping-procedure boundary (§13) | Architecture resolved; boundary NOT RESOLVED | Partially | Before PR21B/C |
-| Patient/clinical data handling (§40) | CONTINGENT on OD-PR21-0 | YES (if source contains such data) | Before PR21B/C |
+| Patient/clinical data handling (§42) | CONTINGENT on OD-PR21-0 | YES (if source contains such data) | Before PR21B/C |
 
-**PR21 implementation overall: NOT READY** until the source-dependent
-blockers above close.
+**PR21 overall readiness: no source-dependent PR21 implementation slice
+(PR21A through PR21F) may start** until the blockers above close.
+**PR21-Foundation may start once this Design PR merges** — it is
+genuinely topology-independent and does not touch PR21's own data
+model, source assumptions, or event identity.
 
 ---
 
-## 46. Test strategy
+## 48. Test strategy
 
 - **Source contract:** wrong sheet, missing headers, duplicate headers,
   malformed dates, formulas/macros, oversized file — contract finalized
@@ -1052,48 +1268,55 @@ blockers above close.
   reference (§11, §16, §17).
 - **Validation gate:** any single blocking `ERROR` anywhere in a batch
   correctly fails the whole session (`validation_failed`) and produces
-  no `DryRunPlan` — regression-tested explicitly, since this is the
-  H2 architecture decision (§15).
+  no `DryRunPlan`; a validated (zero-ERROR) session's plan never
+  contains an ERROR-severity row — both directions regression-tested
+  explicitly (§15, §28).
 - **Idempotency:** same file replay, same event replayed via a
   corrected export with different `ImportSource`/row numbers, truly
   distinct events not falsely merged (§25).
 - **Live safety:** current `Equipment.status` unchanged; current `OPEN`
   transaction unaffected; historical import does not block live
-  dispatch (`idx_tx_one_active_borrow` regression tests, §3, §42).
-- **Generic plan API:** dispatch-by-`dataset_type` correctness; **no
-  PR20 regression** — Equipment Master's existing plan
-  GET/confirm/pagination/404/409 behavior verified unchanged after §29's
-  generalization.
-- **Retention:** adapter retention hook invoked atomically with
-  `ImportSession` retention-state advancement (§36); PR21 artifacts
-  actually redacted, not silently skipped.
+  dispatch (`idx_tx_one_active_borrow` regression tests, §3, §44).
+- **Generic plan API / PR20 compatibility (PR21-Foundation):**
+  dispatch-by-`dataset_type` correctness; **byte/field-for-field no
+  PR20 regression** — Equipment Master's existing
+  `DryRunPlanOut`/`DryRunPlanConfirmOut`/`DryRunPlanRowOut` responses,
+  pagination cursors, and 404/409 semantics verified unchanged after
+  §29's generalization; exactly-once audit write verified (§35).
+- **Retention (PR21-Foundation abstraction + later PR21-specific hook):**
+  fail-closed behavior — provider callback failure/missing registration
+  correctly rolls back the whole redaction transaction and leaves
+  `retention_purged_at` unset (§38); no partial-purged state is ever
+  observable.
 - **PostgreSQL:** stable event-identity uniqueness enforcement (once
-  chosen, §24), concurrency, rollback, atomic execution (§35, §42).
+  chosen, §24), concurrency, rollback, atomic execution (§37, §44).
 - **Reporting:** timestamps normalize correctly to aware UTC (§22);
   business_date/shift derive correctly for both sides of a pair; unified
   history ordering alongside live transactions (§23, §27).
 
 ---
 
-## 47. Design deliverable
+## 49. Design deliverable
 
 This document is that deliverable — self-contained, standing on its own
 without depending on GitHub review comments for its normative contract.
-Fix Round 1's corrections are incorporated directly into the relevant
-sections above, not appended as a separate "see review" note.
+Fix Round 1 and Fix Round 2's corrections are incorporated directly into
+the relevant sections above, not appended as separate "see review"
+notes.
 
 ---
 
-## 48. Governance update (this Design PR's own scope)
+## 50. Governance update (this Design PR's own scope)
 
 Per `docs/ENGINEERING_WORKFLOW.md` §6/§7 and PR19A/PR20's own design-PR
 precedent, this Fix Round's governance-update scope remains limited to:
 this design document, and a new `docs/DECISION_LOG.md` entry recording
-the architecture decisions made in this fix round (H2's selected
-validation model, H3's corrected checksum semantics, H4's generic-API
-direction, M1's retention-hook direction) — **without** claiming any
-Owner Decision in §43 is resolved. **Not performed:** any change to
-`docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, `knowledge/*`, or
+the architecture decisions made in this fix round (H2R's dry-run/
+validation consistency correction, H4R's PR20-compatible provider
+architecture, H5's Foundation-scope clarification, M1's fail-closed
+retention direction) — **without** claiming any Owner Decision in §45 is
+resolved. **Not performed:** any change to `docs/ROADMAP.md`,
+`docs/ROADMAP_STATUS.md`, `knowledge/*`, or
 `docs/audits/04-consolidated-implementation-plan.md`. **GitHub PR #97's
 accepted non-blocking P2 follow-up remains untouched and unresolved by
 this PR** — this fix round edits neither
@@ -1102,7 +1325,7 @@ content of `docs/DECISION_LOG.md`.
 
 ---
 
-## 49. Scope guard for this PR
+## 51. Scope guard for this PR
 
 **Touched:** `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
 (revised), `docs/DECISION_LOG.md` (one new entry, this fix round's
@@ -1114,7 +1337,7 @@ PR21 runtime implementation is performed.
 
 ---
 
-## 50. Mandatory STOP conditions encountered
+## 52. Mandatory STOP conditions encountered
 
 - **Actual Receive/Issue source schema unavailable — ENCOUNTERED** (§6).
 - **Source topology unknown — ENCOUNTERED** (§7, folded into OD-PR21-0).
@@ -1134,25 +1357,27 @@ PR21 runtime implementation is performed.
   fabrication — NOT ENCOUNTERED**; §12 confirms no column requires
   fabricating a value.
 - **Live transaction uniqueness can be affected — risk identified and
-  contained** by OD-PR21-1's default recommendation (§16, §42); not an
+  contained** by OD-PR21-1's default recommendation (§16, §44); not an
   unresolved stop on its own, but downstream of OD-PR21-1.
 - **Patient/HN/MRN data present without an approved handling policy —
-  CONTINGENT, cannot be evaluated without §6** (§40, OD-PR21-6).
+  CONTINGENT, cannot be evaluated without §6** (§42, OD-PR21-6).
 - **A new transaction lifecycle state appears necessary — NOT
   ENCOUNTERED** (§18).
 - **PR21 requiring a change to PR19/PR20 safety semantics — NOT
-  ENCOUNTERED**; every safety mechanism (§35, §36) is reused unmodified.
-  (§29's generic-API generalization and §36's retention hook are
-  additive extensions to shared *infrastructure*, not changes to *safety
-  semantics* — no lock order, fencing, claim, or audit contract is
-  altered.)
+  ENCOUNTERED**; every safety mechanism (§37, §38) is reused unmodified,
+  and PR20's existing wire contract is verified unchanged (§29-§32).
+  §29-§30's generic-transport generalization and §38's retention hook
+  are additive extensions to shared *infrastructure*, not changes to
+  *safety semantics* or *external API contracts* — no lock order,
+  fencing, claim, audit contract, or PR20 response field is altered.
 
-**Net effect: PR21 implementation is NOT READY.** OD-PR21-0 (with its
-Fix-Round-1-expanded scope covering topology and stable event identity)
-and OD-PR21-1/OD-PR21-2 must resolve before PR21B/C can begin.
-PR21-Foundation (§44) is not blocked by source evidence and could
-proceed once independently reviewed, but no slice in this document is
-declared ready today.
+**Net effect: no source-dependent PR21 implementation slice is ready.**
+OD-PR21-0 (covering topology and stable event identity) and
+OD-PR21-1/OD-PR21-2 must resolve before PR21A/B/C can begin.
+**PR21-Foundation (§46) is ready to start once this Design PR merges** —
+it is not blocked by source evidence and does not touch PR21's own data
+model, but it has not started, and this Design PR itself performs no
+implementation (§51).
 
 ---
 

@@ -2713,3 +2713,95 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   or CI file was modified to produce this entry. PR21 implementation
   remains **not started**. GitHub PR #97's P2 follow-up remains open and
   untouched.
+
+## 2026-08-16 — Roadmap PR21 design Fix Round 2: dry-run/validation consistency, PR20 wire compatibility, Foundation-scope clarification, retention fail-closed (PR98-H2R, PR98-H4R, PR98-H5, M1) — still not implemented
+
+- **Decision/record:** A second independent architecture review
+  (REQUEST CHANGES) identified two merge-blocking findings (PR98-H2R,
+  PR98-H4R), one merge-blocking gate contradiction (PR98-H5), and one
+  non-blocking finding (M1, retention fail-closed semantics) in the
+  Fix-Round-1 PR21 design document, on top of confirming H1's
+  topology/1:N-provenance direction and H3's checksum/event-identity
+  direction as improved. This entry records the **architecture
+  corrections selected** in response. None of the seven Owner Decisions
+  (OD-PR21-0 through OD-PR21-6) are resolved by this round. PR21
+  implementation remains **not started**.
+- **PR98-H2R (all-or-nothing validation fully consistent) —
+  corrected.** The design had already selected the all-or-nothing
+  validation gate (Fix Round 1), but its dry-run-contract section still
+  listed `ERROR`-severity conditions (duplicate rows, unmapped Wards,
+  unresolved equipment) as content a `DryRunPlan` shows — self-
+  contradicting the gate it had just selected, since any of those
+  conditions means the session never reaches `validation_failed`'s
+  successor state at all. Corrected: a `DryRunPlan` is now stated,
+  consistently everywhere it is discussed, to exist only for a session
+  whose validation snapshot passed with zero blocking `ERROR` findings;
+  the dry-run summary contract now explicitly excludes any "blocked
+  ERROR rows" category, and the unmatched-Issue/unmatched-Receive
+  sections now state explicitly that those rows are visible only as
+  validation findings, never as dry-run plan rows.
+- **PR98-H4R (PR20 wire compatibility) — corrected, with a fuller
+  architecture.** The prior round's generic-API direction risked
+  renaming PR20's live wire contract to generic names (`plan_id`,
+  `session_id`, `state`). Verified the actual, currently-shipping field
+  names (`backend/app/schemas/import_session.py:172-203`): `DryRunPlanOut`
+  (`id`, `import_session_id`, `import_source_id`, `status`,
+  `is_current`, `created_at`, `confirmed_at`, `confirmed_by_user_id`,
+  `summary`, `rows`, `rows_next_cursor`, `rows_total`) and
+  `DryRunPlanConfirmOut` (`id`, `import_session_id`, `status`,
+  `confirmed_at`, `confirmed_by_user_id`, `summary`) are the
+  authoritative PR20F frontend contract and are not renamed. Selected
+  architecture: a generic transport dispatches by `dataset_type` to a
+  per-dataset `DryRunPlanProvider`; Equipment Master's provider wraps
+  the existing CRUD and returns its existing schemas byte/field
+  unchanged; PR21's provider returns its own, separately-named schema
+  (a discriminated response, not a shared generic envelope, since
+  PR20's upsert-oriented row shape has no meaningful PR21 equivalent).
+  Cursor binding, 404/foreign-plan/409-stale semantics, RBAC, and a
+  single audit-write owner (the transport layer, matching where the
+  audit write already happens today,
+  `backend/app/api/v1/import_sessions.py:443-446`) are all specified to
+  preserve PR20's existing, already-reviewed behavior exactly.
+- **PR98-H5 (implementation gate contradiction) — resolved.** The prior
+  round said "no slice below is ready today" while also describing
+  PR21-Foundation as startable, and its readiness table referenced a
+  "PR21-Foundation idempotency check" that duplicated ownership of
+  stable event identity (a source-dependent concern). Corrected to one
+  coherent model: PR21-Foundation is scoped to genuinely
+  topology-independent generic plumbing only (the generic provider
+  interface, transport dispatch, PR20 compatibility verification,
+  generic pagination/error plumbing, and the retention-hook
+  *abstraction*) and explicitly excludes any PR21 schema, provenance
+  table, source-topology assumption, event-identity/idempotency
+  constraint, parser, pairing logic, or the Ward-alias/BME-provenance
+  tables — all of which remain blocked on OD-PR21-0. The corrected gate
+  statement is "no **source-dependent** PR21 implementation slice may
+  start," not "no implementation slice may start" — PR21-Foundation may
+  begin once this Design PR merges.
+- **M1 (retention fail-closed) — non-blocking, direction strengthened.**
+  The previously-selected generic adapter retention hook now has an
+  explicit fail-closed contract: if a dataset's provider is missing/
+  unregistered, its redaction callback raises, or it cannot positively
+  confirm its artifacts are redacted, the entire per-session redaction
+  transaction rolls back — `retention_purged_at` is never set and
+  session retention completion is never published for a partially-
+  redacted session. An unknown/missing provider is treated as a
+  retryable operational error, never a silent skip; a dataset with
+  genuinely no provider-owned artifacts must declare that explicitly.
+- **What this fix round does not do:** it does not resolve OD-PR21-0
+  through OD-PR21-6; it does not begin PR21-Foundation or any other
+  implementation slice; it does not modify `backend/**`, `frontend/**`,
+  `alembic/**`, `tests/**`, or `.github/**`; it does not touch GitHub
+  PR #97's P2 follow-up or any PR20-related content in this file or in
+  `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md`.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7,
+  same governance-update scope as the two entries above (this entry plus
+  the revised design document only).
+- **Source:** `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+  (revised, renumbered from 50 to 52 sections — see its own §15/§28 for
+  the H2R correction, §29-§36 for the H4R architecture, §46/§47 for the
+  H5 gate correction, and §38 for the M1 fail-closed contract).
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this entry. PR21 implementation
+  remains **not started**. GitHub PR #97's P2 follow-up remains open and
+  untouched.
