@@ -3088,3 +3088,169 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   or CI file was modified to produce this entry. PR21 implementation
   remains **not started**. GitHub PR #97's P2 follow-up and PR #98's
   P2-A/P2-B follow-ups remain open and untouched.
+
+## 2026-08-17 — Roadmap PR21-Foundation merged: internal dry-run-plan provider + fail-closed retention hook (GitHub PR #100)
+
+- **Decision/record:** PR21-Foundation — the source-independent internal
+  plumbing approved by the PR21 design document (§29-§38, §46) —
+  implemented, independently reviewed (two fix rounds, PR100-H1
+  provider-neutral DTOs and PR100-H2 plan/cursor ownership), and merged.
+  **Squash SHA:** `7b99e5866df4b71ffa1aa09d265baa2bc7033c33`, on
+  `claude/medical-equipment-pool-0c7fz0`. **Baseline before this merge:**
+  `c2e125df93f77271bfb0f40b5ac04a5a3935b8fb` (GitHub PR #99).
+- **Scope actually implemented:** an internal `DryRunPlanProvider`
+  registry (`backend/app/services/import_plan_provider.py`), generic
+  over provider-owned plan/row/confirmation types (never a shared,
+  lossy DTO); Equipment Master's compatibility-wrapper provider
+  (`backend/app/services/import_plan_providers/equipment_master.py`),
+  delegating to the existing, unmodified `import_dry_run_plan` CRUD; a
+  fail-closed provider-redaction hook inside
+  `app.crud.import_retention.redact_session` — a session that completed
+  a dry-run must resolve a registered provider for its `dataset_type` or
+  the whole redaction transaction rolls back, never silently treating a
+  missing provider as "nothing to redact"; module-level provider
+  registration wired into `app/main.py`.
+- **PR20 compatibility verified, not assumed:** `GET .../dry-run-plan`
+  and `POST .../dry-run-plan/{id}/confirm` still call
+  `import_dry_run_plan_crud` directly — paths, `response_model`s, field
+  names, status codes, and error codes are byte-for-byte unchanged; no
+  PR21 public route, schema, or database migration was added.
+- **What this PR did not do, stated explicitly:** it did not implement
+  Legacy Receive/Issue import, any PR21 public API, any PR21 database
+  schema, or resolve any PR21 Owner Decision (OD-PR21-0 through
+  OD-PR21-6 were untouched by this merge — see the entry below for
+  their actual resolution).
+- **Evidence:** full PostgreSQL backend suite (260 passed) and full
+  non-PostgreSQL backend suite (1157 passed) green on the exact merged
+  head; Alembic single head unchanged; frontend build unaffected (no
+  frontend files touched); 6/6 GitHub Actions checks green on the
+  reviewed head `2cf08ed9b8068cbcc58e00b1c6c75ab9e25ed12d`; tree-identity
+  independently verified between that reviewed head and the real squash
+  commit (`git diff` — zero lines).
+- **Status:** Runtime code merged. PR21A through PR21F remain blocked on
+  the Owner Decisions recorded in the entry below — PR21-Foundation
+  completing does not itself unblock any source-dependent slice.
+
+## 2026-08-17 — Roadmap PR21 Owner Decision Closure Round 1: OD-PR21-1/2/3/4/6 resolved, OD-PR21-5 partially resolved, OD-PR21-0's identity/pairing sub-components explicitly left open — still not implemented
+
+- **Decision/record:** The Repository Owner reviewed this round's
+  recommended policies (conservative defaults: block unmatched
+  Issue/Receive; preserve raw BME text with optional later mapping;
+  Administrator-owned explicit Ward alias mapping; never permanently
+  import notes without a future privacy review; historical import must
+  never affect live Equipment/`OPEN`-transaction state) and explicitly
+  accepted them, with one explicit exception: the Owner declined to let
+  this session decide whether `ลำดับ` (the Issue/Receive line-item row
+  key) is AppSheet's genuinely re-export-stable identifier — that
+  specific sub-question is recorded as still open, on purpose, per the
+  Owner's own instruction. This entry records that acceptance and its
+  precise scope. **No backend, frontend, migration, or test file was
+  modified.** PR21 implementation (PR21A–F) remains **not started**.
+- **OD-PR21-1 — RESOLVED.** Unmatched historical ISSUE row: `ERROR`-
+  severity, whole-session `validation_failed`, no `DryRunPlan` created,
+  no synthetic pairing ever fabricated (design doc §16). Direct
+  consequence, newly stated: PR21 V1 can never import a historical
+  `OPEN` `BorrowTransaction`, eliminating the `idx_tx_one_active_borrow`
+  collision risk §44 previously flagged as unresolved.
+- **OD-PR21-2 — RESOLVED.** Unmatched historical RECEIVE row: identical
+  treatment and Owner acceptance (§17).
+- **OD-PR21-3 — RESOLVED.** Legacy BME-name policy: preserve exact
+  legacy text permanently as provenance; never auto-create `User`
+  accounts; never auto-map by display-name similarity; an optional
+  mapping to a current `User` is nullable, explicit, and
+  Administrator-driven, added later; import never blocks on that
+  mapping existing; the import actor and the historical BME actor
+  remain structurally distinct (§13).
+- **OD-PR21-4 — RESOLVED.** Ward alias-mapping table ownership:
+  Administrator-owned; every mapping explicit, auditable, and persisted;
+  exact canonical-string match auto-resolves; a known alias resolves via
+  the explicit mapping table; unknown/ambiguous is a validation `ERROR`,
+  never a silently-created `Ward` and never a fuzzy match; raw legacy
+  text always preserved (§14).
+- **OD-PR21-5 — PARTIALLY RESOLVED.** Historical `transaction_no`
+  policy: the **direction** is resolved — never a contemporary-looking,
+  live-format number; the legacy order reference is preserved separately
+  regardless; the row's own UUID primary key suffices for database
+  identity; `transaction_no` itself is populated only from a clearly
+  segregated LEGACY namespace. The **exact namespace/prefix format**
+  remains open — no such format-level approval was requested or given
+  this round — and is deferred specifically to PR21D (execution), not
+  PR21A (schema/provenance foundation), since `BorrowTransaction` writes
+  do not occur until PR21D (§20).
+- **OD-PR21-6 — RESOLVED.** Patient/clinical free-text (`หมายเหตุ`)
+  handling: never imported into permanent `borrow_transactions.notes`
+  by default; raw content survives only inside the temporary source
+  artifact under PR19's existing 180-day redact-in-place retention;
+  the field's actual content remains unreviewed for patient-identifying
+  data — this resolution is a policy adopted *because* the content is
+  unreviewed, not a claim that review found it safe; any future decision
+  to import notes content requires its own explicit, separately-scoped
+  privacy review (§42).
+- **OD-PR21-0 — further narrowed, NOT fully resolved; two
+  sub-components explicitly left open by design this round:**
+  - **Field-level contract (canonical sheets) — RESOLVED this round.**
+    Every real column on the four canonical sheets is now classified as
+    imported business fact / provenance-only / validation-only /
+    ignored / privacy-blocked (design doc §10.1). The
+    `ข้อมูลการส่ง SDC`/`ข้อมูลการรับ SDC` sheet ambiguity remains
+    separately open (§6.1) and is not covered by this classification.
+  - **Stable event identity — deliberately left OPEN.** Per the Owner's
+    own explicit instruction, this session does not decide whether
+    `ลำดับ` is AppSheet's genuinely immutable, re-export-durable row key
+    — uniqueness within one workbook snapshot (verified: 19,871/19,871
+    Issue, 19,750/19,750 Receive non-null values, zero duplicate
+    occurrences — matches the committed evidence manifest exactly) is
+    evidence of uniqueness, not durability. An explicit interim
+    evidentiary policy is adopted instead (design doc §24.1): `ลำดับ`
+    may not be approved as a database-enforced durable identity until
+    the Owner either confirms AppSheet's row-ID behavior across a
+    re-export, or two exports taken at different times are directly
+    compared and shown to retain the same values for the same events.
+    This is a decision about the evidentiary bar, not a resolution of
+    the underlying factual question.
+  - **Issue↔Receive pairing — deliberately left OPEN, an architecture
+    fork made explicit.** §11's confirmed negative finding (no explicit
+    linking field exists between an Issue and its eventual Receive) is
+    unchanged. This round additionally surfaces, without resolving, a
+    previously-implicit choice (design doc §11.1): either the Owner
+    approves a specific deterministic (non-fuzzy, non-"nearest-
+    timestamp") pairing rule if one can still be identified, or the
+    Owner approves adopting event-first staging — importing each
+    historical source row as an independent event/provenance record
+    first, with actual paired-`BorrowTransaction` construction deferred
+    to a later, separately-scoped reconciliation step. The second option
+    is an **architecture change** from the design's current
+    recommendation and requires its own explicit sign-off; it is not
+    adopted by this entry.
+- **Readiness reassessment (design doc §53):** PR21A/B/C/D/E/F all
+  remain blocked. PR21A's blocking remainder is narrowed to OD-PR21-0's
+  stable-event-identity sub-component alone (OD-PR21-3/4, previously
+  also blocking, are now resolved). PR21B's blocking remainder is the
+  SDC-sheet ambiguity, the identifier case matrix, the frozen error-code
+  list, and stable event identity. PR21C's blocking remainder is the
+  SDC-sheet ambiguity and the pairing architecture fork (OD-PR21-1/2,
+  previously also blocking, are now resolved). PR21D additionally
+  depends on OD-PR21-5's remaining exact-format sub-decision.
+  PR21-Foundation remains complete and unaffected (see the entry above).
+- **What this round does not do:** it does not implement PR21A/B/C/D/E;
+  it adds no migration; it does not modify `backend/**`, `frontend/**`,
+  `alembic/**`, `tests/**`, or `.github/**`; it does not decide
+  `ลำดับ`'s re-export durability or select an Issue↔Receive pairing
+  rule — both are explicitly left to the Owner; it does not touch
+  GitHub PR #97's P2 follow-up or PR #98's P2-A/P2-B follow-ups, which
+  remain accepted/non-blocking/unresolved in their existing recorded
+  wording; it does not rewrite any prior dated `DECISION_LOG.md`
+  entry's own historical record.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7, same
+  governance-update scope as every prior PR21 design entry — this
+  entry and the revised design document only.
+- **Source:** `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+  (revised — new §10.1, §11.1, §24.1, §53; §7, §12, §13, §14, §16, §17,
+  §20, §42, §45, §46, §47, §50, §51, §52 updated in place; section count
+  now 53). `docs/evidence/pr21/equipment-pool-workbook-manifest.{json,md}`
+  unchanged, still bound to SHA-256
+  `8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`.
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this entry. PR21 implementation
+  (PR21A–F) remains **not started**. GitHub PR #97's P2 follow-up and
+  PR #98's P2-A/P2-B follow-ups remain open and untouched.
