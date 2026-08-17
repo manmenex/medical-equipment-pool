@@ -813,5 +813,26 @@
     "scope": "WORKBOOK-INTERNAL STRUCTURAL EVIDENCE ONLY",
     "database_resolution_status": "NOT VERIFIED IN THIS EVIDENCE PASS -- this inspection environment did not have an authoritative current database snapshot (live Ward/User tables) available to check against",
     "workbook_internal_ward_spotcheck": "A small sample of Ward strings observed in transaction rows were compared only against this same workbook's own 'แผนก' reference sheet (52 entries) -- not against the live application database. This is internal consistency evidence, not external FK-resolution proof."
+  },
+  "reference_resolution": {
+    "issue": {
+      "basis": "distinct_reference_values: distinct เลขที่ใบส่ง values present on ข้อมูลส่งเครื่องมือ (line-item sheet), checked for set membership against distinct เลขที่ใบยืม values on Orders ยืมเครื่อง (header sheet). This is NOT a row-level count and NOT the same metric as any sheet row_key_uniqueness field.",
+      "present_count": 5677,
+      "resolved_count": 5676,
+      "orphan_count": 1,
+      "resolution_complete": false
+    },
+    "receive": {
+      "basis": "distinct_reference_values: distinct เลขที่ใบรับเครื่อง values present on ข้อมูลรับเครื่องมือ (line-item sheet), checked for set membership against distinct เลขที่ใบคืน values on Orders คืนเครื่อง (header sheet). This is NOT a row-level count and NOT the same metric as any sheet row_key_uniqueness field.",
+      "present_count": 6141,
+      "resolved_count": 6141,
+      "orphan_count": 0,
+      "resolution_complete": true
+    },
+    "invariant_check": {
+      "issue_present_equals_resolved_plus_orphan": true,
+      "receive_present_equals_resolved_plus_orphan": true
+    },
+    "distinction_note": "This metric is entirely separate from each line-item sheet own row_key_uniqueness field (the ลำดับ column, e.g. 19871/19871 for Issue, 19750/19750 for Receive) -- that metric measures uniqueness of the AppSheet-generated row key WITHIN one sheet; this metric measures whether a line-item order-reference VALUE resolves against the separate header sheet. The two must never be read as the same denominator."
   }
 }

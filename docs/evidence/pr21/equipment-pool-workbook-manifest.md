@@ -48,15 +48,41 @@ column present; Ward column (`แผนกที่ส่ง`) present; BME/oper
 (`ชื่อ BME`, `ชื่อ (User)`) present; no title/report rows before records
 — data begins at row 2, header at row 1; spans the full available date
 range (2026-01-01 to 2026-07-28); order-reference field
-(`เลขที่ใบส่ง`/`เลขที่ใบยืม`) verified 100% unique at the header level
-with 19,871/19,871 (100%) of non-blank line-item references resolving
-to a real header row.
+(`เลขที่ใบส่ง`/`เลขที่ใบยืม`) is 100% unique **at the header sheet**
+(5,685 distinct values for 5,685 non-null header rows). **Reference
+resolution (a separate metric — see below): of 5,677 distinct
+line-item reference values, all but one resolve against the header
+sheet; one distinct orphan reference remains.** This is not 100%.
 
 **Receive candidate — `Orders คืนเครื่อง` (header) + `ข้อมูลรับเครื่องมือ` (line items):**
-identical structural shape to the Issue side (see JSON manifest for the
-full per-field breakdown). `canonical_receive_source` is **not**
+identical structural shape to the Issue side. Order-reference field is
+100% unique at the header sheet (6,158 distinct for 6,158 non-null
+header rows). **Reference resolution: of 6,141 distinct line-item
+reference values, all 6,141 resolve against the header sheet — zero
+orphans measured on this side.** `canonical_receive_source` is **not**
 UNRESOLVED — the same structural evidence class applies symmetrically,
 and is recorded as such.
+
+### Reference resolution (distinct-reference basis — do not confuse with row-key uniqueness below)
+
+This is the metric measured for the canonical-source correction: for
+each side, take the **distinct** order-reference values present on the
+line-item sheet, and check how many resolve by set membership against
+the header sheet's own distinct order-reference values.
+
+| Side | Basis | Present (distinct) | Resolved | Orphan | Resolution complete? |
+|---|---|---|---|---|---|
+| Issue | distinct `เลขที่ใบส่ง` values vs. `Orders ยืมเครื่อง.เลขที่ใบยืม` | 5,677 | 5,676 | 1 | **No** |
+| Receive | distinct `เลขที่ใบรับเครื่อง` values vs. `Orders คืนเครื่อง.เลขที่ใบคืน` | 6,141 | 6,141 | 0 | Yes |
+
+**This is a distinct-value count, never a row-level count.** It is
+unrelated to, and must never be read interchangeably with, the row-key
+uniqueness figures below (e.g. `19,871/19,871`) — those measure
+uniqueness of the `ลำดับ` column *within one sheet*, not whether an
+order reference resolves against a *different* sheet. Full detail
+(including the numeric invariant `present = resolved + orphan`,
+verified for both sides) is in the JSON manifest's
+`reference_resolution` object.
 
 **Presentation-sheet evidence (why these are excluded):** the
 `BMEส่ง`/`BMEรับ`-family sheets' own header rows contain a literal
@@ -70,9 +96,14 @@ tabular structure to parse.
 
 For both canonical line-item sheets, the `ลำดับ` column is a row-key
 candidate: 100% unique among non-null values, with a small blank rate
-(~0.2%). The order-reference field is 100% unique at the header-sheet
-level. `ME.Code` (the equipment-identifying field) repeats heavily
-across rows, as expected for a many-transactions-per-equipment history.
+(~0.2%) — this is uniqueness *within its own sheet*, unrelated to
+cross-sheet reference resolution (see "Reference resolution" above).
+The order-reference field is separately 100% unique *at the
+header-sheet level* (i.e., no order number repeats within the header
+sheet itself) — this is also not the same claim as whether line-item
+references resolve against that header sheet. `ME.Code` (the
+equipment-identifying field) repeats heavily across rows, as expected
+for a many-transactions-per-equipment history.
 Exact present/blank/distinct/duplicate counts for every field are in the
 JSON manifest's `row_key_uniqueness`, `order_reference_stats`, and
 `me_code_stats` objects per sheet — no actual ID or BCM values are

@@ -263,16 +263,26 @@ for this conclusion:
 
 - Both line-item tables span the **full available history**: 2026-01-01
   through 2026-07-28 (~7 months), not a single day.
-- Every `เลขที่ใบส่ง`/`เลขที่ใบรับเครื่อง` value on a line-item row
-  matches a `เลขที่ใบยืม`/`เลขที่ใบคืน` value on the corresponding
-  order-header sheet — verified by direct set-membership check: of
-  5,677 distinct Issue order references, **all but one resolve**
-  (only one, `'Borrow1000000005'`, does not — an apparent truncated/
-  malformed value, itself a concrete example of the orphan-reference
-  `ERROR` finding §15 already specifies, not a structural problem).
-- Order numbers are **100% unique** within their header sheet (5,685
-  distinct `เลขที่ใบยืม` values for 5,685 non-null rows; 6,158 for
-  6,158 `เลขที่ใบคืน`) — a genuine, stable, per-transaction key.
+- **Reference resolution (distinct-value basis, not a row-level count —
+  full detail in the evidence manifest, §6):** of the 5,677 **distinct**
+  `เลขที่ใบส่ง` reference values present on the Issue line-item sheet,
+  **all but one (5,676 of 5,677) resolve** by set membership against
+  the `Orders ยืมเครื่อง` header sheet's own distinct
+  `เลขที่ใบยืม` values; the one exception, `'Borrow1000000005'`, does
+  not resolve — an apparent truncated/malformed value, itself a
+  concrete example of the orphan-reference `ERROR` finding §15 already
+  specifies, not a structural problem. On the Receive side, all 6,141
+  distinct `เลขที่ใบรับเครื่อง` reference values resolve against
+  `Orders คืนเครื่อง`'s distinct `เลขที่ใบคืน` values — zero orphans
+  measured. **This distinct-reference-resolution metric is unrelated
+  to, and must not be confused with, the `ลำดับ` row-key uniqueness
+  figures in §24** (a different basis: uniqueness within one sheet, not
+  resolution against a different sheet).
+- Order numbers are **100% unique** within their own header sheet
+  (5,685 distinct `เลขที่ใบยืม` values for 5,685 non-null rows; 6,158
+  for 6,158 `เลขที่ใบคืน`) — a genuine, stable, per-transaction key.
+  This is a separate claim from reference *resolution* above (whether a
+  line-item's reference value finds a matching header row).
 
 ### 6.3 Field-level mapping — still not fully closed
 
@@ -870,10 +880,14 @@ checks, not assumed:
   8-character hex-like string (e.g. `b7f7169c`) rather than the
   sequential number its Thai label ("sequence/order number") would
   suggest — consistent with an AppSheet auto-generated row key. Verified
-  **100% unique among non-null values** (19,871/19,871 distinct for
-  Issue; 19,750/19,750 for Receive), but **not fully populated**: 41 of
-  19,912 Issue rows and 18 of 19,768 Receive rows have a blank `ลำดับ`
-  — a validation-finding case (§15), not silently skippable.
+  **100% unique among non-null values, within its own sheet**
+  (19,871/19,871 distinct for Issue; 19,750/19,750 for Receive), but
+  **not fully populated**: 41 of 19,912 Issue rows and 18 of 19,768
+  Receive rows have a blank `ลำดับ` — a validation-finding case (§15),
+  not silently skippable. **This row-key-uniqueness figure is a
+  different metric, on a different basis, from §6.2's distinct-
+  reference-resolution figures (5,676/5,677 Issue, 6,141/6,141
+  Receive) — the two must never be read as the same denominator.**
 
 **Still not fully resolved, and not claimed as such:** (a) whether this
 row key is AppSheet's genuinely stable, re-export-durable identifier, or
