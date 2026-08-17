@@ -2805,3 +2805,85 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   or CI file was modified to produce this entry. PR21 implementation
   remains **not started**. GitHub PR #97's P2 follow-up remains open and
   untouched.
+
+## 2026-08-16 — Roadmap PR21 design Fix Round 3: static FastAPI/OpenAPI route boundary, confirmation-audit semantics corrected (PR98-H4R2, PR98-H4R3) — still not implemented
+
+- **Decision/record:** A third independent architecture review (REQUEST
+  CHANGES) confirmed Fix Round 2's H2R (all-or-nothing validation/
+  dry-run), H5 (Foundation gate/scope), and M1 (fail-closed retention)
+  corrections as resolved, and confirmed H1's topology/1:N-provenance
+  direction and H3's checksum/event-identity direction as improved and
+  unchanged. It identified two further merge-blocking findings in the
+  generic-plan-API architecture (PR98-H4R2, PR98-H4R3). This entry
+  records the **architecture corrections selected** in response. None of
+  the seven Owner Decisions (OD-PR21-0 through OD-PR21-6) are resolved
+  by this round. PR21 implementation remains **not started**.
+- **PR98-H4R2 (implementable FastAPI/OpenAPI response boundary) —
+  corrected.** Fix Round 2's direction — a single existing route
+  dispatching to one of two response schemas selected by
+  `dataset_type` — is not expressible through FastAPI's static,
+  decorator-declared `response_model` mechanism without either a
+  `Union[DryRunPlanOut, LegacyHistoryDryRunPlanOut]` response model
+  (which would change the generated OpenAPI schema for the
+  already-shipping PR20 route) or an untyped `Any`/`dict`/
+  `response_model=None` escape hatch (which would silently discard
+  PR20's existing response-schema guarantee) — both explicitly rejected.
+  Corrected architecture: **PR20's existing routes
+  (`GET .../dry-run-plan` → `response_model=DryRunPlanOut`,
+  `POST .../confirm` → `response_model=DryRunPlanConfirmOut`) are never
+  touched — path, HTTP semantics, response field names/nullability,
+  enum values, pagination semantics, and OpenAPI schema all unchanged.**
+  PR21 will get its **own new, separate, statically-typed routes**
+  later (illustrative paths under
+  `/import-sessions/{session_id}/legacy-history/...`), added by a
+  source-dependent implementation slice, never by PR21-Foundation. Only
+  the **internal** provider/service layer behind these routes is
+  generalized (a `DryRunPlanProvider` interface used by route handlers
+  internally) — it never owns or dynamically selects a FastAPI
+  `response_model`.
+- **PR98-H4R3 (confirmation-audit semantics) — corrected.** The prior
+  round's "the transport layer... invoked exactly once per confirm
+  call" was wrong. Verified against the actual runtime
+  (`backend/app/crud/import_dry_run_plan.py:252-259, 262-376` and
+  `backend/app/api/v1/import_sessions.py:388-452`): confirmation already
+  returns a `ConfirmationResult` (`plan`, `newly_confirmed: bool`), and
+  the confirmation-audit event (`AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CONFIRMED`)
+  is written **only when `result.newly_confirmed` is true** — a repeat
+  confirm (retry, second actor, network-retry replay) returns the
+  original persisted `confirmed_at`/`confirmed_by_user_id` unchanged and
+  produces **no** additional audit row, and never re-attributes the
+  persisted confirmer to a later caller. Corrected wording, and a
+  generic `ConfirmPlanResult` contract specified for any future provider
+  (Equipment Master's existing one and PR21's future one): audit is
+  written exactly once **per first successful confirmation**, never once
+  per HTTP call; a concurrent-confirmation race resolves to exactly one
+  winner (`newly_confirmed=true`) and exactly one audit row, regardless
+  of how many callers raced. Transaction atomicity (the plan's CAS state
+  transition and the conditional audit write sharing one caller-owned,
+  request-scoped transaction) is stated as an existing invariant to be
+  preserved, not redesigned.
+- **Foundation scope, re-confirmed and narrowed further.** PR21-Foundation's
+  explicit exclusion list now also names "any PR21 public response
+  schema or route" — PR21's own `LegacyHistoryDryRunPlanOut` and its
+  routes belong to a later, source-dependent slice, never to Foundation.
+  This is consistent with, not a reversal of, Fix Round 2's H5
+  correction: Foundation remains startable once this Design PR merges,
+  scoped strictly to internal provider plumbing, PR20 compatibility
+  verification, and the retention-hook abstraction.
+- **What this fix round does not do:** it does not resolve OD-PR21-0
+  through OD-PR21-6; it does not begin PR21-Foundation or any other
+  implementation slice; it does not modify `backend/**`, `frontend/**`,
+  `alembic/**`, `tests/**`, or `.github/**`; it does not touch GitHub
+  PR #97's P2 follow-up or any PR20-related content in this file or in
+  `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md`.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7,
+  same governance-update scope as the three entries above (this entry
+  plus the revised design document only).
+- **Source:** `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+  (revised — section count unchanged at 52; see its own §29-§31 for the
+  H4R2 static-route correction and §35 for the H4R3 confirmation-audit
+  correction).
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this entry. PR21 implementation
+  remains **not started**. GitHub PR #97's P2 follow-up remains open and
+  untouched.

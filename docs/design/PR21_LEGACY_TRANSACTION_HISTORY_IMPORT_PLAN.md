@@ -1,14 +1,14 @@
 # Roadmap PR21 — Legacy Receive and Issue History Import: Design Specification
 
-**Status:** Design only. Not implemented. **Fix Round 2** (architecture
-review, findings PR98-H2R/PR98-H4R/PR98-H5, non-blocking M1) applied on
-top of Fix Round 1 (H1–H4/M1/L1). This document opens Owner Decisions
-(§45) and encounters mandatory STOP conditions (§52) because no real
-Receive/Issue source artifact exists in this repository, and because
-Fix Round 1's own findings (H1, H3) surfaced additional evidence-dependent
-architecture questions that cannot be finalized without that same source
-artifact. No implementation, migration, or runtime change is made by this
-PR.
+**Status:** Design only. Not implemented. **Fix Round 3** (architecture
+review, findings PR98-H4R2/PR98-H4R3) applied on top of Fix Round 2
+(PR98-H2R/PR98-H4R/PR98-H5, non-blocking M1) and Fix Round 1
+(H1–H4/M1/L1). This document opens Owner Decisions (§45) and encounters
+mandatory STOP conditions (§52) because no real Receive/Issue source
+artifact exists in this repository, and because Fix Round 1's own
+findings (H1, H3) surfaced additional evidence-dependent architecture
+questions that cannot be finalized without that same source artifact.
+No implementation, migration, or runtime change is made by this PR.
 
 **Baseline:** `4cab688708320f1e8523a906f5a5ce17ad1e5d9a` (GitHub PR #97,
 Post-PR20 Governance Sync squash merge, on
@@ -729,7 +729,7 @@ dry-run, via PR19's existing `READ ONLY` transaction enforcement.
 
 ---
 
-## 29. Generic persisted-plan API architecture (H4) — PR20 wire compatibility is mandatory
+## 29. Generic persisted-plan API architecture (H4) — PR20 static-route compatibility is mandatory
 
 **Verified: the current PR20 GET/confirm endpoints are hardcoded to
 Equipment Master, not a generic import-session plan API.**
@@ -737,112 +737,153 @@ Equipment Master, not a generic import-session plan API.**
 `EquipmentMasterDryRunPlan`/`EquipmentMasterDryRunPlanRow` by concrete
 type in every function (`get_current_plan`, `list_plan_rows`,
 `confirm_plan`, etc. — lines 12, 32-234). `backend/app/api/v1/import_sessions.py`'s
-`GET /{session_id}/dry-run-plan` (line 328) and
-`POST /{session_id}/dry-run-plan/{plan_id}/confirm` (line 388) call this
-CRUD module directly.
+`GET /{session_id}/dry-run-plan` (line 328,
+`response_model=DryRunPlanOut`) and
+`POST /{session_id}/dry-run-plan/{plan_id}/confirm` (line 388,
+`response_model=DryRunPlanConfirmOut`) call this CRUD module directly,
+with FastAPI's static, decorator-declared `response_model` on each route
+— the mechanism that generates PR20's OpenAPI schema and enforces its
+response shape today.
 
-**Fix Round 2 (PR98-H4R) correction: the generic-API generalization must
-not drift PR20's existing wire contract.** Verified the exact current
-response field names (`backend/app/schemas/import_session.py:172-203`):
-`DryRunPlanOut` carries `id`, `import_session_id`, `import_source_id`,
-`status`, `is_current`, `created_at`, `confirmed_at`,
-`confirmed_by_user_id`, `summary` (itself `total_rows`, `creates`,
-`updates`, `skips`, `warnings`, `blocking_conflicts`), `rows`,
-`rows_next_cursor`, `rows_total`; `DryRunPlanConfirmOut` carries `id`,
-`import_session_id`, `status`, `confirmed_at`, `confirmed_by_user_id`,
-`summary`. **These exact field names are the authoritative, currently-
-shipping PR20F frontend contract and must not be renamed on the wire** —
-Fix Round 1's proposed generic vocabulary (`plan_id`, `session_id`,
-`state`) is **internal-only**, never exposed as PR20's actual response
-shape.
+**Fix Round 3 (PR98-H4R2) correction — a dynamically dataset-typed
+response on the existing route is not implementable and is rejected.**
+Fix Round 2's "dispatches to a per-dataset-type provider, returning one
+of `DryRunPlanOut` / `LegacyHistoryDryRunPlanOut` selected by
+`dataset_type`" direction described a response shape FastAPI's static
+`response_model` mechanism cannot express without either (a) a
+`Union[DryRunPlanOut, LegacyHistoryDryRunPlanOut]` response model — which
+changes the generated OpenAPI schema for the *existing, already-shipping*
+PR20 route and is rejected (§31) — or (b) an untyped/`Any`/`dict`
+`response_model=None` escape hatch, which this design also rejects
+(§31) since it would silently drop PR20's current response-schema
+guarantee. Both options were live/undecided in the prior revision; this
+round selects and commits to exactly one architecture, corrected below.
 
-**Selected architecture: generalize the transport (routing/dispatch),
-never the wire shape.**
+**Selected architecture: the existing PR20 routes are never touched;
+PR21 gets its own new, separately and statically typed routes later.**
+Foundation generalizes only the **internal service/provider layer**
+behind the existing routes — never their public `response_model` or
+path. Concretely:
 
 ```
+EXISTING, UNCHANGED (PR20):
 GET  /import-sessions/{session_id}/dry-run-plan
+       response_model=DryRunPlanOut            -- byte/field/OpenAPI unchanged
 POST /import-sessions/{session_id}/dry-run-plan/{plan_id}/confirm
+       response_model=DryRunPlanConfirmOut      -- byte/field/OpenAPI unchanged
    |
-   +--> generic route handler (existing, in import_sessions.py)
-   |         reads ImportSession.dataset_type
-   +--> dispatches to a per-dataset-type DryRunPlanProvider (§30)
-             (EquipmentMaster's existing behavior becomes the first/
-              default provider, returning DryRunPlanOut/
-              DryRunPlanConfirmOut byte-for-field unchanged;
-              PR21 registers its own provider returning its own
-              schemas, §31)
+   +--> (internally, optionally) a thin compatibility service/provider
+        wrapping the existing import_dry_run_plan_crud calls -- purely
+        an internal refactor, invisible on the wire (§30)
+
+NEW, ADDED LATER (PR21, source-dependent, not this PR, not Foundation):
+GET  /import-sessions/{session_id}/legacy-history/dry-run-plan
+       response_model=LegacyHistoryDryRunPlanOut   -- PR21's own schema
+GET  /import-sessions/{session_id}/legacy-history/dry-run-plan/{plan_id}/rows
+       response_model=<PR21 paginated row schema>
+POST /import-sessions/{session_id}/legacy-history/dry-run-plan/{plan_id}/confirm
+       response_model=LegacyHistoryDryRunPlanConfirmOut
 ```
 
+Exact PR21 paths are illustrative and may be finalized to match
+repository conventions when PR21B/C/D are actually designed in detail —
+the binding contract is: PR20's existing routes and schemas are
+untouched; PR21's routes are new, separate, and use PR21-specific static
+response models; both may share generic provider/service internals
+(§30); FastAPI's OpenAPI schema remains fully, statically typed
+throughout, with no dynamic dispatch of `response_model` at runtime.
 This mirrors the pattern already established for parse/validate/execute
-via `register_adapter()`/`get_adapter()` (`import_adapter.py:285-295`) —
-a per-dataset-type provider lookup, not a duplicated endpoint family,
-and not a lossy common DTO that would force both datasets' genuinely
-different row shapes (§28's upsert-vs-insert distinction) into one
-schema. This requires real, non-trivial, independently-reviewable work
-on shared PR19/PR20 infrastructure, recorded as its own proposed
-implementation slice ("PR21-Foundation," §46), not something PR21A gets
-for free. Duplicating a whole second endpoint family (e.g.
-`/legacy-history-dry-run-plan`) remains rejected as the default.
+via `register_adapter()`/`get_adapter()` (`import_adapter.py:285-295`)
+at the **internal service layer only** — that registry pattern was never
+about the public HTTP response shape, and this design does not extend it
+to be. This requires real, non-trivial, independently-reviewable work on
+shared PR19/PR20 infrastructure (the internal compatibility layer),
+recorded as its own proposed implementation slice ("PR21-Foundation,"
+§46), not something PR21A gets for free.
 
 ---
 
-## 30. Generic provider interface
+## 30. Generic provider interface (internal only — never owns `response_model`)
 
 Internal service-layer contract (exact names may differ to match
 repository conventions; this is the conceptual shape):
 
 ```
 DryRunPlanProvider (per dataset_type)
-  - get_plan(session_id) -> provider-owned plan identity/state
-  - get_plan_rows(session_id, plan_id, cursor, limit) -> provider-owned rows
-  - confirm_plan(session_id, plan_id, actor) -> provider-owned confirm result
+  - load_plan(session_id) -> provider-owned plan identity/state
+  - load_plan_rows(session_id, plan_id, cursor, limit) -> provider-owned rows
+  - confirm_plan(session_id, plan_id, actor) -> ConfirmPlanResult (§35)
   - redact_plan_artifacts(session_id) -> retention hook (§38)
   - execute_plan(...) -- owned by §37's execution contract, not this
     interface directly
 ```
 
+**Fix Round 3 (PR98-H4R2) clarification: this interface is strictly
+internal.** It exists to let Equipment Master's route handler and (once
+built) PR21's own route handlers share business logic — it never
+selects or owns a FastAPI `response_model`. Each route's own decorator
+still declares its own static, concrete response model (§29); a
+provider's return value is mapped to that route's own response schema
+inside that route's own handler, never dispatched dynamically by the
+provider itself.
+
 Provider selection is based on `ImportSession.dataset_type`, via the
 same registration mechanism already used for adapters
-(`register_adapter()`/`get_adapter()`).
+(`register_adapter()`/`get_adapter()`) — but only for internal
+service-layer wiring, never for HTTP response typing.
 
-- **Equipment Master provider:** a thin wrapper around the existing
-  `import_dry_run_plan_crud` functions and `EquipmentMasterDryRunPlan`/
-  `Row` — returns `DryRunPlanOut`/`DryRunPlanConfirmOut`/
-  `DryRunPlanRowOut` **exactly as they exist today**, unchanged.
-- **PR21 provider:** wraps PR21's own plan/row tables (§36) — returns
-  PR21-specific schemas (§31).
+- **Equipment Master provider:** a thin, internal wrapper around the
+  existing `import_dry_run_plan_crud` functions and
+  `EquipmentMasterDryRunPlan`/`Row`. The existing PR20 routes may
+  continue calling `import_dry_run_plan_crud` directly (no behavior
+  change required), or call through this wrapper if useful for
+  code-sharing — either way, `DryRunPlanOut`/`DryRunPlanConfirmOut`/
+  `DryRunPlanRowOut` are returned **exactly as they exist today**,
+  unchanged, by PR20's own unchanged route handlers.
+- **PR21 provider:** added later, wraps PR21's own plan/row tables
+  (§36) — used exclusively by PR21's own new routes (§29), returning
+  PR21-specific schemas (§32).
 
 **Do not force both datasets into one lossy common DTO** — PR20's row
 shape (`action IN ('CREATE','UPDATE','SKIP')`, `target_equipment_id`,
 `expected_equipment_version`) has no meaningful PR21 equivalent (§28);
 attempting a shared row schema would either drop PR20 fields or add
-meaningless nullable fields to PR21's rows. The provider interface
-exists precisely so each dataset's provider owns its own response
-serialization.
+meaningless nullable fields to PR21's rows. Separate routes with
+separate static response models (§29) exist precisely so each dataset
+owns its own response shape without this problem ever arising.
 
 ---
 
-## 31. Wire contract strategy — discriminated response, PR20 payload unchanged
+## 31. Public API strategy — statically typed routes per dataset, no dynamic dispatch
 
-**Selected: Option A, a dataset-discriminated response.**
+**Selected, per PR98-H4R2: static routes, not a union or dynamic
+response type on one shared route.**
 
-```
-GET /import-sessions/{session_id}/dry-run-plan
+- **PR20's existing route is not touched.** `GET .../dry-run-plan`
+  keeps `response_model=DryRunPlanOut` exactly as declared today; `POST
+  .../confirm` keeps `response_model=DryRunPlanConfirmOut` exactly as
+  declared today. Path, HTTP semantics, response body field names,
+  field nullability, enum/status values, pagination semantics, and the
+  generated OpenAPI schema are all unchanged (§29).
+- **PR21 gets its own, separate, statically-typed routes**, added when
+  PR21's source-dependent implementation is ready (illustrative paths
+  in §29) — never a change to PR20's route.
 
-returns one of, selected by ImportSession.dataset_type:
-  - DryRunPlanOut              (Equipment Master -- unchanged from today)
-  - LegacyHistoryDryRunPlanOut (PR21 -- new schema, §32)
-```
+**Why not a union on the existing PR20 route.** `Union[DryRunPlanOut,
+LegacyHistoryDryRunPlanOut]` as the existing route's `response_model`
+was considered and is explicitly rejected: it changes the generated
+OpenAPI schema for a route the production PR20F frontend already
+depends on, and risks breaking that already-reviewed contract for no
+benefit — PR21 does not need to share PR20's route to have its own
+correctly-typed API. **Likewise rejected as compatibility workarounds:**
+`Any`, untyped `dict`, or `response_model=None` on either route — all
+of them would silently discard FastAPI's response-schema guarantee and
+degrade PR20's existing, already-relied-upon OpenAPI documentation.
 
-Each dataset-specific schema preserves its own field names in full;
-neither is forced through a shared generic envelope. **Option B (a
-stable generic envelope with a dataset-specific payload) was evaluated
-and rejected** — it would only be viable if PR20's current wire shape
-could remain byte/field-compatible through a compatibility-serialization
-layer, and no such layer exists today; introducing one purely to satisfy
-a generic envelope would be strictly more implementation risk than
-Option A for no compatibility benefit. **No generic shape is invented
-that renames any existing PR20 field.**
+**Net effect:** transport (route + `response_model`) stays statically
+typed and dataset-specific; only the internal provider layer (§30) is
+generic. No FastAPI route ever dynamically switches its declared
+response type at runtime.
 
 ---
 
@@ -875,15 +916,16 @@ added to `DryRunPlanRowOut` itself.
 ## 33. Pagination contract
 
 Cursor pagination with a validated limit; cursor binds to the exact
-plan it was issued for. **Fix Round 2 addition (PR98-H4R):** for PR21's
-provider, the cursor must bind to session, plan ID, **and provider/
-dataset_type** — a cursor issued for one provider's plan is rejected by
-another provider's `get_plan_rows`, not silently reinterpreted. A
-malformed cursor returns a structured client error. No unbounded/
-thousands-of-rows single response — matches PR20's existing
-`list_plan_rows` cursor-pagination shape (`import_dry_run_plan.py:222-234`)
-for Equipment Master, unchanged; PR21's provider implements the
-equivalent contract for its own rows.
+plan it was issued for. Since PR20 and PR21 use separate routes (§29,
+§31), a cursor is naturally scoped to the route/provider that issued
+it; internally, the provider's own `load_plan_rows` still validates the
+cursor against its own plan ID defensively (a cursor issued for one
+provider's plan rejected if somehow presented to another's lookup, not
+silently reinterpreted). A malformed cursor returns a structured client
+error. No unbounded/thousands-of-rows single response — matches PR20's
+existing `list_plan_rows` cursor-pagination shape
+(`import_dry_run_plan.py:222-234`) for Equipment Master, unchanged;
+PR21's provider implements the equivalent contract for its own rows.
 
 ---
 
@@ -910,42 +952,118 @@ returns for every other stale/missing case, not a distinct signal.
 
 ---
 
-## 35. Confirmation RBAC / audit
+## 35. Confirmation RBAC / audit — exactly once per first successful confirmation
 
 **RBAC:** Administrator-only, via the existing
 `require_roles(*ADMINISTRATOR_ONLY_ROLES)` dependency already applied to
 every import-session endpoint including confirm (verified:
-`import_sessions.py:394`) — enforced once, at the generic transport
-layer, for every dataset_type. No new permission contract invented.
+`import_sessions.py:394`) — enforced identically on both PR20's existing
+route and PR21's future route (§29, §31), each declaring the dependency
+itself since they are separate routes, not a shared dispatch point. No
+new permission contract invented.
 
-**Audit — single owner, no double-audit.** Verified: today, the confirm
-endpoint itself (`import_sessions.py:443-446`), not the CRUD/provider
-layer, calls `record_audit_event(..., action=AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CONFIRMED, ...)`
-after `import_dry_run_plan_crud.confirm_plan()` returns. **Selected:
-the generic transport layer remains the sole audit-write owner for
-confirmation**, invoked exactly once per confirm call using the plan
-identity the provider's `confirm_plan()` returns (actor, import
-session, plan ID, dataset type, timestamp, no raw source payload).
-Providers (Equipment Master's existing one and PR21's new one) **must
-not** independently write a second, duplicate audit event inside their
-own `confirm_plan()` implementation — this is the single point of
-ownership PR98-H4R's finding 13 requires.
+**Fix Round 3 (PR98-H4R3) correction — audit is written exactly once
+per first successful confirmation, not once per confirm HTTP call.**
+The prior revision's "invoked exactly once per confirm call" was wrong.
+Verified against the actual runtime
+(`backend/app/crud/import_dry_run_plan.py:252-259, 262-376` and
+`backend/app/api/v1/import_sessions.py:388-452`):
+
+- `import_dry_run_plan_crud.confirm_plan()` returns a
+  `ConfirmationResult` dataclass carrying `plan` and a `newly_confirmed:
+  bool` flag. Its own docstring (lines 280-283) states the contract
+  precisely: a repeat confirm must "return the persisted row as-is
+  (`newly_confirmed=False`), never re-attributing `confirmed_by_user_id`
+  to a later caller."
+- The route handler's own docstring (`import_sessions.py:431-436`)
+  states it explicitly: *"The `CONFIRMED` audit event is written only
+  when `result.newly_confirmed` — a repeat confirm (same user retry, a
+  second user's idempotent re-confirm, or a network retry after a lost
+  response) is reported as the same success but never produces a second
+  audit row, and never re-attributes the persisted
+  `confirmed_by_user_id` away from the original first confirmer."*
+- The code matches exactly: `if result.newly_confirmed: await
+  record_audit_event(...)` (`import_sessions.py:442-452`) — no `else`
+  branch writes anything.
+
+**Generic `ConfirmPlanResult` contract, required for any provider
+(Equipment Master's existing one and PR21's future one) — conceptual
+shape, exact DTO names may differ:**
+
+```
+ConfirmPlanResult:
+  - plan                    -- the current, persisted plan state
+  - newly_confirmed: bool
+  - confirmed_at             -- the ORIGINAL first-confirmation timestamp
+  - confirmed_by_user_id     -- the ORIGINAL first confirmer's identity
+
+First successful confirm (atomic CAS transition wins):
+  - newly_confirmed = true
+  - confirmed_at / confirmed_by_user_id persisted for the FIRST time
+  - caller (transport) writes the confirmation audit event, exactly once
+
+Any subsequent confirm call for an already-confirmed plan (same actor
+retrying, a different actor re-confirming, a network-retry replay):
+  - newly_confirmed = false
+  - confirmed_at / confirmed_by_user_id returned UNCHANGED, exactly as
+    originally persisted -- the retrying/second actor is never
+    substituted as confirmer
+  - caller (transport) writes NO audit event
+```
+
+**Concurrent-confirmation race:** two callers racing to confirm the same
+plan resolve to exactly one atomic state transition winning (the
+existing conditional-`UPDATE` CAS pattern, unchanged); the winner's
+result carries `newly_confirmed=true`, every other racer's result
+carries `newly_confirmed=false` against the same persisted
+`confirmed_at`/`confirmed_by_user_id` the winner produced — never two
+audit rows, never two different persisted confirmers, regardless of how
+many callers raced.
+
+**Audit ownership — single owner, unchanged split.** The **transport
+route handler** owns the conditional audit write (`if
+result.newly_confirmed: write audit`), matching exactly where it
+happens today. The **provider** owns the atomic confirm CAS/state
+transition and the persisted first-confirmer identity — a provider's
+`confirm_plan()` **must never** independently write its own audit event;
+if it did, a transport-layer write plus a provider-layer write would
+double-audit a single first confirmation, which this design forbids.
+This is one point of ownership, gated on `newly_confirmed`, never one
+audit row per HTTP request.
+
+**Transaction atomicity — preserved exactly from current PR20 runtime,
+not redesigned.** `record_audit_event()` flushes only; the caller owns
+the commit (§21, `backend/app/core/audit.py:157-189`). In the existing
+confirm endpoint, the plan's CAS state transition
+(`import_dry_run_plan_crud.confirm_plan()`) and the conditional audit
+write share the same request-scoped database session and are committed
+together by the endpoint's own transaction boundary — Foundation and
+PR21's own provider must preserve this same atomicity (persisted
+confirmer identity + conditional audit write committed together, never
+as two separate transactions that could diverge on a crash between
+them). This is stated as a preserved invariant, not a redesign.
+
+**Stale/foreign-plan security semantics (§34) are unaffected by any of
+the above** — a confirm attempt against a stale, missing, or
+foreign-session plan still raises before `ConfirmPlanResult` is ever
+produced, exactly as today.
 
 ---
 
 ## 36. Plan persistence ownership decision
 
-**Selected: fully adapter/provider-specific plan tables, behind the
-generalized transport from §29.** This is the same shape the existing
-`EquipmentMasterDryRunPlan`/`Row` tables already use (they are not a
-shared generic header table today; each provider owns its own plan
-tables). PR21 introduces its own header/row tables (§8's provenance
-model attaches to the row level), reachable through the same generic
-`GET`/`confirm` routes once §29's dispatch layer exists. This preserves:
-immutable plan, exact plan confirmation (§32), pagination (§33),
-provider ownership, retention (§38), execution reuse (§37), and creates
-**no PR20 regression** — Equipment Master's existing behavior becomes
-the dispatch layer's default/first provider, byte-for-field unchanged
+**Selected: fully adapter/provider-specific plan tables**, reachable
+through the route architecture in §29/§31 (PR20's existing route calling
+its existing tables directly or through a thin internal wrapper, §30;
+PR21's future route calling its own new tables). This is the same shape
+the existing `EquipmentMasterDryRunPlan`/`Row` tables already use (they
+are not a shared generic header table today; each provider owns its own
+plan tables). PR21 introduces its own header/row tables (§8's provenance
+model attaches to the row level), used exclusively by PR21's own future
+routes. This preserves: immutable plan, exact plan confirmation (§32),
+pagination (§33), provider ownership, retention (§38), execution reuse
+(§37), and creates **no PR20 regression** — Equipment Master's existing
+route, tables, and response shape are untouched, byte/field unchanged
 per §29/§31/§32's verified wire contract.
 
 ---
@@ -1074,7 +1192,8 @@ recorded via the existing `AUDIT_ACTION_IMPORT`/
 `AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CONFIRMED` constants
 (`backend/app/core/audit.py:48-80`), `entity_type="import_session"`. No
 new audit-action constant proposed. Confirmation audit-write ownership
-is exactly as specified in §35 — one write, at the transport layer.
+is exactly as specified in §35 — one write, at the transport layer,
+gated on `newly_confirmed`, never one write per HTTP request.
 
 ---
 
@@ -1083,13 +1202,13 @@ is exactly as specified in §35 — one write, at the transport layer.
 PR19B already previewed Receive History and Issue History as categories
 in the Legacy Import UI (mock/placeholder data). PR21's frontend slice
 (PR21E, §46) reuses that existing architecture and replaces the mocks
-with real PR21 APIs (via §29-§36's generalized endpoints and PR21's own
-discriminated response schema, §31) — no frontend redesign, and no
+with real PR21 APIs — PR21's own new, separately and statically typed
+routes and response schema (§29, §31) — no frontend redesign, and no
 change whatsoever to the existing PR20F Equipment Master frontend
-integration, since its wire contract is verified unchanged (§29). Thai-
-first, mobile-first, minimal typing, large touch targets, Administrator-
-controlled workflow all preserved. No frontend file is touched by this
-Design PR (§51).
+integration, since its route and wire contract are verified unchanged
+(§29). Thai-first, mobile-first, minimal typing, large touch targets,
+Administrator-controlled workflow all preserved. No frontend file is
+touched by this Design PR (§51).
 
 ---
 
@@ -1115,8 +1234,8 @@ No migration is created by this Design PR.
 |---|---|
 | `HistoricalTransactionSourceRef`-shaped 1:N provenance table(s) (§8), including per-ref legacy operator-name capture (§13) | No existing link from a transaction row back to import provenance exists at all; a flat single-provenance-per-transaction design cannot represent §8's required 1:N shape. |
 | `legacy_ward_aliases` mapping table (§14) | Confirmed absent from `master_data.py`. |
-| PR21-owned dry-run plan header/row tables (§36) | Existing `EquipmentMasterDryRunPlan`/`Row` are upsert-oriented and Equipment-specific; do not fit an insert-oriented transaction import, and are not reused directly per §30/§31's discriminated-provider decision. |
-| Generic dry-run-plan transport dispatch + provider interface (§29-§30) — code change, not schema, but listed here as a real prerequisite | `import_dry_run_plan_crud` and the two `import_sessions.py` endpoints are hardcoded to Equipment Master today; no dataset-type dispatch exists. |
+| PR21-owned dry-run plan header/row tables (§36) | Existing `EquipmentMasterDryRunPlan`/`Row` are upsert-oriented and Equipment-specific; do not fit an insert-oriented transaction import, and are not reused directly per §30/§31's separate-routes decision. |
+| Internal generic provider interface + PR21's own future public routes/schemas (§29-§31) — code change, not schema, but listed here as a real prerequisite | `import_dry_run_plan_crud` and the two existing `import_sessions.py` endpoints are hardcoded to Equipment Master today; no internal dataset-type provider dispatch exists, and PR21 has no routes of its own yet. |
 | Fail-closed adapter retention hook (§38) — code change, not schema | `redact_session()` is hardcoded to `EquipmentMasterDryRunPlanRow` today; no generic dispatch, and no fail-closed provider-verification step, exists. |
 | Historical-sentinel handling for `transaction_no` (§20) | NOT NULL/UNIQUE with no historical-import carve-out today; exact mechanism pending OD-PR21-5/§6. |
 
@@ -1189,24 +1308,31 @@ implementation slice may start."** PR21-Foundation, being genuinely
 topology-independent generic plumbing, may start once this Design PR
 merges.
 
-- **PR21-Foundation** — generic plumbing only. **In scope:** the
-  generic provider interface (§30), generic transport dispatch by
-  `dataset_type` (§29), PR20 compatibility wrappers/verification (§29,
-  §31 — proving Equipment Master's wire contract is unchanged),
-  cursor/pagination/error-response generic plumbing (§33, §34), and the
-  retention-hook **abstraction** (the fail-closed dispatch mechanism
-  itself, §38) — but registering PR21's *own* redaction callback is not
-  in this slice, since PR21 has no artifacts yet. **Explicitly out of
-  scope for PR21-Foundation:** any PR21 database schema or migration;
-  PR21's provenance tables (§8, §43); any source-topology assumption
-  (§7); event-identity/idempotency constraints (§24 — this is a later,
+- **PR21-Foundation** — generic *internal* plumbing only, no public API
+  surface of its own. **In scope:** the generic provider interface
+  (§30, internal service layer only — never owns a FastAPI
+  `response_model`); an internal compatibility wrapper/verification
+  around PR20's existing plan service, proving Equipment Master's
+  existing routes/response models/OpenAPI schema are byte/field
+  unchanged (§29, §31); reusable internal pagination/error-response
+  helpers, so long as they do not change PR20's wire shape (§33, §34);
+  and the retention-hook **abstraction** (the fail-closed provider-
+  dispatch mechanism itself, §38) — but registering PR21's *own*
+  redaction callback is not in this slice, since PR21 has no artifacts
+  yet. **Explicitly out of scope for PR21-Foundation (Fix Round 3
+  additions in bold):** any PR21 database schema or migration; PR21's
+  provenance tables (§8, §43); any source-topology assumption (§7);
+  event-identity/idempotency constraints (§24 — this is a later,
   source-dependent slice's responsibility, not Foundation's); Issue/
   Receive parsers (§9, §10); pairing logic (§11); PR21's own
   idempotency keys (§25); the `legacy_ward_aliases` table (§14); legacy
-  BME persistence (§13). All of these remain blocked on OD-PR21-0. This
-  slice carries **PR20-regression risk** (it touches shared PR19/PR20
-  infrastructure) and deserves isolated, independent review separate
-  from PR21's own dataset-specific schema.
+  BME persistence (§13); **any PR21 public response schema or route**
+  (§29, §31 — PR21's own `LegacyHistoryDryRunPlanOut` and its routes are
+  added later, by a source-dependent slice, never by Foundation). All of
+  these remain blocked on OD-PR21-0. This slice carries **PR20-regression
+  risk** (it touches shared PR19/PR20 infrastructure) and deserves
+  isolated, independent review separate from PR21's own dataset-specific
+  schema.
 - **PR21A — Historical Transaction Schema / Provenance Foundation.**
   §8's 1:N provenance tables, §14's `legacy_ward_aliases`, §36's PR21
   plan tables (registered against PR21-Foundation's provider interface
@@ -1277,12 +1403,15 @@ model, source assumptions, or event identity.
 - **Live safety:** current `Equipment.status` unchanged; current `OPEN`
   transaction unaffected; historical import does not block live
   dispatch (`idx_tx_one_active_borrow` regression tests, §3, §44).
-- **Generic plan API / PR20 compatibility (PR21-Foundation):**
-  dispatch-by-`dataset_type` correctness; **byte/field-for-field no
-  PR20 regression** — Equipment Master's existing
+- **Generic plan API / PR20 compatibility (PR21-Foundation):** internal
+  provider dispatch-by-`dataset_type` correctness (service layer only);
+  **byte/field-for-field no PR20 regression** — Equipment Master's
+  existing route, `response_model`, OpenAPI schema, and
   `DryRunPlanOut`/`DryRunPlanConfirmOut`/`DryRunPlanRowOut` responses,
-  pagination cursors, and 404/409 semantics verified unchanged after
-  §29's generalization; exactly-once audit write verified (§35).
+  pagination cursors, and 404/409 semantics all verified unchanged after
+  §29-§31's internal generalization; confirmation-audit cardinality
+  verified exactly once per first successful confirmation, never once
+  per HTTP call, including under concurrent-confirmation races (§35).
 - **Retention (PR21-Foundation abstraction + later PR21-specific hook):**
   fail-closed behavior — provider callback failure/missing registration
   correctly rolls back the whole redaction transaction and leaves
@@ -1365,11 +1494,12 @@ PR21 runtime implementation is performed.
   ENCOUNTERED** (§18).
 - **PR21 requiring a change to PR19/PR20 safety semantics — NOT
   ENCOUNTERED**; every safety mechanism (§37, §38) is reused unmodified,
-  and PR20's existing wire contract is verified unchanged (§29-§32).
-  §29-§30's generic-transport generalization and §38's retention hook
-  are additive extensions to shared *infrastructure*, not changes to
-  *safety semantics* or *external API contracts* — no lock order,
-  fencing, claim, audit contract, or PR20 response field is altered.
+  and PR20's existing route, response model, and wire contract are
+  verified unchanged (§29-§32). §30's internal provider generalization
+  and §38's retention hook are additive extensions to shared
+  *infrastructure*, not changes to *safety semantics* or *external API
+  contracts* — no lock order, fencing, claim, audit contract, PR20
+  response field, or PR20 route is altered.
 
 **Net effect: no source-dependent PR21 implementation slice is ready.**
 OD-PR21-0 (covering topology and stable event identity) and
