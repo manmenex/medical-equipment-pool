@@ -3254,3 +3254,202 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   or CI file was modified to produce this entry. PR21 implementation
   (PR21A–F) remains **not started**. GitHub PR #97's P2 follow-up and
   PR #98's P2-A/P2-B follow-ups remain open and untouched.
+
+## 2026-08-17 — Roadmap PR21 Owner Decision Closure Round 1 merged: wording-fix round included (GitHub PR #101)
+
+- **Decision/record:** The entry above (Owner Decision Closure Round 1)
+  and a subsequent targeted wording-fix round — locating and correcting
+  two stale current-state statements in the design document left over
+  from an earlier draft pass, without opening or closing any new Owner
+  Decision — were reviewed and merged as GitHub PR #101. **Squash SHA:**
+  `e22139346c7bdff1edf841022dd4b7dbebbb3573`, on
+  `claude/medical-equipment-pool-0c7fz0`. **Baseline before this merge:**
+  `7b99e5866df4b71ffa1aa09d265baa2bc7033c33` (GitHub PR #100,
+  PR21-Foundation).
+- **Scope actually merged:** the design-document edits described in the
+  entry directly above this one (OD-PR21-1/2/3/4/6 resolved, OD-PR21-5
+  partially resolved, OD-PR21-0's identity/pairing sub-components left
+  explicitly open), plus a follow-up wording-fix pass correcting stale
+  current-state phrasing so the document's own prose matched the
+  decision state it already recorded — no additional Owner Decision was
+  opened or closed by the wording-fix pass itself. **No backend,
+  frontend, migration, or test file was included in this merge.**
+- **What this PR did not do, stated explicitly:** it did not implement
+  PR21A/B/C/D/E/F; it added no database migration; it did not resolve
+  OD-PR21-0's stable-event-identity or Issue↔Receive-pairing
+  sub-components — those remained explicitly open at this PR's merge,
+  per the Owner's own instruction recorded in the entry above (their
+  resolution is recorded separately, in the entry below, from Owner
+  Decision Closure Round 2).
+- **Evidence:** 6/6 GitHub Actions checks green on the reviewed head
+  `68a113989ea65210d916a2864f2d307b2d7a4997`, no drift between that head
+  and the merged squash commit's tree, and no blocking review comments
+  outstanding at merge time; tree-identity independently verified
+  between the reviewed head and the real squash commit (`git diff` —
+  zero lines).
+- **Status:** Documentation merged. PR21A through PR21F remain blocked
+  at this point on OD-PR21-0's identity/pairing sub-components — see
+  the entry below for their resolution (Owner Decision Closure Round 2).
+
+## 2026-08-17 — Roadmap PR21 Owner Decision Closure Round 2: event-first architecture adopted, OD-PR21-0's identity and pairing sub-components RESOLVED — still not implemented
+
+- **Decision/record:** The Repository Owner directed this session to
+  close the two sub-components of OD-PR21-0 explicitly left open by
+  Round 1 — stable historical event identity, and Issue↔Receive
+  pairing — and to determine whether direct `BorrowTransaction`
+  representation of unpaired legacy rows is semantically safe. This
+  entry records the resulting architecture adoption and both
+  resolutions. **No backend, frontend, migration, or test file was
+  modified.** PR21 implementation (PR21A–F) remains **not started**.
+- **`BorrowTransaction` compatibility finding (§12, revised):** direct
+  representation of unpaired legacy rows as `BorrowTransaction` is not
+  merely unsafe policy but **structurally impossible** for an unpaired
+  historical RECEIVE event — `borrowed_at` is `NOT NULL` and no
+  evidentiary value exists to populate it with when no matching ISSUE
+  is known. An unpaired ISSUE event similarly cannot be given a
+  provable `OPEN`/`CLOSED` `status`, and would collide with
+  `idx_tx_one_active_borrow`'s live-uniqueness invariant if forced into
+  `OPEN`. This finding is the direct justification for adopting a
+  genuinely separate historical model rather than reusing
+  `BorrowTransaction` for legacy rows.
+- **Architecture adopted — event-first (§11's fork (ii), closing §11.1's
+  previously-open fork; new §11.2):** legacy Issue and Receive source
+  rows import as independent, immutable `LegacyEquipmentEvent` rows
+  (`event_type` = `ISSUE`|`RECEIVE`, new §8.1), each carrying its own
+  provenance. Pairing an Issue event to its eventual Receive event is
+  **not required at import time** and is never attempted using any
+  heuristic — nearest-timestamp, same-day, closest date/time, BCM
+  alone, Ward alone, BME alone, order-number sequence, row-number
+  proximity, heuristic scoring, or fuzzy matching are all explicitly
+  named and forbidden. A pairing/link may be recorded later only where
+  deterministic source evidence proves it, or through an explicit,
+  separately-scoped, Owner-authorized reconciliation step — owned by
+  PR22 or later, never by this or any PR21 slice. **OD-PR21-0's
+  Issue↔Receive-pairing sub-component is RESOLVED** on these terms
+  (§45).
+- **Stable event identity — RESOLVED FOR PR21 V1 (frozen migration
+  snapshot; new §24.2), superseding §24.1's interim evidentiary bar for
+  V1's own purposes without claiming that bar's underlying question was
+  actually answered:**
+  > Stable event identity for PR21 V1 is resolved by scoping the
+  > migration to the Owner-approved immutable workbook snapshot
+  > (SHA-256 `8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`,
+  > §6). Within that snapshot, `(dataset_type, source row key ลำดับ)`
+  > identifies an event. Cross-export durability of the source row key
+  > remains unproven and is outside automatic PR21 V1 replay semantics.
+
+  This is deliberately **not** the claim that `ลำดับ` is a proven,
+  globally stable AppSheet key across arbitrary future exports — that
+  claim remains unsupported and is not made. Two identity levels are
+  kept strictly separate: Level 1, `(import_source_id, sheet_name,
+  source_row_number)`, artifact-scoped and not durable across a
+  re-upload; Level 2, `(dataset_type, legacy_source_row_key)`,
+  database-enforced and scoped to the one frozen snapshot only.
+  **OD-PR21-0's stable-event-identity sub-component is RESOLVED FOR
+  PR21 V1** on these narrow terms (§45).
+- **Corrected-export policy (fail-closed, §24.2):** after V1's migration
+  executes against the approved snapshot, a workbook with a
+  **different** SHA-256 is never automatically treated as a
+  continuation of the original migration; any correction requires an
+  explicit correction/reconciliation workflow (PR22-or-later); original
+  imported provenance and events are never silently overwritten.
+- **Same-file replay policy (idempotency, §24.2):** re-running the
+  migration against the identical (same-checksum) workbook must be safe
+  and must never create duplicate `LegacyEquipmentEvent` rows. Database
+  uniqueness is expected to be scoped to `(dataset_type,
+  legacy_source_row_key)` **without** including the source checksum,
+  so a corrected workbook attempting to write a colliding logical event
+  produces a database-level conflict rather than silently succeeding
+  under a different checksum — forcing the conflict through the
+  corrected-export policy above rather than allowing silent duplication
+  or divergence.
+- **Blank-`ลำดับ` row policy (§24.2):** a data-bearing source row
+  missing its required `ลำดับ` key is an `ERROR`-severity finding
+  (whole-session `validation_failed`); no identity is ever synthesized
+  for it. A pure blank/formatting row with no business data is ignored
+  structurally and never reaches the identity requirement.
+- **OD-PR21-1/OD-PR21-2 — AMENDED, not reversed (§16.1/§17.1):** the
+  Owner-accepted underlying principle from Round 1 (never fabricate a
+  live-meaningful `OPEN` transaction from unresolved history) is
+  unchanged and preserved verbatim in place. The specific "unmatched
+  ISSUE/RECEIVE = whole-session `ERROR`" enforcement mechanism is
+  withdrawn as inapplicable under the now-adopted event-first
+  architecture: an Issue or Receive event with no identifiable
+  counterpart now imports successfully as its own independent
+  historical fact. Every other row-level validity condition (§15)
+  continues to apply unchanged.
+- **OD-PR21-5 — RESOLVED for PR21 V1's actual scope (§20.1),** narrowing
+  Round 1's PARTIALLY RESOLVED status: `LegacyEquipmentEvent` has no
+  `transaction_no` column at all, since V1 never writes
+  `BorrowTransaction` rows. The exact LEGACY-namespace format question
+  Round 1 left open is therefore moot for V1 — it only resurfaces if a
+  future PR22-or-later reconciliation step ever materializes a real
+  `BorrowTransaction` for a confirmed pair, which is out of this
+  decision's scope.
+- **Equipment/live-safety invariants reaffirmed, not merely mitigated
+  (§44):** no `Equipment.status`/Ward/location/version mutation, no
+  live dispatch/receipt, no `OPEN` `BorrowTransaction` ever created from
+  history, no interference with `idx_tx_one_active_borrow`, no
+  fabricated `User` rows. The historical-`OPEN`-import risk §44
+  previously flagged is now RESOLVED (not merely mitigated), since
+  event-first staging makes writing an `OPEN` `BorrowTransaction` from
+  legacy data structurally impossible, not merely policy-forbidden.
+- **Unified Transaction History read-model behavior documented, not
+  designed (§27.1):** live `BorrowTransaction` rows and historical
+  `LegacyEquipmentEvent` rows are intended to be merged only at read
+  time into a single history view; `LegacyEquipmentEvent` rows are never
+  written into `borrow_transactions`. No frontend design is included in
+  this round.
+- **OD-PR21-3/4/6 unaffected by this round** — Round 1's resolutions
+  stand unchanged (now attached to `LegacyEquipmentEvent` provenance
+  rather than `BorrowTransaction`, with no change to the policies
+  themselves).
+- **Net effect (§45):** OD-PR21-0's stable-event-identity and
+  Issue↔Receive-pairing sub-components — the two the Owner explicitly
+  instructed Round 1 not to guess at — are now RESOLVED, on the precise
+  narrow terms stated above. OD-PR21-5 moves from PARTIALLY RESOLVED to
+  RESOLVED for V1's actual scope. OD-PR21-1/2 remain RESOLVED, with a
+  recorded, non-silent amendment. OD-PR21-3/4/6 are unaffected.
+  **OD-PR21-0's field-level-contract sub-component (the
+  `ข้อมูลการส่ง SDC`/`ข้อมูลการรับ SDC` sheet ambiguity, §6.1) remains
+  the only open item across all seven decisions.**
+- **Readiness reassessment (design doc §54, superseding §53's own
+  reassessment which is preserved unchanged as historical record):**
+  PR21A (renamed Historical Event Schema / Provenance Foundation) is
+  **READY TO START** — not yet implemented, a separate baseline-gated
+  implementation task is required. PR21B/PR21C are **READY TO START for
+  the four confirmed canonical sheets**, bounded by the still-open
+  SDC-sheet ambiguity for full-scope completeness only. PR21D (renamed
+  Persisted Dry-run + Historical Event Execution) remains blocked,
+  transitively on PR21A–C actually being implemented. PR21E/PR21F
+  remain blocked, unchanged. PR21-Foundation (GitHub PR #100) remains
+  complete and unaffected.
+- **What this round does not do:** it does not implement
+  PR21A/B/C/D/E/F; it adds no migration; it does not modify
+  `backend/**`, `frontend/**`, `alembic/**`, `tests/**`, `.github/**`,
+  or `Docker/**`; it does not merge without independent review; it does
+  not start PR21A; it does not modify `docs/ROADMAP.md`/
+  `docs/ROADMAP_STATUS.md` (still design/decision closure, not an
+  implementation milestone); it does not touch GitHub PR #97's P2
+  follow-up or PR #98's P2-A/P2-B follow-ups, which remain
+  accepted/non-blocking/unresolved in their existing recorded wording;
+  it does not rewrite any prior dated `DECISION_LOG.md` entry's own
+  historical record, and it preserves — rather than silently replaces —
+  every design-document section it amends (original text kept in place,
+  amendment added as a new, explicitly labeled subsection immediately
+  after).
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7, same
+  governance-update scope as every prior PR21 design entry — this entry
+  and the revised design document only.
+- **Source:** `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+  (revised — new §8.1, §11.2, §16.1, §17.1, §20.1, §24.2, §27.1, §54;
+  §12, §15, §43, §44, §45, §46, §47, §52, §53 updated in place; 8
+  pre-existing dangling "§54" cross-references from Round 1 corrected to
+  "§53" before this round's genuinely new §54 was added; section count
+  now 54). `docs/evidence/pr21/equipment-pool-workbook-manifest.{json,md}`
+  unchanged, still bound to SHA-256
+  `8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`.
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this entry. PR21 implementation
+  (PR21A–F) remains **not started**. GitHub PR #97's P2 follow-up and
+  PR #98's P2-A/P2-B follow-ups remain open and untouched.
