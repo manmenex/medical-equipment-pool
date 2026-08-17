@@ -25,6 +25,16 @@ from app.worker.scheduler import start_scheduler, stop_scheduler
 # inside a request handler.
 import app.services.import_adapters.equipment_master  # noqa: E402,F401
 
+# Roadmap PR21-Foundation. Imported for its module-level
+# `register_plan_provider(...)` side effect -- the internal
+# `DryRunPlanProvider` registry (`app.services.import_plan_provider`) is
+# deliberately separate from the adapter registry above, but follows the
+# same "import here for the registration side effect, never lazily inside
+# a request handler" discipline. Add a further
+# `import app.services.import_plan_providers.<x>` line here for each
+# future dataset-type plan provider.
+import app.services.import_plan_providers.equipment_master  # noqa: E402,F401
+
 # Stable, safe codes for FastAPI/Starlette's own HTTPException, keyed by
 # status code. Anything not listed falls back to the generic HTTP_ERROR code
 # — this intentionally stays a small, fixed set rather than trying to name
