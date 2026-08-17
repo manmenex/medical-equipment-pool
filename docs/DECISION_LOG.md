@@ -2887,3 +2887,94 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   or CI file was modified to produce this entry. PR21 implementation
   remains **not started**. GitHub PR #97's P2 follow-up remains open and
   untouched.
+
+## 2026-08-17 — Roadmap PR21 design Source Evidence Update: OD-PR21-0 topology RESOLVED against the real production workbook — still not implemented
+
+- **Decision/record:** The Owner supplied the real production Equipment
+  Pool AppSheet workbook (`บันทึกข้อมูล Equipment Pool.xlsx`, 28 sheets).
+  This session inspected it **directly** with `openpyxl` — headers,
+  sample rows, full row counts (verified via `iter_rows`), date ranges,
+  and uniqueness/referential-integrity checks against the real data —
+  not transcribed from a description. The workbook file itself is a
+  session upload and is **not** committed to this repository (contains
+  real staff names and ward assignments; this entry's scope is
+  documentation only).
+- **OD-PR21-0 — topology component RESOLVED: Option A.** The real
+  workbook is confirmed to be exactly one `.xlsx` file containing both
+  Issue and Receive sheets among its 28 tabs. PR21's `ImportSession` →
+  exactly one `ImportSource`, matching PR19's existing, unmodified
+  topology — zero PR19 foundation changes required. Options B (multiple
+  sources per session) and C (two independent sessions plus a staging
+  layer) are formally rejected — the evidence needed to choose between
+  them never arises, since Option A is what the real deliverable
+  actually is.
+- **Canonical source correction (supersedes the source-evidence task's
+  own suggested sheets).** Direct inspection identified the true
+  canonical Issue/Receive sources as a two-level Order-header +
+  line-item structure — `Orders ยืมเครื่อง` (Issue order header) +
+  `ข้อมูลส่งเครื่องมือ` (Issue line items), `Orders คืนเครื่อง` (Receive
+  order header) + `ข้อมูลรับเครื่องมือ` (Receive line items) — **not**
+  the `BMEส่งเมื่อว่าน`/presentation sheets originally suggested. Those
+  sheets' own header rows literally contain an AppSheet query string
+  (`SELECT B,E,G,... WHERE B=DATE '2026-07-28'`), confirming they are
+  rolling single-day derived views, not canonical historical data. The
+  genuine canonical tables span the full available history
+  (2026-01-01 through 2026-07-28), and their order-number fields
+  (`เลขที่ใบยืม`/`เลขที่ใบคืน`) are verified 100% unique with 5,676/5,677
+  line-item references resolving to a real header row (the one
+  exception, `'Borrow1000000005'`, is an apparent truncated value — a
+  concrete example of the orphan-reference `ERROR` finding the design
+  already specifies, not a structural gap).
+- **Field-level mapping — narrowed, not fully closed.** §9/§10 of the
+  design document now carry real, verified column lists for all four
+  canonical sheets (including confirmation that `ME.Code` is the
+  governing equipment-identifying field). The field-contract gate
+  remains open for two reasons: (a) `ข้อมูลการส่ง SDC`/
+  `ข้อมูลการรับ SDC` are structurally near-identical to the canonical
+  tables but diverge sharply in row count (28,078 vs. 19,912 Issue;
+  51,444 vs. 19,768 Receive, 2.6× more) — "SDC" is undefined anywhere in
+  this repository, and this is recorded as an open question requiring
+  Owner clarification, not guessed; (b) implementation-grade validation
+  rules and the frozen error-code list remain PR21B/C work per this
+  Roadmap's own design/implementation split.
+- **Stable event identity — strong candidates found, not fully
+  confirmed.** Two verified candidates: the order number
+  (`เลขที่ใบยืม`/`เลขที่ใบคืน`, 100% unique) at the order level, and the
+  `ลำดับ` column on the line-item sheets (an 8-character hex-like
+  AppSheet-generated row key, 100% unique among non-null values —
+  19,871/19,871 Issue, 19,750/19,750 Receive — but blank on ~0.2% of
+  rows). Re-export durability of the `ลำดับ` key cannot be confirmed
+  from a single snapshot and is not claimed as resolved.
+- **Issue↔Receive pairing — confirmed negative finding.** Direct
+  inspection confirms **no explicit linking field** exists between an
+  issue and its eventual return anywhere in the workbook. This
+  Owner Decision (OD-PR21-1/OD-PR21-2's underlying pairing question)
+  remains open, now backed by verified evidence rather than an
+  inspection gap — nearest-timestamp/equipment-based heuristic matching
+  is not adopted without explicit Owner approval.
+- **Reference tables found:** `ชื่อ BME` (BME staff roster, exactly 8
+  names) and `แผนก` (Ward reference list, 52 entries) — both narrow the
+  practical scope of OD-PR21-3 and OD-PR21-4 without resolving their
+  ownership/procedure questions.
+- **What this update does not do:** it does not resolve OD-PR21-1
+  through OD-PR21-6; it does not begin PR21-Foundation or any other
+  implementation slice; it does not modify `backend/**`, `frontend/**`,
+  `alembic/**`, `tests/**`, or `.github/**`; it does not commit the
+  uploaded workbook to this repository; it does not touch GitHub PR
+  #97's P2 follow-up, PR #98's P2-A/P2-B follow-ups, or any PR20-related
+  content in this file or in
+  `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md`.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7, same
+  governance-update scope as the four PR21 design entries above (this
+  entry plus the revised design document only — no
+  `ROADMAP.md`/`ROADMAP_STATUS.md`/`knowledge/*` change).
+- **Source:** `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+  (revised — section count unchanged at 52; see its own §6, §6.1-§6.4,
+  §7 for the topology resolution and full sheet classification, §9/§10
+  for the real field lists, §11 for the pairing negative finding, §24
+  for the event-identity candidates, and §45/§47/§52 for the updated
+  Owner Decision/readiness/STOP-condition status).
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this entry. PR21 implementation
+  remains **not started**. GitHub PR #97's P2 follow-up and PR #98's
+  P2-A/P2-B follow-ups remain open and untouched.
