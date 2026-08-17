@@ -764,9 +764,16 @@ materially useful evidence for OD-PR21-3's later-mapping-procedure
 boundary decision: a roster this small makes a future manual
 name-to-`User` mapping step tractable (8 names to reconcile, not
 hundreds), even though this document still does not design that
-procedure. It does **not** resolve OD-PR21-3 — the roster is a name
-*list*, not a mapping to existing `User` rows, and this document
-continues to treat that mapping as future, Owner-approved work.
+procedure. **Historical note (Source Evidence Update, superseded):**
+this roster evidence, on its own, did not resolve OD-PR21-3 at the time
+it was found — a name *list* is not a mapping to existing `User` rows.
+**Current truth (Owner Decision Closure Round 1): OD-PR21-3 is now
+RESOLVED** (§13 above) — not by this roster evidence, but by the
+Owner's separate, explicit acceptance of the preserve-raw-text/
+no-auto-mapping policy. The roster remains useful evidence for a
+possible *future* manual mapping step; it does not itself constitute
+that mapping, which remains out of PR21 V1's scope exactly as §13
+already states.
 
 ---
 
@@ -824,8 +831,14 @@ alias table needed for a smaller edge-case set than originally assumed
 — **not a guarantee**, since this observation is from a small sample,
 not a full cross-check against the live `Ward` table's exact `code`/
 `name` values (out of scope for a design document; that comparison
-belongs to PR21A/B's implementation). Does not resolve OD-PR21-4's
-ownership question.
+belongs to PR21A/B's implementation). **Historical note (Source
+Evidence Update, superseded):** this reference-list evidence, on its
+own, did not resolve OD-PR21-4's ownership question at the time it was
+found — a 52-entry reference list is evidence of *lower ambiguity*, not
+a decision about *who* curates the alias table. **Current truth (Owner
+Decision Closure Round 1): OD-PR21-4 is now RESOLVED** (§14 above) —
+not by this reference-list evidence, but by the Owner's separate,
+explicit acceptance of the Administrator-ownership policy.
 
 ---
 
