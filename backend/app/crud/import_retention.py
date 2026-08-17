@@ -5,14 +5,13 @@ from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.import_session import (
-    EquipmentMasterDryRunPlan,
-    EquipmentMasterDryRunPlanRow,
     ImportJob,
     ImportRowError,
     ImportSession,
     ImportSource,
     ImportSourceBlob,
 )
+from app.services.import_plan_provider import PlanProviderNotRegisteredError, get_plan_provider
 
 # Roadmap PR19A3 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §18).
 # A genuinely new concurrency mechanism -- SELECT ... FOR UPDATE SKIP
@@ -99,7 +98,23 @@ async def redact_session(db: AsyncSession, *, session_id: uuid.UUID, worker_id: 
     single `AUDIT_ACTION_IMPORT_FENCE_LOST` entry in a separate TX3
     (§9.4.2's identical contract, reused here per §18's own reference to
     it). No commit -- the caller's own transaction, including the audit
-    write on success, owns the boundary."""
+    write on success, owns the boundary.
+
+    Roadmap PR21-Foundation (design §38/§46): the leading `SELECT` below
+    loads only the two columns the provider fail-closed decision needs
+    (`dataset_type`, `dry_run_completed_at`) -- this session was not
+    already loaded anywhere earlier in this call chain (`run_retention_
+    cleanup` only has the claimed id), so this is one query per session,
+    the same O(1)-per-session cost the final fenced `UPDATE ... RETURNING`
+    below already pays, never a per-row or N+1 lookup."""
+    session_meta = (
+        await db.execute(
+            select(ImportSession.dataset_type, ImportSession.dry_run_completed_at).where(ImportSession.id == session_id)
+        )
+    ).first()
+    dataset_type = session_meta.dataset_type if session_meta is not None else None
+    dry_run_completed_at = session_meta.dry_run_completed_at if session_meta is not None else None
+
     await db.execute(
         update(ImportSource).where(ImportSource.import_session_id == session_id).values(filename=None, content_type=None)
     )
@@ -123,23 +138,30 @@ async def redact_session(db: AsyncSession, *, session_id: uuid.UUID, worker_id: 
         .values(message="[redacted]", field=None)
     )
 
-    # Roadmap PR20D (design §14.9, fix round 3 H9): one more same-transaction
-    # UPDATE, extending this same claimed/fenced redaction transaction --
-    # not a third retention mechanism. Every plan belonging to this session
-    # (any status: active/superseded/consumed/failed) has its content
-    # columns redacted; the structural columns (id, dry_run_plan_id,
-    # source_row_number, action, target_equipment_id,
-    # expected_equipment_version) are left untouched, matching §6.6's
-    # precedent for import_sources.checksum/byte_size. A no-op for any
-    # session whose dataset_type never persisted a plan (every dataset_type
-    # other than equipment_master, and any equipment_master session that
-    # never reached a successful dry-run).
-    plan_ids_subq = select(EquipmentMasterDryRunPlan.id).where(EquipmentMasterDryRunPlan.import_session_id == session_id)
-    await db.execute(
-        update(EquipmentMasterDryRunPlanRow)
-        .where(EquipmentMasterDryRunPlanRow.dry_run_plan_id.in_(plan_ids_subq))
-        .values(normalized_values=None, matched_identity_fields=None, warnings=None)
-    )
+    # Roadmap PR21-Foundation (design §38/§46): fail-closed provider-owned
+    # plan-artifact redaction, extending this same claimed/fenced
+    # transaction -- not a third retention mechanism. A session can only
+    # ever own a persisted plan artifact if it reached `dry_run_completed`
+    # (the sole point `ImportAdapter.persist_dry_run_plan` is ever called,
+    # in the same transaction as that fenced-completion write -- see that
+    # method's own docstring), so `dry_run_completed_at IS NULL` is a
+    # structural, not a registry-derived, proof that this session owns
+    # nothing to redact here -- no provider lookup needed, matching every
+    # dataset_type's retention behavior before this Foundation slice
+    # existed. For a session that DID complete a dry-run, "no plan
+    # provider registered for this dataset_type" is never read as "nothing
+    # to redact": it fails closed (raises, letting this whole transaction,
+    # including the core redaction already executed above, roll back) so
+    # a genuinely provider-owned artifact can never be silently skipped.
+    if dry_run_completed_at is not None:
+        provider = get_plan_provider(dataset_type)
+        if provider is None:
+            raise PlanProviderNotRegisteredError(
+                f"Session '{session_id}' completed a dry-run under dataset_type '{dataset_type}', but no "
+                "DryRunPlanProvider is registered for that dataset_type -- retention cannot verify there is "
+                "nothing provider-owned to redact, so this session's cleanup is left retryable."
+            )
+        await provider.redact_plan_artifacts(db, import_session_id=session_id)
 
     now = datetime.now(timezone.utc)
     result = await db.execute(
