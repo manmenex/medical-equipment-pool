@@ -167,11 +167,14 @@ live dispatch/receipt workflow as if they occurred today.
   (`transaction.py:140-148`) — at most one `OPEN` transaction per piece
   of equipment, enforced by PostgreSQL.
 
-**PR21's rule, stated positively:** historical transaction rows are
-inserted directly into `borrow_transactions` by the import execution
-step. They never call `borrow_service.borrow()` or
-`borrow_service.return_equipment()`, never call
-`equipment_crud.change_status_for_dispatch_receipt`, and never write an
+**PR21's rule, stated positively (current-state consistency fix,
+PR #102 — corrected to match the adopted event-first architecture,
+§8.1/§11.2/§12):** historical rows are inserted as `LegacyEquipmentEvent`
+rows by the import execution step, **never** as `borrow_transactions`
+rows — PR21 V1 writes no `BorrowTransaction` row for imported legacy
+history at all (§12). Import execution never calls `borrow_service.
+borrow()` or `borrow_service.return_equipment()`, never calls
+`equipment_crud.change_status_for_dispatch_receipt`, and never writes an
 `EquipmentStatusHistory` row.
 
 ---
@@ -935,17 +938,29 @@ No auto-created `User` accounts (`User.password_hash` is NOT NULL —
 `backend/app/models/user.py:72-99` — structurally impossible without
 fabricating credentials). No display-name-similarity auto-mapping.
 
-Given §8's 1:N provenance requirement, the raw legacy operator name is
-most naturally captured **per source ref** (tagged by that ref's
-`event_type` — `ISSUE` actor vs. `RECEIVE` actor), not as two
-independent flat columns directly on `borrow_transactions`. Whether a
-denormalized convenience copy is also kept directly on
-`borrow_transactions` (for query simplicity) is an implementation-time
-schema-shape choice, not a normative requirement of this design — the
-minimum requirement is that the raw text survives verbatim, attributed
-to the correct role, per historical event. `borrower_user_id`/
-`received_by_user_id` remain NULL until an explicit, auditable,
-Owner-approved later mapping step resolves them (§21).
+**Given the adopted event-first architecture, current-state consistency
+fix (PR #102):** PR21 V1 writes no `BorrowTransaction` row for imported
+legacy history at all (§12, §8.1) — `borrow_transactions` is therefore
+**not** a possible PR21 V1 storage location for legacy BME text, not
+even as a denormalized convenience copy, and `borrower_user_id`/
+`received_by_user_id` are never touched by PR21 V1's import path at all
+(those are `BorrowTransaction`'s own live-transaction columns, §21).
+The raw legacy operator name is captured directly on
+`LegacyEquipmentEvent` and/or its normalized provenance reference
+(§8.1's `legacy_bme_name` field), attributed to that one event's own
+source role: the `ISSUE` event preserves its ISSUE-side legacy BME
+actor text, the `RECEIVE` event preserves its RECEIVE-side legacy BME
+actor text, each independently and per-event, since the two are no
+longer fused into one paired transaction record at import time (§11.2).
+Exact physical column/index placement remains PR21A's own
+implementation-grade work (§8.1, §43).
+
+An optional, nullable association to a current `User` (e.g. a future
+`mapped_user_id`-style field — the exact name/shape is PR21A's own
+work, not fixed here) remains a candidate for a later, explicitly
+approved mapping feature: never required for import to succeed, and
+never overwriting the raw legacy text, which stays authoritative
+regardless of whether such a mapping ever exists.
 
 The later mapping procedure itself is **not** designed here — out of
 PR21's Version 1 boundary (OD-PR21-3, §45).
@@ -1280,16 +1295,22 @@ resolved how to supply.
 
 ## 21. User foreign keys
 
-`borrower_user_id`/`received_by_user_id` are both nullable (§12). No fake
-`User` rows; no assigning Administrator as the historical actor; no using
-the importing Administrator's identity as though they performed the
-original transaction.
+`borrower_user_id`/`received_by_user_id` are both nullable (§12) —
+**these are `BorrowTransaction`'s own live-transaction columns; PR21
+V1's legacy import never populates or nullifies them at all, because it
+writes no `BorrowTransaction` row for imported history (§12, §8.1,
+current-state consistency fix, PR #102).** The principle these columns
+originally motivated still applies, now to `LegacyEquipmentEvent`'s own
+provenance instead: no fake `User` rows; no assigning Administrator as
+the historical actor; no using the importing Administrator's identity
+as though they performed the original transaction.
 
 **Import actor** (current authenticated Administrator running PR21) is
 recorded via `record_audit_event()`'s `actor_user_id`
 (`backend/app/core/audit.py:157-189`) → `AuditLog.user_id` — the *only*
 actor field `AuditLog` has. **Historical operator** (legacy BME name) is
-business data captured per §8/§13, never conflated with `AuditLog.user_id`.
+business data captured per §8/§13 on `LegacyEquipmentEvent`, never
+conflated with `AuditLog.user_id`.
 
 ---
 
@@ -2254,22 +2275,29 @@ automatic reuse, and never a partial or silently-skipped redaction.*
 `ImportSession`/`ImportSource`/`ImportRowError`/PR21's own dry-run-plan
 tables (§36) — the *import process's* artifacts.
 
-**Permanent historical transaction/provenance retention:** once a legacy
-row executes into `borrow_transactions` plus its §8/§13 provenance refs,
-it becomes operational historical data, exactly like a live-created
-transaction — **never deleted or redacted on the 180-day timer.**
+**Permanent historical transaction/provenance retention (current-state
+consistency fix, PR #102 — corrected to match the adopted event-first
+architecture, §8.1/§12):** once a legacy row executes as a
+`LegacyEquipmentEvent` row plus its §8.1/§13 provenance refs, it
+becomes permanent historical evidence — **never deleted or redacted on
+the 180-day timer.** This is no longer a `borrow_transactions` row (§12
+found direct `BorrowTransaction` representation unsafe/impossible for
+unpaired history); it remains analogous to a live-created transaction
+only in the sense that it is likewise permanent, not in storage
+location.
 
 **Which minimal provenance fields survive after raw-source redaction**
 (mirroring PR19A's existing redact-in-place split, which purges
 free-text/`notes`/`filename`/`message`/`field` content but retains
 `error_code`/`severity`/`row_number`/summary counts indefinitely):
 survive — `import_session_id`, `import_source_id`, sheet/tab identifier,
-row number, event type, and the source reference/event ID if that turns
-out to be §24's chosen stable identity (needed permanently for
-audit/traceability/idempotency, even after raw redaction). Redacted —
-any free-text content ever staged alongside a finding (this design does
-not propose storing full raw rows, §26, so there is little beyond
-`ImportRowError`'s own fields, which PR19A already redacts generically).
+row number, event type, `migration_authority_id`, and
+`legacy_source_row_key` (§24.2's resolved stable identity — needed
+permanently for audit/traceability/idempotency, even after raw
+redaction). Redacted — any free-text content ever staged alongside a
+finding (this design does not propose storing full raw rows, §26, so
+there is little beyond `ImportRowError`'s own fields, which PR19A
+already redacts generically).
 
 ---
 
@@ -2306,15 +2334,20 @@ touched by this Design PR (§51).
 
 ## 42. Security / privacy assessment
 
-**OD-PR21-6 — RESOLVED (Owner Decision Closure Round 1).** The Owner
-has explicitly accepted the recommended safest V1 policy: the real
-`หมายเหตุ` (notes) columns, now confirmed present on both canonical
-line-item sheets and both order-header sheets (§9, §10), are **not
-imported into permanent `borrow_transactions.notes` by default.**
-Structural presence of the field may still be validated (e.g. length
-bounds), but its content is never copied into permanent historical
-provenance. The raw notes value remains only inside the temporary
-source artifact, governed entirely by PR19's existing 180-day
+**OD-PR21-6 — RESOLVED (Owner Decision Closure Round 1); wording
+corrected to match the adopted event-first architecture (current-state
+consistency fix, PR #102).** The Owner has explicitly accepted the
+recommended safest V1 policy: the real `หมายเหตุ` (notes) columns, now
+confirmed present on both canonical line-item sheets and both
+order-header sheets (§9, §10), are **not imported into permanent
+historical provenance by default** — not into a `borrow_transactions.
+notes` column (PR21 V1 never writes `BorrowTransaction` rows at all,
+§12) and not onto `LegacyEquipmentEvent`, which has no notes-shaped
+field in its own conceptual schema (§8.1). Structural presence of the
+field may still be validated (e.g. length bounds), but its content is
+never copied into permanent historical provenance. The raw notes value
+remains only inside the temporary source artifact, governed entirely by
+PR19's existing 180-day
 redact-in-place retention policy (§38, §39) — it is never treated as
 permanent transaction history. **This content was never inspected for
 patient-identifying data by any session** (no free-text sampling was
