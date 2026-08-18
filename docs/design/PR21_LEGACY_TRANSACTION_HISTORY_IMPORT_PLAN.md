@@ -1644,29 +1644,51 @@ was mis-readable as a global claim.
 
 ## 25. Duplicate detection and re-import / idempotency (corrected-export policy)
 
-Three cases this design distinguishes:
+**Current-state consistency fix (PR #102).** The three cases below are
+rewritten to match §24.2's already-resolved identity policy — this is a
+wording correction, not a new Owner Decision: the prior text predated
+§24.2's `LegacyMigrationAuthority` resolution and, in particular,
+Case (B)'s "not assumed distinct merely because the `ImportSource`
+differs" language contradicted §24.2's fail-closed rule that a
+different-checksum workbook is **never** automatically treated as the
+same historical fact. The three cases now match §24.2 exactly:
 
-- **(A) Exact same source artifact replayed** — same `ImportSource`
-  checksum re-registered. Detectable at the source level, but §24
-  confirms checksum is not globally unique, so this alone is not
-  sufficient protection — row-level idempotency (below) is still
-  required even for this case.
-- **(B) A corrected export containing the same historical event** —
-  different `ImportSource` (different checksum, possibly different row
-  numbers), same underlying historical fact. **Not assumed distinct
-  merely because the `ImportSource` differs** — this is exactly why §24
-  requires a database-enforced stable event identity independent of
-  which file/row it arrived in.
-- **(C) A truly distinct event with similar values** — a different
-  stable identity (§24); imported as a new row.
+- **(A) Same approved snapshot replayed.** Same
+  `LegacyMigrationAuthority` + same approved workbook checksum + same
+  `dataset_type` + same `legacy_source_row_key` → the **same** logical
+  PR21 V1 event. A new `ImportSession`/`ImportSource` created by
+  re-uploading the identical bytes does **not** create a new logical
+  event — database-level uniqueness on `(migration_authority_id,
+  dataset_type, legacy_source_row_key)` (§24.2) prevents duplicate
+  `LegacyEquipmentEvent` creation. `ImportSource.checksum` being a
+  regular index, not a unique constraint (§24), is exactly why this
+  row-level, database-enforced check is required — detecting a repeated
+  checksum at the source level alone would not be sufficient.
+- **(B) Different/corrected workbook.** A different checksum **must
+  not** be automatically attached to the existing migration authority,
+  must **not** be automatically deduplicated against, and must **not**
+  be treated as an update to an existing event — fail closed (§24.2).
+  PR21 V1 makes **no automatic same-event determination across
+  exports**: whether a row in a corrected workbook represents the same
+  underlying historical fact as a row already imported under the
+  existing authority is an **explicit, separately-scoped
+  correction/reconciliation question** (PR22-or-later, under a new or
+  explicitly superseding `LegacyMigrationAuthority`), never something
+  this design infers automatically.
+- **(C) Distinct events within the one approved authority.** Different
+  `(migration_authority_id, dataset_type, legacy_source_row_key)` →
+  distinct historical events within that authority, subject to normal
+  validation. `legacy_source_row_key` (`ลำดับ`) durability is never
+  claimed outside the one authority that imported it (§24.2).
 
-**A distinct source reference is not automatically treated as a distinct
-event** until the source contract (§6) proves that reference is
-authoritative and stable across corrected exports. Until §24 resolves
-with real evidence, this design does not claim a specific deduplication
-mechanism is implemented — it states the requirement (database-enforced
-stable identity, checked at write time) and defers the concrete key to
-PR21A, gated on OD-PR21-0.
+**Design decision vs. implementation, stated precisely.** §24.2 has
+resolved PR21 V1's identity/idempotency **business contract** — this is
+no longer an open design question. The **physical schema and index**
+implementing `(migration_authority_id, dataset_type,
+legacy_source_row_key)` uniqueness remain PR21A's own
+implementation-grade work (§24.2, §43), exactly as originally scoped;
+that is a statement about what has not yet been *built*, not a
+statement that the identity *design* itself is still open.
 
 Other cases, unchanged: duplicate ISSUE/RECEIVE row within one file
 (§15 `ERROR`, in-workbook duplicate); duplicate against already-imported
@@ -1764,11 +1786,22 @@ ELSE (zero ERROR findings; WARNING findings may still exist):
     mapping, §13) -- never a row that failed validation
 ```
 
-**Dry-run summary contract.** The persisted plan's summary may report
-only rows/counts that survived validation: issue events accepted,
-receive events accepted, historical transactions planned (paired per
-§11), non-blocking warning counts, and no-op/skip categories only if a
-later slice's design explicitly defines one. **It must never include a
+**Dry-run summary contract (current-state consistency fix, PR #102).**
+This paragraph is corrected to match the adopted event-first
+architecture (§8.1, §11.2) — the prior "historical transactions planned
+(paired per §11)" wording predates that adoption and contradicted it:
+under event-first, ISSUE and RECEIVE source rows import as independent
+`LegacyEquipmentEvent` rows, never as paired transactions, and pairing
+is never required for import. The persisted plan's summary may report
+only rows/counts that survived validation — for example: ISSUE events
+accepted/planned, RECEIVE events accepted/planned, total
+`LegacyEquipmentEvent` rows planned, non-blocking warning counts, and
+no-op/skip categories only if a later slice's design explicitly defines
+one. **It must never report "historical transactions planned" or any
+other paired-transaction framing** unless a later, separately-approved
+deterministic link between specific events actually exists (§11.2,
+PR22-or-later) — independent ISSUE/RECEIVE events must not be
+summarized as if they were paired. **It must never include a
 "blocked ERROR rows" category** — there is no such category, because a
 batch containing any `ERROR` never produces a plan. If the frontend
 needs to show validation errors to the operator, it reads the
@@ -2644,17 +2677,28 @@ GitHub PR #100). See §54 for the full per-slice reassessment.
 - **Ward:** exact mapping, alias, unknown, ambiguous, blank (§14).
 - **BME:** preserved raw name per event type, no fake-user creation
   (§13, §21).
-- **Pairing:** deterministic pair, ambiguous pair (ERROR, whole-session
-  block per §15), missing issue, missing receive, duplicate source
-  reference (§11, §16, §17).
+- **Pairing (current-state consistency fix, PR #102 — corrected to
+  match event-first, §11.2):** ISSUE and RECEIVE events each validated
+  **independently**, with no pairing attempted at import time; an
+  unmatched ISSUE or RECEIVE is **not** a blocking condition on its own
+  (§16.1, §17.1); duplicate source reference within one file remains a
+  blocking `ERROR` (§15); a deterministic link between two
+  already-imported events is tested only if/when such a link is
+  actually approved (§11.2, PR22-or-later) — never a fuzzy or
+  heuristic match.
 - **Validation gate:** any single blocking `ERROR` anywhere in a batch
   correctly fails the whole session (`validation_failed`) and produces
   no `DryRunPlan`; a validated (zero-ERROR) session's plan never
   contains an ERROR-severity row — both directions regression-tested
   explicitly (§15, §28).
-- **Idempotency:** same file replay, same event replayed via a
-  corrected export with different `ImportSource`/row numbers, truly
-  distinct events not falsely merged (§25).
+- **Idempotency (current-state consistency fix, PR #102 — corrected to
+  match §25's Case A/B/C):** same approved snapshot replayed under the
+  same `migration_authority_id` creates no duplicate
+  `LegacyEquipmentEvent` rows (Case A); a different-checksum (corrected)
+  workbook is never automatically attached to the existing authority or
+  auto-merged as the same event (Case B, fail-closed); distinct events
+  within the one approved authority are not falsely merged (Case C)
+  (§25).
 - **Live safety:** current `Equipment.status` unchanged; current `OPEN`
   transaction unaffected; historical import does not block live
   dispatch (`idx_tx_one_active_borrow` regression tests, §3, §44).
@@ -2672,11 +2716,14 @@ GitHub PR #100). See §54 for the full per-slice reassessment.
   correctly rolls back the whole redaction transaction and leaves
   `retention_purged_at` unset (§38); no partial-purged state is ever
   observable.
-- **PostgreSQL:** stable event-identity uniqueness enforcement (once
-  chosen, §24), concurrency, rollback, atomic execution (§37, §44).
+- **PostgreSQL:** `(migration_authority_id, dataset_type,
+  legacy_source_row_key)` uniqueness enforcement (§24.2 — design
+  resolved; the physical constraint itself is PR21A's implementation
+  work), concurrency, rollback, atomic execution (§37, §44).
 - **Reporting:** timestamps normalize correctly to aware UTC (§22);
-  business_date/shift derive correctly for both sides of a pair; unified
-  history ordering alongside live transactions (§23, §27).
+  `business_date`/shift derive correctly per independent event, never
+  assuming an Issue/Receive pair (§11.2); unified history ordering
+  alongside live transactions (§23, §27).
 
 ---
 
