@@ -17,18 +17,32 @@ independent, immutable `LegacyEquipmentEvent` (§8.1); pairing an Issue
 event to a Receive event is never required for import and is deferred
 to PR22-or-later reconciliation, resolved only where deterministic
 source evidence proves it. **Stable event identity is RESOLVED FOR
-PR21 V1 only** (§24.2) via a frozen, Owner-approved migration snapshot
-— never claimed as a globally durable AppSheet key. **OD-PR21-5 is now
-RESOLVED for V1's actual scope** (§20) — `LegacyEquipmentEvent` has no
-`transaction_no` column at all. **OD-PR21-1 and OD-PR21-2 are AMENDED,
-not reversed** (§16, §17) — the original safety principle (never
-fabricate, never risk a live `OPEN` collision) is unchanged and, under
-event-first, structurally strengthened; only the specific "unmatched =
-`ERROR`" mechanism is narrowed, since pairing is no longer attempted at
-import time. **No source-dependent PR21 implementation slice has been
-implemented by this round** — PR21A/B/C become *ready to start* (§54),
-not already built. This document remains design/decision-only: no
-schema, migration, backend, frontend, or test file is touched (§51).
+PR21 V1 only** (§24.2) via one immutable `LegacyMigrationAuthority`
+design concept, bound to a frozen, Owner-approved workbook snapshot's
+checksum — never claimed as a globally durable AppSheet key; the
+database-enforced identity tuple is `(migration_authority_id,
+dataset_type, legacy_source_row_key)`, not `ลำดับ` alone. **OD-PR21-5 is
+now RESOLVED for V1's actual scope** (§20) — `LegacyEquipmentEvent` has
+no `transaction_no` column at all. **OD-PR21-1 and OD-PR21-2 are
+AMENDED, not reversed** (§16, §17) — the original safety principle
+(never fabricate, never risk a live `OPEN` collision) is unchanged and,
+under event-first, structurally strengthened; only the specific
+"unmatched = `ERROR`" mechanism is narrowed, since pairing is no longer
+attempted at import time. **No source-dependent PR21 implementation
+slice has been implemented by this round** — PR21A becomes *ready to
+start once this Design PR merges* (§54); PR21B/C's full scope remains
+**NOT FULLY READY** (an explicitly bounded canonical-sheet-only
+sub-slice of each may start; the SDC-sheet field-level-contract
+ambiguity, §6.1, remains an open Owner Decision and is not resolved by
+this round). This document remains design/decision-only: no schema,
+migration, backend, frontend, or test file is touched (§51).
+
+**PR #102 fix round.** Independent review of this round's first draft
+found one substantive identity-tuple gap and two readiness-wording
+contradictions; both are corrected throughout this revision (§24.2,
+§8.1, §43, §45, §46, §47, §52, §54). The fix round does not reopen any
+Owner Decision — it corrects this document's own not-yet-merged
+wording to match the decisions actually made.
 
 **Baseline:** `e22139346c7bdff1edf841022dd4b7dbebbb3573` (GitHub PR
 #101, Owner Decision Closure Round 1 squash merge, on
@@ -513,9 +527,15 @@ work, not fixed here):**
 - `legacy_order_reference` — the source's own `เลขที่ใบส่ง`/
   `เลขที่ใบรับเครื่อง` (order/slip number), preserved as business-
   reference provenance (§20's now-resolved OD-PR21-5, below).
-- `legacy_source_row_key` — the source's own `ลำดับ`, the durable
-  logical identity's key component *within the frozen V1 snapshot*
-  (§24.2) — never claimed durable beyond that snapshot.
+- `migration_authority_id` — reference to the immutable
+  `LegacyMigrationAuthority` (a design concept, not a table implemented
+  by this round) this event was imported under (§24.2, PR #102 fix
+  round) — together with `legacy_source_row_key`, forms this event's
+  durable logical identity. Never null; never reassigned after import.
+- `legacy_source_row_key` — the source's own `ลำดับ`. Durable **only in
+  combination with `migration_authority_id`** (§24.2) — never treated
+  as unique or durable on its own, and never claimed durable beyond the
+  one migration authority that imported it.
 - Import/session/source provenance fields (`import_session_id`,
   `import_source_id`, source checksum) — per §26, unchanged.
 - `created_at`/`imported_at` — standard audit timestamps.
@@ -1418,7 +1438,20 @@ PR21B/C/D may not proceed past this point until (D)'s evidentiary bar is
 met and the Owner then makes an explicit (A)/(B)/(C)-style choice based
 on it.
 
-### 24.2 Owner Decision Closure Round 2 — RESOLVED FOR PR21 V1: frozen migration snapshot
+### 24.2 Owner Decision Closure Round 2 — RESOLVED FOR PR21 V1: frozen migration snapshot, migration-authority-scoped identity
+
+**PR #102 fix round correction.** The revision below corrects a gap
+found during independent review of this section's first draft: the
+original draft's database-uniqueness tuple, `(dataset_type,
+legacy_source_row_key)`, said nothing about *which* Owner-approved
+snapshot it was scoped to — read on its own, it silently drifted toward
+implying `legacy_source_row_key` (`ลำดับ`) is unique in some general,
+durable sense, which is exactly the claim this document has never had
+evidence for and has repeatedly disclaimed (§24, §24.1). This round
+names the missing scope explicitly as `LegacyMigrationAuthority` and
+folds it into the identity tuple. **This is a correction to this
+section's own not-yet-merged text, not a reopening of the Owner
+Decision it resolves** — see the closing paragraph below.
 
 **§24.1's interim policy (D) required re-export stability evidence
 before approving `ลำดับ` as durable. No such evidence has been
@@ -1427,6 +1460,49 @@ the underlying *architectural* question a different way: PR21 V1 does
 not need `ลำดับ` to be durable *across arbitrary future exports* if
 PR21 V1 is scoped, by explicit Owner decision, to import from exactly
 **one** frozen, immutable, already-inspected workbook snapshot.
+
+**Migration authority — the governance identity this tuple was missing.**
+§24.1 and PR21 V1's whole approach scope `ลำดับ`'s uniqueness to "the
+Owner-approved frozen snapshot," but that scope needs its own name and
+its own identity if a database constraint is going to enforce it
+correctly. This round introduces **`LegacyMigrationAuthority`**: a
+governance-level identity representing *one* Owner-approved historical
+migration source, immutably bound to the workbook checksum that source
+was approved against.
+
+**`LegacyMigrationAuthority` is a design concept only in this round —
+no table, ORM model, migration, or API is added here.** Its exact
+physical shape is PR21A's own implementation-grade work, exactly like
+`LegacyEquipmentEvent`'s own schema (§8.1). Conceptually:
+
+- `id` — internal identity, referenced by every `LegacyEquipmentEvent`
+  row imported under this authority (§8.1's new `migration_authority_id`
+  field).
+- `approved_workbook_sha256` — the Owner-approved snapshot's checksum
+  (`8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`
+  for PR21 V1, §6) — set once, at approval, and **immutable**
+  afterward.
+- `approved_at` / an explicit governance-approval reference — recorded
+  once, never altered.
+- A scope/dataset marker (e.g. "PR21 legacy history V1") — distinguishes
+  this authority from any later, separately-approved migration
+  authority a future correction, or a different historical dataset,
+  might introduce.
+
+**Why this is not `ImportSource.id`.** `ImportSource` (§7, §26)
+identifies one *technical upload artifact* — a fresh row in
+`import_sources` for every upload, including a retried upload of the
+exact same bytes (§24: checksum is a regular index, not a unique
+constraint, so re-registration is not prevented or detected there).
+`LegacyMigrationAuthority` identifies the *business/governance
+approval* behind a migration — the Owner's decision to treat one
+specific, already-inspected workbook as PR21 V1's authoritative
+historical source. These must stay separate identities: a retried
+upload of the same approved workbook is a **new** `ImportSource` row
+but the **same** migration authority, because it is the same approved
+historical fact being re-submitted, not a new one. Substituting
+`ImportSource.id` for the authority would make same-file retries look
+like unrelated migrations and break the idempotency guarantee below.
 
 **Two identity levels, kept strictly separate (never conflated):**
 
@@ -1438,20 +1514,27 @@ PR21 V1 is scoped, by explicit Owner decision, to import from exactly
   tuple even though the underlying historical fact is unchanged (§24's
   own finding: `ImportSource.checksum` is a regular index, not a unique
   constraint). Retained for audit/debugging; never the logical identity.
-- **Level 2 — durable logical historical event identity, scoped to
-  PR21 V1's frozen snapshot:** `(dataset_type, legacy_source_row_key)`
-  — i.e. `(dataset_type, ลำดับ)` — identifies one historical event
-  **within the Owner-approved authoritative snapshot only.**
+- **Level 2 — durable logical historical event identity, scoped to one
+  migration authority:** `(migration_authority_id, dataset_type,
+  legacy_source_row_key)` — i.e. `(migration_authority_id, dataset_type,
+  ลำดับ)` — identifies one historical event **within the one
+  Owner-approved migration authority that imported it, and nowhere
+  else.** `legacy_source_row_key` (`ลำดับ`) alone, without the
+  authority component, is never treated as unique or durable — see
+  below.
 
 **The resolved Owner Decision, stated with the precision this round's
 own instruction requires:**
 
 > Stable event identity for PR21 V1 is resolved by scoping the
-> migration to the Owner-approved immutable workbook snapshot
-> (SHA-256 `8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`,
-> §6). Within that snapshot, `(dataset_type, source row key ลำดับ)`
-> identifies an event. Cross-export durability of the source row key
-> remains unproven and is outside automatic PR21 V1 replay semantics.
+> migration to one immutable `LegacyMigrationAuthority`, bound to the
+> Owner-approved workbook snapshot's checksum (SHA-256
+> `8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`,
+> §6). Within that one authority, `(migration_authority_id, dataset_type,
+> source row key ลำดับ)` identifies an event. `ลำดับ` is not, on its
+> own, claimed unique or durable outside its owning authority —
+> cross-export durability of the source row key remains unproven and is
+> outside automatic PR21 V1 replay semantics.
 
 **This is deliberately not the same claim as "`ลำดับ` is a proven
 globally stable AppSheet key."** That claim remains unsupported by
@@ -1460,46 +1543,69 @@ is narrower and fully supported by evidence already in hand: within
 one fixed, already-inspected, checksum-bound file, the key is 100%
 unique among non-null values (§24: 19,871/19,871 Issue, 19,750/19,750
 Receive) — sufficient for a database-enforced uniqueness constraint
-scoped to that one migration, without needing to assume anything about
-a future export this document has never seen.
+scoped to that one migration authority, without needing to assume
+anything about a future export this document has never seen. The
+`migration_authority_id` component is exactly what keeps that
+constraint properly scoped: it is a uniqueness claim about *this one
+approved migration*, never a claim about `ลำดับ` in general.
 
 **Full provenance is still persisted regardless** (§8.1, §26) —
-`import_session_id`, `import_source_id`, source checksum, sheet/row —
-the frozen-snapshot policy narrows what the *logical identity* may rely
-on, it does not reduce what is recorded.
+`migration_authority_id`, `import_session_id`, `import_source_id`,
+source checksum, sheet/row — the frozen-snapshot policy narrows what
+the *logical identity* may rely on, it does not reduce what is
+recorded.
 
 **Corrected/re-exported workbook policy (fail-closed).** After PR21 V1's
-migration executes against the approved snapshot, a workbook with a
-**different** SHA-256 must **never** be silently treated as an update
-or continuation of the original migration:
+migration executes under its approved `LegacyMigrationAuthority`, a
+workbook with a **different** SHA-256 must **never** be silently
+attached to that same authority:
 
-- Automatic re-import under the original migration's authority is
-  **rejected** — a different checksum is a structurally different
-  artifact, not a same-migration retry.
+- Automatic re-import **under the existing `migration_authority_id`**
+  is **rejected** — that authority's approved checksum is immutable
+  (above), so a different checksum cannot be absorbed by it; it is a
+  structurally different artifact, not a same-migration retry.
 - Any correction to already-imported history requires an **explicit**
-  correction/reconciliation workflow — owned by PR22 or a later,
-  separately-scoped correction slice, never by silently re-running PR21
-  V1 against a new file.
+  correction/reconciliation workflow, which must mint a **new or
+  explicitly superseding** `LegacyMigrationAuthority` for the corrected
+  workbook — owned by PR22 or a later, separately-scoped correction
+  slice, never by silently re-running PR21 V1 against a new file under
+  the existing authority.
 - Original imported provenance and events are **never** silently
-  overwritten by a later import attempt, regardless of checksum.
+  overwritten by a later import attempt, regardless of checksum or
+  which authority it claims to belong to.
 
 **Same-file replay (idempotency), stated precisely.** The **same**
-exact approved artifact — identical SHA-256 — **must** be safe to
-retry: re-running the migration against the identical workbook must
-never create duplicate `LegacyEquipmentEvent` rows. The database-level
-mechanism (PR21A/D's own implementation-grade work, not fixed here) is
-expected to enforce uniqueness on `(dataset_type,
-legacy_source_row_key)` **without** including the source checksum in
-that uniqueness scope — deliberately, so that a *different* (corrected)
-workbook attempting to write a colliding logical event produces a
-database-level conflict rather than silently succeeding as a "new"
-event under a different checksum, forcing the application layer to
-surface that conflict through the fail-closed corrected-export policy
-above rather than silently duplicating or silently diverging. Relying
-solely on an application-layer pre-check (a `SELECT` before `INSERT`) is
-insufficient on its own — §25's existing requirement for a
-database-enforced identity, not an assumption, is unchanged and
-directly reused here.
+exact approved artifact — identical SHA-256, submitted again under the
+**same** `migration_authority_id` (whether via the same `ImportSource`
+row or a fresh one created by a retried upload — §24's own finding
+that checksum registration is not itself unique means a retry can
+freely create a new `ImportSource`) — **must** be safe: re-running the
+migration must never create duplicate `LegacyEquipmentEvent` rows. The
+database-level mechanism (PR21A/D's own implementation-grade work, not
+fixed here) is expected to enforce uniqueness on
+`(migration_authority_id, dataset_type, legacy_source_row_key)`
+**without** including the source checksum or `ImportSource.id` directly
+in that uniqueness scope — deliberately, so that:
+
+- a retried upload of the identical workbook (new `ImportSource`, same
+  `migration_authority_id`, same checksum) collides safely against the
+  already-imported rows and creates nothing new — true idempotent
+  replay; and
+- a *different* (corrected) workbook — which, by the policy above,
+  cannot be attached to the existing `migration_authority_id` at all —
+  is rejected at the authority-assignment step, before it could ever
+  reach this uniqueness constraint disguised as a same-authority "new"
+  event under a different checksum.
+
+Coupling uniqueness directly to the raw checksum instead of to
+`migration_authority_id` was considered and rejected: a checksum is an
+artifact-storage property, not a domain identity, and binding
+uniqueness to it directly would re-couple the logical event identity to
+file representation — exactly the coupling `LegacyMigrationAuthority`
+exists to remove (above). Relying solely on an application-layer
+pre-check (a `SELECT` before `INSERT`) is insufficient on its own —
+§25's existing requirement for a database-enforced identity, not an
+assumption, is unchanged and directly reused here.
 
 **Blank-`ลำดับ` source rows.** The evidence manifest records blank row
 keys among otherwise-structural rows: 41 of 19,912 Issue rows, 18 of
@@ -1524,7 +1630,15 @@ workbook:
 
 **OD-PR21-0's stable-event-identity sub-component is therefore
 RESOLVED FOR PR21 V1** (§45) — narrowly, on the terms stated above, not
-as an unqualified global claim.
+as an unqualified global claim. **This correction does not reopen that
+resolution.** The underlying decision — PR21 V1 does not need `ลำดับ`
+to be durable across arbitrary future exports, because V1 is scoped to
+one frozen, Owner-approved snapshot — is unchanged from the original
+draft of this section. What changes is only the precise shape of the
+database-enforced tuple that implements it: `migration_authority_id` is
+now an explicit scoping component, rather than leaving that scope
+implicit in a bare `(dataset_type, legacy_source_row_key)` tuple that
+was mis-readable as a global claim.
 
 ---
 
@@ -2197,6 +2311,7 @@ No migration is created by this Design PR.
 | Proposed addition | Why existing schema is insufficient |
 |---|---|
 | `LegacyEquipmentEvent`-shaped table (§8.1, Owner Decision Closure Round 2 — supersedes the `HistoricalTransactionSourceRef`/`HistoricalTransaction` shape this row previously described), including per-event legacy operator-name capture (§13) | No existing table represents an independent, immutable historical `ISSUE`/`RECEIVE` fact; `borrow_transactions` is paired-transaction-shaped and, per §12's Round 2 conclusion, cannot safely represent an unpaired legacy event without fabrication. |
+| `LegacyMigrationAuthority`-shaped table (§24.2, PR #102 fix round — design concept only, not implemented by this Design PR) | No existing table represents the governance identity of one Owner-approved historical migration source, immutably bound to its approved checksum; `ImportSource` is upload-artifact identity, not migration-approval identity (§24.2), and cannot substitute for it without breaking same-file-retry idempotency. |
 | `LegacyEquipmentEventSourceRef`-shaped 1:N provenance table(s) (§8.1) — narrowed from up to 4 source rows per paired transaction to up to 2 per independent event | No existing link from a `LegacyEquipmentEvent` row back to import provenance exists; a flat single-provenance-per-event design cannot represent the header-plus-line-item shape (§6.1). |
 | `legacy_ward_aliases` mapping table (§14) | Confirmed absent from `master_data.py`. |
 | PR21-owned dry-run plan header/row tables (§36) | Existing `EquipmentMasterDryRunPlan`/`Row` are upsert-oriented and Equipment-specific; do not fit an insert-oriented event import, and are not reused directly per §30/§31's separate-routes decision. |
@@ -2266,18 +2381,24 @@ what PR21 V1 builds.
     **Still open:** the `ข้อมูลการส่ง SDC`/`ข้อมูลการรับ SDC` ambiguity
     (§6.1/§6.3) — unchanged by this round.
   - **Stable event identity — RESOLVED FOR PR21 V1** (§24.2, **Owner
-    Decision Closure Round 2**): PR21 V1 is a controlled, one-time
-    migration scoped to the Owner-approved frozen workbook snapshot
-    (SHA-256 above). Within that snapshot,
-    `(dataset_type, source row key ลำดับ)` identifies an event,
-    database-enforced. **Cross-export durability of `ลำดับ` remains
-    unproven and is explicitly not claimed** — a different-checksum
-    workbook is never automatically treated as a replay/update of the
-    original migration (§24.2's corrected-export policy). §24.1's
-    interim evidentiary bar (Option D) is superseded for V1's purposes
-    by this narrower, evidence-supported architectural resolution — it
-    is not that the original evidentiary question was answered, but
-    that V1 no longer needs it answered to proceed safely.
+    Decision Closure Round 2, corrected in the PR #102 fix round**):
+    PR21 V1 is a controlled, one-time migration scoped to one immutable
+    `LegacyMigrationAuthority` (a design concept, §24.2), itself bound
+    to the Owner-approved frozen workbook snapshot's checksum (SHA-256
+    above). Within that one authority,
+    `(migration_authority_id, dataset_type, source row key ลำดับ)`
+    identifies an event, database-enforced. **Cross-export durability of
+    `ลำดับ` remains unproven and is explicitly not claimed** — a
+    different-checksum workbook can never be attached to the existing
+    migration authority and is never automatically treated as a
+    replay/update of the original migration (§24.2's corrected-export
+    policy). §24.1's interim evidentiary bar (Option D) is superseded
+    for V1's purposes by this narrower, evidence-supported architectural
+    resolution — it is not that the original evidentiary question was
+    answered, but that V1 no longer needs it answered to proceed safely.
+    The fix-round correction (adding `migration_authority_id` to the
+    identity tuple) does not reopen this resolution — see §24.2's own
+    closing paragraph.
   - **Issue↔Receive pairing — RESOLVED: pairing NOT required for
     import** (§11.2, **Owner Decision Closure Round 2**): §11.1's
     architecture fork is closed by adopting fork (ii), event-first
@@ -2382,16 +2503,22 @@ merges.
   idempotency keys (§25); the `legacy_ward_aliases` table (§14); legacy
   BME persistence (§13); **any PR21 public response schema or route**
   (§29, §31 — PR21's own `LegacyHistoryDryRunPlanOut` and its routes are
-  added later, by a source-dependent slice, never by Foundation). All of
-  these remain blocked on OD-PR21-0. This slice carries **PR20-regression
-  risk** (it touches shared PR19/PR20 infrastructure) and deserves
-  isolated, independent review separate from PR21's own dataset-specific
+  added later, by a source-dependent slice, never by Foundation). At the
+  time this list was written, all of these were blocked on OD-PR21-0;
+  as of Owner Decision Closure Round 2 (PR #102 fix round), the
+  identity/pairing sub-components are resolved and PR21A/PR21B/PR21C
+  readiness is governed by §46/§54, not by this historical framing —
+  regardless, none of this list is in PR21-Foundation's own scope. This
+  slice carries **PR20-regression risk** (it touches shared PR19/PR20
+  infrastructure) and deserves isolated, independent review separate
+  from PR21's own dataset-specific
   schema.
 - **PR21A — Historical Event Schema / Provenance Foundation** (renamed
   from "Historical Transaction Schema" — Owner Decision Closure Round 2:
   the artifact is `LegacyEquipmentEvent`, §8.1, not a paired
   `HistoricalTransaction`). §8.1's simplified 1:N provenance tables
-  (up to 2 refs per event, not 4 per pair), §14's `legacy_ward_aliases`,
+  (up to 2 refs per event, not 4 per pair), the `LegacyMigrationAuthority`
+  design concept (§24.2, PR #102 fix round), §14's `legacy_ward_aliases`,
   §36's PR21 plan tables (registered against PR21-Foundation's provider
   interface, merged as GitHub PR #100). §7's topology is resolved. **Owner
   Decision Closure Round 1:** OD-PR21-3/4 RESOLVED — no longer blockers.
@@ -2400,28 +2527,45 @@ merges.
   RESOLVED (§11.2) — both formerly the sole remaining blockers, now
   cleared. OD-PR21-5 RESOLVED for V1's actual scope (§20.1) — no
   `transaction_no` column on `LegacyEquipmentEvent` at all.
-  **PR21A is now READY TO START** (design/schema work; not yet
-  implemented — a fresh, baseline-gated implementation task is still
-  required, §54). The exact ref-table cardinality remains PR21A's own
-  implementation-grade design work, as it always was.
+  **PR21A is READY TO START AFTER THIS DESIGN PR MERGES** (design/schema
+  work; not yet implemented — a fresh, baseline-gated implementation
+  task is still required, §54, gated on this PR's own merge like every
+  other design decision in this document). **PR21A must not include:**
+  Issue/Receive parser field contracts, any SDC-specific field, or any
+  source-sheet assumption beyond the generic event/provenance/
+  migration-authority schema — those remain scoped to PR21B/C below,
+  which carry the still-open SDC caveat this PR21A schema itself does
+  not depend on. The exact ref-table and `LegacyMigrationAuthority`
+  cardinality/columns remain PR21A's own implementation-grade design
+  work, as they always were.
 - **PR21B — Issue History Parser + Validation.** Not blocked by
   topology, OD-PR21-1 (RESOLVED+AMENDED, §16.1 — PR21B does not itself
   perform pairing), or OD-PR21-0's identity/pairing sub-components
-  (both RESOLVED, §24.2/§11.2). **PR21B is READY TO START for the four
-  confirmed canonical sheets.** SDC-sheet clarification (§6.1/§6.3)
-  remains open — this bounds `PR21B`'s eventual scope completeness (if
-  SDC later proves to hold additional real data, PR21B's scope may need
-  a follow-up), but does not block starting design/implementation
-  against the already-confirmed canonical scope. §4's identifier case
-  matrix and §15's error-code list remain PR21B's own implementation-
-  grade work, as originally scoped.
+  (both RESOLVED, §24.2/§11.2). **PR21B's full scope is NOT FULLY
+  READY — CONDITIONALLY BLOCKED** by OD-PR21-0's still-open
+  field-level-contract sub-component (the SDC-sheet ambiguity, §6.1/
+  §6.3): until the Owner clarifies whether the SDC sheets represent
+  additional, distinct transaction data, PR21B's own field contract
+  cannot be called final, and this document does not silently decide
+  that question on the Owner's behalf (§13 of this fix round's own
+  instruction). **A narrower, explicitly bounded sub-slice — parsing
+  and validating only the four already-confirmed canonical sheets,
+  excluding any SDC sheet entirely — may start once PR21A's schema is
+  available and this Design PR has merged.** That bounded sub-slice is
+  not the same commitment as "PR21B is ready": it must be scoped,
+  reviewed, and accepted as a canonical-sheet-only slice, with full
+  PR21B acceptance (including any SDC-derived fields) still pending the
+  SDC Owner Decision. §4's identifier case matrix and §15's error-code
+  list remain PR21B's own implementation-grade work, as originally
+  scoped, for whichever scope (bounded or full) is actually undertaken.
 - **PR21C — Receive History Parser + Matching/Validation.** Renamed
   emphasis: no longer "Matching" as an import-time gate — validates
   `RECEIVE` events **independently** (§11.2); adds no pairing heuristic
   of its own. OD-PR21-1/2 (RESOLVED+AMENDED) and OD-PR21-0's pairing
-  sub-component (RESOLVED, §11.2) are no longer blockers. **PR21C is
-  READY TO START for the four confirmed canonical sheets**, with the
-  identical SDC-sheet caveat PR21B carries.
+  sub-component (RESOLVED, §11.2) are no longer blockers. **PR21C's
+  full scope is NOT FULLY READY — CONDITIONALLY BLOCKED**, identical
+  reasoning and identical canonical-sheet-only bounded-sub-slice
+  carve-out to PR21B above.
 - **PR21D — Persisted Dry-run + Historical Event Execution** (renamed
   from "Historical Transaction Execution" — Owner Decision Closure
   Round 2: executes `LegacyEquipmentEvent` inserts, never
@@ -2436,16 +2580,22 @@ merges.
   `docs/ENGINEERING_WORKFLOW.md` §14 — not performed by this Design PR
   (§50).
 
-**Owner Decision Closure Round 2 correction:** PR21A/B/C's sole
-remaining Owner-Decision blockers (OD-PR21-0's identity and pairing
-sub-components) are now resolved. **This does not mean PR21A/B/C are
-implemented** — it means no further Owner Decision blocks *starting*
-their design/implementation. Each remains a separate, baseline-gated
+**Owner Decision Closure Round 2 correction, itself corrected by the
+PR #102 fix round:** OD-PR21-0's identity and pairing sub-components
+are resolved, which fully clears PR21A to start (once this Design PR
+merges) since PR21A's own schema does not depend on SDC. It does
+**not** fully clear PR21B/C: OD-PR21-0's remaining field-level-contract
+sub-component (the SDC-sheet ambiguity, §6.1) is still an **open Owner
+Decision**, and this document does not treat "identity and pairing are
+resolved" as if it also resolved that separate, still-open
+sub-component. PR21B/C's full scope therefore remains **NOT FULLY
+READY** until the Owner closes the SDC question; only the explicitly
+bounded, canonical-sheet-only sub-slice described above may start
+before then. **This does not mean PR21A, or PR21B/C's bounded
+sub-slice, are implemented** — each remains a separate, baseline-gated
 implementation task, not started by this document (§28 of this round's
-own scope guard). SDC-sheet ambiguity (§6.1) remains the one
-open item across the whole readiness picture, narrowly scoped to
-PR21B/C's eventual full-scope completeness, not a start-blocker for the
-confirmed canonical-sheet scope.
+own scope guard), and none may start before this Design PR itself
+merges.
 
 ---
 
@@ -2457,7 +2607,7 @@ confirmed canonical-sheet scope.
 | Canonical Issue/Receive sheet selection (§6.2) | RESOLVED — `Orders`+line-item pairs, verified by direct inspection | NO | — |
 | Field-level contract, canonical sheets (§10.1) | RESOLVED — every canonical-sheet field classified | NO | — |
 | SDC sheet ambiguity (§6.1) | NARROWED (aggregate counts match canonical sheets) but NOT RESOLVED — requires Owner clarification | Partially (scopes PR21B/C's eventual full completeness, not a start-blocker for the confirmed canonical scope) | Before PR21B/C's field contract is considered *final* |
-| Stable event identity (§24, §24.1, §24.2) | **RESOLVED FOR PR21 V1 this round** — frozen migration snapshot (§6's SHA-256), `(dataset_type, ลำดับ)` scoped identity; cross-export durability explicitly NOT claimed | NO (for V1) | — |
+| Stable event identity (§24, §24.1, §24.2) | **RESOLVED FOR PR21 V1, corrected in the PR #102 fix round** — one immutable `LegacyMigrationAuthority` (design concept) bound to the frozen snapshot's checksum (§6); `(migration_authority_id, dataset_type, ลำดับ)` scoped identity; cross-export durability explicitly NOT claimed | NO (for V1) | — |
 | Issue↔Receive pairing (§11, §11.1, §11.2) | **RESOLVED this round** — event-first adopted; pairing not required for import; deterministic-only linking deferred to PR22-or-later | NO | — |
 | Validation/dry-run semantics (§15, §28) | RESOLVED: all-or-nothing PR19 gate; dry-run never contains ERROR-severity rows | NO | — |
 | Generic persisted-plan API design (§29-§32) | RESOLVED design contract, PR20 wire-compatible | NO (design) | — |
@@ -2471,13 +2621,17 @@ confirmed canonical-sheet scope.
 | Patient/clinical data handling (§42) | RESOLVED — notes never imported into permanent history by default | NO | — |
 | `LegacyEquipmentEvent` schema / provenance shape (§8.1) | Semantics RESOLVED this round; **exact schema is PR21A's own implementation-grade work** | NO (design) | PR21A's own design task |
 
-**PR21 overall readiness, reassessed:** the identity and pairing
-blockers that stopped every source-dependent slice are now resolved.
-**PR21A, PR21B, and PR21C are ready to start** (design/implementation
-not yet begun — separate, baseline-gated tasks). PR21D/E/F remain
-blocked, transitively, on those slices actually being built. **PR21-
-Foundation is complete** (merged, GitHub PR #100). See §54 for the full
-per-slice reassessment.
+**PR21 overall readiness, reassessed (PR #102 fix round):** the
+identity and pairing blockers that stopped every source-dependent slice
+are now resolved. **PR21A is ready to start once this Design PR merges**
+(design/implementation not yet begun — a separate, baseline-gated
+task). **PR21B and PR21C are NOT fully ready** — OD-PR21-0's
+field-level-contract sub-component (SDC-sheet ambiguity, §6.1) is still
+an open Owner Decision that bounds their full scope; only an explicitly
+bounded, canonical-sheet-only sub-slice of each may start, once PR21A's
+schema exists (§46). PR21D/E/F remain blocked, transitively, on those
+slices actually being built. **PR21-Foundation is complete** (merged,
+GitHub PR #100). See §54 for the full per-slice reassessment.
 
 ---
 
@@ -2603,12 +2757,15 @@ implementation (PR21A–F) is performed by this PR.
   (§10.1); SDC-sheet field contract remains open, scoped narrowly to
   that ambiguity.
 - **Source event identity unknown — RESOLVED FOR PR21 V1 (Owner
-  Decision Closure Round 2)** (§24, §24.1, §24.2: frozen migration
-  snapshot policy adopted; `(dataset_type, ลำดับ)` scoped to the
-  Owner-approved snapshot's SHA-256; cross-export durability explicitly
-  not claimed — the underlying factual question about `ลำดับ`'s general
-  AppSheet behavior remains genuinely unanswered, but PR21 V1 no longer
-  needs it answered to proceed safely).
+  Decision Closure Round 2, corrected in the PR #102 fix round)** (§24,
+  §24.1, §24.2: frozen migration snapshot policy adopted via one
+  immutable `LegacyMigrationAuthority` design concept, bound to the
+  Owner-approved snapshot's SHA-256; `(migration_authority_id,
+  dataset_type, ลำดับ)` scoped to that one authority; cross-export
+  durability explicitly not claimed — the underlying factual question
+  about `ลำดับ`'s general AppSheet behavior remains genuinely
+  unanswered, but PR21 V1 no longer needs it answered to proceed
+  safely).
 - **Issue↔Receive deterministic matching unknown — RESOLVED (Owner
   Decision Closure Round 2): event-first architecture adopted** (§11,
   §11.1, §11.2: direct inspection confirms no linking field exists,
@@ -2672,9 +2829,13 @@ OD-PR21-6) are now RESOLVED** (OD-PR21-5 resolved for V1's actual
 scope); **OD-PR21-0 has three of four sub-components RESOLVED**
 (topology, identity, pairing) and one narrowly open (field-level
 contract's SDC-sheet ambiguity, §6.1). **PR21-Foundation is complete**
-(§46, §47 — merged as GitHub PR #100). **PR21A/B/C are now ready to
-start** (design/implementation, not yet begun). See §54 for the
-precise, per-slice readiness reassessment this round produces.
+(§46, §47 — merged as GitHub PR #100). **PR21A is ready to start once
+this Design PR merges** (design/implementation, not yet begun).
+**PR21B/C's full scope remains NOT FULLY READY** — the open SDC
+sub-component still blocks it — though an explicitly bounded,
+canonical-sheet-only sub-slice of each may start once PR21A's schema
+exists (§46, PR #102 fix round). See §54 for the precise, per-slice
+readiness reassessment this round produces.
 
 ---
 
@@ -2736,32 +2897,58 @@ assessment; §54 is the current, governing readiness reassessment.
 
 ## 54. Owner Decision Closure Round 2 — readiness reassessment
 
+**Corrected by the PR #102 fix round.** This section's first draft
+declared PR21B/C unconditionally "READY TO START for the four confirmed
+canonical sheets" in the same breath as leaving the SDC field-level-
+contract sub-component of OD-PR21-0 open — two statements that cannot
+both be unconditionally true at once (independent review flagged this
+as a governance contradiction). The corrected readiness model below
+resolves it: OD-PR21-0's identity and pairing sub-components being
+RESOLVED clears PR21A, whose schema does not depend on SDC; it does
+**not** clear PR21B/C's full scope, whose field contract genuinely does
+depend on the still-open SDC question.
+
 **PR21A (Historical Event Schema / Provenance Foundation): READY TO
-START.** §53's blocking remainder (OD-PR21-0's stable-event-identity
-sub-component) is RESOLVED FOR V1 (§24.2). OD-PR21-0's pairing
-sub-component, while not itself a direct PR21A blocker, is also
-RESOLVED (§11.2), simplifying the provenance shape PR21A will design
-(§8.1: up to 2 source refs per event, not 4 per pair). **Not yet
-implemented** — this is a design-readiness statement, not a completion
-statement; a separate, baseline-gated implementation task is required.
+START ONCE THIS DESIGN PR MERGES.** §53's blocking remainder
+(OD-PR21-0's stable-event-identity sub-component) is RESOLVED FOR V1
+(§24.2, migration-authority-scoped). OD-PR21-0's pairing sub-component,
+while not itself a direct PR21A blocker, is also RESOLVED (§11.2),
+simplifying the provenance shape PR21A will design (§8.1: up to 2
+source refs per event, not 4 per pair, plus the `LegacyMigrationAuthority`
+design concept, §24.2). **PR21A must not include** Issue/Receive
+parser field contracts, SDC-specific fields, or any source-sheet
+assumption beyond the generic event/provenance/migration-authority
+schema (§46). **Not yet implemented** — this is a design-readiness
+statement, not a completion statement, and it does not take effect
+until this Design PR itself merges; a separate, baseline-gated
+implementation task is still required.
 
-**PR21B (Issue History Parser + Validation): READY TO START for the
-four confirmed canonical sheets.** §53's blocking remainder (SDC-sheet
+**PR21B (Issue History Parser + Validation): NOT FULLY READY —
+CONDITIONALLY BLOCKED.** §53's blocking remainder (SDC-sheet
 clarification, identifier case matrix, error-code list, stable event
-identity) is reduced to: the SDC-sheet ambiguity (§6.1), which bounds
-eventual full-scope completeness but does not block starting against
-the already-confirmed canonical scope, and the identifier case matrix/
-error-code list, which remain PR21B's own implementation-grade design
-work exactly as originally scoped (never a pre-blocker in this
-document's own convention, matching PR20's OD-1 precedent).
+identity) is reduced to: the SDC-sheet ambiguity (§6.1) alone, since
+stable event identity is now RESOLVED FOR V1. That remaining item is a
+genuine, still-open **Owner Decision** (OD-PR21-0's field-level-contract
+sub-component), not a mere completeness caveat — this document does not
+treat it as resolved just because the other two OD-PR21-0
+sub-components are. **A bounded, canonical-sheet-only sub-slice** —
+parsing/validating only the four already-confirmed canonical sheets,
+explicitly excluding any SDC sheet — may start once PR21A's schema
+exists and this Design PR has merged; that sub-slice must be scoped and
+reviewed as a bounded slice, not treated as "PR21B is ready." Full
+PR21B acceptance (including any SDC-derived scope) still requires the
+Owner to close the SDC question. The identifier case matrix/error-code
+list remain PR21B's own implementation-grade design work exactly as
+originally scoped, for whichever scope is actually undertaken.
 
-**PR21C (Receive History Parser + Matching/Validation): READY TO START
-for the four confirmed canonical sheets**, identical treatment to
-PR21B. §53's blocking remainder (SDC-sheet clarification, pairing
-architecture fork) is reduced to the same SDC caveat alone — the
-pairing architecture fork is RESOLVED (§11.2); PR21C validates
-`RECEIVE` events independently and must not add a pairing heuristic of
-its own (§11.2's own PR22-boundary restriction, unchanged).
+**PR21C (Receive History Parser + Matching/Validation): NOT FULLY
+READY — CONDITIONALLY BLOCKED**, identical treatment and identical
+canonical-sheet-only bounded-sub-slice carve-out to PR21B. §53's
+blocking remainder (SDC-sheet clarification, pairing architecture fork)
+is reduced to the SDC caveat alone — the pairing architecture fork is
+RESOLVED (§11.2); PR21C validates `RECEIVE` events independently and
+must not add a pairing heuristic of its own (§11.2's own PR22-boundary
+restriction, unchanged).
 
 **PR21D (Persisted Dry-run + Historical Event Execution): STILL
 BLOCKED**, transitively on PR21A–C actually being implemented (design
@@ -2777,23 +2964,28 @@ PR21D, unchanged.
 approved slices merging, unchanged.
 
 **What this round does NOT do, stated explicitly (per this round's own
-scope guard):** it does not implement PR21A/B/C/D/E; it does not add a
-migration; it does not modify `backend/**`, `frontend/**`,
-`alembic/**`, `tests/**`, `.github/**`, or `Docker/**`; it does not
-merge without independent review; it does not start PR21A. It resolves
-`ลำดับ`'s scope-narrowed applicability (never its general, cross-export
-AppSheet behavior — that remains genuinely unproven and is not claimed
-otherwise, §24.2) and adopts event-first as the Issue↔Receive
-architecture (§11.2) — both explicit Owner Decisions this round makes,
-per this round's own task specification, not decisions this session
-withheld. It does not touch GitHub PR #97's P2 follow-up or PR #98's
-P2-A/P2-B follow-ups, which remain accepted/non-blocking/unresolved in
-their existing recorded wording — not claimed resolved by this round.
-It does not modify `docs/ROADMAP.md`/`docs/ROADMAP_STATUS.md` — this
-round is still design/decision closure, not an implementation milestone
-requiring a roadmap-status change; that change belongs to PR21F
-(Governance Sync) after implementation slices actually merge, per this
-document's own established convention (§50).
+scope guard, carried forward unchanged by the PR #102 fix round):** it
+does not implement PR21A/B/C/D/E/F; it does not add a migration
+(`LegacyMigrationAuthority` is a design concept only, §24.2 — no
+SQLAlchemy model, Alembic migration, API, or test is added); it does
+not modify `backend/**`, `frontend/**`, `alembic/**`, `tests/**`,
+`.github/**`, or `Docker/**`; it does not merge without independent
+review; it does not start PR21A; it does not resolve the SDC-sheet
+ambiguity (§6.1) — that Owner Decision remains explicitly open, not
+silently decided by this fix round. It resolves `ลำดับ`'s scope-narrowed
+applicability (never its general, cross-export AppSheet behavior — that
+remains genuinely unproven and is not claimed otherwise, §24.2) and
+adopts event-first as the Issue↔Receive architecture (§11.2) — both
+explicit Owner Decisions this round makes, per this round's own task
+specification, not decisions this session withheld. It does not touch
+GitHub PR #97's P2 follow-up or PR #98's P2-A/P2-B follow-ups, which
+remain accepted/non-blocking/unresolved in their existing recorded
+wording — not claimed resolved by this round. It does not modify
+`docs/ROADMAP.md`/`docs/ROADMAP_STATUS.md` — this round is still
+design/decision closure, not an implementation milestone requiring a
+roadmap-status change; that change belongs to PR21F (Governance Sync)
+after implementation slices actually merge, per this document's own
+established convention (§50).
 
 ---
 

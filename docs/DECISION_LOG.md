@@ -3328,41 +3328,60 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   Issue↔Receive-pairing sub-component is RESOLVED** on these terms
   (§45).
 - **Stable event identity — RESOLVED FOR PR21 V1 (frozen migration
-  snapshot; new §24.2), superseding §24.1's interim evidentiary bar for
+  snapshot; §24.2), superseding §24.1's interim evidentiary bar for
   V1's own purposes without claiming that bar's underlying question was
-  actually answered:**
+  actually answered. Corrected in the PR #102 fix round** (independent
+  review found the identity tuple below, as first drafted, omitted the
+  scope that makes it safe — see the correction note at the end of this
+  bullet):
   > Stable event identity for PR21 V1 is resolved by scoping the
-  > migration to the Owner-approved immutable workbook snapshot
-  > (SHA-256 `8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`,
-  > §6). Within that snapshot, `(dataset_type, source row key ลำดับ)`
-  > identifies an event. Cross-export durability of the source row key
-  > remains unproven and is outside automatic PR21 V1 replay semantics.
+  > migration to one immutable `LegacyMigrationAuthority` (a design
+  > concept, not a table implemented by this round), bound to the
+  > Owner-approved workbook snapshot's checksum (SHA-256
+  > `8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`,
+  > §6). Within that one authority, `(migration_authority_id,
+  > dataset_type, source row key ลำดับ)` identifies an event. `ลำดับ` is
+  > not, on its own, claimed unique or durable outside its owning
+  > authority — cross-export durability of the source row key remains
+  > unproven and is outside automatic PR21 V1 replay semantics.
 
   This is deliberately **not** the claim that `ลำดับ` is a proven,
   globally stable AppSheet key across arbitrary future exports — that
   claim remains unsupported and is not made. Two identity levels are
   kept strictly separate: Level 1, `(import_source_id, sheet_name,
   source_row_number)`, artifact-scoped and not durable across a
-  re-upload; Level 2, `(dataset_type, legacy_source_row_key)`,
-  database-enforced and scoped to the one frozen snapshot only.
-  **OD-PR21-0's stable-event-identity sub-component is RESOLVED FOR
-  PR21 V1** on these narrow terms (§45).
+  re-upload; Level 2, `(migration_authority_id, dataset_type,
+  legacy_source_row_key)`, database-enforced and scoped to the one
+  Owner-approved migration authority only. `LegacyMigrationAuthority`
+  is distinct from `ImportSource`: the former is the governance
+  identity of one approved historical migration source (immutably bound
+  to its approved checksum), the latter is a technical upload-artifact
+  identity that a same-file retry creates fresh each time — substituting
+  `ImportSource.id` for the authority would break same-file-retry
+  idempotency. **OD-PR21-0's stable-event-identity sub-component is
+  RESOLVED FOR PR21 V1** on these narrow terms (§45); the fix-round
+  correction (adding `migration_authority_id` to the tuple) does not
+  reopen that resolution — it corrects a gap in the tuple's first draft,
+  where `(dataset_type, legacy_source_row_key)` alone said nothing about
+  which approved snapshot it was scoped to and could be misread as a
+  general-durability claim this document has never supported.
 - **Corrected-export policy (fail-closed, §24.2):** after V1's migration
-  executes against the approved snapshot, a workbook with a
-  **different** SHA-256 is never automatically treated as a
-  continuation of the original migration; any correction requires an
-  explicit correction/reconciliation workflow (PR22-or-later); original
-  imported provenance and events are never silently overwritten.
+  executes under its approved `LegacyMigrationAuthority`, a workbook
+  with a **different** SHA-256 is never automatically attached to that
+  same authority; any correction requires an explicit
+  correction/reconciliation workflow that mints a new or explicitly
+  superseding migration authority (PR22-or-later); original imported
+  provenance and events are never silently overwritten.
 - **Same-file replay policy (idempotency, §24.2):** re-running the
-  migration against the identical (same-checksum) workbook must be safe
-  and must never create duplicate `LegacyEquipmentEvent` rows. Database
-  uniqueness is expected to be scoped to `(dataset_type,
-  legacy_source_row_key)` **without** including the source checksum,
-  so a corrected workbook attempting to write a colliding logical event
-  produces a database-level conflict rather than silently succeeding
-  under a different checksum — forcing the conflict through the
-  corrected-export policy above rather than allowing silent duplication
-  or divergence.
+  migration against the identical (same-checksum) workbook under the
+  **same** `migration_authority_id` must be safe and must never create
+  duplicate `LegacyEquipmentEvent` rows. Database uniqueness is expected
+  to be scoped to `(migration_authority_id, dataset_type,
+  legacy_source_row_key)` **without** including the source checksum or
+  `ImportSource.id` directly, so a workbook that cannot be attached to
+  the existing authority is rejected at the authority-assignment step
+  rather than ever reaching this constraint as a same-authority "new"
+  event under a different checksum.
 - **Blank-`ลำดับ` row policy (§24.2):** a data-bearing source row
   missing its required `ลำดับ` key is an `ERROR`-severity finding
   (whole-session `validation_failed`); no identity is ever synthesized
@@ -3414,16 +3433,28 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   `ข้อมูลการส่ง SDC`/`ข้อมูลการรับ SDC` sheet ambiguity, §6.1) remains
   the only open item across all seven decisions.**
 - **Readiness reassessment (design doc §54, superseding §53's own
-  reassessment which is preserved unchanged as historical record):**
-  PR21A (renamed Historical Event Schema / Provenance Foundation) is
-  **READY TO START** — not yet implemented, a separate baseline-gated
-  implementation task is required. PR21B/PR21C are **READY TO START for
-  the four confirmed canonical sheets**, bounded by the still-open
-  SDC-sheet ambiguity for full-scope completeness only. PR21D (renamed
-  Persisted Dry-run + Historical Event Execution) remains blocked,
-  transitively on PR21A–C actually being implemented. PR21E/PR21F
-  remain blocked, unchanged. PR21-Foundation (GitHub PR #100) remains
-  complete and unaffected.
+  reassessment which is preserved unchanged as historical record).
+  Corrected in the PR #102 fix round:** the first draft of this
+  reassessment declared PR21B/PR21C unconditionally "READY TO START for
+  the four confirmed canonical sheets" in the same breath as leaving
+  OD-PR21-0's SDC field-level-contract sub-component open — independent
+  review flagged this as an internal contradiction (a declared blocker
+  cannot coexist with an unconditional "ready" claim on the item it
+  blocks). Corrected reading: PR21A (renamed Historical Event Schema /
+  Provenance Foundation) is **READY TO START once this Design PR
+  merges** — its schema does not depend on SDC — not yet implemented, a
+  separate baseline-gated implementation task is required, and it must
+  not include Issue/Receive parser field contracts or any SDC-specific
+  field. PR21B/PR21C's **full scope is NOT FULLY READY** — the
+  still-open SDC-sheet ambiguity (§6.1) is a genuine open Owner
+  Decision, not a mere completeness caveat. An explicitly **bounded,
+  canonical-sheet-only sub-slice** of each may start once PR21A's schema
+  exists, but that is a narrower commitment than "PR21B/C are ready";
+  full acceptance still requires the Owner to close the SDC question.
+  PR21D (renamed Persisted Dry-run + Historical Event Execution) remains
+  blocked, transitively on PR21A–C actually being implemented. PR21E/
+  PR21F remain blocked, unchanged. PR21-Foundation (GitHub PR #100)
+  remains complete and unaffected.
 - **What this round does not do:** it does not implement
   PR21A/B/C/D/E/F; it adds no migration; it does not modify
   `backend/**`, `frontend/**`, `alembic/**`, `tests/**`, `.github/**`,
@@ -3446,7 +3477,14 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   §12, §15, §43, §44, §45, §46, §47, §52, §53 updated in place; 8
   pre-existing dangling "§54" cross-references from Round 1 corrected to
   "§53" before this round's genuinely new §54 was added; section count
-  now 54). `docs/evidence/pr21/equipment-pool-workbook-manifest.{json,md}`
+  now 54). **PR #102 fix round (same PR, prior to merge; recorded here
+  rather than as a separate entry per the fix round's own instruction):**
+  §24.2, §8.1, §43, §45, §46, §47, §52, §54, and the header/status banner
+  further revised in place to introduce the `LegacyMigrationAuthority`
+  design concept and correct the identity tuple and PR21A/B/C readiness
+  wording described above; section count unchanged at 54; no new
+  section added; no prior dated entry rewritten.
+  `docs/evidence/pr21/equipment-pool-workbook-manifest.{json,md}`
   unchanged, still bound to SHA-256
   `8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`.
 - **Status:** Documentation-only. No backend, frontend, migration, test,
