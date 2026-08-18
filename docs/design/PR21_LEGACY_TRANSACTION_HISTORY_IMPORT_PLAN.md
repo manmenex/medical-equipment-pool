@@ -2635,12 +2635,27 @@ merges.
 - **PR21D — Persisted Dry-run + Historical Event Execution** (renamed
   from "Historical Transaction Execution" — Owner Decision Closure
   Round 2: executes `LegacyEquipmentEvent` inserts, never
-  `BorrowTransaction` inserts, §12). **Blocked on:** PR21A–C actually
-  being implemented (not merely ready — design readiness is not
-  completion), and on OD-PR21-5's narrow remaining piece (§20.1: the
-  exact `transaction_no` format, relevant only if/when a future
-  reconciliation step materializes real `BorrowTransaction` rows — out
-  of PR21D's own V1 scope as currently defined).
+  `BorrowTransaction` inserts, §12). **Blocking-list correction
+  (current-state consistency fix, PR #102):** the prior wording listed
+  OD-PR21-5's `transaction_no` format as a PR21D blocker in the same
+  breath as calling it out of PR21D's own V1 scope — self-contradictory,
+  since something explicitly out of scope cannot also be a blocker.
+  OD-PR21-5 is RESOLVED for V1 (§20.1): `LegacyEquipmentEvent` has no
+  `transaction_no` column, PR21D writes no `BorrowTransaction` row, and
+  the format question is therefore **not** a PR21D blocker at all.
+  **Blocked on:** PR21A's implementation, and on the approved
+  implementation of whichever PR21B/PR21C slice covers PR21D's actual
+  chosen V1 source scope (the bounded canonical-sheet-only sub-slice, or
+  full PR21B/C if the SDC ambiguity is resolved and folded into that
+  scope — which scope PR21D ultimately depends on is not decided here,
+  §46). **Not blocked on:** Issue↔Receive pairing (§11.2, resolved),
+  stable event identity design (§24.2, resolved), OD-PR21-5's
+  `transaction_no` format, or any future PR22-or-later `BorrowTransaction`
+  reconciliation — none of these are PR21D V1 prerequisites. **Future
+  out-of-scope note, not a blocker:** if a PR22-or-later reconciliation
+  workflow ever materializes a real `BorrowTransaction` row for a
+  confirmed pair, that row's `transaction_no` policy is a separate,
+  later concern for that future slice, not for PR21D.
 - **PR21E — Frontend Real Integration.** **Blocked on:** PR21D.
 - **PR21F — Governance Sync.** After all approved slices merge, per
   `docs/ENGINEERING_WORKFLOW.md` §14 — not performed by this Design PR
