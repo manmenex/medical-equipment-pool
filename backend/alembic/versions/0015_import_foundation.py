@@ -447,6 +447,51 @@ _EXPECTED_INDEXES = {
     },
 }
 
+# PR #103 fix round (PR21A, migration 0019 -- unmerged as of this
+# writing): a narrow, fail-closed allowlist for one specific object a
+# LATER, already-authorized migration legitimately adds to one of THIS
+# migration's own governed tables. This exists only because of this
+# repository's own architecture: `0001_initial.py`'s
+# `Base.metadata.create_all()` uses today's LIVE ORM metadata, so on
+# any from-scratch migration replay (including this migration's own
+# regression tests) a later migration's schema addition to an
+# earlier-governed table can already be present by the time THIS
+# migration's own verify runs here -- even though a true historical
+# system that stopped exactly at this revision would not yet have it
+# (0019 is what actually adds it for a real historical-upgrade path,
+# via its own `ALTER TABLE`). This is deliberately NOT a general
+# relaxation of closed-world verification: every entry here is named
+# explicitly, and each one is optional in exactly one direction --
+# - absent entirely -> acceptable (the true historical-upgrade shape
+#   at this revision, or any install that has not reached 0019 yet)
+# - present with EXACTLY this definition and healthy -> acceptable
+#   (the live-ORM/fresh-install shape, since 0001 already created it)
+# - present with any other name-collision, wrong definition, or
+#   unhealthy state -> still fails closed, exactly like every other
+#   governed object in this module.
+# This migration's own required contract above (`_EXPECTED_COLUMNS`/
+# `_EXPECTED_CONSTRAINTS`/`_EXPECTED_INDEXES`) is completely unchanged
+# by this addition -- `import_sources`' PR19A1-shipped shape still
+# converges exactly as it always has when this one optional object is
+# absent.
+_OPTIONAL_LATER_CONSTRAINTS = {
+    "import_sources": {
+        # `LegacyEquipmentEvent`'s own composite-FK "ownership" target
+        # (docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md
+        # §8.1's provenance-integrity fix) -- proves an event's/ref's
+        # `import_source_id` actually belongs to its `import_session_id`.
+        "uq_import_sources_session_id": "UNIQUE (import_session_id, id)",
+    },
+}
+_OPTIONAL_LATER_INDEXES = {
+    "import_sources": {
+        "uq_import_sources_session_id": (
+            "CREATE UNIQUE INDEX uq_import_sources_session_id ON public.import_sources USING btree "
+            "(import_session_id, id)"
+        ),
+    },
+}
+
 _MISSING = "missing"
 _COMPATIBLE = "compatible"
 _INCOMPATIBLE_DEFINITION = "incompatible_definition"
@@ -608,7 +653,10 @@ def _verify_schema_convergence(bind) -> None:
                 "column also exists."
             )
         unexpected_constraints = _unexpected_object_names(
-            bind, _ACTUAL_CONSTRAINT_NAMES_SQL, table, _EXPECTED_CONSTRAINTS[table]
+            bind,
+            _ACTUAL_CONSTRAINT_NAMES_SQL,
+            table,
+            {**_EXPECTED_CONSTRAINTS[table], **_OPTIONAL_LATER_CONSTRAINTS.get(table, {})},
         )
         if unexpected_constraints:
             problems.append(
@@ -617,7 +665,12 @@ def _verify_schema_convergence(bind) -> None:
                 "an additional UNIQUE) changes write behavior even when every expected constraint is "
                 "also present and correct -- never silently accepted."
             )
-        unexpected_indexes = _unexpected_object_names(bind, _ACTUAL_INDEX_NAMES_SQL, table, _EXPECTED_INDEXES[table])
+        unexpected_indexes = _unexpected_object_names(
+            bind,
+            _ACTUAL_INDEX_NAMES_SQL,
+            table,
+            {**_EXPECTED_INDEXES[table], **_OPTIONAL_LATER_INDEXES.get(table, {})},
+        )
         if unexpected_indexes:
             problems.append(
                 f"{table}: unexpected index(es) not part of the PR19A1 design contract: "
@@ -705,6 +758,52 @@ def _verify_schema_convergence(bind) -> None:
                     f"(pg_index.indisvalid={valid}, indisready={ready}). This usually means a previous "
                     "CREATE INDEX CONCURRENTLY / REINDEX CONCURRENTLY was interrupted. A same-named, "
                     "same-definition index is never classified as compatible while unhealthy."
+                )
+
+    # PR #103 fix round: verify each `_OPTIONAL_LATER_CONSTRAINTS`/
+    # `_OPTIONAL_LATER_INDEXES` entry -- unlike the required loops
+    # above, MISSING is explicitly acceptable here (the true
+    # historical-upgrade shape at this revision); only a wrong
+    # definition or unhealthy state fails closed, exactly like every
+    # other governed object.
+    for table, constraints in _OPTIONAL_LATER_CONSTRAINTS.items():
+        for name, expected_def in constraints.items():
+            kind, actual = _classify_constraint(bind, table, name, expected_def)
+            if kind == _MISSING:
+                continue
+            elif kind == _INCOMPATIBLE_DEFINITION:
+                actual_def, _validated = actual
+                problems.append(
+                    f"{table}: optional later-authorized constraint '{name}' is present but its "
+                    "definition diverges from the one PR21A's own migration is authorized to add.\n"
+                    f"    Expected: {expected_def}\n"
+                    f"    Actual:   {actual_def}"
+                )
+            elif kind == _INCOMPATIBLE_HEALTH:
+                actual_def, validated = actual
+                problems.append(
+                    f"{table}: optional later-authorized constraint '{name}' matches its expected "
+                    f"definition but is not validated (pg_constraint.convalidated={validated})."
+                )
+
+    for table, indexes in _OPTIONAL_LATER_INDEXES.items():
+        for name, expected_def in indexes.items():
+            kind, actual = _classify_index(bind, name, expected_def)
+            if kind == _MISSING:
+                continue
+            elif kind == _INCOMPATIBLE_DEFINITION:
+                actual_def, _valid, _ready = actual
+                problems.append(
+                    f"{table}: optional later-authorized index '{name}' is present but its definition "
+                    "diverges from the one PR21A's own migration is authorized to add.\n"
+                    f"    Expected: {expected_def}\n"
+                    f"    Actual:   {actual_def}"
+                )
+            elif kind == _INCOMPATIBLE_HEALTH:
+                actual_def, valid, ready = actual
+                problems.append(
+                    f"{table}: optional later-authorized index '{name}' matches its expected definition "
+                    f"but is not usable (pg_index.indisvalid={valid}, indisready={ready})."
                 )
 
     if problems:

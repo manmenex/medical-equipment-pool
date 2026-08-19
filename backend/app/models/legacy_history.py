@@ -128,7 +128,24 @@ class LegacyEquipmentEvent(UUIDPKMixin, Base):
     **`equipment_id`/`resolved_ward_id` use `ON DELETE RESTRICT`** (§19):
     historical evidence must remain durable -- deleting `Equipment` or a
     `Ward` that a permanent historical event still references is refused
-    at the database level, never silently cascaded away."""
+    at the database level, never silently cascaded away.
+
+    **PR #103 fix round -- `import_source_id` must belong to
+    `import_session_id`, database-enforced.** Two independent single-
+    column FKs each individually valid does not prove the pair is
+    *internally consistent* -- a row could otherwise carry a real
+    session and a real (but unrelated) source. Enforced here by a
+    composite `ForeignKeyConstraint` against `import_sources
+    (import_session_id, id)`, which requires `ImportSource`'s own
+    supporting `uq_import_sources_session_id` (see that model). The
+    single-column FK on `import_source_id` alone is therefore *removed*
+    (the composite fully subsumes it, mirroring `ImportSession`'s own
+    `current_validation_job_id` -> `import_jobs` pattern above it in
+    this codebase) -- `import_session_id` keeps its own plain FK, both
+    because it is independently useful and because it anchors the
+    composite `uq_legacy_equipment_events_id_session_source` below,
+    which is this table's own composite-FK target for
+    `LegacyEquipmentEventSourceRef` (see that class)."""
 
     __tablename__ = "legacy_equipment_events"
     __table_args__ = (
@@ -141,6 +158,26 @@ class LegacyEquipmentEvent(UUIDPKMixin, Base):
             "event_type",
             "legacy_source_row_key",
             name="uq_legacy_equipment_events_identity",
+        ),
+        # PR #103 fix round: the composite-FK target
+        # `LegacyEquipmentEventSourceRef` uses to prove a ref's own
+        # (session, source) exactly matches the event it claims
+        # provenance for -- see that class's own composite FK.
+        UniqueConstraint(
+            "id",
+            "import_session_id",
+            "import_source_id",
+            name="uq_legacy_equipment_events_id_session_source",
+        ),
+        # PR #103 fix round: proves this event's own `import_source_id`
+        # actually belongs to its own `import_session_id`, not merely
+        # that each is independently a real row -- see this class's own
+        # docstring.
+        ForeignKeyConstraint(
+            ["import_session_id", "import_source_id"],
+            ["import_sources.import_session_id", "import_sources.id"],
+            name="fk_legacy_equipment_events_source_belongs_to_session",
+            ondelete="RESTRICT",
         ),
         Index("ix_legacy_equipment_events_equipment_id", "equipment_id"),
         Index("ix_legacy_equipment_events_import_session_id", "import_session_id"),
@@ -200,9 +237,10 @@ class LegacyEquipmentEvent(UUIDPKMixin, Base):
     import_session_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("import_sessions.id", ondelete="RESTRICT"), nullable=False
     )
-    import_source_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("import_sources.id", ondelete="RESTRICT"), nullable=False
-    )
+    # No plain FK here -- see the composite `ForeignKeyConstraint` in
+    # __table_args__ above, which covers this column together with
+    # `import_session_id` and proves the pair is mutually consistent.
+    import_source_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     # When this historical fact was imported into this system -- distinct
     # from `occurred_at` (when the historical fact itself happened).
     imported_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, server_default=func.now())
@@ -243,7 +281,27 @@ class LegacyEquipmentEventSourceRef(UUIDPKMixin, Base):
     here would risk a second, potentially-diverging source of truth for
     the same fact. Raw legacy operator text lives on
     `LegacyEquipmentEvent.legacy_bme_name` (that class's own docstring)
-    -- not repeated here, for the same reason."""
+    -- not repeated here, for the same reason.
+
+    **PR #103 fix round -- a ref's own (session, source) must exactly
+    match the event it claims provenance for, database-enforced.**
+    Three independent single-column FKs (to the event, to the session,
+    to the source) each individually valid does not prove a ref could
+    never claim provenance for event E while carrying an unrelated
+    session/source pair -- three real rows existing separately says
+    nothing about whether they agree with each other. Enforced here by
+    one composite `ForeignKeyConstraint` against `legacy_equipment_events
+    (id, import_session_id, import_source_id)` -- i.e. the referenced
+    event row's own `id` AND its own `import_session_id` AND its own
+    `import_source_id` must match this ref's three columns together, not
+    merely each column independently pointing at *some* valid row. The
+    three single-column FKs are therefore *removed* (fully subsumed by
+    the composite, mirroring `LegacyEquipmentEvent`'s own removal of its
+    plain `import_source_id` FK above). `import_session_id`/
+    `import_source_id` remain stored here (this table's own
+    `ix_legacy_equipment_event_source_refs_event_id` index and the
+    per-event uniqueness scope above are unaffected) -- this fix changes
+    only how their validity is proven, not whether they are kept."""
 
     __tablename__ = "legacy_equipment_event_source_refs"
     __table_args__ = (
@@ -265,17 +323,28 @@ class LegacyEquipmentEventSourceRef(UUIDPKMixin, Base):
             "source_row_number",
             name="uq_legacy_equipment_event_source_refs_event_source_row",
         ),
+        # PR #103 fix round: see this class's own docstring -- proves
+        # this ref's (session, source) exactly matches the event it
+        # claims provenance for, not merely that each is independently a
+        # real row.
+        ForeignKeyConstraint(
+            ["legacy_equipment_event_id", "import_session_id", "import_source_id"],
+            [
+                "legacy_equipment_events.id",
+                "legacy_equipment_events.import_session_id",
+                "legacy_equipment_events.import_source_id",
+            ],
+            name="fk_legacy_equipment_event_source_refs_event_context",
+            ondelete="RESTRICT",
+        ),
     )
 
-    legacy_equipment_event_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("legacy_equipment_events.id", ondelete="RESTRICT"), nullable=False
-    )
-    import_session_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("import_sessions.id", ondelete="RESTRICT"), nullable=False
-    )
-    import_source_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("import_sources.id", ondelete="RESTRICT"), nullable=False
-    )
+    # No plain FKs on these three columns -- see the composite
+    # `ForeignKeyConstraint` in __table_args__ above, which covers all
+    # three together and proves they mutually agree with one real event.
+    legacy_equipment_event_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    import_session_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    import_source_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     # Defense-in-depth copy, mirroring `ImportSource.checksum` (§26) --
     # never itself a source of truth, never read instead of
     # `ImportSource.checksum`.

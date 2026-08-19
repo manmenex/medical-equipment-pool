@@ -41,14 +41,26 @@ applied to all six tables -- every expected value captured empirically
 against a real, freshly migrated PostgreSQL 16 database (this
 repository's own local instance, migrated through `0018` first, then
 these six tables created directly via `Base.metadata.create_all()` and
-their catalog rows read back), never hand-guessed. Two FK constraint
-names below are PostgreSQL's own auto-truncated defaults (NAMEDATALEN
-63): `legacy_equipment_event_source_refs`'s FK to
-`legacy_equipment_events` renders as
-`legacy_equipment_event_source_re_legacy_equipment_event_id_fkey`, not
-the naively-expected `..._source_refs_legacy_equipment_event_id_fkey`
--- captured empirically, not guessed, exactly like `0015`-`0018`'s own
-truncated-name findings.
+their catalog rows read back), never hand-guessed.
+
+**PR #103 fix round -- permanent provenance session/source ownership
+integrity.** `legacy_equipment_events.import_source_id` and
+`legacy_equipment_event_source_refs`' own `(import_session_id,
+import_source_id)` pair are no longer validated by independent
+single-column FKs (which cannot prove the pair mutually agrees) --
+both now use explicitly-named composite `ForeignKeyConstraint`s
+(`fk_legacy_equipment_events_source_belongs_to_session`,
+`fk_legacy_equipment_event_source_refs_event_context`) proving the
+declared source genuinely belongs to the declared session/event. This
+required one new supporting composite `UNIQUE` on the pre-existing,
+already-merged `import_sources` table (`uq_import_sources_session_id`,
+added here via `ALTER TABLE`, never by editing migration `0015`
+itself) -- see `0015_import_foundation.py`'s own
+`_OPTIONAL_LATER_CONSTRAINTS`/`_OPTIONAL_LATER_INDEXES` for why that
+migration needed a narrow, explicitly-named accommodation (this
+repository's `0001_initial.py` uses live `Base.metadata.create_all()`,
+so a from-scratch migration replay can already see this later
+addition by the time 0015's own closed-world check runs).
 
 Only ever runs raw SQL against PostgreSQL (see 0002/0004/0011-0018's
 identical dialect-gated pattern) -- SQLite tests create these tables via
@@ -79,6 +91,19 @@ CREATE TABLE IF NOT EXISTS legacy_migration_authorities (
 )
 """
 
+_ALTER_IMPORT_SOURCES_ADD_SESSION_ID_UNIQUE = """
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'uq_import_sources_session_id' AND conrelid = 'import_sources'::regclass
+    ) THEN
+        ALTER TABLE import_sources
+            ADD CONSTRAINT uq_import_sources_session_id UNIQUE (import_session_id, id);
+    END IF;
+END $$
+"""
+
 _CREATE_EQUIPMENT_EVENTS = """
 CREATE TABLE IF NOT EXISTS legacy_equipment_events (
     id UUID NOT NULL PRIMARY KEY,
@@ -92,11 +117,16 @@ CREATE TABLE IF NOT EXISTS legacy_equipment_events (
     resolved_ward_id UUID REFERENCES wards(id) ON DELETE RESTRICT,
     legacy_bme_name VARCHAR(150),
     import_session_id UUID NOT NULL REFERENCES import_sessions(id) ON DELETE RESTRICT,
-    import_source_id UUID NOT NULL REFERENCES import_sources(id) ON DELETE RESTRICT,
+    import_source_id UUID NOT NULL,
     imported_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
     CONSTRAINT ck_legacy_equipment_events_event_type CHECK (event_type IN ('ISSUE','RECEIVE')),
     CONSTRAINT uq_legacy_equipment_events_identity
-        UNIQUE (migration_authority_id, event_type, legacy_source_row_key)
+        UNIQUE (migration_authority_id, event_type, legacy_source_row_key),
+    CONSTRAINT uq_legacy_equipment_events_id_session_source
+        UNIQUE (id, import_session_id, import_source_id),
+    CONSTRAINT fk_legacy_equipment_events_source_belongs_to_session
+        FOREIGN KEY (import_session_id, import_source_id)
+        REFERENCES import_sources (import_session_id, id) ON DELETE RESTRICT
 )
 """
 
@@ -113,14 +143,17 @@ CREATE INDEX IF NOT EXISTS ix_legacy_equipment_events_import_session_id
 _CREATE_EVENT_SOURCE_REFS = """
 CREATE TABLE IF NOT EXISTS legacy_equipment_event_source_refs (
     id UUID NOT NULL PRIMARY KEY,
-    legacy_equipment_event_id UUID NOT NULL REFERENCES legacy_equipment_events(id) ON DELETE RESTRICT,
-    import_session_id UUID NOT NULL REFERENCES import_sessions(id) ON DELETE RESTRICT,
-    import_source_id UUID NOT NULL REFERENCES import_sources(id) ON DELETE RESTRICT,
+    legacy_equipment_event_id UUID NOT NULL,
+    import_session_id UUID NOT NULL,
+    import_source_id UUID NOT NULL,
     source_checksum VARCHAR(128) NOT NULL,
     sheet_name VARCHAR(100) NOT NULL,
     source_row_number INTEGER NOT NULL,
     CONSTRAINT uq_legacy_equipment_event_source_refs_event_source_row
-        UNIQUE (legacy_equipment_event_id, import_source_id, sheet_name, source_row_number)
+        UNIQUE (legacy_equipment_event_id, import_source_id, sheet_name, source_row_number),
+    CONSTRAINT fk_legacy_equipment_event_source_refs_event_context
+        FOREIGN KEY (legacy_equipment_event_id, import_session_id, import_source_id)
+        REFERENCES legacy_equipment_events (id, import_session_id, import_source_id) ON DELETE RESTRICT
 )
 """
 
@@ -318,11 +351,24 @@ _EXPECTED_CONSTRAINTS = {
         "legacy_equipment_events_import_session_id_fkey": (
             "FOREIGN KEY (import_session_id) REFERENCES import_sessions(id) ON DELETE RESTRICT"
         ),
-        "legacy_equipment_events_import_source_id_fkey": (
-            "FOREIGN KEY (import_source_id) REFERENCES import_sources(id) ON DELETE RESTRICT"
-        ),
         "uq_legacy_equipment_events_identity": (
             "UNIQUE (migration_authority_id, event_type, legacy_source_row_key)"
+        ),
+        # PR #103 fix round: the composite-FK target
+        # `LegacyEquipmentEventSourceRef` uses to prove a ref's own
+        # (session, source) exactly matches the event it claims
+        # provenance for.
+        "uq_legacy_equipment_events_id_session_source": (
+            "UNIQUE (id, import_session_id, import_source_id)"
+        ),
+        # PR #103 fix round: replaces the old single-column
+        # `legacy_equipment_events_import_source_id_fkey` -- proves
+        # `import_source_id` actually belongs to `import_session_id`,
+        # not merely that each is independently a real row. Requires
+        # `import_sources`' own new `uq_import_sources_session_id`.
+        "fk_legacy_equipment_events_source_belongs_to_session": (
+            "FOREIGN KEY (import_session_id, import_source_id) REFERENCES "
+            "import_sources(import_session_id, id) ON DELETE RESTRICT"
         ),
         "ck_legacy_equipment_events_event_type": (
             "CHECK (((event_type)::text = ANY ((ARRAY['ISSUE'::character varying, "
@@ -331,20 +377,19 @@ _EXPECTED_CONSTRAINTS = {
     },
     "legacy_equipment_event_source_refs": {
         "legacy_equipment_event_source_refs_pkey": "PRIMARY KEY (id)",
-        # PostgreSQL's own NAMEDATALEN-63 auto-truncation of the naive
-        # `legacy_equipment_event_source_refs_legacy_equipment_event_id_fkey`
-        # -- captured empirically, not guessed.
-        "legacy_equipment_event_source_re_legacy_equipment_event_id_fkey": (
-            "FOREIGN KEY (legacy_equipment_event_id) REFERENCES legacy_equipment_events(id) ON DELETE RESTRICT"
-        ),
-        "legacy_equipment_event_source_refs_import_session_id_fkey": (
-            "FOREIGN KEY (import_session_id) REFERENCES import_sessions(id) ON DELETE RESTRICT"
-        ),
-        "legacy_equipment_event_source_refs_import_source_id_fkey": (
-            "FOREIGN KEY (import_source_id) REFERENCES import_sources(id) ON DELETE RESTRICT"
-        ),
         "uq_legacy_equipment_event_source_refs_event_source_row": (
             "UNIQUE (legacy_equipment_event_id, import_source_id, sheet_name, source_row_number)"
+        ),
+        # PR #103 fix round: replaces the three old single-column FKs
+        # (to the event, to the session, to the source) -- proves this
+        # ref's (session, source) exactly matches the event it claims
+        # provenance for, not merely that each column independently
+        # points at some valid row. Requires
+        # `legacy_equipment_events`' own new
+        # `uq_legacy_equipment_events_id_session_source`.
+        "fk_legacy_equipment_event_source_refs_event_context": (
+            "FOREIGN KEY (legacy_equipment_event_id, import_session_id, import_source_id) REFERENCES "
+            "legacy_equipment_events(id, import_session_id, import_source_id) ON DELETE RESTRICT"
         ),
     },
     "legacy_ward_aliases": {
@@ -428,6 +473,10 @@ _EXPECTED_INDEXES = {
         "uq_legacy_equipment_events_identity": (
             "CREATE UNIQUE INDEX uq_legacy_equipment_events_identity ON public.legacy_equipment_events "
             "USING btree (migration_authority_id, event_type, legacy_source_row_key)"
+        ),
+        "uq_legacy_equipment_events_id_session_source": (
+            "CREATE UNIQUE INDEX uq_legacy_equipment_events_id_session_source ON "
+            "public.legacy_equipment_events USING btree (id, import_session_id, import_source_id)"
         ),
         "ix_legacy_equipment_events_equipment_id": (
             "CREATE INDEX ix_legacy_equipment_events_equipment_id ON public.legacy_equipment_events "
@@ -658,6 +707,40 @@ def _verify_schema_convergence(bind) -> None:
                     f"(pg_index.indisvalid={valid}, indisready={ready})."
                 )
 
+    # PR #103 fix round: `import_sources` is not one of PR21A's own six
+    # governed tables (its full closed-world contract belongs to
+    # migration 0015, untouched here), so it is deliberately NOT added
+    # to `_GOVERNED_TABLES` above -- re-declaring 0015's entire
+    # column/constraint/index set here would duplicate that migration's
+    # own ownership and risk drift. This migration only adds ONE new
+    # supporting constraint to that pre-existing table (the composite-FK
+    # target `LegacyEquipmentEvent` needs, see
+    # `_ALTER_IMPORT_SOURCES_ADD_SESSION_ID_UNIQUE`), so only that one
+    # addition is verified here -- empirically, not hand-guessed,
+    # exactly like every other expected definition in this module.
+    kind, actual = _classify_constraint(
+        bind, "import_sources", "uq_import_sources_session_id", "UNIQUE (import_session_id, id)"
+    )
+    if kind == _MISSING:
+        problems.append(
+            "import_sources: constraint 'uq_import_sources_session_id' does not exist even after "
+            "this migration's own ALTER TABLE ran -- this indicates an internal migration bug, not "
+            "a pre-existing incompatible schema."
+        )
+    elif kind == _INCOMPATIBLE_DEFINITION:
+        actual_def, _validated = actual
+        problems.append(
+            "import_sources: constraint 'uq_import_sources_session_id' exists but its definition "
+            "diverges.\n    Expected: UNIQUE (import_session_id, id)\n"
+            f"    Actual:   {actual_def}"
+        )
+    elif kind == _INCOMPATIBLE_HEALTH:
+        actual_def, validated = actual
+        problems.append(
+            "import_sources: constraint 'uq_import_sources_session_id' matches its expected "
+            f"definition but is not validated (pg_constraint.convalidated={validated})."
+        )
+
     if problems:
         raise RuntimeError(
             "Migration 0019 aborted: the existing PostgreSQL catalog diverges from the PR21A design "
@@ -673,6 +756,7 @@ def upgrade() -> None:
     if bind.dialect.name != "postgresql":
         return
 
+    op.execute(sa.text(_ALTER_IMPORT_SOURCES_ADD_SESSION_ID_UNIQUE))
     op.execute(sa.text(_CREATE_MIGRATION_AUTHORITIES))
     op.execute(sa.text(_CREATE_EQUIPMENT_EVENTS))
     op.execute(sa.text(_CREATE_EQUIPMENT_EVENTS_EQUIPMENT_INDEX))
@@ -699,3 +783,4 @@ def downgrade() -> None:
     op.execute(sa.text("DROP TABLE IF EXISTS legacy_equipment_event_source_refs"))
     op.execute(sa.text("DROP TABLE IF EXISTS legacy_equipment_events"))
     op.execute(sa.text("DROP TABLE IF EXISTS legacy_migration_authorities"))
+    op.execute(sa.text("ALTER TABLE import_sources DROP CONSTRAINT IF EXISTS uq_import_sources_session_id"))

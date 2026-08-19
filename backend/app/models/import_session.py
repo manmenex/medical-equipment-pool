@@ -129,6 +129,17 @@ class ImportSource(UUIDPKMixin, Base):
         # composite `source_fingerprint` has no such lookup requirement
         # anywhere in this design.
         Index("ix_import_sources_checksum", "checksum"),
+        # PR #103 fix round (PR21A): minimum supporting composite UNIQUE
+        # a downstream composite-FK "ownership" target needs --
+        # `import_session_id` is already unique on its own (the 1:1
+        # constraint above, unchanged), so this adds no new business
+        # rule; it exists purely so `(import_session_id, id)` together
+        # can be the target of a composite FK proving some other row's
+        # declared source belongs to its declared session (mirrors this
+        # module's own `uq_import_jobs_session_id` pattern on
+        # `ImportJob`, used by `ImportSession`'s own composite FK to
+        # `import_jobs` above).
+        UniqueConstraint("import_session_id", "id", name="uq_import_sources_session_id"),
     )
 
     import_session_id: Mapped[uuid.UUID] = mapped_column(

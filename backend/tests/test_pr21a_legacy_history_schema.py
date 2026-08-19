@@ -570,6 +570,192 @@ async def test_duplicate_source_ref_on_the_same_event_still_rejected(db_session:
     await db_session.rollback()
 
 
+# ---------------------------------------------------------------------------
+# F2. Permanent provenance -- session/source ownership consistency (PR #103)
+# ---------------------------------------------------------------------------
+
+
+async def test_event_import_source_must_belong_to_its_own_import_session(db_session: AsyncSession, seeded_users):
+    """PR #103 fix: `fk_legacy_equipment_events_source_belongs_to_session`
+    -- an event claiming `import_session_id = Session A` but
+    `import_source_id = Source B` (a real row, but belonging to a
+    DIFFERENT session) must be rejected. Two individually-valid FKs are
+    not sufficient; the pair must agree."""
+    from sqlalchemy import text
+
+    await db_session.execute(text("PRAGMA foreign_keys=ON"))
+    actor_id = await _get_user_id(db_session)
+    authority = await _seed_authority(db_session, actor_id=actor_id)
+    session_a, source_a = await _seed_import_session_and_source(db_session, actor_id=actor_id, checksum="a" * 64)
+    session_b, source_b = await _seed_import_session_and_source(db_session, actor_id=actor_id, checksum="b" * 64)
+    equipment = await _seed_equipment(db_session)
+    assert source_a.import_session_id == session_a.id
+    assert source_b.import_session_id == session_b.id
+
+    db_session.add(
+        _make_event(
+            authority_id=authority.id,
+            equipment_id=equipment.id,
+            import_session_id=session_a.id,
+            import_source_id=source_b.id,
+            row_key="crosscontext1",
+        )
+    )
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+    await db_session.rollback()
+
+
+async def test_event_import_source_matching_its_own_session_succeeds(db_session: AsyncSession, seeded_users):
+    """Positive counterpart: `import_session_id`/`import_source_id` that
+    genuinely belong together commit successfully -- the composite FK
+    does not reject the normal, consistent case."""
+    actor_id = await _get_user_id(db_session)
+    authority = await _seed_authority(db_session, actor_id=actor_id)
+    session, source = await _seed_import_session_and_source(db_session, actor_id=actor_id, checksum=authority.approved_workbook_sha256)
+    equipment = await _seed_equipment(db_session)
+
+    event = _make_event(
+        authority_id=authority.id,
+        equipment_id=equipment.id,
+        import_session_id=session.id,
+        import_source_id=source.id,
+        row_key="samecontext1",
+    )
+    db_session.add(event)
+    await db_session.commit()
+    await db_session.refresh(event)
+    assert event.import_session_id == session.id
+    assert event.import_source_id == source.id
+
+
+async def test_source_ref_context_must_exactly_match_its_own_event(db_session: AsyncSession, seeded_users):
+    """PR #103 fix: `fk_legacy_equipment_event_source_refs_event_context`
+    -- a ref claiming provenance for event E but carrying a DIFFERENT
+    (session, source) pair than E's own must be rejected, even though
+    the ref's `legacy_equipment_event_id`, `import_session_id`, and
+    `import_source_id` are each individually a real row somewhere."""
+    from sqlalchemy import text
+
+    await db_session.execute(text("PRAGMA foreign_keys=ON"))
+    actor_id = await _get_user_id(db_session)
+    authority = await _seed_authority(db_session, actor_id=actor_id)
+    session_a, source_a = await _seed_import_session_and_source(db_session, actor_id=actor_id, checksum="c" * 64)
+    session_b, source_b = await _seed_import_session_and_source(db_session, actor_id=actor_id, checksum="d" * 64)
+    equipment = await _seed_equipment(db_session)
+
+    event = _make_event(
+        authority_id=authority.id,
+        equipment_id=equipment.id,
+        import_session_id=session_a.id,
+        import_source_id=source_a.id,
+        row_key="ctxevent1",
+    )
+    db_session.add(event)
+    await db_session.flush()
+
+    db_session.add(
+        LegacyEquipmentEventSourceRef(
+            legacy_equipment_event_id=event.id,
+            import_session_id=session_b.id,
+            import_source_id=source_b.id,
+            source_checksum=source_b.checksum,
+            sheet_name="Orders ยืมเครื่อง",
+            source_row_number=1,
+        )
+    )
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+    await db_session.rollback()
+
+
+async def test_source_ref_partial_context_mismatch_still_rejected(db_session: AsyncSession, seeded_users):
+    """PR #103 fix, partial-mismatch variant: only the session differs
+    (the ref's own source is a real row -- just not the one belonging to
+    the session the ref claims). The composite FK requires the FULL
+    triple to match the event's own row, not merely that each column is
+    independently valid somewhere."""
+    from sqlalchemy import text
+
+    await db_session.execute(text("PRAGMA foreign_keys=ON"))
+    actor_id = await _get_user_id(db_session)
+    authority = await _seed_authority(db_session, actor_id=actor_id)
+    session_a, source_a = await _seed_import_session_and_source(db_session, actor_id=actor_id, checksum="e" * 64)
+    session_b, _source_b = await _seed_import_session_and_source(db_session, actor_id=actor_id, checksum="f" * 64)
+    equipment = await _seed_equipment(db_session)
+
+    event = _make_event(
+        authority_id=authority.id,
+        equipment_id=equipment.id,
+        import_session_id=session_a.id,
+        import_source_id=source_a.id,
+        row_key="partialmismatch1",
+    )
+    db_session.add(event)
+    await db_session.flush()
+
+    db_session.add(
+        LegacyEquipmentEventSourceRef(
+            legacy_equipment_event_id=event.id,
+            import_session_id=session_b.id,  # wrong session
+            import_source_id=source_a.id,  # source_a is real, but belongs to session_a, not session_b
+            source_checksum=source_a.checksum,
+            sheet_name="Orders ยืมเครื่อง",
+            source_row_number=1,
+        )
+    )
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+    await db_session.rollback()
+
+
+async def test_source_ref_context_matching_its_own_event_succeeds(db_session: AsyncSession, seeded_users):
+    """Positive counterpart: a ref whose (session, source) exactly
+    matches its own event's commits successfully, and two distinct
+    events may still legitimately share the same header row (the PR
+    #103 fix round 1 regression, unaffected by this round's composite
+    FK)."""
+    actor_id = await _get_user_id(db_session)
+    authority = await _seed_authority(db_session, actor_id=actor_id)
+    session, source = await _seed_import_session_and_source(db_session, actor_id=actor_id, checksum=authority.approved_workbook_sha256)
+    equipment = await _seed_equipment(db_session)
+
+    event_a = _make_event(authority_id=authority.id, equipment_id=equipment.id, import_session_id=session.id, import_source_id=source.id, row_key="matchctxA1")
+    event_b = _make_event(authority_id=authority.id, equipment_id=equipment.id, import_session_id=session.id, import_source_id=source.id, row_key="matchctxB1")
+    db_session.add_all([event_a, event_b])
+    await db_session.flush()
+
+    header_sheet = "Orders ยืมเครื่อง"
+    db_session.add(
+        LegacyEquipmentEventSourceRef(
+            legacy_equipment_event_id=event_a.id,
+            import_session_id=session.id,
+            import_source_id=source.id,
+            source_checksum=source.checksum,
+            sheet_name=header_sheet,
+            source_row_number=9,
+        )
+    )
+    db_session.add(
+        LegacyEquipmentEventSourceRef(
+            legacy_equipment_event_id=event_b.id,
+            import_session_id=session.id,
+            import_source_id=source.id,
+            source_checksum=source.checksum,
+            sheet_name=header_sheet,
+            source_row_number=9,
+        )
+    )
+    await db_session.commit()
+
+    refs = (
+        await db_session.execute(
+            select(LegacyEquipmentEventSourceRef).where(LegacyEquipmentEventSourceRef.source_row_number == 9)
+        )
+    ).scalars().all()
+    assert {r.legacy_equipment_event_id for r in refs} == {event_a.id, event_b.id}
+
+
 async def test_source_ref_survives_independently_of_temporary_source_row_storage(db_session: AsyncSession, seeded_users):
     """§26: provenance is normalized (`sheet_name`, `source_row_number`,
     `source_checksum`), never a dump of the full raw row -- confirmed
