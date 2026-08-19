@@ -35,6 +35,12 @@ import app.services.import_adapters.equipment_master  # noqa: E402,F401
 # future dataset-type plan provider.
 import app.services.import_plan_providers.equipment_master  # noqa: E402,F401
 
+# Roadmap PR21A. No PR21 parser/adapter exists yet (that is PR21B/C/D's
+# job) -- this provider is registered now so retention's fail-closed
+# dispatch can resolve it the moment a future adapter's dry-run
+# completes; it has no other production caller in this slice.
+import app.services.import_plan_providers.legacy_history  # noqa: E402,F401
+
 # Stable, safe codes for FastAPI/Starlette's own HTTPException, keyed by
 # status code. Anything not listed falls back to the generic HTTP_ERROR code
 # — this intentionally stays a small, fixed set rather than trying to name
