@@ -195,8 +195,8 @@ CREATE TABLE IF NOT EXISTS legacy_history_dry_run_plan_rows (
     normalized_values JSONB,
     warnings JSONB,
     CONSTRAINT ck_legacy_history_dry_run_plan_rows_event_type CHECK (event_type IN ('ISSUE','RECEIVE')),
-    CONSTRAINT uq_legacy_history_dry_run_plan_rows_plan_row_number
-        UNIQUE (dry_run_plan_id, source_row_number)
+    CONSTRAINT uq_legacy_history_dry_run_plan_rows_plan_event_row
+        UNIQUE (dry_run_plan_id, event_type, source_row_number)
 )
 """
 
@@ -399,7 +399,9 @@ _EXPECTED_CONSTRAINTS = {
         "legacy_history_dry_run_plan_rows_dry_run_plan_id_fkey": (
             "FOREIGN KEY (dry_run_plan_id) REFERENCES legacy_history_dry_run_plans(id) ON DELETE RESTRICT"
         ),
-        "uq_legacy_history_dry_run_plan_rows_plan_row_number": "UNIQUE (dry_run_plan_id, source_row_number)",
+        "uq_legacy_history_dry_run_plan_rows_plan_event_row": (
+            "UNIQUE (dry_run_plan_id, event_type, source_row_number)"
+        ),
         "ck_legacy_history_dry_run_plan_rows_event_type": (
             "CHECK (((event_type)::text = ANY ((ARRAY['ISSUE'::character varying, "
             "'RECEIVE'::character varying])::text[])))"
@@ -480,9 +482,10 @@ _EXPECTED_INDEXES = {
             "CREATE UNIQUE INDEX legacy_history_dry_run_plan_rows_pkey ON "
             "public.legacy_history_dry_run_plan_rows USING btree (id)"
         ),
-        "uq_legacy_history_dry_run_plan_rows_plan_row_number": (
-            "CREATE UNIQUE INDEX uq_legacy_history_dry_run_plan_rows_plan_row_number ON "
-            "public.legacy_history_dry_run_plan_rows USING btree (dry_run_plan_id, source_row_number)"
+        "uq_legacy_history_dry_run_plan_rows_plan_event_row": (
+            "CREATE UNIQUE INDEX uq_legacy_history_dry_run_plan_rows_plan_event_row ON "
+            "public.legacy_history_dry_run_plan_rows USING btree (dry_run_plan_id, event_type, "
+            "source_row_number)"
         ),
         "ix_legacy_history_dry_run_plan_rows_plan_id": (
             "CREATE INDEX ix_legacy_history_dry_run_plan_rows_plan_id ON "

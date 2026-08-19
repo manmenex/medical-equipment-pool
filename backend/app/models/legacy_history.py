@@ -417,8 +417,18 @@ class LegacyHistoryDryRunPlanRow(UUIDPKMixin, Base):
         CheckConstraint(
             f"event_type IN {LEGACY_EVENT_TYPES!r}", name="ck_legacy_history_dry_run_plan_rows_event_type"
         ),
+        # Scoped per event_type (PR #103 fix round): a dry-run plan may
+        # legitimately contain both an ISSUE row and a RECEIVE row that
+        # reuse the identical physical source_row_number -- those two
+        # source sheets are independent datasets in PR21 V1 and naturally
+        # renumber from 1. Same plan + same event_type + same
+        # source_row_number is still a duplicate and rejected; same plan +
+        # different event_type + same source_row_number is allowed.
         UniqueConstraint(
-            "dry_run_plan_id", "source_row_number", name="uq_legacy_history_dry_run_plan_rows_plan_row_number"
+            "dry_run_plan_id",
+            "event_type",
+            "source_row_number",
+            name="uq_legacy_history_dry_run_plan_rows_plan_event_row",
         ),
         Index("ix_legacy_history_dry_run_plan_rows_plan_id", "dry_run_plan_id"),
     )

@@ -757,6 +757,120 @@ async def test_retention_never_touches_permanent_legacy_equipment_events(client:
 
 
 # ---------------------------------------------------------------------------
+# H2. Dry-run plan row uniqueness -- ISSUE vs RECEIVE row-number overlap
+# ---------------------------------------------------------------------------
+
+
+async def _seed_bare_plan(db_session: AsyncSession, *, session: ImportSession, source: ImportSource, authority: LegacyMigrationAuthority) -> LegacyHistoryDryRunPlan:
+    """Like `_seed_plan_with_one_row` but inserts no rows -- callers add
+    their own `LegacyHistoryDryRunPlanRow` rows directly."""
+    from app.models.import_session import ImportJob
+
+    validation_job = ImportJob(import_session_id=session.id, job_type="validate", status="succeeded", attempt_number=1)
+    dry_run_job = ImportJob(import_session_id=session.id, job_type="dry_run", status="succeeded", attempt_number=1)
+    db_session.add_all([validation_job, dry_run_job])
+    await db_session.flush()
+
+    plan = await legacy_history_dry_run_plan_crud.insert_plan(
+        db_session,
+        import_session_id=session.id,
+        import_source_id=source.id,
+        migration_authority_id=authority.id,
+        source_checksum=source.checksum,
+        accepted_validation_job_id=validation_job.id,
+        dry_run_job_id=dry_run_job.id,
+        ruleset_version="v1",
+        summary_total_rows=0,
+        summary_issue_events=0,
+        summary_receive_events=0,
+        summary_warnings=0,
+        summary_blocking_conflicts=0,
+    )
+    await db_session.commit()
+    await db_session.refresh(plan)
+    return plan
+
+
+async def test_plan_row_issue_and_receive_may_share_the_same_source_row_number(db_session: AsyncSession, seeded_users):
+    """PR #103 fix: a dry-run plan legitimately contains both an ISSUE
+    row and a RECEIVE row that reuse the identical physical
+    source_row_number -- those two source sheets are independent
+    datasets in PR21 V1 and naturally renumber from 1. Both rows must
+    persist in the same plan."""
+    actor_id = await _get_user_id(db_session)
+    authority = await _seed_authority(db_session, actor_id=actor_id)
+    session, source = await _seed_import_session_and_source(db_session, actor_id=actor_id, checksum=authority.approved_workbook_sha256)
+    plan = await _seed_bare_plan(db_session, session=session, source=source, authority=authority)
+
+    await legacy_history_dry_run_plan_crud.bulk_insert_plan_rows(
+        db_session,
+        [
+            LegacyHistoryDryRunPlanRow(
+                dry_run_plan_id=plan.id, source_row_number=2, event_type="ISSUE", legacy_source_row_key="issue-key"
+            ),
+            LegacyHistoryDryRunPlanRow(
+                dry_run_plan_id=plan.id, source_row_number=2, event_type="RECEIVE", legacy_source_row_key="receive-key"
+            ),
+        ],
+    )
+    await db_session.commit()
+
+    rows = (
+        await db_session.execute(select(LegacyHistoryDryRunPlanRow).where(LegacyHistoryDryRunPlanRow.dry_run_plan_id == plan.id))
+    ).scalars().all()
+    assert len(rows) == 2
+    assert {r.event_type for r in rows} == {"ISSUE", "RECEIVE"}
+    assert {r.source_row_number for r in rows} == {2}
+
+
+async def test_plan_row_duplicate_within_same_event_type_still_rejected(db_session: AsyncSession, seeded_users):
+    """Negative counterpart: the ISSUE/RECEIVE overlap allowance is
+    scoped to different event types only -- two ISSUE rows in the same
+    plan claiming the same source_row_number must still be rejected,
+    proving duplicate protection was not simply removed."""
+    actor_id = await _get_user_id(db_session)
+    authority = await _seed_authority(db_session, actor_id=actor_id)
+    session, source = await _seed_import_session_and_source(db_session, actor_id=actor_id, checksum=authority.approved_workbook_sha256)
+    plan = await _seed_bare_plan(db_session, session=session, source=source, authority=authority)
+
+    db_session.add(
+        LegacyHistoryDryRunPlanRow(dry_run_plan_id=plan.id, source_row_number=2, event_type="ISSUE", legacy_source_row_key="issue-key-1")
+    )
+    await db_session.commit()
+
+    db_session.add(
+        LegacyHistoryDryRunPlanRow(dry_run_plan_id=plan.id, source_row_number=2, event_type="ISSUE", legacy_source_row_key="issue-key-2")
+    )
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+    await db_session.rollback()
+
+
+async def test_plan_row_same_row_number_allowed_across_different_plans(db_session: AsyncSession, seeded_users):
+    """The uniqueness scope is per-plan -- two different plans may each
+    independently claim ISSUE row_number=2 without colliding."""
+    actor_id = await _get_user_id(db_session)
+    authority = await _seed_authority(db_session, actor_id=actor_id)
+    session_a, source_a = await _seed_import_session_and_source(db_session, actor_id=actor_id, checksum=authority.approved_workbook_sha256)
+    session_b, source_b = await _seed_import_session_and_source(db_session, actor_id=actor_id, checksum=authority.approved_workbook_sha256)
+    plan_a = await _seed_bare_plan(db_session, session=session_a, source=source_a, authority=authority)
+    plan_b = await _seed_bare_plan(db_session, session=session_b, source=source_b, authority=authority)
+
+    db_session.add(
+        LegacyHistoryDryRunPlanRow(dry_run_plan_id=plan_a.id, source_row_number=2, event_type="ISSUE", legacy_source_row_key="a-key")
+    )
+    db_session.add(
+        LegacyHistoryDryRunPlanRow(dry_run_plan_id=plan_b.id, source_row_number=2, event_type="ISSUE", legacy_source_row_key="b-key")
+    )
+    await db_session.commit()
+
+    rows = (
+        await db_session.execute(select(LegacyHistoryDryRunPlanRow).where(LegacyHistoryDryRunPlanRow.source_row_number == 2))
+    ).scalars().all()
+    assert {r.dry_run_plan_id for r in rows} == {plan_a.id, plan_b.id}
+
+
+# ---------------------------------------------------------------------------
 # Provider contract -- plan CRUD exercised directly (no adapter exists yet)
 # ---------------------------------------------------------------------------
 
