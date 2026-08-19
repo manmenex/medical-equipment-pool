@@ -7459,7 +7459,29 @@ async def test_migration_0013_fresh_database_all_foreign_keys_are_restrict():
                 # equipment_master_dry_run_plan_rows.dry_run_plan_id ->
                 # equipment_master_dry_run_plans, .target_equipment_id ->
                 # equipment.
-                assert len(rows) == 38, f"expected exactly 38 foreign keys, found {len(rows)}: {rows}"
+                # + 18 added by migration 0019 (Roadmap PR21A):
+                # legacy_migration_authorities.approved_by_user_id -> users;
+                # legacy_equipment_events.migration_authority_id ->
+                # legacy_migration_authorities, .equipment_id -> equipment,
+                # .resolved_ward_id -> wards, .import_session_id ->
+                # import_sessions, .import_source_id -> import_sources;
+                # legacy_equipment_event_source_refs.
+                # legacy_equipment_event_id -> legacy_equipment_events (its
+                # auto-generated FK name is truncated to
+                # legacy_equipment_event_source_re_legacy_equipment_event_id_fkey
+                # by PostgreSQL's NAMEDATALEN 63 limit),
+                # .import_session_id -> import_sessions, .import_source_id
+                # -> import_sources; legacy_ward_aliases.ward_id -> wards,
+                # .created_by_user_id -> users;
+                # legacy_history_dry_run_plans.import_session_id ->
+                # import_sessions, .import_source_id -> import_sources,
+                # .migration_authority_id -> legacy_migration_authorities,
+                # .confirmed_by_user_id -> users, the two composite
+                # fk_legacy_history_dry_run_plans_accepted_validation_job/
+                # _dry_run_job -> import_jobs, and
+                # legacy_history_dry_run_plan_rows.dry_run_plan_id ->
+                # legacy_history_dry_run_plans.
+                assert len(rows) == 56, f"expected exactly 56 foreign keys, found {len(rows)}: {rows}"
                 for conname, confdeltype in rows:
                     assert confdeltype == "r", f"{conname} has confdeltype={confdeltype!r}, expected 'r' (RESTRICT)"
         finally:
