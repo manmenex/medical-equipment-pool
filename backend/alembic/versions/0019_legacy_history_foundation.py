@@ -119,8 +119,8 @@ CREATE TABLE IF NOT EXISTS legacy_equipment_event_source_refs (
     source_checksum VARCHAR(128) NOT NULL,
     sheet_name VARCHAR(100) NOT NULL,
     source_row_number INTEGER NOT NULL,
-    CONSTRAINT uq_legacy_equipment_event_source_refs_source_row
-        UNIQUE (import_source_id, sheet_name, source_row_number)
+    CONSTRAINT uq_legacy_equipment_event_source_refs_event_source_row
+        UNIQUE (legacy_equipment_event_id, import_source_id, sheet_name, source_row_number)
 )
 """
 
@@ -343,8 +343,8 @@ _EXPECTED_CONSTRAINTS = {
         "legacy_equipment_event_source_refs_import_source_id_fkey": (
             "FOREIGN KEY (import_source_id) REFERENCES import_sources(id) ON DELETE RESTRICT"
         ),
-        "uq_legacy_equipment_event_source_refs_source_row": (
-            "UNIQUE (import_source_id, sheet_name, source_row_number)"
+        "uq_legacy_equipment_event_source_refs_event_source_row": (
+            "UNIQUE (legacy_equipment_event_id, import_source_id, sheet_name, source_row_number)"
         ),
     },
     "legacy_ward_aliases": {
@@ -441,10 +441,10 @@ _EXPECTED_INDEXES = {
             "CREATE UNIQUE INDEX legacy_equipment_event_source_refs_pkey ON "
             "public.legacy_equipment_event_source_refs USING btree (id)"
         ),
-        "uq_legacy_equipment_event_source_refs_source_row": (
-            "CREATE UNIQUE INDEX uq_legacy_equipment_event_source_refs_source_row ON "
-            "public.legacy_equipment_event_source_refs USING btree (import_source_id, sheet_name, "
-            "source_row_number)"
+        "uq_legacy_equipment_event_source_refs_event_source_row": (
+            "CREATE UNIQUE INDEX uq_legacy_equipment_event_source_refs_event_source_row ON "
+            "public.legacy_equipment_event_source_refs USING btree (legacy_equipment_event_id, "
+            "import_source_id, sheet_name, source_row_number)"
         ),
         "ix_legacy_equipment_event_source_refs_event_id": (
             "CREATE INDEX ix_legacy_equipment_event_source_refs_event_id ON "

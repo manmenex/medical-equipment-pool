@@ -449,6 +449,127 @@ async def test_source_ref_binds_to_the_correct_event_only(db_session: AsyncSessi
     assert refs_for_b == []
 
 
+async def test_shared_order_header_row_is_allowed_across_distinct_events(db_session: AsyncSession, seeded_users):
+    """PR #103 fix: one `Orders ยืมเครื่อง` header row (source_row_number
+    = H) can describe an order covering multiple equipment line-items,
+    each its own independent `LegacyEquipmentEvent`. Event A refs header
+    H + line-item L1; Event B refs the SAME header H + a DIFFERENT
+    line-item L2. Both commits must succeed -- this is provenance
+    topology only, not Issue<->Receive pairing (§11.2, unaffected), and
+    creates no link between event A and event B."""
+    actor_id = await _get_user_id(db_session)
+    authority = await _seed_authority(db_session, actor_id=actor_id)
+    session, source = await _seed_import_session_and_source(db_session, actor_id=actor_id, checksum=authority.approved_workbook_sha256)
+    equipment = await _seed_equipment(db_session)
+
+    event_a = _make_event(authority_id=authority.id, equipment_id=equipment.id, import_session_id=session.id, import_source_id=source.id, row_key="headerA1")
+    event_b = _make_event(authority_id=authority.id, equipment_id=equipment.id, import_session_id=session.id, import_source_id=source.id, row_key="headerB1")
+    db_session.add_all([event_a, event_b])
+    await db_session.flush()
+
+    header_sheet = "Orders ยืมเครื่อง"
+    header_row_number = 7
+
+    db_session.add(
+        LegacyEquipmentEventSourceRef(
+            legacy_equipment_event_id=event_a.id,
+            import_session_id=session.id,
+            import_source_id=source.id,
+            source_checksum=source.checksum,
+            sheet_name=header_sheet,
+            source_row_number=header_row_number,
+        )
+    )
+    db_session.add(
+        LegacyEquipmentEventSourceRef(
+            legacy_equipment_event_id=event_a.id,
+            import_session_id=session.id,
+            import_source_id=source.id,
+            source_checksum=source.checksum,
+            sheet_name="ข้อมูลส่งเครื่องมือ",
+            source_row_number=101,  # L1
+        )
+    )
+    await db_session.commit()
+
+    db_session.add(
+        LegacyEquipmentEventSourceRef(
+            legacy_equipment_event_id=event_b.id,
+            import_session_id=session.id,
+            import_source_id=source.id,
+            source_checksum=source.checksum,
+            sheet_name=header_sheet,
+            source_row_number=header_row_number,
+        )
+    )
+    db_session.add(
+        LegacyEquipmentEventSourceRef(
+            legacy_equipment_event_id=event_b.id,
+            import_session_id=session.id,
+            import_source_id=source.id,
+            source_checksum=source.checksum,
+            sheet_name="ข้อมูลส่งเครื่องมือ",
+            source_row_number=102,  # L2, distinct from L1
+        )
+    )
+    await db_session.commit()
+
+    header_refs = (
+        await db_session.execute(
+            select(LegacyEquipmentEventSourceRef).where(
+                LegacyEquipmentEventSourceRef.sheet_name == header_sheet,
+                LegacyEquipmentEventSourceRef.source_row_number == header_row_number,
+            )
+        )
+    ).scalars().all()
+    assert {r.legacy_equipment_event_id for r in header_refs} == {event_a.id, event_b.id}
+
+
+async def test_duplicate_source_ref_on_the_same_event_still_rejected(db_session: AsyncSession, seeded_users):
+    """PR #103 fix, negative counterpart: header-row sharing is scoped
+    to DIFFERENT events only. The same event registering a provenance
+    ref to the identical physical source row twice must still be
+    rejected -- proves the per-event dedup was not simply removed
+    alongside the added `legacy_equipment_event_id` scope column."""
+    actor_id = await _get_user_id(db_session)
+    authority = await _seed_authority(db_session, actor_id=actor_id)
+    session, source = await _seed_import_session_and_source(db_session, actor_id=actor_id, checksum=authority.approved_workbook_sha256)
+    equipment = await _seed_equipment(db_session)
+
+    event_a = _make_event(authority_id=authority.id, equipment_id=equipment.id, import_session_id=session.id, import_source_id=source.id, row_key="dupref01")
+    db_session.add(event_a)
+    await db_session.flush()
+
+    header_sheet = "Orders ยืมเครื่อง"
+    header_row_number = 7
+
+    db_session.add(
+        LegacyEquipmentEventSourceRef(
+            legacy_equipment_event_id=event_a.id,
+            import_session_id=session.id,
+            import_source_id=source.id,
+            source_checksum=source.checksum,
+            sheet_name=header_sheet,
+            source_row_number=header_row_number,
+        )
+    )
+    await db_session.commit()
+
+    db_session.add(
+        LegacyEquipmentEventSourceRef(
+            legacy_equipment_event_id=event_a.id,
+            import_session_id=session.id,
+            import_source_id=source.id,
+            source_checksum=source.checksum,
+            sheet_name=header_sheet,
+            source_row_number=header_row_number,
+        )
+    )
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+    await db_session.rollback()
+
+
 async def test_source_ref_survives_independently_of_temporary_source_row_storage(db_session: AsyncSession, seeded_users):
     """§26: provenance is normalized (`sheet_name`, `source_row_number`,
     `source_checksum`), never a dump of the full raw row -- confirmed

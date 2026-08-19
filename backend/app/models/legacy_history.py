@@ -218,6 +218,24 @@ class LegacyEquipmentEventSourceRef(UUIDPKMixin, Base):
     source row number are captured per ref, matching §26's own field
     list exactly.
 
+    **PR #103 fix round -- order-header rows are legitimately shared
+    across multiple events, corrected here.** The workbook's own topology
+    (§6.1, §9) is one order-header row (`Orders ยืมเครื่อง`/
+    `Orders คืนเครื่อง`) describing an order that may cover *multiple*
+    equipment line-items -- each line-item is its own
+    `LegacyEquipmentEvent`, and every one of them legitimately needs a
+    provenance ref back to the *same* header row. A single event
+    registering the *same* physical source row twice is still forbidden
+    (that would be a genuine double-count within one event's own
+    provenance), but two *different* events sharing one header row is the
+    normal, expected shape -- not a duplicate. The uniqueness scope below
+    is therefore per-event: `(legacy_equipment_event_id, import_source_id,
+    sheet_name, source_row_number)`, not merely
+    `(import_source_id, sheet_name, source_row_number)`. Header-row
+    sharing across events is provenance topology only -- it is not
+    Issue<->Receive pairing (§11.2, unaffected) and creates no link
+    between the events that share it.
+
     **Deliberately does not duplicate `event_type` or raw BME text.**
     `event_type` is already known transitively via
     `legacy_equipment_event_id` (a ref never belongs to more than one
@@ -230,17 +248,22 @@ class LegacyEquipmentEventSourceRef(UUIDPKMixin, Base):
     __tablename__ = "legacy_equipment_event_source_refs"
     __table_args__ = (
         Index("ix_legacy_equipment_event_source_refs_event_id", "legacy_equipment_event_id"),
-        # Defense-in-depth: the same physical source row is never
-        # attributed to two different provenance refs. §24.2's own Level
-        # 1 identity -- `(import_source_id, sheet_name,
-        # source_row_number)` -- artifact-scoped, not durable across a
-        # re-upload, and never itself the logical event identity (that is
-        # `uq_legacy_equipment_events_identity` above).
+        # Defense-in-depth, scoped per event (PR #103 fix round): the
+        # same physical source row is never attributed to two different
+        # provenance refs *belonging to the same event*, but is
+        # explicitly allowed to be shared by multiple distinct events (an
+        # order-header row covering several equipment line-items, §6.1/
+        # §9). §24.2's own Level 1 identity -- `(import_source_id,
+        # sheet_name, source_row_number)` -- artifact-scoped, not durable
+        # across a re-upload, and never itself the logical event identity
+        # (that is `uq_legacy_equipment_events_identity` above, entirely
+        # unaffected by this constraint's scope).
         UniqueConstraint(
+            "legacy_equipment_event_id",
             "import_source_id",
             "sheet_name",
             "source_row_number",
-            name="uq_legacy_equipment_event_source_refs_source_row",
+            name="uq_legacy_equipment_event_source_refs_event_source_row",
         ),
     )
 
