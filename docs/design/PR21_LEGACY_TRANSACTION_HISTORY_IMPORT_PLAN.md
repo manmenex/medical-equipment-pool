@@ -381,17 +381,38 @@ parser slice").
 
 ### 6.4 What remains open despite the new evidence
 
+**This subsection records the state as of the Source Evidence Update.
+Each item's evidence finding below is unchanged and unrepeated by later
+rounds; a status pointer is added to each bullet showing what a later
+round did with the open question that evidence raised — none of them
+remain open as of Owner Decision Closure Round 3, §55.**
+
 - **Stable event identity (§24):** direct evidence found — see §24 for
-  the full analysis. Strengthened, not yet fully resolved.
+  the full analysis. Strengthened, not yet fully resolved. *(Status:
+  RESOLVED FOR PR21 V1, Owner Decision Closure Round 2, §24.2.)*
 - **Issue↔Receive pairing (§11):** direct evidence found — **no
   explicit linking field exists** between an issue and its eventual
   return anywhere in the workbook (verified: neither header carries a
-  reference to the other's order number). Remains genuinely open.
+  reference to the other's order number). This evidentiary finding
+  itself is not, and has never been, contradicted by any later round.
+  *(Status: the Owner Decision this finding fed — whether pairing is
+  required for import, and whether heuristic matching may substitute
+  for the missing deterministic key — is RESOLVED, Owner Decision
+  Closure Round 2, §11.2: pairing is not required for import; no
+  heuristic substitute of any kind is permitted; ISSUE and RECEIVE
+  import as independent events. The absence of a deterministic key
+  remains true and is not what this status note changes.)*
 - **SDC sheet ambiguity (§6.1):** requires Owner clarification, not
-  guessed.
+  guessed. *(Status: RESOLVED — EXCLUDED FOR PR21 V1, Owner Decision
+  Closure Round 3, §6.5. A source-authority selection, not a claim that
+  the row-level-equivalence question below was answered.)*
 
-**OD-PR21-0's topology component is RESOLVED (§7). Its field-mapping
-component is narrowed but not fully closed**, pending the above.
+**OD-PR21-0's topology component is RESOLVED (§7).** *(Historical, as
+of the Source Evidence Update: "Its field-mapping component is narrowed
+but not fully closed, pending the above." Status as of Owner Decision
+Closure Round 3: field-mapping is now also RESOLVED — SDC EXCLUDED FOR
+V1, §6.5 — so all four of OD-PR21-0's sub-components are RESOLVED,
+§45.)*
 
 ### 6.5 Owner Decision Closure Round 3 — SDC V1 scope: RESOLVED, EXCLUDED
 
@@ -787,15 +808,20 @@ candidate per §10); จำนวน (ignored); หมายเหตุ (**priv
 OD-PR21-6); ชื่อ BME/ชื่อ (User) (business fact/provenance,
 `RECEIVE`-tagged).
 
-**What remains genuinely unresolved by this classification:** the
-`ข้อมูลการส่ง SDC`/`ข้อมูลการรับ SDC` sheet ambiguity (§6.1) — this
-classification covers only the confirmed canonical sheets; if the Owner
-later confirms SDC sheets represent additional, distinct transaction
-data (not a trailing-blank-row artifact of the canonical sheets, §6.1),
-this classification does not automatically transfer to them. **This
-classification does not resolve OD-PR21-0's field-contract sub-component
-in full** — it settles the canonical-sheet portion; the SDC question
-remains open exactly as §45/§53 record.
+**What remained genuinely unresolved by this classification, as of
+Owner Decision Closure Round 1:** the `ข้อมูลการส่ง SDC`/
+`ข้อมูลการรับ SDC` sheet ambiguity (§6.1) — this classification covers
+only the confirmed canonical sheets; if the Owner later confirmed SDC
+sheets represent additional, distinct transaction data (not a
+trailing-blank-row artifact of the canonical sheets, §6.1), this
+classification would not automatically transfer to them. **This
+classification did not, by itself, resolve OD-PR21-0's field-contract
+sub-component in full** — it settled the canonical-sheet portion; the
+SDC question remained open at that time exactly as §45/§53 then
+recorded. *(Status: RESOLVED — EXCLUDED FOR PR21 V1, Owner Decision
+Closure Round 3, §6.5. The Owner selected the canonical four-sheet
+contract without SDC sheets ever needing this classification extended
+to them.)*
 
 ---
 

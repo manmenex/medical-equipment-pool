@@ -119,8 +119,21 @@ Aggregate counts (full detail in the JSON manifest's
 `issue_receive_pairing_evidence` object): 19,912 Issue-side rows,
 19,768 Receive-side rows, **0** rows with an explicit shared Issue↔Receive
 key, **0** deterministically joinable candidate references. This finding
-does **not** approve timestamp- or equipment-based heuristic matching as
-a substitute — that remains a separate, blocking Owner Decision.
+does **not** authorize timestamp-, equipment-, Ward-, sequence-, or
+proximity-based heuristic matching as a substitute for a real
+deterministic key.
+
+**Current governance status (evidence limitation remains; the Owner
+Decision this evidence once left open does not):** under the event-first
+PR21 V1 architecture approved in Owner Decision Closure Round 2 (GitHub
+PR #102), Issue↔Receive pairing is not required for import, and no
+pairing heuristic is permitted — ISSUE and RECEIVE import as independent
+`LegacyEquipmentEvent` facts. Any future reconciliation or linking is
+PR22-or-later work, requiring deterministic evidence or an explicitly
+authorized review workflow, never an inferred match. See
+`docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md` §11.2 for
+the governing decision text; this manifest's own measurements above are
+unchanged and not re-run by that decision.
 
 ## SDC sheets — narrowed, not resolved
 
