@@ -137,6 +137,17 @@ equivalence was not verified. SDC sheets remain **not selected** as
 canonical (the four sheets above remain primary) — this narrows, but
 does not fully close, the open question.
 
+**Owner Decision Closure Round 3 update (post-dates this manifest's own
+measurements, which are unchanged and unrepeated by this note):** the
+Owner has since selected the four canonical sheets above as the sole
+PR21 V1 authoritative source and excluded the SDC sheets from V1, on
+exactly the evidentiary basis this section states — a source-authority
+decision, not a claim that the row-level-equivalence question this
+section leaves open has since been answered. See
+`docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md` §6.5 for
+the governing decision text. This manifest's own measurements are not
+re-run or amended by that decision.
+
 ## FK-resolution scope
 
 All identifier/Ward matching statistics in this manifest are

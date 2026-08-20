@@ -458,7 +458,7 @@ chronology.
 | PR19A | Legacy Import Foundation (backend) — **COMPLETE / MERGED** (PR19A1 #84, PR19A2 #85, PR19A3 #86) |
 | PR19B | Legacy Import Frontend Skeleton (workflow-review prototype only; no real import) — **COMPLETE / MERGED** as GitHub PR #80, squash SHA `04f5bf5c76b51744981d1cc8072c074e604224e9` |
 | PR20 | Equipment Master Import: BCM, Item Number, equipment attributes, existing hospital QR linkage, equipment duplicate detection, and equipment-record validation — **COMPLETE / MERGED** (design #89; PR20A #90, PR20B #91, OD-1–OD-4 resolution #92, PR20C #93, PR20D #94, PR20E #95, PR20F #96), squash SHA `2743af849702ef551927b9c362421df08c80b5d9` (PR20F, current baseline) |
-| PR21 | Legacy Receive and Issue History Import: Receive/Issue history, legacy BME-name preservation and user mapping, Ward normalization and mapping, transaction-row duplicate detection, and transaction source references — **Next planned; not started** |
+| PR21 | Legacy Receive and Issue History Import: Receive/Issue history, legacy BME-name preservation and user mapping, Ward normalization and mapping, transaction-row duplicate detection, and transaction source references — **In progress; not yet complete.** Design/Owner Decisions resolved (SDC excluded from V1); PR21-Foundation, PR21A, PR21B (canonical Issue), and PR21C (canonical Receive) merged; PR21D1 (Combined Canonical Adapter + Source Admission) authorized, not yet implemented; PR21D2/E/F remain blocked. See `docs/ROADMAP_STATUS.md` |
 | PR22 | Legacy Data Validation and Reconciliation: cross-import validation, reconciliation, source traceability verification, duplicate review, and unified legacy/new history validation |
 | PR23 | Cutover Readiness |
 | PR24 | Go-live / deployment, blocked by PR19–PR23 |
@@ -491,10 +491,12 @@ migration scope is divided as follows:
 - **PR20 — Equipment Master Import (COMPLETE / MERGED, PR20A–PR20F):** BCM,
   Item Number, equipment attributes, existing hospital QR linkage, equipment
   duplicate detection, and equipment-record validation.
-- **PR21 — Legacy Receive and Issue History Import (next planned; not
-  started):** Receive history, Issue history, legacy BME-name preservation
-  and user mapping, Ward normalization and mapping, transaction-row
-  duplicate detection, and transaction source references.
+- **PR21 — Legacy Receive and Issue History Import (in progress; not yet
+  complete — PR21-Foundation/PR21A/PR21B/PR21C merged, PR21D1 authorized
+  but not implemented, see `docs/ROADMAP_STATUS.md`):** Receive history,
+  Issue history, legacy BME-name preservation and user mapping, Ward
+  normalization and mapping, transaction-row duplicate detection, and
+  transaction source references.
 - **PR22 — Legacy Data Validation and Reconciliation:** cross-import
   validation, reconciliation, source traceability verification, duplicate
   review, and unified legacy/new history validation.
