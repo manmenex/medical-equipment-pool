@@ -329,3 +329,28 @@ class ImportNoConfirmedPlanError(DomainError):
 
     code = "IMPORT_NO_CONFIRMED_PLAN"
     status_code = 409
+
+
+class LegacyMigrationAuthorityNotFoundError(DomainError):
+    """Roadmap PR21E0. No `LegacyMigrationAuthority` matches the requested
+    lookup (by id, or by checksum) -- never leaks whether a checksum has
+    ever been *seen* by the system (e.g. rejected during validation for a
+    different reason), only whether an approved authority row exists for
+    it."""
+
+    code = "LEGACY_MIGRATION_AUTHORITY_NOT_FOUND"
+    status_code = 404
+
+
+class LegacyMigrationAuthorityScopeConflictError(DomainError):
+    """Roadmap PR21E0 (design §5/§10) -- `POST /legacy-migration-authorities`
+    was called with a checksum that is already approved under a
+    *different* `scope`. `approved_workbook_sha256` is unique at the
+    database level (one checksum, one governance identity) -- reusing an
+    already-approved checksum under a different scope would silently
+    reinterpret an existing governance decision, never permitted. The
+    caller must use the checksum's existing scope, or approve a
+    genuinely different workbook."""
+
+    code = "LEGACY_MIGRATION_AUTHORITY_SCOPE_CONFLICT"
+    status_code = 409
