@@ -73,19 +73,33 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.audit import AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CREATED, AUDIT_ENTITY_IMPORT_SESSION, record_audit_event
-from app.core.exceptions import InvalidInputError
+from app.core.audit import (
+    AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CREATED,
+    AUDIT_ENTITY_IMPORT_SESSION,
+    record_audit_event,
+)
+from app.core.exceptions import ImportNoConfirmedPlanError, InvalidInputError
+from app.crud import legacy_equipment_event as legacy_equipment_event_crud
 from app.crud import legacy_history_dry_run_plan as legacy_history_dry_run_plan_crud
 from app.crud import legacy_migration_authority as legacy_migration_authority_crud
 from app.models.import_session import ImportSession
-from app.models.legacy_history import LegacyHistoryDryRunPlanRow
-from app.services.import_adapter import DryRunPlan, FieldError, ImportAdapter, RawImportRecord, register_adapter
-from app.services.import_adapter_context import get_adapter_invocation_context
+from app.models.legacy_history import LegacyEquipmentEvent, LegacyEquipmentEventSourceRef, LegacyHistoryDryRunPlanRow
+from app.services.import_adapter import (
+    AdapterExecutionConflict,
+    DryRunPlan,
+    FieldError,
+    ImportAdapter,
+    RawImportRecord,
+    register_adapter,
+)
+from app.services.import_adapter_context import get_adapter_invocation_context, record_resolved_execution_resource
 from app.services.import_adapters.legacy_history import common, issue, receive
 from app.services.import_plan_providers.legacy_history import DATASET_TYPE
 from app.services.import_source_reader import VerifiedSourceContent
@@ -111,6 +125,66 @@ _KIND_SHEET_NAME: dict[str, str] = {
 # own docstring ("Where the checksum/migration-authority gate is actually
 # enforced") for why real identity is unavailable here at all.
 _PLACEHOLDER_ID = uuid.UUID(int=0)
+
+# Roadmap PR21D2 (design §24): bounds how many new
+# `LegacyEquipmentEvent`/`LegacyEquipmentEventSourceRef` ORM objects
+# `execute()` accumulates before flushing, keeping SQLAlchemy session
+# memory and any one INSERT statement's bind-parameter count bounded
+# regardless of how large the confirmed plan is (up to
+# `common.PR21_MAX_IMPORT_RECORDS`).
+_EXECUTE_BATCH_SIZE = 1000
+
+
+class _LegacyEventIdentityConflictError(RuntimeError):
+    """Roadmap PR21D2 (design §9/§33): the structured internal signal for
+    a proven historical-event identity conflict -- a plan row's identity
+    `(migration_authority_id, event_type, legacy_source_row_key)` already
+    exists in the database, but the persisted immutable fact (or its
+    provenance) does not match the current approved plan's own value.
+    Always caught and converted to `AdapterExecutionConflict` before
+    leaving `LegacyTransactionHistoryAdapter._apply_plan_rows` -- this
+    message deliberately carries no raw workbook content (never
+    `legacy_ward_text`/`legacy_bme_name`/`legacy_order_reference`), only
+    structural identifiers, per the task's own "no sensitive source
+    content in error messages" instruction."""
+
+    def __init__(self, *, event_type: str, legacy_source_row_key: str) -> None:
+        super().__init__(
+            f"Historical event identity conflict for event_type={event_type!r}, "
+            f"legacy_source_row_key={legacy_source_row_key!r}: a previously-persisted event exists under "
+            "this migration authority whose immutable fact does not match the currently approved plan."
+        )
+        self.event_type = event_type
+        self.legacy_source_row_key = legacy_source_row_key
+
+
+def _plan_row_matches_existing_event(existing: "LegacyEquipmentEvent", normalized_values: dict) -> bool:
+    """§10 of the PR21D2 task's exact equivalence set (excluding the
+    provenance-identity bullet, checked separately by
+    `LegacyTransactionHistoryAdapter._existing_event_provenance_matches_plan`
+    since it requires a database read): `equipment_id`, `occurred_at`,
+    `legacy_order_reference`, `legacy_ward_text`, `resolved_ward_id`,
+    `legacy_bme_name`. `migration_authority_id`/`event_type`/
+    `legacy_source_row_key` are the identity tuple itself (already equal
+    by construction of the caller's lookup) and are not re-compared
+    here. Deliberately never compares `หมายเหตุ`/notes or any other field
+    outside this exact set -- no such field exists on this model at all
+    (OD-PR21-6, unchanged)."""
+    try:
+        expected_equipment_id = uuid.UUID(normalized_values["equipment_id"])
+        expected_occurred_at = datetime.fromisoformat(normalized_values["occurred_at"])
+    except (KeyError, ValueError):
+        return False
+    expected_ward_raw = normalized_values.get("resolved_ward_id")
+    expected_ward_id = uuid.UUID(expected_ward_raw) if expected_ward_raw else None
+    return (
+        existing.equipment_id == expected_equipment_id
+        and existing.occurred_at == expected_occurred_at
+        and existing.legacy_order_reference == normalized_values.get("legacy_order_reference")
+        and existing.legacy_ward_text == normalized_values.get("legacy_ward_text")
+        and existing.resolved_ward_id == expected_ward_id
+        and existing.legacy_bme_name == normalized_values.get("legacy_bme_name")
+    )
 
 
 @dataclass(frozen=True)
@@ -447,14 +521,293 @@ class LegacyTransactionHistoryAdapter(ImportAdapter):
             },
         )
 
-    # Deliberately NOT overridden -- `execute()`/`precheck_execute()`/
-    # `on_execution_success`/`on_execution_failure`/`on_execution_recovery`
-    # all keep `ImportAdapter`'s own defaults (§21/§55.5/§60/§61 of the
-    # task): `execute()` raises `NotImplementedError`, so
-    # `import_execution_service.run_execute`'s existing
-    # `type(adapter).execute is ImportAdapter.execute` guard keeps
-    # `POST .../execute` structurally unreachable for this dataset_type
-    # until a future PR21D2 slice deliberately implements it.
+    async def precheck_execute(self, db: AsyncSession) -> None:
+        """Roadmap PR21D2 (design §21, mirrors `EquipmentMasterAdapter.
+        precheck_execute`'s own established pattern exactly). A read-only
+        rejection, called strictly before `admit_phase_job` -- a session
+        with no confirmed plan never has any state touched at all."""
+        ctx = get_adapter_invocation_context()
+        plan = await legacy_history_dry_run_plan_crud.get_active_confirmed_for_session(
+            db, import_session_id=ctx.import_session_id
+        )
+        if plan is None:
+            raise ImportNoConfirmedPlanError(
+                f"Import session '{ctx.import_session_id}' has no confirmed dry-run plan to execute. "
+                "Confirm the current plan (POST .../dry-run-plan/{plan_id}/confirm) first."
+            )
+
+    async def execute(self, db: AsyncSession) -> int:
+        """Roadmap PR21D2 (design §5-§9, §22). Resolves the session's
+        `active`, confirmed plan internally -- exactly like
+        `precheck_execute` above -- never from a client-supplied plan id
+        (§6 of the task). Re-verifies the plan's own frozen source/
+        authority binding (§7) before writing a single row: the plan's
+        `import_source_id`/`source_checksum` must match this invocation's
+        own frozen context, and the `LegacyMigrationAuthority` currently
+        bound to that checksum must be the exact same authority the plan
+        itself already carries -- never a caller-substituted id.
+
+        Delegates the actual per-row insert/idempotency work to
+        `_apply_plan_rows` (below). Any conflict there -- an identity
+        collision whose stored fact disagrees with the plan, a database
+        constraint violation, or any other exception -- raises
+        `AdapterExecutionConflict` carrying the resolved plan's own id,
+        so the framework's TX2 failure path can mark the plan `failed`
+        using only that primitive. Never calls `db.commit()`/
+        `db.rollback()` itself -- the caller's TX1 owns the transaction
+        boundary: if any row conflicts, the ENTIRE attempt rolls back,
+        never partially applying the other, non-conflicting rows (§18 of
+        the task, the same all-or-nothing contract `EquipmentMasterAdapter.
+        execute()` already established for this framework)."""
+        ctx = get_adapter_invocation_context()
+        plan = await legacy_history_dry_run_plan_crud.get_active_confirmed_for_session(
+            db, import_session_id=ctx.import_session_id
+        )
+        if plan is None:
+            raise AdapterExecutionConflict(
+                f"Import session '{ctx.import_session_id}' has no confirmed active plan at execute time "
+                "despite precheck_execute succeeding -- a framework-invariant violation.",
+                resolved_resource_id=None,
+            )
+        # Captured as a primitive immediately, before any write is
+        # attempted -- mirrors EquipmentMasterAdapter.execute()'s own
+        # documented rationale (a failed flush aborts the whole
+        # PostgreSQL transaction, expiring every loaded ORM attribute).
+        plan_id = plan.id
+        record_resolved_execution_resource(plan_id)
+
+        # §7 of the task: source/authority binding, re-verified here --
+        # structurally guaranteed by the frozen-once-registered source
+        # contract, but checked, not assumed.
+        if plan.import_source_id != ctx.import_source_id or plan.source_checksum != ctx.source_checksum:
+            raise AdapterExecutionConflict(
+                f"Persisted plan '{plan_id}' source binding does not match the current session's frozen source.",
+                resolved_resource_id=plan_id,
+            )
+        authority = await legacy_migration_authority_crud.get_by_checksum(
+            db, approved_workbook_sha256=ctx.source_checksum
+        )
+        if authority is None or authority.id != plan.migration_authority_id:
+            raise AdapterExecutionConflict(
+                f"Persisted plan '{plan_id}' migration authority binding no longer matches the current "
+                "source checksum's approved authority.",
+                resolved_resource_id=plan_id,
+            )
+
+        try:
+            imported_rows = await self._apply_plan_rows(db, plan_id, authority.id, ctx)
+        except AdapterExecutionConflict:
+            raise
+        except Exception as exc:
+            raise AdapterExecutionConflict(f"Plan '{plan_id}' execution failed: {exc}", resolved_resource_id=plan_id) from exc
+        return imported_rows
+
+    async def _apply_plan_rows(
+        self, db: AsyncSession, plan_id: uuid.UUID, migration_authority_id: uuid.UUID, ctx
+    ) -> int:
+        """§8/§9/§23/§24 of the task. Reads the persisted plan rows in one
+        deterministic order, bulk-prefetches every already-persisted
+        event under this authority in one query (never a per-row
+        `SELECT`), then inserts new events/refs in bounded batches.
+
+        **Idempotency strategy (documented, not left implicit).** The
+        primary mechanism is this function's own bulk prefetch: within
+        one `execute()` attempt's single database transaction, the
+        prefetched identity map is a stable snapshot, so every row in
+        this loop is resolved against it deterministically, with zero
+        risk of a race *within* this attempt (only one `execute()` can
+        ever be in flight for one `ImportSession` at a time, per the
+        framework's own single-winner admission). The remaining risk
+        this defends against is a genuinely different, concurrently
+        committing transaction (e.g. a second `ImportSession` re-
+        importing the identical, already-executed workbook) inserting a
+        colliding identity between this function's prefetch and its own
+        insert. Rather than a fragile per-row `SAVEPOINT`-recover scheme,
+        an unexpected `IntegrityError` on the bulk insert flush is
+        treated the same as every other conflict in this framework: it
+        fails the WHOLE attempt closed (§7 of the task's "any conflict
+        rolls back the entire attempt" contract already established by
+        `EquipmentMasterAdapter.execute()`) -- a retried dry-run/execute
+        will then correctly observe the now-committed row via a fresh
+        prefetch and skip it. This never overwrites an existing row and
+        never silently reports success for one it could not verify."""
+        rows = await legacy_history_dry_run_plan_crud.list_all_plan_rows(db, plan_id=plan_id)
+
+        # §25 of the task: a defensive count check, derived from the same
+        # adapter-owned admission policy PR21D1 already validated the
+        # plan against -- never a new, duplicated magic number. The
+        # persisted plan should already be within this bound; a plan that
+        # somehow exceeds it indicates a framework-invariant violation.
+        if len(rows) > common.PR21_MAX_IMPORT_RECORDS:
+            raise AdapterExecutionConflict(
+                f"Plan '{plan_id}' has {len(rows)} rows, exceeding the PR21 bounded admission allowance -- "
+                "a framework-invariant violation.",
+                resolved_resource_id=plan_id,
+            )
+
+        existing_by_identity = await legacy_equipment_event_crud.bulk_get_existing_by_identity(
+            db, migration_authority_id=migration_authority_id
+        )
+
+        pending_events: list[LegacyEquipmentEvent] = []
+        pending_refs: list[LegacyEquipmentEventSourceRef] = []
+        imported_rows = 0
+
+        for row in rows:
+            identity_key = (row.event_type, row.legacy_source_row_key)
+            normalized_values = row.normalized_values or {}
+            existing = existing_by_identity.get(identity_key)
+            if existing is not None:
+                if not _plan_row_matches_existing_event(existing, normalized_values):
+                    raise _LegacyEventIdentityConflictError(
+                        event_type=row.event_type, legacy_source_row_key=row.legacy_source_row_key
+                    )
+                if not await self._existing_event_provenance_matches_plan(db, existing.id, normalized_values):
+                    raise _LegacyEventIdentityConflictError(
+                        event_type=row.event_type, legacy_source_row_key=row.legacy_source_row_key
+                    )
+                # §9 of the task: a proven-equivalent identity collision is
+                # a safe, idempotent replay -- already fully applied by a
+                # prior execution, so this row contributes nothing new.
+                continue
+
+            event_id = uuid.uuid4()
+            try:
+                equipment_id = uuid.UUID(normalized_values["equipment_id"])
+                occurred_at = datetime.fromisoformat(normalized_values["occurred_at"])
+            except (KeyError, ValueError) as exc:
+                raise AdapterExecutionConflict(
+                    f"Plan row for event_type={row.event_type!r}, "
+                    f"legacy_source_row_key={row.legacy_source_row_key!r} carries a malformed normalized "
+                    "equipment_id/occurred_at value.",
+                    resolved_resource_id=plan_id,
+                ) from exc
+            resolved_ward_id_raw = normalized_values.get("resolved_ward_id")
+
+            pending_events.append(
+                LegacyEquipmentEvent(
+                    id=event_id,
+                    migration_authority_id=migration_authority_id,
+                    equipment_id=equipment_id,
+                    event_type=row.event_type,
+                    occurred_at=occurred_at,
+                    legacy_source_row_key=row.legacy_source_row_key,
+                    legacy_order_reference=normalized_values.get("legacy_order_reference"),
+                    legacy_ward_text=normalized_values.get("legacy_ward_text"),
+                    resolved_ward_id=uuid.UUID(resolved_ward_id_raw) if resolved_ward_id_raw else None,
+                    legacy_bme_name=normalized_values.get("legacy_bme_name"),
+                    import_session_id=ctx.import_session_id,
+                    import_source_id=ctx.import_source_id,
+                )
+            )
+            # §11/§12 of the task: one ref per approved source coordinate
+            # (header, line) -- the SAME physical header row legitimately
+            # supports many different events (its own ref uniqueness is
+            # scoped per-event, never globally), so no special-casing is
+            # needed here to allow that.
+            for ref_key in ("header_source_ref", "line_source_ref"):
+                ref = normalized_values.get(ref_key)
+                if not ref:
+                    continue
+                pending_refs.append(
+                    LegacyEquipmentEventSourceRef(
+                        legacy_equipment_event_id=event_id,
+                        import_session_id=ctx.import_session_id,
+                        import_source_id=ctx.import_source_id,
+                        source_checksum=ctx.source_checksum,
+                        sheet_name=ref["sheet_name"],
+                        source_row_number=ref["source_row_number"],
+                    )
+                )
+            imported_rows += 1
+
+            if len(pending_events) >= _EXECUTE_BATCH_SIZE:
+                await self._flush_batch(db, pending_events, pending_refs, plan_id)
+                pending_events = []
+                pending_refs = []
+
+        await self._flush_batch(db, pending_events, pending_refs, plan_id)
+        return imported_rows
+
+    @staticmethod
+    async def _flush_batch(
+        db: AsyncSession,
+        events: list[LegacyEquipmentEvent],
+        refs: list[LegacyEquipmentEventSourceRef],
+        plan_id: uuid.UUID,
+    ) -> None:
+        if not events and not refs:
+            return
+        try:
+            await legacy_equipment_event_crud.bulk_insert_events(db, events)
+            await legacy_equipment_event_crud.bulk_insert_source_refs(db, refs)
+        except IntegrityError as exc:
+            # See `_apply_plan_rows`'s own docstring: an unexpected
+            # constraint violation here means a genuinely concurrent,
+            # externally-committing transaction inserted a colliding
+            # identity after this attempt's own prefetch -- fails the
+            # whole attempt closed, exactly like every other conflict in
+            # this framework, never a silent partial success.
+            raise AdapterExecutionConflict(
+                f"Plan '{plan_id}' execution hit an unexpected database identity conflict while inserting "
+                "historical events -- a concurrent import likely committed the same identity first.",
+                resolved_resource_id=plan_id,
+            ) from exc
+
+    async def _existing_event_provenance_matches_plan(
+        self, db: AsyncSession, existing_event_id: uuid.UUID, normalized_values: dict
+    ) -> bool:
+        """§10 of the task's final equivalence bullet ("permanent
+        provenance identity required by the plan"). Permissive by
+        design: the existing event's own persisted refs must be a
+        superset of what this plan row expects, not an exact set match
+        -- a genuinely identical replay always satisfies this, while
+        never being needlessly stricter than the task's own "same fact
+        => safe replay" framing requires."""
+        existing_refs = await legacy_equipment_event_crud.get_source_refs_for_event(
+            db, legacy_equipment_event_id=existing_event_id
+        )
+        existing_coords = {(r.sheet_name, r.source_row_number) for r in existing_refs}
+        expected_coords = set()
+        for ref_key in ("header_source_ref", "line_source_ref"):
+            ref = normalized_values.get(ref_key)
+            if ref:
+                expected_coords.add((ref["sheet_name"], ref["source_row_number"]))
+        return expected_coords.issubset(existing_coords)
+
+    async def on_execution_success(self, db: AsyncSession, resolved_resource_id: uuid.UUID | None) -> None:
+        """Roadmap PR21D2 (mirrors `EquipmentMasterAdapter.
+        on_execution_success` exactly). Called by the framework on TX1's
+        own session, only after the Job->Session completion fence has
+        already succeeded -- the plan is only ever marked `consumed`
+        after that fence, never inside `execute()` itself, preserving the
+        framework's global Job->Session->Plan lock order."""
+        if resolved_resource_id is None:
+            return
+        await legacy_history_dry_run_plan_crud.mark_plan_consumed(db, plan_id=resolved_resource_id)
+
+    async def on_execution_failure(self, db: AsyncSession, resolved_resource_id: uuid.UUID | None) -> None:
+        """Roadmap PR21D2 (mirrors `EquipmentMasterAdapter.
+        on_execution_failure` exactly). Called by the framework inside
+        TX2, only after `fenced_phase_failure` has already succeeded --
+        the same Job->Session->Plan lock order `on_execution_success`
+        above and recovery both use."""
+        if resolved_resource_id is None:
+            return
+        await legacy_history_dry_run_plan_crud.mark_plan_failed(db, plan_id=resolved_resource_id)
+
+    async def on_execution_recovery(self, db: AsyncSession, session_id: uuid.UUID) -> None:
+        """Roadmap PR21D2 (mirrors `EquipmentMasterAdapter.
+        on_execution_recovery` exactly). Called by `recover_session()`
+        only when the recovered job's `job_type` was `'execute'` --
+        reconciles a hard worker crash during `execute()` that never
+        raised anything at all. Since `execute()` runs entirely inside
+        one database transaction, a hard crash before that transaction's
+        own commit leaves no partial `LegacyEquipmentEvent`/
+        `LegacyEquipmentEventSourceRef` row behind at all -- this hook's
+        only job is marking the now-orphaned plan `failed`, exactly like
+        the Equipment Master precedent."""
+        await legacy_history_dry_run_plan_crud.mark_active_plan_failed_for_session(db, import_session_id=session_id)
 
 
 register_adapter(LegacyTransactionHistoryAdapter())

@@ -659,27 +659,24 @@ async def test_repeated_validation_gives_same_findings_order(db_session: AsyncSe
 # ---------------------------------------------------------------------------
 
 
-def test_legacy_dataset_type_adapter_registered_but_still_cannot_execute():
+def test_legacy_dataset_type_adapter_registered_for_production_dataset():
     """Adding the Receive-side canonical parser did not, by itself,
     register the final PR21 dataset adapter while SDC scope remained
     open. Roadmap PR21D1 (design doc §55.2/§55.8, Owner Decision
     Closure Round 3, GitHub PR #106) explicitly supersedes that now
     that SDC is excluded and both canonical sides are merged --
-    `legacy_transaction_history` is now expected to have a real,
-    registered production adapter. The safety property that mattered --
-    a real `ImportSession` cannot reach executed history -- is preserved
-    a different way from here on: the registered adapter's own
-    `execute()` is still the unimplemented `ImportAdapter` base-class
-    default (§21/§55.5/§60/§61 of the PR21D1 task), so
-    `import_execution_service.run_execute`'s own
-    `type(adapter).execute is ImportAdapter.execute` guard keeps
-    `POST .../execute` structurally unreachable regardless of
-    registration."""
-    from app.services.import_adapter import ImportAdapter
-
+    `legacy_transaction_history` now has a real, registered production
+    adapter. PR21D1 itself left the adapter's own `execute()` as the
+    unimplemented `ImportAdapter` base-class default (structurally
+    blocking `POST .../execute`); Roadmap PR21D2 is the separately-
+    authorized slice that implements real execution -- see
+    `test_pr21d2_historical_event_execution.py` for that full test
+    suite, including its own confirmed-plan/authority/idempotency
+    safety proofs. This test only confirms the adapter is registered
+    for this dataset_type; it says nothing about execute()'s own
+    behavior, which is out of PR21C's scope either way."""
     adapter = get_adapter(DATASET_TYPE)
     assert adapter is not None
-    assert type(adapter).execute is ImportAdapter.execute
 
 
 def test_workbook_authority_matching_checksum_passes():

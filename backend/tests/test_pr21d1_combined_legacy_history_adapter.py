@@ -282,10 +282,16 @@ def test_adapter_registered_for_legacy_transaction_history():
     assert isinstance(adapter, LegacyTransactionHistoryAdapter)
 
 
-def test_execute_not_overridden_stays_structurally_blocked():
+def test_execute_now_implemented_by_pr21d2():
+    """PR21D1 itself deliberately left `execute()`/`precheck_execute()`
+    unoverridden (structurally blocked, `501 IMPORT_ADAPTER_NOT_IMPLEMENTED`).
+    Roadmap PR21D2 is the separately-authorized slice that implements
+    them -- see `test_pr21d2_historical_event_execution.py` for the full
+    execution test suite. This test only confirms the override now
+    exists; it does not re-test execution behavior itself."""
     adapter = get_adapter(DATASET_TYPE)
-    assert type(adapter).execute is ImportAdapter.execute
-    assert type(adapter).precheck_execute is ImportAdapter.precheck_execute
+    assert type(adapter).execute is not ImportAdapter.execute
+    assert type(adapter).precheck_execute is not ImportAdapter.precheck_execute
 
 
 def test_generic_max_import_rows_default_unchanged():
