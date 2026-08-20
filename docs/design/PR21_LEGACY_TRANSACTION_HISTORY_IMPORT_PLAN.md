@@ -44,9 +44,38 @@ contradictions; both are corrected throughout this revision (§24.2,
 Owner Decision — it corrects this document's own not-yet-merged
 wording to match the decisions actually made.
 
-**Baseline:** `e22139346c7bdff1edf841022dd4b7dbebbb3573` (GitHub PR
-#101, Owner Decision Closure Round 1 squash merge, on
+**Owner Decision Closure Round 3 (this round, §55) resolves OD-PR21-0's
+final, previously-open sub-component: the `ข้อมูลการส่ง SDC`/
+`ข้อมูลการรับ SDC` field-level-contract ambiguity.** The Owner selects
+the four already-confirmed canonical sheets (`Orders ยืมเครื่อง` +
+`ข้อมูลส่งเครื่องมือ` for Issue, `Orders คืนเครื่อง` +
+`ข้อมูลรับเครื่องมือ` for Receive) as the **sole authoritative PR21 V1
+transaction history source contract**; the SDC sheets are **excluded
+from PR21 V1** by explicit Owner decision, not by a claim that
+row-level equivalence with the canonical sheets has been proven (§55
+states the precise evidentiary limits of this decision). **All four of
+OD-PR21-0's sub-components are now RESOLVED — OD-PR21-0 is fully
+closed.** With SDC excluded, this round also **authorizes** (but does
+not itself implement) composing the already-merged PR21B (canonical
+Issue, GitHub PR #104) and PR21C (canonical Receive, GitHub PR #105)
+parsers into the production `legacy_transaction_history` adapter, and
+authorizes a PR21-specific bounded upload-size allowance to admit the
+~19.7 MiB approved workbook past the generic 10 MiB import limit
+(§55). **This round implements no runtime code** — no adapter
+registration, no upload-limit change, no parser change, no migration
+(§55, §22 of this round's own task scope). The next implementation
+slice is authorized as **PR21D1 — Combined Canonical Adapter + Source
+Admission**, with historical-event execution reserved for a
+subsequent **PR21D2 — Historical Event Execution** (§55, §46).
+
+**Baseline:** `651a3877c17d53c0163e34d9008ca744ac7f76ef` (GitHub PR
+#105, PR21C canonical Receive subset squash merge, on
 `claude/medical-equipment-pool-0c7fz0`). Prior baselines:
+`a8ae9fbfc571f74bad2100abf8f90bbd22a68e74` (GitHub PR #104, PR21B
+canonical Issue subset squash merge); `28f0f5eabb64cf4b27294fd3df251e90b167de0a`
+(GitHub PR #103, PR21A Historical Event Schema / Provenance Foundation
+squash merge); `e22139346c7bdff1edf841022dd4b7dbebbb3573` (GitHub PR
+#101, Owner Decision Closure Round 1 squash merge);
 `7b99e5866df4b71ffa1aa09d265baa2bc7033c33` (GitHub PR #100,
 PR21-Foundation squash merge); `5d4b1d3a7f79e9b9e6d281a1eea1f7b5bc862217`
 (GitHub PR #98, PR21 Design Phase 1 squash merge).
@@ -352,17 +381,128 @@ parser slice").
 
 ### 6.4 What remains open despite the new evidence
 
+**This subsection records the state as of the Source Evidence Update.
+Each item's evidence finding below is unchanged and unrepeated by later
+rounds; a status pointer is added to each bullet showing what a later
+round did with the open question that evidence raised — none of them
+remain open as of Owner Decision Closure Round 3, §55.**
+
 - **Stable event identity (§24):** direct evidence found — see §24 for
-  the full analysis. Strengthened, not yet fully resolved.
+  the full analysis. Strengthened, not yet fully resolved. *(Status:
+  RESOLVED FOR PR21 V1, Owner Decision Closure Round 2, §24.2.)*
 - **Issue↔Receive pairing (§11):** direct evidence found — **no
   explicit linking field exists** between an issue and its eventual
   return anywhere in the workbook (verified: neither header carries a
-  reference to the other's order number). Remains genuinely open.
+  reference to the other's order number). This evidentiary finding
+  itself is not, and has never been, contradicted by any later round.
+  *(Status: the Owner Decision this finding fed — whether pairing is
+  required for import, and whether heuristic matching may substitute
+  for the missing deterministic key — is RESOLVED, Owner Decision
+  Closure Round 2, §11.2: pairing is not required for import; no
+  heuristic substitute of any kind is permitted; ISSUE and RECEIVE
+  import as independent events. The absence of a deterministic key
+  remains true and is not what this status note changes.)*
 - **SDC sheet ambiguity (§6.1):** requires Owner clarification, not
-  guessed.
+  guessed. *(Status: RESOLVED — EXCLUDED FOR PR21 V1, Owner Decision
+  Closure Round 3, §6.5. A source-authority selection, not a claim that
+  the row-level-equivalence question below was answered.)*
 
-**OD-PR21-0's topology component is RESOLVED (§7). Its field-mapping
-component is narrowed but not fully closed**, pending the above.
+**OD-PR21-0's topology component is RESOLVED (§7).** *(Historical, as
+of the Source Evidence Update: "Its field-mapping component is narrowed
+but not fully closed, pending the above." Status as of Owner Decision
+Closure Round 3: field-mapping is now also RESOLVED — SDC EXCLUDED FOR
+V1, §6.5 — so all four of OD-PR21-0's sub-components are RESOLVED,
+§45.)*
+
+### 6.5 Owner Decision Closure Round 3 — SDC V1 scope: RESOLVED, EXCLUDED
+
+**This subsection resolves the SDC sheet ambiguity §6.1/§6.3/§6.4 leave
+open, without amending or retracting the measurements those sections
+record.** The measurements above stand unchanged: SDC total row counts
+diverge from the canonical sheets (28,078 vs. 19,912 Issue-side; 51,444
+vs. 19,768 Receive-side), the divergence is fully attributable to large
+trailing blank-row blocks, and — once those blank rows are excluded —
+non-blank row counts and distinct order-reference/`ME.Code` counts match
+the canonical sheets' own counts exactly.
+
+**The governing Owner Decision, stated precisely, is:**
+
+> The evidence narrows the ambiguity but does not establish row-level
+> equivalence. The Owner nevertheless selects the canonical four-sheet
+> contract as the sole authoritative V1 source. SDC exclusion is
+> therefore a governance/source-authority decision, not a claim that
+> SDC has been proven byte-for-byte or row-for-row redundant.
+
+Concretely, this document does **not** claim, and no PR21 slice may
+claim on this document's authority, that:
+
+- SDC rows are row-by-row identical to the canonical sheets;
+- SDC sheets are proven duplicates of the canonical sheets;
+- SDC sheets are derived AppSheet views (unlike the `BMEส่ง`/
+  `สแกนจ่ายเครื่องที่ส่งวันนี้`/print-form sheets in §6.1, which carry
+  direct structural proof of being derived — no equivalent proof exists
+  for the SDC sheets);
+- SDC sheets contain zero unique business differences from the
+  canonical sheets.
+
+**`ข้อมูลการส่ง SDC` and `ข้อมูลการรับ SDC` are EXCLUDED FROM PR21 V1
+AUTHORITATIVE MIGRATION INPUT.** They are not parsed, not validated, not
+imported, not required for PR21 V1 acceptance, not used as a fallback
+source, not merged with canonical rows, not used for deduplication, and
+not treated as additional history by any PR21 V1 slice.
+
+**The complete authoritative PR21 V1 legacy-history source contract is
+exactly these four sheets, and no other workbook sheet:**
+
+| # | Role | Sheet |
+|---|---|---|
+| 1 | ISSUE header | `Orders ยืมเครื่อง` |
+| 2 | ISSUE line item | `ข้อมูลส่งเครื่องมือ` |
+| 3 | RECEIVE header | `Orders คืนเครื่อง` |
+| 4 | RECEIVE line item | `ข้อมูลรับเครื่องมือ` |
+
+**Why excluding SDC is safe for V1:**
+
+1. The four canonical sheets already have explicit business topology:
+   Orders header → equipment line items (§6.1, §6.2, §7).
+2. They span the full approved historical date range (2026-01-01
+   through 2026-07-28, §6.2).
+3. They carry the required event identity/provenance fields (§8.1,
+   §24.2).
+4. PR21B (GitHub PR #104) and PR21C (GitHub PR #105) already implement
+   and test those canonical contracts — the four-sheet contract is not
+   a hypothetical target, it is the shape of code already merged.
+5. Adding SDC would create a second, competing source of truth without
+   evidence that it contributes authoritative additional facts.
+6. V1 should use one deterministic source contract, not merge two
+   potentially overlapping datasets — merging on an unproven
+   equivalence assumption would itself be a silent, undocumented data
+   decision, which this document's own convention (§6.3, §6.4) has
+   consistently refused to make.
+7. If later evidence establishes independent SDC business meaning, that
+   becomes a separately approved future migration/reconciliation scope
+   (PR22-or-later), not an implicit extension of PR21 V1.
+
+**SDC future policy.** SDC may be reconsidered in PR22-or-later **only**
+through an explicit Owner Decision supported by new evidence (e.g. an
+actual row-by-row diff, not aggregate counts). A later SDC feature must
+not retroactively mutate the original imported `LegacyEquipmentEvent`
+facts from this migration. If future SDC import is ever authorized: it
+must preserve separate provenance, use an explicit, separately-versioned
+`LegacyMigrationAuthority`, never silently merge with PR21 V1 events, and
+never infer equivalence to an existing event by BCM/timestamp heuristics.
+
+**Binding to migration authority.** This decision, like every other
+claim in §6 through §14/§24, is bound to the workbook identified by
+SHA-256 `8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`.
+A corrected or re-exported workbook is a different artifact and requires
+its own explicit, governed new/superseding `LegacyMigrationAuthority` —
+never silently attached to the existing authority's approved bytes.
+
+**Status: RESOLVED — EXCLUDED FOR PR21 V1 (Owner Decision Closure Round
+3).** See §45 for the OD-PR21-0 closure record and §55 for the full
+Round 3 authorization (combined adapter, upload admission, next
+implementation slice).
 
 ---
 
@@ -668,15 +808,20 @@ candidate per §10); จำนวน (ignored); หมายเหตุ (**priv
 OD-PR21-6); ชื่อ BME/ชื่อ (User) (business fact/provenance,
 `RECEIVE`-tagged).
 
-**What remains genuinely unresolved by this classification:** the
-`ข้อมูลการส่ง SDC`/`ข้อมูลการรับ SDC` sheet ambiguity (§6.1) — this
-classification covers only the confirmed canonical sheets; if the Owner
-later confirms SDC sheets represent additional, distinct transaction
-data (not a trailing-blank-row artifact of the canonical sheets, §6.1),
-this classification does not automatically transfer to them. **This
-classification does not resolve OD-PR21-0's field-contract sub-component
-in full** — it settles the canonical-sheet portion; the SDC question
-remains open exactly as §45/§53 record.
+**What remained genuinely unresolved by this classification, as of
+Owner Decision Closure Round 1:** the `ข้อมูลการส่ง SDC`/
+`ข้อมูลการรับ SDC` sheet ambiguity (§6.1) — this classification covers
+only the confirmed canonical sheets; if the Owner later confirmed SDC
+sheets represent additional, distinct transaction data (not a
+trailing-blank-row artifact of the canonical sheets, §6.1), this
+classification would not automatically transfer to them. **This
+classification did not, by itself, resolve OD-PR21-0's field-contract
+sub-component in full** — it settled the canonical-sheet portion; the
+SDC question remained open at that time exactly as §45/§53 then
+recorded. *(Status: RESOLVED — EXCLUDED FOR PR21 V1, Owner Decision
+Closure Round 3, §6.5. The Owner selected the canonical four-sheet
+contract without SDC sheets ever needing this classification extended
+to them.)*
 
 ---
 
@@ -2431,9 +2576,10 @@ what PR21 V1 builds.
 
 ## 45. Required Owner Decisions
 
-- **OD-PR21-0 — PARTIALLY RESOLVED; two of four sub-components newly
-  RESOLVED this round.** Real source workbook supplied and directly
-  inspected (§6), bound to its SHA-256 identity
+- **OD-PR21-0 — RESOLVED. All four sub-components resolved; the fourth
+  and final sub-component (field-level contract / SDC scope) resolved
+  in Owner Decision Closure Round 3 (§6.5, §55).** Real source workbook
+  supplied and directly inspected (§6), bound to its SHA-256 identity
   `8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c` and
   the sanitized evidence manifest at
   `docs/evidence/pr21/equipment-pool-workbook-manifest.json`. Four
@@ -2441,11 +2587,18 @@ what PR21 V1 builds.
   - **Topology — RESOLVED** (Source Evidence Update): one workbook
     snapshot → one `ImportSession` → one `ImportSource` → whitelisted
     sheets within that source (Option A, §7).
-  - **Field-level contract — PARTIALLY RESOLVED** (§10.1, Round 1):
-    every canonical-sheet field is classified (imported business fact /
-    provenance-only / validation-only / ignored / privacy-blocked).
-    **Still open:** the `ข้อมูลการส่ง SDC`/`ข้อมูลการรับ SDC` ambiguity
-    (§6.1/§6.3) — unchanged by this round.
+  - **Field-level contract — RESOLVED: SDC EXCLUDED FOR PR21 V1 (Owner
+    Decision Closure Round 3, §6.5).** Every canonical-sheet field is
+    classified (§10.1, Round 1: imported business fact / provenance-only
+    / validation-only / ignored / privacy-blocked). The
+    `ข้อมูลการส่ง SDC`/`ข้อมูลการรับ SDC` ambiguity (§6.1/§6.3), open
+    through Round 2, is now resolved by explicit Owner selection of the
+    four canonical sheets as the sole PR21 V1 source contract — **not**
+    by a claim that SDC has been proven row-level-equivalent to those
+    sheets (§6.5 states the precise evidentiary limits). The complete
+    PR21 V1 source contract is exactly `Orders ยืมเครื่อง` +
+    `ข้อมูลส่งเครื่องมือ` + `Orders คืนเครื่อง` + `ข้อมูลรับเครื่องมือ`
+    (§6.5).
   - **Stable event identity — RESOLVED FOR PR21 V1** (§24.2, **Owner
     Decision Closure Round 2, corrected in the PR #102 fix round**):
     PR21 V1 is a controlled, one-time migration scoped to one immutable
@@ -2531,6 +2684,18 @@ ambiguity) remains the only open item across all seven decisions** —
 narrower than at any prior round. See §54 for the full readiness
 reassessment this implies for PR21A–F.
 
+**Net effect of Owner Decision Closure Round 3 (§55):** OD-PR21-0's
+field-level-contract sub-component — the only item left open by Round
+2 — is now **RESOLVED: SDC EXCLUDED FOR PR21 V1** (§6.5), on the
+precise, narrow terms stated there (a source-authority selection, never
+a row-level-equivalence claim). **All seven Owner Decisions
+(OD-PR21-0 through OD-PR21-6) are now RESOLVED.** No PR21 V1 Owner
+Decision remains open. This round additionally authorizes — but does
+not itself implement — composing the already-merged PR21B/PR21C
+canonical parsers into the production adapter, and a PR21-specific
+upload-size allowance (§55). See §55 for the full readiness
+reassessment this implies for PR21D and beyond.
+
 ---
 
 ## 46. Proposed implementation slices (provisional)
@@ -2607,31 +2772,48 @@ merges.
 - **PR21B — Issue History Parser + Validation.** Not blocked by
   topology, OD-PR21-1 (RESOLVED+AMENDED, §16.1 — PR21B does not itself
   perform pairing), or OD-PR21-0's identity/pairing sub-components
-  (both RESOLVED, §24.2/§11.2). **PR21B's full scope is NOT FULLY
-  READY — CONDITIONALLY BLOCKED** by OD-PR21-0's still-open
-  field-level-contract sub-component (the SDC-sheet ambiguity, §6.1/
-  §6.3): until the Owner clarifies whether the SDC sheets represent
-  additional, distinct transaction data, PR21B's own field contract
-  cannot be called final, and this document does not silently decide
-  that question on the Owner's behalf (§13 of this fix round's own
-  instruction). **A narrower, explicitly bounded sub-slice — parsing
-  and validating only the four already-confirmed canonical sheets,
-  excluding any SDC sheet entirely — may start once PR21A's schema is
-  available and this Design PR has merged.** That bounded sub-slice is
-  not the same commitment as "PR21B is ready": it must be scoped,
-  reviewed, and accepted as a canonical-sheet-only slice, with full
-  PR21B acceptance (including any SDC-derived fields) still pending the
-  SDC Owner Decision. §4's identifier case matrix and §15's error-code
-  list remain PR21B's own implementation-grade work, as originally
-  scoped, for whichever scope (bounded or full) is actually undertaken.
+  (both RESOLVED, §24.2/§11.2). *(Original Round 2 text, preserved as
+  historical record — see the Owner Decision Closure Round 3 status
+  note immediately below for the current, superseding status.)*
+  **PR21B's full scope is NOT FULLY READY — CONDITIONALLY BLOCKED** by
+  OD-PR21-0's still-open field-level-contract sub-component (the
+  SDC-sheet ambiguity, §6.1/§6.3): until the Owner clarifies whether
+  the SDC sheets represent additional, distinct transaction data,
+  PR21B's own field contract cannot be called final, and this document
+  does not silently decide that question on the Owner's behalf (§13 of
+  this fix round's own instruction). **A narrower, explicitly bounded
+  sub-slice — parsing and validating only the four already-confirmed
+  canonical sheets, excluding any SDC sheet entirely — may start once
+  PR21A's schema is available and this Design PR has merged.** That
+  bounded sub-slice is not the same commitment as "PR21B is ready": it
+  must be scoped, reviewed, and accepted as a canonical-sheet-only
+  slice, with full PR21B acceptance (including any SDC-derived fields)
+  still pending the SDC Owner Decision. §4's identifier case matrix and
+  §15's error-code list remain PR21B's own implementation-grade work,
+  as originally scoped, for whichever scope (bounded or full) is
+  actually undertaken.
+
+  **Owner Decision Closure Round 3 status (§55; supersedes the above):**
+  the bounded canonical-sheet-only sub-slice described above is
+  **IMPLEMENTED AND MERGED** (GitHub PR #104, squash SHA
+  `a8ae9fbfc571f74bad2100abf8f90bbd22a68e74`). SDC is now **EXCLUDED FOR
+  PR21 V1** (§6.5) — there is no further "full scope including SDC" to
+  wait for. **PR21B is COMPLETE for its entire PR21 V1 scope.**
 - **PR21C — Receive History Parser + Matching/Validation.** Renamed
   emphasis: no longer "Matching" as an import-time gate — validates
   `RECEIVE` events **independently** (§11.2); adds no pairing heuristic
   of its own. OD-PR21-1/2 (RESOLVED+AMENDED) and OD-PR21-0's pairing
-  sub-component (RESOLVED, §11.2) are no longer blockers. **PR21C's
-  full scope is NOT FULLY READY — CONDITIONALLY BLOCKED**, identical
-  reasoning and identical canonical-sheet-only bounded-sub-slice
-  carve-out to PR21B above.
+  sub-component (RESOLVED, §11.2) are no longer blockers. *(Original
+  Round 2 text, preserved as historical record.)* **PR21C's full scope
+  is NOT FULLY READY — CONDITIONALLY BLOCKED**, identical reasoning and
+  identical canonical-sheet-only bounded-sub-slice carve-out to PR21B
+  above.
+
+  **Owner Decision Closure Round 3 status (§55; supersedes the above):**
+  the bounded canonical-sheet-only sub-slice is **IMPLEMENTED AND
+  MERGED** (GitHub PR #105, squash SHA
+  `651a3877c17d53c0163e34d9008ca744ac7f76ef`). SDC is now **EXCLUDED FOR
+  PR21 V1** (§6.5). **PR21C is COMPLETE for its entire PR21 V1 scope.**
 - **PR21D — Persisted Dry-run + Historical Event Execution** (renamed
   from "Historical Transaction Execution" — Owner Decision Closure
   Round 2: executes `LegacyEquipmentEvent` inserts, never
@@ -2643,7 +2825,8 @@ merges.
   OD-PR21-5 is RESOLVED for V1 (§20.1): `LegacyEquipmentEvent` has no
   `transaction_no` column, PR21D writes no `BorrowTransaction` row, and
   the format question is therefore **not** a PR21D blocker at all.
-  **Blocked on:** PR21A's implementation, and on the approved
+  *(Original Round 2 blocking analysis, preserved as historical
+  record.)* **Blocked on:** PR21A's implementation, and on the approved
   implementation of whichever PR21B/PR21C slice covers PR21D's actual
   chosen V1 source scope (the bounded canonical-sheet-only sub-slice, or
   full PR21B/C if the SDC ambiguity is resolved and folded into that
@@ -2656,27 +2839,60 @@ merges.
   workflow ever materializes a real `BorrowTransaction` row for a
   confirmed pair, that row's `transaction_no` policy is a separate,
   later concern for that future slice, not for PR21D.
-- **PR21E — Frontend Real Integration.** **Blocked on:** PR21D.
+
+  **Owner Decision Closure Round 3 (§55; supersedes the above blocking
+  analysis and splits PR21D into two sub-slices for reviewability):**
+  PR21A/B/C are now all implemented and merged, and SDC exclusion
+  settles PR21D's V1 source scope as exactly the four canonical sheets
+  (§6.5) — no more "which scope PR21D ultimately depends on" ambiguity.
+  PR21D is split:
+  - **PR21D1 — Combined Canonical Adapter + Source Admission.**
+    **AUTHORIZED, NOT YET IMPLEMENTED** (§55). Composes the merged
+    PR21B/PR21C parsers into the production `legacy_transaction_history`
+    `ImportAdapter`, registers it, adds the PR21-specific bounded upload
+    allowance (§55), and integrates with the existing `ImportSession`
+    validation pipeline under the all-or-nothing rule (§55). Does
+    **not** execute `LegacyEquipmentEvent` inserts unless PR21D2 is
+    explicitly folded in by a later authorization; does not pair
+    Issue/Receive; does not add SDC; does not mutate Equipment.
+  - **PR21D2 — Historical Event Execution.** **STILL BLOCKED** on
+    PR21D1's implementation, review, and merge becoming the new
+    authoritative baseline. Executes the validated, immutable
+    `LegacyEquipmentEvent` INSERTs (§8.1) from an admitted
+    `LegacyHistoryDryRunPlan` — never `BorrowTransaction` replay, live
+    dispatch, live receipt, or `Equipment.status` mutation (§12, §19,
+    §44, unchanged).
+- **PR21E — Frontend Real Integration.** **Blocked on:** PR21D2.
 - **PR21F — Governance Sync.** After all approved slices merge, per
   `docs/ENGINEERING_WORKFLOW.md` §14 — not performed by this Design PR
-  (§50).
+  (§50), nor by Owner Decision Closure Round 3 (§55).
 
 **Owner Decision Closure Round 2 correction, itself corrected by the
-PR #102 fix round:** OD-PR21-0's identity and pairing sub-components
-are resolved, which fully clears PR21A to start (once this Design PR
-merges) since PR21A's own schema does not depend on SDC. It does
-**not** fully clear PR21B/C: OD-PR21-0's remaining field-level-contract
-sub-component (the SDC-sheet ambiguity, §6.1) is still an **open Owner
-Decision**, and this document does not treat "identity and pairing are
-resolved" as if it also resolved that separate, still-open
-sub-component. PR21B/C's full scope therefore remains **NOT FULLY
-READY** until the Owner closes the SDC question; only the explicitly
-bounded, canonical-sheet-only sub-slice described above may start
-before then. **This does not mean PR21A, or PR21B/C's bounded
-sub-slice, are implemented** — each remains a separate, baseline-gated
-implementation task, not started by this document (§28 of this round's
-own scope guard), and none may start before this Design PR itself
-merges.
+PR #102 fix round (historical — superseded by Owner Decision Closure
+Round 3 immediately below):** OD-PR21-0's identity and pairing
+sub-components are resolved, which fully clears PR21A to start (once
+this Design PR merges) since PR21A's own schema does not depend on SDC.
+It does **not** fully clear PR21B/C: OD-PR21-0's remaining
+field-level-contract sub-component (the SDC-sheet ambiguity, §6.1) is
+still an **open Owner Decision**, and this document does not treat
+"identity and pairing are resolved" as if it also resolved that
+separate, still-open sub-component. PR21B/C's full scope therefore
+remains **NOT FULLY READY** until the Owner closes the SDC question;
+only the explicitly bounded, canonical-sheet-only sub-slice described
+above may start before then. **This does not mean PR21A, or PR21B/C's
+bounded sub-slice, are implemented** — each remains a separate,
+baseline-gated implementation task, not started by this document (§28
+of this round's own scope guard), and none may start before this
+Design PR itself merges.
+
+**Owner Decision Closure Round 3 (§55) — current, superseding status:**
+PR21A, PR21B's bounded sub-slice, and PR21C's bounded sub-slice are all
+now **implemented and merged** (GitHub PR #103/#104/#105). SDC is
+**EXCLUDED FOR PR21 V1** (§6.5) — the bounded sub-slices already merged
+**are** PR21B/PR21C's complete V1 scope, not a subset awaiting a
+still-open SDC decision. PR21D1 (combined adapter + source admission)
+is **AUTHORIZED, NOT YET IMPLEMENTED**; PR21D2 (execution) remains
+**BLOCKED** on PR21D1.
 
 ---
 
@@ -2687,7 +2903,9 @@ merges.
 | Source topology (§7) | **RESOLVED — Option A, confirmed against the real workbook** | NO | — |
 | Canonical Issue/Receive sheet selection (§6.2) | RESOLVED — `Orders`+line-item pairs, verified by direct inspection | NO | — |
 | Field-level contract, canonical sheets (§10.1) | RESOLVED — every canonical-sheet field classified | NO | — |
-| SDC sheet ambiguity (§6.1) | NARROWED (aggregate counts match canonical sheets) but NOT RESOLVED — requires Owner clarification | Partially (scopes PR21B/C's eventual full completeness, not a start-blocker for the confirmed canonical scope) | Before PR21B/C's field contract is considered *final* |
+| SDC sheet ambiguity (§6.1, §6.5) | **RESOLVED — EXCLUDED FOR PR21 V1 (Owner Decision Closure Round 3)** — a source-authority selection, not a row-level-equivalence claim | NO (for V1) | — |
+| Combined canonical adapter authorization (§55) | **AUTHORIZED, NOT YET IMPLEMENTED (Owner Decision Closure Round 3)** | NO — authorization granted; implementation itself is PR21D1's own task | Before `legacy_transaction_history` may be registered |
+| PR21-specific upload admission policy (§55) | **AUTHORIZED, NOT YET IMPLEMENTED (Owner Decision Closure Round 3)** — bounded allowance, generic 10 MiB cap unchanged | NO — authorization granted; implementation itself is PR21D1's own task | Before the ~19.7 MiB approved workbook can be uploaded through the generic pipeline |
 | Stable event identity (§24, §24.1, §24.2) | **RESOLVED FOR PR21 V1, corrected in the PR #102 fix round** — one immutable `LegacyMigrationAuthority` (design concept) bound to the frozen snapshot's checksum (§6); `(migration_authority_id, dataset_type, ลำดับ)` scoped identity; cross-export durability explicitly NOT claimed | NO (for V1) | — |
 | Issue↔Receive pairing (§11, §11.1, §11.2) | **RESOLVED this round** — event-first adopted; pairing not required for import; deterministic-only linking deferred to PR22-or-later | NO | — |
 | Validation/dry-run semantics (§15, §28) | RESOLVED: all-or-nothing PR19 gate; dry-run never contains ERROR-severity rows | NO | — |
@@ -2702,9 +2920,10 @@ merges.
 | Patient/clinical data handling (§42) | RESOLVED — notes never imported into permanent history by default | NO | — |
 | `LegacyEquipmentEvent` schema / provenance shape (§8.1) | Semantics RESOLVED this round; **exact schema is PR21A's own implementation-grade work** | NO (design) | PR21A's own design task |
 
-**PR21 overall readiness, reassessed (PR #102 fix round):** the
-identity and pairing blockers that stopped every source-dependent slice
-are now resolved. **PR21A is ready to start once this Design PR merges**
+**PR21 overall readiness, reassessed (PR #102 fix round; historical —
+superseded by Owner Decision Closure Round 3 below):** the identity and
+pairing blockers that stopped every source-dependent slice are now
+resolved. **PR21A is ready to start once this Design PR merges**
 (design/implementation not yet begun — a separate, baseline-gated
 task). **PR21B and PR21C are NOT fully ready** — OD-PR21-0's
 field-level-contract sub-component (SDC-sheet ambiguity, §6.1) is still
@@ -2713,6 +2932,18 @@ bounded, canonical-sheet-only sub-slice of each may start, once PR21A's
 schema exists (§46). PR21D/E/F remain blocked, transitively, on those
 slices actually being built. **PR21-Foundation is complete** (merged,
 GitHub PR #100). See §54 for the full per-slice reassessment.
+
+**PR21 overall readiness, current (Owner Decision Closure Round 3,
+§55):** **PR21-Foundation, PR21A, PR21B, and PR21C are all complete**
+(merged: GitHub PR #100, #103, #104, #105). **SDC is RESOLVED —
+EXCLUDED FOR PR21 V1** (§6.5) — no Owner Decision remains open across
+all seven (OD-PR21-0 through OD-PR21-6, §45). PR21B/C's merged bounded
+sub-slices **are** their complete V1 scope, not a partial slice awaiting
+a still-open decision. **PR21D1 (Combined Canonical Adapter + Source
+Admission) is AUTHORIZED, NOT YET IMPLEMENTED.** **PR21D2 (Historical
+Event Execution), PR21E, and PR21F remain BLOCKED**, transitively on
+PR21D1 actually being implemented, reviewed, and merged. See §55 for
+the full reassessment and authorization record.
 
 ---
 
@@ -3081,6 +3312,255 @@ design/decision closure, not an implementation milestone requiring a
 roadmap-status change; that change belongs to PR21F (Governance Sync)
 after implementation slices actually merge, per this document's own
 established convention (§50).
+
+---
+
+## 55. Owner Decision Closure Round 3 — SDC V1 scope decision, combined adapter authorization, and source admission policy
+
+**Task type: Owner Decision Closure / governance. No runtime
+implementation in this round** — no adapter registration, no upload-
+limit implementation, no parser change, no migration, no `backend/**`,
+`frontend/**`, `alembic/**`, `tests/**`, or CI-workflow file touched.
+
+**Baseline:** `651a3877c17d53c0163e34d9008ca744ac7f76ef` (GitHub PR
+#105, PR21C canonical Receive subset squash merge). This is the first
+Owner Decision Closure round to run *after* real implementation exists
+(PR21-Foundation/#100, PR21A/#103, PR21B/#104, PR21C/#105 are all
+merged) — every earlier round in this document ran design-only, with no
+implementation yet on the branch.
+
+**Purpose.** Close the SDC source-scope ambiguity (§6.1/§6.3/§6.4's
+sole remaining open item) and explicitly define the authorization
+boundary for the final combined `legacy_transaction_history` adapter.
+
+### 55.1 SDC resolution (full detail: §6.5)
+
+`ข้อมูลการส่ง SDC`/`ข้อมูลการรับ SDC` are **RESOLVED — EXCLUDED FROM
+PR21 V1** by explicit Owner source-authority selection, not by a claim
+of proven row-level equivalence (§6.5's exact wording governs; not
+restated here). The complete PR21 V1 source contract is exactly the
+four canonical sheets (§6.5's table). **OD-PR21-0 is now fully RESOLVED
+— all seven Owner Decisions (OD-PR21-0 through OD-PR21-6) are RESOLVED**
+(§45).
+
+### 55.2 Combined adapter authorization
+
+With SDC excluded from V1, **implementation is now AUTHORIZED** to
+compose the already-merged canonical parsers —
+
+- PR21B Issue: `app.services.import_adapters.legacy_history.issue`
+  (`Orders ยืมเครื่อง` + `ข้อมูลส่งเครื่องมือ`)
+- PR21C Receive: `app.services.import_adapters.legacy_history.receive`
+  (`Orders คืนเครื่อง` + `ข้อมูลรับเครื่องมือ`)
+
+— into the production `ImportAdapter` for `legacy_transaction_history`
+(the `DATASET_TYPE` already defined by PR21-Foundation,
+`app.services.import_plan_providers.legacy_history`). **This is
+authorization to implement the adapter in a subsequent PR (PR21D1,
+§55.8) — this governance PR does not itself call
+`register_adapter()`, add any adapter class, or otherwise register
+anything.**
+
+### 55.3 Combined validation contract — atomicity
+
+The final adapter **must** validate all four canonical sheets within
+**one** `ImportSession` / **one** `ImportSource` / **one** approved
+workbook snapshot — never as two independent migration sessions (Issue
+session, Receive session). Required topology:
+
+```
+ONE workbook
+  → ONE ImportSession
+    → ONE ImportSource
+      → four canonical sheets (Issue header/line, Receive header/line)
+        → Issue candidates + Receive candidates
+          → one aggregate validation decision
+```
+
+**All-or-nothing, restated for the combined adapter (mirrors §15's
+existing PR19 gate, applied across both sides at once):** any
+`severity == "error"` finding anywhere — Issue header/line validation
+**or** Receive header/line validation — means the whole session's
+`new_status` is `validation_failed`, and **no** `LegacyHistoryDryRunPlan`
+is admitted. Forbidden outcomes, explicitly: Issue valid + Receive
+invalid → an Issue-only `DryRunPlan`; Receive valid + Issue invalid → a
+Receive-only `DryRunPlan`; skipping invalid rows and continuing with a
+partial-history plan. This is the natural consequence of routing both
+sides' `FieldError`/finding lists through the same
+`import_validation_service.run_validation` aggregate gate PR21B/C's own
+finding lists were already designed to feed (§15, §24 of PR21B/PR21C's
+own task specs) — PR21D1 does not need new batch-level logic, only
+correct wiring of both parsers' output into that one existing gate.
+
+### 55.4 No Issue↔Receive pairing
+
+Combined adapter composition does **not** authorize pairing. ISSUE and
+RECEIVE candidates remain independent historical events, exactly as
+§11.2 already establishes. **Forbidden matching bases, explicitly
+reaffirmed:** BCM, Equipment UUID, timestamp proximity, Ward, order-
+number similarity, sequence, nearest date — none of these may link an
+Issue candidate to a Receive candidate at import time. PR22-or-later
+owns reconciliation/linking (§11.2, unchanged).
+
+### 55.5 Execution authorization boundary
+
+This Owner Decision does **not** itself implement PR21D execution. It
+authorizes the prerequisite adapter/composition layer (PR21D1, §55.8)
+necessary before execution (PR21D2, §55.8) may proceed. Execution
+remains governed by the already-approved event-first design (§8.1,
+§11.2): validated immutable plan → `LegacyEquipmentEvent` INSERT.
+**Never:** `BorrowTransaction` replay, live dispatch, live receipt, or
+`Equipment.status` mutation (§12, §19, §44 — unchanged, reaffirmed).
+
+### 55.6 Source authority / checksum — unchanged
+
+The approved V1 workbook remains bound to SHA-256
+`8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`. The
+four-sheet source contract (§6.5) is approved specifically for that
+migration authority/snapshot. A corrected or re-exported workbook
+requires its own explicit, governed new/superseding
+`LegacyMigrationAuthority` — it is never silently attached to the
+existing authority's approved bytes (§6.5, §24.2, unchanged).
+
+### 55.7 Known production-wiring blocker and authorized policy
+
+**Blocker (technical source-artifact admission, not an SDC blocker):**
+the approved workbook is 20,690,045 bytes (~19.7 MiB, §6). The generic
+import upload limit
+(`MAX_UPLOAD_BYTES = 10 * 1024 * 1024` in
+`backend/app/services/import_service.py`) is 10 MiB. The combined
+adapter therefore cannot be considered production-wirable against the
+approved workbook until upload admission supports this source size.
+This was already flagged, undecided, as a deferred follow-up in both
+PR21B's and PR21C's own merged PR descriptions (GitHub PR #104, #105).
+
+**Authorized policy:** implementation is authorized to solve this with
+a **PR21-specific bounded allowance** —
+
+```
+PR21_MAX_UPLOAD_BYTES = 32 MiB   (or an equivalent dataset-specific mechanism)
+```
+
+— while the existing generic `import_service.MAX_UPLOAD_BYTES` (10 MiB)
+remains **unchanged**, for the identical architectural reason
+`PR21_MAX_WORKSHEET_COUNT = 32` (already implemented, PR21B/PR104 fix
+round) does not raise the generic
+`import_service.MAX_WORKSHEET_COUNT` (25): a dataset-specific allowance
+is more maintainable and safer than a global relaxation, and does not
+weaken the Equipment Master / generic import paths. 32 MiB gives
+bounded headroom above the verified ~19.7 MiB artifact without inviting
+arbitrary upload sizes. **This governance PR records the authorization/
+policy only — the constant is not added or wired here.** If repository
+architecture at implementation time favors a different mechanism or
+constant name, the implementation may choose an equivalent
+dataset-specific approach, but **must not** globally raise the generic
+`MAX_UPLOAD_BYTES` solely to accommodate PR21.
+
+**Security bounds remain required, unconditionally.** A larger PR21
+upload admission does not bypass, relax, or exempt: zip archive bounds,
+decompression limits, archive entry limits, macro-OOXML rejection,
+macro-part rejection, the worksheet-count limit
+(`PR21_MAX_WORKSHEET_COUNT`, unchanged at 32), exact canonical
+sheet/header validation, or the workbook-authority checksum gate
+(`verify_workbook_authority`, §55.6). **The checksum never exempts an
+artifact from structural security validation** — an approved-checksum
+workbook is still run through every existing security check; the
+checksum identifies migration authority, it does not bypass safety.
+
+### 55.8 Next implementation slice authorization
+
+The next implementation slice is authorized as:
+
+**PR21D1 — Combined Canonical Adapter + Source Admission.**
+
+Allowed scope:
+
+- the PR21-specific upload allowance (§55.7);
+- composing Issue + Receive parsing/validation (§55.2) behind one
+  `ImportAdapter`;
+- aggregating both sides' findings into one validation result;
+- the all-or-nothing validation rule across both sides (§55.3);
+- registering `legacy_transaction_history` via
+  `app.services.import_adapter.register_adapter()`;
+- integrating with the existing `ImportSession` validation pipeline
+  (`import_validation_service.run_validation`);
+- persisting/admitting `LegacyHistoryDryRunPlan` per the already-
+  approved plan architecture (§28, §36), if that persistence step
+  belongs to the combined-adapter boundary as PR21D1 is scoped at
+  implementation time.
+
+Must **not** yet:
+
+- execute `LegacyEquipmentEvent` INSERTs — that is PR21D2's job, unless
+  a future authorization explicitly folds D2 into D1's own scope;
+- pair Issue/Receive candidates (§55.4);
+- add SDC in any form (§55.1, §6.5);
+- mutate Equipment (status, version, location, lifecycle — §55.5,
+  unchanged).
+
+**PR21D2 — Historical Event Execution** remains reserved and **STILL
+BLOCKED** until PR21D1 is implemented, independently reviewed, merged,
+and becomes the new authoritative baseline (§46).
+
+### 55.9 Roadmap state after this round
+
+- **PR21A:** COMPLETE (merged, GitHub PR #103).
+- **PR21B canonical Issue:** COMPLETE for its full PR21 V1 scope (merged,
+  GitHub PR #104) — SDC exclusion means there is no further "full
+  scope" to await.
+- **PR21C canonical Receive:** COMPLETE for its full PR21 V1 scope
+  (merged, GitHub PR #105) — same reasoning.
+- **SDC V1 scope decision:** RESOLVED — EXCLUDED (§6.5).
+- **Combined canonical adapter:** AUTHORIZED, NOT YET IMPLEMENTED
+  (§55.2, §55.8).
+- **PR21-specific upload admission:** AUTHORIZED, NOT YET IMPLEMENTED
+  (§55.7, §55.8).
+- **PR21D1 (Combined Canonical Adapter + Source Admission):**
+  AUTHORIZED, NOT YET IMPLEMENTED.
+- **PR21D2 (Historical Event Execution):** BLOCKED, transitively on
+  PR21D1's implementation, review, and merge.
+- **PR21E/PR21F:** remain downstream, blocked as previously stated
+  (§46), unaffected by this round beyond the PR21D1/D2 split.
+- **PR22:** retains sole reconciliation/pairing responsibility,
+  unchanged (§55.4, §11.2).
+
+### 55.10 Owner Decision table — chronology preserved
+
+OD-PR21-0's field-level-contract sub-component's recorded chronology,
+preserved rather than rewritten:
+
+**OPEN** (§6.1, first raised) → **NARROWED** (Source Evidence Update
+and Round 1/2: aggregate counts measured, blank-row explanation found,
+row-level diff not performed, §6.3/§6.4) → **Owner scope decision**
+(this round) → **RESOLVED / EXCLUDED FOR V1** (§6.5, this round).
+
+At no point does this document, or any prior dated entry within it,
+get rewritten to read as though the SDC question had never been open —
+§6.1/§6.3/§6.4's original text stands unchanged; this round's
+resolution is layered on top as §6.5 and the status-label updates in
+§45/§46/§47 above, each pointing back to §6.5 for the substantive
+decision.
+
+### 55.11 Historical follow-ups — unaffected
+
+GitHub PR #97's P2 follow-up and GitHub PR #98's P2-A/P2-B follow-ups
+remain **accepted / non-blocking / unresolved**, in their existing
+recorded wording — this round does not touch, resolve, or claim
+resolution of any of them.
+
+### 55.12 What this round does NOT do
+
+It does not implement PR21D1 or PR21D2; it does not register
+`legacy_transaction_history` as a production `ImportAdapter`; it does
+not add or wire `PR21_MAX_UPLOAD_BYTES` (or any equivalent constant);
+it does not modify `backend/**`, `frontend/**`, `alembic/**`,
+`tests/**`, or any CI workflow file; it does not add a migration; it
+does not merge without independent review; it does not pair Issue and
+Receive candidates or authorize any future PR to do so implicitly; it
+does not perform the full PR21F Governance Sync (that remains a
+separate, later task once PR21D1/D2 also merge, per §46's own
+convention); it does not resolve, reopen, or restate a position on
+GitHub PR #97's P2 or PR #98's P2-A/P2-B follow-ups (§55.11).
 
 ---
 

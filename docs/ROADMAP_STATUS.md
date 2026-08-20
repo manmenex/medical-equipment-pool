@@ -157,7 +157,7 @@ closure record.
 
 | Sequence | Roadmap item | Status |
 |---|---|---|
-| Next | PR21 — Legacy Receive and Issue History Import | Planned; not started; the next planned Roadmap item, first on this table now that PR19 and PR20 have both moved off it (see below). **Depends on PR19A and PR20** (`docs/audits/04-consolidated-implementation-plan.md`: "Dependencies: PR19A, PR20") — both now complete, so PR21 is unblocked. |
+| Next | PR21 — Legacy Receive and Issue History Import | **In progress; not yet complete.** Design and all seven Owner Decisions (OD-PR21-0 through OD-PR21-6) are resolved, including the SDC source-scope decision (SDC excluded from V1). PR21-Foundation, PR21A (schema/provenance), PR21B (canonical Issue parser), and PR21C (canonical Receive parser) are merged. **PR21D1 (Combined Canonical Adapter + Source Admission) is authorized but not yet implemented; PR21D2 (Historical Event Execution), PR21E (frontend), and PR21F (Governance Sync) remain blocked.** See `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md` §55 and `docs/DECISION_LOG.md` ("Roadmap PR21 Owner Decision Closure Round 3") for the full record. This row will move off this table, and a full PR21F Governance Sync will update this table's surrounding narrative, once PR21D2/E/F also merge. **Depends on PR19A and PR20** (`docs/audits/04-consolidated-implementation-plan.md`: "Dependencies: PR19A, PR20") — both complete. |
 | After PR21 | PR22 — Legacy Data Validation and Reconciliation | Planned; depends on PR20 and PR21 |
 | After PR22 | PR23 — Cutover Readiness | Planned |
 | After PR19–PR23 | PR24 — Go-live / deployment | Planned; blocked by PR19–PR23 |
