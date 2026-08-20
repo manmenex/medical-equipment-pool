@@ -29,7 +29,26 @@ from app.services.import_adapters.equipment_master import (
     _reject_macro_ooxml_structure,
     _reject_macro_parts,
 )
-from app.services.import_service import MAX_WORKSHEET_COUNT, _validate_zip_archive_bounds
+from app.services.import_service import _validate_zip_archive_bounds
+
+# PR21 fix P1: the generic `import_service.MAX_WORKSHEET_COUNT` (25) is
+# tuned for the older/generic import flows (e.g. Equipment Master),
+# whose source topology is a single working sheet plus a handful of
+# incidental ones. The Owner-approved PR21 legacy-history workbook is
+# independently verified to contain 28 worksheets (manifest SHA-256
+# `8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`),
+# so reusing the generic cap rejects the real authoritative artifact
+# before its two canonical sheets can even be selected. This package
+# therefore defines its own bounded allowance instead of raising the
+# generic constant (which would silently relax the unrelated import
+# datasets that still rely on it) -- 32 gives a narrow four-sheet
+# tolerance above the verified 28-sheet shape (room for a harmless
+# helper/report sheet without recoupling the cap to today's exact
+# count) while still rejecting pathological worksheet-count abuse. The
+# zip-bomb/macro/archive-bounds hardening below is unaffected --
+# dataset-specific policy applies only to worksheet *count*, never to
+# the security bounds themselves.
+PR21_MAX_WORKSHEET_COUNT = 32
 
 # §22/§10.1: the workbook's `วันที่`/`เวลา` cells carry no embedded
 # timezone (openpyxl returns naive `datetime`/`time` values). Asia/
@@ -55,10 +74,10 @@ def load_workbook_bytes(content: bytes) -> Workbook:
         raise InvalidInputError(
             "The uploaded file could not be read as a valid Excel (.xlsx) spreadsheet."
         ) from exc
-    if len(workbook.sheetnames) > MAX_WORKSHEET_COUNT:
+    if len(workbook.sheetnames) > PR21_MAX_WORKSHEET_COUNT:
         raise InvalidInputError(
-            f"The uploaded file contains more than {MAX_WORKSHEET_COUNT} worksheets, "
-            "exceeding what a normal legacy history export contains."
+            f"The uploaded file contains more than {PR21_MAX_WORKSHEET_COUNT} worksheets, "
+            "exceeding the PR21 legacy history import's bounded worksheet-count allowance."
         )
     return workbook
 

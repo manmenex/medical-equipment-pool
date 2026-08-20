@@ -26,8 +26,10 @@ from app.models.equipment import Equipment, EquipmentStatus
 from app.models.legacy_history import LegacyWardAlias
 from app.models.master_data import Ward
 from app.models.user import User
+from app.services import import_service
 from app.services.identifiers import normalize_bcm_code
 from app.services.import_adapter import get_adapter
+from app.services.import_adapters.legacy_history import common as common_module
 from app.services.import_adapters.legacy_history import issue as issue_module
 from app.services.import_adapters.legacy_history.types import LegacyIssueCandidate
 from app.services.import_plan_providers.legacy_history import DATASET_TYPE
@@ -590,3 +592,85 @@ def test_missing_governed_column_rejected():
     wb.save(buf)
     with pytest.raises(InvalidInputError):
         issue_module.parse_workbook(buf.getvalue())
+
+
+# ---------------------------------------------------------------------------
+# PR21 fix P1: PR21-specific worksheet-count cap
+# (`common.PR21_MAX_WORKSHEET_COUNT`) -- the Owner-approved real PR21
+# workbook is independently verified to contain 28 worksheets, which the
+# inherited generic `import_service.MAX_WORKSHEET_COUNT` (25) rejected
+# before the canonical sheets could even be selected.
+# ---------------------------------------------------------------------------
+
+
+def _dummy_extra_sheets(count: int, *, prefix: str = "Dummy") -> dict[str, list]:
+    return {f"{prefix}{i}": [["placeholder"]] for i in range(count)}
+
+
+def test_approved_28_sheet_workbook_shape_accepted_by_loader():
+    """The verified real-workbook shape (2 canonical sheets + 26 other
+    sheets = 28 total) must be accepted, not rejected by a worksheet-count
+    policy tuned for a different, generic import flow."""
+    content = _build_workbook([_header_row()], [_line_row()], extra_sheets=_dummy_extra_sheets(26))
+    workbook = common_module.load_workbook_bytes(content)
+    assert len(workbook.sheetnames) == 28
+
+
+async def test_approved_28_sheet_workbook_reaches_canonical_issue_topology(db_session: AsyncSession):
+    """End-to-end: not only does the loader accept the 28-sheet shape, the
+    full parse/preload/validate pipeline still reaches a clean ISSUE
+    candidate from it -- the sheet-count allowance does not, by itself,
+    disturb canonical Issue parsing."""
+    await _seed_equipment(db_session)
+    await _seed_ward(db_session, code="Ward 1")
+    content = _build_workbook([_header_row()], [_line_row()], extra_sheets=_dummy_extra_sheets(26))
+    header_records, line_records, candidates, findings = await _run(db_session, content)
+    assert len(header_records) == 1
+    assert len(line_records) == 1
+    assert len(candidates) == 1
+    assert findings == []
+
+
+def test_worksheet_count_at_cap_accepted():
+    extra = common_module.PR21_MAX_WORKSHEET_COUNT - 2
+    content = _build_workbook([_header_row()], [_line_row()], extra_sheets=_dummy_extra_sheets(extra))
+    workbook = common_module.load_workbook_bytes(content)
+    assert len(workbook.sheetnames) == common_module.PR21_MAX_WORKSHEET_COUNT
+
+
+def test_worksheet_count_over_cap_rejected():
+    extra = common_module.PR21_MAX_WORKSHEET_COUNT - 2 + 1
+    content = _build_workbook([_header_row()], [_line_row()], extra_sheets=_dummy_extra_sheets(extra))
+    with pytest.raises(InvalidInputError):
+        common_module.load_workbook_bytes(content)
+
+
+def test_generic_import_service_cap_unchanged():
+    """The PR21-specific allowance must not leak into, or replace, the
+    generic import path's own policy -- that policy is still enforced
+    directly inside `import_service.py` and exercised end-to-end by
+    `test_import.py`'s own worksheet-count-limit regression."""
+    assert import_service.MAX_WORKSHEET_COUNT == 25
+    assert not hasattr(common_module, "MAX_WORKSHEET_COUNT")
+
+
+async def test_canonical_selection_unaffected_by_sdc_and_derived_sheets_in_28_sheet_shape(db_session: AsyncSession):
+    """Allowing a 28-sheet workbook must not become broad sheet ingestion:
+    SDC and derived/report sheets present within that same 28-sheet shape
+    must still never produce a candidate -- only the two named canonical
+    sheets are ever read."""
+    await _seed_equipment(db_session)
+    await _seed_ward(db_session, code="Ward 1")
+    extra_sheets: dict[str, list] = {
+        "ข้อมูลการส่ง SDC": [["x"]],
+        "ข้อมูลการรับ SDC": [["x"]],
+        "Report Summary": [["x"]],
+        "Equipment Master": [["x"]],
+    }
+    extra_sheets.update(_dummy_extra_sheets(22, prefix="Helper"))
+    content = _build_workbook([_header_row()], [_line_row()], extra_sheets=extra_sheets)
+    header_records, line_records, candidates, findings = await _run(db_session, content)
+    assert len(header_records) == 1
+    assert len(line_records) == 1
+    assert len(candidates) == 1
+    assert findings == []
