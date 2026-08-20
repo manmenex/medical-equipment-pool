@@ -275,9 +275,46 @@ async def test_parser_exception_follows_tx1_tx2_contract(client: AsyncClient, se
         unregister_adapter(DATASET_TYPE)
 
 
-async def test_bounded_row_count(client: AsyncClient, seeded_users, monkeypatch):
-    monkeypatch.setattr(import_validation_service, "MAX_IMPORT_ROWS", 2)
+async def test_bounded_row_count(client: AsyncClient, seeded_users):
+    """PR21D1 fix (P1 review, GitHub PR #107): the row-count admission
+    bound is now owned by the adapter (`ImportAdapter.max_import_rows`),
+    not a module-level name `import_validation_service` reads directly --
+    overridden here on the adapter *instance* (never on the shared
+    `FakeAdapter` class, which every other test in this module also
+    registers), exactly the override mechanism a real adapter subclass
+    uses via its own class attribute."""
     adapter = FakeAdapter(rows=3)
+    adapter.max_import_rows = 2
+    register_adapter(adapter)
+    try:
+        headers = await auth_headers(client)
+        session = await _create_and_register(client, headers)
+        r = await client.post(f"/api/v1/import-sessions/{session['id']}/validate", headers=headers)
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "validation_failed"
+    finally:
+        unregister_adapter(DATASET_TYPE)
+
+
+async def test_default_adapter_max_import_rows_unchanged_at_5000():
+    """PR21D1 fix §8 (P1 review, GitHub PR #107): an adapter that does not
+    override `max_import_rows` must keep the exact pre-existing framework
+    default -- protects PR19/PR20's own established behavior from any
+    accidental change by this fix."""
+    from app.services.import_adapter import MAX_IMPORT_ROWS
+
+    assert MAX_IMPORT_ROWS == 5000
+    adapter = FakeAdapter(rows=1)
+    assert adapter.max_import_rows == 5000
+    assert adapter.max_import_rows == MAX_IMPORT_ROWS
+
+
+async def test_default_adapter_rejects_5001_rows_exactly_as_before(client: AsyncClient, seeded_users):
+    """PR21D1 fix §8/§9 (P1 review, GitHub PR #107): a non-overriding
+    adapter's admission boundary is still exactly 5,000 -- 5,001 rows is
+    rejected (`validation_failed`), matching the framework's own
+    pre-existing behavior unchanged by this fix."""
+    adapter = FakeAdapter(rows=5001)
     register_adapter(adapter)
     try:
         headers = await auth_headers(client)

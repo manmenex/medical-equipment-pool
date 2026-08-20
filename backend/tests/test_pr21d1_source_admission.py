@@ -34,6 +34,8 @@ from app.models.legacy_history import LegacyHistoryDryRunPlan, LegacyMigrationAu
 from app.models.master_data import Ward
 from app.services import import_execution_service, import_lease
 from app.services.identifiers import normalize_bcm_code
+from app.services.import_adapter import ImportAdapter, RawImportRecord, get_adapter, register_adapter
+from app.services.import_adapters.legacy_history import common as common_module
 from app.services.import_adapters.legacy_history import issue as issue_module
 from app.services.import_adapters.legacy_history import receive as receive_module
 from app.services.import_plan_provider import get_plan_provider
@@ -533,3 +535,198 @@ async def test_KNOWN_GAP_generic_dry_run_plan_endpoint_cannot_see_a_real_legacy_
     r = await client.get(f"/api/v1/import-sessions/{session['id']}/dry-run-plan", headers=headers)
     assert r.status_code == 404
     assert r.json()["code"] == "IMPORT_DRY_RUN_PLAN_NOT_FOUND"
+
+
+# ---------------------------------------------------------------------------
+# F. Row-count admission (P1 fix, GitHub PR #107 review): the registered
+#    PR21 adapter's own bounded `max_import_rows` (`common.
+#    PR21_MAX_IMPORT_RECORDS`) admits the approved workbook's combined
+#    record count, which the framework's generic 5,000-row default alone
+#    could never admit -- proven both as a pure framework-admission
+#    boundary (via a lightweight fake adapter swapped in under the same
+#    `dataset_type`, never a real ~50k-row workbook) and, separately, with
+#    the REAL registered production adapter parsing a real (much smaller
+#    but still >5,000-combined-record) synthetic workbook through to a
+#    genuine `validated` business-validation outcome.
+# ---------------------------------------------------------------------------
+
+
+class _FakeCountingAdapter(ImportAdapter):
+    """A minimal stand-in registered under the SAME `dataset_type` as the
+    real production adapter, purely to test the framework's row-count
+    admission mechanism in isolation -- never a substitute for exercising
+    the real adapter's own parse/business-validation logic (see
+    `test_real_adapter_admits_over_5000_combined_records_and_validates`
+    below for that)."""
+
+    dataset_type = DATASET_TYPE
+    ruleset_version = "1"
+
+    def __init__(self, *, rows: int, max_import_rows: int):
+        self.rows = rows
+        self.max_import_rows = max_import_rows
+
+    def parse(self, raw_input):
+        return [RawImportRecord(row_number=i + 1, fields={}) for i in range(self.rows)]
+
+    async def preload_business_context(self, db, records):
+        return None
+
+    def validate_business_rules(self, record, context):
+        return []
+
+
+def _swap_registered_adapter(new_adapter: ImportAdapter):
+    """Context manager: temporarily overwrites the shared adapter
+    registry entry for `DATASET_TYPE` (which normally holds the real,
+    process-wide-singleton `LegacyTransactionHistoryAdapter` registered
+    by `app.main`'s import-time side effect), restoring the original
+    afterward unconditionally -- never leaves a fake adapter installed
+    for any other test in this process."""
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _cm():
+        original = get_adapter(DATASET_TYPE)
+        register_adapter(new_adapter)
+        try:
+            yield
+        finally:
+            if original is not None:
+                register_adapter(original)
+
+    return _cm()
+
+
+async def _create_and_register_metadata_only(client: AsyncClient, headers: dict) -> dict:
+    """Metadata-only source registration (no byte upload) -- mirrors
+    `test_import_validation.py`'s own `_create_and_register` convention.
+    Appropriate here since `_FakeCountingAdapter.parse()` ignores
+    `raw_input` entirely, so no real bytes need to exist for these
+    framework-admission-boundary tests (§9 of the review: "the goal is
+    the framework bound, not openpyxl stress testing")."""
+    created = (
+        await client.post("/api/v1/import-sessions", headers=headers, json={"dataset_type": DATASET_TYPE})
+    ).json()
+    reg = await client.post(
+        f"/api/v1/import-sessions/{created['id']}/source",
+        headers=headers,
+        json={"checksum": "a" * 64, "byte_size": 100},
+    )
+    assert reg.status_code == 201, reg.text
+    return created
+
+
+async def test_pr21_adapter_accepts_5001_records_that_generic_default_would_reject(
+    client: AsyncClient, seeded_users
+):
+    with _swap_registered_adapter(
+        _FakeCountingAdapter(rows=5001, max_import_rows=common_module.PR21_MAX_IMPORT_RECORDS)
+    ):
+        headers = await auth_headers(client)
+        session = await _create_and_register_metadata_only(client, headers)
+        r = await client.post(f"/api/v1/import-sessions/{session['id']}/validate", headers=headers)
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "validated", "5,001 records must be admitted under the PR21-specific bound"
+
+
+async def test_pr21_adapter_accepts_exact_cap(client: AsyncClient, seeded_users):
+    with _swap_registered_adapter(
+        _FakeCountingAdapter(rows=common_module.PR21_MAX_IMPORT_RECORDS, max_import_rows=common_module.PR21_MAX_IMPORT_RECORDS)
+    ):
+        headers = await auth_headers(client)
+        session = await _create_and_register_metadata_only(client, headers)
+        r = await client.post(f"/api/v1/import-sessions/{session['id']}/validate", headers=headers)
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "validated", "exactly PR21_MAX_IMPORT_RECORDS records must be admitted"
+
+
+async def test_pr21_adapter_rejects_cap_plus_one(client: AsyncClient, seeded_users):
+    with _swap_registered_adapter(
+        _FakeCountingAdapter(
+            rows=common_module.PR21_MAX_IMPORT_RECORDS + 1, max_import_rows=common_module.PR21_MAX_IMPORT_RECORDS
+        )
+    ):
+        headers = await auth_headers(client)
+        session = await _create_and_register_metadata_only(client, headers)
+        r = await client.post(f"/api/v1/import-sessions/{session['id']}/validate", headers=headers)
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "validation_failed", "PR21_MAX_IMPORT_RECORDS + 1 must still be rejected"
+
+
+async def test_generic_default_still_rejects_5001_records_for_other_datasets(client: AsyncClient, seeded_users):
+    """§8/§22 of the review: swapping PR21's own adapter never affects any
+    other dataset_type's own admission bound."""
+    other_dataset_type = "pr21d1_fix_unrelated_dataset"
+
+    class _OtherFakeAdapter(ImportAdapter):
+        dataset_type = other_dataset_type
+        ruleset_version = "1"
+
+        def parse(self, raw_input):
+            return [RawImportRecord(row_number=i + 1, fields={}) for i in range(5001)]
+
+        async def preload_business_context(self, db, records):
+            return None
+
+        def validate_business_rules(self, record, context):
+            return []
+
+    from app.services.import_adapter import unregister_adapter
+
+    register_adapter(_OtherFakeAdapter())
+    try:
+        headers = await auth_headers(client)
+        created = (
+            await client.post(
+                "/api/v1/import-sessions", headers=headers, json={"dataset_type": other_dataset_type}
+            )
+        ).json()
+        reg = await client.post(
+            f"/api/v1/import-sessions/{created['id']}/source",
+            headers=headers,
+            json={"checksum": "b" * 64, "byte_size": 100},
+        )
+        assert reg.status_code == 201, reg.text
+        r = await client.post(f"/api/v1/import-sessions/{created['id']}/validate", headers=headers)
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "validation_failed"
+    finally:
+        unregister_adapter(other_dataset_type)
+
+
+async def test_real_adapter_admits_over_5000_combined_records_and_validates(
+    client: AsyncClient, seeded_users, db_session
+):
+    """§15 of the review: the REAL registered production adapter, parsing
+    a real (synthetic) workbook whose combined Issue+Receive record count
+    exceeds the framework's generic 5,000-row default, must be admitted
+    by the row-count gate and reach real business validation --
+    culminating in a genuine `validated` outcome across every one of
+    those >5,000 rows, not merely "did not raise `_RowLimitExceededError`".
+    Kept well under `PR21_MAX_IMPORT_RECORDS` (60,000) and far below the
+    real ~51,464-row approved workbook -- proving the mechanism, not
+    stress-testing `openpyxl`."""
+    await _seed_equipment(db_session)
+    await _seed_ward(db_session)
+    headers = await auth_headers(client)
+
+    line_count = 2600  # combined = 2 headers + 2*2600 lines = 5,202 > 5,000
+    content = _default_workbook(
+        issue_headers=[_issue_header_row(order_ref="ORD-BULK")],
+        issue_lines=[_issue_line_row(row_key=str(i), order_ref="ORD-BULK") for i in range(1, line_count + 1)],
+        receive_headers=[_receive_header_row(order_ref="RET-BULK")],
+        receive_lines=[_receive_line_row(row_key=str(i), order_ref="RET-BULK") for i in range(1, line_count + 1)],
+    )
+
+    session = await _create_session(client, headers, dataset_type=DATASET_TYPE)
+    up = await _upload(client, headers, session["id"], content)
+    assert up.status_code == 201, up.text
+    v = await client.post(f"/api/v1/import-sessions/{session['id']}/validate", headers=headers)
+    assert v.status_code == 200, v.text
+    assert v.json()["status"] == "validated", (
+        "a real workbook with 5,202 combined canonical records must pass admission and business validation -- "
+        "proving preload_business_context/validate_business_rules genuinely ran, not merely that the row-count "
+        "check was bypassed"
+    )
+    assert v.json()["total_rows"] == 2 + 2 * line_count

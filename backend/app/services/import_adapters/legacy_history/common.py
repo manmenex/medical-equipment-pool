@@ -66,6 +66,36 @@ PR21_MAX_WORKSHEET_COUNT = 32
 # unconditional regardless of which cap admitted the compressed upload.
 PR21_MAX_UPLOAD_BYTES = 32 * 1024 * 1024
 
+# PR21D1 fix (P1 review, GitHub PR #107): the framework's own generic
+# `import_adapter.MAX_IMPORT_ROWS` (5,000) is tuned for the older/generic
+# single-sheet import flows and rejects the combined Issue+Receive record
+# count `LegacyTransactionHistoryAdapter.parse()` produces for the
+# Owner-approved PR21 workbook before validation can even run. The exact,
+# evidence-derived combined non-blank data-row count for the four
+# canonical sheets, per `docs/evidence/pr21/equipment-pool-workbook-
+# manifest.json` (workbook SHA-256
+# `8657cfc6c23036c64ea601dcc64c2b2e9d4fc5b51321534098d7a9ff1d84b00c`,
+# `non_empty_row_count - 1` per sheet, i.e. excluding the header row,
+# which is exactly what `row_is_blank()`-filtered parsing produces):
+#   Orders ยืมเครื่อง (Issue header):      5,685
+#   ข้อมูลส่งเครื่องมือ (Issue line):        19,871
+#   Orders คืนเครื่อง (Receive header):     6,158
+#   ข้อมูลรับเครื่องมือ (Receive line):       19,750
+#   combined total:                        51,464
+# No merged governance decision (PR #106/§55, DECISION_LOG) names an
+# exact numeric row-admission bound for this dataset, so -- mirroring
+# `PR21_MAX_WORKSHEET_COUNT`/`PR21_MAX_UPLOAD_BYTES`'s own precedent of a
+# narrow, evidence-justified, bounded operational allowance rather than
+# an unbounded or arbitrarily large one -- this sets a bound with
+# deliberately modest headroom above the verified 51,464 combined count
+# (roughly the same ~15-20% margin `PR21_MAX_WORKSHEET_COUNT` uses above
+# its own verified 28-sheet count), never `sys.maxsize` or an
+# unjustified round number. Consulted only via
+# `LegacyTransactionHistoryAdapter.max_import_rows` -- the framework's
+# own `MAX_IMPORT_ROWS` constant and every other adapter's default
+# admission bound are completely unaffected.
+PR21_MAX_IMPORT_RECORDS = 60_000
+
 # §22/§10.1: the workbook's `วันที่`/`เวลา` cells carry no embedded
 # timezone (openpyxl returns naive `datetime`/`time` values). Asia/
 # Bangkok is this repository's own established business timezone for

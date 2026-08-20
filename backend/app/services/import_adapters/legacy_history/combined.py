@@ -167,6 +167,12 @@ def _candidate_to_row_dict(candidate) -> dict[str, Any]:
 class LegacyTransactionHistoryAdapter(ImportAdapter):
     dataset_type = DATASET_TYPE
     ruleset_version = "1"
+    # PR21D1 fix (P1 review, GitHub PR #107): see `common.PR21_MAX_IMPORT_
+    # RECORDS`'s own docstring for the exact evidence-derived combined
+    # record count this bounds against and why 5,000 (the framework's
+    # generic `ImportAdapter.max_import_rows` default) cannot admit the
+    # real approved workbook.
+    max_import_rows = common.PR21_MAX_IMPORT_RECORDS
 
     def parse(self, raw_input: Any) -> list[RawImportRecord]:
         """§2/§6 of the task: loads the workbook once per canonical side

@@ -288,6 +288,45 @@ def test_execute_not_overridden_stays_structurally_blocked():
     assert type(adapter).precheck_execute is ImportAdapter.precheck_execute
 
 
+def test_generic_max_import_rows_default_unchanged():
+    """PR21D1 fix §11 (P1 review, GitHub PR #107): the framework's own
+    generic bound must remain exactly 5,000 -- this fix only adds a
+    per-adapter override mechanism, it never raises the shared default."""
+    from app.services.import_adapter import MAX_IMPORT_ROWS
+
+    assert MAX_IMPORT_ROWS == 5000
+
+
+def test_pr21_adapter_declares_its_own_bounded_max_import_rows():
+    """PR21D1 fix (P1 review, GitHub PR #107): the registered production
+    adapter overrides `max_import_rows` to `common.PR21_MAX_IMPORT_RECORDS`
+    -- strictly greater than the generic 5,000 default, and a genuine
+    bounded value (never `sys.maxsize`/unbounded)."""
+    from app.services.import_adapter import MAX_IMPORT_ROWS
+
+    adapter = get_adapter(DATASET_TYPE)
+    assert adapter.max_import_rows == common_module.PR21_MAX_IMPORT_RECORDS
+    assert adapter.max_import_rows > MAX_IMPORT_ROWS
+    assert 0 < adapter.max_import_rows < 1_000_000
+
+
+def test_pr21_cap_exceeds_evidence_derived_combined_record_count():
+    """PR21D1 fix §10 (P1 review, GitHub PR #107): the approved workbook's
+    real combined non-blank data-row count across all four canonical
+    sheets (§ evidence: `docs/evidence/pr21/equipment-pool-workbook-
+    manifest.json`, `non_empty_row_count - 1` per sheet, i.e. excluding
+    the header row) must fit under PR21's own bound -- these counts are
+    admission evidence only, never asserted as a business-validity
+    requirement."""
+    issue_headers = 5_685
+    issue_lines = 19_871
+    receive_headers = 6_158
+    receive_lines = 19_750
+    combined_records = issue_headers + issue_lines + receive_headers + receive_lines
+    assert combined_records == 51_464
+    assert combined_records <= common_module.PR21_MAX_IMPORT_RECORDS
+
+
 # ---------------------------------------------------------------------------
 # B. parse(): flattening, defense-in-depth checks.
 # ---------------------------------------------------------------------------
