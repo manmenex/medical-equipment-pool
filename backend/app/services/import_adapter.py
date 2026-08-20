@@ -111,6 +111,23 @@ class ImportAdapter(abc.ABC):
     #: an integer -- ruleset versions are opaque labels, not orderable.
     ruleset_version: str = "1"
 
+    #: PR21D1 fix (P1 review, GitHub PR #107): the row-count admission
+    #: bound `import_validation_service.run_validation` enforces
+    #: immediately after `parse()` returns. Defaults to the module-level
+    #: `MAX_IMPORT_ROWS` unchanged -- every adapter that does not
+    #: explicitly override this class attribute keeps the exact
+    #: pre-existing 5,000-row behavior. A concrete adapter whose real,
+    #: evidence-backed source shape exceeds that generic bound (e.g. a
+    #: combined multi-sheet dataset) may override this with its own
+    #: bounded, documented allowance -- never `sys.maxsize`, never an
+    #: arbitrarily large round number picked without evidence. This stays
+    #: a plain per-adapter class attribute (not a dataset_type branch in
+    #: the validation service itself, §12 of the review) so admission
+    #: policy ownership matches every other dataset-specific bound this
+    #: repository already uses this same pattern for (worksheet count,
+    #: upload byte size).
+    max_import_rows: int = MAX_IMPORT_ROWS
+
     @abc.abstractmethod
     def parse(self, raw_input: Any) -> list[RawImportRecord]:
         """Synchronous, CPU-bound parse of `raw_input` into typed records,

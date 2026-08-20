@@ -39,7 +39,7 @@ from app.crud import import_session as import_session_crud
 from app.crud import import_source_blob as import_source_blob_crud
 from app.models.import_session import ImportRowError, ImportSession
 from app.services import import_lease
-from app.services.import_adapter import MAX_IMPORT_ROWS, get_adapter
+from app.services.import_adapter import get_adapter
 from app.services.import_source_reader import ImportSourceReader, SourceDescriptor
 
 logger = logging.getLogger(__name__)
@@ -173,8 +173,13 @@ async def run_validation(
             )
             raw_input = await ImportSourceReader().open_verified(db, descriptor)
         raw_records = await asyncio.to_thread(adapter.parse, raw_input)
-        if len(raw_records) > MAX_IMPORT_ROWS:
-            raise _RowLimitExceededError(f"Source has more than {MAX_IMPORT_ROWS} rows.")
+        # PR21D1 fix (P1 review, GitHub PR #107): the admission bound is
+        # owned by the adapter (`ImportAdapter.max_import_rows`, defaulting
+        # to the framework's own `MAX_IMPORT_ROWS`), never a dataset_type
+        # branch here -- this service stays generic across every adapter.
+        max_import_rows = adapter.max_import_rows
+        if len(raw_records) > max_import_rows:
+            raise _RowLimitExceededError(f"Source has more than {max_import_rows} rows.")
 
         context = await adapter.preload_business_context(db, raw_records)
 

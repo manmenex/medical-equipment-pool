@@ -25,6 +25,13 @@ from app.worker.scheduler import start_scheduler, stop_scheduler
 # inside a request handler.
 import app.services.import_adapters.equipment_master  # noqa: E402,F401
 
+# Roadmap PR21D1 (Owner Decision Closure Round 3, GitHub PR #106, design
+# doc §55.2/§55.8): the combined canonical Issue+Receive adapter for
+# `legacy_transaction_history`, now that SDC exclusion (§6.5) authorizes
+# registering a production adapter for this dataset_type. Same
+# registration-side-effect discipline as the line above.
+import app.services.import_adapters.legacy_history.combined  # noqa: E402,F401
+
 # Roadmap PR21-Foundation. Imported for its module-level
 # `register_plan_provider(...)` side effect -- the internal
 # `DryRunPlanProvider` registry (`app.services.import_plan_provider`) is
