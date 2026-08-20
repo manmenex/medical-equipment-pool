@@ -36,6 +36,7 @@ from app.schemas.import_session import (
     ValidationFindingOut,
 )
 from app.services import import_execution_service, import_retention_service, import_validation_service
+from app.services.import_adapters.legacy_history.common import PR21_MAX_UPLOAD_BYTES
 from app.services.import_service import MAX_UPLOAD_BYTES, _read_upload_bounded, _validate_filename, _validate_zip_archive_bounds
 from app.utils.pagination import decode_cursor, decode_int_cursor, encode_cursor, encode_int_cursor
 
@@ -47,6 +48,15 @@ from app.utils.pagination import decode_cursor, decode_int_cursor, encode_cursor
 # (PR20C) declares its own `dataset_type` class attribute independently,
 # per this codebase's existing ImportAdapter pattern.
 _EQUIPMENT_MASTER_DATASET_TYPE = "equipment_master"
+
+# Roadmap PR21D1 (design doc §55.7): same plain-literal convention as
+# `_EQUIPMENT_MASTER_DATASET_TYPE` above -- selects the PR21-specific
+# bounded upload allowance (`PR21_MAX_UPLOAD_BYTES`, 32 MiB) instead of
+# the generic `MAX_UPLOAD_BYTES` (10 MiB) for this one dataset_type,
+# decided from the session's own server-side `dataset_type` column
+# *before* any byte is read off the wire -- never a client-supplied
+# value. The generic cap remains unchanged for every other dataset_type.
+_LEGACY_TRANSACTION_HISTORY_DATASET_TYPE = "legacy_transaction_history"
 
 # PR90-H2: matches `ImportSource.content_type`'s exact column width
 # (String(255), app/models/import_session.py), the same literal
@@ -245,7 +255,14 @@ async def upload_source(
         raise InvalidInputError(
             f"Uploaded file's content type exceeds the maximum allowed length of {_CONTENT_TYPE_MAX_LENGTH} characters."
         )
-    content = await _read_upload_bounded(file, max_bytes=MAX_UPLOAD_BYTES)
+    # Roadmap PR21D1 (design doc §55.7): dataset-specific cap selection,
+    # resolved from the session's own server-side dataset_type -- before
+    # `_read_upload_bounded` ever reads a byte off the wire. Every other
+    # dataset_type keeps the unchanged generic 10 MiB cap.
+    max_upload_bytes = (
+        PR21_MAX_UPLOAD_BYTES if session.dataset_type == _LEGACY_TRANSACTION_HISTORY_DATASET_TYPE else MAX_UPLOAD_BYTES
+    )
+    content = await _read_upload_bounded(file, max_bytes=max_upload_bytes)
     _validate_zip_archive_bounds(content)
 
     server_checksum = hashlib.sha256(content).hexdigest()

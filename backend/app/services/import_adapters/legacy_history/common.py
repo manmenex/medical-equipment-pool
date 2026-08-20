@@ -50,6 +50,22 @@ from app.services.import_service import _validate_zip_archive_bounds
 # the security bounds themselves.
 PR21_MAX_WORKSHEET_COUNT = 32
 
+# Roadmap PR21D1 / Owner Decision Closure Round 3 (GitHub PR #106, design
+# doc §55.7): the generic `import_service.MAX_UPLOAD_BYTES` (10 MiB) is
+# tuned for the older/generic import flows and rejects the Owner-approved
+# PR21 workbook (~19.7 MiB, 20,690,045 bytes) before its bytes ever reach
+# this package's own loader. Mirrors `PR21_MAX_WORKSHEET_COUNT`'s own
+# precedent exactly: a narrow, dataset-specific allowance instead of
+# raising the generic constant (which would silently relax the unrelated
+# Equipment Master upload path) -- 32 MiB gives bounded headroom above
+# the verified ~19.7 MiB artifact. This constant is consulted only by the
+# upload endpoint (`app.api.v1.import_sessions.upload_source`), selected
+# by `ImportSession.dataset_type` *before* any byte is read off the wire
+# (never a client-supplied value) -- it does not, by itself, relax any
+# zip-bomb/decompression/entry-count bound below, all of which remain
+# unconditional regardless of which cap admitted the compressed upload.
+PR21_MAX_UPLOAD_BYTES = 32 * 1024 * 1024
+
 # §22/§10.1: the workbook's `วันที่`/`เวลา` cells carry no embedded
 # timezone (openpyxl returns naive `datetime`/`time` values). Asia/
 # Bangkok is this repository's own established business timezone for

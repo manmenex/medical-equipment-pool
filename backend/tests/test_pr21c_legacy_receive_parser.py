@@ -659,12 +659,27 @@ async def test_repeated_validation_gives_same_findings_order(db_session: AsyncSe
 # ---------------------------------------------------------------------------
 
 
-def test_legacy_dataset_type_still_has_no_registered_adapter():
-    """Adding the Receive-side canonical parser must not, by itself,
-    register the final PR21 dataset adapter -- a real `ImportSession`
-    still cannot reach `validated`/dry-run/execute from Issue+Receive
-    canonical parsing alone (SDC scope remains open)."""
-    assert get_adapter(DATASET_TYPE) is None
+def test_legacy_dataset_type_adapter_registered_but_still_cannot_execute():
+    """Adding the Receive-side canonical parser did not, by itself,
+    register the final PR21 dataset adapter while SDC scope remained
+    open. Roadmap PR21D1 (design doc §55.2/§55.8, Owner Decision
+    Closure Round 3, GitHub PR #106) explicitly supersedes that now
+    that SDC is excluded and both canonical sides are merged --
+    `legacy_transaction_history` is now expected to have a real,
+    registered production adapter. The safety property that mattered --
+    a real `ImportSession` cannot reach executed history -- is preserved
+    a different way from here on: the registered adapter's own
+    `execute()` is still the unimplemented `ImportAdapter` base-class
+    default (§21/§55.5/§60/§61 of the PR21D1 task), so
+    `import_execution_service.run_execute`'s own
+    `type(adapter).execute is ImportAdapter.execute` guard keeps
+    `POST .../execute` structurally unreachable regardless of
+    registration."""
+    from app.services.import_adapter import ImportAdapter
+
+    adapter = get_adapter(DATASET_TYPE)
+    assert adapter is not None
+    assert type(adapter).execute is ImportAdapter.execute
 
 
 def test_workbook_authority_matching_checksum_passes():
