@@ -7459,7 +7459,43 @@ async def test_migration_0013_fresh_database_all_foreign_keys_are_restrict():
                 # equipment_master_dry_run_plan_rows.dry_run_plan_id ->
                 # equipment_master_dry_run_plans, .target_equipment_id ->
                 # equipment.
-                assert len(rows) == 38, f"expected exactly 38 foreign keys, found {len(rows)}: {rows}"
+                # + 18 added by migration 0019 (Roadmap PR21A) as originally
+                # shipped: legacy_migration_authorities.approved_by_user_id
+                # -> users; legacy_equipment_events.migration_authority_id
+                # -> legacy_migration_authorities, .equipment_id ->
+                # equipment, .resolved_ward_id -> wards, .import_session_id
+                # -> import_sessions, .import_source_id -> import_sources;
+                # legacy_equipment_event_source_refs.
+                # legacy_equipment_event_id -> legacy_equipment_events,
+                # .import_session_id -> import_sessions, .import_source_id
+                # -> import_sources; legacy_ward_aliases.ward_id -> wards,
+                # .created_by_user_id -> users;
+                # legacy_history_dry_run_plans.import_session_id ->
+                # import_sessions, .import_source_id -> import_sources,
+                # .migration_authority_id -> legacy_migration_authorities,
+                # .confirmed_by_user_id -> users, the two composite
+                # fk_legacy_history_dry_run_plans_accepted_validation_job/
+                # _dry_run_job -> import_jobs, and
+                # legacy_history_dry_run_plan_rows.dry_run_plan_id ->
+                # legacy_history_dry_run_plans.
+                # - 2, PR #103 fix round (provenance-integrity fix,
+                # docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md
+                # §8.1): legacy_equipment_events' single-column
+                # .import_source_id FK is replaced by one composite
+                # fk_legacy_equipment_events_source_belongs_to_session ->
+                # import_sources(import_session_id, id) -- net 0 for this
+                # table (1 simple FK out, 1 composite FK in).
+                # legacy_equipment_event_source_refs' three single-column
+                # FKs (.legacy_equipment_event_id, .import_session_id,
+                # .import_source_id) are replaced by one composite
+                # fk_legacy_equipment_event_source_refs_event_context ->
+                # legacy_equipment_events(id, import_session_id,
+                # import_source_id) -- net -2 for this table (3 simple FKs
+                # out, 1 composite FK in). `import_sources` itself gains a
+                # new UNIQUE (uq_import_sources_session_id, the composite
+                # FK's own target), not a FK, so it adds 0 to this count.
+                # 56 - 2 = 54.
+                assert len(rows) == 54, f"expected exactly 54 foreign keys, found {len(rows)}: {rows}"
                 for conname, confdeltype in rows:
                     assert confdeltype == "r", f"{conname} has confdeltype={confdeltype!r}, expected 'r' (RESTRICT)"
         finally:
@@ -9248,6 +9284,28 @@ _CATALOG_MISMATCH_SCENARIOS = (
         ),
         "import_sessions: constraint 'ck_import_sessions_notes_length' does not exist on this table",
     ),
+    # PR #103 fix round: `import_sources.uq_import_sources_session_id`
+    # is an OPTIONAL later-authorized object (`_OPTIONAL_LATER_CONSTRAINTS`/
+    # `_OPTIONAL_LATER_INDEXES` in 0015 itself) -- MISSING is acceptable,
+    # but a same-named object with the wrong definition, or an unhealthy
+    # backing index, must still fail closed exactly like every other
+    # governed object. These two scenarios prove that "optional" only
+    # ever relaxes the MISSING case, never definition/health.
+    (
+        "optional_constraint_wrong_definition",
+        ("ALTER TABLE import_sources ADD CONSTRAINT uq_import_sources_session_id UNIQUE (checksum)",),
+        "uq_import_sources_session_id",
+    ),
+    (
+        "optional_constraint_unhealthy_backing_index",
+        (
+            "ALTER TABLE import_sources ADD CONSTRAINT uq_import_sources_session_id "
+            "UNIQUE (import_session_id, id)",
+            "UPDATE pg_index SET indisvalid = false, indisready = false "
+            "WHERE indexrelid = 'uq_import_sources_session_id'::regclass",
+        ),
+        "uq_import_sources_session_id",
+    ),
 )
 
 
@@ -9293,6 +9351,47 @@ async def test_migration_0015_catalog_mismatches_fail_closed(scenario_name, muta
         assert expected_substring in combined, (
             f"scenario '{scenario_name}': failure must name the specific mismatched object "
             f"('{expected_substring}'):\n{combined}"
+        )
+    finally:
+        await _drop_scratch_database()
+
+
+async def test_migration_0015_accepts_correct_optional_pr21a_constraint_when_already_present():
+    """PR #103 fix round: `import_sources.uq_import_sources_session_id`
+    is an OPTIONAL later-authorized object (added for real by migration
+    0019, unmerged as of this writing) -- but on this repository's own
+    `0001_initial.py` -> `Base.metadata.create_all()` fresh-install path,
+    it can already be present by the time 0015's own verify runs (the
+    exact scenario `_OPTIONAL_LATER_CONSTRAINTS`/`_OPTIONAL_LATER_INDEXES`
+    exist to accommodate -- see that module's own docstring). A
+    correctly-defined, healthy instance of it must not fail 0015's own
+    `upgrade head` -- MISSING and COMPATIBLE are both acceptable for an
+    optional object; only a wrong definition or unhealthy state is not
+    (proven by the `optional_constraint_*` scenarios above)."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+
+    try:
+        _run_alembic("upgrade", "head")
+        _run_alembic("downgrade", "0014_index_naming_convergence")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            await _build_correct_historical_baseline(
+                engine,
+                mutations=(
+                    "ALTER TABLE import_sources ADD CONSTRAINT uq_import_sources_session_id "
+                    "UNIQUE (import_session_id, id)",
+                ),
+            )
+        finally:
+            await engine.dispose()
+
+        result = _run_alembic_allow_failure("upgrade", "head")
+        assert result.returncode == 0, (
+            "a correctly-defined, healthy optional later-authorized constraint must not fail "
+            f"upgrade head:\n{result.stdout}\n{result.stderr}"
         )
     finally:
         await _drop_scratch_database()
