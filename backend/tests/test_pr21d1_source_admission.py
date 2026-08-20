@@ -372,7 +372,18 @@ async def test_issue_side_failure_blocks_whole_session_dry_run(client: AsyncClie
     assert v.json()["status"] == "validation_failed", "one bad Issue row must fail the WHOLE combined validation"
 
 
-async def test_execute_endpoint_structurally_blocked_even_after_dry_run(client: AsyncClient, seeded_users, db_session):
+async def test_execute_endpoint_requires_confirmed_plan_even_after_dry_run(
+    client: AsyncClient, seeded_users, db_session
+):
+    """PR21D1 itself left `execute()` structurally unimplemented (a
+    `501 IMPORT_ADAPTER_NOT_IMPLEMENTED` for every dry-run outcome,
+    confirmed or not). Roadmap PR21D2 is the separately-authorized slice
+    that implements it -- see `test_pr21d2_historical_event_execution.py`
+    for the full execution test suite, including its own proof that a
+    genuinely confirmed plan executes successfully. This test now proves
+    the narrower, still-current invariant: a merely dry-run (never
+    confirmed) plan is still rejected -- `409 IMPORT_NO_CONFIRMED_PLAN`,
+    not `501`."""
     await _seed_equipment(db_session)
     await _seed_ward(db_session)
     headers = await auth_headers(client)
@@ -388,8 +399,8 @@ async def test_execute_endpoint_structurally_blocked_even_after_dry_run(client: 
     assert dr.status_code == 200, dr.text
 
     ex = await client.post(f"/api/v1/import-sessions/{session['id']}/execute", headers=headers)
-    assert ex.status_code == 501, ex.text
-    assert ex.json()["code"] == "IMPORT_ADAPTER_NOT_IMPLEMENTED"
+    assert ex.status_code == 409, ex.text
+    assert ex.json()["code"] == "IMPORT_NO_CONFIRMED_PLAN"
 
 
 async def test_dry_run_without_authority_fails_and_no_plan_persisted(client: AsyncClient, seeded_users, db_session):

@@ -105,6 +105,91 @@ async def get_current_plan(db: AsyncSession, *, import_session_id: uuid.UUID) ->
     ).scalar_one_or_none()
 
 
+async def get_active_confirmed_for_session(
+    db: AsyncSession, *, import_session_id: uuid.UUID
+) -> LegacyHistoryDryRunPlan | None:
+    """Roadmap PR21D2. Mirrors `import_dry_run_plan.
+    get_active_confirmed_for_session`'s exact resolution query and
+    rationale: `status = 'active' AND confirmed_at IS NOT NULL`,
+    deliberately distinct from `get_current_plan` above (which returns a
+    merely-`active`, possibly-unconfirmed plan). The partial unique index
+    on `(import_session_id) WHERE status = 'active'` guarantees at most
+    one row -- no "pick the newest" heuristic."""
+    return (
+        await db.execute(
+            select(LegacyHistoryDryRunPlan).where(
+                LegacyHistoryDryRunPlan.import_session_id == import_session_id,
+                LegacyHistoryDryRunPlan.status == "active",
+                LegacyHistoryDryRunPlan.confirmed_at.isnot(None),
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def mark_plan_consumed(db: AsyncSession, *, plan_id: uuid.UUID) -> None:
+    """Roadmap PR21D2. Called by the adapter's own `on_execution_success`,
+    inside the framework's TX1, only after the Job->Session completion
+    fence has already succeeded -- mirrors `import_dry_run_plan.
+    mark_plan_consumed` exactly."""
+    await db.execute(
+        update(LegacyHistoryDryRunPlan).where(LegacyHistoryDryRunPlan.id == plan_id).values(status="consumed")
+    )
+
+
+async def mark_plan_failed(db: AsyncSession, *, plan_id: uuid.UUID) -> None:
+    """Roadmap PR21D2. Called by the adapter's own `on_execution_failure`,
+    on the framework's TX2 session, immediately before that transaction's
+    own commit -- mirrors `import_dry_run_plan.mark_plan_failed`
+    exactly."""
+    await db.execute(
+        update(LegacyHistoryDryRunPlan).where(LegacyHistoryDryRunPlan.id == plan_id).values(status="failed")
+    )
+
+
+async def mark_active_plan_failed_for_session(db: AsyncSession, *, import_session_id: uuid.UUID) -> None:
+    """Roadmap PR21D2. Called by the adapter's own `on_execution_recovery`
+    -- reconciles a hard worker crash during `execute()` that never
+    raised anything at all. Mirrors `import_dry_run_plan.
+    mark_active_plan_failed_for_session` exactly: no `confirmed_at`
+    predicate needed, since reaching `executing` already required a
+    confirmed plan."""
+    await db.execute(
+        update(LegacyHistoryDryRunPlan)
+        .where(
+            LegacyHistoryDryRunPlan.import_session_id == import_session_id,
+            LegacyHistoryDryRunPlan.status == "active",
+        )
+        .values(status="failed")
+    )
+
+
+async def list_all_plan_rows(db: AsyncSession, *, plan_id: uuid.UUID) -> list[LegacyHistoryDryRunPlanRow]:
+    """Roadmap PR21D2. Unpaginated -- `execute()`'s own internal
+    consumption of one confirmed plan's rows, never an API response
+    (contrast `list_plan_rows` above, the cursor-paginated read path).
+    Ordered by `(event_type, source_row_number, id)` -- `source_row_number`
+    alone is not globally unique across a combined plan (Issue and
+    Receive sheets independently renumber from 1, §23 of the PR21D2 task),
+    so `event_type` is included as the primary sort key ahead of it, with
+    `id` as a final deterministic tiebreaker. The final database outcome
+    of `execute()` must never depend on accidental SQL row order."""
+    return list(
+        (
+            await db.execute(
+                select(LegacyHistoryDryRunPlanRow)
+                .where(LegacyHistoryDryRunPlanRow.dry_run_plan_id == plan_id)
+                .order_by(
+                    LegacyHistoryDryRunPlanRow.event_type.asc(),
+                    LegacyHistoryDryRunPlanRow.source_row_number.asc(),
+                    LegacyHistoryDryRunPlanRow.id.asc(),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
 async def get_plan_by_id(
     db: AsyncSession, *, plan_id: uuid.UUID, import_session_id: uuid.UUID
 ) -> LegacyHistoryDryRunPlan | None:
