@@ -9,6 +9,8 @@ from app.api.v1 import (
     health,
     import_sessions,
     inventory_import,
+    legacy_history_import,
+    legacy_migration_authorities,
     master_data,
     notifications,
     report_options,
@@ -32,3 +34,5 @@ api_router.include_router(audit.router)
 api_router.include_router(notifications.router)
 api_router.include_router(inventory_import.router)
 api_router.include_router(import_sessions.router)
+api_router.include_router(legacy_migration_authorities.router)
+api_router.include_router(legacy_history_import.router)

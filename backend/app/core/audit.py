@@ -79,6 +79,13 @@ AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CREATED = "import_dry_run_plan_created"
 # `persist_dry_run_plan`'s).
 AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CONFIRMED = "import_dry_run_plan_confirmed"
 
+# Roadmap PR21E0. Written exactly once, on the first genuine creation of a
+# `LegacyMigrationAuthority` row (`POST /legacy-migration-authorities`) --
+# never on an idempotent retry that returns an already-existing row (the
+# same `newly_confirmed`-gated discipline PR20D's own dry-run-plan confirm
+# audit already established above).
+AUDIT_ACTION_LEGACY_MIGRATION_AUTHORITY_APPROVED = "legacy_migration_authority_approved"
+
 # Audit entity-type values, same rationale as the actions above.
 AUDIT_ENTITY_EQUIPMENT = "equipment"
 AUDIT_ENTITY_USER = "user"
@@ -102,6 +109,10 @@ AUDIT_ENTITY_BORROW_TRANSACTION = "borrow_transaction"
 # import_sessions.id, never the import_jobs.id -- the session is the
 # aggregate root (§3.1).
 AUDIT_ENTITY_IMPORT_SESSION = "import_session"
+# Roadmap PR21E0. entity_id is the LegacyMigrationAuthority.id -- a
+# distinct aggregate root from ImportSession (§24.2 of the PR21 design:
+# an authority is a governance-level identity, not an upload artifact).
+AUDIT_ENTITY_LEGACY_MIGRATION_AUTHORITY = "legacy_migration_authority"
 
 # Substrings matched case-insensitively against JSON keys in before/after
 # payloads. Deliberately broad (e.g. "token" covers access_token,

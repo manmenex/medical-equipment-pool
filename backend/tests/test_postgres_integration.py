@@ -12856,3 +12856,120 @@ async def test_pr95h1_execute_completion_vs_recovery_concurrent_race_never_produ
             assert final_equipment.version == 1
         else:
             pytest.fail(f"trial {trial}: neither completion nor recovery won: {outcomes}")
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR21E0 -- Legacy Import Operator API Surface, §10 of the task:
+# genuine two-connection concurrent-approval race for
+# `app.crud.legacy_migration_authority.create_or_get_approval`, proved
+# against real PostgreSQL uniqueness enforcement -- mirrors
+# `test_pr20e_create_identity_race_exactly_one_winner`'s own
+# `asyncio.Barrier`-forced-overlap shape. `test_pr21e0_legacy_migration_
+# authority_api.py`'s own SQLite suite proves the sequential idempotent-
+# retry contract (single shared StaticPool connection there cannot
+# support two genuinely overlapping transactions), so this is the one
+# place the real race is exercised.
+# ---------------------------------------------------------------------------
+
+
+async def test_pr21e0_concurrent_authority_approval_exactly_one_winner(pg_engine, pg_session, pg_seeded_users):
+    """Two independent connections race an identical `(scope, checksum)`
+    approval, `asyncio.Barrier`-forced to overlap. Exactly one connection's
+    `INSERT` must win; the other must observe `IntegrityError` inside its
+    own `db.begin_nested()` SAVEPOINT, requery, and return the SAME
+    persisted row (`created=False`) rather than raising -- proving
+    `create_or_get_approval`'s INSERT-then-catch-IntegrityError-then-
+    requery pattern is safe under a real, concurrently-committing second
+    connection, not merely against a single-connection SQLite
+    approximation. Repeated across trials with a fresh checksum each time.
+
+    **PR #109 P1 fix round (§7 of that task).** The losing side's own
+    session must remain genuinely usable *after* the SAVEPOINT-scoped
+    `IntegrityError` -- never a `PendingRollbackError` and never a
+    session left in a failed-transaction state -- because the CRUD
+    helper no longer calls `db.rollback()` against the outer transaction
+    (that would have poisoned it before this test's own `db.commit()`
+    ever ran). Proven concretely below: after `create_or_get_approval`
+    returns on each side, an unrelated write is staged on that same
+    session *before* committing, and verified durable afterward -- not
+    merely that `db.commit()` happened to not raise."""
+    from app.crud import legacy_migration_authority as _pg_legacy_migration_authority_crud
+    from app.models.legacy_history import LegacyMigrationAuthority as _PgLegacyMigrationAuthority
+    from app.models.master_data import Ward as _PgWard
+
+    actor = pg_seeded_users["administrator"]
+    maker = _pg94_session_maker(pg_engine)
+
+    for trial in range(5):
+        checksum = uuid.uuid4().hex + uuid.uuid4().hex[:32]
+        assert len(checksum) == 64
+        scope = "pr21_legacy_transaction_history_v1"
+        # Ward.code is String(20) -- keep the generated code (prefix +
+        # tag + "-" + one-char label) comfortably within that limit.
+        trial_tag = uuid.uuid4().hex[:6].upper()
+
+        barrier = asyncio.Barrier(2)
+        db_a = maker()
+        db_b = maker()
+        outcomes: dict[str, dict] = {}
+
+        async def _run(db, label: str):
+            await barrier.wait()
+            authority, created = await _pg_legacy_migration_authority_crud.create_or_get_approval(
+                db, scope=scope, approved_workbook_sha256=checksum, actor_id=actor.id
+            )
+            # §7: proves this session's transaction is still genuinely
+            # usable after the SAVEPOINT-scoped IntegrityError handling
+            # (the losing side) -- not just that create_or_get_approval
+            # itself returned, but that further work can still be staged
+            # and committed on the SAME session/transaction afterward.
+            db.add(_PgWard(code=f"P109R{trial_tag}-{label}", name=f"race {label}"))
+            await db.commit()
+            outcomes[label] = {"authority_id": authority.id, "created": created}
+
+        # `return_exceptions=True` -- unlike the default, this guarantees
+        # `gather()` waits for BOTH `_run()` calls to genuinely finish
+        # (success or exception) before returning. With the default
+        # (`return_exceptions=False`), if one `_run()` were to raise,
+        # `gather()` propagates that exception immediately WITHOUT waiting
+        # for the other -- and closing a session whose own `_run()` is
+        # still mid-`db.commit()` at that moment raises SQLAlchemy's own
+        # `IllegalStateChangeError` ("method '_connection_for_bind()' is
+        # already in progress"), masking whatever the real failure was.
+        # Neither `_run()` is expected to raise under correct behavior
+        # (`create_or_get_approval` never raises for an identical
+        # checksum+scope), so any exception here is a genuine failure,
+        # surfaced explicitly below rather than masked by a close()-time
+        # race.
+        results = await asyncio.gather(_run(db_a, "a"), _run(db_b, "b"), return_exceptions=True)
+        await db_a.close()
+        await db_b.close()
+        for result in results:
+            if isinstance(result, BaseException):
+                raise AssertionError(f"trial {trial}: _run() raised unexpectedly: {result!r}") from result
+
+        assert outcomes["a"]["authority_id"] == outcomes["b"]["authority_id"], (
+            f"trial {trial}: two different authority rows were created: {outcomes}"
+        )
+        assert sum(1 for o in outcomes.values() if o["created"]) == 1, (
+            f"trial {trial}: expected exactly one winner to report created=True: {outcomes}"
+        )
+
+        async with maker() as verify_db:
+            rows = (
+                await verify_db.execute(
+                    select(_PgLegacyMigrationAuthority).where(
+                        _PgLegacyMigrationAuthority.approved_workbook_sha256 == checksum
+                    )
+                )
+            ).scalars().all()
+            wards = (
+                await verify_db.execute(
+                    select(_PgWard).where(_PgWard.code.like(f"P109R{trial_tag}-%"))
+                )
+            ).scalars().all()
+        assert len(rows) == 1, f"trial {trial}: expected exactly one persisted row, found {len(rows)}"
+        assert len(wards) == 2, (
+            f"trial {trial}: expected both sides' post-approval writes to have committed cleanly "
+            f"(no PendingRollbackError, session usable after SAVEPOINT handling), found {len(wards)}"
+        )
