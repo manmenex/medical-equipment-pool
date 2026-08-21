@@ -4,26 +4,11 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LegacyImportSessionDetailPage } from "@/pages/LegacyImportSessionDetailPage";
-import { ImportSessionNotFoundError } from "@/services/legacyImportClient";
-import type { ImportSessionDetail } from "@/types/legacyImport";
 import type { UserProfile } from "@/types";
-import { assertImportSessionInvariants } from "@/utils/legacyImportInvariants";
 
-const getSession = vi.fn();
-
-vi.mock("@/services/legacyImportClient", () => {
-  class FakeImportSessionNotFoundError extends Error {}
-  return {
-    legacyImportClient: {
-      getSession: (...args: unknown[]) => getSession(...args),
-    },
-    ImportSessionNotFoundError: FakeImportSessionNotFoundError,
-  };
-});
-
-const getEquipmentMasterSession = vi.fn();
-vi.mock("@/services/equipmentMasterImportClient", () => ({
-  getEquipmentMasterSession: (...args: unknown[]) => getEquipmentMasterSession(...args),
+const getImportSessionSummary = vi.fn();
+vi.mock("@/services/importSessionClient", () => ({
+  getImportSessionSummary: (...args: unknown[]) => getImportSessionSummary(...args),
 }));
 
 let mockUser: UserProfile | null = null;
@@ -39,62 +24,11 @@ function makeUser(role: UserProfile["role"]): UserProfile {
   return { id: "user-1", employee_code: "U001", full_name: "Test User", email: "u@test.dev", role, permissions: {} };
 }
 
-// Matches backend/app/schemas/import_session.py's ImportSessionOut field-for-
-// field where a real field exists; findings mirror ValidationFindingOut
-// (id/row_number/field/error_code/message/severity).
-//
-// Default status is dry_run_completed (the real confirm-gate state, design
-// §5), which is reachable only from VALIDATED -- so, per design §12/§13,
-// invalidRows must be 0 and the finding below is warning-severity, not
-// error. `assertImportSessionInvariants` runs on every call so an override
-// that accidentally recreates an impossible combination fails the test
-// immediately rather than silently rendering a state the real backend
-// could never produce.
-function makeDetail(overrides: Partial<ImportSessionDetail> = {}): ImportSessionDetail {
-  const detail: ImportSessionDetail = {
-    id: "demo-1",
-    datasetType: "receive_history",
-    filename: "receive.xlsx",
-    status: "dry_run_completed",
-    createdByUserId: "user-1",
-    requestedByDisplayName: "สมชาย ใจดี",
-    createdAt: "2026-07-20T03:00:00Z",
-    totalRows: 100,
-    validRows: 100,
-    invalidRows: 0,
-    warningRows: 1,
-    importedRows: null,
-    failureReason: null,
-    requestedFileSizeBytes: 2048,
-    validationCounts: {
-      totalRows: 100,
-      validRows: 100,
-      warningRows: 1,
-      invalidRows: 0,
-    },
-    findingsByCategory: [{ categoryLabelTh: "รูปแบบวันที่ไม่ถูกต้อง", count: 1 }],
-    findings: [
-      {
-        id: "finding-1",
-        rowNumber: 3,
-        field: "วันที่",
-        errorCode: "INVALID_DATE",
-        message: "รูปแบบวันที่ไม่ถูกต้อง",
-        severity: "warning",
-      },
-    ],
-    resultSummary: null,
-    ...overrides,
-  };
-  assertImportSessionInvariants(detail);
-  return detail;
-}
+const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 
-const REAL_SESSION_ID = "11111111-1111-4111-8111-111111111111";
-
-function makeRealSummary(overrides: Partial<Record<string, unknown>> = {}) {
+function makeSummary(overrides: Partial<Record<string, unknown>> = {}) {
   return {
-    id: REAL_SESSION_ID,
+    id: SESSION_ID,
     dataset_type: "equipment_master",
     status: "created",
     version: 1,
@@ -125,10 +59,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
 });
 
-function renderPage(sessionId = "demo-1") {
+function renderPage(sessionId = SESSION_ID) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
@@ -141,122 +75,83 @@ function renderPage(sessionId = "demo-1") {
   );
 }
 
+// Roadmap PR21E (design §12): which panel renders is decided purely by the
+// session's own real `dataset_type`, fetched once via the shared
+// getImportSessionSummary seam -- never inferred from the route/id shape
+// (the former PR19B/PR20F isBackendSessionId UUID-regex routing no longer
+// exists; every session id on this route is real now).
 describe("LegacyImportSessionDetailPage", () => {
   it("shows a loading state", async () => {
-    getSession.mockReturnValue(new Promise(() => {}));
+    getImportSessionSummary.mockReturnValue(new Promise(() => {}));
     renderPage();
     expect(await screen.findByText("กำลังโหลดรายละเอียดการนำเข้าข้อมูล...")).toBeInTheDocument();
   });
 
-  it("renders validation summary, finding rows, and the dry-run confirm-gate panel with a disabled confirm action", async () => {
-    getSession.mockResolvedValue(makeDetail());
+  it("routes an equipment_master session to the Equipment Master workflow panel", async () => {
+    getImportSessionSummary.mockResolvedValue(makeSummary({ dataset_type: "equipment_master" }));
     renderPage();
 
-    expect(await screen.findByText("สรุปผลการตรวจสอบข้อมูล")).toBeInTheDocument();
-    // Rendered twice -- once in the desktop table, once in the mobile card
-    // fallback (task brief: "responsive tables or card fallback on small
-    // screens") -- jsdom has no viewport, so both are present in the DOM.
-    expect(screen.getAllByText("รูปแบบวันที่ไม่ถูกต้อง").length).toBeGreaterThan(0);
-    // Real backend confirm-gate status (design §5): dry_run_completed.
-    expect(screen.getByText("ทดลองนำเข้าโดยไม่บันทึกแล้ว — รอการยืนยัน")).toBeInTheDocument();
-
-    const confirmButton = screen.getByRole("button", { name: /ยืนยันนำเข้า/ });
-    expect(confirmButton).toBeDisabled();
+    expect(await screen.findByText("นำเข้าข้อมูลหลักเครื่องมือ")).toBeInTheDocument();
+    expect(getImportSessionSummary).toHaveBeenCalledWith(SESSION_ID);
   });
 
-  it("shows the non-blocking warning note when warningRows > 0", async () => {
-    getSession.mockResolvedValue(makeDetail());
+  it("routes a legacy_transaction_history session to the Legacy History workflow panel", async () => {
+    getImportSessionSummary.mockResolvedValue(makeSummary({ dataset_type: "legacy_transaction_history" }));
     renderPage();
 
-    expect(await screen.findByText(/คำเตือนไม่ปิดกั้นการดำเนินการต่อ/)).toBeInTheDocument();
+    expect(await screen.findByText("นำเข้าประวัติการรับ-ส่งเครื่องมือเดิม")).toBeInTheDocument();
   });
 
-  it("does not show the dry-run confirm-gate panel for a status other than dry_run_completed", async () => {
-    getSession.mockResolvedValue(makeDetail({ status: "validated" }));
-    renderPage();
-
-    await screen.findByText("สรุปผลการตรวจสอบข้อมูล");
-    expect(screen.queryByText("ทดลองนำเข้าโดยไม่บันทึกแล้ว — รอการยืนยัน")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /ยืนยันนำเข้า/ })).not.toBeInTheDocument();
-  });
-
-  it("renders a result summary for a completed session and no dry-run confirm action", async () => {
-    getSession.mockResolvedValue(
-      makeDetail({
-        status: "completed",
-        warningRows: 0,
-        validationCounts: null,
-        findingsByCategory: [],
-        findings: [],
-        resultSummary: {
-          status: "completed",
-          importedRows: 90,
-          terminalAt: "2026-07-20T04:00:00Z",
-          sessionId: "demo-1",
-        },
+  it("renders correctly when loaded directly (no prior create-flow state)", async () => {
+    getImportSessionSummary.mockResolvedValue(
+      makeSummary({
+        dataset_type: "legacy_transaction_history",
+        status: "dry_run_completed",
+        total_rows: 500,
+        valid_rows: 500,
+        invalid_rows: 0,
+        warning_rows: 0,
       })
     );
     renderPage();
 
-    expect(await screen.findByText("สรุปผลการนำเข้า")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /ยืนยันนำเข้า/ })).not.toBeInTheDocument();
+    expect(await screen.findByText("นำเข้าประวัติการรับ-ส่งเครื่องมือเดิม")).toBeInTheDocument();
+    expect(screen.getByText(SESSION_ID, { exact: false })).toBeInTheDocument();
+  });
+
+  it("shows a safe unsupported-dataset state for an unrecognized dataset_type, never the Equipment Master panel", async () => {
+    getImportSessionSummary.mockResolvedValue(makeSummary({ dataset_type: "something_unknown" }));
+    renderPage();
+
+    expect(await screen.findByText("ไม่รองรับประเภทข้อมูลนี้")).toBeInTheDocument();
+    expect(screen.queryByText("นำเข้าข้อมูลหลักเครื่องมือ")).not.toBeInTheDocument();
+    expect(screen.queryByText("นำเข้าประวัติการรับ-ส่งเครื่องมือเดิม")).not.toBeInTheDocument();
   });
 
   it("shows a not-found message for an unknown session id", async () => {
-    getSession.mockRejectedValue(new ImportSessionNotFoundError("nope"));
-    renderPage("does-not-exist");
+    const error = Object.assign(new Error("not found"), {
+      isAxiosError: true,
+      response: { status: 404, data: { code: "IMPORT_SESSION_NOT_FOUND", detail: "not found" } },
+    });
+    getImportSessionSummary.mockRejectedValue(error);
+    renderPage("22222222-2222-4222-8222-222222222222");
 
     expect(await screen.findByText("ไม่พบรายการนำเข้าข้อมูลนี้")).toBeInTheDocument();
   });
 
   it("shows a generic error state with retry for a non-not-found failure", async () => {
-    getSession.mockRejectedValue(new Error("network error"));
+    getImportSessionSummary.mockRejectedValue(new Error("network error"));
     renderPage();
 
     expect(await screen.findByText("ไม่สามารถโหลดรายละเอียดการนำเข้าข้อมูลได้")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "ลองใหม่" })).toBeInTheDocument();
   });
 
-  it("shows a permission-denied state for a non-administrator and never calls getSession", async () => {
+  it("shows a permission-denied state for a non-administrator, and never calls the session client", async () => {
     mockUser = makeUser("read_only");
     renderPage();
 
     expect(await screen.findByText("คุณไม่มีสิทธิ์เข้าถึงหน้านำเข้าข้อมูลเดิม")).toBeInTheDocument();
-    expect(getSession).not.toHaveBeenCalled();
-  });
-
-  // Roadmap PR20F design §41 "category dispatch" + "reload" tests: a UUID
-  // session id routes to the real EquipmentMasterWorkflowPanel (and its own
-  // real API client) instead of the PR19B mock view -- purely from the
-  // session id shape in the URL, with no reliance on any prior in-memory
-  // navigation state (design §39: a direct reload/URL visit must recover
-  // fully from backend truth).
-  describe("real Equipment Master session (UUID id)", () => {
-    it("routes a UUID session id to the real workflow panel, never the mock client", async () => {
-      getEquipmentMasterSession.mockResolvedValue(makeRealSummary());
-      renderPage(REAL_SESSION_ID);
-
-      expect(await screen.findByText("นำเข้าข้อมูลหลักเครื่องมือ")).toBeInTheDocument();
-      expect(getEquipmentMasterSession).toHaveBeenCalledWith(REAL_SESSION_ID);
-      expect(getSession).not.toHaveBeenCalled();
-    });
-
-    it("renders correctly when the UUID route is loaded directly (no prior create-flow state)", async () => {
-      getEquipmentMasterSession.mockResolvedValue(
-        makeRealSummary({ status: "dry_run_completed", total_rows: 500, valid_rows: 500, invalid_rows: 0, warning_rows: 0 })
-      );
-      renderPage(REAL_SESSION_ID);
-
-      expect(await screen.findByText("นำเข้าข้อมูลหลักเครื่องมือ")).toBeInTheDocument();
-      expect(screen.getByText(REAL_SESSION_ID, { exact: false })).toBeInTheDocument();
-    });
-
-    it("shows a permission-denied state for a non-administrator on a real session id, and never calls the real client", async () => {
-      mockUser = makeUser("read_only");
-      renderPage(REAL_SESSION_ID);
-
-      expect(await screen.findByText("คุณไม่มีสิทธิ์เข้าถึงหน้านำเข้าข้อมูลเดิม")).toBeInTheDocument();
-      expect(getEquipmentMasterSession).not.toHaveBeenCalled();
-    });
+    expect(getImportSessionSummary).not.toHaveBeenCalled();
   });
 });

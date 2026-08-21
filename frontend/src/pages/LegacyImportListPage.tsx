@@ -1,129 +1,117 @@
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
 import { LegacyImportAccessGate } from "@/components/LegacyImportAccessGate";
 import { LegacyImportStatusBadge } from "@/components/LegacyImportStatusBadge";
 import { canManageLegacyImport, useAuth } from "@/hooks/useAuth";
 import { apiErrorMessage } from "@/services/api";
-import { legacyImportClient } from "@/services/legacyImportClient";
 import { listEquipmentMasterSessions } from "@/services/equipmentMasterImportClient";
-import type { ImportSessionStatus } from "@/types/legacyImport";
+import { listLegacyHistorySessions } from "@/services/legacyHistoryImportClient";
+import type { ImportCategory, ImportSessionStatus } from "@/types/legacyImport";
 import { formatDateTimeInTimezone } from "@/utils/printFormat";
 import { IMPORT_CATEGORY_LABELS } from "@/utils/legacyImportLabels";
 
 interface MergedImportRow {
   id: string;
-  categoryLabel: string;
-  filename: string;
+  category: ImportCategory;
   status: ImportSessionStatus;
   actorLabel: string;
   createdAt: string;
   totalRows: number | null;
 }
 
-// PR19B "Import landing/session list" + PR20F "Equipment Master real API
-// integration" (design §35): this list merges two genuinely different
-// sources -- real, backend-persisted Equipment Master sessions (fetched via
-// services/equipmentMasterImportClient.ts) and the still-mock Receive/Issue
-// History sessions (services/legacyImportClient.ts's MockImportClient,
-// explicitly filtered to exclude equipment_master so a category is never
-// listed from both sources at once). Receive/Issue History remain
-// frontend-only placeholders -- see legacyImportFixtures.ts's file-level
-// note -- and are never routed through the real Equipment Master client.
+// Roadmap PR21E (design §29-§30): this list now merges two genuinely real,
+// backend-persisted sources -- Equipment Master and Legacy Transaction
+// History sessions, both fetched via their own real client and both
+// cursor-paginated the same way (mirrors the same pattern already used for
+// equipment transaction history and DryRunPlan rows elsewhere in this
+// codebase). The former PR19B mock Receive/Issue History list, and the
+// "still a prototype" banner, have been removed entirely -- every session
+// listed here is real.
 export function LegacyImportListPage() {
   const { user } = useAuth();
-  // Never fires for a user the usability gate below would reject anyway --
-  // mirrors the rest of this codebase's "don't call a lookup a role can't
-  // use" convention (e.g. AdminPage never mounts InventoryImportPanel
-  // unless canImportInventory(user) is already true).
-  // Review round 1 (P1 "Legacy Import session list must paginate"): a
-  // single limit:50 fetch silently hid every real Equipment Master session
-  // beyond the first page. useInfiniteQuery follows the backend's own
-  // next_cursor through an explicit "โหลดเพิ่มเติม" action instead of
-  // discarding it -- mirroring the same cursor pattern already used for
-  // equipment transaction history (EquipmentDetailPage) and DryRunPlan rows
-  // (EquipmentMasterWorkflowPanel). The mock Receive/Issue list has no
-  // pagination concern of its own -- MockImportClient.listSessions() always
-  // returns its full, small fixture set in one page (nextCursor: null).
+  // Never fires for a user the usability gate below would reject anyway.
+  const enabled = canManageLegacyImport(user);
+
   const {
-    data: realPages,
-    isLoading: realLoading,
-    isError: realIsError,
-    error: realError,
-    refetch: refetchReal,
-    fetchNextPage: fetchNextRealPage,
-    hasNextPage: hasNextRealPage,
-    isFetchingNextPage: isFetchingNextRealPage,
+    data: equipmentMasterPages,
+    isLoading: equipmentMasterLoading,
+    isError: equipmentMasterIsError,
+    error: equipmentMasterError,
+    refetch: refetchEquipmentMaster,
+    fetchNextPage: fetchNextEquipmentMasterPage,
+    hasNextPage: hasNextEquipmentMasterPage,
+    isFetchingNextPage: isFetchingNextEquipmentMasterPage,
   } = useInfiniteQuery({
     queryKey: ["legacy-import", "equipment-master", "sessions"],
     queryFn: ({ pageParam }) => listEquipmentMasterSessions({ limit: 50, cursor: pageParam }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.next_cursor,
-    enabled: canManageLegacyImport(user),
+    enabled,
   });
-  const realItems = realPages?.pages.flatMap((p) => p.items) ?? [];
-  const realTotal = realPages?.pages[0]?.total ?? null;
-  const {
-    data: mockPage,
-    isLoading: mockLoading,
-    isError: mockIsError,
-    error: mockError,
-    refetch: refetchMock,
-  } = useQuery({
-    queryKey: ["legacy-import", "sessions"],
-    queryFn: () => legacyImportClient.listSessions(),
-    enabled: canManageLegacyImport(user),
-  });
+  const equipmentMasterItems = equipmentMasterPages?.pages.flatMap((p) => p.items) ?? [];
+  const equipmentMasterTotal = equipmentMasterPages?.pages[0]?.total ?? null;
 
-  const isLoading = realLoading || mockLoading;
-  const isError = realIsError || mockIsError;
+  const {
+    data: legacyHistoryPages,
+    isLoading: legacyHistoryLoading,
+    isError: legacyHistoryIsError,
+    error: legacyHistoryError,
+    refetch: refetchLegacyHistory,
+    fetchNextPage: fetchNextLegacyHistoryPage,
+    hasNextPage: hasNextLegacyHistoryPage,
+    isFetchingNextPage: isFetchingNextLegacyHistoryPage,
+  } = useInfiniteQuery({
+    queryKey: ["legacy-import", "legacy-history", "sessions"],
+    queryFn: ({ pageParam }) => listLegacyHistorySessions({ limit: 50, cursor: pageParam }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.next_cursor,
+    enabled,
+  });
+  const legacyHistoryItems = legacyHistoryPages?.pages.flatMap((p) => p.items) ?? [];
+  const legacyHistoryTotal = legacyHistoryPages?.pages[0]?.total ?? null;
+
+  const isLoading = equipmentMasterLoading || legacyHistoryLoading;
+  const isError = equipmentMasterIsError || legacyHistoryIsError;
 
   function refetchBoth() {
-    refetchReal();
-    refetchMock();
+    refetchEquipmentMaster();
+    refetchLegacyHistory();
   }
 
-  const mockRows: MergedImportRow[] = (mockPage?.items ?? [])
-    .filter((session) => session.datasetType !== "equipment_master")
-    .map((session) => ({
-      id: session.id,
-      categoryLabel: IMPORT_CATEGORY_LABELS[session.datasetType],
-      filename: session.filename,
-      status: session.status,
-      actorLabel: session.requestedByDisplayName,
-      createdAt: session.createdAt,
-      totalRows: session.totalRows,
-    }));
-
-  // The real ImportSessionOut carries no filename (that belongs to the
-  // separate ImportSource resource, registered via source/upload) and no
+  // Neither real ImportSessionOut carries a filename (that belongs to the
+  // separate ImportSource resource, registered via source/upload) or a
   // display name (only created_by_user_id, a user id reference with no
   // name-resolution endpoint in this contract) -- both rendered honestly
-  // as "-"/the raw id rather than fetched per-row or fabricated.
-  const realRows: MergedImportRow[] = realItems.map((session) => ({
+  // as the raw id rather than fetched per-row or fabricated.
+  const equipmentMasterRows: MergedImportRow[] = equipmentMasterItems.map((session) => ({
     id: session.id,
-    categoryLabel: IMPORT_CATEGORY_LABELS.equipment_master,
-    filename: "-",
+    category: "equipment_master",
+    status: session.status,
+    actorLabel: session.created_by_user_id,
+    createdAt: session.created_at,
+    totalRows: session.total_rows,
+  }));
+  const legacyHistoryRows: MergedImportRow[] = legacyHistoryItems.map((session) => ({
+    id: session.id,
+    category: "legacy_transaction_history",
     status: session.status,
     actorLabel: session.created_by_user_id,
     createdAt: session.created_at,
     totalRows: session.total_rows,
   }));
 
-  const rows = [...realRows, ...mockRows].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  const rows = [...equipmentMasterRows, ...legacyHistoryRows].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  const hasNextPage = hasNextEquipmentMasterPage || hasNextLegacyHistoryPage;
 
   return (
     <LegacyImportAccessGate>
       <div className="flex flex-col gap-4">
-        <div className="rounded-lg border border-dashed border-status-pm bg-status-pm/10 px-3 py-2 text-sm font-medium text-status-pm">
-          ข้อมูลหลักเครื่องมือเชื่อมต่อระบบจริงแล้ว — ประวัติการรับคืนและประวัติการเบิกยังเป็นต้นแบบ ยังไม่มีการนำเข้าข้อมูลจริง
-        </div>
-
         <div className="flex items-start justify-between gap-3">
           <div>
             <h1 className="text-lg font-semibold">นำเข้าข้อมูลเดิม</h1>
             <p className="text-sm text-[var(--text-muted)]">
-              นำเข้าข้อมูลเดิมจากระบบเก่า (AppSheet) สำหรับข้อมูลหลักเครื่องมือ ประวัติการรับคืน และประวัติการเบิก
+              นำเข้าข้อมูลเดิมจากระบบเก่า (AppSheet) สำหรับข้อมูลหลักเครื่องมือ และประวัติการรับ-ส่งเครื่องมือเดิม
             </p>
           </div>
           <Link
@@ -139,7 +127,7 @@ export function LegacyImportListPage() {
           {isError && (
             <div className="flex flex-col items-start gap-2">
               <p className="text-sm text-status-repair">
-                {apiErrorMessage(realError ?? mockError, "ไม่สามารถโหลดรายการนำเข้าข้อมูลได้")}
+                {apiErrorMessage(equipmentMasterError ?? legacyHistoryError, "ไม่สามารถโหลดรายการนำเข้าข้อมูลได้")}
               </p>
               <button
                 type="button"
@@ -162,9 +150,6 @@ export function LegacyImportListPage() {
                       ประเภทข้อมูล
                     </th>
                     <th scope="col" className="py-2 pr-3 font-medium">
-                      ไฟล์
-                    </th>
-                    <th scope="col" className="py-2 pr-3 font-medium">
                       สถานะ
                     </th>
                     <th scope="col" className="py-2 pr-3 font-medium">
@@ -183,10 +168,9 @@ export function LegacyImportListPage() {
                     <tr key={row.id} className="border-b border-[var(--border)] last:border-0">
                       <td className="py-2 pr-3">
                         <Link to={`/imports/${row.id}`} className="text-status-borrowed hover:underline">
-                          {row.categoryLabel}
+                          {IMPORT_CATEGORY_LABELS[row.category]}
                         </Link>
                       </td>
-                      <td className="py-2 pr-3">{row.filename}</td>
                       <td className="py-2 pr-3">
                         <LegacyImportStatusBadge status={row.status} />
                       </td>
@@ -201,19 +185,23 @@ export function LegacyImportListPage() {
               </table>
             </div>
           )}
-          {!isLoading && !isError && hasNextRealPage && (
+          {!isLoading && !isError && hasNextPage && (
             <button
               type="button"
-              onClick={() => fetchNextRealPage()}
-              disabled={isFetchingNextRealPage}
+              onClick={() => {
+                if (hasNextEquipmentMasterPage) fetchNextEquipmentMasterPage();
+                if (hasNextLegacyHistoryPage) fetchNextLegacyHistoryPage();
+              }}
+              disabled={isFetchingNextEquipmentMasterPage || isFetchingNextLegacyHistoryPage}
               className="mt-3 rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium disabled:opacity-50"
             >
-              {isFetchingNextRealPage ? "กำลังโหลด..." : "โหลดเพิ่มเติม"}
+              {isFetchingNextEquipmentMasterPage || isFetchingNextLegacyHistoryPage ? "กำลังโหลด..." : "โหลดเพิ่มเติม"}
             </button>
           )}
-          {!isLoading && !isError && !hasNextRealPage && realTotal !== null && realItems.length > 0 && (
+          {!isLoading && !isError && !hasNextPage && (equipmentMasterTotal !== null || legacyHistoryTotal !== null) && rows.length > 0 && (
             <p className="mt-2 text-xs text-[var(--text-muted)]">
-              ข้อมูลหลักเครื่องมือ: แสดง {realItems.length.toLocaleString()} จาก {realTotal.toLocaleString()} รายการ
+              ข้อมูลหลักเครื่องมือ: แสดง {equipmentMasterItems.length.toLocaleString()} จาก {(equipmentMasterTotal ?? 0).toLocaleString()} รายการ ·
+              ประวัติการรับ-ส่งเครื่องมือเดิม: แสดง {legacyHistoryItems.length.toLocaleString()} จาก {(legacyHistoryTotal ?? 0).toLocaleString()} รายการ
             </p>
           )}
         </div>

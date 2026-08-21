@@ -100,6 +100,45 @@ export function describeEquipmentMasterImportError(error: unknown): EquipmentMas
 // operator -- the reviewed plan can no longer be trusted and a fresh
 // dry-run is required before trying again. Never auto-retried, never a
 // silent refresh of expected_version.
-export function requiresFreshDryRun(kind: EquipmentMasterImportErrorKind): boolean {
+export function requiresFreshDryRun(kind: EquipmentMasterImportErrorKind | LegacyHistoryImportErrorKind): boolean {
   return kind === "stale_plan" || kind === "no_confirmed_plan" || kind === "execution_failed";
+}
+
+// Roadmap PR21E: Legacy Transaction History reuses every kind above
+// (the underlying session/plan lifecycle is the same generic PR19
+// infrastructure both datasets share) plus two authority-specific kinds
+// from backend/app/api/v1/legacy_migration_authorities.py. A new sibling
+// function, not a rename/generalization of describeEquipmentMasterImportError
+// above -- minimizes regression risk to the already-shipped Equipment
+// Master workflow.
+export type LegacyHistoryImportErrorKind =
+  | EquipmentMasterImportErrorKind
+  | "authority_not_found"
+  | "authority_scope_conflict";
+
+export interface LegacyHistoryImportErrorInfo {
+  code: string | undefined;
+  kind: LegacyHistoryImportErrorKind;
+  message: string;
+}
+
+export function describeLegacyHistoryImportError(error: unknown): LegacyHistoryImportErrorInfo {
+  const code = apiErrorCode(error);
+
+  if (code === "LEGACY_MIGRATION_AUTHORITY_NOT_FOUND") {
+    return {
+      code,
+      kind: "authority_not_found",
+      message: "ยังไม่มีการอนุมัติไฟล์นี้สำหรับการนำเข้า",
+    };
+  }
+  if (code === "LEGACY_MIGRATION_AUTHORITY_SCOPE_CONFLICT") {
+    return {
+      code,
+      kind: "authority_scope_conflict",
+      message: "checksum ของไฟล์นี้ได้รับการอนุมัติภายใต้ขอบเขตอื่นไปแล้ว ไม่สามารถอนุมัติซ้ำภายใต้ขอบเขตนี้ได้",
+    };
+  }
+
+  return describeEquipmentMasterImportError(error);
 }
