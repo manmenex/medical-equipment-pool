@@ -47,16 +47,15 @@ enough to implement without further architecture debate:
 
 - what "reconciled" means for legacy-imported data (§9-§15);
 - how a reconciliation analysis run is computed, persisted, and made
-  reproducible (§11, §16-§18);
+  reproducible (§17-§18);
 - how a human reviews and disposes of findings, and what a sign-off
-  actually attests to (§19-§23);
-- the API, error, and concurrency contracts that support that workflow
-  (§24-§27);
+  actually attests to (§19-§20);
+- the authorization, concurrency, lock-ordering, API, and error
+  contracts that support that workflow (§21-§23, §25-§26);
 - performance, audit, retention, and privacy requirements given the real
-  ~51,000-row dataset scale already established by PR21 (§27-§28, §33-§35);
+  ~51,000-row dataset scale already established by PR21 (§27-§29);
 - a minimized set of genuine Owner Decisions this design cannot resolve
-  on its own (§35 numbering per the outline, actually rendered as §36
-  here — see note in that section).
+  on its own (§36).
 
 ---
 
@@ -176,7 +175,7 @@ reinventing it.**
 **No equivalent table exists for BME-name-to-User mapping.**
 `LegacyEquipmentEvent.legacy_bme_name` is raw, verbatim text only,
 explicitly never auto-mapped (`legacy_history.py:224-225`). If PR22 wants
-BME-to-User resolution, it must design a new table — see OD-PR22-5 (§36).
+BME-to-User resolution, it must design a new table — see OD-PR22-4 (§36).
 
 ### 4.4 `BorrowTransaction`, `Equipment`, `Ward` — the modern/live side
 
@@ -201,7 +200,7 @@ rows are structurally outside it (§4.1) and must stay that way.
 `UNAVAILABLE_DEFECTIVE`, `DECOMMISSIONED`, `equipment.py:17-29`),
 `version` (`Integer, nullable=False, default=1, server_default=text("1")`,
 `equipment.py:212` — the CAS column PR22 must model its own concurrency
-columns after, §26). **`Equipment` has no direct FK/relationship to
+columns after, §17). **`Equipment` has no direct FK/relationship to
 `Ward`** — only `department_owner_id` (confirmed by
 `backend/app/api/v1/reports.py:206-207`'s own comment). This matters for
 §9.F: Ward traceability for legacy events is inherently indirect (via
@@ -262,7 +261,7 @@ workflow with a human review step).
   adapter-owned resource (e.g. the `DryRunPlan`) is mutated
   (`import_execution_service.py:468-490`, comment explicitly: "the global
   lock order is now Job -> Session -> Plan on every path"). PR22 must
-  define and hold to an equivalent order for its own entities (§27).
+  define and hold to an equivalent order for its own entities (§23).
 - **Flat exception hierarchy**: every domain exception subclasses
   `DomainError` directly (`backend/app/core/exceptions.py:1-7`) with a
   `code` string and `status_code`; ~30 leaf classes, no intermediate
@@ -271,7 +270,7 @@ workflow with a human review step).
   in the `detail` string, never a separate code per sub-cause — is
   explicit in `ImportDryRunPlanStaleError`'s own docstring
   (`exceptions.py:307-317`). PR22's own stale/conflict errors must follow
-  this same shape (§25).
+  this same shape (§26).
 - **Retention job pattern** (PR19A3, 180 days): explicit
   Administrator-only endpoint (`POST /import-sessions/retention/cleanup`,
   `backend/app/api/v1/import_sessions.py:142-157`) — **no in-repo
@@ -280,7 +279,7 @@ workflow with a human review step).
   fenced per-row redaction transaction. `settings.IMPORT_RETENTION_DAYS
   = 180` (`backend/app/core/config.py:79`). This 180-day *temporary
   artifact* policy is explicitly **not** what PR22's own governance
-  evidence should follow (§34) — reconciliation/sign-off evidence is
+  evidence should follow (§29) — reconciliation/sign-off evidence is
   permanent, not a temporary artifact.
 - **Role model**: exactly three confirmed roles —
   `ROLE_ADMINISTRATOR = "administrator"`, `ROLE_EQUIPMENT_POOL_STAFF =
@@ -311,7 +310,7 @@ once via `loop.time()`, `asyncio.wait_for` around both the semaphore
 acquire and a shielded compute task, slot released only via the task's
 own done-callback (never on caller-side timeout). This is the pattern
 PR22's own analysis engine should reuse for the ~51,000-row dataset
-(§28).
+(§27).
 
 ### 4.7 Pagination convention
 
@@ -322,17 +321,17 @@ PR22's own analysis engine should reuse for the ~51,000-row dataset
 Example: `GET /reports/receive` (`app/api/v1/reports.py:114-150`),
 `limit: int = Query(default=25, ge=1, le=200)`, keyset pagination
 ordered `created_at DESC, id DESC`, `limit+1` fetch to detect a next
-page. PR22's findings-list endpoint follows this identical shape (§24).
+page. PR22's findings-list endpoint follows this identical shape (§25).
 
 ### 4.8 No existing unified legacy/modern history query
 
 Confirmed absent: no query, view, or ORM join spans `BorrowTransaction`
 and `LegacyEquipmentEvent` anywhere in the merged codebase today (a
 repo-wide search for "unified"/"reconcil" in `backend/` returns no
-application-code matches). PR22 is the first slice to build this (§18).
+application-code matches). PR22 is the first slice to build this (§15).
 Real scale: `backend/app/crud/legacy_equipment_event.py:71` documents "a
 ~51,464-row combined dataset" for PR21D2's own batch-insert path — the
-same order of magnitude this design's performance section (§28) must
+same order of magnitude this design's performance section (§27) must
 handle.
 
 ### 4.9 PR21 design's own PR22-deferred items (binding on this design)
@@ -355,7 +354,7 @@ as authoritative and does not reopen:
 > historical record regardless of whether a later link is ever
 > established.
 
-And on corrected/re-exported workbooks (§20 below, `PR21_LEGACY_...md:1742-1861`):
+And on corrected/re-exported workbooks (§13 below, `PR21_LEGACY_...md:1742-1861`):
 
 > A different checksum **must not** be automatically attached to the
 > existing migration authority, must **not** be automatically
@@ -367,8 +366,8 @@ And on corrected/re-exported workbooks (§20 below, `PR21_LEGACY_...md:1742-1861
 > correction/reconciliation question** (PR22-or-later, under a new or
 > explicitly superseding `LegacyMigrationAuthority`).
 
-These two quoted passages are the binding constraints §7 (pairing) and
-§20 (source correction) below implement.
+These two quoted passages are the binding constraints §11 (pairing) and
+§13 (source correction) below implement.
 
 ---
 
@@ -392,12 +391,12 @@ must support, end to end:
    otherwise judged complete per the Owner-approved completion policy,
    §36), an Administrator performs **sign-off** — an immutable,
    auditable attestation bound to the exact run/snapshot reviewed.
-5. A signed-off run's evidence remains available indefinitely (§34) and
+5. A signed-off run's evidence remains available indefinitely (§29) and
    feeds Roadmap PR23's cutover-readiness evidence (not designed here).
 
 This workflow is explicitly **not** "detect anomaly, fix data
 immediately." No step here writes to `Equipment`, `BorrowTransaction`, or
-`LegacyEquipmentEvent`. If genuine data correction is ever needed, §21
+`LegacyEquipmentEvent`. If genuine data correction is ever needed, §16
 requires a separate, explicitly audited correction workflow — not an
 implicit side-effect of reconciliation review.
 
@@ -419,7 +418,7 @@ requirement not to collapse them into one "duplicate" flag):
    business-relevant fields (`equipment_id`, `event_type`, `occurred_at`,
    `legacy_ward_text`, `legacy_bme_name`, `legacy_order_reference`) —
    almost always the signature of a corrected/re-exported workbook
-   creating a second authority over overlapping source rows (§20).
+   creating a second authority over overlapping source rows (§13).
 3. **Suspected semantic duplicate.** Different source identity, business
    fields *not* byte-identical, but a deterministic rule judges them
    likely to represent the same event (e.g. same `equipment_id`, same
@@ -438,9 +437,9 @@ requirement not to collapse them into one "duplicate" flag):
    import, which is a distinct, real traceability question, §9.A).
 6. **Reconciliation disposition.** The human-reviewed conclusion attached
    to a finding — never inferred, never defaulted, never derived from
-   severity (§15).
+   severity (§10).
 
-A finding belongs to exactly one detection category (§14) but its
+A finding belongs to exactly one detection category (§10) but its
 underlying *nature*, per this taxonomy, informs which category and
 severity it receives. These six concepts are documentation/design
 vocabulary, not necessarily six separate database columns — §17
@@ -459,12 +458,12 @@ vocabulary, not necessarily six separate database columns — §17
 - E. Current-state plausibility comparison, as a review signal only,
   never automatic mutation (§9.E)
 - F. Ward traceability review, reusing PR21A's existing alias table (§9.F)
-- G. BME/operator traceability review, contingent on OD-PR22-5 (§9.G)
-- H. Corrected/re-exported workbook governance (§9.H, §20)
-- I. Reconciliation sign-off, its evidence, and its semantics (§9.I, §22)
-- A read-only-first, persisted-snapshot analysis architecture (§10-§11)
+- G. BME/operator traceability review, contingent on OD-PR22-4 (§9.G)
+- H. Corrected/re-exported workbook governance (§9.H, §13)
+- I. Reconciliation sign-off, its evidence, and its semantics (§9.I, §20)
+- A read-only-first, persisted-snapshot analysis architecture (§17-§18)
 - A unified read/query projection over legacy + modern history, without
-  physically merging the tables (§18)
+  physically merging the tables (§15)
 
 **Explicitly out of scope (do not absorb into PR22):**
 
@@ -497,13 +496,13 @@ mistakes a reconciliation feature is most likely to accidentally make:
   tracked entirely in PR22's own new tables (§17), never on `Equipment`
   itself.
 - Do not mutate `LegacyEquipmentEvent` rows to "fix" anything a finding
-  surfaces. They are permanent (§4.1, §21).
+  surfaces. They are permanent (§4.1, §16).
 - Do not require Issue↔Receive pairing to validate that an event exists
   or is traceable — pairing is optional analytical/review-time
   enrichment, never a precondition (§4.9).
 - Do not automatically rewrite `Equipment.status` from historical
   chronology (§16).
-- Do not treat "reconcile" as synonymous with "correct the data" (§21).
+- Do not treat "reconcile" as synonymous with "correct the data" (§16).
 - Do not introduce a general analytics/BI dashboard — only a narrowly
   scoped operational reconciliation summary tied to the review workflow
   itself (§31).
@@ -558,7 +557,7 @@ Three distinct mechanisms, matching §6's taxonomy:
   identity constraint under *different* `migration_authority_id`s (the
   only way two logically-identical events can coexist, since the
   constraint already prevents duplication within one authority). This is
-  the primary signal that a corrected workbook (§20) re-imported
+  the primary signal that a corrected workbook (§13) re-imported
   overlapping rows under a new authority.
 - **Suspected semantic duplicates** use a bounded, explicit, documented
   rule (not fuzzy scoring) — e.g. same `equipment_id` + same `event_type`
@@ -580,7 +579,7 @@ Deterministic, per-`equipment_id` sequencing of `ISSUE`/`RECEIVE` events
 ordered by `occurred_at`, producing chronology findings for: RECEIVE
 without a prior ISSUE, ISSUE without a later RECEIVE, consecutive ISSUEs
 with no intervening RECEIVE, and any other sequence a documented rule
-set (versioned, §29) flags as unusual. **These are always classified as
+set (versioned, §24) flags as unusual. **These are always classified as
 observations (findings), never automatically paired or rewritten** — the
 review brief is explicit on this, and it matches PR21's own
 Owner-Decision-resolved event-first architecture (§4.9). A chronology
@@ -595,7 +594,8 @@ historical event is `ISSUE`, current status is `AVAILABLE_AT_POOL`).
 Per §16, this produces a `CURRENT_STATE_MISMATCH` finding — a signal
 only, explicitly not evidence of an import defect, since the real
 explanation may be a missing historical row, activity after the legacy
-cutoff (§9.17-adjacent, see below), a valid manual correction, or a
+import's own data cutoff (not separately defined by this design — see
+the note below), a valid manual correction, or a
 normal operational transition entirely outside the imported period.
 
 ### 9.F Ward traceability
@@ -613,20 +613,20 @@ a PR22 mutation path.
 
 ### 9.G BME/operator traceability
 
-Contingent on **OD-PR22-5** (§36) — whether raw BME names may ever be
+Contingent on **OD-PR22-4** (§36) — whether raw BME names may ever be
 mapped to current `User` records for *display* purposes. Absent that
 decision, PR22's BME traceability finding is limited to: distinct raw
 `legacy_bme_name` values and their event counts, presented as-is, never
-resolved to a `User`. If OD-PR22-5 approves display-only resolution, a
+resolved to a `User`. If OD-PR22-4 approves display-only resolution, a
 new alias-style table (mirroring `LegacyWardAlias`'s own shape:
 `raw_bme_name` UNIQUE, `resolved_user_id` FK, `created_by_user_id`,
 `created_at`) is added — but **never** used to auto-create a `User`, and
 never presented as proof that the current authenticated operator and the
-historical actor are the same person (§35).
+historical actor are the same person (§28).
 
 ### 9.H Corrected/re-exported workbook governance
 
-See §20 for the full model. In summary here: PR21's design already
+See §13 for the full model. In summary here: PR21's design already
 resolved the high-level policy (§4.9 quote) — a corrected workbook must
 mint a new or explicitly superseding `LegacyMigrationAuthority`, never
 silently reuse the existing one. PR22 owns the actual reconciliation
@@ -636,7 +636,7 @@ by authority pair).
 
 ### 9.I Reconciliation sign-off
 
-See §22 for full semantics. In summary: sign-off is a per-run,
+See §20 for full semantics. In summary: sign-off is a per-run,
 Administrator-authored, immutable attestation binding an exact run
 snapshot to a statement that its findings were reviewed and disposed —
 never a claim that the underlying data is objectively perfect.
@@ -657,15 +657,16 @@ suggested groups, refined by §9's analysis:
 | `CHRONOLOGY_ANOMALY` | 9.D | Medium-High depending on pattern |
 | `CURRENT_STATE_MISMATCH` | 9.E | Medium (signal only) |
 | `WARD_TRACEABILITY_GAP` | 9.F | Low-Medium |
-| `BME_TRACEABILITY_GAP` | 9.G | Low (informational, contingent on OD-PR22-5) |
-| `PAIRING_CANDIDATE` | §12 | Informational (never blocks sign-off by itself) |
+| `BME_TRACEABILITY_GAP` | 9.G | Low (informational, contingent on OD-PR22-4) |
+| `PAIRING_CANDIDATE` | §11 | Informational (never blocks sign-off by itself) |
 
 Each finding carries (schema in §17): a machine-readable `code` (from
-this table, or its eventual Owner-refined version), a `severity` (§15,
-kept fully separate from disposition), affected entity references
-(`equipment_id`, one or more `legacy_equipment_event_id`s, optionally a
-`ward_id`/raw ward text), a bounded, structured `evidence` payload (not
-free text — see §17), and a `rule_version` (§29). Names are provisional;
+this table, or its eventual Owner-refined version), a `severity` (above,
+kept fully separate from disposition — see §19), affected entity
+references (`equipment_id`, one or more `legacy_equipment_event_id`s,
+optionally a `ward_id`/raw ward text), a bounded, structured `evidence`
+payload (not free text — see §17), and a `rule_version` (§24). Names are
+provisional;
 the actual enum is fixed at implementation time against real analysis
 results, not finalized here.
 
@@ -704,19 +705,19 @@ technical detail):
 
 Fully specified in §6 (taxonomy) and §9.C (detection mechanisms). The
 one remaining design commitment: duplicate detection is **read-only
-analysis**, computed fresh (or from a persisted snapshot, §16) each run
+analysis**, computed fresh (or from a persisted snapshot, §18) each run
 — it never deletes, merges, or marks any `LegacyEquipmentEvent` row. A
 disposition of "confirmed duplicate" on a finding is a review
-conclusion, not an instruction to delete anything (§21).
+conclusion, not an instruction to delete anything (§16).
 
 ---
 
 ## 13. Corrected-source policy
 
-See §20 (full design) and §9.H (business framing). Summary of the
-binding constraint already resolved by PR21's own design (§4.9): fail
-closed, mint a new/superseding authority, never silently reuse or infer
-same-event equivalence automatically.
+See §9.H (business framing) and §4.9 (PR21's binding constraints, quoted
+above). Summary of the binding constraint already resolved by PR21's own
+design (§4.9): fail closed, mint a new/superseding authority, never
+silently reuse or infer same-event equivalence automatically.
 
 ---
 
@@ -728,7 +729,8 @@ See §9.E and §16.
 
 ## 15. Unified history projection
 
-See §18.
+See §4.8 (confirms no such query exists today) and §25 (the proposed
+read-only companion endpoint).
 
 ---
 
@@ -743,7 +745,7 @@ results is presented to a human as a *signal*, with the explanation
 space explicitly including "this may not indicate any problem" (§9.E).
 If a genuine correction is warranted, it happens through the **existing**
 manual Equipment/dispatch/receipt workflows PR6-PR20 already built —
-never through a PR22-specific write path (§21).
+never through a PR22-specific write path.
 
 ---
 
@@ -778,7 +780,7 @@ findings after review.**
 *Pros:* smaller schema footprint.
 *Cons:* destroys the very evidence a reviewer's disposition decisions
 were based on — a later question ("why was this specific duplicate
-accepted?") becomes unanswerable. Contradicts §33's audit requirement
+accepted?") becomes unanswerable. Contradicts §28's audit requirement
 and this repository's own "provenance is never discarded" convention
 (`LegacyEquipmentEvent` itself is the paradigm case).
 
@@ -798,8 +800,8 @@ ownership, lifecycle, FKs, retention, and audit requirement:
 - Immutability: append-only after creation for its identity/snapshot
   fields (§18); its `status` and `version` (CAS) columns are the only
   ones that change, and only through the fenced lifecycle transitions
-  in §19.
-- Ownership: created by an Administrator (§23).
+  in §18.
+- Ownership: created by an Administrator (§21).
 - Lifecycle: `pending` → `running` → `completed` | `failed`, then
   externally (via `LegacyReconciliationSignOff`, a separate table, not a
   status value on the run itself — see rationale below) →
@@ -816,7 +818,7 @@ ownership, lifecycle, FKs, retention, and audit requirement:
   (Integer, CAS, `default=0`/`server_default=text("0")` matching
   `ImportSession.version`'s exact shape), `rule_version` (`VARCHAR(50)`,
   NOT NULL — the analysis rule set version this run was computed under,
-  §29), `snapshot_as_of` (`TIMESTAMP WITH TIME ZONE`, NOT NULL — the
+  §24), `snapshot_as_of` (`TIMESTAMP WITH TIME ZONE`, NOT NULL — the
   single logical instant this run's read queries are bound to; see §18's
   snapshot-consistency discussion), `created_by_user_id` (FK →
   `users.id`, RESTRICT), `created_at` (`server_default=func.now()`),
@@ -827,7 +829,7 @@ ownership, lifecycle, FKs, retention, and audit requirement:
   `summary_by_severity_high`/`medium`/`low`, all `Integer NOT NULL
   DEFAULT 0`, `>= 0` check-constrained) — populated once, at completion,
   never recomputed live.
-- Retention: permanent (§34) — not the 180-day temporary-artifact policy.
+- Retention: permanent (§29) — not the 180-day temporary-artifact policy.
 - Audit: run creation and every status transition is audited via
   `record_audit_event` with new constants
   (`AUDIT_ACTION_RECONCILIATION_RUN_CREATED`,
@@ -841,7 +843,7 @@ ownership, lifecycle, FKs, retention, and audit requirement:
   `evidence`, `affected_*` references, `rule_version`) are
   **write-once** — set only by the analysis engine at run-completion
   time, never edited afterward. Only the disposition fields are ever
-  updated post-creation, and only through the CAS pattern in §26.
+  updated post-creation, and only through the CAS pattern in §22.
 - Ownership: created by the analysis engine (system-authored, no
   `created_by_user_id` in the sense of a human actor — the run's own
   `created_by_user_id` already records who *triggered* the run).
@@ -853,7 +855,7 @@ ownership, lifecycle, FKs, retention, and audit requirement:
   RESTRICT, NOT NULL, indexed), `code` (`VARCHAR(50)`, NOT NULL — from
   §10's taxonomy), `severity` (`VARCHAR(10)`, NOT NULL, CheckConstraint
   `IN ('high','medium','low')` — kept structurally separate from
-  disposition per §15), `equipment_id` (UUID, nullable FK → `equipment.id`
+  disposition per §19), `equipment_id` (UUID, nullable FK → `equipment.id`
   RESTRICT — nullable because not every finding is equipment-scoped,
   e.g. a Ward-traceability-gap finding may span many pieces of
   equipment), `legacy_equipment_event_ids` (a small bounded array or a
@@ -881,13 +883,13 @@ ownership, lifecycle, FKs, retention, and audit requirement:
   arises to query findings by affected event efficiently, a junction
   table (`LegacyReconciliationFindingEvent(finding_id, event_id)`) can be
   added additively without disturbing this shape — not needed for V1.
-- Retention: permanent, same as the owning run (§34).
+- Retention: permanent, same as the owning run (§29).
 - Audit: disposition changes are audited
   (`AUDIT_ACTION_RECONCILIATION_FINDING_DISPOSED`), `before`/`after`
   capturing the disposition transition. Read-only finding-list queries
   are **not** audited (matches the existing convention of avoiding audit
   spam for read-only analysis queries, per §4.5's audit-writer
-  discipline and the review brief's own §33 instruction).
+  discipline and this design's own §28 instruction).
 
 **`LegacyReconciliationSignOff`**
 - Responsibility: the immutable, auditable attestation that a specific
@@ -898,7 +900,7 @@ ownership, lifecycle, FKs, retention, and audit requirement:
   answer), never as mutating an existing sign-off row — mirroring
   `LegacyMigrationAuthority`'s own "never updated, mint a new one"
   convention (§4.2).
-- Ownership: Administrator-authored (§23).
+- Ownership: Administrator-authored (§21).
 - Columns: `id` (UUID PK), `run_id` (FK → `legacy_reconciliation_runs.id`,
   RESTRICT, NOT NULL, UNIQUE — enforcing at most one active sign-off per
   run at the database level, matching the "one active DryRunPlan per
@@ -911,11 +913,11 @@ ownership, lifecycle, FKs, retention, and audit requirement:
   by disposition, captured at sign-off time so this row remains
   self-describing even if someone later queries the findings table
   directly), `run_version_at_signoff` (Integer, NOT NULL — the run's
-  `version` at the moment of sign-off, §26's concurrency guard),
+  `version` at the moment of sign-off, §22's concurrency guard),
   `superseded_by_run_id` (nullable, self-referential-via-run FK — set if
   a later run/sign-off explicitly supersedes this one, per OD-PR22-3's
   eventual answer).
-- Retention: permanent (§34), highest-priority governance evidence in
+- Retention: permanent (§29), highest-priority governance evidence in
   this design.
 - Audit: sign-off creation is always audited
   (`AUDIT_ACTION_RECONCILIATION_SIGNOFF`), never best-effort (§4.5's
@@ -935,17 +937,17 @@ one.
 
 ## 18. Run lifecycle
 
-1. **`pending`** — row created (`POST /legacy-reconciliation-runs`, §24),
+1. **`pending`** — row created (`POST /legacy-reconciliation-runs`, §25),
    `created_by_user_id` recorded, `snapshot_as_of` set to `now()` at
    creation (the single logical instant every read query in this run is
    bound to — see the next paragraph for how that binding is enforced).
 2. **`running`** — the analysis engine claims the run via the identical
    CAS admission pattern `ImportJob` uses (§4.5): one atomic `UPDATE ...
    WHERE status='pending' AND version=expected_version`. If the analysis
-   is long-running enough to need its own lease/heartbeat (§28 addresses
+   is long-running enough to need its own lease/heartbeat (§27 addresses
    whether it will be), it reuses `ImportJob`'s exact lease/fencing shape
    rather than inventing a second one; if the ~51k-row analysis proves
-   fast enough to run synchronously within one bounded request (§28's
+   fast enough to run synchronously within one bounded request (§27's
    own performance section makes this determination against real query
    plans, not assumed here), a lease may be unnecessary and the run
    simply transitions `pending → running → completed` within one
@@ -973,9 +975,10 @@ columns beyond `Equipment.version`, which is a conflict counter, not a
 history table). `snapshot_as_of` is recorded as the wall-clock time this
 transaction began, for human-readable evidence — the actual consistency
 guarantee comes from the transaction isolation level, not the timestamp
-column. This directly answers §11's requirement: "a reconciliation
-result must be reproducible and auditable... do not rely on a live query
-whose result silently changes after sign-off" — after `completed`, the
+column. This directly answers the review brief's own requirement: "a
+reconciliation result must be reproducible and auditable... do not rely
+on a live query whose result silently changes after sign-off" — after
+`completed`, the
 findings are already persisted rows, immune to any subsequent live-data
 drift by construction (Option B, §17.1).
 
@@ -984,7 +987,7 @@ drift by construction (Option B, §17.1).
 ## 19. Finding lifecycle and disposition
 
 A finding is `open` (disposition `NULL`) until a human sets its
-disposition via a single CAS-guarded UPDATE (§26) — identical shape to
+disposition via a single CAS-guarded UPDATE (§22) — identical shape to
 `Equipment.update_with_cas` (§4.5): `WHERE id=:id AND version=:expected_version`,
 `SET disposition=..., disposed_by_user_id=..., disposed_at=now(),
 version=version+1`. There is no intermediate "claimed for review" state —
@@ -1012,10 +1015,10 @@ set, for the Owner to confirm or amend:
   `confirmed_valid` because it acknowledges a real gap rather than
   denying one exists.
 - `requires_correction` — reviewed, a genuine data-correction workflow
-  (§21) is needed; this disposition does not itself trigger that
+  (§16) is needed; this disposition does not itself trigger that
   workflow — it is a signal for a human to separately initiate it.
 
-Severity (§15) is never inferred from disposition, or vice versa — a
+Severity (§10) is never inferred from disposition, or vice versa — a
 `high`-severity duplicate finding can be `confirmed_duplicate` (fully
 resolved, review-wise) while remaining `high` severity for historical
 record purposes; a `low`-severity traceability gap can be
@@ -1048,9 +1051,9 @@ cutover-readiness policy question, explicitly out of this design's scope
 
 **Binding to exact run/snapshot identity**: enforced structurally by
 `LegacyReconciliationSignOff.run_id` (UNIQUE FK) and
-`run_version_at_signoff` (§17.2) — the sign-off API call (§24) must
+`run_version_at_signoff` (§17.2) — the sign-off API call (§25) must
 supply the run's currently-known `version`, and the INSERT is rejected
-(§26) if that no longer matches, exactly mirroring how `DryRunPlan`
+(§22) if that no longer matches, exactly mirroring how `DryRunPlan`
 confirmation binds to an exact plan identity rather than "whatever the
 current plan happens to be."
 
@@ -1065,7 +1068,7 @@ instruction not to invent a new role:
   (Matches the existing pattern — `LegacyMigrationAuthority` approval
   and `POST /import-sessions` are both already Administrator-only.)
 - **Finding disposition**: proposed Administrator-only for V1, **pending
-  OD-PR22-6 (§36)** on whether `equipment_pool_staff` should also be
+  OD-PR22-5 (§36)** on whether `equipment_pool_staff` should also be
   permitted to set dispositions (read/review) while reserving sign-off
   itself to Administrator alone. The current role matrix
   (`docs/BUSINESS_RULES.md`) does not mention any import/migration/
@@ -1084,7 +1087,7 @@ instruction not to invent a new role:
 - Enforced identically to every existing route: `require_roles(*<a new
   named capability-group constant>)` added to `backend/app/api/v1/deps.py`
   (e.g. `RECONCILIATION_ADMINISTRATION_ROLES = ADMINISTRATOR_ONLY_ROLES`
-  as an explicit alias, so a future OD-PR22-6 answer that loosens
+  as an explicit alias, so a future OD-PR22-5 answer that loosens
   disposition-setting only requires changing one named constant, not
   every route decorator).
 
@@ -1097,12 +1100,12 @@ Every scenario the review brief names, addressed:
 - **Two Administrators reviewing the same finding concurrently**: the
   second writer's CAS UPDATE (§19) matches zero rows (the first writer
   already incremented `version`) and receives a structured 409 conflict
-  (§25) — never a silent overwrite, never a last-write-wins race.
+  (§26) — never a silent overwrite, never a last-write-wins race.
 - **Concurrent disposition changes generally**: same CAS mechanism,
   applied per-finding — findings are independently concurrency-controlled,
   so two reviewers working *different* findings on the same run never
   contend with each other.
-- **Sign-off racing with disposition changes**: sign-off (§24's
+- **Sign-off racing with disposition changes**: sign-off (§25's
   `POST .../sign-off`) requires the caller to supply the run's current
   `version` (§20); if a disposition change on any of that run's findings
   happens to also require bumping the *run's* own `version` (a design
@@ -1163,7 +1166,7 @@ directly:
   only, never locked for write by PR22 at all — §16), no lock ordering
   concern arises, since PR22 never issues `SELECT ... FOR UPDATE`
   against `Equipment`/`BorrowTransaction`/`LegacyEquipmentEvent` — it is
-  read-only against all three, by design (§10).
+  read-only against all three, by design (§16).
 
 ---
 
@@ -1198,7 +1201,7 @@ GET    /legacy-reconciliation-runs/{run_id}                  (all roles)
 GET    /legacy-reconciliation-runs/{run_id}/findings         (all roles, Page[LegacyReconciliationFindingOut],
                                                                 filterable by code/severity/disposition)
 POST   /legacy-reconciliation-runs/{run_id}/findings/{finding_id}/disposition
-                                                               (Administrator, or per OD-PR22-6)
+                                                               (Administrator, or per OD-PR22-5)
 POST   /legacy-reconciliation-runs/{run_id}/sign-off          (Administrator only)
 GET    /legacy-reconciliation-runs/{run_id}/sign-off          (all roles — read the attestation, if any)
 ```
@@ -1209,15 +1212,15 @@ top-level resource, matching how `/legacy-migration-authorities` (PR21E0)
 already got its own top-level resource rather than being force-fit under
 `/import-sessions` (§4.2).
 
-Potential read-only companion endpoint, addressing §18's unified-history
+Potential read-only companion endpoint, addressing §15's unified-history
 requirement:
 
 ```
 GET /equipment/{id}/history?include_legacy=true
 ```
 
-returning a merged, paginated, `Page[T]`-shaped projection (§18) — not
-finalized here; belongs to an implementation slice once §18's query
+returning a merged, paginated, `Page[T]`-shaped projection (§15) — not
+finalized here; belongs to an implementation slice once its query
 design is validated against real `EXPLAIN ANALYZE` output (§27).
 
 No frontend-specific RPC-style endpoint is introduced — every endpoint
@@ -1265,7 +1268,7 @@ Given the real ~51,000-row combined dataset (§4.8):
 - **No N+1.** Finding-evidence construction (`evidence` JSONB, §17.2)
   is built from the same batch query results already fetched for
   detection, never a second per-finding round-trip.
-- **No full-dataset frontend load.** All read endpoints (§24) return
+- **No full-dataset frontend load.** All read endpoints (§25) return
   `Page[T]` (§4.7); the frontend never fetches "all findings" in one
   call.
 - **SQL window functions** are the natural tool for §9.D's chronology
@@ -1277,7 +1280,7 @@ Given the real ~51,000-row combined dataset (§4.8):
   repository's own established evidence bar for PR14A/PR14B-class
   performance work, `docs/audits/05-pr14a-transaction-boundary-audit.md`,
   `06-pr14b-pagination-index-evidence.md`).
-- **Bounded pagination** everywhere findings are listed (§24).
+- **Bounded pagination** everywhere findings are listed (§25).
 - **Asynchronous job framework reuse, if needed**: whether the full
   cross-table analysis genuinely requires the `ImportJob` lease/heartbeat
   machinery (i.e. whether it cannot complete inside one bounded HTTP
@@ -1310,7 +1313,7 @@ Per §4.5's existing framework and constants convention:
   PR22 mutation is always the current authenticated operator performing
   the action — never conflated with a `LegacyEquipmentEvent.legacy_bme_name`
   value, which remains historical personnel data with no live-identity
-  claim attached (§9.G, §35).
+  claim attached (§9.G).
 
 ---
 
@@ -1336,7 +1339,7 @@ by design, not a general-purpose comment box).
 
 ## 30. Frontend workflow
 
-Only after the API (§24) is settled at implementation time — proposed
+Only after the API (§25) is settled at implementation time — proposed
 principles now, no component design:
 
 - Thai-first, per this repository's established UI convention.
@@ -1390,7 +1393,7 @@ repository already has.
 No migration is written by this document. When implementation begins,
 the new tables (`legacy_reconciliation_runs`,
 `legacy_reconciliation_findings`, `legacy_reconciliation_signoffs`, and
-optionally a BME-alias table per OD-PR22-5) are additive-only, following
+optionally a BME-alias table per OD-PR22-4) are additive-only, following
 this repository's own "General rule applied throughout" migration
 convention (`docs/audits/04-consolidated-implementation-plan.md` Part
 E: "every migration below is additive-first... no migration in this plan
@@ -1411,7 +1414,7 @@ commitment):
   foundation (migration, models, CAS admission, no analysis logic yet).
 - **PR22C** — deterministic analysis engine (§9's detection rules, §27's
   batch queries, finding persistence at run completion).
-- **PR22D** — finding review/disposition API (§19, §24, §26).
+- **PR22D** — finding review/disposition API (§19, §25, §26).
 - **PR22E** — sign-off + concurrency/audit (§20, §22, §28).
 - **PR22F** — frontend real integration (§30).
 - **PR22G** — governance sync (closes Roadmap PR22, mirrors PR21F's own
@@ -1441,7 +1444,7 @@ monolithic change.
   performance is unproven until real `EXPLAIN ANALYZE` evidence exists
   against production-representative volume (§27) — genuinely a risk,
   not yet resolved by this design.
-- **Role-authorization ambiguity** (§21, OD-PR22-6) — shipping
+- **Role-authorization ambiguity** (§21, OD-PR22-5) — shipping
   Administrator-only disposition-setting as the safe default is
   low-risk, but revisiting it later (loosening to `equipment_pool_staff`)
   would be an additive, low-risk change if the Owner later approves it.
@@ -1453,8 +1456,8 @@ monolithic change.
 Per the review brief's own instruction to inspect repository truth first
 and minimize Owner Decisions, this design resolves everything it can
 from existing convention (persistence model §17.1, read-only-first
-lifecycle §18, append-only/no-destructive-CRUD policy §21/§16, rule
-versioning §29, lock ordering §23, error-contract shape §26) without
+lifecycle §18, append-only/no-destructive-CRUD policy §16, rule
+versioning §24, lock ordering §23, error-contract shape §26) without
 escalating any of those as Owner Decisions — they are engineering
 judgment calls grounded in this repository's own established precedent,
 not open business questions. The following, genuinely business-policy
@@ -1494,14 +1497,14 @@ questions remain, deliberately minimized to six:
 
 **What did NOT require an Owner Decision, and why**: the persistence
 option (§17.1 — matches every analogous already-merged workflow, no
-genuine ambiguity); the read-only-first/snapshot architecture (§10, §18 —
+genuine ambiguity); the read-only-first/snapshot architecture (§5, §18 —
 directly requested by the task brief itself, not a new choice); the
-append-only/no-destructive-CRUD policy (§16, §21 — directly required by
+append-only/no-destructive-CRUD policy (§16 — directly required by
 PR21's own already-Owner-approved immutability principle, §4.9, not a
-new question); rule versioning (§29 — a standard engineering practice,
+new question); rule versioning (§24 — a standard engineering practice,
 no business tradeoff); lock ordering (§23 — a direct, non-ambiguous
 extension of the existing Job→Session→resource convention); the
-corrected-source technical mechanism (§20 — PR21's design already
+corrected-source technical mechanism (§13 — PR21's design already
 resolved the governing policy, §4.9; only the exact table shape remained,
 which is an implementation detail, not a policy question).
 
