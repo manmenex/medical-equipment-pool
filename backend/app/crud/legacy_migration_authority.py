@@ -52,9 +52,22 @@ async def create_or_get_approval(
     """Roadmap PR21E0 (design §5/§10). Race-safe via
     INSERT-then-catch-IntegrityError-then-requery -- mirrors
     `app.crud.import_session.get_or_create_session`'s own established
-    pattern exactly, never a `SELECT`-before-`INSERT` (a genuine race
-    between the pre-check and the insert would still be possible with
-    that shape; this codebase's own precedent avoids it structurally).
+    pattern, never a `SELECT`-before-`INSERT` (a genuine race between the
+    pre-check and the insert would still be possible with that shape;
+    this codebase's own precedent avoids it structurally).
+
+    **PR #109 P1 fix round -- transaction ownership.** The conflict-prone
+    `INSERT` runs inside its own `db.begin_nested()` SAVEPOINT rather than
+    the caller's outer transaction directly. This CRUD helper does not
+    own the caller's transaction (the route handler does, committing
+    once after this call returns) -- a plain `await db.rollback()` on
+    `IntegrityError` would discard the *entire* outer transaction,
+    including any unrelated work the caller staged before calling this
+    function (the same transaction-ownership class PR90-H1 fixed for
+    source registration). `begin_nested()`'s own `__aexit__` rolls back
+    only the SAVEPOINT when the `flush()` inside it raises, leaving the
+    outer transaction -- and everything already staged on it -- fully
+    intact and usable for the requery below and any further caller work.
 
     - No existing row for this checksum: the insert succeeds, `created`
       is `True`.
@@ -66,17 +79,20 @@ async def create_or_get_approval(
       *original* approver and timestamp always survive every retry.
     - An existing row carries this exact checksum under a *different*
       `scope`: `LegacyMigrationAuthorityScopeConflictError` (`409`) --
-      never silently reinterpreted, never overwritten.
+      never silently reinterpreted, never overwritten. Raised from
+      *outside* the nested transaction (the SAVEPOINT has already been
+      released by the time this is raised), so it never leaves the
+      session in a failed-transaction state the caller can't use.
 
     Returns `(authority, created)`."""
     authority = LegacyMigrationAuthority(
         scope=scope, approved_workbook_sha256=approved_workbook_sha256, approved_by_user_id=actor_id
     )
-    db.add(authority)
     try:
-        await db.flush()
+        async with db.begin_nested():
+            db.add(authority)
+            await db.flush()
     except IntegrityError:
-        await db.rollback()
         existing = await get_by_checksum(db, approved_workbook_sha256=approved_workbook_sha256)
         if existing is None:
             # A different, unrelated integrity failure (e.g. a bad FK on

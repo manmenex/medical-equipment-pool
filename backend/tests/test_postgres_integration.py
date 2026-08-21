@@ -12875,15 +12875,27 @@ async def test_pr95h1_execute_completion_vs_recovery_concurrent_race_never_produ
 async def test_pr21e0_concurrent_authority_approval_exactly_one_winner(pg_engine, pg_session, pg_seeded_users):
     """Two independent connections race an identical `(scope, checksum)`
     approval, `asyncio.Barrier`-forced to overlap. Exactly one connection's
-    `INSERT` must win; the other must observe `IntegrityError`, roll back,
-    requery, and return the SAME persisted row (`created=False`) rather
-    than raising -- proving `create_or_get_approval`'s
-    INSERT-then-catch-IntegrityError-then-requery pattern is safe under a
-    real, concurrently-committing second connection, not merely against a
-    single-connection SQLite approximation. Repeated across trials with a
-    fresh checksum each time."""
+    `INSERT` must win; the other must observe `IntegrityError` inside its
+    own `db.begin_nested()` SAVEPOINT, requery, and return the SAME
+    persisted row (`created=False`) rather than raising -- proving
+    `create_or_get_approval`'s INSERT-then-catch-IntegrityError-then-
+    requery pattern is safe under a real, concurrently-committing second
+    connection, not merely against a single-connection SQLite
+    approximation. Repeated across trials with a fresh checksum each time.
+
+    **PR #109 P1 fix round (§7 of that task).** The losing side's own
+    session must remain genuinely usable *after* the SAVEPOINT-scoped
+    `IntegrityError` -- never a `PendingRollbackError` and never a
+    session left in a failed-transaction state -- because the CRUD
+    helper no longer calls `db.rollback()` against the outer transaction
+    (that would have poisoned it before this test's own `db.commit()`
+    ever ran). Proven concretely below: after `create_or_get_approval`
+    returns on each side, an unrelated write is staged on that same
+    session *before* committing, and verified durable afterward -- not
+    merely that `db.commit()` happened to not raise."""
     from app.crud import legacy_migration_authority as _pg_legacy_migration_authority_crud
     from app.models.legacy_history import LegacyMigrationAuthority as _PgLegacyMigrationAuthority
+    from app.models.master_data import Ward as _PgWard
 
     actor = pg_seeded_users["administrator"]
     maker = _pg94_session_maker(pg_engine)
@@ -12892,6 +12904,7 @@ async def test_pr21e0_concurrent_authority_approval_exactly_one_winner(pg_engine
         checksum = uuid.uuid4().hex + uuid.uuid4().hex[:32]
         assert len(checksum) == 64
         scope = "pr21_legacy_transaction_history_v1"
+        trial_tag = uuid.uuid4().hex[:10].upper()
 
         barrier = asyncio.Barrier(2)
         db_a = maker()
@@ -12903,6 +12916,12 @@ async def test_pr21e0_concurrent_authority_approval_exactly_one_winner(pg_engine
             authority, created = await _pg_legacy_migration_authority_crud.create_or_get_approval(
                 db, scope=scope, approved_workbook_sha256=checksum, actor_id=actor.id
             )
+            # §7: proves this session's transaction is still genuinely
+            # usable after the SAVEPOINT-scoped IntegrityError handling
+            # (the losing side) -- not just that create_or_get_approval
+            # itself returned, but that further work can still be staged
+            # and committed on the SAME session/transaction afterward.
+            db.add(_PgWard(code=f"PR109-P1-RACE-{trial_tag}-{label}", name=f"race {label}"))
             await db.commit()
             outcomes[label] = {"authority_id": authority.id, "created": created}
 
@@ -12927,4 +12946,13 @@ async def test_pr21e0_concurrent_authority_approval_exactly_one_winner(pg_engine
                     )
                 )
             ).scalars().all()
+            wards = (
+                await verify_db.execute(
+                    select(_PgWard).where(_PgWard.code.like(f"PR109-P1-RACE-{trial_tag}-%"))
+                )
+            ).scalars().all()
         assert len(rows) == 1, f"trial {trial}: expected exactly one persisted row, found {len(rows)}"
+        assert len(wards) == 2, (
+            f"trial {trial}: expected both sides' post-approval writes to have committed cleanly "
+            f"(no PendingRollbackError, session usable after SAVEPOINT handling), found {len(wards)}"
+        )
