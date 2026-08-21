@@ -68,17 +68,35 @@ slice is authorized as **PR21D1 — Combined Canonical Adapter + Source
 Admission**, with historical-event execution reserved for a
 subsequent **PR21D2 — Historical Event Execution** (§55, §46).
 
-**Baseline:** `651a3877c17d53c0163e34d9008ca744ac7f76ef` (GitHub PR
-#105, PR21C canonical Receive subset squash merge, on
+**Owner Decision Closure Round 4 / PR21F Governance Sync closure (§56,
+current — supersedes every "AUTHORIZED, NOT YET IMPLEMENTED"/"STILL
+BLOCKED" status above): PR21D1, PR21D2, PR21E0, and PR21E have all since
+merged.** Roadmap PR21 (Legacy Receive and Issue History Import) is now
+**fully complete** — every implementation slice (Foundation, A, B, C, the
+combined adapter and source admission, historical event execution, the
+operator API surface, and the real frontend integration) has merged, each
+independently reviewed with CI green on its own exact reviewed head. See
+§56 for the full closure record. **The next planned Roadmap item is
+PR22 — Legacy Data Validation and Reconciliation.**
+
+**Baseline:** `d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` (GitHub PR #110,
+PR21E — Legacy History Frontend Real Integration squash merge, on
 `claude/medical-equipment-pool-0c7fz0`). Prior baselines:
-`a8ae9fbfc571f74bad2100abf8f90bbd22a68e74` (GitHub PR #104, PR21B
-canonical Issue subset squash merge); `28f0f5eabb64cf4b27294fd3df251e90b167de0a`
-(GitHub PR #103, PR21A Historical Event Schema / Provenance Foundation
-squash merge); `e22139346c7bdff1edf841022dd4b7dbebbb3573` (GitHub PR
-#101, Owner Decision Closure Round 1 squash merge);
-`7b99e5866df4b71ffa1aa09d265baa2bc7033c33` (GitHub PR #100,
-PR21-Foundation squash merge); `5d4b1d3a7f79e9b9e6d281a1eea1f7b5bc862217`
-(GitHub PR #98, PR21 Design Phase 1 squash merge).
+`78eeea7827c53443f34de9e516573c2ed7c59581` (GitHub PR #109, PR21E0
+squash merge); `c4788de06bed9a13aa5ec981fb8e19c67bc5720b` (GitHub PR
+#108, PR21D2 squash merge); `50b9e77269b238d95fb34b28d0bc223a369951e2`
+(GitHub PR #107, PR21D1 squash merge); `6ffb3dfa75ab52b9747d4a4d31d73f34cd6d2595`
+(GitHub PR #106, Owner Decision Closure Round 3 squash merge);
+`651a3877c17d53c0163e34d9008ca744ac7f76ef` (GitHub PR
+#105, PR21C canonical Receive subset squash merge); `a8ae9fbfc571f74bad2100abf8f90bbd22a68e74`
+(GitHub PR #104, PR21B canonical Issue subset squash merge);
+`28f0f5eabb64cf4b27294fd3df251e90b167de0a` (GitHub PR #103, PR21A
+Historical Event Schema / Provenance Foundation squash merge);
+`e22139346c7bdff1edf841022dd4b7dbebbb3573` (GitHub PR #101, Owner
+Decision Closure Round 1 squash merge); `7b99e5866df4b71ffa1aa09d265baa2bc7033c33`
+(GitHub PR #100, PR21-Foundation squash merge);
+`5d4b1d3a7f79e9b9e6d281a1eea1f7b5bc862217` (GitHub PR #98, PR21 Design
+Phase 1 squash merge).
 
 **Roadmap authority:** `docs/audits/04-consolidated-implementation-plan.md`
 is Level 4 in the source-of-truth hierarchy
@@ -2885,14 +2903,28 @@ baseline-gated implementation task, not started by this document (§28
 of this round's own scope guard), and none may start before this
 Design PR itself merges.
 
-**Owner Decision Closure Round 3 (§55) — current, superseding status:**
-PR21A, PR21B's bounded sub-slice, and PR21C's bounded sub-slice are all
-now **implemented and merged** (GitHub PR #103/#104/#105). SDC is
-**EXCLUDED FOR PR21 V1** (§6.5) — the bounded sub-slices already merged
-**are** PR21B/PR21C's complete V1 scope, not a subset awaiting a
-still-open SDC decision. PR21D1 (combined adapter + source admission)
-is **AUTHORIZED, NOT YET IMPLEMENTED**; PR21D2 (execution) remains
-**BLOCKED** on PR21D1.
+**Owner Decision Closure Round 3 (§55) — historical, superseded by Round
+4 immediately below:** PR21A, PR21B's bounded sub-slice, and PR21C's
+bounded sub-slice are all now **implemented and merged** (GitHub PR
+#103/#104/#105). SDC is **EXCLUDED FOR PR21 V1** (§6.5) — the bounded
+sub-slices already merged **are** PR21B/PR21C's complete V1 scope, not a
+subset awaiting a still-open SDC decision. PR21D1 (combined adapter +
+source admission) is **AUTHORIZED, NOT YET IMPLEMENTED**; PR21D2
+(execution) remains **BLOCKED** on PR21D1. This was accurate as of Round
+3; see the current status immediately below.
+
+**Owner Decision Closure Round 4 / PR21F closure (§56) — current,
+superseding status:** PR21D1, PR21D2, PR21E0, and PR21E are all now
+**implemented and merged** (GitHub PR #107/#108/#109/#110). PR21E0
+closed the migration-authority approval API and the PR21-specific
+dry-run-plan/rows/confirm HTTP surface gaps this document itself had
+flagged as still-missing. PR21E replaced the PR19B mock Receive/Issue
+frontend with the real combined `legacy_transaction_history` workflow.
+**Roadmap PR21 (Legacy Receive and Issue History Import) is now fully
+complete — no slice remains authorized-but-not-implemented or blocked.**
+PR21F (this governance sync, §56) is the closing slice. The next planned
+Roadmap item is PR22 — Legacy Data Validation and Reconciliation, per
+§56.
 
 ---
 
@@ -2904,8 +2936,12 @@ is **AUTHORIZED, NOT YET IMPLEMENTED**; PR21D2 (execution) remains
 | Canonical Issue/Receive sheet selection (§6.2) | RESOLVED — `Orders`+line-item pairs, verified by direct inspection | NO | — |
 | Field-level contract, canonical sheets (§10.1) | RESOLVED — every canonical-sheet field classified | NO | — |
 | SDC sheet ambiguity (§6.1, §6.5) | **RESOLVED — EXCLUDED FOR PR21 V1 (Owner Decision Closure Round 3)** — a source-authority selection, not a row-level-equivalence claim | NO (for V1) | — |
-| Combined canonical adapter authorization (§55) | **AUTHORIZED, NOT YET IMPLEMENTED (Owner Decision Closure Round 3)** | NO — authorization granted; implementation itself is PR21D1's own task | Before `legacy_transaction_history` may be registered |
-| PR21-specific upload admission policy (§55) | **AUTHORIZED, NOT YET IMPLEMENTED (Owner Decision Closure Round 3)** — bounded allowance, generic 10 MiB cap unchanged | NO — authorization granted; implementation itself is PR21D1's own task | Before the ~19.7 MiB approved workbook can be uploaded through the generic pipeline |
+| Combined canonical adapter authorization (§55) | **RESOLVED — implemented and merged as PR21D1 (GitHub PR #107, §56)** | NO | — |
+| PR21-specific upload admission policy (§55) | **RESOLVED — implemented and merged as PR21D1 (GitHub PR #107, §56)** — bounded 32 MiB allowance, generic 10 MiB cap unchanged for every other dataset | NO | — |
+| Migration-authority approval API (§55.6, §56) | **RESOLVED — implemented and merged as PR21E0 (GitHub PR #109, §56)** — Administrator-only, exact scope `pr21_legacy_transaction_history_v1`, no automatic approval, no delete/revoke | NO | — |
+| PR21-specific dry-run-plan/rows/confirm HTTP surface (§29-§34, §56) | **RESOLVED — implemented and merged as PR21E0 (GitHub PR #109, §56)** — separate route family, PR20's own routes byte/field/OpenAPI-unchanged | NO | — |
+| Historical event execution (§37, §56) | **RESOLVED — implemented and merged as PR21D2 (GitHub PR #108, §56)** | NO | — |
+| Real frontend integration (§41, §56) | **RESOLVED — implemented and merged as PR21E (GitHub PR #110, §56)** | NO | — |
 | Stable event identity (§24, §24.1, §24.2) | **RESOLVED FOR PR21 V1, corrected in the PR #102 fix round** — one immutable `LegacyMigrationAuthority` (design concept) bound to the frozen snapshot's checksum (§6); `(migration_authority_id, dataset_type, ลำดับ)` scoped identity; cross-export durability explicitly NOT claimed | NO (for V1) | — |
 | Issue↔Receive pairing (§11, §11.1, §11.2) | **RESOLVED this round** — event-first adopted; pairing not required for import; deterministic-only linking deferred to PR22-or-later | NO | — |
 | Validation/dry-run semantics (§15, §28) | RESOLVED: all-or-nothing PR19 gate; dry-run never contains ERROR-severity rows | NO | — |
@@ -2933,17 +2969,27 @@ schema exists (§46). PR21D/E/F remain blocked, transitively, on those
 slices actually being built. **PR21-Foundation is complete** (merged,
 GitHub PR #100). See §54 for the full per-slice reassessment.
 
-**PR21 overall readiness, current (Owner Decision Closure Round 3,
-§55):** **PR21-Foundation, PR21A, PR21B, and PR21C are all complete**
-(merged: GitHub PR #100, #103, #104, #105). **SDC is RESOLVED —
-EXCLUDED FOR PR21 V1** (§6.5) — no Owner Decision remains open across
-all seven (OD-PR21-0 through OD-PR21-6, §45). PR21B/C's merged bounded
-sub-slices **are** their complete V1 scope, not a partial slice awaiting
-a still-open decision. **PR21D1 (Combined Canonical Adapter + Source
-Admission) is AUTHORIZED, NOT YET IMPLEMENTED.** **PR21D2 (Historical
-Event Execution), PR21E, and PR21F remain BLOCKED**, transitively on
-PR21D1 actually being implemented, reviewed, and merged. See §55 for
-the full reassessment and authorization record.
+**PR21 overall readiness, historical (Owner Decision Closure Round 3,
+§55; superseded by Round 4 immediately below):** **PR21-Foundation,
+PR21A, PR21B, and PR21C are all complete** (merged: GitHub PR #100,
+#103, #104, #105). **SDC is RESOLVED — EXCLUDED FOR PR21 V1** (§6.5) —
+no Owner Decision remains open across all seven (OD-PR21-0 through
+OD-PR21-6, §45). PR21B/C's merged bounded sub-slices **are** their
+complete V1 scope, not a partial slice awaiting a still-open decision.
+**PR21D1 (Combined Canonical Adapter + Source Admission) is AUTHORIZED,
+NOT YET IMPLEMENTED.** **PR21D2 (Historical Event Execution), PR21E, and
+PR21F remain BLOCKED**, transitively on PR21D1 actually being
+implemented, reviewed, and merged. See §55 for the full reassessment and
+authorization record. This was accurate as of Round 3.
+
+**PR21 overall readiness, current (Owner Decision Closure Round 4 /
+PR21F closure, §56):** **Every PR21 implementation slice is complete and
+merged** — PR21-Foundation (#100), PR21A (#103), PR21B (#104), PR21C
+(#105), PR21D1 (#107), PR21D2 (#108), PR21E0 (#109), and PR21E (#110).
+**Roadmap PR21 (Legacy Receive and Issue History Import) is now fully
+complete.** No slice remains authorized-but-not-implemented, blocked, or
+not started. See §56 for the full closure record. **The next planned
+Roadmap item is PR22 — Legacy Data Validation and Reconciliation.**
 
 ---
 
@@ -3561,6 +3607,143 @@ does not perform the full PR21F Governance Sync (that remains a
 separate, later task once PR21D1/D2 also merge, per §46's own
 convention); it does not resolve, reopen, or restate a position on
 GitHub PR #97's P2 or PR #98's P2-A/P2-B follow-ups (§55.11).
+
+---
+
+## 56. Owner Decision Closure Round 4 / PR21F Governance Sync — PR21D1/D2/E0/E merged; Roadmap PR21 fully complete
+
+**This round is documentation-only** (`docs/ENGINEERING_WORKFLOW.md`
+§14) — it implements no runtime code, resolves no new Owner Decision,
+and rewrites no prior dated entry in this document or `docs/DECISION_LOG.md`.
+It records that the four slices Round 3 (§55) authorized/reserved have
+all since merged, and formally closes Roadmap PR21.
+
+### 56.1 What merged since Round 3
+
+- **PR21D1 — Combined Canonical Adapter + Source Admission** (GitHub PR
+  #107, squash SHA `50b9e77269b238d95fb34b28d0bc223a369951e2`).
+  Implemented exactly what §55.2/§55.7/§55.8 authorized: composed the
+  merged PR21B/PR21C parsers into the production `legacy_transaction_history`
+  `ImportAdapter` and registered it; added `PR21_MAX_UPLOAD_BYTES = 32
+  MiB` (generic 10 MiB cap unchanged elsewhere); wired the mandatory
+  all-or-nothing validation gate (§55.3) — an Issue-only or Receive-only
+  `LegacyHistoryDryRunPlan` is structurally unreachable. Did not pair
+  Issue/Receive (§55.4, unchanged), did not add SDC (§55.1, unchanged),
+  did not mutate Equipment (§55.5, unchanged), did not execute
+  `LegacyEquipmentEvent` inserts (that remained PR21D2's own task, per
+  §55.8).
+- **PR21D2 — Historical Event Execution** (GitHub PR #108, squash SHA
+  `c4788de06bed9a13aa5ec981fb8e19c67bc5720b`). Executes the validated,
+  immutable `LegacyEquipmentEvent` INSERTs (`event_type` = `ISSUE` |
+  `RECEIVE`, §8.1) from an admitted, confirmed `LegacyHistoryDryRunPlan` —
+  never `BorrowTransaction` replay, live dispatch, live receipt, or
+  `Equipment.status`/`version`/location/lifecycle mutation (§12, §19,
+  §44, unchanged). Reuses PR19/PR20's existing execution claim/lease/
+  fencing/TX1/TX2/recovery/audit machinery (§37, unchanged architecture),
+  idempotent and scoped by the §24.2 identity tuple
+  `(migration_authority_id, event_type, legacy_source_row_key)`.
+- **PR21E0 — Legacy Import Operator API Surface** (GitHub PR #109,
+  squash SHA `78eeea7827c53443f34de9e516573c2ed7c59581`). Closed the two
+  gaps §55.6 and §29-§34 themselves identified as not yet reachable over
+  HTTP: (1) `POST /legacy-migration-authorities` / `GET
+  /legacy-migration-authorities?checksum=...` — the sole production write
+  path for `LegacyMigrationAuthority` (§24.2's design concept made real),
+  Administrator-only, exact scope `pr21_legacy_transaction_history_v1`
+  (§7 of the closing task's own instruction — never an operator-typed
+  scope), idempotent (200 for an existing exact-checksum row, 201 for a
+  genuine first approval), 409 on a genuine scope conflict, no delete/
+  revoke workflow; (2) `GET .../legacy-history/dry-run-plan`, `GET
+  .../dry-run-plan/{plan_id}/rows`, `POST
+  .../dry-run-plan/{plan_id}/confirm` — a deliberately separate route
+  family from PR20's own `.../dry-run-plan` routes (§29/§31, static
+  routes per dataset, no dynamic dispatch, as this document already
+  required), leaving PR20's own routes byte/field/OpenAPI-unchanged (its
+  own dedicated PR20-regression test suite confirms this).
+- **PR21E — Legacy History Frontend Real Integration** (GitHub PR #110,
+  squash SHA `d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810`). Replaced the
+  PR19B mock Receive/Issue History frontend (§41, historical) with the
+  real, single combined `legacy_transaction_history` operator workflow
+  this document has always specified (§2 of the closing task's own
+  instruction, matching §41's own design intent): create session →
+  upload workbook (backend-computed checksum only, §28 of the closing
+  task, matching §55.6's "checksum authority unchanged") → an explicit,
+  never-auto-approved migration-authority approval step behind its own
+  confirmation dialog → validate → dry-run → paginated ISSUE/RECEIVE row
+  review (backend cursor pagination, never a full-dataset client fetch,
+  §33/§35 of this document) → confirm → execute, each mutating action
+  behind its own confirmation dialog. Session-detail routing now fetches
+  the session's own real `dataset_type` once and dispatches on it,
+  replacing the prior UUID-shape heuristic that would otherwise have
+  silently routed a real PR21 session into the Equipment Master panel —
+  a regression this slice's own tests explicitly guard against.
+  `MockImportClient`, `legacyImportFixtures.ts`, the skeleton banner, and
+  every mock-only type/mapper/invariant were removed entirely; no
+  production PR21 path goes through mock data. Equipment Master's own
+  regression tests (`EquipmentMasterWorkflowPanel`,
+  `equipmentMasterImportClient`) pass unchanged.
+
+### 56.2 PR #110 finding-status correction
+
+PR #110's Final Merge Gate recorded **zero review threads, zero
+comments, zero findings of any kind** — reviewed head
+`8c2b1dacac9996b7a4cab89ff70b6939471ef164`, CI green 6/6, the reviewed
+head and the merged squash commit's tree independently verified
+byte-identical (`git diff` empty, tree hashes identical, squash commit's
+sole parent the prior baseline). This is a genuine **absence** of
+findings, not an accepted P2 — no document in this repository should
+describe PR #110 as having carried a P2 finding.
+
+### 56.3 Answers to the closing acceptance-criteria questions (cross-document consistency)
+
+1. Is PR21 implemented? **YES — complete as of this closure.**
+2. What is the production dataset? `legacy_transaction_history`.
+3. One or two workbook imports? **ONE** combined workbook/`ImportSession`.
+4. Are ISSUE and RECEIVE paired? **NO** — event-first, §11.2, unchanged.
+5. Is SDC included? **NO**, excluded for V1 (§6.5, §55.1, unchanged).
+6. Does historical import change current Equipment status/location?
+   **NO** (§19, §44, §55.5, unchanged).
+7. Is authority approval implemented? **YES** (PR21E0, §56.1).
+8. Is the PR21 dry-run review/confirm HTTP API implemented? **YES**
+   (PR21E0, §56.1).
+9. Is the real frontend implemented? **YES** (PR21E, §56.1).
+10. What is next? **PR22 — Legacy Data Validation and Reconciliation.**
+
+### 56.4 Historical follow-ups — unaffected
+
+GitHub PR #97's P2 follow-up and GitHub PR #98's P2-A/P2-B follow-ups
+remain **accepted / non-blocking / unresolved**, in their existing
+recorded wording — this round does not touch, resolve, or restate a
+position on any of them.
+
+### 56.5 What this round does NOT do
+
+It does not modify `backend/**`, `frontend/**`, `alembic/**`,
+`tests/**`, or any CI workflow file; it does not add a migration; it
+does not begin PR22, define its scope, or design any part of it beyond
+the one-line pointer above; it does not resolve, reopen, or restate a
+position on GitHub PR #97's P2 or PR #98's P2-A/P2-B follow-ups (§56.4);
+it does not introduce a new Owner Decision; it does not rewrite §1-§55
+above — every prior round's "AUTHORIZED, NOT YET IMPLEMENTED"/"STILL
+BLOCKED" statement remains exactly as originally written and accurate
+as of its own date, now superseded for current-state purposes by this
+section and the updated status lines in §46/§47/the banner above.
+
+### 56.6 Roadmap state after this round
+
+- **PR21-Foundation, PR21A, PR21B, PR21C:** COMPLETE (unchanged from
+  Round 3).
+- **SDC:** EXCLUDED FOR V1 (unchanged from Round 3).
+- **PR21D1:** COMPLETE (merged, GitHub PR #107).
+- **PR21D2:** COMPLETE (merged, GitHub PR #108).
+- **PR21E0:** COMPLETE (merged, GitHub PR #109).
+- **PR21E:** COMPLETE (merged, GitHub PR #110).
+- **PR21F (this section):** the closing governance sync — Roadmap PR21
+  is fully complete once this document (and its companion
+  `docs/ROADMAP.md`/`docs/ROADMAP_STATUS.md`/`docs/DECISION_LOG.md`/
+  `knowledge/CHANGE_HISTORY.md` updates) merge.
+- **Roadmap PR21 (Legacy Receive and Issue History Import): COMPLETE.**
+- **PR22 — Legacy Data Validation and Reconciliation:** the next planned
+  Roadmap item, not started, designed, or scoped by this round.
 
 ---
 
