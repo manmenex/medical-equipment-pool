@@ -1148,6 +1148,15 @@ on a live query whose result silently changes after sign-off" — after
 findings are already persisted rows, immune to any subsequent live-data
 drift by construction (Option B, §17.1).
 
+**No `signed_off` run-status value exists in this lifecycle, and none is
+added by this design.** Sign-off is modeled as the existence of a
+separate, fully immutable `LegacyReconciliationSignOff` row bound to the
+run (§17.2, §20), not as a fifth `status` transition — so a run reaching
+`completed` never implies, by itself, that it has been (or can be)
+signed off. This keeps the "no sign-off before OD-PR22-7 resolves" rule
+(§20) a property of when a `LegacyReconciliationSignOff` row may be
+inserted, with no run-lifecycle change required to enforce it.
+
 ---
 
 ## 19. Finding lifecycle and disposition
@@ -1198,12 +1207,12 @@ despite low machine-assigned severity.
 Restated with full precision, addressing the review brief's own
 requirement that sign-off must never mean "data is objectively perfect":
 
-> "The Administrator confirms that every finding recorded on
-> reconciliation run `{run_id}` (computed under rule set version
-> `{rule_version}`, snapshot as of `{snapshot_as_of}`) has been assigned
-> an accepted disposition, and that the summary counts in
-> `attestation_summary` accurately reflect that run's findings at the
-> moment of sign-off."
+> "The reviewer confirms that all findings generated for the exact
+> immutable reconciliation run `{run_id}`, rule version
+> `{rule_version}`, migration authority scope, and approved temporal
+> coverage (`legacy_coverage_start`/`legacy_coverage_end`, and
+> `live_system_start` if applicable) have been reviewed according to the
+> permitted disposition policy."
 
 This is a statement about **review completeness against one specific,
 immutable run**, never a statement about the objective correctness of
@@ -1215,26 +1224,55 @@ given mix of dispositions is *acceptable for Go-live* is a Roadmap PR23
 cutover-readiness policy question, explicitly out of this design's scope
 (§7).
 
-**Updated attestation wording once OD-PR22-7 resolves (§9.J, §36) —
-binding temporal coverage, not only rule version and data authorities:**
-
-> "The reviewer confirms that all findings generated for the exact
-> immutable reconciliation run `{run_id}`, rule version
-> `{rule_version}`, migration authority scope, and approved temporal
-> coverage (`legacy_coverage_start`/`legacy_coverage_end`, and
-> `live_system_start` if applicable) have been reviewed according to the
-> permitted disposition policy."
-
 Sign-off never certifies hospital history outside the approved coverage
 window — only that the findings generated *for that window* were
-reviewed. **Acceptance criterion: no reconciliation run may be signed
-off without an explicit, persisted, authoritative temporal coverage
-boundary approved under OD-PR22-7** — a sign-off endpoint must not
-operate on an implicit `observed_min_event_at`/`observed_max_event_at`
-value in place of an approved boundary. Until OD-PR22-7 resolves, the
-original attestation wording above (naming only `rule_version` and
-`snapshot_as_of`) remains the interim contract, and no sign-off may be
-described as covering a stated temporal window.
+reviewed.
+
+**Sign-off preconditions (all required, no exceptions)**: a run may
+reach final sign-off only when every one of the following holds:
+
+1. The reconciliation run and its snapshot are immutable (§17.2, §18) —
+   sign-off binds to one exact, closed run.
+2. The rule set version (§24) under which the run's findings were
+   computed is recorded and unambiguous.
+3. The applicable data/migration authorities (§4.9, §13) in scope for
+   the run are recorded and unambiguous.
+4. **The authoritative temporal coverage boundary is resolved under
+   OD-PR22-7 (§9.J, §36)** — `legacy_coverage_start`/
+   `legacy_coverage_end` (and `live_system_start`, if the Owner adopts
+   the two-boundary model) are explicit, persisted, and approved; an
+   implicit `observed_min_event_at`/`observed_max_event_at` value never
+   substitutes for an approved boundary.
+5. Every sign-off-blocking finding on the run has been assigned an
+   accepted disposition under the approved disposition policy (§19).
+6. The caller invoking sign-off is authorized to sign off (§21).
+
+**Until OD-PR22-7 resolves the authoritative temporal coverage
+contract, reconciliation runs may be created, analyzed, reviewed, and
+where otherwise authorized, findings may be dispositioned; however, no
+run may reach final sign-off.** There is no separate interim, partial,
+or provisional sign-off mode: precondition 4 above is not optional and
+is not satisfiable before OD-PR22-7 resolves, so no run can meet all
+sign-off preconditions until then. The original, narrower attestation
+wording (naming only `rule_version` and `snapshot_as_of`, without a
+temporal coverage clause) is retired by this design and must not be
+implemented as an alternative or fallback attestation — the attestation
+wording above, binding temporal coverage, is the only sign-off contract
+this design authorizes, and it cannot be satisfied while OD-PR22-7 is
+open.
+
+**Acceptance criterion:**
+
+- **While OD-PR22-7 remains OPEN**: no reconciliation run may reach
+  final sign-off. Run creation, deterministic analysis, snapshot
+  persistence, finding review, and — where otherwise authorized by
+  other resolved Owner Decisions — disposition assignment remain
+  permitted.
+- **Once OD-PR22-7 resolves**: final sign-off binds the exact immutable
+  reconciliation snapshot and the approved temporal coverage — a
+  sign-off endpoint must not operate on an implicit
+  `observed_min_event_at`/`observed_max_event_at` value in place of an
+  approved boundary, and all other preconditions above must still hold.
 
 **Binding to exact run/snapshot identity**: enforced structurally by
 `LegacyReconciliationSignOff.run_id` (UNIQUE FK) and
@@ -1242,7 +1280,11 @@ described as covering a stated temporal window.
 supply the run's currently-known `version`, and the INSERT is rejected
 (§22) if that no longer matches, exactly mirroring how `DryRunPlan`
 confirmation binds to an exact plan identity rather than "whatever the
-current plan happens to be."
+current plan happens to be." This structural binding is necessary but
+not sufficient: it prevents sign-off from targeting a stale run
+version, but does not by itself satisfy precondition 4 — the temporal
+coverage precondition is enforced separately, and both must hold before
+any sign-off write is accepted.
 
 ---
 
@@ -1312,7 +1354,12 @@ Every scenario the review brief names, addressed:
   ... WHERE run_id=:id AND disposition IS NULL` returning zero, inside
   the same transaction, before the INSERT commits) — this is the actual
   concurrency guard for "did review truly finish," not the run's own
-  `version` column.
+  `version` column. This disposition-completeness check is one sign-off
+  precondition among several (§20) and does not by itself authorize the
+  INSERT: the same transaction must also confirm the run's approved
+  temporal coverage boundary under OD-PR22-7, which cannot be confirmed
+  while OD-PR22-7 remains OPEN and therefore blocks the INSERT
+  regardless of disposition completeness.
 - **A new corrected authority appearing during review**: does not
   invalidate an in-progress run — the run's `REPEATABLE READ` snapshot
   (§18) already fixed its view of the data at `running` time; a new
@@ -1392,6 +1439,16 @@ POST   /legacy-reconciliation-runs/{run_id}/findings/{finding_id}/disposition
 POST   /legacy-reconciliation-runs/{run_id}/sign-off          (Administrator only)
 GET    /legacy-reconciliation-runs/{run_id}/sign-off          (all roles — read the attestation, if any)
 ```
+
+**Sign-off endpoint gating**: `POST .../sign-off` is listed here as a
+proposed future endpoint and is not removed from this design merely
+because its implementation is gated. Its calling behavior cannot be
+implemented — and, if implemented as inert scaffolding ahead of that,
+must not be callable to a successful result — until OD-PR22-7 and all
+other sign-off-gating Owner Decisions resolve (§20, §34's PR22E entry).
+`GET .../sign-off` (reading an existing attestation, if any) carries no
+such gate — it is unaffected because no attestation can exist before
+sign-off is possible.
 
 Deliberately **not** nested under `/import-sessions` — a reconciliation
 run is not an `ImportSession` (it imports nothing), so it gets its own
@@ -1614,11 +1671,17 @@ commitment):
   review, Ward/BME traceability) is unaffected by this gate and may
   proceed.**
 - **PR22D** — finding review/disposition API (§19, §25, §26).
-- **PR22E** — sign-off + concurrency/audit (§20, §22, §28). **Not
-  authorized to implement the temporal-coverage-binding attestation
-  wording (§20) or the "no sign-off without approved coverage"
-  acceptance criterion until OD-PR22-7 resolves — the interim
-  (rule-version-only) attestation contract in §20 applies until then.**
+- **PR22E** — sign-off + concurrency/audit (§20, §22, §28). **May
+  implement sign-off mechanics (the attestation wording, the sign-off
+  write path, and the "no sign-off without approved coverage"
+  acceptance criterion, §20) only after OD-PR22-7 and all other
+  sign-off-gating Owner Decisions have resolved. Before then, this
+  slice may implement only non-sign-off infrastructure that does not
+  encode unresolved sign-off semantics — e.g. finding-review
+  concurrency (§22) and audit logging (§28) for actions other than
+  sign-off itself. No interim, partial, or provisional sign-off
+  endpoint is authorized under any circumstance; there is no
+  rule-version-only fallback attestation contract to implement.**
 - **PR22F** — frontend real integration (§30).
 - **PR22G** — governance sync (closes Roadmap PR22, mirrors PR21F's own
   pattern).
@@ -1659,12 +1722,14 @@ respective dependencies are otherwise satisfied.**
   open risk in this design: without an approved
   `legacy_coverage_start`/`legacy_coverage_end`, §9.E's current-state
   comparison and §9.D's chronology wording cannot be implemented
-  correctly, and a sign-off produced before OD-PR22-7 resolves could not
-  honestly state what temporal window it covered. Mitigated by gating
-  PR22C's and PR22E's cutoff-dependent behavior explicitly (§34) rather
-  than shipping a best-guess interpretation (e.g. `MAX(occurred_at)`)
-  that would silently misstate coverage if the approved workbook itself
-  has trailing gaps (§9.J).
+  correctly, and any sign-off produced before OD-PR22-7 resolves could
+  not honestly state what temporal window it covered — which is exactly
+  why §20 blocks all final sign-off until OD-PR22-7 resolves, rather
+  than permitting a sign-off that omits or fudges the coverage claim.
+  Mitigated by gating PR22C's and PR22E's cutoff-dependent behavior
+  explicitly (§34) rather than shipping a best-guess interpretation
+  (e.g. `MAX(occurred_at)`) that would silently misstate coverage if the
+  approved workbook itself has trailing gaps (§9.J).
 
 ---
 
@@ -1732,9 +1797,10 @@ independent review found this design had left undefined):
   own coverage relates to its predecessor's (§13). **This design
   explicitly does not resolve OD-PR22-7** — §9.J names the problem and
   compares alternatives; it does not choose one. Blocks: PR22C's
-  current-state-comparison and coverage-scoped chronology rules, and
-  PR22E's coverage-binding sign-off attestation (§34) — does not block
-  PR22B's/PR22D's own non-temporal scope.
+  current-state-comparison and coverage-scoped chronology rules, and all
+  of PR22E's sign-off mechanics — no final sign-off may occur while this
+  remains OPEN (§20, §34) — does not block PR22B's/PR22D's own
+  non-temporal scope.
 
 **What did NOT require an Owner Decision, and why**: the persistence
 option (§17.1 — matches every analogous already-merged workflow, no
