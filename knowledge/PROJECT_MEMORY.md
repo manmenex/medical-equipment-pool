@@ -158,8 +158,9 @@ CHANGES on remaining finding PR80-H1R; final reviewed head
 `5edf1bfd8de7013eb74f300193456c9e5c0f0332` **APPROVE**, CI green 6/6),
 PR19B merged with real squash-merge SHA
 `04f5bf5c76b51744981d1cc8072c074e604224e9` — historical for current-state
-purposes (superseded by `2743af8...`, the current PR20F baseline; see
-"Current baseline and Roadmap" above). GitHub PR #81, an earlier
+purposes (superseded by `2743af8...`, PR20F's own baseline at the time,
+itself since superseded by `d64d50d...`, PR21E, the current baseline;
+see "Current baseline and Roadmap" above). GitHub PR #81, an earlier
 unsplit PR19A candidate, was closed without merging, superseded by
 PR19A1/PR19A2/PR19A3. **Both PR19A and PR19B are now complete; Roadmap
 PR19 (Legacy Import Foundation, backend + frontend skeleton) as a whole is

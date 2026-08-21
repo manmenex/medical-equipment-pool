@@ -3781,17 +3781,108 @@ matched line.
 | `docs/api/dispatch.md` | "this repository's PR20 review round 1" | B — refers to a specific historical code-review round for a `ward_id` validation finding, unrelated to Roadmap PR20 (Equipment Master Import) status | None |
 | `docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md`, `docs/development/TESTING.md`, `docs/prompts/codex-pr-review.md` | "current baseline" (PR15B's own historical baseline), "mock" (frontend test-mocking convention, unrelated to `MockImportClient`) | B — correctly scoped to their own subject | None |
 | All remaining files under `docs/adr/`, `docs/api/`, `docs/architecture/`, `docs/audits/01-02*`, `docs/development/`, `docs/kickoffs/`, `docs/prompts/`, `knowledge/adr/`, `knowledge/architecture/`, `knowledge/business-rules/`, `knowledge/glossary.md`, `knowledge/traceability/README.md`, `knowledge/README.md` | no PR19/PR20/PR21/PR22/legacy-import/mock/baseline hit of any kind | N/A | None |
-| `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, `docs/DECISION_LOG.md`, this design document, `docs/audits/04-consolidated-implementation-plan.md`, `knowledge/CHANGE_HISTORY.md`, `knowledge/CONTEXT.md`, `knowledge/PROJECT_MEMORY.md` (`knowledge/`) | the 8 files already updated by this PR's original commit | A — current, already corrected in this PR | None (verified consistent with each other) |
+| `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, `docs/DECISION_LOG.md`, this design document, `docs/audits/04-consolidated-implementation-plan.md`, `knowledge/CHANGE_HISTORY.md`, `knowledge/CONTEXT.md`, `knowledge/PROJECT_MEMORY.md` (`knowledge/`) | the 8 files already updated by this PR's original commit, checked here for *coverage* (missing files/phrases), not yet independently re-checked for internal drift caused by the round-1 edits themselves | **Correction (Fix Round 2, §56.8): this row's "None (verified consistent)" conclusion was wrong** — a second independent review found stale `2743af8...`/PR20F "current baseline" self-references left behind inside several of these same 8 files (plus `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md`, a 9th file) by the round-1 edit itself. See §56.8 for the corrected audit. | See §56.8 |
 
-**Result:** zero new Category D (stale-current) hits and zero Category C
-(historical-but-ambiguous) hits outside the 8 files this PR already
-updated. The wider sweep confirms, rather than changes, the original
-round's content — the P1 finding was about sweep completeness/evidence,
-not about an actual remaining inconsistency. `docs/PROJECT_MEMORY.md`
+**Result (as this subsection originally concluded — corrected by §56.8,
+below):** the 83-file coverage sweep found zero files *missing* an update
+outside the 8 already-touched files. It did **not**, however, verify that
+every internal cross-reference *within* those 8 files (plus the PR20
+design document) stayed consistent after the round-1 edit moved the
+"current baseline" pointer from `2743af8...` to `d64d50d...` — several did
+not, and a second independent review caught this as a distinct, further
+[P1] finding. See §56.8 for the corrected sweep and full audit table.
+`docs/PROJECT_MEMORY.md`
 (distinct from `knowledge/PROJECT_MEMORY.md`) was directly inspected in
 full and requires no change: it is the dated chronological log ending at
 "Governance Pack v1.0," carries no baseline or PR21-related claim, and
 is correctly out of scope for a PR21 status update.
+
+### 56.8 PR21F fix round 2 — stale PR20F "current baseline" self-references (second [P1] response)
+
+A second independent review of this PR (head `466d17369ff0d6bbec679ce2a29c54f9609a3955`)
+returned a further blocking [P1] finding: round 1's edit correctly moved
+the top-level "current baseline" pointer in every governance file from
+`2743af849702ef551927b9c362421df08c80b5d9` (PR20F) to `d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810`
+(PR21E), but left several *nested* self-references — internal
+cross-reference labels inside historical paragraphs that had, before
+round 1, correctly pointed to "the current baseline above/at the top of
+this section" and named `2743af8...` — still naming `2743af8...` as if
+it were still that current-baseline pointer. §56.7's own claim that the
+8 already-touched files were "verified consistent with each other" did
+not check for this specific kind of internal drift; that claim was
+wrong and is corrected in place in §56.7's table above, not deleted.
+
+**Acceptance criterion used (per the reviewer's explicit framing): not
+"zero occurrences of `2743af8...`"** — the SHA is a genuine, valuable
+historical reference and stays in every file as PR20F's own real
+squash-merge SHA — **but zero occurrences that a reader could
+understand as `2743af8...` being the repository's *current* baseline.**
+
+**Method:** `git grep -n '2743af849702ef551927b9c362421df08c80b5d9'` and
+`git grep -n '2743af8'` across all of `docs/` and `knowledge/`; every hit
+individually read in context and classified HISTORICAL (stays, valid
+provenance) or STALE-CURRENT (must be fixed). Independently cross-checked
+with `git grep -n -i 'current baseline'`, `'current authoritative'`, and
+`'authoritative baseline'` across the same scope, and with the PR21-state
+sweep (`PR21.*not started|PR21.*not yet implemented|PR21.*blocked|future
+Roadmap PR21|future PR21`).
+
+**Audit table** (file | line/context | classification | action):
+
+| File | Context | Classification | Action taken |
+|---|---|---|---|
+| `docs/ROADMAP.md` (top baseline section, `d64d50d...` paragraph) | "the real squash-merge SHA of GitHub PR #96, Roadmap PR20F..." (the paragraph's own historical-provenance statement, correctly labeled "Historical" at its own start) | HISTORICAL | None |
+| `docs/ROADMAP.md` (PR19B paragraph header) | "Historical — superseded by the current baseline above (`2743af8...`, PR20F)" | STALE-CURRENT — labeled the PR19B paragraph as superseded by what was, at round-1 time, "the current baseline above," but that phrase now resolves to `d64d50d...`, not `2743af8...` | Fixed: now reads "superseded by `2743af8...` (PR20F) immediately above, itself since superseded by the current baseline at the top of this section (`d64d50d...`, PR21E)" |
+| `docs/ROADMAP.md` (PR19A3/`7f13a1e` paragraph header, two spots) | "superseded in turn by the current baseline at the top of this section (`2743af8...`, PR20F)" (header) and the same phrase inside the paragraph's 2026-08-11 update | STALE-CURRENT | Fixed: both now chain through `2743af8...` (PR20F) to the current baseline (`d64d50d...`, PR21E) |
+| `docs/ROADMAP.md` (PR18F/`729d1aa` paragraph header) | "`04f5bf5c...` is in turn superseded by the current baseline at the top of this section (`2743af8...`, PR20F)" | STALE-CURRENT | Fixed: chain extended to `d64d50d...` (PR21E) |
+| `docs/ROADMAP.md` (PR18F paragraph body, PR19 split note) | "Roadmap PR19 and PR20 are both now fully complete — see the current baseline at the top of this section (`2743af8...`, PR20F)" | STALE-CURRENT | Fixed: now says "Roadmap PR19, PR20, and PR21 are all now fully complete — see the current baseline at the top of this section (`d64d50d...`, PR21E)" |
+| `docs/ROADMAP.md` (PR18E/`5d8cf7d` paragraph header) | "chains up ... to the current baseline at the top of this section (`2743af8...`, PR20F) — none of ... is current" | STALE-CURRENT — the "current" claim itself named the wrong SHA | Fixed: chain now correctly ends at `d64d50d...` (PR21E), and `2743af8...` added to the explicit "none of these is current" list |
+| `docs/ROADMAP.md` ("PR20 note" paragraph) | "merged as the real squash SHA `2743af8...` (the current baseline — see above)" — unqualified, present-tense "the current baseline" | STALE-CURRENT | Fixed: "PR20's own final baseline at the time, since superseded by the current baseline at the top of this document (`d64d50d...`, PR21E; see above)" |
+| `docs/ROADMAP.md` ("Approved forward sequence," PR19 split paragraph) | "Roadmap PR19 and PR20 are both now fully complete — see the current baseline at the top of this document (`2743af8...`, PR20F)" | STALE-CURRENT | Fixed: "PR19, PR20, and PR21 are all now fully complete — see the current baseline at the top of this document (`d64d50d...`, PR21E)" |
+| `docs/ROADMAP.md` (Completed table, PR20 row) | "squash SHA `2743af8...` (PR20F, current baseline)" — directly contradicts the PR21 row immediately below it, which correctly says "(PR21E, current baseline)" | STALE-CURRENT | Fixed: "(PR20F, historical baseline — superseded by PR21E, see below)" |
+| `docs/ROADMAP.md` (Completed table, PR20F slice row, SHA column) | `` `2743af8` `` — a bare SHA value in a data column, same as every other row's squash-SHA column; makes no "current" claim | HISTORICAL | None |
+| `docs/ROADMAP_STATUS.md` (`7f13a1e` provenance paragraph) | "superseded in turn by the current baseline at the top of this section (`2743af8...`, PR20F)" | STALE-CURRENT | Fixed: chain extended to `d64d50d...` (PR21E) |
+| `docs/ROADMAP_STATUS.md` (PR19B merge paragraph) | "historical/intermediate, since superseded by `2743af8...` (PR20F, the current baseline; see 'Current baseline' above)" | STALE-CURRENT | Fixed: "superseded by `2743af8...` (PR20F), itself in turn since superseded by `d64d50d...` (PR21E, the current baseline...)" |
+| `docs/ROADMAP_STATUS.md` ("Roadmap PR20 complete" section, PR20F slice line) | "squash SHA `2743af8...` (see 'Current baseline' above)" | HISTORICAL — a neutral pointer to the baseline-history section, does not itself assert `2743af8...` is current | None |
+| `docs/audits/04-consolidated-implementation-plan.md` ("Update — Roadmap PR20..." paragraph) | "The current authoritative base-branch baseline is `2743af8...`" — immediately followed (after round 1's addition) by a second paragraph asserting "The current authoritative base-branch baseline is `d64d50d...`," i.e. two consecutive, contradictory "current" claims | STALE-CURRENT | Fixed: "PR20's own base-branch baseline at the time was `2743af8...` — since superseded as the repository's current authoritative baseline by GitHub PR #110 (Roadmap PR21E), `d64d50d...` (see the update immediately below)" |
+| `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` (status header) | "merged into `claude/medical-equipment-pool-0c7fz0`, current baseline `2743af8...`" — PR20's own design doc calling PR20F's SHA the (repository) current baseline, unqualified | STALE-CURRENT — this is exactly the PR20-design-doc pattern the reviewer named explicitly (§10 of the fix-round instructions) | Fixed: "PR20's own final/historical baseline at the time, `2743af8...` — since superseded as the repository's current baseline by GitHub PR #110 (Roadmap PR21E), `d64d50d...`; see `docs/ROADMAP.md`'s 'Current baseline' section for the live pointer." **Checked against GitHub PR #97's accepted P2 (precise wording of the PR20 design-edit-scope description, immediately following this sentence): this fix adds baseline-SHA context before that sentence and does not edit, touch, or resolve it — P2 remains open, unresolved, exactly as before.** |
+| `knowledge/CHANGE_HISTORY.md` (PR19B-merged entry) | "the current authoritative baseline is `2743af8...` (PR20F)" — this entry sits below the PR21-complete entry (added at the very top of the file in round 1), so `2743af8...` is no longer the nearest-above "current" pointer | STALE-CURRENT | Fixed: "`2743af8...` (PR20F) ... was the authoritative baseline next, and is itself now also historical — superseded by the entry at the very top of this file, `d64d50d...` (PR21E), the current authoritative baseline" |
+| `knowledge/CHANGE_HISTORY.md` (same entry, "as of this entry" sentence) | "`04f5bf5c...` was, as of this entry, the current authoritative base-branch tip" | HISTORICAL — explicitly self-scoped ("as of this entry") | None |
+| `knowledge/CHANGE_HISTORY.md` ("Roadmap PR20 complete" entry, PR20F bullet) | "squash SHA `2743af8...`" (plain provenance mention, PR20F's own slice bullet) | HISTORICAL | None |
+| `knowledge/CHANGE_HISTORY.md` ("Roadmap PR20 complete" entry, closing note) | "Those remain future Roadmap PR21+ scope" / "not started by this entry" | HISTORICAL — explicitly self-scoped ("by this entry") | None |
+| `knowledge/PROJECT_MEMORY.md` (PR19B-merged paragraph) | "superseded by `2743af8...`, the current PR20F baseline; see 'Current baseline and Roadmap' above" | STALE-CURRENT | Fixed: "superseded by `2743af8...`, PR20F's own baseline at the time, itself since superseded by `d64d50d...`, PR21E, the current baseline" |
+| `knowledge/CONTEXT.md` | "`2743af849702ef551927b9c362421df08c80b5d9` (GitHub PR #96, Roadmap PR20F — now historical: its mock workflow has been fully removed by PR21E)" | HISTORICAL — already correctly qualified in round 1 | None |
+| `docs/DECISION_LOG.md` (four hits, inside the dated `## 2026-08-11` and `## 2026-08-16` entries) | "the current authoritative baseline is `2743af8...`" and similar, each inside a dated entry describing that entry's own point-in-time state | HISTORICAL — dated entries are append-only; a dated entry correctly saying the baseline *was* `2743af8...` as of its own date is accurate and must never be rewritten | None (verified each hit sits inside a `## YYYY-MM-DD` header's body, not in an undated summary) |
+| `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md` (this document), §55.9 "Roadmap state after this round," and similar Owner Decision Closure Round 1-3 (§46-§55) status lines | "AUTHORIZED, NOT YET IMPLEMENTED," "STILL BLOCKED," etc. | HISTORICAL — each is a numbered closure round's own "state after this round" snapshot, explicitly time-boxed by its own section number, superseded by §56 above (unaffected by this round) | None |
+
+**Independent re-verification after the fixes above** (same commands as
+the Method paragraph, re-run against the working tree):
+
+- `git grep -n '2743af8'` across `docs/`/`knowledge/`: every remaining hit
+  classified HISTORICAL per the table above; zero unqualified "current"
+  claims remain.
+- `git grep -n -i 'current baseline'` / `'current authoritative'` /
+  `'authoritative baseline'`: every hit either names `d64d50d...`
+  correctly, sits inside a dated `docs/DECISION_LOG.md` entry, or is
+  unrelated to PR20/PR21 (`docs/BUSINESS_RULES.md`'s PR10 role-model
+  section, `docs/ENGINEERING_WORKFLOW.md`'s generic baseline-management
+  policy, `docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md`'s and
+  `PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`'s own historical baselines).
+- PR21-state sweep (`PR21.*not started|...|future Roadmap PR21|future
+  PR21`): every hit is either inside a dated `DECISION_LOG.md` entry, a
+  self-scoped historical statement ("this was accurate at the time,"
+  "not started by this entry"), or a numbered, time-boxed Owner Decision
+  Closure Round snapshot in this document (§46-§55) — none is an
+  unqualified current-state claim.
+
+**Result:** zero remaining occurrences of `2743af8...`/PR20F identified
+as the repository's *current* baseline anywhere in `docs/**`/
+`knowledge/**`. `2743af8...` remains present, by design, as PR20F's own
+historical squash SHA — accurate, valuable provenance, never deleted.
+The single unambiguous current implementation baseline is
+`d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` (GitHub PR #110, Roadmap
+PR21E) everywhere it is asserted. GitHub PR #97's accepted P2 and PR
+#98's P2-A/P2-B remain open, untouched, and unaffected by this round.
 
 ---
 

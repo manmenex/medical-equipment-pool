@@ -53,8 +53,9 @@ Schema / Session / Source Foundation), both based on GitHub PR #83
 PR19A's implementation slices are merged — Roadmap PR19A (Legacy Import
 Foundation, backend) is now fully complete.** Superseded by `04f5bf5c...`
 (GitHub PR #80, PR19B) once PR19B also merged — `04f5bf5c...` is itself
-now historical/intermediate, superseded in turn by the current baseline
-at the top of this section (`2743af8...`, PR20F).
+now historical/intermediate, superseded in turn by `2743af8...` (GitHub
+PR #96, PR20F), itself since superseded by the current baseline at the
+top of this section (`d64d50d...`, GitHub PR #110, PR21E).
 
 `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` — squash commit of GitHub PR #79,
 the documentation-only PR18F governance synchronization recording Roadmap
@@ -124,8 +125,9 @@ rollback semantics) plus a non-blocking observation about nullable
 `5edf1bfd8de7013eb74f300193456c9e5c0f0332` closed PR80-H1R and received
 **APPROVE**, with CI green (6/6). PR19B then merged as GitHub PR #80,
 real squash-merge SHA `04f5bf5c76b51744981d1cc8072c074e604224e9` —
-historical/intermediate, since superseded by `2743af8...` (PR20F, the
-current baseline; see "Current baseline" above). GitHub PR #81, an earlier unsplit
+historical/intermediate, since superseded by `2743af8...` (PR20F), itself
+in turn since superseded by `d64d50d...` (PR21E, the current baseline;
+see "Current baseline" above). GitHub PR #81, an earlier unsplit
 PR19A candidate, was closed without merging, superseded by
 PR19A1/PR19A2/PR19A3. **PR19A and PR19B are both complete and merged;
 Roadmap PR19 (Legacy Import Foundation, backend + frontend skeleton) as a

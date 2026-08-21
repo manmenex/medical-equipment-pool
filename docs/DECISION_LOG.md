@@ -3788,3 +3788,60 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
 - **Status:** Documentation-only; no runtime behavior changed. PR #111
   remains Draft, unmerged, pending a fresh independent review of this
   exact new head.
+
+## 2026-08-21 — PR21F fix round 2: stale PR20F "current baseline" self-references removed, GitHub PR #111 description corrected again
+
+- **Decision:** None — another process/evidence entry, not a new
+  decision. A second independent review of GitHub PR #111 (head
+  `466d17369ff0d6bbec679ce2a29c54f9609a3955`) returned a further blocking
+  [P1] finding: the entry immediately above's sweep confirmed no
+  *missing* file needed an update, but did not catch that round 1's own
+  edit — moving the top-level "current baseline" pointer from
+  `2743af849702ef551927b9c362421df08c80b5d9` (PR20F) to
+  `d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` (PR21E) — left several
+  *nested* cross-reference labels inside `docs/ROADMAP.md`,
+  `docs/ROADMAP_STATUS.md`, `docs/audits/04-consolidated-implementation-plan.md`,
+  `knowledge/CHANGE_HISTORY.md`, and `knowledge/PROJECT_MEMORY.md` still
+  naming `2743af8...`/PR20F as "the current baseline above/at the top of
+  this section," plus one occurrence each in `docs/ROADMAP.md`'s
+  Completed table and "PR20 note," and one in
+  `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md`'s own status header
+  (that document calling PR20F's SHA the repository's current baseline,
+  rather than PR20's own historical baseline).
+- **What changed:** every occurrence of `2743af8...`/`2743af849702ef551927b9c362421df08c80b5d9`
+  across `docs/**`/`knowledge/**` was individually re-read and classified
+  HISTORICAL or STALE-CURRENT. Every STALE-CURRENT hit was fixed so the
+  chain of supersession correctly ends at `d64d50d...` (PR21E); every
+  HISTORICAL hit (including all four hits inside dated
+  `docs/DECISION_LOG.md` entries above, and every "AUTHORIZED, NOT YET
+  IMPLEMENTED"/"STILL BLOCKED" line inside this design document's own
+  numbered, time-boxed Owner Decision Closure Round sections, §46-§55)
+  was left untouched. `2743af8...` itself was never deleted from any
+  file — it remains accurate historical provenance everywhere it
+  appears; only unqualified "current" claims attached to it were fixed.
+  See `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md` §56.8
+  for the full method and per-occurrence audit table.
+- **`docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` and GitHub PR
+  #97's P2:** the fix to that document's status header adds
+  baseline-SHA context immediately before the sentence GitHub PR #97's
+  accepted P2 concerns (precise wording of the PR20 design-edit-scope
+  description) but does not edit that sentence itself. **P2 remains
+  open, unresolved, exactly as before — this entry does not resolve or
+  touch it.**
+- **GitHub PR #111 description corrected again:** its Evidence table and
+  Scope section are updated to describe this second sweep, its method,
+  and its result, replacing the now-superseded round-1 wording that had
+  (wrongly) implied the 8 already-touched files needed no further
+  review.
+- **What this entry does not do:** it does not modify `backend/**`,
+  `frontend/**`, `alembic/**`, `tests/**`, or any CI workflow file; it
+  does not rewrite this entry's own predecessor above, or any other
+  prior dated entry; it does not resolve, reopen, or restate a position
+  on GitHub PR #97's P2 or PR #98's P2-A/P2-B; it does not merge PR
+  #111.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+  §56.8; GitHub PR #111 description.
+- **Status:** Documentation-only; no runtime behavior changed. PR #111
+  remains Draft, unmerged, pending a fresh independent review of this
+  exact new head.

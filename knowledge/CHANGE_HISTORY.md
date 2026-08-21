@@ -139,9 +139,12 @@ repository's standard squash-merge SHA-retrieval practice — the reviewed
 head is never treated as the merged baseline. `04f5bf5c...` was, as of
 this entry, the current authoritative base-branch tip, superseding
 `7f13a1e...` for current-state purposes at that time. **Superseded by the
-entry above:** `04f5bf5c...` is itself now historical/intermediate — the
-current authoritative baseline is `2743af849702ef551927b9c362421df08c80b5d9`
-(PR20F), per "Roadmap PR20 complete: PR20A–PR20F merged" above. PR19B's frontend types/mock fixtures were
+entry above:** `04f5bf5c...` is itself now historical/intermediate —
+`2743af849702ef551927b9c362421df08c80b5d9`
+(PR20F), per "Roadmap PR20 complete: PR20A–PR20F merged" above, was the
+authoritative baseline next, and is itself now also historical —
+superseded by the entry at the very top of this file, `d64d50d...`
+(PR21E), the current authoritative baseline. PR19B's frontend types/mock fixtures were
 reconciled against PR19A's merged public contracts (nullable
 `imported_rows`, the `failure_reason` field); its terminal-outcome
 presentation (`LegacyImportResultSummary`) now renders truthfully per

@@ -465,9 +465,12 @@ infrastructure, GitHub PR #90), PR20B (`Equipment.version`, GitHub PR
 `DryRunPlan`, GitHub PR #94), PR20E (execute, GitHub PR #95), and PR20F
 (real frontend integration, GitHub PR #96) — are merged, plus the
 architecture-approved design (GitHub PR #89) and two documentation-only
-governance syncs (GitHub PR #88, #92). The current authoritative
-base-branch baseline is `2743af849702ef551927b9c362421df08c80b5d9`
-(GitHub PR #96's real squash-merge SHA) — see `docs/ROADMAP.md` and
+governance syncs (GitHub PR #88, #92). PR20's own base-branch baseline at
+the time was `2743af849702ef551927b9c362421df08c80b5d9`
+(GitHub PR #96's real squash-merge SHA) — since superseded as the
+repository's current authoritative baseline by GitHub PR #110 (Roadmap
+PR21E), `d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` (see the update
+immediately below) — see `docs/ROADMAP.md` and
 `docs/DECISION_LOG.md` ("Roadmap PR20 complete: PR20A–PR20F merged") for
 the full record. **At the time this paragraph was written, concrete
 legacy dataset import beyond Equipment Master (Receive History, Issue
