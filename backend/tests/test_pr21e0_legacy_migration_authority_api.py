@@ -464,7 +464,7 @@ async def test_outer_transaction_preserved_on_scope_conflict(sp_engine, sp_seede
     async with session_maker() as db:
         actor_id = (await db.execute(select(User.id).limit(1))).scalar_one()
 
-        unrelated = Ward(code="PR109-P1-CONFLICT-WARD", name="PR109 P1 Conflict Ward")
+        unrelated = Ward(code="PR109-P1-CONFLW", name="PR109 P1 Conflict Ward")
         db.add(unrelated)
         await db.flush()
 
@@ -476,7 +476,7 @@ async def test_outer_transaction_preserved_on_scope_conflict(sp_engine, sp_seede
         # The caller's session must remain usable -- neither in a failed-
         # transaction state, nor missing the unrelated staged write.
         still_staged = (
-            await db.execute(select(Ward).where(Ward.code == "PR109-P1-CONFLICT-WARD"))
+            await db.execute(select(Ward).where(Ward.code == "PR109-P1-CONFLW"))
         ).scalar_one_or_none()
         assert still_staged is not None, "unrelated staged write was discarded by the scope-conflict path"
 
@@ -484,7 +484,7 @@ async def test_outer_transaction_preserved_on_scope_conflict(sp_engine, sp_seede
 
     async with session_maker() as verify_db:
         ward_row = (
-            await verify_db.execute(select(Ward).where(Ward.code == "PR109-P1-CONFLICT-WARD"))
+            await verify_db.execute(select(Ward).where(Ward.code == "PR109-P1-CONFLW"))
         ).scalar_one_or_none()
         assert ward_row is not None, "the unrelated write did not survive the caller's commit"
 

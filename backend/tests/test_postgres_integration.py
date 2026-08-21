@@ -12904,7 +12904,9 @@ async def test_pr21e0_concurrent_authority_approval_exactly_one_winner(pg_engine
         checksum = uuid.uuid4().hex + uuid.uuid4().hex[:32]
         assert len(checksum) == 64
         scope = "pr21_legacy_transaction_history_v1"
-        trial_tag = uuid.uuid4().hex[:10].upper()
+        # Ward.code is String(20) -- keep the generated code (prefix +
+        # tag + "-" + one-char label) comfortably within that limit.
+        trial_tag = uuid.uuid4().hex[:6].upper()
 
         barrier = asyncio.Barrier(2)
         db_a = maker()
@@ -12921,7 +12923,7 @@ async def test_pr21e0_concurrent_authority_approval_exactly_one_winner(pg_engine
             # (the losing side) -- not just that create_or_get_approval
             # itself returned, but that further work can still be staged
             # and committed on the SAME session/transaction afterward.
-            db.add(_PgWard(code=f"PR109-P1-RACE-{trial_tag}-{label}", name=f"race {label}"))
+            db.add(_PgWard(code=f"P109R{trial_tag}-{label}", name=f"race {label}"))
             await db.commit()
             outcomes[label] = {"authority_id": authority.id, "created": created}
 
@@ -12963,7 +12965,7 @@ async def test_pr21e0_concurrent_authority_approval_exactly_one_winner(pg_engine
             ).scalars().all()
             wards = (
                 await verify_db.execute(
-                    select(_PgWard).where(_PgWard.code.like(f"PR109-P1-RACE-{trial_tag}-%"))
+                    select(_PgWard).where(_PgWard.code.like(f"P109R{trial_tag}-%"))
                 )
             ).scalars().all()
         assert len(rows) == 1, f"trial {trial}: expected exactly one persisted row, found {len(rows)}"
