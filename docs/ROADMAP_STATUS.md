@@ -8,25 +8,41 @@ control detailed ordering, scope, dependencies, and acceptance criteria.
 
 ## Current baseline
 
-`2743af849702ef551927b9c362421df08c80b5d9` — the real squash-merge SHA of
-GitHub PR #96, Roadmap PR20F (Equipment Master Frontend Real API
-Integration), merged on top of `698c34d9c280b2ca2ea4f299bd186517c9fb26a8`
-(GitHub PR #95, Roadmap PR20E). PR20F's final independently reviewed
-feature-branch head was `38c6d33c15ed13929392d0736b9accda0886fa2e`, which
-had no blocking or non-blocking finding remaining, with CI green (6/6) —
-**that reviewed head is not the baseline**; the squash commit actually
-landed on the base branch, `2743af8...`, is. With PR20F merged, all six
-implementation slices of Roadmap PR20 — PR20A (#90), PR20B (#91), PR20C
-(#93), PR20D (#94), PR20E (#95), PR20F (#96), plus the design (#89) and
-two governance syncs (#88, #92) — are merged. **Roadmap PR20 (Equipment
-Master Import) is now fully complete.** See "Roadmap PR20 complete" below
-for the full detail and `docs/DECISION_LOG.md` ("Roadmap PR20 complete:
-PR20A–PR20F merged") for the closure record. Roadmap PR19 (Legacy Import
-Foundation, backend + frontend skeleton) remains fully complete,
-unaffected by PR20's completion — its own baseline,
-`04f5bf5c76b51744981d1cc8072c074e604224e9` (GitHub PR #80), is retained
-below as provenance, followed by `7f13a1e...` (PR19A3) and `729d1aa...`
-(PR18F) as provenance for earlier Roadmap items.
+`d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` — the real squash-merge SHA of
+GitHub PR #110, Roadmap PR21E (Legacy History Frontend Real Integration),
+merged on top of `78eeea7827c53443f34de9e516573c2ed7c59581` (GitHub PR
+#109, Roadmap PR21E0 — Legacy Import Operator API Surface). PR21E's final
+independently reviewed feature-branch head was
+`8c2b1dacac9996b7a4cab89ff70b6939471ef164`, which carried **zero review
+threads and zero findings of any kind** — a genuine absence of findings,
+never an accepted P2 — with CI green (6/6) and the reviewed head's tree
+independently verified byte-identical to the merged squash commit's tree
+— **that reviewed head is not the baseline**; the squash commit actually
+landed on the base branch, `d64d50d...`, is. With PR21E merged, every
+Roadmap PR21 implementation slice — PR21-Foundation (#100), PR21A
+(#103), PR21B (#104), PR21C (#105), PR21D1 (#107), PR21D2 (#108), PR21E0
+(#109), PR21E (#110), plus the design (#98, #99) and three Owner
+Decision Closure rounds (#101, #102, #106) — is merged. **Roadmap PR21
+(Legacy Receive and Issue History Import) is now fully complete.** See
+"Roadmap PR21 complete" below for the full detail and
+`docs/DECISION_LOG.md` ("Roadmap PR21 complete: PR21D1–PR21F merged") for
+the closure record. Roadmap PR20 (Equipment Master Import) remains fully
+complete, unaffected by PR21's completion — its own baseline,
+`2743af849702ef551927b9c362421df08c80b5d9` (GitHub PR #96), is retained
+below as provenance, followed by `04f5bf5c...` (PR19B), `7f13a1e...`
+(PR19A3), and `729d1aa...` (PR18F) as provenance for earlier Roadmap
+items.
+
+`2743af849702ef551927b9c362421df08c80b5d9` — squash commit of GitHub PR
+#96, Roadmap PR20F (Equipment Master Frontend Real API Integration),
+merged on top of `698c34d9c280b2ca2ea4f299bd186517c9fb26a8` (GitHub PR
+#95, Roadmap PR20E). With PR20F merged, all six implementation slices of
+Roadmap PR20 — PR20A (#90), PR20B (#91), PR20C (#93), PR20D (#94), PR20E
+(#95), PR20F (#96), plus the design (#89) and two governance syncs (#88,
+#92) — were merged. **Roadmap PR20 (Equipment Master Import) is fully
+complete** (unaffected by PR21's completion; see "Roadmap PR20 complete"
+below). Superseded by `d64d50d...` (GitHub PR #110, PR21E) as the current
+baseline once PR21E also merged.
 
 `7f13a1e85e9b6a4828170c4b12bc2be27b15de39` — squash commit of GitHub PR
 #86, the Roadmap PR19A3 implementation (Dry-run, Execution, Recovery,
@@ -37,8 +53,9 @@ Schema / Session / Source Foundation), both based on GitHub PR #83
 PR19A's implementation slices are merged — Roadmap PR19A (Legacy Import
 Foundation, backend) is now fully complete.** Superseded by `04f5bf5c...`
 (GitHub PR #80, PR19B) once PR19B also merged — `04f5bf5c...` is itself
-now historical/intermediate, superseded in turn by the current baseline
-at the top of this section (`2743af8...`, PR20F).
+now historical/intermediate, superseded in turn by `2743af8...` (GitHub
+PR #96, PR20F), itself since superseded by the current baseline at the
+top of this section (`d64d50d...`, GitHub PR #110, PR21E).
 
 `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` — squash commit of GitHub PR #79,
 the documentation-only PR18F governance synchronization recording Roadmap
@@ -88,9 +105,11 @@ recovery, retention) as GitHub PR #86, squash SHA
 Foundation, backend) is now fully complete.** No concrete legacy dataset
 import (Equipment Master, Receive History, Issue History) is implemented
 by PR19A itself — true then and now; **Equipment Master import has since
-been implemented separately by Roadmap PR20 (complete; see above), and
-only Receive History/Issue History import remain future Roadmap PR21
-scope.** PR19B
+been implemented separately by Roadmap PR20 (complete; see above); at
+the time this paragraph was written, Receive History/Issue History
+import remained future Roadmap PR21 scope — this was accurate then;
+Roadmap PR21 has since fully completed too, see "Roadmap PR21 complete"
+below.** PR19B
 (`feature/pr19b-import-frontend-skeleton`), originally branched from
 `729d1aa...` as a provisional Draft, was reconciled against PR19A's
 merged authoritative contract at reviewed head
@@ -106,8 +125,9 @@ rollback semantics) plus a non-blocking observation about nullable
 `5edf1bfd8de7013eb74f300193456c9e5c0f0332` closed PR80-H1R and received
 **APPROVE**, with CI green (6/6). PR19B then merged as GitHub PR #80,
 real squash-merge SHA `04f5bf5c76b51744981d1cc8072c074e604224e9` —
-historical/intermediate, since superseded by `2743af8...` (PR20F, the
-current baseline; see "Current baseline" above). GitHub PR #81, an earlier unsplit
+historical/intermediate, since superseded by `2743af8...` (PR20F), itself
+in turn since superseded by `d64d50d...` (PR21E, the current baseline;
+see "Current baseline" above). GitHub PR #81, an earlier unsplit
 PR19A candidate, was closed without merging, superseded by
 PR19A1/PR19A2/PR19A3. **PR19A and PR19B are both complete and merged;
 Roadmap PR19 (Legacy Import Foundation, backend + frontend skeleton) as a
@@ -116,9 +136,10 @@ workflow-review skeleton — no real file upload, workbook parsing,
 validation/dry-run/import execution, or production legacy dataset
 adapter was implemented by PR19B. **This was accurate as of PR19B's own
 merge; Equipment Master import has since been separately implemented and
-completed by Roadmap PR20 (see "Roadmap PR20 complete" above) — only
-Receive History and Issue History import remain future Roadmap PR21
-scope, not yet started.** The Exception Record governing this split
+completed by Roadmap PR20 (see "Roadmap PR20 complete" above), and
+Receive History/Issue History import — Roadmap PR21 — has since fully
+completed too (see "Roadmap PR21 complete" below). No production import
+path goes through PR19B's mock workflow any more.** The Exception Record governing this split
 (`docs/DECISION_LOG.md`) is now closed — see "Roadmap PR19B merged:
 Exception Record closed; Roadmap PR19 fully complete" there for the
 closure record and the required-steps evidence.
@@ -146,19 +167,68 @@ frontend API integration, replacing the PR19B mock workflow for this
 dataset type) as GitHub PR #96, squash SHA
 `2743af849702ef551927b9c362421df08c80b5d9` (see "Current baseline"
 above). **Roadmap PR20 (Equipment Master Import) is now fully complete.**
-PR20 implements Equipment Master only — Receive History and Issue History
-import remain unimplemented, future Roadmap PR21 scope; PR19B's
-Receive/Issue History screens remain frontend-only mock placeholders,
-unchanged by PR20. See `docs/DECISION_LOG.md` ("Roadmap PR20 complete:
-PR20A–PR20F merged") for the full slice-by-slice review chronology and
-closure record.
+PR20 implements Equipment Master only — legacy Receive/Issue history
+import was Roadmap PR21's own scope, now also complete (see "Roadmap
+PR21 complete" below). See `docs/DECISION_LOG.md` ("Roadmap PR20
+complete: PR20A–PR20F merged") for the full slice-by-slice review
+chronology and closure record.
+
+**Roadmap PR21 complete:** Roadmap PR21 (Legacy Receive and Issue
+History Import) shipped across eight implementation slices, per the
+architecture-approved design (GitHub PR #98, `docs/design/
+PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`, with a Source Evidence
+Update GitHub PR #99) and all seven Owner Decisions (OD-PR21-0 through
+OD-PR21-6), all RESOLVED across three closure rounds (GitHub PR #101,
+#102, #106) — including OD-PR21-0's SDC-sheet field-level-contract
+sub-component, resolved by **excluding SDC from PR21 V1** (a
+source-authority decision, not a row-level-equivalence claim). **PR21-
+Foundation** (GitHub PR #100, squash SHA
+`7b99e5866df4b71ffa1aa09d265baa2bc7033c33`) — generic internal
+dry-run-plan provider + fail-closed retention-hook abstraction, no PR21
+dataset schema of its own. **PR21A** (GitHub PR #103, squash SHA
+`28f0f5eabb64cf4b27294fd3df251e90b167de0a`) — the `LegacyEquipmentEvent`
+schema/provenance foundation; event-first architecture (Owner Decision
+Closure Round 2) — each accepted row imports as an independent
+`ISSUE`/`RECEIVE` event, pairing deferred to PR22-or-later. **PR21B**
+(GitHub PR #104, squash SHA
+`a8ae9fbfc571f74bad2100abf8f90bbd22a68e74`) and **PR21C** (GitHub PR
+#105, squash SHA `651a3877c17d53c0163e34d9008ca744ac7f76ef`) — canonical
+Issue and Receive parsers/validators, each merged as an unregistered
+internal component pending the SDC decision. **PR21D1 — Combined
+Canonical Adapter + Source Admission** (GitHub PR #107, squash SHA
+`50b9e77269b238d95fb34b28d0bc223a369951e2`) — composed PR21B/PR21C into
+the registered `legacy_transaction_history` `ImportAdapter`, added the
+`PR21_MAX_UPLOAD_BYTES = 32 MiB` bounded upload allowance, wired the
+mandatory all-or-nothing validation gate. **PR21D2 — Historical Event
+Execution** (GitHub PR #108, squash SHA
+`c4788de06bed9a13aa5ec981fb8e19c67bc5720b`) — executes the confirmed
+plan's `LegacyEquipmentEvent` INSERTs; never `BorrowTransaction` replay,
+live dispatch/receipt, or `Equipment.status`/version/location/lifecycle
+mutation. **PR21E0 — Legacy Import Operator API Surface** (GitHub PR
+#109, squash SHA `78eeea7827c53443f34de9e516573c2ed7c59581`) — the
+Administrator-only migration-authority checksum-approval API and the
+PR21-specific dry-run-plan/rows/confirm HTTP route family, separate from
+and non-disruptive to PR20's own routes. **PR21E — Legacy History
+Frontend Real Integration** (GitHub PR #110, squash SHA
+`d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810`, see "Current baseline"
+above) — real frontend integration replacing the PR19B mock Receive/
+Issue workflow with one combined `legacy_transaction_history` operator
+flow (create → upload → explicit authority approval → validate →
+dry-run → paginated row review → confirm → execute); `MockImportClient`
+and the fixture set/skeleton banner were removed entirely. **PR #110's
+independent Final Merge Gate recorded zero review threads and zero
+findings of any kind — a genuine absence of findings, never an accepted
+P2.** **Roadmap PR21 (Legacy Receive and Issue History Import) is now
+fully complete.** No production import path goes through mock data for
+either Equipment Master or legacy transaction history. See
+`docs/DECISION_LOG.md` ("Roadmap PR21 complete: PR21D1–PR21F merged")
+for the full slice-by-slice review chronology and closure record.
 
 ## Current and planned sequence
 
 | Sequence | Roadmap item | Status |
 |---|---|---|
-| Next | PR21 — Legacy Receive and Issue History Import | **In progress; not yet complete.** Design and all seven Owner Decisions (OD-PR21-0 through OD-PR21-6) are resolved, including the SDC source-scope decision (SDC excluded from V1). PR21-Foundation, PR21A (schema/provenance), PR21B (canonical Issue parser), and PR21C (canonical Receive parser) are merged. **PR21D1 (Combined Canonical Adapter + Source Admission) is authorized but not yet implemented; PR21D2 (Historical Event Execution), PR21E (frontend), and PR21F (Governance Sync) remain blocked.** See `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md` §55 and `docs/DECISION_LOG.md` ("Roadmap PR21 Owner Decision Closure Round 3") for the full record. This row will move off this table, and a full PR21F Governance Sync will update this table's surrounding narrative, once PR21D2/E/F also merge. **Depends on PR19A and PR20** (`docs/audits/04-consolidated-implementation-plan.md`: "Dependencies: PR19A, PR20") — both complete. |
-| After PR21 | PR22 — Legacy Data Validation and Reconciliation | Planned; depends on PR20 and PR21 |
+| Next | PR22 — Legacy Data Validation and Reconciliation | Planned; depends on PR20 and PR21, both now complete |
 | After PR22 | PR23 — Cutover Readiness | Planned |
 | After PR19–PR23 | PR24 — Go-live / deployment | Planned; blocked by PR19–PR23 |
 
@@ -177,13 +247,15 @@ time. This was never a statement about a hard dependency, only settling
 which of PR19B/PR20 would be worked on first — the one item whose
 relative order was ever in question. **Roadmap PR20 has since also fully
 completed (see "Roadmap PR20 complete" above); its row has likewise moved
-off this table, and PR21 is now shown with sequence "Next" in the table
-above.** PR21 through PR24's ordering is preserved as-is because it
-reflects an existing authoritative dependency chain
+off this table. Roadmap PR21 has since fully completed too (see "Roadmap
+PR21 complete" above); its row has also moved off this table, and PR22
+is now shown with sequence "Next" in the table above.** PR22 through
+PR24's ordering is preserved as-is because it reflects an existing
+authoritative dependency chain
 (`docs/audits/04-consolidated-implementation-plan.md` Part D, Group 8:
-PR21 depends on PR20; PR22 depends on PR20 and PR21; PR24 is blocked by
-PR19–PR23), not a new sequencing decision introduced by this or any prior
-governance sync.
+PR21 depended on PR20 — satisfied; PR22 depends on PR20 and PR21, both
+now complete; PR24 is blocked by PR19–PR23), not a new sequencing
+decision introduced by this or any prior governance sync.
 
 Roadmap PR15B (Schema Hygiene implementation, GitHub PR #54), the
 documentation audit and Roadmap consistency work that preceded it
@@ -212,9 +284,16 @@ Import) is also now fully complete and has moved off this table:** the
 design (GitHub PR #89), PR20A–PR20F (GitHub PR #90, #91, #93, #94, #95,
 #96), and two governance syncs (GitHub PR #88, #92) are all merged — see
 "Roadmap PR20 complete" above and `docs/DECISION_LOG.md` ("Roadmap PR20
-complete: PR20A–PR20F merged") for the full record. This table now begins
-with PR21, the next planned Roadmap item; PR19B's own historical
-relative-ordering note is preserved above.
+complete: PR20A–PR20F merged") for the full record. **Roadmap PR21
+(Legacy Receive and Issue History Import) is also now fully complete and
+has moved off this table:** the design (GitHub PR #98, #99), three Owner
+Decision Closure rounds (GitHub PR #101, #102, #106), PR21-Foundation
+(#100), PR21A–C (#103, #104, #105), and PR21D1/D2/E0/E (#107, #108,
+#109, #110) are all merged — see "Roadmap PR21 complete" above and
+`docs/DECISION_LOG.md` ("Roadmap PR21 complete: PR21D1–PR21F merged")
+for the full record. This table now begins with PR22, the next planned
+Roadmap item; PR19B's own historical relative-ordering note is preserved
+above.
 
 ## Scope guardrails for the planned sequence
 
@@ -226,19 +305,25 @@ relative-ordering note is preserved above.
 - Version 1 legacy history migration includes only the AppSheet equipment
   receive-data and equipment issue-data sheets. Equipment Verify Checklist
   history is excluded unless a later approved decision changes the scope.
-- PR19B is a frontend-only workflow-review skeleton: no file upload, no
-  parsing, no validation/dry-run/import execution, no database change. Its
-  Equipment Master/Receive/Issue History category labels preview PR20/PR21
-  scope and are not an implemented capability.
+- PR19B was a frontend-only workflow-review skeleton (no file upload, no
+  parsing, no validation/dry-run/import execution, no database change),
+  merged as GitHub PR #80. **This described PR19B's own scope at the time
+  it merged; PR19B's mock workflow (`MockImportClient`, its fixtures, the
+  skeleton banner) has since been removed entirely by Roadmap PR21E
+  (GitHub PR #110) — both real import categories now go through the real
+  backend.**
 - PR20 Equipment Master Import (**COMPLETE / MERGED**, PR20A–PR20F) covers
   BCM, Item Number, equipment attributes, existing hospital QR linkage,
   equipment duplicate detection, and equipment-record validation. It does
   not own transaction BME or Ward data, and does not implement Receive
-  History or Issue History import (PR21).
-- PR21 Legacy Receive and Issue History Import covers Receive and Issue
-  history, legacy BME-name preservation and user mapping, Ward normalization
-  and mapping, transaction-row duplicate detection, and transaction source
-  references.
+  History or Issue History import (PR21, also complete).
+- PR21 Legacy Receive and Issue History Import (**COMPLETE / MERGED**,
+  design #98/#99 through PR21E #110) covers Receive and Issue history,
+  legacy BME-name preservation and user mapping, Ward normalization and
+  mapping, transaction-row duplicate detection, and transaction source
+  references — delivered as one combined `legacy_transaction_history`
+  workbook/session, SDC excluded from V1, no Issue↔Receive pairing
+  (deferred to PR22), no mutation of current Equipment state.
 - PR22 Legacy Data Validation and Reconciliation covers cross-import
   validation, reconciliation, source traceability verification, duplicate
   review, and unified legacy/new history validation.

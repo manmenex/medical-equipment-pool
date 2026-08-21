@@ -8,8 +8,11 @@ artifact infrastructure, GitHub PR #90), PR20B (`Equipment.version`,
 GitHub PR #91), PR20C (parse/normalize/validate, GitHub PR #93), PR20D
 (persisted `DryRunPlan`, GitHub PR #94), PR20E (execute, GitHub PR #95),
 and PR20F (real frontend integration, GitHub PR #96) are all merged into
-`claude/medical-equipment-pool-0c7fz0`, current baseline
-`2743af849702ef551927b9c362421df08c80b5d9`. See
+`claude/medical-equipment-pool-0c7fz0`, PR20's own final/historical
+baseline at the time, `2743af849702ef551927b9c362421df08c80b5d9` — since
+superseded as the repository's current baseline by GitHub PR #110
+(Roadmap PR21E), `d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810`; see
+`docs/ROADMAP.md`'s "Current baseline" section for the live pointer. See
 `docs/DECISION_LOG.md` ("Roadmap PR20 complete: PR20A–PR20F merged") and
 `docs/ROADMAP.md`'s PR20 note for the full slice-by-slice record. **This
 governance sync updated this status/current-state annotation and the §24

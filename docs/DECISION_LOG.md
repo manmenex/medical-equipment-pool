@@ -3601,3 +3601,247 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   change, or migration occurred. PR21D1/D2/E/F remain **not started**.
   GitHub PR #97's P2 follow-up and PR #98's P2-A/P2-B follow-ups remain
   open and untouched.
+
+## 2026-08-21 — Roadmap PR21 complete: PR21D1–PR21F merged; Roadmap PR21 fully complete
+
+- **Decision:** Roadmap PR21 (Legacy Receive and Issue History Import) is
+  **fully complete.** The four remaining authorized-but-not-yet-implemented
+  slices from Owner Decision Closure Round 3 (immediately above) have all
+  merged, each independently reviewed with CI green on its own exact
+  reviewed head, and this entry — Roadmap PR21's own governance-sync
+  closure — is the fifth and final slice.
+- **PR21D1 — Combined Canonical Adapter + Source Admission** (GitHub PR
+  #107, squash SHA `50b9e77269b238d95fb34b28d0bc223a369951e2`). Composed
+  the already-merged PR21B (`issue.py`) and PR21C (`receive.py`) canonical
+  parsers into the production `legacy_transaction_history` `ImportAdapter`
+  and registered it; added the authorized `PR21_MAX_UPLOAD_BYTES = 32 MiB`
+  bounded upload allowance (the generic 10 MiB cap is unchanged for every
+  other dataset); wired the mandatory all-or-nothing validation gate — one
+  workbook → one `ImportSession` → one `ImportSource` → all four canonical
+  sheets → one aggregate validation decision, so an Issue-only or
+  Receive-only `LegacyHistoryDryRunPlan` is structurally unreachable. Still
+  no Issue↔Receive pairing (unchanged PR22-or-later responsibility, §55.4
+  of the design document), no SDC (§55.1, excluded), no Equipment mutation
+  (§55.5, unchanged).
+- **PR21D2 — Historical Event Execution** (GitHub PR #108, squash SHA
+  `c4788de06bed9a13aa5ec981fb8e19c67bc5720b`). Executes the validated,
+  immutable `LegacyEquipmentEvent` INSERTs (`event_type` = `ISSUE` |
+  `RECEIVE` — event types, never `BorrowTransaction` rows, never Equipment
+  lifecycle states) from an admitted, confirmed `LegacyHistoryDryRunPlan`.
+  Never writes `BorrowTransaction`; never mutates `Equipment.status`,
+  `Equipment.version`, current Ward/location, or any live dispatch/receipt
+  state. Reuses PR19/PR20's existing lease/heartbeat/fencing/recovery/audit
+  machinery unchanged, adding only the dataset-specific insert step;
+  idempotent and scoped by `(migration_authority_id, event_type,
+  legacy_source_row_key)` — the implemented form of OD-PR21-0's resolved
+  identity tuple (design doc §24.2).
+- **PR21E0 — Legacy Import Operator API Surface** (GitHub PR #109, squash
+  SHA `78eeea7827c53443f34de9e516573c2ed7c59581`). Closed the two
+  production-readiness gaps the design document itself had flagged as
+  still-missing (§46, §47, prior entries above): (1) an Administrator-only
+  `POST /legacy-migration-authorities` / `GET
+  /legacy-migration-authorities?checksum=...` API — the sole production
+  write path for `LegacyMigrationAuthority`, gated to the single allowed
+  scope `pr21_legacy_transaction_history_v1`, idempotent on retry (200 for
+  an existing exact-checksum row, 201 for a genuine first approval, 409 on
+  a genuine scope conflict), with no automatic approval and no delete/
+  revoke workflow added; and (2) a PR21-specific, statically typed `GET
+  /import-sessions/{id}/legacy-history/dry-run-plan`, `GET
+  .../dry-run-plan/{plan_id}/rows`, and `POST
+  .../dry-run-plan/{plan_id}/confirm` route family — deliberately separate
+  from PR20's own `.../dry-run-plan` routes, which this slice left
+  byte/field/OpenAPI-unchanged (its own PR20-regression test suite
+  confirms this).
+- **PR21E — Legacy History Frontend Real Integration** (GitHub PR #110,
+  squash SHA `d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810`). Replaced the
+  PR19B mock Receive/Issue History frontend workflow with a real, single
+  combined `legacy_transaction_history` operator workflow against
+  PR21D1/D2/E0: create session → upload workbook (backend-computed
+  checksum only, never browser-computed, never operator-typed) → an
+  explicit, never-auto-approved migration-authority approval step behind
+  its own confirmation dialog → validate → dry-run → paginated ISSUE/
+  RECEIVE row review (mobile-first, backend cursor pagination, never a
+  full-dataset fetch) → confirm → execute, each mutating action gated by
+  its own confirmation dialog. Session-detail routing now fetches the
+  session's own real `dataset_type` once and dispatches on it, replacing
+  the prior UUID-shape heuristic (`isBackendSessionId`) that would
+  otherwise have silently routed every real PR21 session into the
+  Equipment Master panel — a regression this slice's own tests explicitly
+  guard against. `MockImportClient`, `legacyImportFixtures.ts`, the
+  skeleton banner, and every mock-only type/mapper/invariant were removed
+  entirely; no production PR21 path goes through mock data. Equipment
+  Master's own 22 + 12 regression tests (`EquipmentMasterWorkflowPanel`,
+  `equipmentMasterImportClient`) pass unchanged.
+- **PR #110 finding-status correction (explicit, per Repository Owner
+  instruction):** PR #110's Final Merge Gate recorded **zero review
+  threads, zero comments, zero findings of any kind** — head
+  `8c2b1dacac9996b7a4cab89ff70b6939471ef164`, CI green 6/6, reviewed head
+  and the merged squash commit's tree verified byte-identical
+  (`git diff`/tree-hash/sole-parent checks). This is a genuine **absence**
+  of findings, not an accepted P2 — no prior entry, conversational
+  statement, or later document in this repository should describe PR #110
+  as having carried a P2 finding of any kind.
+- **All Owner Decisions:** all seven PR21 V1 Owner Decisions (OD-PR21-0
+  through OD-PR21-6) were already RESOLVED as of Owner Decision Closure
+  Round 3 (immediately above); this closure entry resolves none, defers
+  none, and introduces no new Owner Decision.
+- **SDC status, unchanged:** still EXCLUDED FOR PR21 V1 (§55.1/§6.5 of the
+  design document) — a source-authority decision, not a row-level-
+  equivalence claim. May be reconsidered in PR22-or-later only through a
+  new, evidence-backed Owner Decision, per the already-recorded future
+  policy (Round 3, above).
+- **Pairing status, unchanged:** Issue↔Receive pairing was never
+  implemented by any PR21 slice and remains PR22-or-later's sole
+  responsibility (event-first architecture, Owner Decision Closure Round
+  2, unchanged by this entry).
+- **Equipment live-state safety, unchanged:** no PR21 slice — PR21D2's
+  execution included — ever mutates `Equipment.status`, `Equipment.
+  version`, current Ward/location, or live dispatch/receipt state. This
+  was true of every slice individually and remains true of the completed
+  whole.
+- **Historical accepted/non-blocking findings, preserved as-is:** GitHub
+  PR #97's P2 follow-up and GitHub PR #98's P2-A/P2-B follow-ups remain
+  **accepted / non-blocking / unresolved**, in their existing recorded
+  wording — this entry does not touch, resolve, or restate a position on
+  any of them; repository truth (their own PR review records) governs, not
+  this entry's prose.
+- **What this entry does not do:** it does not modify `backend/**`,
+  `frontend/**`, `alembic/**`, `tests/**`, or any CI workflow file — this
+  is the documentation-only PR21F Governance Sync itself
+  (`docs/ENGINEERING_WORKFLOW.md` §14), synchronizing `docs/ROADMAP.md`,
+  `docs/ROADMAP_STATUS.md`, this file, `knowledge/CHANGE_HISTORY.md`, the
+  PR21 design document's own closure section, and
+  `docs/audits/04-consolidated-implementation-plan.md` with the actual
+  merged repository state; it does not begin PR22; it does not invent a
+  new Owner Decision; it does not rewrite any prior dated entry in this
+  file — every "not started"/"not yet implemented"/"blocked" statement
+  above remains exactly as originally written, accurate as of its own
+  date, now superseded by this entry for current-state purposes.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14,
+  the same governance-update scope as every prior PR21 entry, closing the
+  Roadmap PR21 item per the same convention used for Roadmap PR18/PR19/
+  PR20's own completion entries above.
+- **Source:** `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+  §56 (new — full Round 4/closure record); `docs/ROADMAP.md` (Current
+  baseline updated to `d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810`, PR21
+  note added, Completed table and Approved forward sequence updated);
+  `docs/ROADMAP_STATUS.md` (Current baseline updated, "Roadmap PR21
+  complete" section added, PR21 row moved off the "Current and planned
+  sequence" table); `knowledge/CHANGE_HISTORY.md` (closure entry added,
+  reordered to the front of the file per its own newest-first convention
+  — a prior entry, "Roadmap PR21 SDC scope decision," had been
+  mis-appended at the file's oldest position by an earlier session; its
+  content is unchanged, only its position corrected);
+  `docs/audits/04-consolidated-implementation-plan.md` (PR21 current-state
+  status synchronized, PR22 dependency note unchanged).
+- **Status:** Documentation-only. No `backend/**`, `frontend/**`,
+  `alembic/**`, `tests/**`, or CI workflow file was modified to produce
+  this entry. **Roadmap PR21 (Legacy Receive and Issue History Import) is
+  now fully complete.** The next planned Roadmap item is **PR22 — Legacy
+  Data Validation and Reconciliation**, depending on PR20 and PR21, both
+  now complete; PR22 is not started, designed, or scoped by this entry.
+
+## 2026-08-21 — PR21F fix round: full-repository sweep evidence (P1 response), GitHub PR #111 description corrected
+
+- **Decision:** None — this is a process/evidence entry, not a new
+  decision. It responds to one independent-review [P1] finding on GitHub
+  PR #111 (head `0c9758c2b7373f7c97c582fb7823bee9183184e7`): the entry
+  immediately above's consistency sweep only inspected the 8 files this
+  PR already touched, not every tracked file under `docs/**`/
+  `knowledge/**`, so its completeness was asserted rather than evidenced.
+- **What changed:** every tracked file under `docs/` and `knowledge/`
+  (83 files) was swept for PR21/PR20/legacy-import terminology and
+  staleness markers, each hit classified A (current-normative) / B
+  (historical-dated, preserve) / C (historical-but-ambiguous, qualify) /
+  D (stale-current, fix). See
+  `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md` §56.7 for
+  the full method and audit table. Result: zero Category C or D hits
+  outside the 8 already-updated files — the wider sweep confirms the
+  prior entry's content rather than changing it.
+- **`docs/PROJECT_MEMORY.md` discrepancy resolved:** a SHA grep hit
+  initially appeared to place the current baseline SHA in
+  `docs/PROJECT_MEMORY.md` (distinct from `knowledge/PROJECT_MEMORY.md`,
+  same name, different purpose — see that file's own header). Direct
+  inspection confirmed this was a mis-attributed match against
+  `knowledge/PROJECT_MEMORY.md` (identical line number, 95, in the file
+  already correctly updated in the prior entry). `docs/PROJECT_MEMORY.md`
+  itself is untouched: it is the dated chronological log ending at
+  "Governance Pack v1.0," carries no baseline or PR21-related claim, and
+  required no edit.
+- **GitHub PR #111 description corrected:** its Evidence table claimed
+  "Every match classified" for a sweep that had only covered 8 files —
+  corrected to describe the actual (now 83-file) sweep and point to
+  §56.7. Its Operations section stated "Known limitations: none
+  identified," which was self-contradictory with the same description's
+  own Scope section explicitly preserving GitHub PR #97's P2 and PR
+  #98's P2-A/P2-B as accepted/non-blocking/unresolved — corrected to
+  name that open governance-level status explicitly, while stating it is
+  not a runtime blocker for this documentation-only PR.
+- **What this entry does not do:** it does not modify `backend/**`,
+  `frontend/**`, `alembic/**`, `tests/**`, or any CI workflow file; it
+  does not rewrite the entry immediately above or any other prior dated
+  entry; it does not resolve, reopen, or restate a position on GitHub PR
+  #97's P2 or PR #98's P2-A/P2-B; it does not merge PR #111.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+  §56.7; GitHub PR #111 description.
+- **Status:** Documentation-only; no runtime behavior changed. PR #111
+  remains Draft, unmerged, pending a fresh independent review of this
+  exact new head.
+
+## 2026-08-21 — PR21F fix round 2: stale PR20F "current baseline" self-references removed, GitHub PR #111 description corrected again
+
+- **Decision:** None — another process/evidence entry, not a new
+  decision. A second independent review of GitHub PR #111 (head
+  `466d17369ff0d6bbec679ce2a29c54f9609a3955`) returned a further blocking
+  [P1] finding: the entry immediately above's sweep confirmed no
+  *missing* file needed an update, but did not catch that round 1's own
+  edit — moving the top-level "current baseline" pointer from
+  `2743af849702ef551927b9c362421df08c80b5d9` (PR20F) to
+  `d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` (PR21E) — left several
+  *nested* cross-reference labels inside `docs/ROADMAP.md`,
+  `docs/ROADMAP_STATUS.md`, `docs/audits/04-consolidated-implementation-plan.md`,
+  `knowledge/CHANGE_HISTORY.md`, and `knowledge/PROJECT_MEMORY.md` still
+  naming `2743af8...`/PR20F as "the current baseline above/at the top of
+  this section," plus one occurrence each in `docs/ROADMAP.md`'s
+  Completed table and "PR20 note," and one in
+  `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md`'s own status header
+  (that document calling PR20F's SHA the repository's current baseline,
+  rather than PR20's own historical baseline).
+- **What changed:** every occurrence of `2743af8...`/`2743af849702ef551927b9c362421df08c80b5d9`
+  across `docs/**`/`knowledge/**` was individually re-read and classified
+  HISTORICAL or STALE-CURRENT. Every STALE-CURRENT hit was fixed so the
+  chain of supersession correctly ends at `d64d50d...` (PR21E); every
+  HISTORICAL hit (including all four hits inside dated
+  `docs/DECISION_LOG.md` entries above, and every "AUTHORIZED, NOT YET
+  IMPLEMENTED"/"STILL BLOCKED" line inside this design document's own
+  numbered, time-boxed Owner Decision Closure Round sections, §46-§55)
+  was left untouched. `2743af8...` itself was never deleted from any
+  file — it remains accurate historical provenance everywhere it
+  appears; only unqualified "current" claims attached to it were fixed.
+  See `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md` §56.8
+  for the full method and per-occurrence audit table.
+- **`docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` and GitHub PR
+  #97's P2:** the fix to that document's status header adds
+  baseline-SHA context immediately before the sentence GitHub PR #97's
+  accepted P2 concerns (precise wording of the PR20 design-edit-scope
+  description) but does not edit that sentence itself. **P2 remains
+  open, unresolved, exactly as before — this entry does not resolve or
+  touch it.**
+- **GitHub PR #111 description corrected again:** its Evidence table and
+  Scope section are updated to describe this second sweep, its method,
+  and its result, replacing the now-superseded round-1 wording that had
+  (wrongly) implied the 8 already-touched files needed no further
+  review.
+- **What this entry does not do:** it does not modify `backend/**`,
+  `frontend/**`, `alembic/**`, `tests/**`, or any CI workflow file; it
+  does not rewrite this entry's own predecessor above, or any other
+  prior dated entry; it does not resolve, reopen, or restate a position
+  on GitHub PR #97's P2 or PR #98's P2-A/P2-B; it does not merge PR
+  #111.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+  §56.8; GitHub PR #111 description.
+- **Status:** Documentation-only; no runtime behavior changed. PR #111
+  remains Draft, unmerged, pending a fresh independent review of this
+  exact new head.
