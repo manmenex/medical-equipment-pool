@@ -3745,6 +3745,54 @@ section and the updated status lines in §46/§47/the banner above.
 - **PR22 — Legacy Data Validation and Reconciliation:** the next planned
   Roadmap item, not started, designed, or scoped by this round.
 
+### 56.7 PR21F fix round — full-repository consistency sweep (P1 response)
+
+An independent review of this PR (head `0c9758c2b7373f7c97c582fb7823bee9183184e7`)
+returned one blocking [P1] finding: the original §56 sweep only inspected
+the 8 files this PR already touched, not every tracked file under
+`docs/**`/`knowledge/**`. This subsection records the wider sweep run in
+response, so the claim is evidenced rather than asserted.
+
+**Method:** every tracked file under `docs/` and `knowledge/` (83 files,
+enumerated via `find docs knowledge -type f \( -name "*.md" -o -name
+"*.txt" \)`) was in scope. `git grep` was run across all of them —
+first for all 7 historical squash SHAs cited anywhere in the 8
+originally-touched files, then for phrase groups covering PR21/PR20/
+legacy-import terminology (`PR21`, `Receive/Issue`, `Receive and Issue`,
+`legacy_transaction_history`, `LegacyEquipmentEvent`, `MockImportClient`,
+`legacy history`) and staleness markers (`not started`, `next planned`,
+`is the next`, `currently unimplemented`, `remains unimplemented`, `not
+yet implemented`, `not yet started`, `mock workflow`, `Receive History
+and Issue History`). Every file returned by any of these searches was
+opened and read in full or in the surrounding context, not just at the
+matched line.
+
+**Audit table** (file | phrase/category | classification | action):
+
+| File | Phrase/category | Classification | Action |
+|---|---|---|---|
+| `docs/PROJECT_MEMORY.md` | initially suspected baseline-SHA hit (later found to be a mis-attributed match against `knowledge/PROJECT_MEMORY.md`, same line number) | A — current, correct as-is (file contains no baseline/current-state claim at all; it is the dated historical log, ending at "Governance Pack v1.0," explicitly distinct from `knowledge/PROJECT_MEMORY.md`) | None |
+| `docs/DOCUMENTATION_AUDIT.md` | "PR20/PR21 imports" (Follow-up actions), "implementation has not started" (PR15B, unrelated to PR21) | B — historical, dated 2026-07-28 snapshot, self-scoped by its own header date | None |
+| `docs/api/ERROR_CODES.md` | PR21E0 route-family error-code descriptions | A — current and accurate (PR21E0 is merged; descriptions match implemented behavior) | None |
+| `docs/evidence/pr21/equipment-pool-workbook-manifest.md` | PR21 V1 architecture/source-evidence references | B — dated evidence record tied to Owner Decision Closure Round 2 | None |
+| `docs/design/PR16_REPORTING_FOUNDATION_PLAN.md`, `PR17_OPERATIONAL_REPORTS_PLAN.md`, `PR18_PRINTING_EXPORT_PLAN.md`, `PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`, `PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` | each document's own "next planned item" / "future Roadmap PR21 scope" / `MockImportClient` language, scoped to that PR's own historical position | B — each is that PR's own dated design record describing its own contemporaneous status, not a claim about PR21's current status | None |
+| `docs/ARCHITECTURE_DECISIONS.md`, `docs/BUSINESS_RULES.md`, `docs/DOMAIN_MODEL.md`, `docs/GLOSSARY.md`, `docs/DEFINITION_OF_DONE.md` | generic "legacy"/"import" usage (PR6/PR7/PR8/PR10 legacy-field handling, unrelated to PR19-21) | A — current and correctly scoped to their own subject | None |
+| `docs/PROJECT_WORKFLOW.md`, `docs/PROJECT_PLAYBOOK.md`, `docs/REVIEW_CHECKLIST.md`, `docs/AI_REVIEW_WORKFLOW.md`, `docs/AI_WORKFLOW.md`, `docs/ENGINEERING_WORKFLOW.md` | process/authority documents pointing to `ROADMAP.md`/`ROADMAP_STATUS.md` as the status authority | A — correctly defer to the canonical status documents rather than duplicating status | None |
+| `docs/api/dispatch.md` | "this repository's PR20 review round 1" | B — refers to a specific historical code-review round for a `ward_id` validation finding, unrelated to Roadmap PR20 (Equipment Master Import) status | None |
+| `docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md`, `docs/development/TESTING.md`, `docs/prompts/codex-pr-review.md` | "current baseline" (PR15B's own historical baseline), "mock" (frontend test-mocking convention, unrelated to `MockImportClient`) | B — correctly scoped to their own subject | None |
+| All remaining files under `docs/adr/`, `docs/api/`, `docs/architecture/`, `docs/audits/01-02*`, `docs/development/`, `docs/kickoffs/`, `docs/prompts/`, `knowledge/adr/`, `knowledge/architecture/`, `knowledge/business-rules/`, `knowledge/glossary.md`, `knowledge/traceability/README.md`, `knowledge/README.md` | no PR19/PR20/PR21/PR22/legacy-import/mock/baseline hit of any kind | N/A | None |
+| `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, `docs/DECISION_LOG.md`, this design document, `docs/audits/04-consolidated-implementation-plan.md`, `knowledge/CHANGE_HISTORY.md`, `knowledge/CONTEXT.md`, `knowledge/PROJECT_MEMORY.md` (`knowledge/`) | the 8 files already updated by this PR's original commit | A — current, already corrected in this PR | None (verified consistent with each other) |
+
+**Result:** zero new Category D (stale-current) hits and zero Category C
+(historical-but-ambiguous) hits outside the 8 files this PR already
+updated. The wider sweep confirms, rather than changes, the original
+round's content — the P1 finding was about sweep completeness/evidence,
+not about an actual remaining inconsistency. `docs/PROJECT_MEMORY.md`
+(distinct from `knowledge/PROJECT_MEMORY.md`) was directly inspected in
+full and requires no change: it is the dated chronological log ending at
+"Governance Pack v1.0," carries no baseline or PR21-related claim, and
+is correctly out of scope for a PR21 status update.
+
 ---
 
 *(End of design document. See the PR description for the required final

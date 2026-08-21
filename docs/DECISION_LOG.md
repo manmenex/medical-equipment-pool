@@ -3740,3 +3740,51 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   now fully complete.** The next planned Roadmap item is **PR22 — Legacy
   Data Validation and Reconciliation**, depending on PR20 and PR21, both
   now complete; PR22 is not started, designed, or scoped by this entry.
+
+## 2026-08-21 — PR21F fix round: full-repository sweep evidence (P1 response), GitHub PR #111 description corrected
+
+- **Decision:** None — this is a process/evidence entry, not a new
+  decision. It responds to one independent-review [P1] finding on GitHub
+  PR #111 (head `0c9758c2b7373f7c97c582fb7823bee9183184e7`): the entry
+  immediately above's consistency sweep only inspected the 8 files this
+  PR already touched, not every tracked file under `docs/**`/
+  `knowledge/**`, so its completeness was asserted rather than evidenced.
+- **What changed:** every tracked file under `docs/` and `knowledge/`
+  (83 files) was swept for PR21/PR20/legacy-import terminology and
+  staleness markers, each hit classified A (current-normative) / B
+  (historical-dated, preserve) / C (historical-but-ambiguous, qualify) /
+  D (stale-current, fix). See
+  `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md` §56.7 for
+  the full method and audit table. Result: zero Category C or D hits
+  outside the 8 already-updated files — the wider sweep confirms the
+  prior entry's content rather than changing it.
+- **`docs/PROJECT_MEMORY.md` discrepancy resolved:** a SHA grep hit
+  initially appeared to place the current baseline SHA in
+  `docs/PROJECT_MEMORY.md` (distinct from `knowledge/PROJECT_MEMORY.md`,
+  same name, different purpose — see that file's own header). Direct
+  inspection confirmed this was a mis-attributed match against
+  `knowledge/PROJECT_MEMORY.md` (identical line number, 95, in the file
+  already correctly updated in the prior entry). `docs/PROJECT_MEMORY.md`
+  itself is untouched: it is the dated chronological log ending at
+  "Governance Pack v1.0," carries no baseline or PR21-related claim, and
+  required no edit.
+- **GitHub PR #111 description corrected:** its Evidence table claimed
+  "Every match classified" for a sweep that had only covered 8 files —
+  corrected to describe the actual (now 83-file) sweep and point to
+  §56.7. Its Operations section stated "Known limitations: none
+  identified," which was self-contradictory with the same description's
+  own Scope section explicitly preserving GitHub PR #97's P2 and PR
+  #98's P2-A/P2-B as accepted/non-blocking/unresolved — corrected to
+  name that open governance-level status explicitly, while stating it is
+  not a runtime blocker for this documentation-only PR.
+- **What this entry does not do:** it does not modify `backend/**`,
+  `frontend/**`, `alembic/**`, `tests/**`, or any CI workflow file; it
+  does not rewrite the entry immediately above or any other prior dated
+  entry; it does not resolve, reopen, or restate a position on GitHub PR
+  #97's P2 or PR #98's P2-A/P2-B; it does not merge PR #111.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+  §56.7; GitHub PR #111 description.
+- **Status:** Documentation-only; no runtime behavior changed. PR #111
+  remains Draft, unmerged, pending a fresh independent review of this
+  exact new head.
