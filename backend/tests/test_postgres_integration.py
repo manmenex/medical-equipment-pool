@@ -12925,11 +12925,26 @@ async def test_pr21e0_concurrent_authority_approval_exactly_one_winner(pg_engine
             await db.commit()
             outcomes[label] = {"authority_id": authority.id, "created": created}
 
-        try:
-            await asyncio.gather(_run(db_a, "a"), _run(db_b, "b"))
-        finally:
-            await db_a.close()
-            await db_b.close()
+        # `return_exceptions=True` -- unlike the default, this guarantees
+        # `gather()` waits for BOTH `_run()` calls to genuinely finish
+        # (success or exception) before returning. With the default
+        # (`return_exceptions=False`), if one `_run()` were to raise,
+        # `gather()` propagates that exception immediately WITHOUT waiting
+        # for the other -- and closing a session whose own `_run()` is
+        # still mid-`db.commit()` at that moment raises SQLAlchemy's own
+        # `IllegalStateChangeError` ("method '_connection_for_bind()' is
+        # already in progress"), masking whatever the real failure was.
+        # Neither `_run()` is expected to raise under correct behavior
+        # (`create_or_get_approval` never raises for an identical
+        # checksum+scope), so any exception here is a genuine failure,
+        # surfaced explicitly below rather than masked by a close()-time
+        # race.
+        results = await asyncio.gather(_run(db_a, "a"), _run(db_b, "b"), return_exceptions=True)
+        await db_a.close()
+        await db_b.close()
+        for result in results:
+            if isinstance(result, BaseException):
+                raise AssertionError(f"trial {trial}: _run() raised unexpectedly: {result!r}") from result
 
         assert outcomes["a"]["authority_id"] == outcomes["b"]["authority_id"], (
             f"trial {trial}: two different authority rows were created: {outcomes}"
