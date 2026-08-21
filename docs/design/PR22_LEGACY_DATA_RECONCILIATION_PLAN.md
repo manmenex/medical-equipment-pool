@@ -585,18 +585,37 @@ review brief is explicit on this, and it matches PR21's own
 Owner-Decision-resolved event-first architecture (§4.9). A chronology
 anomaly may later become a **pairing candidate** (§9.D overlaps §12) once
 a human reviews it, but the finding itself never asserts a pairing.
+**Every chronology finding must be phrased relative to the approved
+temporal coverage window (§9.J), not as an absolute claim** — "ISSUE with
+no later RECEIVE before coverage end" is a fundamentally different,
+narrower claim than "ISSUE with no later RECEIVE, ever," and a `RECEIVE`
+with no earlier `ISSUE` may simply reflect history that predates the
+source's own coverage start rather than a genuine anomaly. This wording
+distinction is gated by **OD-PR22-7** exactly as the current-state
+comparison in §9.E is.
 
 ### 9.E Current-state plausibility
 
-A read-only comparison between an equipment's last-known imported
-historical event and its *current* `Equipment.status` (e.g. last
-historical event is `ISSUE`, current status is `AVAILABLE_AT_POOL`).
-Per §16, this produces a `CURRENT_STATE_MISMATCH` finding — a signal
-only, explicitly not evidence of an import defect, since the real
-explanation may be a missing historical row, activity after the legacy
-import's own data cutoff (not separately defined by this design — see
-the note below), a valid manual correction, or a
-normal operational transition entirely outside the imported period.
+**Blocked from becoming an authoritative reconciliation rule until
+OD-PR22-7 resolves (§9.J, §36).** A read-only comparison between an
+equipment's last-known imported historical event and its *current*
+`Equipment.status` (e.g. last historical event is `ISSUE`, current
+status is `AVAILABLE_AT_POOL`) is the intended shape, per §16 — but
+without an approved, authoritative temporal coverage boundary, this
+design cannot yet state which side of that comparison is even
+*applicable*: activity after the legacy import's own coverage end is a
+categorically different case from activity genuinely contradicting the
+historical record within the covered period, and this design does not
+have an approved way to tell them apart yet. **If OD-PR22-7 adopts an
+authoritative legacy coverage end, current-state mismatch rules must
+distinguish activity within the historical coverage window from
+activity after that boundary** — producing a `CURRENT_STATE_MISMATCH`
+finding only for the former, and a distinct (or suppressed) signal for
+the latter, per whichever post-cutoff treatment option (§9.J) the Owner
+selects. Until then, no final severity/disposition behavior for this
+concern is authorized. Other candidate explanations for a raw mismatch
+remain unaffected by this gating: a missing historical row, a valid
+manual correction, or a normal operational transition.
 
 ### 9.F Ward traceability
 
@@ -640,6 +659,132 @@ See §20 for full semantics. In summary: sign-off is a per-run,
 Administrator-authored, immutable attestation binding an exact run
 snapshot to a statement that its findings were reviewed and disposed —
 never a claim that the underlying data is objectively perfect.
+
+### 9.J Temporal coverage boundary (data cutoff)
+
+**Gates §9.D and §9.E. Blocking until OD-PR22-7 (§36) resolves.** A
+prior round of this design stated that current-state mismatches "may be
+explained by activity after the legacy cutoff," without ever defining
+what that cutoff *is*. That gap is real and is not resolved here —
+this subsection names the problem precisely, compares the real
+alternatives, and gates every dependent rule until an Owner Decision
+settles it.
+
+**Observed evidence is not the same thing as authoritative coverage.**
+`MIN(occurred_at)`/`MAX(occurred_at)` across a migration authority's
+imported `LegacyEquipmentEvent` rows (`observed_min_event_at`/
+`observed_max_event_at`) answer only "where does the data we happen to
+have stop" — never "where the source was *intended* to stop." If the
+approved workbook is itself missing trailing rows (a real, admitted
+possibility — PR21's own evidence manifest already records blank/
+missing-row cases, §4.1), silently treating the observed maximum
+timestamp as the coverage boundary would make the system *confidently
+wrong*: every gap after the true (but unrecorded) cutoff would read as
+a plausible reconciliation anomaly instead of an out-of-scope period,
+and every gap before it would read as a false "complete" claim. This
+design does **not** infer the cutoff from `MIN`/`MAX` event timestamps,
+the upload timestamp, or the import-completion timestamp, and does not
+treat any of those as authoritative merely because they are easy to
+compute.
+
+**Alternatives compared** (none silently chosen):
+
+- **(A) Owner-provided / governance-approved explicit cutoff datetime.**
+  A human states the coverage boundary directly, independent of any
+  computed value. Most defensible, least automatable.
+- **(B) Approved source metadata carries a governed coverage end.** The
+  boundary is recorded as part of the `LegacyMigrationAuthority`
+  approval itself (§4.2) — still human-approved, but bound to the
+  authority rather than entered as a free-standing value.
+- **(C) Derive from the latest imported legacy event timestamp.**
+  Rejected as the *sole* source, per the reasoning above — an
+  `observed_max_event_at` value remains useful as evidence, never as
+  the authoritative boundary by itself.
+- **(D) System cutover/go-live boundary.** The point at which the
+  modern system became authoritative. Necessary for the "live-system
+  start" half of the model below, but not by itself a statement about
+  where *legacy* coverage ends — the two can differ (overlap or gap).
+- **(E) Two-boundary model** — `legacy_coverage_end` (Option A or B,
+  above) kept **separate** from `live_system_start`/cutover (Option D).
+
+**Recommended direction (not yet normative): the two-boundary model
+(E), preferring source (A) or (B) for `legacy_coverage_end`.** A single
+boundary cannot represent all three real possibilities — a clean
+handoff, a genuine history gap between the legacy source's end and the
+modern system's start, or an overlap where both sources describe the
+same period — and collapsing them into one value would silently pick a
+wrong interpretation for at least one of the three. This is a
+recommendation this design puts forward for the Owner to approve or
+reject, not a contract PR22B+ may implement yet.
+
+**Coverage start, not only coverage end.** §9.D's own chronology
+rewording ("RECEIVE without a prior ISSUE" vs. "RECEIVE reflecting
+history before source coverage start") only becomes meaningful if a
+`legacy_coverage_start` is also approved — otherwise "before coverage
+start" is exactly as undefined as "after coverage end" was before this
+subsection. OD-PR22-7 is scoped to cover **both**
+`legacy_coverage_start` and `legacy_coverage_end`, not only the end
+boundary the original gap report named.
+
+**Overlap and gap cases the design must not silently collapse:**
+
+| Case | Condition | Interpretation |
+|---|---|---|
+| A — Gap | `legacy_coverage_end` < `live_system_start` | A genuine history gap exists between the two sources; neither is authoritative for the gap period. |
+| B — Clean boundary | `legacy_coverage_end` == `live_system_start` | Simple handoff; no overlap-authority question arises. |
+| C — Overlap | `legacy_coverage_end` > `live_system_start` | Both sources describe part of the same period; which one is authoritative for that overlap is itself part of what OD-PR22-7 must settle. |
+
+**Binding to the reconciliation run.** If OD-PR22-7 is approved, a
+`LegacyReconciliationRun` (§17.2) must conceptually carry its approved
+`legacy_coverage_start`/`legacy_coverage_end` (and, if the Owner adopts
+the two-boundary model, `live_system_start`) alongside its existing
+`rule_version`, `migration_authority_id` scope, `created_by_user_id`,
+and `created_at` — so a signed-off run remains fully interpretable
+later without depending on live, mutable state to reconstruct what
+temporal window it actually covered. Exact field names/types are not
+finalized here; see §17.2 for where they land once approved.
+
+**Post-cutoff live activity — treatment not yet authorized.** Four
+candidate treatments, compared but not selected:
+
+- **(a) Exclude** post-boundary activity from mismatch evaluation
+  entirely.
+- **(b) Include only as explanatory evidence** attached to a finding,
+  never as the trigger for one.
+- **(c) Downgrade** mismatch severity for anything explainable by
+  post-boundary activity, without excluding it.
+- **(d) Compare through the unified history projection** (§9.J below,
+  §15) using both legacy and modern history together, letting the
+  projection itself resolve which source is authoritative per the
+  overlap/gap table above.
+  Of these, (d) is the most architecturally consistent with §15's own
+  unified-projection goal, but is **not** adopted here — it is a
+  candidate pending OD-PR22-7, exactly like (a)-(c).
+
+**Corrected/re-exported authorities and coverage.** A corrected
+workbook (§13) is not assumed to inherit its predecessor's temporal
+coverage — a correction may genuinely extend, narrow, or leave coverage
+unchanged, and assuming otherwise would silently misstate what the
+corrected authority actually represents. §13's corrected-source policy
+must, once OD-PR22-7 resolves, either bind coverage independently per
+authority or define an explicit inheritance rule as part of the
+approved supersession relationship — this is scoped under OD-PR22-7
+itself (not a second, duplicate Owner Decision) since it is the same
+underlying "what does this authority's coverage boundary mean"
+question, only asked about a second authority.
+
+**Sign-off must attest to coverage, not only to review completeness.**
+§20's own sign-off semantics is updated (§20 below) so the attestation
+names the exact `rule_version`, migration authority, **and approved
+temporal coverage** a run was evaluated against — never a claim that
+covers "all hospital history," only the approved window.
+
+**What this subsection does not do:** it does not choose among
+alternatives (A)-(E) or treatments (a)-(d); it does not compute or
+approve any actual date; it does not authorize PR22B/C/E to implement
+cutoff-dependent behavior (§34); and it does not touch PR21's own
+already-resolved scope (SDC exclusion, event-first architecture,
+pairing prohibition, §4.9) in any way.
 
 ---
 
@@ -717,20 +862,29 @@ conclusion, not an instruction to delete anything (§16).
 See §9.H (business framing) and §4.9 (PR21's binding constraints, quoted
 above). Summary of the binding constraint already resolved by PR21's own
 design (§4.9): fail closed, mint a new/superseding authority, never
-silently reuse or infer same-event equivalence automatically.
+silently reuse or infer same-event equivalence automatically. **Temporal
+coverage per authority is gated under OD-PR22-7 (§9.J):** a corrected
+authority is not assumed to inherit its predecessor's coverage boundary
+— once OD-PR22-7 resolves, this policy must either bind coverage
+independently per authority or state an explicit inheritance rule as
+part of the approved supersession relationship.
 
 ---
 
 ## 14. Current-state comparison
 
-See §9.E and §16.
+See §9.E and §16 — **blocked from authoritative behavior until
+OD-PR22-7 resolves (§9.J, §36)**.
 
 ---
 
 ## 15. Unified history projection
 
 See §4.8 (confirms no such query exists today) and §25 (the proposed
-read-only companion endpoint).
+read-only companion endpoint). **Which source is authoritative during
+an overlap or gap period (§9.J's Case A/B/C table) is gated under
+OD-PR22-7** — this section does not yet authorize any overlap-resolution
+behavior in the projection.
 
 ---
 
@@ -829,6 +983,18 @@ ownership, lifecycle, FKs, retention, and audit requirement:
   `summary_by_severity_high`/`medium`/`low`, all `Integer NOT NULL
   DEFAULT 0`, `>= 0` check-constrained) — populated once, at completion,
   never recomputed live.
+- **Temporal coverage (conceptual, blocked on OD-PR22-7, §9.J, §36 —
+  not authorized for implementation until resolved):** once approved,
+  the run additionally carries its bound `legacy_coverage_start`/
+  `legacy_coverage_end` (and, if the Owner adopts the two-boundary
+  model, `live_system_start`) — the authoritative window, never the
+  observed `MIN`/`MAX` of imported event timestamps (§9.J) — plus a
+  `coverage_source` marker recording which OD-PR22-7 alternative
+  ((A)-(E)) produced the bound value, so a signed-off run remains
+  self-describing without depending on live, mutable state to
+  reconstruct what it actually covered. Exact column names/types are
+  not finalized here; PR22B's own migration design fixes them once
+  OD-PR22-7 resolves.
 - Retention: permanent (§29) — not the 180-day temporary-artifact policy.
 - Audit: run creation and every status transition is audited via
   `record_audit_event` with new constants
@@ -1048,6 +1214,27 @@ reached, not that every conclusion was "everything is fine." Whether a
 given mix of dispositions is *acceptable for Go-live* is a Roadmap PR23
 cutover-readiness policy question, explicitly out of this design's scope
 (§7).
+
+**Updated attestation wording once OD-PR22-7 resolves (§9.J, §36) —
+binding temporal coverage, not only rule version and data authorities:**
+
+> "The reviewer confirms that all findings generated for the exact
+> immutable reconciliation run `{run_id}`, rule version
+> `{rule_version}`, migration authority scope, and approved temporal
+> coverage (`legacy_coverage_start`/`legacy_coverage_end`, and
+> `live_system_start` if applicable) have been reviewed according to the
+> permitted disposition policy."
+
+Sign-off never certifies hospital history outside the approved coverage
+window — only that the findings generated *for that window* were
+reviewed. **Acceptance criterion: no reconciliation run may be signed
+off without an explicit, persisted, authoritative temporal coverage
+boundary approved under OD-PR22-7** — a sign-off endpoint must not
+operate on an implicit `observed_min_event_at`/`observed_max_event_at`
+value in place of an approved boundary. Until OD-PR22-7 resolves, the
+original attestation wording above (naming only `rule_version` and
+`snapshot_as_of`) remains the interim contract, and no sign-off may be
+described as covering a stated temporal window.
 
 **Binding to exact run/snapshot identity**: enforced structurally by
 `LegacyReconciliationSignOff.run_id` (UNIQUE FK) and
@@ -1412,10 +1599,26 @@ commitment):
 - **PR22A — architecture/design (this document).**
 - **PR22B** — reconciliation schema + `LegacyReconciliationRun`
   foundation (migration, models, CAS admission, no analysis logic yet).
+  **The neutral columns (`id`, `status`, `version`, `rule_version`,
+  `snapshot_as_of`, `created_by_user_id`, `created_at`, summary
+  counters) may be implemented before OD-PR22-7 resolves — they carry
+  no cutoff semantics. The temporal-coverage columns (§17.2) must
+  **not** be added, or must be added strictly nullable and unused, until
+  OD-PR22-7 is approved — this slice must not decide their shape by
+  implementing them first.**
 - **PR22C** — deterministic analysis engine (§9's detection rules, §27's
-  batch queries, finding persistence at run completion).
+  batch queries, finding persistence at run completion). **Not
+  authorized to implement §9.E's current-state comparison or §9.D's
+  coverage-window-scoped chronology wording until OD-PR22-7 resolves
+  (§9.J) — every other detection rule in §9 (traceability, duplicate
+  review, Ward/BME traceability) is unaffected by this gate and may
+  proceed.**
 - **PR22D** — finding review/disposition API (§19, §25, §26).
-- **PR22E** — sign-off + concurrency/audit (§20, §22, §28).
+- **PR22E** — sign-off + concurrency/audit (§20, §22, §28). **Not
+  authorized to implement the temporal-coverage-binding attestation
+  wording (§20) or the "no sign-off without approved coverage"
+  acceptance criterion until OD-PR22-7 resolves — the interim
+  (rule-version-only) attestation contract in §20 applies until then.**
 - **PR22F** — frontend real integration (§30).
 - **PR22G** — governance sync (closes Roadmap PR22, mirrors PR21F's own
   pattern).
@@ -1423,7 +1626,11 @@ commitment):
 Each slice should remain independently reviewable, per this repository's
 established preference for small slices over one large PR — matching how
 PR21 itself split into Foundation/A/B/C/D1/D2/E0/E rather than one
-monolithic change.
+monolithic change. **OD-PR22-7 (§9.J, §36) blocks cutoff-dependent
+behavior in PR22C and PR22E specifically, and gates which columns
+PR22B may safely add — it does not block PR22B's or PR22D's own
+non-temporal scope, and does not block PR22F/PR22G once their
+respective dependencies are otherwise satisfied.**
 
 ---
 
@@ -1448,6 +1655,16 @@ monolithic change.
   Administrator-only disposition-setting as the safe default is
   low-risk, but revisiting it later (loosening to `equipment_pool_staff`)
   would be an additive, low-risk change if the Owner later approves it.
+- **Temporal coverage ambiguity** (§9.J, OD-PR22-7) — the highest-priority
+  open risk in this design: without an approved
+  `legacy_coverage_start`/`legacy_coverage_end`, §9.E's current-state
+  comparison and §9.D's chronology wording cannot be implemented
+  correctly, and a sign-off produced before OD-PR22-7 resolves could not
+  honestly state what temporal window it covered. Mitigated by gating
+  PR22C's and PR22E's cutoff-dependent behavior explicitly (§34) rather
+  than shipping a best-guess interpretation (e.g. `MAX(occurred_at)`)
+  that would silently misstate coverage if the approved workbook itself
+  has trailing gaps (§9.J).
 
 ---
 
@@ -1461,7 +1678,10 @@ versioning §24, lock ordering §23, error-contract shape §26) without
 escalating any of those as Owner Decisions — they are engineering
 judgment calls grounded in this repository's own established precedent,
 not open business questions. The following, genuinely business-policy
-questions remain, deliberately minimized to six:
+questions remain, deliberately minimized to seven (six from the
+original architecture round, plus OD-PR22-7 added in fix round 2 below
+to resolve a genuine content gap — the temporal-coverage boundary — an
+independent review found this design had left undefined):
 
 - **OD-PR22-1 — Pairing persistence model.** Is Issue↔Receive pairing
   (a) a purely analytical/review-time relation with no persisted
@@ -1494,6 +1714,27 @@ questions remain, deliberately minimized to six:
   This is explicitly a PR23-adjacent policy question this design
   surfaces but does not resolve, since PR23 is out of this design's own
   scope (§7).
+- **OD-PR22-7 — Legacy data cutoff / temporal reconciliation boundary
+  (§9.J).** *Added in fix round 2, responding to an independent-review
+  [P1] finding — status: OPEN, implementation-blocking.* What
+  authoritative temporal boundary defines the historical coverage
+  against which a PR22 reconciliation run is evaluated, and how must
+  post-boundary live activity be treated? Specifically: (a) is
+  `legacy_coverage_start`/`legacy_coverage_end` sourced from an explicit
+  Owner-provided value, from governed `LegacyMigrationAuthority`
+  metadata, or some other mechanism (§9.J compares alternatives
+  (A)-(E), never `MIN`/`MAX` observed event timestamps alone); (b) is a
+  separate `live_system_start`/cutover boundary adopted (the
+  two-boundary model, §9.J's recommended-but-not-adopted direction);
+  (c) which of the four post-cutoff treatment options (§9.J: exclude /
+  explanatory-evidence-only / severity-downgrade / unified-projection
+  comparison) applies; and (d) how a corrected/re-exported authority's
+  own coverage relates to its predecessor's (§13). **This design
+  explicitly does not resolve OD-PR22-7** — §9.J names the problem and
+  compares alternatives; it does not choose one. Blocks: PR22C's
+  current-state-comparison and coverage-scoped chronology rules, and
+  PR22E's coverage-binding sign-off attestation (§34) — does not block
+  PR22B's/PR22D's own non-temporal scope.
 
 **What did NOT require an Owner Decision, and why**: the persistence
 option (§17.1 — matches every analogous already-merged workflow, no
