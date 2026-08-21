@@ -5,12 +5,12 @@ interface LegacyImportValidationSummaryProps {
   findingsByCategory: ImportFindingCategoryCount[];
 }
 
-// PR19B "Validation summary skeleton": mock/sample counts only -- never
-// calculated from a real selected file (task scope boundary). `counts`
-// mirrors the real ImportSessionOut fields (total_rows/valid_rows/
-// warning_rows/invalid_rows) -- no `duplicateRows` field exists in the
-// merged backend contract; a duplicate is one specific finding error code
-// instead (see the issues table below).
+// Roadmap PR20F/PR21E: renders real validation counters read from the
+// session's own real ImportSessionOut fields (total_rows/valid_rows/
+// warning_rows/invalid_rows) -- never computed here. No `duplicateRows`
+// field exists in the merged backend contract; a duplicate is one specific
+// finding error code instead (see the issues table below). Dataset-
+// agnostic, shared by both real workflows.
 export function LegacyImportValidationSummary({ counts, findingsByCategory }: LegacyImportValidationSummaryProps) {
   const cards: { label: string; value: number; accentClassName: string }[] = [
     { label: "ทั้งหมด", value: counts.totalRows, accentClassName: "text-[var(--text-primary,inherit)]" },

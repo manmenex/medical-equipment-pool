@@ -85,10 +85,11 @@ export function App() {
           {/* Roadmap PR17 Slice 4: the final PR17 report screen, same
               /reports sub-route convention as Slice 3's two screens. */}
           <Route path="/reports/equipment-verify-checklist" element={<EquipmentVerifyChecklistPage />} />
-          {/* Roadmap PR19B (Legacy Import Frontend Skeleton): preview-only
-              routes, no real import execution -- see
-              pages/LegacyImport*.tsx and types/legacyImport.ts's
-              file-level note. */}
+          {/* Roadmap PR20F/PR21E: real, backend-integrated import routes for
+              both Equipment Master and Legacy Transaction History -- see
+              pages/LegacyImport*.tsx. Which workflow panel renders on the
+              detail route is decided by the session's own real
+              dataset_type, never by the route/id shape. */}
           <Route path="/imports" element={<LegacyImportListPage />} />
           <Route path="/imports/new" element={<LegacyImportCreatePage />} />
           <Route path="/imports/:sessionId" element={<LegacyImportSessionDetailPage />} />

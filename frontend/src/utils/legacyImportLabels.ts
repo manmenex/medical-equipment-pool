@@ -1,13 +1,12 @@
 import type { ImportCategory, ImportFindingSeverity, ImportSessionStatus } from "@/types/legacyImport";
 
-// PR19B skeleton only -- see types/legacyImport.ts's file-level note.
-// Centralized here (rather than repeated per component) so every screen
-// renders the same Thai label/color for the same value.
+// Roadmap PR20F/PR21E: centralized here (rather than repeated per
+// component) so every screen renders the same Thai label/color for the
+// same value.
 
 export const IMPORT_CATEGORY_LABELS: Record<ImportCategory, string> = {
   equipment_master: "ข้อมูลหลักเครื่องมือ (Equipment Master)",
-  receive_history: "ประวัติการรับคืน (Receive History)",
-  issue_history: "ประวัติการเบิก (Issue History)",
+  legacy_transaction_history: "ประวัติการรับ-ส่งเครื่องมือเดิม",
 };
 
 // Labels for the real 11-value backend status enum

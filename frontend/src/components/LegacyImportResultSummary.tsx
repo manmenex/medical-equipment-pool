@@ -2,11 +2,10 @@ import { formatDateTimeInTimezone } from "@/utils/printFormat";
 import type { ImportResultSummary } from "@/types/legacyImport";
 import { LegacyImportStatusBadge } from "@/components/LegacyImportStatusBadge";
 
-// PR19B "Result summary skeleton". No PR19B code path can ever produce this
-// from a live action -- it only ever renders a pre-existing example
-// fixture session, never as the outcome of pressing a button in this
-// skeleton (task scope: "No real result generation"). Mirrors what
-// actually exists on the real `ImportSessionOut` once execute completes:
+// Roadmap PR20F/PR21E. Renders the real terminal outcome of a real execute
+// action (EquipmentMasterWorkflowPanel, LegacyHistoryWorkflowPanel) --
+// dataset-agnostic, shared by both real workflows. Mirrors what actually
+// exists on the real `ImportSessionOut` once execute completes:
 // `status`, `imported_rows`, `terminal_at`, and the session's own `id` --
 // no `skippedCount`/`failedCount` field exists in that contract.
 //

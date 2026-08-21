@@ -1,64 +1,40 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 
-import { LegacyImportAccessGate } from "@/components/LegacyImportAccessGate";
-import { LegacyImportDryRunSummary } from "@/components/LegacyImportDryRunSummary";
-import { LegacyImportIssuesTable } from "@/components/LegacyImportIssuesTable";
-import { LegacyImportResultSummary } from "@/components/LegacyImportResultSummary";
-import { LegacyImportSkeletonBanner } from "@/components/LegacyImportSkeletonBanner";
-import { LegacyImportStatusBadge } from "@/components/LegacyImportStatusBadge";
-import { LegacyImportValidationSummary } from "@/components/LegacyImportValidationSummary";
 import { EquipmentMasterWorkflowPanel } from "@/components/EquipmentMasterWorkflowPanel";
+import { LegacyHistoryWorkflowPanel } from "@/components/LegacyHistoryWorkflowPanel";
+import { LegacyImportAccessGate } from "@/components/LegacyImportAccessGate";
 import { canManageLegacyImport, useAuth } from "@/hooks/useAuth";
-import { ImportSessionNotFoundError, legacyImportClient } from "@/services/legacyImportClient";
-import { formatDateTimeInTimezone } from "@/utils/printFormat";
-import { IMPORT_CATEGORY_LABELS, formatFileSize } from "@/utils/legacyImportLabels";
-import { isBackendSessionId } from "@/utils/legacyImportSessionId";
+import { getImportSessionSummary } from "@/services/importSessionClient";
+import { EQUIPMENT_MASTER_DATASET_TYPE } from "@/services/equipmentMasterImportClient";
+import { LEGACY_TRANSACTION_HISTORY_DATASET_TYPE } from "@/services/legacyHistoryImportClient";
+import { apiErrorCode } from "@/services/api";
 
-// PR19B "Import session details" (mock path) + PR20F "Equipment Master
-// real workflow" (real path). Which path renders is decided purely by
-// `isBackendSessionId(sessionId)` (utils/legacyImportSessionId.ts) --
-// routing only, never a business decision. The mock path below is
-// unchanged from PR19B and continues to serve Receive/Issue History,
-// which remain frontend-only placeholders (design §34).
+// Roadmap PR21E: which workflow panel renders is decided by the session's
+// own real `dataset_type` -- fetched once here, never inferred from the
+// route/id shape (the former isBackendSessionId UUID-regex routing, which
+// only ever needed to distinguish a real session from a PR19B mock
+// fixture, no longer applies now that every session on this route is
+// real). A session that does not exist, or whose dataset_type this
+// frontend has no workflow for, both render an honest, distinct state --
+// never silently falling back to the Equipment Master panel for an
+// unrecognized dataset_type.
 export function LegacyImportSessionDetailPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const { user } = useAuth();
-  const isRealSession = isBackendSessionId(sessionId);
 
   const { data: session, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ["legacy-import", "session", sessionId],
-    queryFn: () => legacyImportClient.getSession(sessionId as string),
-    enabled: Boolean(sessionId) && canManageLegacyImport(user) && !isRealSession,
+    queryKey: ["legacy-import", "session-summary", sessionId],
+    queryFn: () => getImportSessionSummary(sessionId as string),
+    enabled: Boolean(sessionId) && canManageLegacyImport(user),
     retry: false,
   });
 
-  const isNotFound = isError && error instanceof ImportSessionNotFoundError;
-  // The confirm-gate panel appears exactly when the session is sitting in
-  // the real backend's own confirm-gate status (design §5) -- not an
-  // invented "awaiting confirmation" status.
-  const isAwaitingConfirmation = session?.status === "dry_run_completed";
-
-  if (isRealSession) {
-    return (
-      <LegacyImportAccessGate>
-        <div className="flex flex-col gap-4">
-          <div>
-            <Link to="/imports" className="text-sm text-status-borrowed hover:underline">
-              ← กลับไปยังรายการนำเข้าข้อมูล
-            </Link>
-          </div>
-          <EquipmentMasterWorkflowPanel sessionId={sessionId as string} />
-        </div>
-      </LegacyImportAccessGate>
-    );
-  }
+  const isNotFound = isError && apiErrorCode(error) === "IMPORT_SESSION_NOT_FOUND";
 
   return (
     <LegacyImportAccessGate>
       <div className="flex flex-col gap-4">
-        <LegacyImportSkeletonBanner />
-
         <div>
           <Link to="/imports" className="text-sm text-status-borrowed hover:underline">
             ← กลับไปยังรายการนำเข้าข้อมูล
@@ -70,9 +46,7 @@ export function LegacyImportSessionDetailPage() {
         {isNotFound && (
           <div className="surface rounded-xl border p-4">
             <p className="text-sm font-medium text-status-repair">ไม่พบรายการนำเข้าข้อมูลนี้</p>
-            <p className="mt-1 text-sm text-[var(--text-muted)]">
-              รายการนี้อาจถูกยกเลิกหรือไม่เคยมีอยู่ในระบบ
-            </p>
+            <p className="mt-1 text-sm text-[var(--text-muted)]">รายการนี้อาจถูกยกเลิกหรือไม่เคยมีอยู่ในระบบ</p>
           </div>
         )}
 
@@ -89,63 +63,26 @@ export function LegacyImportSessionDetailPage() {
           </div>
         )}
 
-        {!isLoading && !isError && session && (
-          <div className="flex flex-col gap-4">
-            <div className="surface rounded-xl border p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h1 className="text-lg font-semibold">{IMPORT_CATEGORY_LABELS[session.datasetType]}</h1>
-                  <p className="text-sm text-[var(--text-muted)]">
-                    {session.filename} · {formatFileSize(session.requestedFileSizeBytes)}
-                  </p>
-                </div>
-                <LegacyImportStatusBadge status={session.status} />
-              </div>
-              <dl className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-3">
-                <div>
-                  <dt className="text-xs text-[var(--text-muted)]">เลขอ้างอิงรายการ</dt>
-                  <dd>{session.id}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-[var(--text-muted)]">ผู้ดำเนินการ</dt>
-                  <dd>{session.requestedByDisplayName}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-[var(--text-muted)]">วันที่สร้าง</dt>
-                  <dd>{formatDateTimeInTimezone(session.createdAt, "Asia/Bangkok")}</dd>
-                </div>
-              </dl>
-            </div>
-
-            {session.validationCounts && (
-              <div className="surface rounded-xl border p-4">
-                <LegacyImportValidationSummary
-                  counts={session.validationCounts}
-                  findingsByCategory={session.findingsByCategory}
-                />
-              </div>
-            )}
-
-            {session.findings.length > 0 && (
-              <div className="surface rounded-xl border p-4">
-                <h3 className="mb-3 text-sm font-semibold">รายการที่ต้องตรวจสอบ</h3>
-                <LegacyImportIssuesTable findings={session.findings} />
-              </div>
-            )}
-
-            {isAwaitingConfirmation && session.validationCounts && (
-              <div className="surface rounded-xl border p-4">
-                <LegacyImportDryRunSummary counts={session.validationCounts} />
-              </div>
-            )}
-
-            {session.resultSummary && (
-              <div className="surface rounded-xl border p-4">
-                <LegacyImportResultSummary result={session.resultSummary} />
-              </div>
-            )}
-          </div>
+        {!isLoading && !isError && session && sessionId && session.dataset_type === EQUIPMENT_MASTER_DATASET_TYPE && (
+          <EquipmentMasterWorkflowPanel sessionId={sessionId} />
         )}
+
+        {!isLoading && !isError && session && sessionId && session.dataset_type === LEGACY_TRANSACTION_HISTORY_DATASET_TYPE && (
+          <LegacyHistoryWorkflowPanel sessionId={sessionId} />
+        )}
+
+        {!isLoading &&
+          !isError &&
+          session &&
+          session.dataset_type !== EQUIPMENT_MASTER_DATASET_TYPE &&
+          session.dataset_type !== LEGACY_TRANSACTION_HISTORY_DATASET_TYPE && (
+            <div className="surface rounded-xl border p-4">
+              <p className="text-sm font-medium text-status-repair">ไม่รองรับประเภทข้อมูลนี้</p>
+              <p className="mt-1 text-sm text-[var(--text-muted)]">
+                ระบบยังไม่มีหน้าจอสำหรับประเภทข้อมูล &quot;{session.dataset_type}&quot;
+              </p>
+            </div>
+          )}
       </div>
     </LegacyImportAccessGate>
   );

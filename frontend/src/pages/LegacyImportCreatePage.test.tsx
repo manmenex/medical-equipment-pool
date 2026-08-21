@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,19 +8,25 @@ import { LegacyImportCreatePage } from "@/pages/LegacyImportCreatePage";
 import { api } from "@/services/api";
 import type { UserProfile } from "@/types";
 
-const createPreviewSession = vi.fn();
-vi.mock("@/services/legacyImportClient", () => ({
-  legacyImportClient: {
-    createPreviewSession: (...args: unknown[]) => createPreviewSession(...args),
-  },
-  ImportSessionNotFoundError: class ImportSessionNotFoundError extends Error {},
-}));
-
 const createEquipmentMasterSession = vi.fn();
 const uploadEquipmentMasterSource = vi.fn();
 vi.mock("@/services/equipmentMasterImportClient", () => ({
   createEquipmentMasterSession: (...args: unknown[]) => createEquipmentMasterSession(...args),
   uploadEquipmentMasterSource: (...args: unknown[]) => uploadEquipmentMasterSource(...args),
+}));
+
+const createLegacyHistorySession = vi.fn();
+const uploadLegacyHistorySource = vi.fn();
+vi.mock("@/services/legacyHistoryImportClient", () => ({
+  createLegacyHistorySession: (...args: unknown[]) => createLegacyHistorySession(...args),
+  uploadLegacyHistorySource: (...args: unknown[]) => uploadLegacyHistorySource(...args),
+}));
+
+const approveLegacyMigrationAuthority = vi.fn();
+const findLegacyMigrationAuthorityByChecksum = vi.fn();
+vi.mock("@/services/legacyMigrationAuthorityClient", () => ({
+  approveLegacyMigrationAuthority: (...args: unknown[]) => approveLegacyMigrationAuthority(...args),
+  findLegacyMigrationAuthorityByChecksum: (...args: unknown[]) => findLegacyMigrationAuthorityByChecksum(...args),
 }));
 
 let mockUser: UserProfile | null = null;
@@ -43,7 +49,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
 });
 
 function renderPage() {
@@ -60,7 +66,7 @@ function renderPage() {
   );
 }
 
-function makeTestFile(name = "receive.xlsx", sizeBytes = 2048): File {
+function makeTestFile(name = "legacy-history.xlsx", sizeBytes = 2048): File {
   return new File([new Uint8Array(sizeBytes)], name, {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
@@ -74,7 +80,7 @@ describe("LegacyImportCreatePage", () => {
     const next = screen.getByRole("button", { name: "ถัดไป" });
     expect(next).toBeDisabled();
 
-    await user.click(screen.getByLabelText(/ประวัติการรับคืน/));
+    await user.click(screen.getByLabelText(/ประวัติการรับ-ส่งเครื่องมือเดิม/));
     expect(next).toBeEnabled();
 
     await user.click(next);
@@ -85,16 +91,16 @@ describe("LegacyImportCreatePage", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(screen.getByLabelText(/ประวัติการรับคืน/));
+    await user.click(screen.getByLabelText(/ข้อมูลหลักเครื่องมือ/));
     await user.click(screen.getByRole("button", { name: "ถัดไป" }));
 
     const continueButton = screen.getByRole("button", { name: "ตรวจสอบข้อมูล" });
     expect(continueButton).toBeDisabled();
 
     const input = screen.getByLabelText("เลือกไฟล์สำหรับนำเข้าข้อมูลเดิม");
-    await user.upload(input, makeTestFile());
+    await user.upload(input, makeTestFile("equipment.xlsx"));
 
-    expect(await screen.findByText("receive.xlsx")).toBeInTheDocument();
+    expect(await screen.findByText("equipment.xlsx")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "ตรวจสอบข้อมูล" })).toBeEnabled();
   });
 
@@ -102,47 +108,18 @@ describe("LegacyImportCreatePage", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(screen.getByLabelText(/ประวัติการรับคืน/));
+    await user.click(screen.getByLabelText(/ข้อมูลหลักเครื่องมือ/));
     await user.click(screen.getByRole("button", { name: "ถัดไป" }));
-    await user.upload(screen.getByLabelText("เลือกไฟล์สำหรับนำเข้าข้อมูลเดิม"), makeTestFile());
-    await screen.findByText("receive.xlsx");
+    await user.upload(screen.getByLabelText("เลือกไฟล์สำหรับนำเข้าข้อมูลเดิม"), makeTestFile("equipment.xlsx"));
+    await screen.findByText("equipment.xlsx");
 
     await user.click(screen.getByRole("button", { name: "เปลี่ยนไฟล์" }));
 
-    expect(screen.queryByText("receive.xlsx")).not.toBeInTheDocument();
+    expect(screen.queryByText("equipment.xlsx")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "ตรวจสอบข้อมูล" })).toBeDisabled();
   });
 
-  it("continuing sends only name/size/type to the mock client, never uploads, never calls the real API, and navigates to the created session", async () => {
-    createPreviewSession.mockResolvedValue({ id: "preview-1" });
-    const user = userEvent.setup();
-    renderPage();
-
-    await user.click(screen.getByLabelText(/ประวัติการรับคืน/));
-    await user.click(screen.getByRole("button", { name: "ถัดไป" }));
-    await user.upload(screen.getByLabelText("เลือกไฟล์สำหรับนำเข้าข้อมูลเดิม"), makeTestFile("receive.xlsx", 2048));
-    await screen.findByText("receive.xlsx");
-
-    await user.click(screen.getByRole("button", { name: "ตรวจสอบข้อมูล" }));
-
-    await waitFor(() => expect(createPreviewSession).toHaveBeenCalledTimes(1));
-    expect(createPreviewSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        importCategory: "receive_history",
-        file: {
-          name: "receive.xlsx",
-          sizeBytes: 2048,
-          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        },
-      })
-    );
-    expect(api.post).not.toHaveBeenCalled();
-    expect(api.get).not.toHaveBeenCalled();
-
-    expect(await screen.findByText("session detail page")).toBeInTheDocument();
-  });
-
-  it("continuing for equipment_master creates a real session, uploads the file through the real API, never touches the mock client, and navigates to the created session", async () => {
+  it("continuing for equipment_master creates a real session, uploads the file through the real API, and navigates to the created session", async () => {
     createEquipmentMasterSession.mockResolvedValue({ id: "11111111-1111-4111-8111-111111111111" });
     uploadEquipmentMasterSource.mockResolvedValue({ id: "source-1" });
     const user = userEvent.setup();
@@ -160,7 +137,7 @@ describe("LegacyImportCreatePage", () => {
     const [sessionIdArg, fileArg] = uploadEquipmentMasterSource.mock.calls[0] as [string, File];
     expect(sessionIdArg).toBe("11111111-1111-4111-8111-111111111111");
     expect(fileArg.name).toBe("equipment.xlsx");
-    expect(createPreviewSession).not.toHaveBeenCalled();
+    expect(createLegacyHistorySession).not.toHaveBeenCalled();
 
     expect(await screen.findByText("session detail page")).toBeInTheDocument();
   });
@@ -186,32 +163,16 @@ describe("LegacyImportCreatePage", () => {
     expect(await screen.findByText("session detail page")).toBeInTheDocument();
   });
 
-  it("does not show the prototype-only notice for equipment_master, and shows it for receive_history", async () => {
-    const user = userEvent.setup();
-    renderPage();
-
-    await user.click(screen.getByLabelText(/ข้อมูลหลักเครื่องมือ/));
-    expect(screen.queryByText(/ยังไม่มีการอัปโหลด ตรวจสอบ หรือนำเข้าข้อมูลจริง/)).not.toBeInTheDocument();
-
-    await user.click(screen.getByLabelText(/ประวัติการรับคืน/));
-    expect(screen.getByText(/ยังไม่มีการอัปโหลด ตรวจสอบ หรือนำเข้าข้อมูลจริง/)).toBeInTheDocument();
-  });
-
   it("shows a back-navigation control between steps", async () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(screen.getByLabelText(/ประวัติการรับคืน/));
+    await user.click(screen.getByLabelText(/ข้อมูลหลักเครื่องมือ/));
     await user.click(screen.getByRole("button", { name: "ถัดไป" }));
     expect(screen.getByLabelText("เลือกไฟล์สำหรับนำเข้าข้อมูลเดิม")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "ย้อนกลับ" }));
     expect(screen.getByRole("button", { name: "ถัดไป" })).toBeInTheDocument();
-  });
-
-  it('states execution is unavailable in this skeleton', async () => {
-    renderPage();
-    expect(screen.getByText(/ยังไม่มีการอัปโหลด ตรวจสอบ หรือนำเข้าข้อมูลจริง/)).toBeInTheDocument();
   });
 
   // Bug-fix regression: switching import category after a file was already
@@ -222,35 +183,31 @@ describe("LegacyImportCreatePage", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(screen.getByLabelText(/ประวัติการรับคืน/));
+    await user.click(screen.getByLabelText(/ข้อมูลหลักเครื่องมือ/));
     await user.click(screen.getByRole("button", { name: "ถัดไป" }));
-    await user.upload(screen.getByLabelText("เลือกไฟล์สำหรับนำเข้าข้อมูลเดิม"), makeTestFile());
-    await screen.findByText("receive.xlsx");
+    await user.upload(screen.getByLabelText("เลือกไฟล์สำหรับนำเข้าข้อมูลเดิม"), makeTestFile("equipment.xlsx"));
+    await screen.findByText("equipment.xlsx");
     expect(screen.getByRole("button", { name: "ตรวจสอบข้อมูล" })).toBeEnabled();
 
     await user.click(screen.getByRole("button", { name: "ย้อนกลับ" }));
-    await user.click(screen.getByLabelText(/ข้อมูลหลักเครื่องมือ/));
+    await user.click(screen.getByLabelText(/ประวัติการรับ-ส่งเครื่องมือเดิม/));
     await user.click(screen.getByRole("button", { name: "ถัดไป" }));
 
-    expect(screen.queryByText("receive.xlsx")).not.toBeInTheDocument();
+    expect(screen.queryByText("equipment.xlsx")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "ตรวจสอบข้อมูล" })).toBeDisabled();
     expect(screen.getByLabelText("เลือกไฟล์สำหรับนำเข้าข้อมูลเดิม")).toBeInTheDocument();
 
-    await user.upload(screen.getByLabelText("เลือกไฟล์สำหรับนำเข้าข้อมูลเดิม"), makeTestFile("equipment.xlsx"));
-    expect(await screen.findByText("equipment.xlsx")).toBeInTheDocument();
+    await user.upload(screen.getByLabelText("เลือกไฟล์สำหรับนำเข้าข้อมูลเดิม"), makeTestFile("legacy-history.xlsx"));
+    expect(await screen.findByText("legacy-history.xlsx")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "ตรวจสอบข้อมูล" })).toBeEnabled();
   });
 
-  // Bug-fix regression: file-type enforcement must not rely on the input's
-  // `accept` attribute alone (unenforced for drag-and-drop / "all files"
-  // picker) -- both the extension gate and Thai error message must be
-  // exercised, with full recovery after an invalid selection.
   describe("file type validation", () => {
     it("accepts a valid .xlsx file", async () => {
       const user = userEvent.setup();
       renderPage();
 
-      await user.click(screen.getByLabelText(/ประวัติการรับคืน/));
+      await user.click(screen.getByLabelText(/ข้อมูลหลักเครื่องมือ/));
       await user.click(screen.getByRole("button", { name: "ถัดไป" }));
       await user.upload(screen.getByLabelText("เลือกไฟล์สำหรับนำเข้าข้อมูลเดิม"), makeTestFile("valid.xlsx"));
 
@@ -262,19 +219,12 @@ describe("LegacyImportCreatePage", () => {
       ["legacy.xls", "application/vnd.ms-excel"],
       ["data.csv", "text/csv"],
       ["scan.pdf", "application/pdf"],
-      // Misleading MIME: an xlsx content-type on a non-.xlsx filename must
-      // still be rejected -- the extension check is authoritative, not the
-      // browser-supplied MIME type.
       ["renamed.txt", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
     ])("rejects %s with an accessible Thai error and keeps continue disabled", async (name, type) => {
-      // applyAccept: false simulates what the `accept` attribute cannot
-      // prevent in a real browser -- picking a non-matching file via "all
-      // files" in the native dialog. The dropzone's own isAllowedImportFile
-      // gate (not the browser) must be what actually rejects this file.
       const user = userEvent.setup({ applyAccept: false });
       renderPage();
 
-      await user.click(screen.getByLabelText(/ประวัติการรับคืน/));
+      await user.click(screen.getByLabelText(/ข้อมูลหลักเครื่องมือ/));
       await user.click(screen.getByRole("button", { name: "ถัดไป" }));
 
       const rejected = new File([new Uint8Array(10)], name, { type });
@@ -284,23 +234,113 @@ describe("LegacyImportCreatePage", () => {
       expect(screen.queryByText(name)).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "ตรวจสอบข้อมูล" })).toBeDisabled();
     });
+  });
 
-    it("recovers after an invalid file by accepting a subsequently selected valid .xlsx file", async () => {
-      const user = userEvent.setup({ applyAccept: false });
+  describe("legacy_transaction_history migration authority flow", () => {
+    beforeEach(() => {
+      createLegacyHistorySession.mockResolvedValue({ id: "33333333-3333-4333-8333-333333333333" });
+      uploadLegacyHistorySource.mockResolvedValue({ id: "source-1", checksum: "a".repeat(64) });
+    });
+
+    async function getToAuthorityCheck(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(screen.getByLabelText(/ประวัติการรับ-ส่งเครื่องมือเดิม/));
+      await user.click(screen.getByRole("button", { name: "ถัดไป" }));
+      await user.upload(screen.getByLabelText("เลือกไฟล์สำหรับนำเข้าข้อมูลเดิม"), makeTestFile());
+      await screen.findByText("legacy-history.xlsx");
+      await user.click(screen.getByRole("button", { name: "ตรวจสอบข้อมูล" }));
+    }
+
+    it("creates a real session, uploads through the real API, and navigates straight to the session when the checksum is already approved", async () => {
+      findLegacyMigrationAuthorityByChecksum.mockResolvedValue({
+        id: "auth-1",
+        scope: "pr21_legacy_transaction_history_v1",
+        approved_workbook_sha256: "a".repeat(64),
+        approved_by_user_id: "user-1",
+        approved_at: "2026-08-01T00:00:00Z",
+        created_at: "2026-08-01T00:00:00Z",
+      });
+      const user = userEvent.setup();
       renderPage();
 
-      await user.click(screen.getByLabelText(/ประวัติการรับคืน/));
-      await user.click(screen.getByRole("button", { name: "ถัดไป" }));
+      await getToAuthorityCheck(user);
 
-      const input = screen.getByLabelText("เลือกไฟล์สำหรับนำเข้าข้อมูลเดิม");
-      await user.upload(input, new File([new Uint8Array(10)], "bad.csv", { type: "text/csv" }));
-      expect(await screen.findByRole("alert")).toHaveTextContent("รองรับเฉพาะไฟล์ .xlsx เท่านั้น");
+      await waitFor(() => expect(uploadLegacyHistorySource).toHaveBeenCalledTimes(1));
+      expect(createLegacyHistorySession).toHaveBeenCalledTimes(1);
+      expect(findLegacyMigrationAuthorityByChecksum).toHaveBeenCalledWith("a".repeat(64));
+      expect(await screen.findByText("session detail page")).toBeInTheDocument();
+      expect(approveLegacyMigrationAuthority).not.toHaveBeenCalled();
+    });
 
-      await user.upload(input, makeTestFile("recovered.xlsx"));
+    it("shows an explicit, never-auto-approved approval step when the checksum has not been approved yet", async () => {
+      findLegacyMigrationAuthorityByChecksum.mockResolvedValue(null);
+      const user = userEvent.setup();
+      renderPage();
 
-      expect(await screen.findByText("recovered.xlsx")).toBeInTheDocument();
-      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "ตรวจสอบข้อมูล" })).toBeEnabled();
+      await getToAuthorityCheck(user);
+
+      expect(await screen.findByText("อนุมัติไฟล์สำหรับนำเข้าประวัติการรับ-ส่งเครื่องมือเดิม")).toBeInTheDocument();
+      expect(approveLegacyMigrationAuthority).not.toHaveBeenCalled();
+      expect(screen.queryByText("session detail page")).not.toBeInTheDocument();
+    });
+
+    it("requires an explicit confirmation dialog before approving, then navigates to the session", async () => {
+      findLegacyMigrationAuthorityByChecksum.mockResolvedValue(null);
+      approveLegacyMigrationAuthority.mockResolvedValue({
+        authority: {
+          id: "auth-2",
+          scope: "pr21_legacy_transaction_history_v1",
+          approved_workbook_sha256: "a".repeat(64),
+          approved_by_user_id: "user-1",
+          approved_at: "2026-08-01T00:00:00Z",
+          created_at: "2026-08-01T00:00:00Z",
+        },
+        created: true,
+      });
+      const user = userEvent.setup();
+      renderPage();
+
+      await getToAuthorityCheck(user);
+      await screen.findByText("อนุมัติไฟล์สำหรับนำเข้าประวัติการรับ-ส่งเครื่องมือเดิม");
+
+      await user.click(screen.getByRole("button", { name: "อนุมัติไฟล์นี้" }));
+      const dialog = await screen.findByRole("alertdialog");
+      expect(approveLegacyMigrationAuthority).not.toHaveBeenCalled();
+
+      await user.click(within(dialog).getByRole("button", { name: "อนุมัติ" }));
+
+      await waitFor(() => expect(approveLegacyMigrationAuthority).toHaveBeenCalledWith("a".repeat(64)));
+      expect(await screen.findByText("session detail page")).toBeInTheDocument();
+    });
+
+    it("cancelling the approval dialog never calls approve", async () => {
+      findLegacyMigrationAuthorityByChecksum.mockResolvedValue(null);
+      const user = userEvent.setup();
+      renderPage();
+
+      await getToAuthorityCheck(user);
+      await screen.findByText("อนุมัติไฟล์สำหรับนำเข้าประวัติการรับ-ส่งเครื่องมือเดิม");
+      await user.click(screen.getByRole("button", { name: "อนุมัติไฟล์นี้" }));
+      const dialog = await screen.findByRole("alertdialog");
+      await user.click(within(dialog).getByRole("button", { name: "ยกเลิก" }));
+
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      expect(approveLegacyMigrationAuthority).not.toHaveBeenCalled();
+    });
+
+    it("shows a Thai error message and stays on the approval step when the approve call fails", async () => {
+      findLegacyMigrationAuthorityByChecksum.mockResolvedValue(null);
+      approveLegacyMigrationAuthority.mockRejectedValue(new Error("network error"));
+      const user = userEvent.setup();
+      renderPage();
+
+      await getToAuthorityCheck(user);
+      await screen.findByText("อนุมัติไฟล์สำหรับนำเข้าประวัติการรับ-ส่งเครื่องมือเดิม");
+      await user.click(screen.getByRole("button", { name: "อนุมัติไฟล์นี้" }));
+      const dialog = await screen.findByRole("alertdialog");
+      await user.click(within(dialog).getByRole("button", { name: "อนุมัติ" }));
+
+      expect(await screen.findByRole("alert")).toBeInTheDocument();
+      expect(screen.getByText("อนุมัติไฟล์สำหรับนำเข้าประวัติการรับ-ส่งเครื่องมือเดิม")).toBeInTheDocument();
     });
   });
 });

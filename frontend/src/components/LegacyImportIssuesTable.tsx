@@ -11,11 +11,12 @@ function SeverityBadge({ severity }: { severity: ImportFinding["severity"] }) {
   );
 }
 
-// PR19B "Row-level findings skeleton": representative mock rows only,
-// shaped like the real backend's ValidationFindingOut
-// (id/row_number/field/error_code/message/severity) -- no `submittedValue`
-// field exists in that contract, so the offending value (if relevant) is
-// folded into `message` text instead. Renders a table on wider screens and
+// Roadmap PR20F/PR21E: renders real findings, shaped exactly like the real
+// backend's ValidationFindingOut (id/row_number/field/error_code/message/
+// severity) -- no `submittedValue` field exists in that contract, so the
+// offending value (if relevant) is folded into `message` text instead.
+// Dataset-agnostic, shared by both real workflows. Renders a table on
+// wider screens and
 // a stacked-card fallback on small screens (task brief, Accessibility:
 // "responsive tables or card fallback on small screens").
 export function LegacyImportIssuesTable({ findings }: { findings: ImportFinding[] }) {

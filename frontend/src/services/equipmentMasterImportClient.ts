@@ -1,4 +1,5 @@
 import { api } from "@/services/api";
+import { getImportSessionSummary } from "@/services/importSessionClient";
 import type { Page } from "@/types";
 import type {
   DryRunPlanConfirmOut,
@@ -9,13 +10,13 @@ import type {
   ValidationFindingOut,
 } from "@/types/legacyImportApi";
 
-// Roadmap PR20F: the one seam every Equipment Master real-workflow
+// Roadmap PR20F/PR21E: the one seam every Equipment Master real-workflow
 // page/component goes through. Every function here is a thin, honest
 // wrapper over the actual merged backend routes
 // (backend/app/api/v1/import_sessions.py) -- no business logic, no row
 // classification, no client-side recomputation of anything the backend
-// already decided. Never used for Receive/Issue History, which remain on
-// services/legacyImportClient.ts's MockImportClient.
+// already decided. Never used for Legacy Transaction History, which goes
+// through services/legacyHistoryImportClient.ts instead.
 
 export const EQUIPMENT_MASTER_DATASET_TYPE = "equipment_master";
 
@@ -37,8 +38,7 @@ export async function listEquipmentMasterSessions(params: {
 }
 
 export async function getEquipmentMasterSession(sessionId: string): Promise<ImportSessionSummaryOut> {
-  const resp = await api.get<ImportSessionSummaryOut>(`/import-sessions/${sessionId}`);
-  return resp.data;
+  return getImportSessionSummary(sessionId);
 }
 
 // Roadmap PR20A (design §6.2): the single authoritative,
