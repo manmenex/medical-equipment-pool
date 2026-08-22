@@ -10,19 +10,39 @@ ordering
 
 ## Current baseline
 
-Current baseline: `d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` on
+Current baseline: `c802d66c9d1e5395cd20591c451ebdc0cefbf7df` on
 `claude/medical-equipment-pool-0c7fz0` — the real squash-merge SHA of
-GitHub PR #110, Roadmap PR21E (Legacy History Frontend Real Integration).
-PR21E's final independently reviewed feature-branch head was
-`8c2b1dacac9996b7a4cab89ff70b6939471ef164` (independent Final Merge Gate:
-zero review threads, zero findings of any kind — a genuine absence of
-findings, not an accepted P2 — CI green 6/6 on that exact head) — **that
-reviewed head is not the baseline**; the squash commit actually landed on
-the base branch, `d64d50d...`, is. With PR21E merged, **Roadmap PR21
-(Legacy Receive and Issue History Import) is now fully complete** — every
-implementation slice (Foundation, A, B, C, D1, D2, E0, E) is merged. See
-`docs/DECISION_LOG.md` ("Roadmap PR21 complete: PR21D1–PR21F merged") for
-the closure record.
+GitHub PR #113, the post-PR22A governance synchronization (documentation-
+only), squash-merged on top of `c924d8ba2c8c5d933ea36ea3d488e2550615df40`
+(GitHub PR #112, Roadmap PR22A — Legacy Data Validation and
+Reconciliation Architecture, design only). PR #113's final independently
+reviewed feature-branch head was
+`ec02ced43d649c8c813a458762f110b13eb5ab7d` (independent Final Merge
+Gate: zero review threads, zero comments, CI green 6/6 on that exact
+head) — **that reviewed head is not the baseline**; the squash commit
+actually landed on the base branch, `c802d66...`, is, independently
+verified tree-identical to that reviewed head with sole parent
+`c924d8b...` confirmed. This baseline advances even though PR #113 is
+documentation-only, consistent with this repository's squash-baseline
+discipline: the authoritative baseline tracks the exact commit landed on
+the base branch, not only commits that touch runtime code.
+
+**Roadmap PR22 (Legacy Data Validation and Reconciliation)'s
+architecture design is merged (GitHub PR #112, folded into this
+baseline), and all seven Owner Decisions (OD-PR22-1 through OD-PR22-7)
+are now RESOLVED / OWNER APPROVED**, recorded by the PR22 Owner Decision
+Closure round. PR22 implementation is **still not started** — every
+PR22B-G slice becomes eligible only once the governance PR recording
+this closure round itself merges; **the next planned step is PR22B**.
+
+`d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` (GitHub PR #110, Roadmap
+PR21E — Legacy History Frontend Real Integration) is now historical,
+superseded first by `e07a36a...` (GitHub PR #111, PR21F), then
+`c924d8b...` (GitHub PR #112, PR22A), and now by this baseline. With
+PR21E merged, **Roadmap PR21 (Legacy Receive and Issue History Import)
+is now fully complete** — every implementation slice (Foundation, A, B,
+C, D1, D2, E0, E) is merged. See `docs/DECISION_LOG.md` ("Roadmap PR21
+complete: PR21D1–PR21F merged") for the closure record.
 
 This baseline follows `78eeea7827c53443f34de9e516573c2ed7c59581` (GitHub
 PR #109, PR21E0 — Legacy Import Operator API Surface), `c4788de06bed9a13aa5ec981fb8e19c67bc5720b`
@@ -69,28 +89,32 @@ Owner Decision numbering/cross-reference sweep; the new §9.J temporal
 coverage boundary and OD-PR22-7; the sign-off-ambiguity resolution
 blocking all final sign-off until OD-PR22-7 resolves), squash SHA
 `c924d8ba2c8c5d933ea36ea3d488e2550615df40`, sole parent `e07a36a...`
-(PR21F) — verified tree-identical to the final independently reviewed
-feature-branch head (zero review threads, zero comments, CI green 6/6
-on that exact head). This is design only: no `backend/**`, `frontend/**`,
-`alembic/**`, or `tests/**` file was touched by it; no implementation
-slice is authorized; all seven Owner Decisions (OD-PR22-1 through
-OD-PR22-7) remain **OPEN**, pending Owner review and resolution.
-**Current work is now that Owner review/resolution of OD-PR22-1 through
-OD-PR22-7** — no PR22 implementation slice (PR22B-G) may begin before
-its own relevant Owner Decisions resolve.
+(PR21F). The post-PR22A governance synchronization (GitHub PR #113) has
+since also merged — squash SHA `c802d66c9d1e5395cd20591c451ebdc0cefbf7df`
+(see "Current baseline" above), docs-only. **All seven Owner Decisions
+(OD-PR22-1 through OD-PR22-7) are now RESOLVED / OWNER APPROVED**,
+recorded in the design document's own §36 by the PR22 Owner Decision
+Closure round (the Owner approved all seven per Recommendation). No
+`backend/**`, `frontend/**`, `alembic/**`, or `tests/**` file was touched
+by the design, the governance sync, or this closure round. **Current
+work is now PR22B** — the first implementation slice, eligible once the
+governance PR recording this closure round itself merges; no other
+PR22B-G slice may begin ahead of its own ordinary implementation
+dependencies (e.g. PR22C depends on PR22B, PR22E depends on PR22D).
 
 ## Next sequence
 
 Roadmap PR19, PR20 (Equipment Master Import), and PR21 (Legacy Receive
 and Issue History Import) are all now fully complete. **Roadmap PR22
 (Legacy Data Validation and Reconciliation)'s architecture design has
-merged (GitHub PR #112); implementation has not started** — per `docs/audits/04-consolidated-implementation-plan.md`
+merged and all seven Owner Decisions are resolved (GitHub PR #112);
+implementation has not started** — per `docs/audits/04-consolidated-implementation-plan.md`
 Part D, PR22 depends on PR20 and PR21 (both now satisfied) and covers:
 cross-import validation, reconciliation, source traceability
 verification, duplicate review, and unified legacy/new history
 validation, including Issue↔Receive pairing (deliberately deferred by
-PR21's own event-first architecture, and addressed only as a design-time
-Owner Decision by PR22A, never silently finalized).
+PR21's own event-first architecture, and resolved as a design-time Owner
+Decision — OD-PR22-1 — by this closure round, never silently finalized).
 
 1. PR19A — Legacy Import Foundation (backend) — **complete.**
 2. PR19B — Legacy Import Frontend Skeleton — **complete, merged as GitHub
@@ -105,8 +129,9 @@ Owner Decision by PR22A, never silently finalized).
 5. PR22 — Validation and reconciliation: cross-import validation,
    reconciliation, source traceability verification, duplicate review, and
    unified legacy/new history validation. **Architecture design merged
-   (GitHub PR #112); implementation not started** — the next planned
-   Roadmap item.
+   (GitHub PR #112), all seven Owner Decisions resolved; implementation
+   not started** — the next planned Roadmap item; next eligible slice is
+   PR22B.
 6. PR23 — Cutover readiness.
 7. PR24 — Go-live / deployment.
 
@@ -149,12 +174,13 @@ Legacy migration and reconciliation are mandatory before PR24.
   Owner Decisions (OD-PR21-0 through OD-PR21-6) are RESOLVED and
   implemented (PR21-Foundation/A/B/C/D1/D2/E0/E, all merged).** **PR22's
   own design (`docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`,
-  GitHub PR #112) has since named and scoped cross-import validation,
-  reconciliation ownership, and Issue↔Receive pairing policy, but does
-  not resolve them — all seven Owner Decisions (OD-PR22-1 through
-  OD-PR22-7) remain OPEN, pending Owner review; no PR22 implementation
-  slice may begin before its own relevant Owner Decisions resolve.**
-  PR23 must define cutover evidence. PR19B's
+  GitHub PR #112) has since named, scoped, and — via the PR22 Owner
+  Decision Closure round — resolved cross-import validation,
+  reconciliation ownership, and Issue↔Receive pairing policy: all seven
+  Owner Decisions (OD-PR22-1 through OD-PR22-7) are RESOLVED / OWNER
+  APPROVED. PR22 implementation is still not started; the next eligible
+  slice is PR22B, once the governance PR recording this closure round
+  merges.** PR23 must define cutover evidence. PR19B's
   category labels were a UI preview only and did not resolve any of
   this — PR20's and PR21's own implementations are what actually resolved
   it.
