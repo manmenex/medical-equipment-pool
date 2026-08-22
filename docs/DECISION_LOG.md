@@ -3845,3 +3845,58 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
 - **Status:** Documentation-only; no runtime behavior changed. PR #111
   remains Draft, unmerged, pending a fresh independent review of this
   exact new head.
+
+## 2026-08-21 — Roadmap PR22 architecture design started (design only, no implementation)
+
+- **Decision/record:** Architecture design work for Roadmap PR22 (Legacy
+  Data Validation and Reconciliation) has started, branched from
+  `e07a36aa8482b7b97368a6adb9cfcc81c93d0ee0` (GitHub PR #111's real
+  squash-merge SHA — PR21F, Roadmap PR21's governance closure). New
+  document: `docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md` (36
+  sections: workflow, semantics, finding taxonomy, pairing/duplicate/
+  corrected-source policy, domain model, run/finding/sign-off lifecycle,
+  authorization, concurrency, lock ordering, API, error contract,
+  performance, audit, retention/privacy, frontend/reporting principles,
+  implementation slices, and 6 minimized Owner Decisions).
+- **Grounded in direct inspection of the merged runtime**, not
+  conversational memory: `LegacyEquipmentEvent`/`LegacyMigrationAuthority`/
+  `LegacyWardAlias` schema (`backend/app/models/legacy_history.py`,
+  migration `0019_legacy_history_foundation.py`); the `ImportSession`/
+  `ImportJob` CAS/lease/fencing/audit framework
+  (`backend/app/models/import_session.py`, `backend/app/crud/import_job.py`,
+  `backend/app/core/audit.py`); `Equipment.version`'s CAS pattern
+  (`backend/app/crud/equipment.py`); the flat `DomainError` exception
+  hierarchy and unified-stale-contract convention
+  (`backend/app/core/exceptions.py`); the PR16-PR18 `ExportDocument`
+  report/export architecture (`backend/app/schemas/report_export.py`,
+  `backend/app/services/report_pdf_service.py`/`report_xlsx_service.py`);
+  `Page[T]` cursor pagination (`backend/app/schemas/common.py`,
+  `backend/app/utils/pagination.py`); the 3-role model
+  (`backend/app/models/user.py`, `backend/app/api/v1/deps.py`); and
+  `BorrowTransaction`/`Equipment`/`Ward` (`backend/app/models/transaction.py`,
+  `equipment.py`, `master_data.py`). Full citations in the design
+  document's own §4.
+- **Status: DESIGN ONLY.** No `backend/**`, `frontend/**`, `alembic/**`,
+  or `tests/**` file is created or modified. No implementation slice is
+  authorized. **Roadmap PR22 remains not started** for implementation
+  purposes — only its architecture design is in progress. Roadmap PR21
+  remains fully complete, unaffected by this entry.
+- **What this entry does not do:** it does not resolve any of the six
+  Owner Decisions the design document records (OD-PR22-1 through
+  OD-PR22-6); it does not begin PR23 or PR24; it does not redefine any
+  PR21 schema, identity, or immutability guarantee (§4.9 of the design
+  document quotes and preserves PR21's own binding constraints verbatim).
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6 (Design
+  PR Policy), following PR19A's/PR20's/PR21's own design-PR precedent —
+  this entry and the new design document are the full governance-update
+  scope for a design-only PR; the broader `docs/ROADMAP.md`/
+  `docs/ROADMAP_STATUS.md`/`knowledge/*` sweep is intentionally deferred
+  to the post-implementation governance sync, exactly as it was for
+  PR19A, PR20, and PR21's own design PRs. Minimal "design in progress"
+  notes were added to `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, and
+  `knowledge/CONTEXT.md` only.
+- **Source:** `docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md` (new
+  document).
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this entry. PR22 implementation has
+  **not** started.

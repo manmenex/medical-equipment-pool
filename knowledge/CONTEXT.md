@@ -58,24 +58,29 @@ the full slice-by-slice record.
 ## Current work
 
 Roadmap PR21 (Legacy Receive and Issue History Import) is now fully
-complete — PR21-Foundation (#100), PR21A (#103), PR21B (#104), PR21C
-(#105), PR21D1 (#107), PR21D2 (#108), PR21E0 (#109), and PR21E (#110) are
-all merged. This PR21F governance synchronization records that completion
-and establishes `d64d50d...` as the current baseline; it changes no
-runtime behavior — no backend, frontend, migration, or CI file is touched
-by this documentation-only sync.
+complete — implementation (PR21-Foundation #100, PR21A #103, PR21B #104,
+PR21C #105, PR21D1 #107, PR21D2 #108, PR21E0 #109, PR21E #110) and
+governance closure (PR21F, GitHub PR #111, squash SHA
+`e07a36aa8482b7b97368a6adb9cfcc81c93d0ee0`) are both merged. **Current
+work is Roadmap PR22 (Legacy Data Validation and Reconciliation)'s
+architecture design** — `docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`,
+Draft PR22A, branched from `e07a36a...`. This is design only: no
+`backend/**`, `frontend/**`, `alembic/**`, or `tests/**` file is touched;
+no implementation slice is authorized; every PR22 Owner Decision remains
+unresolved pending independent review.
 
 ## Next sequence
 
 Roadmap PR19, PR20 (Equipment Master Import), and PR21 (Legacy Receive
 and Issue History Import) are all now fully complete. **Roadmap PR22
-(Legacy Data Validation and Reconciliation) is the next planned Roadmap
-item, not started** — per `docs/audits/04-consolidated-implementation-plan.md`
+(Legacy Data Validation and Reconciliation)'s architecture design is in
+progress; implementation has not started** — per `docs/audits/04-consolidated-implementation-plan.md`
 Part D, PR22 depends on PR20 and PR21 (both now satisfied) and covers:
 cross-import validation, reconciliation, source traceability
 verification, duplicate review, and unified legacy/new history
 validation, including Issue↔Receive pairing (deliberately deferred by
-PR21's own event-first architecture).
+PR21's own event-first architecture, and addressed only as a design-time
+Owner Decision by PR22A, never silently finalized).
 
 1. PR19A — Legacy Import Foundation (backend) — **complete.**
 2. PR19B — Legacy Import Frontend Skeleton — **complete, merged as GitHub
