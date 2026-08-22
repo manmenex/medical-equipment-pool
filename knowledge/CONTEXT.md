@@ -61,20 +61,30 @@ Roadmap PR21 (Legacy Receive and Issue History Import) is now fully
 complete — implementation (PR21-Foundation #100, PR21A #103, PR21B #104,
 PR21C #105, PR21D1 #107, PR21D2 #108, PR21E0 #109, PR21E #110) and
 governance closure (PR21F, GitHub PR #111, squash SHA
-`e07a36aa8482b7b97368a6adb9cfcc81c93d0ee0`) are both merged. **Current
-work is Roadmap PR22 (Legacy Data Validation and Reconciliation)'s
-architecture design** — `docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`,
-Draft PR22A, branched from `e07a36a...`. This is design only: no
-`backend/**`, `frontend/**`, `alembic/**`, or `tests/**` file is touched;
-no implementation slice is authorized; every PR22 Owner Decision remains
-unresolved pending independent review.
+`e07a36aa8482b7b97368a6adb9cfcc81c93d0ee0`) are both merged. **Roadmap
+PR22 (Legacy Data Validation and Reconciliation)'s architecture design
+has merged** — `docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`,
+GitHub PR #112 (PR22A, three independent-review fix rounds folded in:
+Owner Decision numbering/cross-reference sweep; the new §9.J temporal
+coverage boundary and OD-PR22-7; the sign-off-ambiguity resolution
+blocking all final sign-off until OD-PR22-7 resolves), squash SHA
+`c924d8ba2c8c5d933ea36ea3d488e2550615df40`, sole parent `e07a36a...`
+(PR21F) — verified tree-identical to the final independently reviewed
+feature-branch head (zero review threads, zero comments, CI green 6/6
+on that exact head). This is design only: no `backend/**`, `frontend/**`,
+`alembic/**`, or `tests/**` file was touched by it; no implementation
+slice is authorized; all seven Owner Decisions (OD-PR22-1 through
+OD-PR22-7) remain **OPEN**, pending Owner review and resolution.
+**Current work is now that Owner review/resolution of OD-PR22-1 through
+OD-PR22-7** — no PR22 implementation slice (PR22B-G) may begin before
+its own relevant Owner Decisions resolve.
 
 ## Next sequence
 
 Roadmap PR19, PR20 (Equipment Master Import), and PR21 (Legacy Receive
 and Issue History Import) are all now fully complete. **Roadmap PR22
-(Legacy Data Validation and Reconciliation)'s architecture design is in
-progress; implementation has not started** — per `docs/audits/04-consolidated-implementation-plan.md`
+(Legacy Data Validation and Reconciliation)'s architecture design has
+merged (GitHub PR #112); implementation has not started** — per `docs/audits/04-consolidated-implementation-plan.md`
 Part D, PR22 depends on PR20 and PR21 (both now satisfied) and covers:
 cross-import validation, reconciliation, source traceability
 verification, duplicate review, and unified legacy/new history
@@ -94,8 +104,9 @@ Owner Decision by PR22A, never silently finalized).
    Owner Decision Closure rounds GitHub PR #101/#102/#106).
 5. PR22 — Validation and reconciliation: cross-import validation,
    reconciliation, source traceability verification, duplicate review, and
-   unified legacy/new history validation. **Not started** — the next
-   planned Roadmap item.
+   unified legacy/new history validation. **Architecture design merged
+   (GitHub PR #112); implementation not started** — the next planned
+   Roadmap item.
 6. PR23 — Cutover readiness.
 7. PR24 — Go-live / deployment.
 
@@ -136,9 +147,14 @@ Legacy migration and reconciliation are mandatory before PR24.
   PR #98/#99) has since defined transaction BME-name/user and Ward
   mappings, event identity, and the SDC exclusion in full — all seven
   Owner Decisions (OD-PR21-0 through OD-PR21-6) are RESOLVED and
-  implemented (PR21-Foundation/A/B/C/D1/D2/E0/E, all merged).** PR22 must
-  still define cross-import validation, reconciliation ownership, and
-  Issue↔Receive pairing; PR23 must define cutover evidence. PR19B's
+  implemented (PR21-Foundation/A/B/C/D1/D2/E0/E, all merged).** **PR22's
+  own design (`docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`,
+  GitHub PR #112) has since named and scoped cross-import validation,
+  reconciliation ownership, and Issue↔Receive pairing policy, but does
+  not resolve them — all seven Owner Decisions (OD-PR22-1 through
+  OD-PR22-7) remain OPEN, pending Owner review; no PR22 implementation
+  slice may begin before its own relevant Owner Decisions resolve.**
+  PR23 must define cutover evidence. PR19B's
   category labels were a UI preview only and did not resolve any of
   this — PR20's and PR21's own implementations are what actually resolved
   it.

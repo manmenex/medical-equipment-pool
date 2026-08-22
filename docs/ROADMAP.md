@@ -36,10 +36,14 @@ legacy dataset imports required for Version 1 (Equipment Master, PR20;
 legacy transaction history, PR21) are now real, backend-and-frontend-
 integrated workflows — no production import path goes through
 `MockImportClient` or any PR19B mock/fixture data. **The next planned
-Roadmap item is PR22 — Legacy Data Validation and Reconciliation — its
-architecture design is in progress** (`docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`,
-Draft PR22A); implementation is **not started**, and its Owner Decisions
-are **not yet resolved**.
+Roadmap item is PR22 — Legacy Data Validation and Reconciliation. Its
+architecture design has merged** (`docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`,
+GitHub PR #112, squash SHA `c924d8ba2c8c5d933ea36ea3d488e2550615df40`,
+sole parent `e07a36a...`/PR21F) — the design document itself is complete
+and merged, but PR22 **implementation is not started**, and all seven
+Owner Decisions (OD-PR22-1 through OD-PR22-7) remain **OPEN**, pending
+Owner review and resolution before any implementation slice (PR22B-G)
+may begin.
 
 **Historical — superseded by the current baseline above (`d64d50d...`,
 PR21E):** `2743af849702ef551927b9c362421df08c80b5d9` — the real
@@ -576,7 +580,7 @@ chronology.
 | PR19B | Legacy Import Frontend Skeleton (workflow-review prototype only; no real import) — **COMPLETE / MERGED** as GitHub PR #80, squash SHA `04f5bf5c76b51744981d1cc8072c074e604224e9` |
 | PR20 | Equipment Master Import: BCM, Item Number, equipment attributes, existing hospital QR linkage, equipment duplicate detection, and equipment-record validation — **COMPLETE / MERGED** (design #89; PR20A #90, PR20B #91, OD-1–OD-4 resolution #92, PR20C #93, PR20D #94, PR20E #95, PR20F #96), squash SHA `2743af849702ef551927b9c362421df08c80b5d9` (PR20F, historical baseline — superseded by PR21E, see below) |
 | PR21 | Legacy Receive and Issue History Import: Receive/Issue history, legacy BME-name preservation and user mapping, Ward normalization and mapping, transaction-row duplicate detection, and transaction source references — **COMPLETE / MERGED** (design #98/#99; PR21-Foundation #100; Owner Decision Closure Rounds 1-3 #101/#102/#106; PR21A #103, PR21B #104, PR21C #105, PR21D1 #107, PR21D2 #108, PR21E0 #109, PR21E #110), squash SHA `d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` (PR21E, current baseline) |
-| PR22 | Legacy Data Validation and Reconciliation: cross-import validation, reconciliation, source traceability verification, duplicate review, and unified legacy/new history validation — **DESIGN IN PROGRESS** (architecture design `docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`, Draft PR22A); implementation **not started**, Owner Decisions **not yet resolved** |
+| PR22 | Legacy Data Validation and Reconciliation: cross-import validation, reconciliation, source traceability verification, duplicate review, and unified legacy/new history validation — **DESIGN MERGED, IMPLEMENTATION NOT STARTED** (architecture design `docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`, GitHub PR #112, squash SHA `c924d8ba2c8c5d933ea36ea3d488e2550615df40`); all seven Owner Decisions (OD-PR22-1 through OD-PR22-7) remain **OPEN** |
 | PR23 | Cutover Readiness |
 | PR24 | Go-live / deployment, blocked by PR19–PR23 |
 
