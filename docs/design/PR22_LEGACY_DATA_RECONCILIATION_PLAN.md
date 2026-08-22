@@ -1243,12 +1243,17 @@ requirement that sign-off must never mean "data is objectively perfect":
 This is a statement about **review completeness against one specific,
 immutable run**, never a statement about the objective correctness of
 the imported data itself. A run with findings dispositioned
-`accepted_unresolved` or `requires_correction` can still be validly
-signed off — sign-off attests that review happened and conclusions were
-reached, not that every conclusion was "everything is fine." Whether a
-given mix of dispositions is *acceptable for Go-live* is a Roadmap PR23
-cutover-readiness policy question, explicitly out of this design's scope
-(§7).
+`confirmed_valid`, `confirmed_duplicate`, or `accepted_unresolved` can
+still be validly signed off — sign-off attests that review happened and
+conclusions were reached, not that every conclusion was "everything is
+fine." **A run with any finding still dispositioned `requires_correction`
+can never be signed off** (OD-PR22-6, §36) — that disposition means a
+separate, explicit, audited correction workflow is required first (§19);
+sign-off is never used to bypass it. Whether a given mix of the three
+sign-off-eligible dispositions is *acceptable for Go-live* is a Roadmap
+PR23 cutover-readiness policy question, explicitly out of this design's
+scope (§7) — but whether sign-off can occur *at all* is not a PR23
+question, it is decided here and by OD-PR22-6.
 
 Sign-off never certifies hospital history outside the approved coverage
 window — only that the findings generated *for that window* were
@@ -1257,32 +1262,48 @@ reviewed.
 **Sign-off preconditions (all required, no exceptions)**: a run may
 reach final sign-off only when every one of the following holds:
 
-1. The reconciliation run and its snapshot are immutable (§17.2, §18) —
-   sign-off binds to one exact, closed run.
+1. The reconciliation run and its snapshot are immutable and completed
+   (§17.2, §18) — sign-off binds to one exact, closed run.
 2. The rule set version (§24) under which the run's findings were
    computed is recorded and unambiguous.
 3. The applicable data/migration authorities (§4.9, §13) in scope for
    the run are recorded and unambiguous.
 4. **The authoritative temporal coverage boundary is resolved under
    OD-PR22-7 (§9.J, §36)** — `legacy_coverage_start`/
-   `legacy_coverage_end` (and `live_system_start`, if the Owner adopts
-   the two-boundary model) are explicit, persisted, and approved; an
-   implicit `observed_min_event_at`/`observed_max_event_at` value never
-   substitutes for an approved boundary.
-5. Every sign-off-blocking finding on the run has been assigned an
-   accepted disposition under the approved disposition policy (§19).
-6. The caller invoking sign-off is authorized to sign off (§21).
+   `legacy_coverage_end`/`live_system_start` are explicit, persisted,
+   and approved; an implicit `observed_min_event_at`/
+   `observed_max_event_at` value never substitutes for an approved
+   boundary.
+5. Every finding on the run has been assigned an accepted disposition
+   under the approved disposition policy (§19) — `COUNT(findings WHERE
+   disposition IS NULL) == 0` for the run.
+6. **Zero findings on the run are dispositioned `requires_correction`**
+   (OD-PR22-6, §36) — `COUNT(findings WHERE disposition =
+   'requires_correction') == 0` for the run. `accepted_unresolved`,
+   `confirmed_valid`, and `confirmed_duplicate` do not block sign-off;
+   `requires_correction` always does, with no exception.
+7. The caller invoking sign-off is authorized to sign off (§21).
+8. Freshness/concurrency checks pass (§22) — the run's `version` matches
+   what the sign-off call supplied, and no finding's disposition changed
+   between the caller's last read and the sign-off write.
 
-**OD-PR22-7 is now RESOLVED / OWNER APPROVED (§36) — final sign-off is
-authorized**, subject strictly to every precondition above continuing
-to hold for the specific run being signed off. There is no separate
-interim, partial, or provisional sign-off mode: precondition 4 is not
-optional, and a sign-off write is rejected if it is not satisfied for
-that run. The original, narrower attestation wording (naming only
-`rule_version` and `snapshot_as_of`, without a temporal coverage clause)
-is retired by this design and must not be implemented as an alternative
-or fallback attestation — the attestation wording above, binding
-temporal coverage, is the only sign-off contract this design authorizes.
+Preconditions 5 and 6 are evaluated together, in the same transaction as
+the sign-off INSERT (§22): a finding with a null disposition and a
+finding dispositioned `requires_correction` are two independently
+sufficient reasons to reject a sign-off attempt, and both are checked —
+satisfying one never substitutes for the other.
+
+**OD-PR22-6 and OD-PR22-7 are both now RESOLVED / OWNER APPROVED (§36)
+— final sign-off is authorized**, subject strictly to every precondition
+above continuing to hold for the specific run being signed off. There is
+no separate interim, partial, or provisional sign-off mode: no
+precondition above is optional, and a sign-off write is rejected if any
+one of them is not satisfied for that run. The original, narrower
+attestation wording (naming only `rule_version` and `snapshot_as_of`,
+without a temporal coverage clause) is retired by this design and must
+not be implemented as an alternative or fallback attestation — the
+attestation wording above, binding temporal coverage, is the only
+sign-off contract this design authorizes.
 
 *Historical note (fix round 3, superseded by OD-PR22-7's resolution
 above): before OD-PR22-7 resolved, this section stated that no
@@ -1292,14 +1313,24 @@ though run creation, analysis, snapshot persistence, finding review, and
 That gate no longer applies — it is recorded here only as the design's
 own review history, not as current normative status.*
 
+*Historical note (Owner Decision Closure fix round 1): an earlier
+version of this section stated "a run with findings dispositioned
+`accepted_unresolved` or `requires_correction` can still be validly
+signed off." That statement was a genuine contradiction with §34's and
+§36's own OD-PR22-6 text, which always required
+`requires_correction == 0` before sign-off. It has been corrected above
+— `requires_correction` never permits sign-off; only `confirmed_valid`,
+`confirmed_duplicate`, and `accepted_unresolved` do.*
+
 **Acceptance criterion (current normative rule):** final sign-off is
 allowed only if every precondition above is satisfied for the run being
-signed off — an immutable run/snapshot, unambiguous rule version and
-data/migration authority scope, explicit approved
+signed off — an immutable, completed run/snapshot, unambiguous rule
+version and data/migration authority scope, explicit approved
 `legacy_coverage_start`/`legacy_coverage_end`/`live_system_start`
 (never an implicit `observed_min_event_at`/`observed_max_event_at`
-value in their place), every sign-off-blocking finding dispositioned,
-and an authorized caller. Sign-off binds the exact immutable
+value in their place), every finding dispositioned with zero findings
+left `requires_correction`, an authorized caller, and passing
+freshness/concurrency checks. Sign-off binds the exact immutable
 reconciliation snapshot and the approved temporal coverage.
 
 **Binding to exact run/snapshot identity**: enforced structurally by
@@ -1377,18 +1408,23 @@ Every scenario the review brief names, addressed:
   reviewers on the same run needlessly contentious (every reviewer's
   CAS write would collide with every other reviewer's). Instead,
   sign-off's own endpoint independently re-verifies, in the same
-  transaction as the sign-off INSERT, that **every** finding belonging
-  to the run currently has a non-null `disposition` (a `SELECT COUNT(*)
-  ... WHERE run_id=:id AND disposition IS NULL` returning zero, inside
-  the same transaction, before the INSERT commits) — this is the actual
-  concurrency guard for "did review truly finish," not the run's own
-  `version` column. This disposition-completeness check is one sign-off
-  precondition among several (§20) and does not by itself authorize the
-  INSERT: the same transaction must also confirm the run's approved
-  temporal coverage boundary (`legacy_coverage_start`/
-  `legacy_coverage_end`/`live_system_start`, per OD-PR22-7's resolution,
-  §36) is explicit and approved for that run — the INSERT is rejected if
-  that confirmation fails, regardless of disposition completeness.
+  transaction as the sign-off INSERT, **two** counts against the run's
+  findings: (a) `SELECT COUNT(*) ... WHERE run_id=:id AND disposition IS
+  NULL` must return zero (every finding has been reviewed), and (b)
+  `SELECT COUNT(*) ... WHERE run_id=:id AND disposition =
+  'requires_correction'` must also return zero (OD-PR22-6, §20, §36) —
+  this is the actual concurrency guard for "did review truly finish, and
+  cleanly," not the run's own `version` column. A finding disposed
+  `requires_correction` *after* the caller's last read but *before* the
+  sign-off transaction commits is caught by check (b) exactly as a
+  newly-undispositioned finding is caught by check (a) — neither check
+  substitutes for the other. These two checks are sign-off preconditions
+  among several (§20) and do not by themselves authorize the INSERT: the
+  same transaction must also confirm the run's approved temporal
+  coverage boundary (`legacy_coverage_start`/`legacy_coverage_end`/
+  `live_system_start`, per OD-PR22-7's resolution, §36) is explicit and
+  approved for that run — the INSERT is rejected if any of these
+  confirmations fails.
 - **A new corrected authority appearing during review**: does not
   invalidate an in-progress run — the run's `REPEATABLE READ` snapshot
   (§18) already fixed its view of the data at `running` time; a new
@@ -1510,7 +1546,8 @@ Following the flat `DomainError` hierarchy exactly (§4.5), proposed
 | `RECONCILIATION_RUN_INVALID_STATE` | 409 | An operation requires the run to be in a state it isn't (e.g. triggering analysis on an already-`running` run). |
 | `RECONCILIATION_FINDING_NOT_FOUND` | 404 | `finding_id` does not resolve, or does not belong to the given `run_id` (unified, per the existing "never distinguish missing vs. wrong-parent" information-boundary convention PR21E0 already established for dry-run-plan rows, §4.5). |
 | `RECONCILIATION_FINDING_STALE` | 409 | Disposition CAS write matched zero rows — `version` mismatch or the finding was concurrently disposed. |
-| `RECONCILIATION_SIGNOFF_INCOMPLETE` | 409 | Sign-off attempted while at least one finding on the run still has `disposition IS NULL`. |
+| `RECONCILIATION_SIGNOFF_INCOMPLETE` | 409 | Sign-off attempted while at least one finding on the run still has `disposition IS NULL` — review is not yet complete. |
+| `RECONCILIATION_SIGNOFF_BLOCKED_REQUIRES_CORRECTION` | 409 | Sign-off attempted while at least one finding on the run is dispositioned `requires_correction` (OD-PR22-6, §20, §36) — review is complete, but a blocking correction is still outstanding. Deliberately a distinct code from `RECONCILIATION_SIGNOFF_INCOMPLETE`: "not yet reviewed" and "reviewed, blocking correction outstanding" are different classes of problem the caller must resolve differently (disposition the finding, vs. complete the separate correction workflow, §19). |
 | `RECONCILIATION_SIGNOFF_ALREADY_EXISTS` | 409 | A sign-off already exists for this run (the UNIQUE constraint on `run_id`, surfaced as a domain error rather than a raw integrity-error 500). |
 
 Each is a single flat `DomainError` subclass with a stable `code` and
@@ -1626,7 +1663,14 @@ principles now, no component design:
   JSON blob.
 - No business-rule enforcement in the frontend — every disposition
   transition, every sign-off completeness check, is re-verified
-  server-side regardless of what the UI already showed (§22, §26).
+  server-side regardless of what the UI already showed (§22, §26). In
+  particular, the sign-off preconditions in §20 (all findings
+  dispositioned, zero `requires_correction`, and the rest) are enforced
+  entirely by the backend: even if the UI incorrectly presents a
+  sign-off action as available, the server-side transaction rejects the
+  write (`RECONCILIATION_SIGNOFF_INCOMPLETE`/
+  `RECONCILIATION_SIGNOFF_BLOCKED_REQUIRES_CORRECTION`, §26) — the
+  backend is the sole source of truth for whether sign-off is possible.
 
 ---
 
@@ -1636,10 +1680,15 @@ principles now, no component design:
 summary only, directly serving the review workflow itself: total
 findings, open vs. disposed counts, breakdown by severity and by
 category, and (once sign-off exists) the attestation summary (§17.2's
-`attestation_summary`). No cross-run trend analysis, no
-organization-wide metrics, no scheduling/alerting — those would be
-Roadmap PR15's own broader observability scope (still unscheduled per
-`docs/ROADMAP_STATUS.md`), not PR22's.
+`attestation_summary`). **The `requires_correction` count is always
+surfaced as its own distinct, visible figure — never folded silently
+into "disposed"** (OD-PR22-6, §20, §36): a finding dispositioned
+`requires_correction` is reviewed, but it is also an outstanding
+sign-off blocker, and the dashboard must not present a run as
+sign-off-eligible while that count is nonzero. No cross-run trend
+analysis, no organization-wide metrics, no scheduling/alerting — those
+would be Roadmap PR15's own broader observability scope (still
+unscheduled per `docs/ROADMAP_STATUS.md`), not PR22's.
 
 ---
 
@@ -1892,7 +1941,12 @@ now resolved:
   transparently in the final sign-off evidence; `confirmed_valid` and
   `confirmed_duplicate` are likewise acceptable terminal review
   conclusions. Any outstanding `requires_correction` finding blocks PR22
-  completion / PR23 cutover readiness. "PR22 complete" does **not** mean
+  completion / PR23 cutover readiness — and, per §20's sign-off
+  preconditions (fix round 1), also structurally blocks condition (3)
+  itself: a valid final sign-off cannot exist while any finding remains
+  `requires_correction`, so conditions (2) and (3) are never actually in
+  tension — they are restated together here for clarity, not because
+  either could hold without the other. "PR22 complete" does **not** mean
   "all historical data is objectively perfect" — it means the defined
   reconciliation workflow is complete and no known item requiring
   correction remains outstanding. This resolves the policy question this
