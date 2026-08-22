@@ -43,7 +43,11 @@ sole parent `e07a36a...`/PR21F) — the design document itself is complete
 and merged, but PR22 **implementation is not started**, and all seven
 Owner Decisions (OD-PR22-1 through OD-PR22-7) remain **OPEN**, pending
 Owner review and resolution before any implementation slice (PR22B-G)
-may begin.
+may begin. `c924d8b...` is GitHub PR #112's own real squash SHA — it is
+**not** asserted above to be the single current authoritative baseline;
+that remains `d64d50d...` (see the top of this section) until the
+post-PR22A governance synchronization (GitHub PR #113) merges, at which
+point *that* PR's own real squash-merge SHA becomes the new baseline.
 
 **Historical — superseded by the current baseline above (`d64d50d...`,
 PR21E):** `2743af849702ef551927b9c362421df08c80b5d9` — the real

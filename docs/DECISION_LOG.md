@@ -3917,8 +3917,10 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   tree (`53f40f9cd6ac17ab2b0523f1677448211f78957f`) was independently
   confirmed tree-identical to the reviewed feature-branch head, and the
   squash commit's sole parent was independently confirmed to be
-  `e07a36a...`, before this squash SHA was adopted as the new branch
-  point for future PR22 work.
+  `e07a36a...`. `c924d8b...` is GitHub PR #112's own real squash-merge
+  SHA and, until the post-PR22A governance synchronization below
+  completes, the base new work branches from — **not** the repository's
+  new authoritative baseline; see that entry for why.
 - **What merged:** `docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`
   (36 sections), across three independent-review fix rounds folded into
   this one PR: (1) Owner Decision identifier numbering and ~50 stale
@@ -3951,13 +3953,16 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   for PR19A, PR20, and PR21's own design PRs and for GitHub PR #111.
   Minimal "design merged, implementation not started, Owner Decisions
   OPEN" updates were made to `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`,
-  and `knowledge/CONTEXT.md` — `knowledge/CONTEXT.md`'s own "Current
-  baseline" section is intentionally left unchanged (still
-  `d64d50d...`, PR21E) since, exactly as with PR21F's own governance-sync
-  merge, a documentation/design-only merge does not touch runtime code
-  and so does not advance that field; the exact-branch-point value for
-  whatever PR22 work comes next is this entry's own squash SHA,
-  `c924d8b...`.
+  and `knowledge/CONTEXT.md`. `c924d8b...` (GitHub PR #112's real squash
+  SHA) is correctly described here as PR #112's own squash SHA and as
+  the base the post-PR22A governance-synchronization PR (GitHub PR
+  #113) branches from — it is **not** asserted to be the repository's
+  new authoritative baseline. **GitHub PR #113 is that governance
+  synchronization; after it merges, its own real squash-merge SHA
+  becomes the authoritative baseline for subsequent PR22 work**, and
+  `knowledge/CONTEXT.md`'s "Current baseline" section is updated to
+  record that exact SHA at that time — not before, and not with
+  `c924d8b...` in its place.
 - **Source:** `docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`;
   GitHub PR #112 description and its three fix-round evidence tables.
 - **Status:** Documentation-only. No backend, frontend, migration, test,
