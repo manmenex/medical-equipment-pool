@@ -8,18 +8,37 @@ control detailed ordering, scope, dependencies, and acceptance criteria.
 
 ## Current baseline
 
-`d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` — the real squash-merge SHA of
-GitHub PR #110, Roadmap PR21E (Legacy History Frontend Real Integration),
-merged on top of `78eeea7827c53443f34de9e516573c2ed7c59581` (GitHub PR
-#109, Roadmap PR21E0 — Legacy Import Operator API Surface). PR21E's final
-independently reviewed feature-branch head was
-`8c2b1dacac9996b7a4cab89ff70b6939471ef164`, which carried **zero review
-threads and zero findings of any kind** — a genuine absence of findings,
-never an accepted P2 — with CI green (6/6) and the reviewed head's tree
-independently verified byte-identical to the merged squash commit's tree
-— **that reviewed head is not the baseline**; the squash commit actually
-landed on the base branch, `d64d50d...`, is. With PR21E merged, every
-Roadmap PR21 implementation slice — PR21-Foundation (#100), PR21A
+`c802d66c9d1e5395cd20591c451ebdc0cefbf7df` — the real squash-merge SHA of
+GitHub PR #113, the post-PR22A governance synchronization (documentation-
+only), merged on top of `c924d8ba2c8c5d933ea36ea3d488e2550615df40`
+(GitHub PR #112, Roadmap PR22A — Legacy Data Validation and
+Reconciliation Architecture, design only). PR #113's final independently
+reviewed feature-branch head was
+`ec02ced43d649c8c813a458762f110b13eb5ab7d`, which carried **zero review
+threads and zero comments**, with CI green (6/6) and the reviewed head's
+tree independently verified byte-identical to the merged squash commit's
+tree, sole parent `c924d8b...` confirmed — **that reviewed head is not
+the baseline**; the squash commit actually landed on the base branch,
+`c802d66...`, is. This baseline advances even though PR #113 is
+documentation-only, consistent with this repository's squash-baseline
+discipline: the authoritative baseline tracks the exact commit landed on
+the base branch, not only commits that touch runtime code.
+
+**Roadmap PR22 (Legacy Data Validation and Reconciliation)'s
+architecture design is merged** (GitHub PR #112, folded into this
+baseline) — **and all seven Owner Decisions (OD-PR22-1 through
+OD-PR22-7) are now RESOLVED / OWNER APPROVED**, recorded by the PR22
+Owner Decision Closure round. Implementation is **still not started** —
+every PR22B-G slice becomes eligible only once the governance PR
+recording this closure round merges; **the next planned step is PR22B**,
+not yet started.
+
+`d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` (GitHub PR #110, Roadmap
+PR21E — Legacy History Frontend Real Integration) is now historical,
+superseded first by `e07a36a...` (GitHub PR #111, PR21F), then
+`c924d8b...` (GitHub PR #112, PR22A), and now by this baseline. With
+PR21E merged, every Roadmap PR21 implementation slice — PR21-Foundation
+(#100), PR21A
 (#103), PR21B (#104), PR21C (#105), PR21D1 (#107), PR21D2 (#108), PR21E0
 (#109), PR21E (#110), plus the design (#98, #99) and three Owner
 Decision Closure rounds (#101, #102, #106) — is merged. **Roadmap PR21
@@ -41,8 +60,9 @@ Roadmap PR20 — PR20A (#90), PR20B (#91), PR20C (#93), PR20D (#94), PR20E
 (#95), PR20F (#96), plus the design (#89) and two governance syncs (#88,
 #92) — were merged. **Roadmap PR20 (Equipment Master Import) is fully
 complete** (unaffected by PR21's completion; see "Roadmap PR20 complete"
-below). Superseded by `d64d50d...` (GitHub PR #110, PR21E) as the current
-baseline once PR21E also merged.
+below). Superseded by `d64d50d...` (GitHub PR #110, PR21E) once PR21E
+merged, itself since superseded twice more — see "Current baseline"
+above for the current value.
 
 `7f13a1e85e9b6a4828170c4b12bc2be27b15de39` — squash commit of GitHub PR
 #86, the Roadmap PR19A3 implementation (Dry-run, Execution, Recovery,
@@ -54,8 +74,8 @@ PR19A's implementation slices are merged — Roadmap PR19A (Legacy Import
 Foundation, backend) is now fully complete.** Superseded by `04f5bf5c...`
 (GitHub PR #80, PR19B) once PR19B also merged — `04f5bf5c...` is itself
 now historical/intermediate, superseded in turn by `2743af8...` (GitHub
-PR #96, PR20F), itself since superseded by the current baseline at the
-top of this section (`d64d50d...`, GitHub PR #110, PR21E).
+PR #96, PR20F), then `d64d50d...` (GitHub PR #110, PR21E), and now by
+the current baseline at the top of this section.
 
 `729d1aa2f40db60a6056ecbb5bc1ab8e64e92e52` — squash commit of GitHub PR #79,
 the documentation-only PR18F governance synchronization recording Roadmap
@@ -125,9 +145,9 @@ rollback semantics) plus a non-blocking observation about nullable
 `5edf1bfd8de7013eb74f300193456c9e5c0f0332` closed PR80-H1R and received
 **APPROVE**, with CI green (6/6). PR19B then merged as GitHub PR #80,
 real squash-merge SHA `04f5bf5c76b51744981d1cc8072c074e604224e9` —
-historical/intermediate, since superseded by `2743af8...` (PR20F), itself
-in turn since superseded by `d64d50d...` (PR21E, the current baseline;
-see "Current baseline" above). GitHub PR #81, an earlier unsplit
+historical/intermediate, since superseded by `2743af8...` (PR20F), then
+`d64d50d...` (PR21E), and now by the current baseline (see "Current
+baseline" above). GitHub PR #81, an earlier unsplit
 PR19A candidate, was closed without merging, superseded by
 PR19A1/PR19A2/PR19A3. **PR19A and PR19B are both complete and merged;
 Roadmap PR19 (Legacy Import Foundation, backend + frontend skeleton) as a
@@ -228,7 +248,7 @@ for the full slice-by-slice review chronology and closure record.
 
 | Sequence | Roadmap item | Status |
 |---|---|---|
-| Next | PR22 — Legacy Data Validation and Reconciliation | Depends on PR20 and PR21, both now complete. **Architecture design merged** (`docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`, GitHub PR #112, squash SHA `c924d8ba2c8c5d933ea36ea3d488e2550615df40`) — implementation not started, all seven Owner Decisions (OD-PR22-1 through OD-PR22-7) remain OPEN |
+| Next | PR22 — Legacy Data Validation and Reconciliation | Depends on PR20 and PR21, both now complete. **Architecture design merged, all seven Owner Decisions RESOLVED / OWNER APPROVED** (`docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`, GitHub PR #112, squash SHA `c924d8ba2c8c5d933ea36ea3d488e2550615df40`) — implementation not started; next eligible slice is PR22B |
 | After PR22 | PR23 — Cutover Readiness | Planned |
 | After PR19–PR23 | PR24 — Go-live / deployment | Planned; blocked by PR19–PR23 |
 

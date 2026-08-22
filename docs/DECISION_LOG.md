@@ -3968,3 +3968,141 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
 - **Status:** Documentation-only. No backend, frontend, migration, test,
   or CI file was modified to produce this entry. PR22 implementation has
   **not** started.
+
+## 2026-08-22 — GitHub PR #113 merged; new authoritative baseline adopted
+
+- **Decision/record:** GitHub PR #113 (the post-PR22A governance
+  synchronization named by the entry above) merged via squash to
+  `claude/medical-equipment-pool-0c7fz0`, real squash-merge SHA
+  `c802d66c9d1e5395cd20591c451ebdc0cefbf7df`, sole parent
+  `c924d8ba2c8c5d933ea36ea3d488e2550615df40` (GitHub PR #112, PR22A).
+  Independently verified via the same Final Merge Gate procedure used
+  for GitHub PR #111 and #112: exact reviewed feature-branch head
+  `ec02ced43d649c8c813a458762f110b13eb5ab7d` recorded zero review
+  threads, zero reviews, and zero comments, and CI green 6/6 on that
+  exact head; after Draft→Ready, head and CI were re-verified unchanged
+  before the squash merge was performed. Post-merge, the squash commit's
+  tree (`2eee6af23ecf5091dbcb6b3f701db8d862758442`) was independently
+  confirmed tree-identical to the reviewed feature-branch head, and the
+  squash commit's sole parent was independently confirmed to be
+  `c924d8b...`.
+- **New authoritative baseline:** `c802d66...` is now the repository's
+  single current authoritative baseline, recorded in `docs/ROADMAP.md`,
+  `docs/ROADMAP_STATUS.md`, and `knowledge/CONTEXT.md`'s own "Current
+  baseline" sections, superseding `d64d50d...` (PR21E) — itself already
+  superseded once, by `e07a36a...` (PR21F), before this entry. This
+  baseline advances even though PR #113 is documentation-only, matching
+  this repository's squash-baseline discipline of tracking the exact
+  commit landed on the base branch regardless of whether it touches
+  runtime code. **Per corrected process guidance, this recording is
+  made as part of the next governance PR to touch these files (the PR22
+  Owner Decision Closure round below) rather than via a separate,
+  self-referential baseline-adoption PR** — an earlier such PR (GitHub
+  PR #114) was opened, found unnecessary, and closed without merging;
+  see the entry below for detail.
+- **Status:** Roadmap PR22's architecture design remains merged (GitHub
+  PR #112, folded into this baseline); PR22 implementation is **not**
+  started as of this entry.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14,
+  following the same Final Merge Gate precedent used for GitHub PR #111
+  and #112.
+- **Source:** GitHub PR #113 description and its fix-round-1 evidence
+  table; GitHub PR #114 (closed without merge, see below).
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this entry.
+
+## 2026-08-22 — GitHub PR #114 closed without merge (superseded baseline-adoption process)
+
+- **Decision/record:** GitHub PR #114 (`docs/pr113-baseline-adopt`) was
+  opened as a dedicated PR to record GitHub PR #113's squash SHA as the
+  new authoritative baseline, following the same "record the new baseline
+  in its own PR" pattern used after GitHub PR #112's own merge.
+- **Why closed without merge:** the Repository Owner corrected this
+  process: the real squash SHA produced by a Final Merge Gate becomes
+  authoritative immediately upon that PR's merge — no additional,
+  self-referential "baseline adoption" PR is required or should be
+  created afterward. Future work branches directly from the verified
+  squash SHA. GitHub PR #114 was accordingly closed without merging;
+  its changes were not incorporated elsewhere, and the baseline-adoption
+  facts it would have recorded are instead captured in the entry above
+  and in this same round's governance updates.
+- **Status:** Closed, unmerged. No runtime or documentation change from
+  GitHub PR #114 landed anywhere.
+- **Source:** GitHub PR #114 (closed) and its closing comment.
+
+## 2026-08-22 — PR22 Owner Decision Closure: OD-PR22-1 through OD-PR22-7 RESOLVED / OWNER APPROVED
+
+- **Decision/record:** The Repository Owner approved all seven PR22
+  Owner Decisions recorded in `docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`
+  §36 ("อนุมัติ OD-PR22-1 ถึง OD-PR22-7 ตาม Recommendation" — approving
+  OD-PR22-1 through OD-PR22-7 per this design's own recommendation).
+  Branched from the exact authoritative baseline `c802d66c9d1e5395cd20591c451ebdc0cefbf7df`
+  (GitHub PR #113), independently re-verified as `origin/claude/medical-equipment-pool-0c7fz0`'s
+  exact HEAD before branching.
+- **What resolved (final approved answers, full detail in §36):**
+  - **OD-PR22-1 (Pairing persistence model):** persisted reconciliation
+    finding/artifact only (`PAIRING_CANDIDATE`), never a
+    `LegacyEquipmentEvent` mutation or fabricated `BorrowTransaction`;
+    deterministic rules only, human disposition required to confirm.
+  - **OD-PR22-2 (Finding disposition vocabulary):** the proposed
+    four-value set (`confirmed_valid`, `confirmed_duplicate`,
+    `accepted_unresolved`, `requires_correction`) approved unchanged.
+  - **OD-PR22-3 (Reopen/supersede after sign-off):** a signed run is
+    never reopened; a new run is created and explicitly supersedes it,
+    with full provenance.
+  - **OD-PR22-4 (BME-name-to-User mapping):** display-only mapping
+    approved via a new Administrator-managed alias table (mirroring
+    `LegacyWardAlias`); raw historical text always preserved; never
+    auto-creates a `User`.
+  - **OD-PR22-5 (Disposition-setting authorization):** Administrator-only
+    for V1, exactly as this design's own default; sign-off remains
+    Administrator-only; no new role.
+  - **OD-PR22-6 ("PR22 complete" / cutover threshold):** every finding
+    dispositioned, `requires_correction` count zero, valid final
+    sign-off against the exact immutable run/snapshot, approved rules,
+    authorities, and temporal coverage; `accepted_unresolved` is a
+    permitted terminal disposition.
+  - **OD-PR22-7 (Temporal coverage/cutoff):** the two-boundary model
+    adopted (`legacy_coverage_start`/`legacy_coverage_end`/
+    `live_system_start`), sourced via an explicit Administrator/
+    Owner-governed approval workflow bound to the migration authority —
+    never from observed `MIN`/`MAX` event timestamps alone; post-cutoff
+    activity resolved through the unified legacy/modern history
+    projection (§15); corrected/re-exported authorities require their
+    own explicitly approved coverage, never silently inherited.
+- **What changed in the design document:** §36 rewritten so all seven
+  decisions read RESOLVED / OWNER APPROVED with their final answers,
+  retaining each decision's original framing as historical context.
+  §1/header status updated from "design only, Owner Decisions pending"
+  to "design merged, Owner Decisions resolved, implementation not
+  started." §9.D, §9.E, §9.G, §9.J, §11, §13, §14, §15, §17.2, §18, §20,
+  §21, §22, §25, §34, §35 updated so no sentence still reads as gating
+  behavior on an OPEN Owner Decision — each now reads as authorized per
+  the corresponding resolution, with prior gating language retained only
+  as clearly marked historical framing where useful (e.g. §20's fix-round-3
+  historical note). §36's own list of what did *not* need an Owner
+  Decision, and the meaning of OD-PR22-1 through OD-PR22-7 themselves,
+  is otherwise unchanged from the architecture and prior fix rounds.
+- **What this entry does not do:** it does not modify `backend/**`,
+  `frontend/**`, `alembic/**`, `tests/**`, or any CI workflow file; it
+  does not begin PR22B or any other implementation slice; it does not
+  add an eighth Owner Decision; it does not alter the persistence
+  recommendation, finding taxonomy, authorization model, concurrency
+  model, or any other architectural recommendation beyond resolving the
+  seven named decisions; it does not touch PR21's own already-resolved
+  scope (§4.9).
+- **Implementation authorization:** PR22 implementation remains **not
+  started** as of this entry. Every PR22B-G slice becomes eligible only
+  after the governance PR recording this closure round itself merges
+  (Final Merge Gate: independent exact-head review, CI, Draft→Ready,
+  squash merge, tree-identity/parent verification). The next eligible
+  slice is **PR22B** (reconciliation schema + `LegacyReconciliationRun`
+  foundation, including the now-authorized temporal-coverage columns).
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14,
+  following the same Owner Decision Closure precedent used for
+  OD-PR21-0 through OD-PR21-6 (GitHub PR #101/#102/#106).
+- **Source:** `docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md` §36;
+  the governance PR recording this closure round.
+- **Status:** Documentation-only (design document + governance files).
+  No `backend/**`, `frontend/**`, `alembic/**`, `tests/**`, or CI
+  workflow file modified. PR22 implementation has **not** started.
