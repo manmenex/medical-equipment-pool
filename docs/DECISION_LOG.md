@@ -3900,3 +3900,71 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
 - **Status:** Documentation-only. No backend, frontend, migration, test,
   or CI file was modified to produce this entry. PR22 implementation has
   **not** started.
+
+## 2026-08-22 — Roadmap PR22 architecture design (PR22A) merged — design only, no implementation
+
+- **Decision/record:** GitHub PR #112 (PR22A — Legacy Data Validation and
+  Reconciliation Architecture) merged via squash to
+  `claude/medical-equipment-pool-0c7fz0`, real squash-merge SHA
+  `c924d8ba2c8c5d933ea36ea3d488e2550615df40`, sole parent
+  `e07a36aa8482b7b97368a6adb9cfcc81c93d0ee0` (GitHub PR #111, PR21F).
+  Independently verified before merge via the same Final Merge Gate
+  procedure used for GitHub PR #111: exact reviewed feature-branch head
+  `ac9842fbc8284700dcdcf67967ff9449bbf5fbda` recorded zero review
+  threads, zero reviews, and zero comments, and CI green 6/6 on that
+  exact head; after Draft→Ready, head and CI were re-verified unchanged
+  before the squash merge was performed. Post-merge, the squash commit's
+  tree (`53f40f9cd6ac17ab2b0523f1677448211f78957f`) was independently
+  confirmed tree-identical to the reviewed feature-branch head, and the
+  squash commit's sole parent was independently confirmed to be
+  `e07a36a...`. `c924d8b...` is GitHub PR #112's own real squash-merge
+  SHA and, until the post-PR22A governance synchronization below
+  completes, the base new work branches from — **not** the repository's
+  new authoritative baseline; see that entry for why.
+- **What merged:** `docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`
+  (36 sections), across three independent-review fix rounds folded into
+  this one PR: (1) Owner Decision identifier numbering and ~50 stale
+  internal `§N` cross-reference corrections; (2) new §9.J "Temporal
+  coverage boundary (data cutoff)" and new OD-PR22-7, gating §9.D/§9.E/
+  §13/§15/§17.2/§20/§34 dependent behavior on its resolution; (3) removal
+  of a genuine ambiguity in §20's sign-off semantics — the design now
+  states unambiguously that **all final reconciliation sign-off is
+  blocked until OD-PR22-7 resolves**, with no separate interim/partial/
+  provisional sign-off mode, an explicit 6-item sign-off preconditions
+  list, and a two-state acceptance criterion.
+- **Status: DESIGN MERGED, IMPLEMENTATION NOT STARTED.** The design
+  document itself is now complete and merged into the base branch — this
+  is a milestone for the *design*, not for Roadmap PR22 as a whole. No
+  `backend/**`, `frontend/**`, `alembic/**`, or `tests/**` file was
+  created or modified by this merge. No PR22 implementation slice
+  (PR22B-G) is authorized. **All seven Owner Decisions (OD-PR22-1
+  through OD-PR22-7) remain OPEN** — nothing in this entry or the merged
+  design resolves any of them; each names and scopes a real open
+  question and gates the behavior that depends on it, per the design
+  document's own §36. Roadmap PR22 itself is not complete and is not
+  claimed to be.
+- **What this entry does not do:** it does not resolve OD-PR22-1 through
+  OD-PR22-7; it does not authorize PR22B-G; it does not modify
+  `backend/**`, `frontend/**`, `alembic/**`, `tests/**`, or any CI
+  workflow file; it does not redefine any PR21 schema, identity, or
+  immutability guarantee.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14,
+  following the same design-PR-merge and Final Merge Gate precedent used
+  for PR19A, PR20, and PR21's own design PRs and for GitHub PR #111.
+  Minimal "design merged, implementation not started, Owner Decisions
+  OPEN" updates were made to `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`,
+  and `knowledge/CONTEXT.md`. `c924d8b...` (GitHub PR #112's real squash
+  SHA) is correctly described here as PR #112's own squash SHA and as
+  the base the post-PR22A governance-synchronization PR (GitHub PR
+  #113) branches from — it is **not** asserted to be the repository's
+  new authoritative baseline. **GitHub PR #113 is that governance
+  synchronization; after it merges, its own real squash-merge SHA
+  becomes the authoritative baseline for subsequent PR22 work**, and
+  `knowledge/CONTEXT.md`'s "Current baseline" section is updated to
+  record that exact SHA at that time — not before, and not with
+  `c924d8b...` in its place.
+- **Source:** `docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`;
+  GitHub PR #112 description and its three fix-round evidence tables.
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this entry. PR22 implementation has
+  **not** started.

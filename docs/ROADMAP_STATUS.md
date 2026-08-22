@@ -228,7 +228,7 @@ for the full slice-by-slice review chronology and closure record.
 
 | Sequence | Roadmap item | Status |
 |---|---|---|
-| Next | PR22 — Legacy Data Validation and Reconciliation | Depends on PR20 and PR21, both now complete. **Architecture design in progress** (`docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`, Draft PR22A) — implementation not started, Owner Decisions not yet resolved |
+| Next | PR22 — Legacy Data Validation and Reconciliation | Depends on PR20 and PR21, both now complete. **Architecture design merged** (`docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`, GitHub PR #112, squash SHA `c924d8ba2c8c5d933ea36ea3d488e2550615df40`) — implementation not started, all seven Owner Decisions (OD-PR22-1 through OD-PR22-7) remain OPEN |
 | After PR22 | PR23 — Cutover Readiness | Planned |
 | After PR19–PR23 | PR24 — Go-live / deployment | Planned; blocked by PR19–PR23 |
 
