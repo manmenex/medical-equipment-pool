@@ -3968,3 +3968,56 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
 - **Status:** Documentation-only. No backend, frontend, migration, test,
   or CI file was modified to produce this entry. PR22 implementation has
   **not** started.
+
+## 2026-08-22 — Post-PR22A governance synchronization merged (GitHub PR #113); new authoritative baseline adopted
+
+- **Decision/record:** GitHub PR #113 (the post-PR22A governance
+  synchronization named by the entry above) merged via squash to
+  `claude/medical-equipment-pool-0c7fz0`, real squash-merge SHA
+  `c802d66c9d1e5395cd20591c451ebdc0cefbf7df`, sole parent
+  `c924d8ba2c8c5d933ea36ea3d488e2550615df40` (GitHub PR #112, PR22A).
+  Independently verified via the same Final Merge Gate procedure used
+  for GitHub PR #111 and #112: exact reviewed feature-branch head
+  `ec02ced43d649c8c813a458762f110b13eb5ab7d` recorded zero review
+  threads, zero reviews, and zero comments, and CI green 6/6 on that
+  exact head; after Draft→Ready, head and CI were re-verified unchanged
+  before the squash merge was performed. Post-merge, the squash commit's
+  tree (`2eee6af23ecf5091dbcb6b3f701db8d862758442`) was independently
+  confirmed tree-identical to the reviewed feature-branch head, and the
+  squash commit's sole parent was independently confirmed to be
+  `c924d8b...`.
+- **New authoritative baseline:** `c802d66...` is now the repository's
+  single current authoritative baseline, recorded in
+  `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, and
+  `knowledge/CONTEXT.md`'s own "Current baseline" sections, superseding
+  `d64d50d...` (PR21E) — itself already superseded once, by `e07a36a...`
+  (PR21F), before this entry. This baseline advances even though PR #113
+  is documentation-only, matching this repository's squash-baseline
+  discipline of tracking the exact commit landed on the base branch
+  regardless of whether it touches runtime code — the prior entry's
+  wording implying otherwise was a fix-round correction to GitHub PR
+  #113's own first head, not a new rule invented here.
+- **What merged:** minimal wording updates to `docs/DECISION_LOG.md`
+  (this file, the entry above), `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`,
+  and `knowledge/CONTEXT.md`, recording GitHub PR #112's merge and
+  correcting the baseline-semantics ambiguity an independent review
+  found in this PR's first head.
+- **Status:** Roadmap PR22's architecture design remains merged (GitHub
+  PR #112, folded into this baseline); PR22 implementation is **not**
+  started; all seven Owner Decisions (OD-PR22-1 through OD-PR22-7)
+  remain **OPEN** — nothing in this entry resolves any of them. **The
+  next planned step is Owner Decision Closure for OD-PR22-1 through
+  OD-PR22-7 — not PR22B-G directly** — matching the OD-PR21-* Owner
+  Decision Closure precedent (GitHub PR #101/#102/#106) that preceded
+  PR21A-E's own implementation slices.
+- **What this entry does not do:** it does not resolve OD-PR22-1
+  through OD-PR22-7; it does not authorize PR22B-G; it does not modify
+  `backend/**`, `frontend/**`, `alembic/**`, `tests/**`, or any CI
+  workflow file.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14,
+  following the same Final Merge Gate precedent used for GitHub PR #111
+  and #112.
+- **Source:** GitHub PR #113 description and its fix-round-1 evidence
+  table.
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this entry.

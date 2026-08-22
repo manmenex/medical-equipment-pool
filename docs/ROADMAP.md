@@ -8,21 +8,48 @@
 ## Current baseline
 
 **The single current authoritative baseline is
-`d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810`** — the real squash-merge SHA
-of GitHub PR **#110**, Roadmap PR21E (Legacy History Frontend Real
-Integration), squash-merged into `claude/medical-equipment-pool-0c7fz0`
-on top of `78eeea7827c53443f34de9e516573c2ed7c59581` (GitHub PR #109,
-Roadmap PR21E0 — Legacy Import Operator API Surface). PR #110's final
-independently reviewed feature-branch head was
-`8c2b1dacac9996b7a4cab89ff70b6939471ef164` — that reviewed head carried
-**zero review threads and zero findings of any kind** (a genuine absence
-of findings, not an accepted P2), CI green 6/6, and the reviewed head's
-tree was verified byte-identical to the merged squash commit's tree —
-**do not treat that reviewed head as the baseline**; per this
-repository's standard squash-merge SHA-retrieval practice, the real
-baseline is the squash commit actually landed on the base branch,
-`d64d50d...`, which is distinct from any feature-branch head reviewed
-along the way. **With PR21E merged, every Roadmap PR21 implementation
+`c802d66c9d1e5395cd20591c451ebdc0cefbf7df`** — the real squash-merge SHA
+of GitHub PR **#113**, the post-PR22A governance synchronization
+(documentation-only: `docs/DECISION_LOG.md`, `docs/ROADMAP.md`,
+`docs/ROADMAP_STATUS.md`, `knowledge/CONTEXT.md`), squash-merged into
+`claude/medical-equipment-pool-0c7fz0` on top of
+`c924d8ba2c8c5d933ea36ea3d488e2550615df40` (GitHub PR #112, PR22A —
+Legacy Data Validation and Reconciliation Architecture, design only).
+PR #113's final independently reviewed feature-branch head was
+`ec02ced43d649c8c813a458762f110b13eb5ab7d` — that reviewed head carried
+**zero review threads and zero comments**, CI green 6/6, and the
+reviewed head's tree was verified byte-identical to the merged squash
+commit's tree, with sole parent `c924d8b...` confirmed — **do not treat
+that reviewed head as the baseline**; per this repository's standard
+squash-merge SHA-retrieval practice, the real baseline is the squash
+commit actually landed on the base branch, `c802d66...`, which is
+distinct from any feature-branch head reviewed along the way. **This
+baseline advances even though PR #113 is documentation-only** —
+consistent with this repository's squash-baseline discipline, the
+authoritative baseline tracks the exact commit landed on the base
+branch, not only commits that touch runtime code; PR #113's own
+description (fix round 1) corrects an earlier, mistaken claim that a
+docs-only merge never advances this field.
+
+**Roadmap PR22 (Legacy Data Validation and Reconciliation)'s
+architecture design is merged** (`docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`,
+GitHub PR #112, squash SHA `c924d8ba2c8c5d933ea36ea3d488e2550615df40`,
+now historical/superseded by this baseline) — the design document
+itself is complete and merged, but PR22 **implementation is not
+started**, and all seven Owner Decisions (OD-PR22-1 through OD-PR22-7)
+remain **OPEN**, pending Owner review and resolution before any
+implementation slice (PR22B-G) may begin. **The next planned step is
+Owner Decision Closure for OD-PR22-1 through OD-PR22-7 — not PR22B-G
+directly** — matching the OD-PR21-* Owner Decision Closure precedent
+that preceded PR21A-E's own implementation slices.
+
+`d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` — the real squash-merge SHA
+of GitHub PR #110, Roadmap PR21E (Legacy History Frontend Real
+Integration), squash-merged on top of
+`78eeea7827c53443f34de9e516573c2ed7c59581` (GitHub PR #109, Roadmap
+PR21E0 — Legacy Import Operator API Surface), is now historical,
+superseded first by `e07a36a...` (GitHub PR #111, PR21F) and then by
+this baseline. **With PR21E merged, every Roadmap PR21 implementation
 slice — PR21-Foundation, PR21A (Historical Event Schema / Provenance
 Foundation), PR21B (canonical Issue parser), PR21C (canonical Receive
 parser), PR21D1 (Combined Canonical Adapter + Source Admission), PR21D2
@@ -35,22 +62,10 @@ closure record, and the PR21 note below for full detail. Both concrete
 legacy dataset imports required for Version 1 (Equipment Master, PR20;
 legacy transaction history, PR21) are now real, backend-and-frontend-
 integrated workflows — no production import path goes through
-`MockImportClient` or any PR19B mock/fixture data. **The next planned
-Roadmap item is PR22 — Legacy Data Validation and Reconciliation. Its
-architecture design has merged** (`docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`,
-GitHub PR #112, squash SHA `c924d8ba2c8c5d933ea36ea3d488e2550615df40`,
-sole parent `e07a36a...`/PR21F) — the design document itself is complete
-and merged, but PR22 **implementation is not started**, and all seven
-Owner Decisions (OD-PR22-1 through OD-PR22-7) remain **OPEN**, pending
-Owner review and resolution before any implementation slice (PR22B-G)
-may begin. `c924d8b...` is GitHub PR #112's own real squash SHA — it is
-**not** asserted above to be the single current authoritative baseline;
-that remains `d64d50d...` (see the top of this section) until the
-post-PR22A governance synchronization (GitHub PR #113) merges, at which
-point *that* PR's own real squash-merge SHA becomes the new baseline.
+`MockImportClient` or any PR19B mock/fixture data.
 
-**Historical — superseded by the current baseline above (`d64d50d...`,
-PR21E):** `2743af849702ef551927b9c362421df08c80b5d9` — the real
+**Historical — superseded by `d64d50d...` (PR21E), itself now historical,
+superseded by the current baseline above:** `2743af849702ef551927b9c362421df08c80b5d9` — the real
 squash-merge SHA of GitHub PR **#96**, Roadmap PR20F (Equipment Master
 Frontend Real API Integration), squash-merged into
 `claude/medical-equipment-pool-0c7fz0` on top of

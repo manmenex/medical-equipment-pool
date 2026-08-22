@@ -8,18 +8,34 @@ control detailed ordering, scope, dependencies, and acceptance criteria.
 
 ## Current baseline
 
-`d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` — the real squash-merge SHA of
-GitHub PR #110, Roadmap PR21E (Legacy History Frontend Real Integration),
-merged on top of `78eeea7827c53443f34de9e516573c2ed7c59581` (GitHub PR
-#109, Roadmap PR21E0 — Legacy Import Operator API Surface). PR21E's final
-independently reviewed feature-branch head was
-`8c2b1dacac9996b7a4cab89ff70b6939471ef164`, which carried **zero review
-threads and zero findings of any kind** — a genuine absence of findings,
-never an accepted P2 — with CI green (6/6) and the reviewed head's tree
-independently verified byte-identical to the merged squash commit's tree
-— **that reviewed head is not the baseline**; the squash commit actually
-landed on the base branch, `d64d50d...`, is. With PR21E merged, every
-Roadmap PR21 implementation slice — PR21-Foundation (#100), PR21A
+`c802d66c9d1e5395cd20591c451ebdc0cefbf7df` — the real squash-merge SHA of
+GitHub PR #113, the post-PR22A governance synchronization (documentation-
+only), merged on top of `c924d8ba2c8c5d933ea36ea3d488e2550615df40`
+(GitHub PR #112, Roadmap PR22A — Legacy Data Validation and
+Reconciliation Architecture, design only). PR #113's final independently
+reviewed feature-branch head was
+`ec02ced43d649c8c813a458762f110b13eb5ab7d`, which carried **zero review
+threads and zero comments**, with CI green (6/6) and the reviewed head's
+tree independently verified byte-identical to the merged squash commit's
+tree, sole parent `c924d8b...` confirmed — **that reviewed head is not
+the baseline**; the squash commit actually landed on the base branch,
+`c802d66...`, is. This baseline advances even though PR #113 is
+documentation-only, consistent with this repository's squash-baseline
+discipline: the authoritative baseline tracks the exact commit landed on
+the base branch, not only commits that touch runtime code.
+
+**Roadmap PR22 (Legacy Data Validation and Reconciliation)'s
+architecture design is merged** (GitHub PR #112, folded into this
+baseline) — implementation is **not started**, and all seven Owner
+Decisions (OD-PR22-1 through OD-PR22-7) remain **OPEN**. **The next
+planned step is Owner Decision Closure for OD-PR22-1 through OD-PR22-7
+— not PR22B-G directly.**
+
+`d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` (GitHub PR #110, Roadmap
+PR21E — Legacy History Frontend Real Integration) is now historical,
+superseded first by `e07a36a...` (GitHub PR #111, PR21F) and then by
+this baseline. With PR21E merged, every Roadmap PR21 implementation
+slice — PR21-Foundation (#100), PR21A
 (#103), PR21B (#104), PR21C (#105), PR21D1 (#107), PR21D2 (#108), PR21E0
 (#109), PR21E (#110), plus the design (#98, #99) and three Owner
 Decision Closure rounds (#101, #102, #106) — is merged. **Roadmap PR21

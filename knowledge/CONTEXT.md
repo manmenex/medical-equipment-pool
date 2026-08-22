@@ -10,21 +10,41 @@ ordering
 
 ## Current baseline
 
-Current baseline: `d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` on
+Current baseline: `c802d66c9d1e5395cd20591c451ebdc0cefbf7df` on
 `claude/medical-equipment-pool-0c7fz0` — the real squash-merge SHA of
-GitHub PR #110, Roadmap PR21E (Legacy History Frontend Real Integration).
-PR21E's final independently reviewed feature-branch head was
-`8c2b1dacac9996b7a4cab89ff70b6939471ef164` (independent Final Merge Gate:
-zero review threads, zero findings of any kind — a genuine absence of
-findings, not an accepted P2 — CI green 6/6 on that exact head) — **that
-reviewed head is not the baseline**; the squash commit actually landed on
-the base branch, `d64d50d...`, is. With PR21E merged, **Roadmap PR21
-(Legacy Receive and Issue History Import) is now fully complete** — every
-implementation slice (Foundation, A, B, C, D1, D2, E0, E) is merged. See
-`docs/DECISION_LOG.md` ("Roadmap PR21 complete: PR21D1–PR21F merged") for
-the closure record.
+GitHub PR #113, the post-PR22A governance synchronization (docs-only:
+`docs/DECISION_LOG.md`, `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`,
+`knowledge/CONTEXT.md`), squash-merged on top of
+`c924d8ba2c8c5d933ea36ea3d488e2550615df40` (GitHub PR #112, PR22A —
+Legacy Data Validation and Reconciliation Architecture, design only).
+PR #113's final independently reviewed feature-branch head was
+`ec02ced43d649c8c813a458762f110b13eb5ab7d` (independent Final Merge
+Gate: zero review threads, zero comments, CI green 6/6 on that exact
+head) — **that reviewed head is not the baseline**; the squash commit
+actually landed on the base branch, `c802d66...`, is — independently
+verified tree-identical to that reviewed head, with sole parent
+`c924d8b...` confirmed. This baseline advances even though PR #113 is
+documentation-only, consistent with this repository's squash-baseline
+discipline: the authoritative baseline tracks the exact commit landed
+on the base branch, not only commits that touch runtime code.
 
-This baseline follows `78eeea7827c53443f34de9e516573c2ed7c59581` (GitHub
+Roadmap PR22 (Legacy Data Validation and Reconciliation)'s architecture
+design is merged (GitHub PR #112, folded into this baseline) —
+**implementation has not started, and all seven Owner Decisions
+(OD-PR22-1 through OD-PR22-7) remain OPEN.** With PR21E merged (prior
+baseline `d64d50d...`, now historical, superseded by this entry),
+**Roadmap PR21 (Legacy Receive and Issue History Import) is now fully
+complete** — every implementation slice (Foundation, A, B, C, D1, D2,
+E0, E) is merged. See `docs/DECISION_LOG.md` ("Roadmap PR21 complete:
+PR21D1–PR21F merged") for that closure record.
+
+This baseline follows `c924d8ba2c8c5d933ea36ea3d488e2550615df40` (GitHub
+PR #112, PR22A — Legacy Data Validation and Reconciliation Architecture,
+design only), which follows `e07a36aa8482b7b97368a6adb9cfcc81c93d0ee0`
+(GitHub PR #111, PR21F — Roadmap PR21 governance closure), which follows
+`d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` (GitHub PR #110, Roadmap
+PR21E — Legacy History Frontend Real Integration, now historical),
+`78eeea7827c53443f34de9e516573c2ed7c59581` (GitHub
 PR #109, PR21E0 — Legacy Import Operator API Surface), `c4788de06bed9a13aa5ec981fb8e19c67bc5720b`
 (GitHub PR #108, PR21D2 — Historical Event Execution),
 `50b9e77269b238d95fb34b28d0bc223a369951e2` (GitHub PR #107, PR21D1 —
@@ -74,10 +94,13 @@ feature-branch head (zero review threads, zero comments, CI green 6/6
 on that exact head). This is design only: no `backend/**`, `frontend/**`,
 `alembic/**`, or `tests/**` file was touched by it; no implementation
 slice is authorized; all seven Owner Decisions (OD-PR22-1 through
-OD-PR22-7) remain **OPEN**, pending Owner review and resolution.
-**Current work is now that Owner review/resolution of OD-PR22-1 through
-OD-PR22-7** — no PR22 implementation slice (PR22B-G) may begin before
-its own relevant Owner Decisions resolve.
+OD-PR22-7) remain **OPEN**, pending Owner review and resolution. The
+post-PR22A governance synchronization (GitHub PR #113) has since also
+merged — squash SHA `c802d66c9d1e5395cd20591c451ebdc0cefbf7df` (see
+"Current baseline" above), docs-only. **Current work is now Owner
+review/resolution of OD-PR22-1 through OD-PR22-7** — no PR22
+implementation slice (PR22B-G) may begin before its own relevant Owner
+Decisions resolve.
 
 ## Next sequence
 
