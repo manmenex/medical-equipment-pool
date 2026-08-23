@@ -4208,10 +4208,131 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   equality resolution only, no fuzzy matching, no `User` created as a
   side effect (confirmed by a regression test asserting the `users`
   table's row count is unchanged by an alias insert).
-- **Status:** Draft, **not merged, PR22B implementation in progress**.
-  This entry documents work in progress, not completion — see the PR's
-  own description for current CI/review state.
+- **Status:** **Merged as GitHub PR #116** — see the entry below for the
+  real squash-merge SHA and independent Final Merge Gate verification.
+  This entry documents the implementation as it stood at the point PR22B
+  reached its final, exact-binding-field-contract shape; the merge entry
+  below is the authoritative merge record.
 - **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
 - **Source:** `docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`
   §9.J/§11/§13-15/§17.2/§18/§20-22/§25/§34/§36; the PR22B implementation
   task's own binding field contract; the PR22B GitHub PR description.
+
+## 2026-08-23 — GitHub PR #116 merged; new authoritative baseline adopted
+
+- **Decision/record:** GitHub PR #116 (PR22B — Reconciliation Schema +
+  Run/Snapshot Foundation, the entry above) merged via squash to
+  `claude/medical-equipment-pool-0c7fz0`, real squash-merge SHA
+  `c5e750cecd7458e9570c6dc1679abeacde0da369`, sole parent
+  `f03af893d727b221bd941466d83e5eceb9eb596a` (GitHub PR #115).
+  Independently verified via this repository's standard Final Merge
+  Gate procedure: the exact reviewed feature-branch head
+  (`4f1f5d33eba3051c3d4580f5328b8efe48d8e161`) recorded zero review
+  threads, zero reviews, and zero comments, and CI green 6/6 on that
+  exact head; after Draft→Ready, head and CI were re-verified unchanged
+  before the squash merge. The merge itself was performed directly by
+  the repository Owner mid-gate; the resulting squash commit was
+  independently verified afterward rather than trusted blindly — its
+  tree confirmed byte-identical to the reviewed feature-branch head via
+  an empty `git diff`, and its sole parent confirmed to be
+  `f03af893...`.
+- **New authoritative baseline:** `c5e750cecd7458e9570c6dc1679abeacde0da369`
+  is now the repository's single current authoritative baseline,
+  recorded in `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, and
+  `knowledge/CONTEXT.md`'s own "Current baseline" sections, superseding
+  `f03af893...` (GitHub PR #115). **Per this repository's standing
+  process, no separate self-referential "baseline adoption" PR is
+  created for this squash SHA** — it became authoritative immediately
+  upon merge, and its recording is folded into PR22C (the next PR that
+  legitimately touches these governance files).
+- **Status:** Roadmap PR22B (Reconciliation Schema + Run/Snapshot
+  Foundation) is now fully complete and merged. PR22 implementation
+  continues with PR22C, recorded in the entry below.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14,
+  following the same Final Merge Gate precedent used for GitHub PR
+  #111/#112/#113/#115.
+- **Source:** GitHub PR #116 description and its Final Merge Gate
+  verification evidence.
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this baseline-recording entry
+  itself (it is folded into PR22C's own runtime-code PR).
+
+## 2026-08-23 — PR22C (Deterministic Reconciliation Analysis Engine) implementation started — in progress, not merged
+
+- **Decision/record:** Second Roadmap PR22 implementation slice.
+  Branched from the exact authoritative baseline
+  `c5e750cecd7458e9570c6dc1679abeacde0da369` (GitHub PR #116),
+  independently re-verified as `origin/claude/medical-equipment-pool-0c7fz0`'s
+  exact HEAD before branching. Implements the deterministic analysis
+  engine that executes a `LegacyReconciliationRun` against PR22B's
+  schema as-is (no new migration) and persists immutable findings —
+  this slice never redesigns PR22B's binding field contract. Explicitly
+  out of scope: the review/disposition API (PR22D), the sign-off service
+  (PR22E), and the frontend (PR22F/G); no public HTTP route and no
+  BME/coverage-approval CRUD API are added.
+- **What was added:** `backend/app/services/reconciliation/` — a fixed,
+  named rule version (`rule_version.py`,
+  `PR22_RECONCILIATION_RULE_VERSION = "pr22-v1"`); DTOs and snapshot
+  types (`candidates.py`); a pure, in-memory unified legacy/modern
+  projection (`projection.py`, `context.py`) that never physically
+  merges `LegacyEquipmentEvent` and `BorrowTransaction`; nine
+  deterministic rule modules under `rules/` (`equipment_identity`,
+  `source_provenance`, `duplicates` [`DUPLICATE_EXACT` +
+  `DUPLICATE_SUSPECTED`], `chronology`, `current_state`,
+  `ward_traceability`, `bme_traceability`, `pairing`), each a pure
+  function from an immutable context to `FindingCandidate` tuples with
+  no DB mutation; centralized, all-or-nothing finding persistence
+  (`persistence.py`); and the top-level orchestrator (`engine.py`,
+  `execute_reconciliation_run`). Six new `DomainError` subclasses added
+  to `backend/app/core/exceptions.py`
+  (`ReconciliationRunNotFoundError`, `ReconciliationRunNotPendingError`,
+  `ReconciliationRunVersionConflictError`,
+  `UnsupportedReconciliationRuleVersionError`,
+  `ReconciliationCoverageMismatchError`,
+  `ReconciliationAnalysisFailedError`), following this repository's
+  established `DomainError` (`code`/`status_code`) pattern. No new
+  Alembic migration — PR22B's schema and indexes are used as-is, per
+  EXPLAIN ANALYZE evidence showing the existing
+  `uq_legacy_equipment_events_identity` index already serves the main
+  query well at 20,000-row scale (24ms). `backend/tests/
+  test_pr22c_reconciliation_rules.py` (26 pure-Python rule-level tests)
+  and `backend/tests/test_pr22c_reconciliation_engine.py` (10
+  PostgreSQL-only tests, including a genuine two-connection
+  `REPEATABLE READ` snapshot-consistency proof and a genuine
+  two-connection concurrent-CAS-claim single-winner proof).
+- **Key structural decisions:** the CAS claim/fenced-completion/
+  fenced-failure transaction design mirrors
+  `app.services.import_execution_service.run_execute`'s established
+  TX1/TX2/TX3 shape — TX1 (the caller's own session) validates and
+  claims (`pending → running`, fenced on `version`); TX2 (a fresh
+  session, real PostgreSQL `REPEATABLE READ`, opened from a session
+  factory built on TX1's own `db.bind` — never the application's global
+  default session factory) runs every rule against one consistent
+  snapshot and persists findings + the fenced `running → completed`
+  transition atomically; TX3 (only on TX2 failure, a second fresh
+  session from the same factory) performs the fenced `running → failed`
+  transition, a silent no-op if a different worker already legitimately
+  advanced the run. `snapshot_as_of` remains evidence only — real
+  PostgreSQL `REPEATABLE READ` is the actual consistency mechanism,
+  proven with a genuine two-connection test (not emulated with
+  timestamps). Findings are never disposed by this engine
+  (`disposition`/`disposed_by_user_id`/`disposed_at` always NULL at
+  persistence) — disposition is PR22D's job. `PAIRING_CANDIDATE`
+  candidates require two independent non-trivial matching dimensions
+  (`resolved_ward_id` AND `legacy_order_reference`, both non-null,
+  equal, bidirectionally unique) — ward alone, order-reference alone,
+  nearest-timestamp alone, or BCM/equipment alone are each insufficient;
+  disposition is always NULL at creation, never `confirmed_pair`.
+  `CHRONOLOGY_ANOMALY` is coverage-aware (`>= legacy_coverage_start`)
+  and never claims "missing forever" — only "no later event within
+  covered history." `CURRENT_STATE_MISMATCH` is conservative and skips
+  `unavailable_defective`/`decommissioned` equipment entirely to avoid
+  false positives. Before execution, the run's own copied coverage
+  timestamps are verified to still exactly match the bound coverage
+  artifact's current values — fail closed on mismatch, never repaired.
+- **Status:** Draft, **not merged, PR22C implementation in progress**.
+  This entry documents work in progress, not completion — see the PR's
+  own description for current CI/review state.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the PR22C implementation task's own ~59-section binding
+  specification; the PR22C GitHub PR description.

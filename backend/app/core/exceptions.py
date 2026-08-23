@@ -354,3 +354,67 @@ class LegacyMigrationAuthorityScopeConflictError(DomainError):
 
     code = "LEGACY_MIGRATION_AUTHORITY_SCOPE_CONFLICT"
     status_code = 409
+
+
+class ReconciliationRunNotFoundError(DomainError):
+    """Roadmap PR22C (docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md
+    §11/§17.2) -- no `LegacyReconciliationRun` matches the requested id."""
+
+    code = "RECONCILIATION_RUN_NOT_FOUND"
+    status_code = 404
+
+
+class ReconciliationRunNotPendingError(DomainError):
+    """Roadmap PR22C -- `execute_reconciliation_run` was called for a run
+    whose `status` is not `pending` (already `running`, `completed`, or
+    `failed`). A completed/failed run is never re-executed (§27) -- the
+    caller must create a new run instead."""
+
+    code = "RECONCILIATION_RUN_NOT_PENDING"
+    status_code = 409
+
+
+class ReconciliationRunVersionConflictError(DomainError):
+    """Roadmap PR22C (§8) -- the CAS claim (`WHERE id=:id AND
+    status='pending' AND version=:expected_version`) matched zero rows:
+    either a concurrent caller already claimed this run, or the caller's
+    `expected_version` is stale. Exactly one concurrent claimant may ever
+    win; every other claimant receives this error, never a duplicate
+    execution."""
+
+    code = "RECONCILIATION_RUN_VERSION_CONFLICT"
+    status_code = 409
+
+
+class UnsupportedReconciliationRuleVersionError(DomainError):
+    """Roadmap PR22C (§4/§36) -- `run.rule_version` does not match the
+    engine's own `PR22_RECONCILIATION_RULE_VERSION`. A run is bound to
+    the rule version it was created for and never silently executed
+    under a different engine version, and `run.rule_version` is never
+    changed automatically -- fail closed instead."""
+
+    code = "UNSUPPORTED_RECONCILIATION_RULE_VERSION"
+    status_code = 422
+
+
+class ReconciliationCoverageMismatchError(DomainError):
+    """Roadmap PR22C (§38) -- the run's own copied
+    `legacy_coverage_start`/`legacy_coverage_end`/`live_system_start`
+    values do not exactly match its bound `LegacyMigrationAuthorityCoverage`
+    artifact's current values, or `run.coverage_id` does not reference an
+    existing coverage row at all. Never "repaired" -- the run is rejected
+    and left untouched; there is no `MIN`/`MAX`-derived fallback."""
+
+    code = "RECONCILIATION_COVERAGE_MISMATCH"
+    status_code = 409
+
+
+class ReconciliationAnalysisFailedError(DomainError):
+    """Roadmap PR22C (§7/§26) -- the analysis transaction (projection +
+    rule evaluation + finding persistence + completion) failed after the
+    run was claimed. The run is transitioned `running -> failed` (fenced
+    against a concurrent claimant, §7) in a separate transaction; no
+    partial finding set is ever left visible for this run."""
+
+    code = "RECONCILIATION_ANALYSIS_FAILED"
+    status_code = 500
