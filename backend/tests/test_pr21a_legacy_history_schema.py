@@ -1126,12 +1126,37 @@ from tests.test_postgres_integration import (  # noqa: E402
 )
 
 
-async def _legacy_history_tables() -> set[str]:
+_MIGRATION_0019_TABLES = {
+    "legacy_migration_authorities",
+    "legacy_equipment_events",
+    "legacy_equipment_event_source_refs",
+    "legacy_ward_aliases",
+    "legacy_history_dry_run_plans",
+    "legacy_history_dry_run_plan_rows",
+}
+
+
+async def _existing_tables(names: set[str]) -> set[str]:
+    """Returns the subset of `names` that currently exist as real tables.
+    Deliberately scoped to a fixed, named set (never a broad `legacy_`
+    prefix glob) -- migration 0001's own `Base.metadata.create_all()`
+    creates every currently-registered ORM table on a fresh database
+    regardless of which revision an `alembic upgrade` targets, so a
+    later migration's tables (e.g. 0020, Roadmap PR22B) are already
+    physically present the moment migration 0001 runs, even when the
+    upgrade target is an earlier revision such as 0019. A prefix-glob
+    "exactly these tables and no others" comparison would therefore
+    incorrectly see 0020's tables too; checking only this fixed,
+    migration-0019-owned name set (mirroring
+    `test_migration_0018_downgrade_re_upgrade_round_trip`'s per-table
+    `to_regclass` pattern in `test_postgres_integration.py`, the
+    established convention for this exact interaction) is unaffected by
+    what any other migration does."""
     engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
     try:
         async with engine.connect() as conn:
-            names = await conn.run_sync(lambda sync_conn: set(inspect(sync_conn).get_table_names()))
-            return {n for n in names if n.startswith("legacy_")}
+            actual = await conn.run_sync(lambda sync_conn: set(inspect(sync_conn).get_table_names()))
+            return names & actual
     finally:
         await engine.dispose()
 
@@ -1144,23 +1169,24 @@ async def test_migration_0019_upgrade_downgrade_round_trip():
         pytest.skip(f"Cannot create scratch database for migration test: {exc}")
 
     try:
+        # Always upgrades to "head" (never an intermediate target on a
+        # fresh database) and then downgrades back down to just before
+        # this migration -- this is the established, later-migration-safe
+        # pattern (see `test_migration_0018_downgrade_re_upgrade_round_
+        # trip`), since downgrading from head runs every intervening
+        # migration's own downgrade() in sequence (0020's, then 0019's),
+        # correctly removing both sets of tables regardless of how many
+        # later migrations now exist.
         _run_alembic("upgrade", "head")
-        tables = await _legacy_history_tables()
-        assert tables == {
-            "legacy_migration_authorities",
-            "legacy_equipment_events",
-            "legacy_equipment_event_source_refs",
-            "legacy_ward_aliases",
-            "legacy_history_dry_run_plans",
-            "legacy_history_dry_run_plan_rows",
-        }
+        tables = await _existing_tables(_MIGRATION_0019_TABLES)
+        assert tables == _MIGRATION_0019_TABLES
 
         _run_alembic("downgrade", "0018_dry_run_plans")
-        tables = await _legacy_history_tables()
+        tables = await _existing_tables(_MIGRATION_0019_TABLES)
         assert tables == set(), "downgrade must remove exactly the six tables this migration added"
 
         _run_alembic("upgrade", "head")
-        tables = await _legacy_history_tables()
-        assert len(tables) == 6, "re-upgrade must succeed and converge exactly like a fresh install"
+        tables = await _existing_tables(_MIGRATION_0019_TABLES)
+        assert tables == _MIGRATION_0019_TABLES, "re-upgrade must succeed and converge exactly like a fresh install"
     finally:
         await _drop_scratch_database()
