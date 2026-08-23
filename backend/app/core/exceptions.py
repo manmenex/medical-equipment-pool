@@ -418,3 +418,58 @@ class ReconciliationAnalysisFailedError(DomainError):
 
     code = "RECONCILIATION_ANALYSIS_FAILED"
     status_code = 500
+
+
+class ReconciliationFindingNotFoundError(DomainError):
+    """Roadmap PR22D -- no `LegacyReconciliationFinding` row matches the
+    given id. Used both for a standalone `GET .../legacy-reconciliation-
+    findings/{finding_id}` lookup and for the disposition-mutation path's
+    own existence check -- never distinguishes "never existed" from
+    "exists under a different run" when a caller reaches a finding via a
+    nested route, mirroring this repository's existing information-
+    boundary discipline (see `app.crud.import_dry_run_plan.confirm_plan`'s
+    collapsed missing/foreign-session handling)."""
+
+    code = "RECONCILIATION_FINDING_NOT_FOUND"
+    status_code = 404
+
+
+class ReconciliationFindingVersionConflictError(DomainError):
+    """Roadmap PR22D -- a disposition mutation's `expected_version` no
+    longer matches the finding's current `version`. A concurrent
+    Administrator already disposed (or re-disposed) this finding; the
+    caller must re-fetch (`GET .../legacy-reconciliation-findings/
+    {finding_id}`) and retry with the fresh version -- never blind-retry
+    the same stale value."""
+
+    code = "RECONCILIATION_FINDING_VERSION_CONFLICT"
+    status_code = 409
+
+
+class ReconciliationFindingRunNotCompletedError(DomainError):
+    """Roadmap PR22D -- disposition mutation is only permitted while the
+    finding's owning run has `status = 'completed'`. A `pending`/
+    `running`/`failed` run has no stable, reviewable evidence yet (a
+    `failed` run's partial state was never persisted at all, per PR22C
+    §26's all-or-nothing guarantee) -- reviewing against it would mean
+    reviewing evidence that may not exist yet or may still change under
+    the reviewer."""
+
+    code = "RECONCILIATION_FINDING_RUN_NOT_COMPLETED"
+    status_code = 409
+
+
+class ReconciliationFindingSignedOffError(DomainError):
+    """Roadmap PR22D (§14-16 of the task) -- the finding's owning run
+    already has a persisted `LegacyReconciliationSignOff` row. Once a run
+    is signed off, every one of its findings' dispositions becomes
+    permanently immutable. This is checked under the same
+    `LegacyReconciliationRun` row lock (`SELECT ... FOR UPDATE`) acquired
+    at the start of the disposition-mutation transaction, so a concurrent
+    future PR22E sign-off creation can never race past an in-flight
+    disposition mutation (or vice versa) -- see
+    `app.crud.legacy_reconciliation.update_finding_disposition`'s own
+    docstring for the full lock-order contract PR22E must also follow."""
+
+    code = "RECONCILIATION_FINDING_SIGNED_OFF"
+    status_code = 409

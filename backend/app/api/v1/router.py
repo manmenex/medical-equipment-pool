@@ -11,6 +11,7 @@ from app.api.v1 import (
     inventory_import,
     legacy_history_import,
     legacy_migration_authorities,
+    legacy_reconciliation,
     master_data,
     notifications,
     report_options,
@@ -36,3 +37,5 @@ api_router.include_router(inventory_import.router)
 api_router.include_router(import_sessions.router)
 api_router.include_router(legacy_migration_authorities.router)
 api_router.include_router(legacy_history_import.router)
+api_router.include_router(legacy_reconciliation.runs_router)
+api_router.include_router(legacy_reconciliation.findings_router)
