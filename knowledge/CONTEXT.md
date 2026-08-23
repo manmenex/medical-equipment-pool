@@ -105,16 +105,19 @@ was touched by the design, the governance sync, or the closure round
 itself. **Current work is PR22B** (Reconciliation Schema + Run/Snapshot
 Foundation) — the first implementation slice, **in progress, not yet
 merged**: `LegacyMigrationAuthorityCoverage` (OD-PR22-7's governed
-two-boundary temporal-coverage artifact), `LegacyReconciliationRun`,
-`LegacyReconciliationFinding` (OD-PR22-2's four-value disposition
-domain), `LegacyReconciliationFindingEvent` (provenance junction table),
-and `LegacyReconciliationSignOff` (table shape only, no sign-off logic).
-`LegacyBMEUserAlias` (§18) is deliberately deferred, not implemented.
-Schema/persistence only — no analysis/detection engine (PR22C), no API,
-no frontend, no disposition-mutation service, and no sign-off logic
-(PR22E) exist yet. No other PR22B-G slice may begin ahead of its own
-ordinary implementation dependencies (e.g. PR22C depends on PR22B,
-PR22E depends on PR22D).
+two-boundary temporal-coverage artifact, closed `approval_basis`
+domain), `LegacyReconciliationRun` (`pending`/`running`/`completed`/
+`failed` status, OD-PR22-3's forward-only `supersedes_run_id`
+supersession), `LegacyReconciliationFinding` (bounded, DB-unconstrained
+`code`; closed `severity`; OD-PR22-2's four-value disposition domain),
+`LegacyReconciliationFindingEvent` (provenance junction table),
+`LegacyReconciliationSignOff` (table shape only, no sign-off logic),
+and `LegacyBMEUserAlias` (OD-PR22-4's display-only BME-name-to-User
+mapping). Schema/persistence only — no analysis/detection engine
+(PR22C), no API, no frontend, no disposition-mutation service, and no
+sign-off logic (PR22E) exist yet. No other PR22B-G slice may begin
+ahead of its own ordinary implementation dependencies (e.g. PR22C
+depends on PR22B, PR22E depends on PR22D).
 
 ## Next sequence
 

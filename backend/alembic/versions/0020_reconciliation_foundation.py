@@ -11,31 +11,32 @@ foundation` (37 chars) does not fit. `0020_reconciliation_foundation`
 naming-convention change.
 
 Roadmap PR22B (docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md
-§9.J, §11, §13-15, §17.2, §18, §20-22, §25, §34, §36 -- OD-PR22-1
-through OD-PR22-7, all RESOLVED/OWNER APPROVED). Introduces five new,
+§9.J, §11, §13-15, §17.2, §18, §20-22, §25, §36 -- OD-PR22-1 through
+OD-PR22-7, all RESOLVED/OWNER APPROVED), refined by the PR22B
+implementation task's own binding field contract. Introduces six new,
 purely additive tables: `legacy_migration_authority_coverages`
 (OD-PR22-7's governed two-boundary temporal-coverage approval
 artifact), `legacy_reconciliation_runs` (one reconciliation attempt per
-approved coverage artifact, following the same active/superseded/
-consumed/failed supersession lifecycle as `LegacyHistoryDryRunPlan`/
-`EquipmentMasterDryRunPlan`), `legacy_reconciliation_findings`
-(OD-PR22-2's four-value disposition domain), `legacy_reconciliation_
-finding_events` (indexed, referentially-enforced finding-to-
-`LegacyEquipmentEvent` provenance junction table), and
-`legacy_reconciliation_sign_offs` (OD-PR22-6's final sign-off artifact
--- table shape only; no sign-off logic, endpoint, service, or audit
-write exists anywhere in this slice, that is PR22E's exclusive scope).
-No existing table is modified. `LegacyBMEUserAlias` (§18) is
-deliberately deferred, not silently omitted -- see
-`app.models.legacy_reconciliation`'s own module docstring for the full
-reasoning. This slice implements no analysis/detection engine (PR22C),
-no API, and no frontend.
+approved coverage artifact; `pending`/`running`/`completed`/`failed`
+lifecycle; OD-PR22-3's forward-only supersession via
+`supersedes_run_id`), `legacy_reconciliation_findings` (bounded,
+DB-unconstrained `code`; closed `severity` domain; OD-PR22-2's
+four-value `disposition` domain), `legacy_reconciliation_finding_events`
+(indexed, referentially-enforced finding-to-`LegacyEquipmentEvent`
+provenance junction table), `legacy_reconciliation_signoffs`
+(OD-PR22-6's final sign-off artifact -- table shape only; no sign-off
+logic, endpoint, service, or audit write exists anywhere in this
+slice, that is PR22E's exclusive scope), and `legacy_bme_user_aliases`
+(OD-PR22-4's display-only BME-name-to-User mapping, mirroring
+`legacy_ward_aliases`'s exact shape). No existing table is modified.
+This slice implements no analysis/detection engine (PR22C), no API,
+and no frontend.
 
 **Fresh-install vs. historical-upgrade convergence**, following the
 exact discipline migrations `0015`-`0019` established (see those
 migrations' own extensive docstrings for the full rationale -- not
 restated here). `app.models.legacy_reconciliation` (registered in
-`app/db/base.py`) already defines all five ORM models, so
+`app/db/base.py`) already defines all six ORM models, so
 `0001_initial.py`'s `Base.metadata.create_all()` already creates every
 table on any brand-new install. This migration's own raw SQL is what
 creates them on a database that historically applied `0001`-`0019`
@@ -43,13 +44,13 @@ before this slice existed. `_verify_schema_convergence()` below is the
 same production-owned, fail-closed catalog classification pattern as
 `0015`-`0019`'s (closed-world column/constraint/index equality,
 index/constraint health gates, relation-scoped constraint lookups)
-applied to all five tables -- every expected value captured
-empirically against a real, freshly migrated PostgreSQL 16 database
-(this repository's own local instance, migrated through `0019` first,
-then these five tables created directly via `Base.metadata.create_all()`
-and their catalog rows read back), never hand-guessed. Two
-auto-generated foreign-key constraint names are truncated by
-PostgreSQL's own NAMEDATALEN(63) limit
+applied to all six tables -- every expected value captured empirically
+against a real, freshly migrated PostgreSQL 16 database (this
+repository's own local instance, migrated through `0019` first, then
+these six tables created directly via `Base.metadata.create_all()` and
+their catalog rows read back), never hand-guessed. Two auto-generated
+foreign-key constraint names are truncated by PostgreSQL's own
+NAMEDATALEN(63) limit
 (`legacy_migration_authority_coverage_migration_authority_id_fkey`,
 `legacy_reconciliation_finding_ev_legacy_equipment_event_id_fkey`) --
 both captured and reproduced verbatim below exactly as PostgreSQL
@@ -78,11 +79,14 @@ CREATE TABLE IF NOT EXISTS legacy_migration_authority_coverages (
     legacy_coverage_start TIMESTAMP WITH TIME ZONE NOT NULL,
     legacy_coverage_end TIMESTAMP WITH TIME ZONE NOT NULL,
     live_system_start TIMESTAMP WITH TIME ZONE NOT NULL,
+    approval_basis VARCHAR(50) NOT NULL,
     approved_by_user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     approved_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
     CONSTRAINT ck_legacy_migration_authority_coverages_coverage_window
-        CHECK (legacy_coverage_start < legacy_coverage_end)
+        CHECK (legacy_coverage_start <= legacy_coverage_end),
+    CONSTRAINT ck_legacy_migration_authority_coverages_approval_basis
+        CHECK (approval_basis IN ('explicit_owner_approval','explicit_administrator_approval'))
 )
 """
 
@@ -91,35 +95,54 @@ CREATE INDEX IF NOT EXISTS ix_legacy_migration_authority_coverages_migration_aut
     ON legacy_migration_authority_coverages (migration_authority_id)
 """
 
+_CREATE_COVERAGES_AUTHORITY_APPROVED_AT_INDEX = """
+CREATE INDEX IF NOT EXISTS ix_legacy_migration_authority_coverages_authority_approved_at
+    ON legacy_migration_authority_coverages (migration_authority_id, approved_at)
+"""
+
 _CREATE_RUNS = """
 CREATE TABLE IF NOT EXISTS legacy_reconciliation_runs (
     id UUID NOT NULL PRIMARY KEY,
-    coverage_id UUID NOT NULL REFERENCES legacy_migration_authority_coverages(id) ON DELETE RESTRICT,
-    legacy_coverage_start_snapshot TIMESTAMP WITH TIME ZONE NOT NULL,
-    legacy_coverage_end_snapshot TIMESTAMP WITH TIME ZONE NOT NULL,
-    live_system_start_snapshot TIMESTAMP WITH TIME ZONE NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
     version INTEGER NOT NULL DEFAULT 0,
+    rule_version VARCHAR(50) NOT NULL,
+    snapshot_as_of TIMESTAMP WITH TIME ZONE NOT NULL,
     created_by_user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
     started_at TIMESTAMP WITH TIME ZONE,
     completed_at TIMESTAMP WITH TIME ZONE,
+    failed_at TIMESTAMP WITH TIME ZONE,
+    legacy_coverage_start TIMESTAMP WITH TIME ZONE NOT NULL,
+    legacy_coverage_end TIMESTAMP WITH TIME ZONE NOT NULL,
+    live_system_start TIMESTAMP WITH TIME ZONE NOT NULL,
+    coverage_id UUID NOT NULL REFERENCES legacy_migration_authority_coverages(id) ON DELETE RESTRICT,
+    supersedes_run_id UUID REFERENCES legacy_reconciliation_runs(id) ON DELETE RESTRICT,
     summary_total_findings INTEGER NOT NULL DEFAULT 0,
-    summary_requires_correction INTEGER NOT NULL DEFAULT 0,
-    summary_accepted_unresolved INTEGER NOT NULL DEFAULT 0,
-    summary_confirmed_valid INTEGER NOT NULL DEFAULT 0,
-    summary_confirmed_duplicate INTEGER NOT NULL DEFAULT 0,
+    summary_high INTEGER NOT NULL DEFAULT 0,
+    summary_medium INTEGER NOT NULL DEFAULT 0,
+    summary_low INTEGER NOT NULL DEFAULT 0,
     CONSTRAINT ck_legacy_reconciliation_runs_status
-        CHECK (status IN ('active','superseded','consumed','failed')),
+        CHECK (status IN ('pending','running','completed','failed')),
+    CONSTRAINT ck_legacy_reconciliation_runs_version CHECK (version >= 0),
+    CONSTRAINT ck_legacy_reconciliation_runs_coverage_window
+        CHECK (legacy_coverage_start <= legacy_coverage_end),
+    CONSTRAINT ck_legacy_reconciliation_runs_no_self_supersession
+        CHECK (supersedes_run_id IS NULL OR supersedes_run_id <> id),
     CONSTRAINT ck_legacy_reconciliation_runs_summary_total_findings CHECK (summary_total_findings >= 0),
-    CONSTRAINT ck_legacy_reconciliation_runs_summary_requires_correction
-        CHECK (summary_requires_correction >= 0),
-    CONSTRAINT ck_legacy_reconciliation_runs_summary_accepted_unresolved
-        CHECK (summary_accepted_unresolved >= 0),
-    CONSTRAINT ck_legacy_reconciliation_runs_summary_confirmed_valid CHECK (summary_confirmed_valid >= 0),
-    CONSTRAINT ck_legacy_reconciliation_runs_summary_confirmed_duplicate
-        CHECK (summary_confirmed_duplicate >= 0)
+    CONSTRAINT ck_legacy_reconciliation_runs_summary_high CHECK (summary_high >= 0),
+    CONSTRAINT ck_legacy_reconciliation_runs_summary_medium CHECK (summary_medium >= 0),
+    CONSTRAINT ck_legacy_reconciliation_runs_summary_low CHECK (summary_low >= 0)
 )
+"""
+
+_CREATE_RUNS_CREATED_AT_INDEX = """
+CREATE INDEX IF NOT EXISTS ix_legacy_reconciliation_runs_created_at
+    ON legacy_reconciliation_runs (created_at)
+"""
+
+_CREATE_RUNS_STATUS_INDEX = """
+CREATE INDEX IF NOT EXISTS ix_legacy_reconciliation_runs_status
+    ON legacy_reconciliation_runs (status)
 """
 
 _CREATE_RUNS_COVERAGE_INDEX = """
@@ -127,32 +150,36 @@ CREATE INDEX IF NOT EXISTS ix_legacy_reconciliation_runs_coverage_id
     ON legacy_reconciliation_runs (coverage_id)
 """
 
-_CREATE_RUNS_ONE_ACTIVE_INDEX = """
-CREATE UNIQUE INDEX IF NOT EXISTS uq_legacy_reconciliation_runs_one_active_per_coverage
-    ON legacy_reconciliation_runs (coverage_id) WHERE status = 'active'
+_CREATE_RUNS_SUPERSEDES_INDEX = """
+CREATE INDEX IF NOT EXISTS ix_legacy_reconciliation_runs_supersedes_run_id
+    ON legacy_reconciliation_runs (supersedes_run_id)
 """
 
 _CREATE_FINDINGS = """
 CREATE TABLE IF NOT EXISTS legacy_reconciliation_findings (
     id UUID NOT NULL PRIMARY KEY,
     run_id UUID NOT NULL REFERENCES legacy_reconciliation_runs(id) ON DELETE RESTRICT,
-    equipment_id UUID NOT NULL REFERENCES equipment(id) ON DELETE RESTRICT,
-    finding_type VARCHAR(30) NOT NULL,
-    evidence JSONB,
-    detected_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    code VARCHAR(50) NOT NULL,
+    severity VARCHAR(10) NOT NULL,
+    equipment_id UUID REFERENCES equipment(id) ON DELETE RESTRICT,
+    evidence JSONB NOT NULL,
+    rule_version VARCHAR(50) NOT NULL,
     disposition VARCHAR(30),
     disposed_by_user_id UUID REFERENCES users(id) ON DELETE RESTRICT,
     disposed_at TIMESTAMP WITH TIME ZONE,
-    CONSTRAINT ck_legacy_reconciliation_findings_finding_type
-        CHECK (finding_type IN ('MISSING_IN_LIVE_SYSTEM','MISSING_IN_LEGACY_HISTORY','STATUS_CONFLICT',
-            'PAIRING_CANDIDATE','DUPLICATE_SUSPECT')),
+    disposition_note TEXT,
+    version INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    CONSTRAINT ck_legacy_reconciliation_findings_severity
+        CHECK (severity IN ('high','medium','low')),
     CONSTRAINT ck_legacy_reconciliation_findings_disposition
         CHECK (disposition IS NULL OR disposition IN
             ('confirmed_valid','confirmed_duplicate','accepted_unresolved','requires_correction')),
     CONSTRAINT ck_legacy_reconciliation_findings_disposed_by_pair
         CHECK ((disposition IS NULL) = (disposed_by_user_id IS NULL)),
     CONSTRAINT ck_legacy_reconciliation_findings_disposed_at_pair
-        CHECK ((disposition IS NULL) = (disposed_at IS NULL))
+        CHECK ((disposition IS NULL) = (disposed_at IS NULL)),
+    CONSTRAINT ck_legacy_reconciliation_findings_version CHECK (version >= 0)
 )
 """
 
@@ -161,14 +188,19 @@ CREATE INDEX IF NOT EXISTS ix_legacy_reconciliation_findings_run_id
     ON legacy_reconciliation_findings (run_id)
 """
 
+_CREATE_FINDINGS_RUN_DISPOSITION_INDEX = """
+CREATE INDEX IF NOT EXISTS ix_legacy_reconciliation_findings_run_disposition
+    ON legacy_reconciliation_findings (run_id, disposition)
+"""
+
+_CREATE_FINDINGS_RUN_CODE_INDEX = """
+CREATE INDEX IF NOT EXISTS ix_legacy_reconciliation_findings_run_code
+    ON legacy_reconciliation_findings (run_id, code)
+"""
+
 _CREATE_FINDINGS_EQUIPMENT_INDEX = """
 CREATE INDEX IF NOT EXISTS ix_legacy_reconciliation_findings_equipment_id
     ON legacy_reconciliation_findings (equipment_id)
-"""
-
-_CREATE_FINDINGS_DISPOSITION_INDEX = """
-CREATE INDEX IF NOT EXISTS ix_legacy_reconciliation_findings_disposition
-    ON legacy_reconciliation_findings (disposition)
 """
 
 _CREATE_FINDING_EVENTS = """
@@ -191,14 +223,28 @@ CREATE INDEX IF NOT EXISTS ix_legacy_reconciliation_finding_events_event_id
     ON legacy_reconciliation_finding_events (legacy_equipment_event_id)
 """
 
-_CREATE_SIGN_OFFS = """
-CREATE TABLE IF NOT EXISTS legacy_reconciliation_sign_offs (
+_CREATE_SIGNOFFS = """
+CREATE TABLE IF NOT EXISTS legacy_reconciliation_signoffs (
     id UUID NOT NULL PRIMARY KEY,
     run_id UUID NOT NULL REFERENCES legacy_reconciliation_runs(id) ON DELETE RESTRICT,
     signed_off_by_user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     signed_off_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
-    note TEXT,
-    CONSTRAINT uq_legacy_reconciliation_sign_offs_run_id UNIQUE (run_id)
+    attestation_summary JSONB NOT NULL,
+    run_version_at_signoff INTEGER NOT NULL,
+    CONSTRAINT uq_legacy_reconciliation_signoffs_run_id UNIQUE (run_id),
+    CONSTRAINT ck_legacy_reconciliation_signoffs_run_version_at_signoff
+        CHECK (run_version_at_signoff >= 0)
+)
+"""
+
+_CREATE_BME_ALIASES = """
+CREATE TABLE IF NOT EXISTS legacy_bme_user_aliases (
+    id UUID NOT NULL PRIMARY KEY,
+    raw_bme_name VARCHAR(150) NOT NULL,
+    resolved_user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    created_by_user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    CONSTRAINT uq_legacy_bme_user_aliases_raw_bme_name UNIQUE (raw_bme_name)
 )
 """
 
@@ -207,11 +253,12 @@ _GOVERNED_TABLES = (
     "legacy_reconciliation_runs",
     "legacy_reconciliation_findings",
     "legacy_reconciliation_finding_events",
-    "legacy_reconciliation_sign_offs",
+    "legacy_reconciliation_signoffs",
+    "legacy_bme_user_aliases",
 )
 
 # Captured empirically against a real, freshly migrated PostgreSQL 16
-# database (all five tables created directly via
+# database (all six tables created directly via
 # `Base.metadata.create_all()`, then their own catalog rows read back)
 # -- mirrors 0015-0019's `_EXPECTED_COLUMNS` shape exactly: (data_type,
 # udt_name, character_maximum_length, is_nullable, column_default).
@@ -222,50 +269,66 @@ _EXPECTED_COLUMNS = {
         "legacy_coverage_start": ("timestamp with time zone", "timestamptz", None, "NO", None),
         "legacy_coverage_end": ("timestamp with time zone", "timestamptz", None, "NO", None),
         "live_system_start": ("timestamp with time zone", "timestamptz", None, "NO", None),
+        "approval_basis": ("character varying", "varchar", 50, "NO", None),
         "approved_by_user_id": ("uuid", "uuid", None, "NO", None),
         "approved_at": ("timestamp with time zone", "timestamptz", None, "NO", "now()"),
         "created_at": ("timestamp with time zone", "timestamptz", None, "NO", "now()"),
     },
     "legacy_reconciliation_runs": {
         "id": ("uuid", "uuid", None, "NO", None),
-        "coverage_id": ("uuid", "uuid", None, "NO", None),
-        "legacy_coverage_start_snapshot": ("timestamp with time zone", "timestamptz", None, "NO", None),
-        "legacy_coverage_end_snapshot": ("timestamp with time zone", "timestamptz", None, "NO", None),
-        "live_system_start_snapshot": ("timestamp with time zone", "timestamptz", None, "NO", None),
-        "status": ("character varying", "varchar", 20, "NO", "'active'::character varying"),
+        "status": ("character varying", "varchar", 20, "NO", "'pending'::character varying"),
         "version": ("integer", "int4", None, "NO", "0"),
+        "rule_version": ("character varying", "varchar", 50, "NO", None),
+        "snapshot_as_of": ("timestamp with time zone", "timestamptz", None, "NO", None),
         "created_by_user_id": ("uuid", "uuid", None, "NO", None),
         "created_at": ("timestamp with time zone", "timestamptz", None, "NO", "now()"),
         "started_at": ("timestamp with time zone", "timestamptz", None, "YES", None),
         "completed_at": ("timestamp with time zone", "timestamptz", None, "YES", None),
+        "failed_at": ("timestamp with time zone", "timestamptz", None, "YES", None),
+        "legacy_coverage_start": ("timestamp with time zone", "timestamptz", None, "NO", None),
+        "legacy_coverage_end": ("timestamp with time zone", "timestamptz", None, "NO", None),
+        "live_system_start": ("timestamp with time zone", "timestamptz", None, "NO", None),
+        "coverage_id": ("uuid", "uuid", None, "NO", None),
+        "supersedes_run_id": ("uuid", "uuid", None, "YES", None),
         "summary_total_findings": ("integer", "int4", None, "NO", "0"),
-        "summary_requires_correction": ("integer", "int4", None, "NO", "0"),
-        "summary_accepted_unresolved": ("integer", "int4", None, "NO", "0"),
-        "summary_confirmed_valid": ("integer", "int4", None, "NO", "0"),
-        "summary_confirmed_duplicate": ("integer", "int4", None, "NO", "0"),
+        "summary_high": ("integer", "int4", None, "NO", "0"),
+        "summary_medium": ("integer", "int4", None, "NO", "0"),
+        "summary_low": ("integer", "int4", None, "NO", "0"),
     },
     "legacy_reconciliation_findings": {
         "id": ("uuid", "uuid", None, "NO", None),
         "run_id": ("uuid", "uuid", None, "NO", None),
-        "equipment_id": ("uuid", "uuid", None, "NO", None),
-        "finding_type": ("character varying", "varchar", 30, "NO", None),
-        "evidence": ("jsonb", "jsonb", None, "YES", None),
-        "detected_at": ("timestamp with time zone", "timestamptz", None, "NO", "now()"),
+        "code": ("character varying", "varchar", 50, "NO", None),
+        "severity": ("character varying", "varchar", 10, "NO", None),
+        "equipment_id": ("uuid", "uuid", None, "YES", None),
+        "evidence": ("jsonb", "jsonb", None, "NO", None),
+        "rule_version": ("character varying", "varchar", 50, "NO", None),
         "disposition": ("character varying", "varchar", 30, "YES", None),
         "disposed_by_user_id": ("uuid", "uuid", None, "YES", None),
         "disposed_at": ("timestamp with time zone", "timestamptz", None, "YES", None),
+        "disposition_note": ("text", "text", None, "YES", None),
+        "version": ("integer", "int4", None, "NO", "0"),
+        "created_at": ("timestamp with time zone", "timestamptz", None, "NO", "now()"),
     },
     "legacy_reconciliation_finding_events": {
         "id": ("uuid", "uuid", None, "NO", None),
         "finding_id": ("uuid", "uuid", None, "NO", None),
         "legacy_equipment_event_id": ("uuid", "uuid", None, "NO", None),
     },
-    "legacy_reconciliation_sign_offs": {
+    "legacy_reconciliation_signoffs": {
         "id": ("uuid", "uuid", None, "NO", None),
         "run_id": ("uuid", "uuid", None, "NO", None),
         "signed_off_by_user_id": ("uuid", "uuid", None, "NO", None),
         "signed_off_at": ("timestamp with time zone", "timestamptz", None, "NO", "now()"),
-        "note": ("text", "text", None, "YES", None),
+        "attestation_summary": ("jsonb", "jsonb", None, "NO", None),
+        "run_version_at_signoff": ("integer", "int4", None, "NO", None),
+    },
+    "legacy_bme_user_aliases": {
+        "id": ("uuid", "uuid", None, "NO", None),
+        "raw_bme_name": ("character varying", "varchar", 150, "NO", None),
+        "resolved_user_id": ("uuid", "uuid", None, "NO", None),
+        "created_by_user_id": ("uuid", "uuid", None, "NO", None),
+        "created_at": ("timestamp with time zone", "timestamptz", None, "NO", "now()"),
     },
 }
 
@@ -286,7 +349,11 @@ _EXPECTED_CONSTRAINTS = {
             "FOREIGN KEY (approved_by_user_id) REFERENCES users(id) ON DELETE RESTRICT"
         ),
         "ck_legacy_migration_authority_coverages_coverage_window": (
-            "CHECK ((legacy_coverage_start < legacy_coverage_end))"
+            "CHECK ((legacy_coverage_start <= legacy_coverage_end))"
+        ),
+        "ck_legacy_migration_authority_coverages_approval_basis": (
+            "CHECK (((approval_basis)::text = ANY ((ARRAY['explicit_owner_approval'::character varying, "
+            "'explicit_administrator_approval'::character varying])::text[])))"
         ),
     },
     "legacy_reconciliation_runs": {
@@ -297,22 +364,24 @@ _EXPECTED_CONSTRAINTS = {
         "legacy_reconciliation_runs_created_by_user_id_fkey": (
             "FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT"
         ),
+        "legacy_reconciliation_runs_supersedes_run_id_fkey": (
+            "FOREIGN KEY (supersedes_run_id) REFERENCES legacy_reconciliation_runs(id) ON DELETE RESTRICT"
+        ),
         "ck_legacy_reconciliation_runs_status": (
-            "CHECK (((status)::text = ANY ((ARRAY['active'::character varying, "
-            "'superseded'::character varying, 'consumed'::character varying, "
-            "'failed'::character varying])::text[])))"
+            "CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'running'::character varying, "
+            "'completed'::character varying, 'failed'::character varying])::text[])))"
+        ),
+        "ck_legacy_reconciliation_runs_version": "CHECK ((version >= 0))",
+        "ck_legacy_reconciliation_runs_coverage_window": (
+            "CHECK ((legacy_coverage_start <= legacy_coverage_end))"
+        ),
+        "ck_legacy_reconciliation_runs_no_self_supersession": (
+            "CHECK (((supersedes_run_id IS NULL) OR (supersedes_run_id <> id)))"
         ),
         "ck_legacy_reconciliation_runs_summary_total_findings": "CHECK ((summary_total_findings >= 0))",
-        "ck_legacy_reconciliation_runs_summary_requires_correction": (
-            "CHECK ((summary_requires_correction >= 0))"
-        ),
-        "ck_legacy_reconciliation_runs_summary_accepted_unresolved": (
-            "CHECK ((summary_accepted_unresolved >= 0))"
-        ),
-        "ck_legacy_reconciliation_runs_summary_confirmed_valid": "CHECK ((summary_confirmed_valid >= 0))",
-        "ck_legacy_reconciliation_runs_summary_confirmed_duplicate": (
-            "CHECK ((summary_confirmed_duplicate >= 0))"
-        ),
+        "ck_legacy_reconciliation_runs_summary_high": "CHECK ((summary_high >= 0))",
+        "ck_legacy_reconciliation_runs_summary_medium": "CHECK ((summary_medium >= 0))",
+        "ck_legacy_reconciliation_runs_summary_low": "CHECK ((summary_low >= 0))",
     },
     "legacy_reconciliation_findings": {
         "legacy_reconciliation_findings_pkey": "PRIMARY KEY (id)",
@@ -325,10 +394,9 @@ _EXPECTED_CONSTRAINTS = {
         "legacy_reconciliation_findings_disposed_by_user_id_fkey": (
             "FOREIGN KEY (disposed_by_user_id) REFERENCES users(id) ON DELETE RESTRICT"
         ),
-        "ck_legacy_reconciliation_findings_finding_type": (
-            "CHECK (((finding_type)::text = ANY ((ARRAY['MISSING_IN_LIVE_SYSTEM'::character varying, "
-            "'MISSING_IN_LEGACY_HISTORY'::character varying, 'STATUS_CONFLICT'::character varying, "
-            "'PAIRING_CANDIDATE'::character varying, 'DUPLICATE_SUSPECT'::character varying])::text[])))"
+        "ck_legacy_reconciliation_findings_severity": (
+            "CHECK (((severity)::text = ANY ((ARRAY['high'::character varying, 'medium'::character varying, "
+            "'low'::character varying])::text[])))"
         ),
         "ck_legacy_reconciliation_findings_disposition": (
             "CHECK (((disposition IS NULL) OR ((disposition)::text = ANY "
@@ -341,6 +409,7 @@ _EXPECTED_CONSTRAINTS = {
         "ck_legacy_reconciliation_findings_disposed_at_pair": (
             "CHECK (((disposition IS NULL) = (disposed_at IS NULL)))"
         ),
+        "ck_legacy_reconciliation_findings_version": "CHECK ((version >= 0))",
     },
     "legacy_reconciliation_finding_events": {
         "legacy_reconciliation_finding_events_pkey": "PRIMARY KEY (id)",
@@ -357,15 +426,26 @@ _EXPECTED_CONSTRAINTS = {
             "UNIQUE (finding_id, legacy_equipment_event_id)"
         ),
     },
-    "legacy_reconciliation_sign_offs": {
-        "legacy_reconciliation_sign_offs_pkey": "PRIMARY KEY (id)",
-        "legacy_reconciliation_sign_offs_run_id_fkey": (
+    "legacy_reconciliation_signoffs": {
+        "legacy_reconciliation_signoffs_pkey": "PRIMARY KEY (id)",
+        "legacy_reconciliation_signoffs_run_id_fkey": (
             "FOREIGN KEY (run_id) REFERENCES legacy_reconciliation_runs(id) ON DELETE RESTRICT"
         ),
-        "legacy_reconciliation_sign_offs_signed_off_by_user_id_fkey": (
+        "legacy_reconciliation_signoffs_signed_off_by_user_id_fkey": (
             "FOREIGN KEY (signed_off_by_user_id) REFERENCES users(id) ON DELETE RESTRICT"
         ),
-        "uq_legacy_reconciliation_sign_offs_run_id": "UNIQUE (run_id)",
+        "uq_legacy_reconciliation_signoffs_run_id": "UNIQUE (run_id)",
+        "ck_legacy_reconciliation_signoffs_run_version_at_signoff": "CHECK ((run_version_at_signoff >= 0))",
+    },
+    "legacy_bme_user_aliases": {
+        "legacy_bme_user_aliases_pkey": "PRIMARY KEY (id)",
+        "legacy_bme_user_aliases_resolved_user_id_fkey": (
+            "FOREIGN KEY (resolved_user_id) REFERENCES users(id) ON DELETE RESTRICT"
+        ),
+        "legacy_bme_user_aliases_created_by_user_id_fkey": (
+            "FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT"
+        ),
+        "uq_legacy_bme_user_aliases_raw_bme_name": "UNIQUE (raw_bme_name)",
     },
 }
 
@@ -380,19 +460,31 @@ _EXPECTED_INDEXES = {
             "CREATE INDEX ix_legacy_migration_authority_coverages_migration_authority_id ON "
             "public.legacy_migration_authority_coverages USING btree (migration_authority_id)"
         ),
+        "ix_legacy_migration_authority_coverages_authority_approved_at": (
+            "CREATE INDEX ix_legacy_migration_authority_coverages_authority_approved_at ON "
+            "public.legacy_migration_authority_coverages USING btree (migration_authority_id, approved_at)"
+        ),
     },
     "legacy_reconciliation_runs": {
         "legacy_reconciliation_runs_pkey": (
             "CREATE UNIQUE INDEX legacy_reconciliation_runs_pkey ON public.legacy_reconciliation_runs "
             "USING btree (id)"
         ),
+        "ix_legacy_reconciliation_runs_created_at": (
+            "CREATE INDEX ix_legacy_reconciliation_runs_created_at ON public.legacy_reconciliation_runs "
+            "USING btree (created_at)"
+        ),
+        "ix_legacy_reconciliation_runs_status": (
+            "CREATE INDEX ix_legacy_reconciliation_runs_status ON public.legacy_reconciliation_runs "
+            "USING btree (status)"
+        ),
         "ix_legacy_reconciliation_runs_coverage_id": (
             "CREATE INDEX ix_legacy_reconciliation_runs_coverage_id ON public.legacy_reconciliation_runs "
             "USING btree (coverage_id)"
         ),
-        "uq_legacy_reconciliation_runs_one_active_per_coverage": (
-            "CREATE UNIQUE INDEX uq_legacy_reconciliation_runs_one_active_per_coverage ON "
-            "public.legacy_reconciliation_runs USING btree (coverage_id) WHERE ((status)::text = 'active'::text)"
+        "ix_legacy_reconciliation_runs_supersedes_run_id": (
+            "CREATE INDEX ix_legacy_reconciliation_runs_supersedes_run_id ON public.legacy_reconciliation_runs "
+            "USING btree (supersedes_run_id)"
         ),
     },
     "legacy_reconciliation_findings": {
@@ -404,13 +496,17 @@ _EXPECTED_INDEXES = {
             "CREATE INDEX ix_legacy_reconciliation_findings_run_id ON public.legacy_reconciliation_findings "
             "USING btree (run_id)"
         ),
+        "ix_legacy_reconciliation_findings_run_disposition": (
+            "CREATE INDEX ix_legacy_reconciliation_findings_run_disposition ON "
+            "public.legacy_reconciliation_findings USING btree (run_id, disposition)"
+        ),
+        "ix_legacy_reconciliation_findings_run_code": (
+            "CREATE INDEX ix_legacy_reconciliation_findings_run_code ON public.legacy_reconciliation_findings "
+            "USING btree (run_id, code)"
+        ),
         "ix_legacy_reconciliation_findings_equipment_id": (
             "CREATE INDEX ix_legacy_reconciliation_findings_equipment_id ON "
             "public.legacy_reconciliation_findings USING btree (equipment_id)"
-        ),
-        "ix_legacy_reconciliation_findings_disposition": (
-            "CREATE INDEX ix_legacy_reconciliation_findings_disposition ON "
-            "public.legacy_reconciliation_findings USING btree (disposition)"
         ),
     },
     "legacy_reconciliation_finding_events": {
@@ -431,14 +527,23 @@ _EXPECTED_INDEXES = {
             "public.legacy_reconciliation_finding_events USING btree (legacy_equipment_event_id)"
         ),
     },
-    "legacy_reconciliation_sign_offs": {
-        "legacy_reconciliation_sign_offs_pkey": (
-            "CREATE UNIQUE INDEX legacy_reconciliation_sign_offs_pkey ON "
-            "public.legacy_reconciliation_sign_offs USING btree (id)"
+    "legacy_reconciliation_signoffs": {
+        "legacy_reconciliation_signoffs_pkey": (
+            "CREATE UNIQUE INDEX legacy_reconciliation_signoffs_pkey ON "
+            "public.legacy_reconciliation_signoffs USING btree (id)"
         ),
-        "uq_legacy_reconciliation_sign_offs_run_id": (
-            "CREATE UNIQUE INDEX uq_legacy_reconciliation_sign_offs_run_id ON "
-            "public.legacy_reconciliation_sign_offs USING btree (run_id)"
+        "uq_legacy_reconciliation_signoffs_run_id": (
+            "CREATE UNIQUE INDEX uq_legacy_reconciliation_signoffs_run_id ON "
+            "public.legacy_reconciliation_signoffs USING btree (run_id)"
+        ),
+    },
+    "legacy_bme_user_aliases": {
+        "legacy_bme_user_aliases_pkey": (
+            "CREATE UNIQUE INDEX legacy_bme_user_aliases_pkey ON public.legacy_bme_user_aliases USING btree (id)"
+        ),
+        "uq_legacy_bme_user_aliases_raw_bme_name": (
+            "CREATE UNIQUE INDEX uq_legacy_bme_user_aliases_raw_bme_name ON public.legacy_bme_user_aliases "
+            "USING btree (raw_bme_name)"
         ),
     },
 }
@@ -512,7 +617,7 @@ def _classify_index(bind, name: str, expected_def: str) -> tuple[str, tuple[str,
 
 def _verify_schema_convergence(bind) -> None:
     """Mirrors `0019_legacy_history_foundation._verify_schema_convergence()`'s
-    exact discipline and rationale, applied to all five new PR22B tables.
+    exact discipline and rationale, applied to all six new PR22B tables.
     Required invariant: `expected_governed_objects ==
     actual_governed_objects` -- exact closed-world equality, per table.
     Any non-COMPATIBLE classification aborts the migration with every
@@ -624,17 +729,22 @@ def upgrade() -> None:
 
     op.execute(sa.text(_CREATE_COVERAGES))
     op.execute(sa.text(_CREATE_COVERAGES_AUTHORITY_INDEX))
+    op.execute(sa.text(_CREATE_COVERAGES_AUTHORITY_APPROVED_AT_INDEX))
     op.execute(sa.text(_CREATE_RUNS))
+    op.execute(sa.text(_CREATE_RUNS_CREATED_AT_INDEX))
+    op.execute(sa.text(_CREATE_RUNS_STATUS_INDEX))
     op.execute(sa.text(_CREATE_RUNS_COVERAGE_INDEX))
-    op.execute(sa.text(_CREATE_RUNS_ONE_ACTIVE_INDEX))
+    op.execute(sa.text(_CREATE_RUNS_SUPERSEDES_INDEX))
     op.execute(sa.text(_CREATE_FINDINGS))
     op.execute(sa.text(_CREATE_FINDINGS_RUN_INDEX))
+    op.execute(sa.text(_CREATE_FINDINGS_RUN_DISPOSITION_INDEX))
+    op.execute(sa.text(_CREATE_FINDINGS_RUN_CODE_INDEX))
     op.execute(sa.text(_CREATE_FINDINGS_EQUIPMENT_INDEX))
-    op.execute(sa.text(_CREATE_FINDINGS_DISPOSITION_INDEX))
     op.execute(sa.text(_CREATE_FINDING_EVENTS))
     op.execute(sa.text(_CREATE_FINDING_EVENTS_FINDING_INDEX))
     op.execute(sa.text(_CREATE_FINDING_EVENTS_EVENT_INDEX))
-    op.execute(sa.text(_CREATE_SIGN_OFFS))
+    op.execute(sa.text(_CREATE_SIGNOFFS))
+    op.execute(sa.text(_CREATE_BME_ALIASES))
     _verify_schema_convergence(bind)
 
 
@@ -644,7 +754,8 @@ def downgrade() -> None:
     if bind.dialect.name != "postgresql":
         return
 
-    op.execute(sa.text("DROP TABLE IF EXISTS legacy_reconciliation_sign_offs"))
+    op.execute(sa.text("DROP TABLE IF EXISTS legacy_bme_user_aliases"))
+    op.execute(sa.text("DROP TABLE IF EXISTS legacy_reconciliation_signoffs"))
     op.execute(sa.text("DROP TABLE IF EXISTS legacy_reconciliation_finding_events"))
     op.execute(sa.text("DROP TABLE IF EXISTS legacy_reconciliation_findings"))
     op.execute(sa.text("DROP TABLE IF EXISTS legacy_reconciliation_runs"))

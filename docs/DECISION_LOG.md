@@ -4153,56 +4153,65 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   Branched from the exact authoritative baseline
   `f03af893d727b221bd941466d83e5eceb9eb596a` (GitHub PR #115),
   independently re-verified as `origin/claude/medical-equipment-pool-0c7fz0`'s
-  exact HEAD before branching. Adds the persistence/schema foundation
-  only for PR22 — no analysis/detection engine (PR22C), no API, no
-  frontend, no disposition-mutation service, and no sign-off logic
-  (PR22E) are implemented in this slice.
+  exact HEAD before branching. Implements the PR22B implementation
+  task's own binding field contract (a refinement of
+  `docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`'s §17.2
+  recommendation). Adds the persistence/schema foundation only for
+  PR22 — no analysis/detection engine (PR22C), no API, no frontend, no
+  disposition-mutation service, and no sign-off logic (PR22E) are
+  implemented in this slice.
 - **What was added:** `backend/app/models/legacy_reconciliation.py`
-  (five new SQLAlchemy models: `LegacyMigrationAuthorityCoverage`,
+  (six new SQLAlchemy models: `LegacyMigrationAuthorityCoverage`,
   `LegacyReconciliationRun`, `LegacyReconciliationFinding`,
-  `LegacyReconciliationFindingEvent`, `LegacyReconciliationSignOff`),
-  registered in `backend/app/db/base.py`; one additive Alembic migration
+  `LegacyReconciliationFindingEvent`, `LegacyReconciliationSignOff`,
+  `LegacyBMEUserAlias`), registered in `backend/app/db/base.py`; one
+  additive Alembic migration
   (`backend/alembic/versions/0020_reconciliation_foundation.py`,
   `down_revision = "0019_legacy_history_foundation"`, following the same
   fail-closed `_verify_schema_convergence()` catalog-classification
   pattern as migrations `0015`-`0019`, empirically verified against a
   real freshly migrated PostgreSQL 16 database); and
-  `backend/tests/test_pr22b_reconciliation_schema.py` covering
+  `backend/tests/test_pr22b_reconciliation_schema.py` (63 tests) covering
   constraint/domain/coherence/supersession/FK-integrity/no-mutation
   behavior plus a real PostgreSQL-only migration upgrade/downgrade/
   re-upgrade round trip.
 - **Key structural decisions:** OD-PR22-7's two-boundary temporal model
-  implemented as an immutable, append-only `LegacyMigrationAuthority
-  Coverage` approval artifact — `legacy_coverage_end`/`live_system_start`
-  gap, clean-handoff, and overlap are all valid, none is DB-rejected.
-  `LegacyReconciliationRun` reuses the existing `active`/`superseded`/
-  `consumed`/`failed` supersession lifecycle and one-active-per-parent
-  partial-unique-index pattern from `LegacyHistoryDryRunPlan`/
-  `EquipmentMasterDryRunPlan` verbatim, rather than inventing a new
-  taxonomy, and snapshots its bound coverage's three timestamps as
-  immutable evidence (the coverage artifact remains authoritative).
-  OD-PR22-2's four-value disposition domain (`confirmed_valid`,
-  `confirmed_duplicate`, `accepted_unresolved`, `requires_correction`)
-  is enforced by an explicit `CheckConstraint`, with a regression test
-  proving `confirmed_pair` is explicitly rejected (§34) alongside a
-  two-CHECK paired-nullability pattern coupling
-  `disposition`/`disposed_by_user_id`/`disposed_at`. Finding→event
-  provenance uses a real junction table
+  implemented as an immutable, append-only `legacy_migration_authority_
+  coverages` approval artifact bound to a closed `approval_basis` marker
+  (`explicit_owner_approval`/`explicit_administrator_approval`, never
+  arbitrary free text as the only provenance) — `legacy_coverage_end`/
+  `live_system_start` gap, clean-handoff, and overlap are all valid,
+  none is DB-rejected; the window's own `legacy_coverage_start <=
+  legacy_coverage_end` uses `<=`, not strict `<`. `legacy_reconciliation_
+  runs.status` is exactly `pending`/`running`/`completed`/`failed` — no
+  `signed_off` value; OD-PR22-3's supersession is represented
+  forward-only on the NEW run via `supersedes_run_id` (self-referencing
+  FK, self-supersession rejected by CHECK) rather than by mutating a
+  prior (possibly signed) run. `legacy_reconciliation_findings.code` is
+  a bounded, DB-unconstrained `VARCHAR(50)` — deliberately not a
+  CHECK-enforced enum, since PR22C owns the evolving taxonomy;
+  `severity` (`high`/`medium`/`low`) is closed. OD-PR22-2's four-value
+  disposition domain (`confirmed_valid`, `confirmed_duplicate`,
+  `accepted_unresolved`, `requires_correction`) is enforced by an
+  explicit `CheckConstraint`, with a regression test proving
+  `confirmed_pair` is explicitly rejected (§34) alongside a two-CHECK
+  paired-nullability pattern coupling `disposition`/`disposed_by_user_id`
+  /`disposed_at`. Finding→event provenance uses a real junction table
   (`legacy_reconciliation_finding_events`), never a JSONB array of
-  UUIDs. `LegacyReconciliationSignOff` exists as a table shape only
-  (`UNIQUE(run_id)`) — no sign-off precondition/audit logic exists
-  anywhere in this slice, confirmed by a structural test that the model
-  exposes no callable beyond plain ORM attribute access.
-- **Deliberately deferred, not silently omitted:** `LegacyBMEUserAlias`
-  (§18) is not implemented in this slice — no column in this module
-  references it and no test depends on it, so adding it now would be
-  dead code with no caller; it is left for a future, narrowly-scoped
-  slice that actually consumes it, per §18's own explicit permission to
-  defer.
+  UUIDs. `legacy_reconciliation_signoffs` exists as a table shape only
+  (`UNIQUE(run_id)`, `attestation_summary` JSONB NOT NULL,
+  `run_version_at_signoff` for future staleness detection) — no
+  sign-off precondition/audit logic exists anywhere in this slice,
+  confirmed by a structural test that the model exposes no callable
+  beyond plain ORM attribute access. `legacy_bme_user_aliases`
+  (OD-PR22-4) mirrors `legacy_ward_aliases`'s exact shape — plain
+  equality resolution only, no fuzzy matching, no `User` created as a
+  side effect (confirmed by a regression test asserting the `users`
+  table's row count is unchanged by an alias insert).
 - **Status:** Draft, **not merged, PR22B implementation in progress**.
   This entry documents work in progress, not completion — see the PR's
   own description for current CI/review state.
 - **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
 - **Source:** `docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`
-  §9.J/§11/§13-15/§17.2/§18/§20-22/§25/§34/§36; the PR22B GitHub PR
-  description.
+  §9.J/§11/§13-15/§17.2/§18/§20-22/§25/§34/§36; the PR22B implementation
+  task's own binding field contract; the PR22B GitHub PR description.
