@@ -12,6 +12,7 @@ from app.models import (  # noqa: E402,F401
     equipment,
     import_session,
     legacy_history,
+    legacy_reconciliation,
     master_data,
     notification,
     transaction,

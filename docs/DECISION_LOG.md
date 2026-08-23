@@ -4106,3 +4106,103 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
 - **Status:** Documentation-only (design document + governance files).
   No `backend/**`, `frontend/**`, `alembic/**`, `tests/**`, or CI
   workflow file modified. PR22 implementation has **not** started.
+
+## 2026-08-23 — GitHub PR #115 merged; new authoritative baseline adopted
+
+- **Decision/record:** GitHub PR #115 (the PR22 Owner Decision Closure
+  round named by the entry above) merged via squash to
+  `claude/medical-equipment-pool-0c7fz0`, real squash-merge SHA
+  `f03af893d727b221bd941466d83e5eceb9eb596a`, sole parent
+  `c802d66c9d1e5395cd20591c451ebdc0cefbf7df` (GitHub PR #113).
+  Independently verified via the same Final Merge Gate procedure used
+  for GitHub PR #111/#112/#113: the exact reviewed feature-branch head
+  recorded zero review threads, zero reviews, and zero comments, and CI
+  green 6/6 on that exact head; after Draft→Ready, head and CI were
+  re-verified unchanged before the squash merge was performed.
+  Post-merge, the squash commit's tree was independently confirmed
+  tree-identical to the reviewed feature-branch head, and the squash
+  commit's sole parent was independently confirmed to be `c802d66...`.
+- **New authoritative baseline:** `f03af893...` is now the repository's
+  single current authoritative baseline, recorded in `docs/ROADMAP.md`,
+  `docs/ROADMAP_STATUS.md`, and `knowledge/CONTEXT.md`'s own "Current
+  baseline" sections, superseding `c802d66...` (GitHub PR #113). **Per
+  the explicit process correction issued for this closure round, no
+  separate self-referential "baseline adoption" PR is created for this
+  squash SHA** — it became authoritative immediately upon merge, and its
+  recording is folded into the PR22B implementation PR itself (the next
+  PR that legitimately touches these governance files), rather than into
+  a dedicated baseline-adoption PR the way GitHub PR #114 attempted for
+  GitHub PR #113's own squash SHA before being closed without merge.
+- **Status:** Roadmap PR22's architecture design and all seven Owner
+  Decisions (OD-PR22-1 through OD-PR22-7) remain RESOLVED / OWNER
+  APPROVED (GitHub PR #112, #115, folded into this baseline). PR22
+  implementation begins with PR22B, recorded in the entry below.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14,
+  following the same Final Merge Gate precedent used for GitHub PR
+  #111/#112/#113.
+- **Source:** GitHub PR #115 description and its fix-round-1 evidence
+  table.
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this baseline-recording entry
+  itself (it is folded into PR22B's own runtime-code PR alongside
+  PR22B's schema changes, not a separate documentation-only PR).
+
+## 2026-08-23 — PR22B (Reconciliation Schema + Run/Snapshot Foundation) implementation started — in progress, not merged
+
+- **Decision/record:** First Roadmap PR22 implementation slice.
+  Branched from the exact authoritative baseline
+  `f03af893d727b221bd941466d83e5eceb9eb596a` (GitHub PR #115),
+  independently re-verified as `origin/claude/medical-equipment-pool-0c7fz0`'s
+  exact HEAD before branching. Adds the persistence/schema foundation
+  only for PR22 — no analysis/detection engine (PR22C), no API, no
+  frontend, no disposition-mutation service, and no sign-off logic
+  (PR22E) are implemented in this slice.
+- **What was added:** `backend/app/models/legacy_reconciliation.py`
+  (five new SQLAlchemy models: `LegacyMigrationAuthorityCoverage`,
+  `LegacyReconciliationRun`, `LegacyReconciliationFinding`,
+  `LegacyReconciliationFindingEvent`, `LegacyReconciliationSignOff`),
+  registered in `backend/app/db/base.py`; one additive Alembic migration
+  (`backend/alembic/versions/0020_reconciliation_foundation.py`,
+  `down_revision = "0019_legacy_history_foundation"`, following the same
+  fail-closed `_verify_schema_convergence()` catalog-classification
+  pattern as migrations `0015`-`0019`, empirically verified against a
+  real freshly migrated PostgreSQL 16 database); and
+  `backend/tests/test_pr22b_reconciliation_schema.py` covering
+  constraint/domain/coherence/supersession/FK-integrity/no-mutation
+  behavior plus a real PostgreSQL-only migration upgrade/downgrade/
+  re-upgrade round trip.
+- **Key structural decisions:** OD-PR22-7's two-boundary temporal model
+  implemented as an immutable, append-only `LegacyMigrationAuthority
+  Coverage` approval artifact — `legacy_coverage_end`/`live_system_start`
+  gap, clean-handoff, and overlap are all valid, none is DB-rejected.
+  `LegacyReconciliationRun` reuses the existing `active`/`superseded`/
+  `consumed`/`failed` supersession lifecycle and one-active-per-parent
+  partial-unique-index pattern from `LegacyHistoryDryRunPlan`/
+  `EquipmentMasterDryRunPlan` verbatim, rather than inventing a new
+  taxonomy, and snapshots its bound coverage's three timestamps as
+  immutable evidence (the coverage artifact remains authoritative).
+  OD-PR22-2's four-value disposition domain (`confirmed_valid`,
+  `confirmed_duplicate`, `accepted_unresolved`, `requires_correction`)
+  is enforced by an explicit `CheckConstraint`, with a regression test
+  proving `confirmed_pair` is explicitly rejected (§34) alongside a
+  two-CHECK paired-nullability pattern coupling
+  `disposition`/`disposed_by_user_id`/`disposed_at`. Finding→event
+  provenance uses a real junction table
+  (`legacy_reconciliation_finding_events`), never a JSONB array of
+  UUIDs. `LegacyReconciliationSignOff` exists as a table shape only
+  (`UNIQUE(run_id)`) — no sign-off precondition/audit logic exists
+  anywhere in this slice, confirmed by a structural test that the model
+  exposes no callable beyond plain ORM attribute access.
+- **Deliberately deferred, not silently omitted:** `LegacyBMEUserAlias`
+  (§18) is not implemented in this slice — no column in this module
+  references it and no test depends on it, so adding it now would be
+  dead code with no caller; it is left for a future, narrowly-scoped
+  slice that actually consumes it, per §18's own explicit permission to
+  defer.
+- **Status:** Draft, **not merged, PR22B implementation in progress**.
+  This entry documents work in progress, not completion — see the PR's
+  own description for current CI/review state.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** `docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`
+  §9.J/§11/§13-15/§17.2/§18/§20-22/§25/§34/§36; the PR22B GitHub PR
+  description.
