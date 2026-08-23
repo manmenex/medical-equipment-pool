@@ -19,6 +19,13 @@ ordinary, chronologically-unremarkable ISSUE-then-RECEIVE sequence is
 exactly the primary case a pairing candidate should be proposed for,
 not an exception to it.
 
+`context.events` is already bounded to `[legacy_coverage_start,
+legacy_coverage_end]` by
+`app.services.reconciliation.projection.load_legacy_events`'s own SQL
+predicate (OD-PR22-7, Fix Round 1) -- a legacy event outside the
+approved window cannot appear in it at all, so this module never
+reapplies its own boundary filter on top (§11 of Fix Round 1).
+
 The matching predicate requires **two independent, non-trivial
 dimensions to agree simultaneously** -- `resolved_ward_id` AND
 `legacy_order_reference`, both non-null and equal on both sides. Ward
@@ -62,9 +69,9 @@ def evaluate(context: ReconciliationContext) -> tuple[FindingCandidate, ...]:
 
     candidates: list[FindingCandidate] = []
     for equipment_id in sorted(by_equipment, key=str):
-        events = tuple(
-            e for e in by_equipment[equipment_id] if e.occurred_at >= context.legacy_coverage_start
-        )
+        # Already temporally scoped by `load_legacy_events` -- see this
+        # module's own docstring. No filter is reapplied here.
+        events = tuple(by_equipment[equipment_id])
         issues, receives = _split_issues_and_receives(events)
 
         for issue in sorted(issues, key=lambda e: (str(e.occurred_at), str(e.id))):

@@ -2,9 +2,13 @@
 
 A signal only -- Equipment is never mutated by this rule or by anything
 else in this package (§2/§35). Compares current `Equipment.status`
-against the terminal state implied by the *full* unified, coverage-
-filtered history projection (legacy + modern) for that equipment, never
-the last legacy event alone.
+against the terminal state implied by the *full* unified history
+projection (legacy + modern) for that equipment, never the last legacy
+event alone. `context.projection_by_equipment` is already temporally
+scoped by `app.services.reconciliation.projection.build_projection`
+(OD-PR22-7, Fix Round 1) -- a legacy event after `legacy_coverage_end`
+or a modern event before `live_system_start` cannot appear in it, so
+this rule never reapplies its own boundary filter on top.
 
 `unavailable_defective`/`decommissioned` are treated conservatively and
 never flagged: those are legitimate independent lifecycle transitions
@@ -44,10 +48,10 @@ def evaluate(context: ReconciliationContext) -> tuple[FindingCandidate, ...]:
         if eq is None or eq.status in _CONSERVATIVE_STATUSES:
             continue
 
-        events = [
-            ev for ev in context.projection_by_equipment[equipment_id] if ev.occurred_at >= context.legacy_coverage_start
-        ]
-        signal = _terminal_signal(tuple(events))
+        # Already temporally scoped by `build_projection` -- see this
+        # module's own docstring. No filter is reapplied here.
+        events = context.projection_by_equipment[equipment_id]
+        signal = _terminal_signal(events)
         if signal is None:
             continue
         expected_status, terminal = signal

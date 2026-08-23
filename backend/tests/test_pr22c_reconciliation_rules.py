@@ -87,7 +87,21 @@ def _ctx(
     coverage_end: datetime = _COVERAGE_END,
     live_start: datetime = _LIVE_START,
 ) -> ReconciliationContext:
-    projection = build_projection(legacy_events=events, transactions=transactions)
+    """Fix Round 1 (OD-PR22-7): `events` is bounded to
+    `[coverage_start, coverage_end]` here exactly as
+    `projection.load_legacy_events`'s own SQL predicate would bound it in
+    production -- a legacy event outside that window is excluded from
+    `context.events` (and therefore from the projection every rule
+    reads), not merely left for an individual rule to filter. This is a
+    faithful in-memory model of that one predicate (not a
+    reimplementation of unrelated query logic), independently
+    cross-checked against the real SQL predicate by a dedicated
+    PostgreSQL test in test_pr22c_reconciliation_engine.py. The modern
+    (`live_system_start`) side of the same OD-PR22-7 boundary needs no
+    equivalent mirroring here -- `build_projection` (real production
+    code, called below) already enforces it directly."""
+    scoped_events = tuple(e for e in events if coverage_start <= e.occurred_at <= coverage_end)
+    projection = build_projection(legacy_events=scoped_events, transactions=transactions, live_system_start=live_start)
     return ReconciliationContext(
         run_id=_uuid("run-default"),
         rule_version="pr22-v1",
@@ -95,7 +109,7 @@ def _ctx(
         legacy_coverage_start=coverage_start,
         legacy_coverage_end=coverage_end,
         live_system_start=live_start,
-        events=events,
+        events=scoped_events,
         source_refs_by_event=source_refs_by_event or {},
         equipment_by_id={e.id: e for e in equipment},
         ward_alias_by_raw=ward_alias_by_raw or {},
@@ -431,4 +445,178 @@ def test_pairing_ambiguous_match_no_candidate():
     receive_a = _event("2", equipment_id=eq_id, event_type="RECEIVE", occurred_at=at + timedelta(days=1), resolved_ward_id=ward_id, order_ref="ORD-Z")
     receive_b = _event("3", equipment_id=eq_id, event_type="RECEIVE", occurred_at=at + timedelta(days=2), resolved_ward_id=ward_id, order_ref="ORD-Z")
     ctx = _ctx(events=(issue, receive_a, receive_b), equipment=(_equipment("z"),))
+    assert pairing.evaluate(ctx) == ()
+
+
+# ---------------------------------------------------------------------------
+# I. OD-PR22-7 temporal projection boundary (Fix Round 1)
+# ---------------------------------------------------------------------------
+
+
+def _tx(
+    seed: str,
+    equipment_id: uuid.UUID,
+    *,
+    borrowed_at: datetime,
+    returned_at: datetime | None = None,
+) -> TransactionSnapshot:
+    return TransactionSnapshot(
+        id=_uuid(f"tx-{seed}"),
+        equipment_id=equipment_id,
+        status="closed" if returned_at is not None else "open",
+        borrowed_at=borrowed_at,
+        returned_at=returned_at,
+        ward_id=None,
+    )
+
+
+def test_legacy_event_before_coverage_start_excluded():
+    """§16 item 1."""
+    eq_id = _uuid("equipment-aa")
+    e1 = _event("1", equipment_id=eq_id, event_type="ISSUE", occurred_at=_COVERAGE_START - timedelta(seconds=1))
+    ctx = _ctx(events=(e1,), equipment=(_equipment("aa"),))
+    assert ctx.events == ()
+    assert ctx.projection_by_equipment == {}
+
+
+def test_legacy_event_at_coverage_start_included():
+    """§16 item 2 -- start boundary is inclusive."""
+    eq_id = _uuid("equipment-ab")
+    e1 = _event("1", equipment_id=eq_id, event_type="ISSUE", occurred_at=_COVERAGE_START)
+    ctx = _ctx(events=(e1,), equipment=(_equipment("ab"),))
+    assert ctx.events == (e1,)
+
+
+def test_legacy_event_inside_window_included():
+    """§16 item 3."""
+    eq_id = _uuid("equipment-ac")
+    e1 = _event("1", equipment_id=eq_id, event_type="ISSUE", occurred_at=_COVERAGE_START + timedelta(days=100))
+    ctx = _ctx(events=(e1,), equipment=(_equipment("ac"),))
+    assert ctx.events == (e1,)
+
+
+def test_legacy_event_at_coverage_end_included():
+    """§16 item 4 -- end boundary is inclusive."""
+    eq_id = _uuid("equipment-ad")
+    e1 = _event("1", equipment_id=eq_id, event_type="ISSUE", occurred_at=_COVERAGE_END)
+    ctx = _ctx(events=(e1,), equipment=(_equipment("ad"),))
+    assert ctx.events == (e1,)
+
+
+def test_legacy_event_after_coverage_end_excluded():
+    """§16 item 5."""
+    eq_id = _uuid("equipment-ae")
+    e1 = _event("1", equipment_id=eq_id, event_type="ISSUE", occurred_at=_COVERAGE_END + timedelta(seconds=1))
+    ctx = _ctx(events=(e1,), equipment=(_equipment("ae"),))
+    assert ctx.events == ()
+    assert ctx.projection_by_equipment == {}
+
+
+def test_modern_issue_before_live_start_excluded():
+    """§16 item 6."""
+    eq_id = _uuid("equipment-af")
+    tx = _tx("1", eq_id, borrowed_at=_LIVE_START - timedelta(seconds=1), returned_at=_LIVE_START + timedelta(days=1))
+    ctx = _ctx(transactions=(tx,), equipment=(_equipment("af"),))
+    kinds = {ev.source_kind for ev in ctx.projection}
+    assert "modern_issue" not in kinds
+    assert "modern_receive" in kinds
+
+
+def test_modern_issue_at_live_start_included():
+    """§16 item 7 -- start boundary is inclusive."""
+    eq_id = _uuid("equipment-ag")
+    tx = _tx("1", eq_id, borrowed_at=_LIVE_START)
+    ctx = _ctx(transactions=(tx,), equipment=(_equipment("ag"),))
+    assert {ev.source_kind for ev in ctx.projection} == {"modern_issue"}
+
+
+def test_modern_issue_after_live_start_included():
+    """§16 item 8."""
+    eq_id = _uuid("equipment-ah")
+    tx = _tx("1", eq_id, borrowed_at=_LIVE_START + timedelta(days=1))
+    ctx = _ctx(transactions=(tx,), equipment=(_equipment("ah"),))
+    assert {ev.source_kind for ev in ctx.projection} == {"modern_issue"}
+
+
+def test_modern_receive_before_live_start_excluded():
+    """§16 item 9. An already-closed transaction entirely before
+    live_system_start contributes zero projected events -- neither
+    issue nor receive."""
+    eq_id = _uuid("equipment-ai")
+    tx = _tx("1", eq_id, borrowed_at=_LIVE_START - timedelta(days=2), returned_at=_LIVE_START - timedelta(seconds=1))
+    ctx = _ctx(transactions=(tx,), equipment=(_equipment("ai"),))
+    assert ctx.projection == ()
+
+
+def test_modern_receive_after_live_start_included():
+    """§16 item 10."""
+    eq_id = _uuid("equipment-aj")
+    tx = _tx("1", eq_id, borrowed_at=_LIVE_START + timedelta(days=1), returned_at=_LIVE_START + timedelta(days=2))
+    ctx = _ctx(transactions=(tx,), equipment=(_equipment("aj"),))
+    assert {ev.source_kind for ev in ctx.projection} == {"modern_issue", "modern_receive"}
+
+
+def test_split_transaction_pre_live_issue_post_live_receive():
+    """Mandatory regression (Fix Round 1 §17): one `BorrowTransaction`
+    row whose `borrowed_at` is before `live_system_start` and whose
+    `returned_at` is after it must contribute `modern_receive` only,
+    never `modern_issue` -- and the row must never be dropped entirely
+    just because its own `borrowed_at` alone falls outside scope."""
+    eq_id = _uuid("equipment-ak")
+    tx = _tx("1", eq_id, borrowed_at=_LIVE_START - timedelta(days=5), returned_at=_LIVE_START + timedelta(days=5))
+    ctx = _ctx(transactions=(tx,), equipment=(_equipment("ak"),))
+    assert {ev.source_kind for ev in ctx.projection} == {"modern_receive"}
+
+
+def test_split_transaction_post_live_issue_still_open():
+    """Fix Round 1 §6's second example: issued after
+    `live_system_start`, never returned -- `modern_issue` only."""
+    eq_id = _uuid("equipment-al")
+    tx = _tx("1", eq_id, borrowed_at=_LIVE_START + timedelta(days=1), returned_at=None)
+    ctx = _ctx(transactions=(tx,), equipment=(_equipment("al"),))
+    assert {ev.source_kind for ev in ctx.projection} == {"modern_issue"}
+
+
+def test_current_state_ignores_pre_live_start_modern_issue():
+    """Fix Round 1 §20-style regression: a modern ISSUE with
+    `borrowed_at` between `legacy_coverage_start` and
+    `live_system_start` must never influence CURRENT_STATE_MISMATCH.
+    Under the pre-fix filter (`occurred_at >= legacy_coverage_start`
+    only, with no `live_system_start` check at all), this event would
+    have been wrongly admitted into the projection and flipped the
+    expected terminal signal to 'issued_to_ward', producing a false
+    mismatch against the equipment's real 'available_at_pool' status.
+    This test fails against that pre-fix behavior and passes after it."""
+    eq_id = _uuid("equipment-am")
+    legacy_receive = _event(
+        "1", equipment_id=eq_id, event_type="RECEIVE", occurred_at=_COVERAGE_START + timedelta(days=1)
+    )
+    pre_live_issue = _tx("1", eq_id, borrowed_at=_LIVE_START - timedelta(days=1))
+    ctx = _ctx(
+        events=(legacy_receive,),
+        transactions=(pre_live_issue,),
+        equipment=(_equipment("am", status="available_at_pool"),),
+    )
+    assert current_state.evaluate(ctx) == ()
+
+
+def test_pairing_excludes_partner_outside_temporal_scope():
+    """Fix Round 1 §21 regression: an otherwise-valid pairing partner
+    outside the approved coverage window is excluded by
+    `projection.load_legacy_events`'s own SQL predicate before it ever
+    reaches this rule -- modeled here by `_ctx()`'s identical bounding
+    (see its own docstring) -- so no PAIRING_CANDIDATE forms even though
+    the two events would otherwise satisfy the matching predicate."""
+    eq_id = _uuid("equipment-an")
+    ward_id = _uuid("ward-an")
+    issue = _event(
+        "1", equipment_id=eq_id, event_type="ISSUE", occurred_at=_COVERAGE_START + timedelta(days=1),
+        resolved_ward_id=ward_id, order_ref="ORD-AN",
+    )
+    out_of_scope_receive = _event(
+        "2", equipment_id=eq_id, event_type="RECEIVE", occurred_at=_COVERAGE_END + timedelta(days=1),
+        resolved_ward_id=ward_id, order_ref="ORD-AN",
+    )
+    ctx = _ctx(events=(issue, out_of_scope_receive), equipment=(_equipment("an"),))
+    assert ctx.events == (issue,)  # the out-of-scope receive never reached this context at all
     assert pairing.evaluate(ctx) == ()

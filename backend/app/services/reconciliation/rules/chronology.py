@@ -1,17 +1,19 @@
 """Roadmap PR22C §18 -- CHRONOLOGY_ANOMALY.
 
-Coverage-aware: events before `legacy_coverage_start` are never blamed
--- filtered out of the walk entirely, never merely down-weighted.
-"Covered history" for this rule is exactly the set of events the unified
-projection actually contains (legacy events only ever exist within
-`[legacy_coverage_start, legacy_coverage_end]`, by construction of the
-governed coverage artifact; modern `BorrowTransaction` rows are always
-current/live data, i.e. always within the covered range from
-`live_system_start` onward) -- so no separate "is this instant inside
-the gap window" check is needed: the gap between `legacy_coverage_end`
-and `live_system_start` (when one exists, OD-PR22-7) naturally contains
-zero projected events, and this walk only ever reasons about events that
-exist.
+Coverage-aware: "covered history" for this rule is exactly the set of
+events `context.projection_by_equipment` actually contains -- and that
+set is *already* bounded to `[legacy_coverage_start, legacy_coverage_end]`
+for legacy events and `>= live_system_start` for modern events by
+`app.services.reconciliation.projection.build_projection` at
+construction time (OD-PR22-7, Fix Round 1 §8/§9). This module trusts
+that invariant and never reapplies or reinterprets its own temporal
+filter on top of it -- a legacy event after `legacy_coverage_end` or a
+modern event before `live_system_start` structurally cannot appear in
+`context.projection_by_equipment` at all, so no separate "is this
+instant inside the gap window" check is needed here either: the gap
+between `legacy_coverage_end` and `live_system_start` (when one exists,
+OD-PR22-7) naturally contains zero projected events, and this walk only
+ever reasons about events that exist.
 
 A deterministic finite-state walk per equipment over the coverage-
 filtered, already-sorted projection:
@@ -49,11 +51,9 @@ def evaluate(context: ReconciliationContext) -> tuple[FindingCandidate, ...]:
     candidates: list[FindingCandidate] = []
 
     for equipment_id in sorted(context.projection_by_equipment, key=str):
-        events = [
-            ev for ev in context.projection_by_equipment[equipment_id] if ev.occurred_at >= context.legacy_coverage_start
-        ]
-        if not events:
-            continue
+        # Already temporally scoped by `build_projection` -- see this
+        # module's own docstring. No filter is reapplied here.
+        events = context.projection_by_equipment[equipment_id]
 
         issued = False
         last_issue: HistoryProjectionEvent | None = None

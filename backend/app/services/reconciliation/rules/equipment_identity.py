@@ -13,6 +13,13 @@ attempted here -- §2/§14 explicitly forbid it).
 
 One finding per Equipment (deduplicated across every event referencing
 it), never one per event.
+
+Scope (Fix Round 1 §14): "every event referencing it" means every event
+in `context.events`, which is already bounded to this run's approved
+`[legacy_coverage_start, legacy_coverage_end]` window by
+`app.services.reconciliation.projection.load_legacy_events` -- an event
+outside that window never contributes to this run's finding set, same
+as every other rule in this package.
 """
 
 from __future__ import annotations

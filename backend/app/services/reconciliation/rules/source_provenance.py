@@ -5,6 +5,16 @@ provenance -- at least one `LegacyEquipmentEventSourceRef` row (PR21's
 own contract, §8.1/§26 of the PR21 design). This rule never modifies
 provenance; evidence points to the exact event/source references
 involved, never a workbook blob.
+
+Scope (Fix Round 1 §13): this rule validates provenance only for events
+within this *run's* approved `[legacy_coverage_start, legacy_coverage_
+end]` window, i.e. `context.events` as bounded by
+`app.services.reconciliation.projection.load_legacy_events` -- it is a
+per-run reconciliation finding, not a standalone dataset-wide integrity
+sweep over every `LegacyEquipmentEvent` a migration authority has ever
+recorded. An event outside this run's window is simply not evaluated by
+this run at all (it may be, or have been, evaluated by a different run
+whose own coverage includes it).
 """
 
 from __future__ import annotations

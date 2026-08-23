@@ -47,8 +47,22 @@ async def build_context(
     transaction `app.services.reconciliation.engine` opens for TX2.
     `migration_authority_id` is resolved by the caller from the run's
     bound coverage artifact (§38's own coverage-integrity check already
-    loads that row, so it is passed in here rather than re-queried)."""
-    events = await projection_mod.load_legacy_events(db, migration_authority_id=migration_authority_id)
+    loads that row, so it is passed in here rather than re-queried).
+
+    OD-PR22-7 (Fix Round 1): `run.legacy_coverage_start`/`legacy_
+    coverage_end`/`live_system_start` -- already verified by the
+    caller's own coverage-integrity check (§38) to match the run's bound
+    coverage artifact -- are the sole source of the temporal scope
+    enforced here, passed straight into `projection.load_legacy_events`/
+    `load_transactions_for_equipment`/`build_projection`. No other
+    boundary value (observed MIN/MAX, import time, `created_at`) is ever
+    substituted."""
+    events = await projection_mod.load_legacy_events(
+        db,
+        migration_authority_id=migration_authority_id,
+        legacy_coverage_start=run.legacy_coverage_start,
+        legacy_coverage_end=run.legacy_coverage_end,
+    )
 
     event_ids = tuple(e.id for e in events)
     source_refs_by_event: dict[uuid.UUID, list[SourceRefSnapshot]] = {}
@@ -85,8 +99,12 @@ async def build_context(
                 item_no=eq.item_no,
             )
 
-    transactions = await projection_mod.load_transactions_for_equipment(db, equipment_ids=equipment_ids)
-    proj = projection_mod.build_projection(legacy_events=events, transactions=transactions)
+    transactions = await projection_mod.load_transactions_for_equipment(
+        db, equipment_ids=equipment_ids, live_system_start=run.live_system_start
+    )
+    proj = projection_mod.build_projection(
+        legacy_events=events, transactions=transactions, live_system_start=run.live_system_start
+    )
     proj_by_equipment = projection_mod.group_by_equipment(proj)
 
     # §22/§40: read-only inputs -- PR22C never inserts/updates/deletes
