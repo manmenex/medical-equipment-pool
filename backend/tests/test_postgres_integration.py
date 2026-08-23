@@ -7495,7 +7495,26 @@ async def test_migration_0013_fresh_database_all_foreign_keys_are_restrict():
                 # new UNIQUE (uq_import_sources_session_id, the composite
                 # FK's own target), not a FK, so it adds 0 to this count.
                 # 56 - 2 = 54.
-                assert len(rows) == 54, f"expected exactly 54 foreign keys, found {len(rows)}: {rows}"
+                # + 14 added by migration 0020 (Roadmap PR22B):
+                # legacy_migration_authority_coverages.
+                # migration_authority_id -> legacy_migration_authorities,
+                # .approved_by_user_id -> users (2);
+                # legacy_reconciliation_runs.coverage_id ->
+                # legacy_migration_authority_coverages,
+                # .created_by_user_id -> users, .supersedes_run_id ->
+                # legacy_reconciliation_runs (self-referencing) (3);
+                # legacy_reconciliation_findings.run_id ->
+                # legacy_reconciliation_runs, .equipment_id -> equipment,
+                # .disposed_by_user_id -> users (3);
+                # legacy_reconciliation_finding_events.finding_id ->
+                # legacy_reconciliation_findings,
+                # .legacy_equipment_event_id -> legacy_equipment_events
+                # (2); legacy_reconciliation_signoffs.run_id ->
+                # legacy_reconciliation_runs, .signed_off_by_user_id ->
+                # users (2); legacy_bme_user_aliases.resolved_user_id ->
+                # users, .created_by_user_id -> users (2).
+                # 54 + 14 = 68.
+                assert len(rows) == 68, f"expected exactly 68 foreign keys, found {len(rows)}: {rows}"
                 for conname, confdeltype in rows:
                     assert confdeltype == "r", f"{conname} has confdeltype={confdeltype!r}, expected 'r' (RESTRICT)"
         finally:
