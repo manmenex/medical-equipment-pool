@@ -86,6 +86,16 @@ AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CONFIRMED = "import_dry_run_plan_confirmed"
 # audit already established above).
 AUDIT_ACTION_LEGACY_MIGRATION_AUTHORITY_APPROVED = "legacy_migration_authority_approved"
 
+# Roadmap PR22D. Mutating a finding's human disposition is a distinct
+# action from every other AUDIT_ACTION_* constant above -- never
+# AUDIT_ACTION_UPDATE, matching AUDIT_ACTION_WARD_CORRECTION's own
+# precedent comment for a narrow, purpose-built action name rather than a
+# generic one. Written exactly once per successful disposition mutation,
+# in the same transaction as the finding's own CAS `UPDATE` (mandatory,
+# not best-effort -- see app.api.v1.legacy_reconciliation's PATCH
+# endpoint, which commits both together or neither).
+AUDIT_ACTION_RECONCILIATION_FINDING_DISPOSED = "reconciliation_finding_disposed"
+
 # Audit entity-type values, same rationale as the actions above.
 AUDIT_ENTITY_EQUIPMENT = "equipment"
 AUDIT_ENTITY_USER = "user"
@@ -113,6 +123,10 @@ AUDIT_ENTITY_IMPORT_SESSION = "import_session"
 # distinct aggregate root from ImportSession (§24.2 of the PR21 design:
 # an authority is a governance-level identity, not an upload artifact).
 AUDIT_ENTITY_LEGACY_MIGRATION_AUTHORITY = "legacy_migration_authority"
+# Roadmap PR22D. entity_id is the LegacyReconciliationFinding.id -- a
+# finding, not its owning run, is the aggregate root for this action
+# (only the finding's own disposition fields change).
+AUDIT_ENTITY_RECONCILIATION_FINDING = "reconciliation_finding"
 
 # Substrings matched case-insensitively against JSON keys in before/after
 # payloads. Deliberately broad (e.g. "token" covers access_token,

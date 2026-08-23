@@ -4330,9 +4330,123 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   false positives. Before execution, the run's own copied coverage
   timestamps are verified to still exactly match the bound coverage
   artifact's current values — fail closed on mismatch, never repaired.
-- **Status:** Draft, **not merged, PR22C implementation in progress**.
-  This entry documents work in progress, not completion — see the PR's
-  own description for current CI/review state.
+- **Status:** **Merged as GitHub PR #117**, after a Fix Round 1 that
+  enforced OD-PR22-7's temporal coverage boundary in the projection
+  layer (both `legacy_coverage_end` and `live_system_start` bounds,
+  never a partial rule-local filter) — see the entry below for the real
+  squash-merge SHA and independent Final Merge Gate verification. This
+  entry documents the implementation's pre-fix-round shape; the merge
+  entry below is the authoritative merge record.
 - **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
 - **Source:** the PR22C implementation task's own ~59-section binding
   specification; the PR22C GitHub PR description.
+
+## 2026-08-23 — GitHub PR #117 merged; new authoritative baseline adopted
+
+- **Decision/record:** GitHub PR #117 (PR22C — Deterministic
+  Reconciliation Analysis Engine, the entry above) merged via squash to
+  `claude/medical-equipment-pool-0c7fz0`, real squash-merge SHA
+  `b45cf7503a3ff941d4b65741c7ac14a0af6e7a25`, sole parent
+  `c5e750cecd7458e9570c6dc1679abeacde0da369` (GitHub PR #116).
+  Independently verified via this repository's standard Final Merge
+  Gate procedure: the exact reviewed feature-branch head
+  (`008f0f94fee4179746fea5b7a1917829811ade1f`, after a Fix Round 1
+  addressing an independent-review finding that the projection loaded
+  events outside the approved temporal coverage window) recorded zero
+  review threads, zero reviews, and zero comments, and CI green 6/6 on
+  that exact head; after Draft→Ready, head and CI were re-verified
+  unchanged before the squash merge. Post-merge, the squash commit's
+  tree was independently confirmed tree-identical to the reviewed
+  feature-branch head via an empty `git diff`, and its sole parent was
+  independently confirmed to be `c5e750c...`.
+- **New authoritative baseline:** `b45cf7503a3ff941d4b65741c7ac14a0af6e7a25`
+  is now the repository's single current authoritative baseline,
+  recorded in `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, and
+  `knowledge/CONTEXT.md`'s own "Current baseline" sections, superseding
+  `c5e750c...` (GitHub PR #116). **Per this repository's standing
+  process, no separate self-referential "baseline adoption" PR is
+  created for this squash SHA** — it became authoritative immediately
+  upon merge, and its recording is folded into PR22D (the next PR that
+  legitimately touches these governance files).
+- **Status:** Roadmap PR22C (Deterministic Reconciliation Analysis
+  Engine) is now fully complete and merged. PR22 implementation
+  continues with PR22D, recorded in the entry below.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14,
+  following the same Final Merge Gate precedent used for GitHub PR
+  #111/#112/#113/#115/#116.
+- **Source:** GitHub PR #117 description (including its Fix Round 1
+  section) and its Final Merge Gate verification evidence.
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this baseline-recording entry
+  itself (it is folded into PR22D's own runtime-code PR).
+
+## 2026-08-23 — PR22D (Finding Review / Disposition API) implementation started — in progress, not merged
+
+- **Decision/record:** Third Roadmap PR22 implementation slice.
+  Branched from the exact authoritative baseline
+  `b45cf7503a3ff941d4b65741c7ac14a0af6e7a25` (GitHub PR #117),
+  independently re-verified as `origin/claude/medical-equipment-pool-0c7fz0`'s
+  exact HEAD before branching. Implements read endpoints for
+  reconciliation runs/findings plus a single Administrator-only
+  disposition-mutation endpoint (OD-PR22-5), against PR22B's schema and
+  PR22C's persisted findings as-is (no new migration, no analysis-rule
+  changes). Explicitly out of scope: the sign-off service (PR22E), any
+  correction workflow, and the frontend (PR22F/G).
+- **What was added:** `backend/app/api/v1/legacy_reconciliation.py` —
+  two routers (`/legacy-reconciliation-runs`, `/legacy-reconciliation-
+  findings`) exposing `GET` run list/detail, `GET` nested finding list
+  (filterable by `code`/`severity`/`disposition`/`equipment_id`, cursor-
+  paginated), `GET` finding detail (structured evidence + linked
+  `LegacyEquipmentEvent` refs + an `EquipmentSummary` DTO), and `PATCH
+  .../disposition`. `backend/app/crud/legacy_reconciliation.py` — the
+  query functions plus `update_finding_disposition`, the CAS/lock-order
+  disposition mutation. `backend/app/schemas/legacy_reconciliation.py`
+  — explicit Pydantic DTOs (never ORM models reused as API contracts).
+  Two new `DomainError` subclasses beyond PR22C's existing
+  `ReconciliationRunNotFoundError`/`ReconciliationRunVersionConflictError`-style
+  set: `ReconciliationFindingNotFoundError`,
+  `ReconciliationFindingVersionConflictError`,
+  `ReconciliationFindingRunNotCompletedError`,
+  `ReconciliationFindingSignedOffError`. One new audit constant pair
+  (`AUDIT_ACTION_RECONCILIATION_FINDING_DISPOSED`,
+  `AUDIT_ENTITY_RECONCILIATION_FINDING`). No new Alembic migration —
+  EXPLAIN ANALYZE evidence against a 40,000-finding synthetic run showed
+  every filtered/paginated query already served by PR22B's existing
+  `ix_legacy_reconciliation_findings_run_disposition`/`run_code`
+  indexes (sub-13ms). `backend/tests/test_pr22d_finding_review_api.py`
+  (45 SQLite-based tests: reads, pagination, filters, authorization,
+  the closed four-value disposition domain, CAS, signed-run
+  immutability, run-status gating, audit before/after semantics, no-
+  side-effect proofs) and `backend/tests/
+  test_pr22d_finding_review_concurrency.py` (2 genuine two-connection
+  PostgreSQL tests: exactly-one-CAS-writer-wins, and the TOCTOU
+  lock-order proof against a simulated concurrent sign-off insertion).
+- **Key structural decisions:** the disposition mutation's lock order —
+  `LegacyReconciliationRun` row locked `FOR UPDATE` first, then
+  `LegacyReconciliationFinding`, then the sign-off-existence check, all
+  inside one transaction the run lock spans start to finish — mirrors
+  `app.crud.import_dry_run_plan.confirm_plan`'s established ordered-
+  lock discipline, generalized to a new parent/child pair. This is
+  documented explicitly as a binding contract PR22E's own future
+  sign-off-creation code must also follow (lock the run row first,
+  before touching `legacy_reconciliation_signoffs` at all) — proven
+  against a real two-connection PostgreSQL race in the concurrency test
+  file, using a clearly-marked test-only simulation of that future
+  contract, never real PR22E code. Disposition mutation is gated on the
+  owning run's `status == 'completed'` (a `pending`/`running`/`failed`
+  run has no stable finding set to review) and on no
+  `LegacyReconciliationSignOff` existing for the run (permanent
+  immutability once signed off) — both checked under the same run lock.
+  The four-value disposition domain (OD-PR22-2) is enforced by a
+  Pydantic `Literal` type alone (no custom validation code needed) —
+  `confirmed_pair` and every other non-member value are rejected as a
+  standard `422` before any application code runs. The mandatory audit
+  write and the CAS `UPDATE` land in one transaction, committed once by
+  the API layer (never inside the CRUD helper) — a rejected mutation
+  (stale version, signed-off run, wrong role) writes zero audit rows.
+- **Status:** Draft, **not merged, PR22D implementation in progress**.
+  This entry documents work in progress, not completion — see the PR's
+  own description for current CI/review state.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the PR22D implementation task's own binding specification;
+  the PR22D GitHub PR description.
