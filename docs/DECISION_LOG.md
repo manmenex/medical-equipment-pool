@@ -4450,3 +4450,139 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
 - **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
 - **Source:** the PR22D implementation task's own binding specification;
   the PR22D GitHub PR description.
+
+## 2026-08-23 — GitHub PR #118 merged; new authoritative baseline adopted
+
+- **Decision/record:** GitHub PR #118 (PR22D — Finding Review /
+  Disposition API, the entry above) merged via squash to
+  `claude/medical-equipment-pool-0c7fz0`, real squash-merge SHA
+  `966d7a712681e40780f954c8744a592316af56ec`, sole parent
+  `b45cf7503a3ff941d4b65741c7ac14a0af6e7a25` (GitHub PR #117). Included
+  a Fix Round 1 addressing an independent-review finding: `docs/api/
+  ERROR_CODES.md` was missing the five reconciliation `DomainError`
+  codes that became genuinely HTTP-reachable once this PR added public
+  routes (`RECONCILIATION_RUN_NOT_FOUND`, `RECONCILIATION_FINDING_NOT_
+  FOUND`, `RECONCILIATION_FINDING_VERSION_CONFLICT`, `RECONCILIATION_
+  FINDING_RUN_NOT_COMPLETED`, `RECONCILIATION_FINDING_SIGNED_OFF`) —
+  docs-only, no runtime behavior changed. Independently verified via
+  this repository's standard Final Merge Gate procedure: the exact
+  reviewed feature-branch head (`dae831bf21bbab215bfdc6c00205375f9821b938`,
+  after the Fix Round 1 above) recorded zero review threads, zero
+  reviews, and zero comments, and CI green 6/6 on that exact head; after
+  Draft→Ready, head and CI were re-verified unchanged before the squash
+  merge. Post-merge, the squash commit's tree was independently
+  confirmed tree-identical to the reviewed feature-branch head via an
+  empty `git diff`, and its sole parent was independently confirmed to
+  be `b45cf75...`.
+- **New authoritative baseline:** `966d7a712681e40780f954c8744a592316af56ec`
+  is now the repository's single current authoritative baseline,
+  recorded in `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, and
+  `knowledge/CONTEXT.md`'s own "Current baseline" sections, superseding
+  `b45cf75...` (GitHub PR #117). **Per this repository's standing
+  process, no separate self-referential "baseline adoption" PR is
+  created for this squash SHA** — it became authoritative immediately
+  upon merge, and its recording is folded into PR22E (the next PR that
+  legitimately touches these governance files).
+- **Status:** Roadmap PR22D (Finding Review / Disposition API) is now
+  fully complete and merged. PR22 implementation continues with PR22E,
+  recorded in the entry below.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14,
+  following the same Final Merge Gate precedent used for GitHub PR
+  #111/#112/#113/#115/#116/#117.
+- **Source:** GitHub PR #118 description (including its Fix Round 1
+  section) and its Final Merge Gate verification evidence.
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this baseline-recording entry
+  itself (it is folded into PR22E's own runtime-code PR).
+
+## 2026-08-23 — PR22E (Reconciliation Sign-off + Concurrency/Audit) implementation started — in progress, not merged
+
+- **Decision/record:** Fourth Roadmap PR22 implementation slice.
+  Branched from the exact authoritative baseline
+  `966d7a712681e40780f954c8744a592316af56ec` (GitHub PR #118),
+  independently re-verified as `origin/claude/medical-equipment-pool-0c7fz0`'s
+  exact HEAD before branching. Implements the final reconciliation
+  sign-off workflow (`POST`/`GET /legacy-reconciliation-runs/{run_id}/
+  sign-off`), turning PR22B's already-existing `LegacyReconciliationSignOff`
+  schema into the real, Administrator-only business workflow with all
+  eight sign-off preconditions (§20 of the PR22 design), a server-
+  generated attestation, mandatory audit, and a TOCTOU-safe lock order
+  that composes with PR22D's own disposition-mutation lock order without
+  re-architecting it. Explicitly out of scope: the frontend (PR22F),
+  final governance close-out (PR22G), any correction workflow, reopening
+  a signed run, or mutating/deleting a sign-off.
+- **What was added:** `backend/app/services/reconciliation/coverage.py`
+  — `verify_coverage_integrity`, extracted from what was inline logic in
+  PR22C's `engine._validate_and_claim` so PR22E's own coverage
+  precondition reuses the exact same fail-closed comparison rather than
+  duplicating it (PR22C's `engine.py` now calls this same shared
+  helper — a pure refactor, no behavior change). `backend/app/crud/
+  legacy_reconciliation.py` — `create_signoff`/`get_signoff` added
+  alongside PR22D's existing functions. `backend/app/api/v1/
+  legacy_reconciliation.py` — `POST`/`GET .../sign-off` added to the
+  existing `runs_router` (no new route family, per the design's own
+  §7). `backend/app/schemas/legacy_reconciliation.py` — `SignOffRequest`
+  (`expected_version` only — every attestation value is server-
+  generated, never client-supplied) / `SignOffDetail`. Seven new
+  `DomainError` subclasses: `ReconciliationSignOffNotFoundError`,
+  `ReconciliationSignOffAlreadyExistsError`,
+  `ReconciliationSignOffRunNotCompletedError`,
+  `ReconciliationSignOffVersionConflictError`,
+  `ReconciliationSignOffFindingsIncompleteError`,
+  `ReconciliationSignOffRequiresCorrectionError`,
+  `ReconciliationSignOffEvidenceInconsistentError` — plus PR22C's
+  previously HTTP-unreachable `ReconciliationCoverageMismatchError`
+  becoming genuinely reachable for the first time via this PR's sign-off
+  route. One new audit constant pair
+  (`AUDIT_ACTION_RECONCILIATION_SIGNOFF`,
+  `AUDIT_ENTITY_RECONCILIATION_SIGNOFF`). `docs/api/ERROR_CODES.md`
+  updated in the same PR (not deferred to a fix round) with all eight
+  newly HTTP-reachable codes, following a full route→service→exception→
+  handler→catalog sweep. No new Alembic migration — the existing
+  `LegacyReconciliationSignOff` schema (PR22B) and the existing
+  `(run_id, disposition)` finding index (PR22B) already serve every
+  sign-off query. `backend/tests/test_pr22e_reconciliation_signoff_api.py`
+  (28 SQLite-based tests: happy path, eligible-disposition mix, zero-
+  finding run, requires_correction/unreviewed/both-blockers precedence,
+  run-status gate, stale version, coverage mismatch, evidence
+  inconsistency, duplicate sign-off, authorization, no-side-effect proof,
+  audit-failure rollback) and `backend/tests/
+  test_pr22e_reconciliation_signoff_concurrency.py` (2 genuine two-
+  connection PostgreSQL tests: exactly-one-concurrent-sign-off-wins, and
+  the real sign-off-vs-disposition TOCTOU race — this time using the
+  actual `create_signoff` on both sides, a stronger proof than PR22D's
+  own test could give since PR22E did not exist yet at that time).
+- **Key structural decisions:** `create_signoff` locks
+  `LegacyReconciliationRun` `FOR UPDATE` first — the exact same first
+  step PR22D's `update_finding_disposition` already takes — before
+  validating status/version/coverage, checking for an existing sign-off,
+  or querying finding completeness, all inside one transaction the run
+  lock spans start to finish. This is what makes disposition mutation
+  and sign-off creation serialize completely without either transaction
+  needing to know about the other's existence, closing the TOCTOU race
+  PR22D's own docstring described only as a future contract — proven
+  directly in this PR's own concurrency test, not merely documented.
+  `Run.version` is never bumped by sign-off (matching the design's own
+  §22 rationale: only run-lifecycle transitions bump it, never a
+  finding-level disposition change) — `run_version_at_signoff` simply
+  records the exact locked value. Findings-complete
+  (`disposition IS NULL` count) and requires_correction count are
+  evaluated together via one `GROUP BY` aggregate query (reusing PR22D's
+  existing `finding_counts_by_disposition`, never a second duplicated
+  query, never N+1) — incomplete-review takes precedence when a run has
+  both problems (documented in `ERROR_CODES.md`). A fresh finding-count
+  cross-check against `run.summary_total_findings` (evidence-
+  consistency) fails closed rather than trusting either value alone. The
+  attestation is built entirely from database truth read inside the same
+  locked transaction — the request schema accepts only `expected_version`,
+  nothing else. The mandatory audit write and the sign-off `INSERT` land
+  in one transaction, committed once by the API layer (never inside the
+  CRUD helper, mirroring PR22D's identical discipline) — a rejected
+  sign-off attempt writes zero audit rows, and an audit-write failure
+  rolls the sign-off `INSERT` back too (proven by a dedicated test).
+- **Status:** Draft, **not merged, PR22E implementation in progress**.
+  This entry documents work in progress, not completion — see the PR's
+  own description for current CI/review state.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the PR22E implementation task's own binding specification;
+  the PR22E GitHub PR description.

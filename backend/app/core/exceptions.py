@@ -473,3 +473,99 @@ class ReconciliationFindingSignedOffError(DomainError):
 
     code = "RECONCILIATION_FINDING_SIGNED_OFF"
     status_code = 409
+
+
+class ReconciliationSignOffNotFoundError(DomainError):
+    """Roadmap PR22E -- `GET /legacy-reconciliation-runs/{run_id}/sign-off`
+    was called for a run that has no persisted `LegacyReconciliationSignOff`
+    row. Distinct from `ReconciliationRunNotFoundError`: the run itself may
+    exist and simply not be signed off yet."""
+
+    code = "RECONCILIATION_SIGNOFF_NOT_FOUND"
+    status_code = 404
+
+
+class ReconciliationSignOffAlreadyExistsError(DomainError):
+    """Roadmap PR22E (§14 of the task) -- `POST .../sign-off` was called
+    for a run that already has a persisted `LegacyReconciliationSignOff`
+    row (`UNIQUE(run_id)`). A sign-off is never created twice, never
+    modified, and this second POST creates no new row -- the caller must
+    `GET .../sign-off` to read the existing, immutable attestation.
+    Checked under the same `LegacyReconciliationRun` row lock the
+    sign-off-creation transaction acquires first, so two concurrent POSTs
+    can never both observe "no existing sign-off" and race an INSERT --
+    whichever acquires the lock first commits its sign-off (or fails on
+    an earlier precondition) before the second's own existence check
+    runs. `UNIQUE(run_id)` at the schema level remains defense-in-depth
+    only, translated to this same structured error rather than a raw
+    `IntegrityError`."""
+
+    code = "RECONCILIATION_SIGNOFF_ALREADY_EXISTS"
+    status_code = 409
+
+
+class ReconciliationSignOffRunNotCompletedError(DomainError):
+    """Roadmap PR22E (§17 of the task, OD-PR22-6/§20 precondition 1 of the
+    design) -- `POST .../sign-off` was called while the run's `status` is
+    not `completed` (still `pending`/`running`, or terminally `failed`).
+    Only a closed, immutable run/snapshot may be signed off."""
+
+    code = "RECONCILIATION_SIGNOFF_RUN_NOT_COMPLETED"
+    status_code = 409
+
+
+class ReconciliationSignOffVersionConflictError(DomainError):
+    """Roadmap PR22E (§18 of the task, §20 precondition 8 of the design)
+    -- the caller's `expected_version` no longer matches the run's
+    current `version`, checked under the run's own `SELECT ... FOR
+    UPDATE` lock. `LegacyReconciliationRun.version` is bumped only by
+    run-lifecycle transitions (never by an individual finding's
+    disposition change, per the design's own §22 concurrency rationale),
+    so this specifically detects a stale read of the run itself, not a
+    stale finding-disposition read (see
+    `ReconciliationSignOffFindingsIncompleteError`/
+    `ReconciliationSignOffRequiresCorrectionError` for that)."""
+
+    code = "RECONCILIATION_SIGNOFF_VERSION_CONFLICT"
+    status_code = 409
+
+
+class ReconciliationSignOffFindingsIncompleteError(DomainError):
+    """Roadmap PR22E (§15 of the task, §20 precondition 5 of the design)
+    -- at least one of the run's findings still has `disposition IS
+    NULL`, checked via `COUNT(...) == 0` in the same transaction as the
+    sign-off INSERT (under the run's own lock, so a concurrent
+    disposition change landing between the caller's last read and this
+    check is still caught). Never exposes individual finding contents --
+    only the fact that review is incomplete."""
+
+    code = "RECONCILIATION_SIGNOFF_FINDINGS_INCOMPLETE"
+    status_code = 409
+
+
+class ReconciliationSignOffRequiresCorrectionError(DomainError):
+    """Roadmap PR22E (§16 of the task, OD-PR22-6/§20 precondition 6 of the
+    design) -- at least one of the run's findings is dispositioned
+    `requires_correction`, checked independently of (and in addition to)
+    `ReconciliationSignOffFindingsIncompleteError`'s null-disposition
+    check -- satisfying one check never substitutes for the other.
+    `accepted_unresolved`, `confirmed_valid`, and `confirmed_duplicate`
+    never block sign-off; `requires_correction` always does, with no
+    exception. A separate, explicit correction workflow (not this PR) is
+    required before a run in this state can be signed off."""
+
+    code = "RECONCILIATION_SIGNOFF_REQUIRES_CORRECTION"
+    status_code = 409
+
+
+class ReconciliationSignOffEvidenceInconsistentError(DomainError):
+    """Roadmap PR22E (§21/§44 of the task) -- the run's own persisted
+    `summary_total_findings` does not match the actual count of
+    `LegacyReconciliationFinding` rows for this run, both counted fresh
+    from the database inside the same transaction as the sign-off INSERT
+    (under the run's own lock). Sign-off never proceeds against evidence
+    it cannot reconcile against itself -- fails closed rather than
+    normalizing or trusting `summary_total_findings` alone."""
+
+    code = "RECONCILIATION_SIGNOFF_EVIDENCE_INCONSISTENT"
+    status_code = 409

@@ -123,3 +123,28 @@ class FindingDispositionRequest(BaseModel):
     # this repository's existing free-text cap, not a new one. Rejected
     # (422) if exceeded, never silently truncated server-side (§18).
     disposition_note: str | None = Field(default=None, max_length=4000)
+
+
+class SignOffRequest(BaseModel):
+    """Roadmap PR22E §8 of the task. Deliberately the *only* field this
+    request ever accepts -- `attestation_summary`/`rule_version`/
+    `coverage timestamps`/finding counts/`signed_off_by_user_id`/
+    `signed_off_at` are never accepted from the client; the backend
+    constructs every attestation value from database truth inside the
+    sign-off transaction (§20/§21 of the task)."""
+
+    expected_version: int = Field(ge=0)
+
+
+class SignOffDetail(BaseModel):
+    """Roadmap PR22E §26 of the task. Explicit DTO -- never the ORM row
+    or its internals."""
+
+    id: UUIDStr
+    run_id: UUIDStr
+    signed_off_by_user_id: UUIDStr
+    signed_off_at: datetime
+    attestation_summary: dict
+    run_version_at_signoff: int
+
+    model_config = {"from_attributes": True}

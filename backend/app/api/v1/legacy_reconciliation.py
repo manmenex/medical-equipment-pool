@@ -1,21 +1,24 @@
-"""Roadmap PR22D -- Finding Review / Disposition API.
+"""Roadmap PR22D/PR22E -- Finding Review / Disposition API (PR22D) and
+Reconciliation Sign-off (PR22E).
 
-Read surfaces (run list/detail, finding list/detail) are available to
-every authenticated role (`VIEW_AND_REPORT_ROLES`) -- reviewing is not
-itself a mutation. The single disposition-mutation endpoint (`PATCH
-.../disposition`) is Administrator-only (OD-PR22-5); `equipment_pool_
-staff`/`read_only` receive a plain 403, enforced at this dependency
-layer, never left to the frontend to hide.
+Read surfaces (run list/detail, finding list/detail, `GET .../sign-off`)
+are available to every authenticated role (`VIEW_AND_REPORT_ROLES`) --
+reviewing is not itself a mutation. Both mutation endpoints (`PATCH
+.../disposition`, `POST .../sign-off`) are Administrator-only
+(OD-PR22-5/§21 of the PR22E task); `equipment_pool_staff`/`read_only`
+receive a plain 403, enforced at this dependency layer, never left to
+the frontend to hide.
 
 Two route families, matching this repository's existing per-resource
 prefix convention (`legacy-migration-authorities`, `legacy-history-
 import`, etc. -- never one shared umbrella prefix):
-`/legacy-reconciliation-runs` and `/legacy-reconciliation-findings`.
+`/legacy-reconciliation-runs` (also owns `/{run_id}/sign-off`, per §7 of
+the PR22E task -- no second sign-off route family) and
+`/legacy-reconciliation-findings`.
 
-Deliberately absent from this module (PR22E/F/G's own scope, §40/§41 of
-the task): any sign-off creation endpoint, any correction workflow, any
-frontend. This module only ever *reads* `LegacyReconciliationSignOff`
-existence, to enforce disposition immutability once a run is signed off.
+Deliberately absent from this module (PR22F/G's own scope): any
+correction workflow, any frontend, any re-opening or mutation of an
+existing sign-off (immutable once created, per OD-PR22-3).
 """
 
 from __future__ import annotations
@@ -26,8 +29,19 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import ADMINISTRATOR_ONLY_ROLES, VIEW_AND_REPORT_ROLES, require_roles
-from app.core.audit import AUDIT_ACTION_RECONCILIATION_FINDING_DISPOSED, AUDIT_ENTITY_RECONCILIATION_FINDING, record_audit_event
-from app.core.exceptions import InvalidInputError, ReconciliationFindingNotFoundError, ReconciliationRunNotFoundError
+from app.core.audit import (
+    AUDIT_ACTION_RECONCILIATION_FINDING_DISPOSED,
+    AUDIT_ACTION_RECONCILIATION_SIGNOFF,
+    AUDIT_ENTITY_RECONCILIATION_FINDING,
+    AUDIT_ENTITY_RECONCILIATION_SIGNOFF,
+    record_audit_event,
+)
+from app.core.exceptions import (
+    InvalidInputError,
+    ReconciliationFindingNotFoundError,
+    ReconciliationRunNotFoundError,
+    ReconciliationSignOffNotFoundError,
+)
 from app.crud import legacy_reconciliation as reconciliation_crud
 from app.db.session import get_db
 from app.models.equipment import Equipment
@@ -46,6 +60,8 @@ from app.schemas.legacy_reconciliation import (
     LegacyEventRef,
     RunDetail,
     RunListItem,
+    SignOffDetail,
+    SignOffRequest,
 )
 from app.utils.pagination import decode_cursor, encode_cursor
 
@@ -254,3 +270,63 @@ async def update_reconciliation_finding_disposition(
     # neither lands at all (§22 of the task).
     await db.commit()
     return await _build_finding_detail(db, updated)
+
+
+@runs_router.post("/{run_id}/sign-off", response_model=SignOffDetail, status_code=201)
+async def create_reconciliation_signoff(
+    run_id: uuid.UUID,
+    payload: SignOffRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    actor=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
+):
+    """Roadmap PR22E §7-24 of the task. Administrator-only (§27). All
+    eight sign-off preconditions (§9) are enforced by
+    `reconciliation_crud.create_signoff` itself, inside the same
+    transaction as the `SignOff` `INSERT`, under the
+    `LegacyReconciliationRun` row lock acquired first (§11's canonical
+    lock order) -- this endpoint adds no additional validation of its
+    own beyond the mandatory audit write and the single commit."""
+    signoff, attestation = await reconciliation_crud.create_signoff(
+        db, run_id=run_id, expected_version=payload.expected_version, actor_id=actor.id
+    )
+    await record_audit_event(
+        db,
+        actor_user_id=actor.id,
+        action=AUDIT_ACTION_RECONCILIATION_SIGNOFF,
+        entity_type=AUDIT_ENTITY_RECONCILIATION_SIGNOFF,
+        entity_id=signoff.id,
+        after={
+            "run_id": str(signoff.run_id),
+            "signoff_id": str(signoff.id),
+            "run_version_at_signoff": signoff.run_version_at_signoff,
+            "rule_version": attestation["rule_version"],
+            "coverage_id": attestation["coverage_id"],
+            "dispositions": attestation["dispositions"],
+            "summary_total_findings": attestation["summary_total_findings"],
+            "signed_off_at": signoff.signed_off_at.isoformat(),
+        },
+        request=request,
+    )
+    # One atomic transaction: the SignOff INSERT above (not yet
+    # committed, still flushed only) and this audit write land together
+    # here, or -- if anything above raised -- neither lands at all (§24
+    # of the task: no sign-off row without audit, and no low-level CRUD
+    # helper commits or rolls back this caller-owned transaction).
+    await db.commit()
+    return signoff
+
+
+@runs_router.get("/{run_id}/sign-off", response_model=SignOffDetail)
+async def get_reconciliation_signoff(
+    run_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _actor=Depends(require_roles(*VIEW_AND_REPORT_ROLES)),
+):
+    """§26 of the task. Same authenticated read-role set as every other
+    reconciliation `GET` route (§27) -- no new role."""
+    await _get_run_or_404(db, run_id)
+    signoff = await reconciliation_crud.get_signoff(db, run_id=run_id)
+    if signoff is None:
+        raise ReconciliationSignOffNotFoundError(f"Reconciliation run '{run_id}' has not been signed off.")
+    return signoff

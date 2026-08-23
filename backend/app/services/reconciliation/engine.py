@@ -48,16 +48,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.exceptions import (
     ReconciliationAnalysisFailedError,
-    ReconciliationCoverageMismatchError,
     ReconciliationRunNotFoundError,
     ReconciliationRunNotPendingError,
     ReconciliationRunVersionConflictError,
     UnsupportedReconciliationRuleVersionError,
 )
-from app.models.legacy_reconciliation import LegacyMigrationAuthorityCoverage, LegacyReconciliationRun
+from app.models.legacy_reconciliation import LegacyReconciliationRun
 
 from . import persistence
 from .context import build_context
+from .coverage import verify_coverage_integrity
 from .rule_version import PR22_RECONCILIATION_RULE_VERSION
 from .rules import (
     bme_traceability,
@@ -118,24 +118,10 @@ async def _validate_and_claim(
             "re-executed (§27) -- create a new run instead."
         )
 
-    coverage = (
-        await db.execute(
-            select(LegacyMigrationAuthorityCoverage).where(LegacyMigrationAuthorityCoverage.id == run.coverage_id)
-        )
-    ).scalar_one_or_none()
-    if coverage is None:
-        raise ReconciliationCoverageMismatchError(
-            f"Run '{run_id}' references coverage '{run.coverage_id}', which no longer exists."
-        )
-    if (
-        coverage.legacy_coverage_start != run.legacy_coverage_start
-        or coverage.legacy_coverage_end != run.legacy_coverage_end
-        or coverage.live_system_start != run.live_system_start
-    ):
-        raise ReconciliationCoverageMismatchError(
-            f"Run '{run_id}''s own copied coverage timestamps no longer match its bound coverage artifact "
-            f"'{coverage.id}'. Never repaired or inferred from MIN/MAX -- this run cannot execute."
-        )
+    # Shared with PR22E's sign-off precondition 4 (§19 of that task) --
+    # `app.services.reconciliation.coverage.verify_coverage_integrity` is
+    # the one place this fail-closed comparison is implemented.
+    coverage = await verify_coverage_integrity(db, run=run)
 
     claim_result = await db.execute(
         update(LegacyReconciliationRun)
