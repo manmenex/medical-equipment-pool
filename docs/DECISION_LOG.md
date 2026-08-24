@@ -4726,3 +4726,142 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
 - **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
 - **Source:** the PR22F implementation task's own binding specification;
   the PR22F GitHub PR description.
+
+## 2026-08-24 — PR22F Fix Round 1: fail-closed sign-off gating + missing finding filters
+
+- **Decision/record:** Independent review of PR #120's head
+  (`c417cd251255cf419b84e3c37b24b6ca0a4fa618`) returned REQUEST CHANGES
+  with two P1 findings. **P1 #1:** a signed-off run's disposition edit
+  action was still exposed to an Administrator — the backend correctly
+  rejected the write (`RECONCILIATION_FINDING_SIGNED_OFF`), but the
+  frontend's own usability contract requires the edit action to
+  disappear once a run's sign-off state is known. Fixed in
+  `ReconciliationRunDetailPage.tsx` by computing `canEditDisposition =
+  canSetReconciliationDisposition(user) && signoffQuery.isSuccess &&
+  signoffQuery.data === null`, replacing the previous role-only
+  `canDispose` gate passed into `FindingDetailContent`. This fails
+  **closed**: while the sign-off query is loading, or has errored for
+  any reason other than the normal 404-not-found case (already
+  normalized to `null` data), the edit action stays hidden — "unknown"
+  sign-off state is never treated as "unsigned". The backend's own
+  `RECONCILIATION_FINDING_SIGNED_OFF` handling is unchanged and kept as
+  defense-in-depth; this remains a usability gate only, never a
+  substitute for backend authorization/version/state checks. **P1 #2:**
+  the finding filters omitted `code` and `equipment_id`, even though
+  `services/reconciliation.ts` already supported both server-side.
+  Added a "ประเภทปัญหา" (finding code/category) filter populated from
+  the existing finding-code label map (exported as
+  `RECONCILIATION_FINDING_CODE_FILTER_OPTIONS`), and a new
+  `frontend/src/components/EquipmentAutocomplete.tsx` — mirroring
+  `OperatorAutocomplete.tsx`'s established search-as-you-type + cursor
+  "load more" pattern exactly, but backed by the existing
+  `services/equipment.ts` `searchEquipment` (no new backend endpoint) —
+  so staff search equipment by name/asset number/BCM code instead of
+  typing a raw UUID. Both filters flow into the same `findingsFilters`
+  object already used for `severity`/`disposition`, which is also the
+  `useInfiniteQuery` key's filter segment, so every filter change hits
+  the backend (never a client-side `Array.filter`) and resets pagination
+  to a null cursor for free. 10 new regression tests were added to
+  `ReconciliationRunDetailPage.test.tsx` (34 total for that page). No
+  backend files touched, no migration, no new business rules, no fifth
+  disposition, no PR22G work.
+- **Status:** Draft, **not merged, PR22F Fix Round 1 applied** at head
+  `45c1205153b8061f82a61626c4ce04f14a30b11c`. This entry documents work
+  in progress, not completion — see the entry below for the eventual
+  merge record.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the independent review of GitHub PR #120's head
+  `c417cd2...`; the PR22F Fix Round 1 task's own binding specification;
+  the PR22F GitHub PR description's Fix Round 1 section.
+
+## 2026-08-24 — GitHub PR #120 merged; new authoritative baseline adopted
+
+- **Decision/record:** GitHub PR #120 (PR22F — Reconciliation Frontend
+  Integration, the two entries above) merged via squash to
+  `claude/medical-equipment-pool-0c7fz0`, real squash-merge SHA
+  `76040d5e87223767c9dbe36eb67c6a156af12c0c`, sole parent
+  `896d92f8c00ee860c82892e4e4d466d5869dcf48` (GitHub PR #119).
+  Independently verified via this repository's standard Final Merge Gate
+  procedure: the exact reviewed feature-branch head
+  (`45c1205153b8061f82a61626c4ce04f14a30b11c`, after the Fix Round 1
+  above) recorded zero review threads, zero reviews, and zero comments,
+  and CI green 6/6 on that exact head. The squash commit's tree was
+  independently confirmed tree-identical to the reviewed feature-branch
+  head via an empty `git diff`, and its sole parent was independently
+  confirmed to be `896d92f8...` via `git cat-file -p` (exactly one
+  `parent` line).
+- **New authoritative baseline:** `76040d5e87223767c9dbe36eb67c6a156af12c0c`
+  is now the repository's single current authoritative baseline,
+  recorded in `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, and
+  `knowledge/CONTEXT.md`'s own "Current baseline" sections, superseding
+  `896d92f8...` (GitHub PR #119). **Per this repository's standing
+  process, no separate self-referential "baseline adoption" PR is
+  created for this squash SHA** — it became authoritative immediately
+  upon merge, and its recording is folded into PR22G (the next PR that
+  legitimately touches these governance files).
+- **Status:** Roadmap PR22F (Reconciliation Frontend Integration) is now
+  fully complete and merged. **PR22A through PR22F — design, all seven
+  Owner Decisions, and every implementation slice (schema/run-snapshot
+  foundation, analysis engine, finding review/disposition API,
+  sign-off + concurrency/audit, frontend integration) — are now all
+  merged. PR22 implementation is complete.** Roadmap PR22 overall is
+  **not** complete until PR22G (governance close-out) itself merges,
+  recorded in the entry below.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14,
+  following the same Final Merge Gate precedent used for GitHub PR
+  #111/#112/#113/#115/#116/#117/#118/#119.
+- **Source:** GitHub PR #120 description (including its Fix Round 1
+  section) and its Final Merge Gate verification evidence.
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this baseline-recording entry
+  itself (it is folded into PR22G's own governance-documentation PR).
+
+## 2026-08-24 — PR22G (Roadmap PR22 Governance Close-out) implementation started — in progress, not merged
+
+- **Decision/record:** Implementation of Roadmap PR22G (Governance
+  Close-out) started on branch `feature/pr22g-governance-closeout`,
+  based on baseline `76040d5e87223767c9dbe36eb67c6a156af12c0c` (GitHub
+  PR #120, the entry above). Scope: documentation/governance only —
+  `docs/DECISION_LOG.md`, `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`,
+  and `knowledge/CONTEXT.md` updated to record the current baseline,
+  PR22F's merge (GitHub PR #120, real squash SHA, reviewed head, tree
+  identity, sole parent), and PR22A-F implementation as complete;
+  `knowledge/CHANGE_HISTORY.md` deliberately left unchanged — its
+  documented scope is conceptual (mental-model) changes, not per-PR-
+  slice merge tracking, no entry was ever added there for PR22B through
+  PR22F individually, and adding a "Roadmap PR22 complete" entry now
+  would be premature and self-referential, since PR22 does not actually
+  close until this PR22G governance PR itself merges. Zero
+  `backend/**`, `frontend/**`, Alembic migration, or test file touched.
+  A targeted repository-wide sweep for stale normative PR22 status
+  phrases (e.g. "PR22F in progress", "PR22G not started", the prior
+  baseline SHA) classified every match as either current-and-updated or
+  historical-and-preserved (append-only `docs/DECISION_LOG.md` entries,
+  and one already-accurate code comment in
+  `frontend/src/types/reconciliation.ts` naming the backend SHA that
+  DTO module was written against — left untouched, both because it
+  remains accurate and because `frontend/**` is outside this PR's own
+  scope boundary).
+- **Key structural decisions:** Per this repository's standing
+  self-referential-governance discipline (reinforced explicitly for
+  this PR), this entry and every governance file edited by this PR
+  describe status as **"PR22A-F implementation complete; PR22G
+  governance close-out in progress"** — never "PR22G complete" or
+  "Roadmap PR22 fully complete" — while this PR remains open on its own
+  branch. That claim is deferred to the next entry in this log, written
+  only after PR22G's own real squash-merge SHA is known post-merge, per
+  the same "no baseline recorded before it exists" discipline already
+  applied to every prior PR22 slice. All seven approved PR22 Owner
+  Decisions (OD-PR22-1 through OD-PR22-7) are left exactly as approved
+  — none reopened, reinterpreted, or extended by this PR. The next
+  Roadmap item after PR22 closes is PR23 — Cutover Readiness (rehearse
+  migration, obtain reconciliation sign-off, close operational
+  readiness gaps; depends on PR22), per
+  `docs/audits/04-consolidated-implementation-plan.md` Part D — not
+  started, not implied to start, by this PR.
+- **Status:** Draft, **not merged, PR22G implementation in progress**.
+  This entry documents work in progress, not completion — see the PR's
+  own description for current CI/review state.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the PR22G implementation task's own binding specification;
+  the PR22G GitHub PR description.

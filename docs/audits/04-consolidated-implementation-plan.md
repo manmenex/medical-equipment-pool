@@ -500,13 +500,17 @@ delivers one combined `legacy_transaction_history` workbook/`ImportSession`
 an independent `ISSUE`/`RECEIVE` `LegacyEquipmentEvent` (event-first
 architecture) — Issue↔Receive pairing is deliberately deferred to PR22;
 historical import never mutates current `Equipment.status`/version/
-location. The current authoritative base-branch baseline is
-`d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` (GitHub PR #110's real
-squash-merge SHA) — see `docs/ROADMAP.md` and `docs/DECISION_LOG.md`
-("Roadmap PR21 complete: PR21D1–PR21F merged") for the full record.
-**Roadmap PR22 (Legacy Data Validation and Reconciliation) is now the
-next planned Roadmap item, not started** — its Dependencies bullet below
-(PR20, PR21) is now fully satisfied.
+location. **Roadmap PR22 (Legacy Data Validation and Reconciliation)'s
+architecture design, all seven Owner Decisions, and every
+implementation slice (PR22B–PR22F) have since merged — PR22A-F
+implementation is complete; PR22G (governance close-out) is in
+progress, not yet merged.** This paragraph's "not started" framing was
+accurate only at the time it was written, when PR21 had just completed
+and PR22's Dependencies bullet below (PR20, PR21) had just become
+satisfied — see `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, and
+`docs/DECISION_LOG.md` for the current authoritative baseline and
+full record; this document's own scope/dependency description of PR22
+below remains authoritative and unchanged.
 
 #### PR19A — Legacy Import Foundation (backend)
 - **Objective:** Provide a staged, validation-first, traceable import framework.

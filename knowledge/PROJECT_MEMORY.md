@@ -202,14 +202,22 @@ Receive/Issue imports); each accepted row becomes an independent
 `ISSUE`/`RECEIVE` `LegacyEquipmentEvent`, Issue↔Receive pairing
 deferred to PR22-or-later; historical import never mutates current
 Equipment status/location. **Roadmap PR22 (Legacy Data Validation and
-Reconciliation) is now the next planned Roadmap item**, depending on
-PR20 and PR21 (both now complete), per
-`docs/audits/04-consolidated-implementation-plan.md`. The remaining
-Roadmap-numbered items are:
+Reconciliation) — architecture design, all seven Owner Decisions
+(OD-PR22-1 through OD-PR22-7), and every implementation slice
+(PR22B–PR22F: schema/run-snapshot foundation, deterministic analysis
+engine, finding review/disposition API, sign-off + concurrency/audit,
+frontend integration) — is now fully implemented and merged.** Current
+authoritative baseline entering PR22G: `76040d5e87223767c9dbe36eb67c6a156af12c0c`
+(GitHub PR #120, PR22F). **Current Roadmap work is PR22G — governance
+close-out — in progress, not yet merged; Roadmap PR22 overall remains
+open until PR22G itself merges.** The remaining Roadmap-numbered items
+are:
 
-- PR22: validation and reconciliation — **not started, next planned
-  item**;
-- PR23: cutover readiness;
+- PR22: legacy data validation and reconciliation — **PR22A-F
+  implementation complete and merged; PR22G governance close-out in
+  progress, not yet merged**;
+- PR23: cutover readiness — **next planned Roadmap item after PR22
+  closes, not started**;
 - PR24: Go-live / deployment.
 
 Roadmap numbers and GitHub PR numbers are independent. Legacy migration is
