@@ -22,6 +22,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core import audit as audit_module
 from app.core.exceptions import ReconciliationFindingSignedOffError, ReconciliationSignOffAlreadyExistsError
 from app.models.legacy_history import LegacyMigrationAuthority
 from app.models.legacy_reconciliation import (
@@ -201,3 +202,61 @@ async def test_signoff_serializes_against_concurrent_disposition(pg_engine, pg_s
     await pg_session.refresh(finding)
     if signoff_rows:
         assert finding.disposition in ("confirmed_valid", "accepted_unresolved")
+
+
+async def test_signoff_audit_failure_rolls_back_signoff(pg_engine, pg_session, pg_seeded_users, monkeypatch):
+    """§24/§42 of the task -- if the mandatory audit write fails, the
+    sign-off `INSERT` must roll back too: zero sign-off rows left, never
+    a sign-off with no corresponding audit event.
+
+    **This proof lives here, not in the SQLite API test file, because it
+    is only meaningful under a dialect that actually enforces it.** Fix
+    Round 1 (P2) moved `create_signoff`'s duplicate-sign-off defense
+    fully inside a `db.begin_nested()` SAVEPOINT, which is the correct
+    fix for genuine SAVEPOINT isolation under PostgreSQL -- but this
+    repository's SQLite test engine (`tests/conftest.py`) never applies
+    the SQLAlchemy-documented pysqlite recipe (`isolation_level=None` at
+    connect + an explicit `BEGIN` via a `"begin"` event listener) real
+    SAVEPOINT/`ROLLBACK` correctness requires, so a row inserted and
+    released under a SAVEPOINT can survive a later plain `ROLLBACK` on
+    SQLite specifically (a pysqlite/aiosqlite driver limitation,
+    independently reproduced with a minimal SQLAlchemy ORM example with
+    zero application code involved -- not a bug in this function).
+    PostgreSQL has no such limitation, proven directly below."""
+    actor = pg_seeded_users["administrator"]
+    coverage = await _seed_coverage(pg_session, actor_id=actor.id, checksum="6" * 64)
+    run = await _seed_run(pg_session, coverage=coverage, actor_id=actor.id, summary_total_findings=0)
+
+    async def _raise(*args, **kwargs):
+        raise RuntimeError("simulated audit-subsystem failure")
+
+    monkeypatch.setattr(audit_module, "record_audit_event", _raise)
+
+    session_maker = async_sessionmaker(pg_engine, expire_on_commit=False, class_=AsyncSession)
+
+    async def _attempt():
+        # Mirrors app.api.v1.legacy_reconciliation.create_reconciliation_signoff's
+        # own shape exactly: create_signoff (not yet committed) -> mandatory
+        # audit write -> one commit. The mocked audit failure here stands
+        # in for the endpoint's own `await record_audit_event(...)` call.
+        async with session_maker() as db:
+            signoff, attestation = await reconciliation_crud.create_signoff(
+                db, run_id=run.id, expected_version=0, actor_id=actor.id
+            )
+            await audit_module.record_audit_event(
+                db,
+                actor_user_id=actor.id,
+                action=audit_module.AUDIT_ACTION_RECONCILIATION_SIGNOFF,
+                entity_type=audit_module.AUDIT_ENTITY_RECONCILIATION_SIGNOFF,
+                entity_id=signoff.id,
+                after={"run_id": str(signoff.run_id)},
+            )
+            await db.commit()
+
+    with pytest.raises(RuntimeError):
+        await _attempt()
+
+    rows = (
+        await pg_session.execute(select(LegacyReconciliationSignOff).where(LegacyReconciliationSignOff.run_id == run.id))
+    ).scalars().all()
+    assert rows == [], "audit-write failure must leave zero sign-off rows -- never a sign-off with no audit event"

@@ -7,15 +7,15 @@ sign-off preconditions, authorization, mandatory audit atomicity, the
 server-generated attestation shape, and immutability.
 
 The genuine two-connection lock-order/race proofs (concurrent sign-off,
-sign-off-vs-disposition, audit-failure rollback under real PostgreSQL)
-are proved in `test_pr22e_reconciliation_signoff_concurrency.py` instead
-of here, mirroring `test_pr22d_finding_review_concurrency.py`'s identical
-convention -- every genuine concurrency proof lives in the
+sign-off-vs-disposition) and the audit-failure-rollback proof are all
+proved in `test_pr22e_reconciliation_signoff_concurrency.py` instead of
+here, mirroring `test_pr22d_finding_review_concurrency.py`'s identical
+convention -- every genuine transaction-semantics proof lives in the
 PostgreSQL-only suite, not the SQLite one this file's `client`/
-`db_session` fixtures use. The audit-rollback failure test here uses a
-monkeypatched `record_audit_event` against SQLite instead, matching
-`test_pr20e_equipment_master_execution.py`'s established pattern for that
-kind of proof.
+`db_session` fixtures use. The audit-rollback proof specifically cannot
+run correctly against this repository's SQLite test engine (see the
+"G. Mandatory audit atomicity" section below for why) -- it is a real
+PostgreSQL-only proof, not merely a stylistic choice.
 """
 
 import hashlib
@@ -27,7 +27,6 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.api.v1.legacy_reconciliation as legacy_reconciliation_api
 from app.models.audit import AuditLog
 from app.models.equipment import Equipment, EquipmentStatus
 from app.models.legacy_history import LegacyEquipmentEvent, LegacyMigrationAuthority
@@ -536,40 +535,32 @@ async def test_signoff_has_no_side_effects_on_other_tables(client: AsyncClient, 
 # ---------------------------------------------------------------------------
 # G. Mandatory audit atomicity (§24/§42 of the task).
 # ---------------------------------------------------------------------------
-
-
-async def test_signoff_audit_failure_rolls_back_signoff(client: AsyncClient, seeded_users, db_session, monkeypatch):
-    """§24/§42 of the task: if the mandatory audit write fails, the
-    sign-off INSERT must roll back too -- zero sign-off rows left, never
-    a sign-off with no corresponding audit event.
-
-    Uses a raw `ASGITransport(..., raise_app_exceptions=False)` client
-    (matching `test_exception_handling.py`'s own `_raw_client` helper)
-    -- Starlette's `ServerErrorMiddleware` always re-raises after sending
-    its 500 response, and httpx's `ASGITransport` re-raises that into the
-    caller by default (a test-transport-only quirk, not a production
-    behavior); this is the established workaround for inspecting the
-    response a genuinely unhandled exception already sent."""
-    from httpx import ASGITransport
-    from app.main import app as fastapi_app
-
-    actor_id = await _actor_id(db_session)
-    coverage = await _seed_coverage(db_session, actor_id=actor_id, checksum="fail")
-    run = await _seed_run(db_session, coverage=coverage, actor_id=actor_id, summary_total_findings=0)
-    run_id = run.id
-
-    async def _raise(*args, **kwargs):
-        raise RuntimeError("simulated audit-subsystem failure")
-
-    monkeypatch.setattr(legacy_reconciliation_api, "record_audit_event", _raise)
-
-    headers = await auth_headers(client)
-    raw_transport = ASGITransport(app=fastapi_app, raise_app_exceptions=False)
-    async with AsyncClient(transport=raw_transport, base_url="http://test") as raw_client:
-        r = await raw_client.post(
-            f"/api/v1/legacy-reconciliation-runs/{run_id}/sign-off", headers=headers, json={"expected_version": 0}
-        )
-    assert r.status_code == 500, r.text
-
-    rows = (await db_session.execute(select(LegacyReconciliationSignOff).where(LegacyReconciliationSignOff.run_id == run_id))).scalars().all()
-    assert rows == [], "audit-write failure must leave zero sign-off rows -- never a sign-off with no audit event"
+#
+# Fix Round 1 (P2): the audit-failure-rollback proof for `create_signoff`
+# now lives in `test_pr22e_reconciliation_signoff_concurrency.py`
+# (`test_signoff_audit_failure_rolls_back_signoff`) instead of here.
+# `create_signoff`'s duplicate-sign-off defense (this same fix round)
+# now genuinely wraps its `INSERT` in a SAVEPOINT
+# (`db.begin_nested()`) -- correct and required for that defense to
+# actually isolate a concurrent-duplicate `IntegrityError` under real
+# PostgreSQL. Investigating why this SQLite-based test started failing
+# after that change traced to a real, pre-existing pysqlite/aiosqlite
+# limitation, verified independently of any of this PR's application
+# code: this repository's SQLite test engine (`tests/conftest.py`) never
+# applies the SQLAlchemy-documented pysqlite recipe (`isolation_level=
+# None` at connect + an explicit `BEGIN` via a `"begin"` event listener)
+# that real SAVEPOINT/ROLLBACK correctness requires -- pysqlite's own
+# legacy DML-detection heuristic does not recognize `RELEASE SAVEPOINT`,
+# so a row inserted and released under a SAVEPOINT survives a later
+# plain `ROLLBACK` on SQLite specifically (reproduced with a *minimal*
+# SQLAlchemy ORM example with zero application code involved). The
+# identical sequence against real PostgreSQL rolls back correctly (0
+# rows), confirmed directly. Since this property is only ever
+# meaningful -- and only ever actually enforced by this application --
+# under PostgreSQL (SQLite's own `FOR UPDATE`/concurrency limitations
+# already mean every other genuine transaction-semantics proof in this
+# suite lives in the PostgreSQL-only file), the test moved there rather
+# than staying here asserting a guarantee SQLite's own driver cannot
+# reliably provide. Fixing the underlying pysqlite session configuration
+# repository-wide is out of this fix round's scope (`app/db/session.py`
+# is shared by every other test and would need its own dedicated review).

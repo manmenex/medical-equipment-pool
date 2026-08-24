@@ -440,13 +440,6 @@ async def create_signoff(
         "unreviewed_findings": 0,
     }
 
-    signoff = LegacyReconciliationSignOff(
-        run_id=run_id,
-        signed_off_by_user_id=actor_id,
-        attestation_summary=attestation_summary,
-        run_version_at_signoff=run.version,
-    )
-    db.add(signoff)
     try:
         # A SAVEPOINT, not a bare flush: on the (structurally unreachable
         # under the run lock, but handled explicitly rather than assumed
@@ -454,8 +447,20 @@ async def create_signoff(
         # failed INSERT -- the caller's own outer transaction (and the
         # run lock it holds) remains perfectly usable for the caller to
         # continue, or for the API layer to still commit whatever else
-        # it already did in this same transaction.
+        # it already did in this same transaction. Construction/`add`/
+        # `flush` all happen *inside* this block -- entering
+        # `begin_nested()` can itself trigger an autoflush of any
+        # already-pending ORM state, so `db.add(signoff)` must not occur
+        # before the nested block starts, or the INSERT would not be
+        # genuinely isolated inside the SAVEPOINT.
         async with db.begin_nested():
+            signoff = LegacyReconciliationSignOff(
+                run_id=run_id,
+                signed_off_by_user_id=actor_id,
+                attestation_summary=attestation_summary,
+                run_version_at_signoff=run.version,
+            )
+            db.add(signoff)
             await db.flush()
     except IntegrityError as exc:
         raise ReconciliationSignOffAlreadyExistsError(
