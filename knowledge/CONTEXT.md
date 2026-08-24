@@ -10,24 +10,26 @@ ordering
 
 ## Current baseline
 
-Current baseline: `896d92f8c00ee860c82892e4e4d466d5869dcf48` on
+Current baseline: `76040d5e87223767c9dbe36eb67c6a156af12c0c` on
 `claude/medical-equipment-pool-0c7fz0` — the real squash-merge SHA of
-GitHub PR #119, "PR22E — Reconciliation Sign-off + Concurrency/Audit",
+GitHub PR #120, "PR22F — Reconciliation Frontend Integration",
 squash-merged on top of
-`966d7a712681e40780f954c8744a592316af56ec` (GitHub PR #118, PR22D,
-now historical/superseded by this baseline). PR #119's final
+`896d92f8c00ee860c82892e4e4d466d5869dcf48` (GitHub PR #119, PR22E,
+now historical/superseded by this baseline). PR #120's final
 independently reviewed feature-branch head
-(`293c390988684f3cbdbde6317cf8ed5ca14a87d7`, after a Fix Round 1 moving
-the duplicate-sign-off `INSERT` fully inside its SAVEPOINT; independent
-Final Merge Gate: zero review threads, zero comments, CI green 6/6 on
-that exact head) — **that reviewed head is not the baseline**; the
-squash commit actually landed on the base branch, `896d92f8...`, is,
-independently verified tree-identical to that reviewed head with sole
-parent `966d7a71...` confirmed. Per this repository's standing process,
-**no separate "baseline adoption" PR is created** — the squash SHA
-became authoritative immediately upon merge, recorded here by PR22F
-(the next PR that legitimately touches these governance files),
-consistent with this repository's squash-baseline discipline.
+(`45c1205153b8061f82a61626c4ce04f14a30b11c`, after a Fix Round 1
+addressing two P1 findings — fail-closed disposition-edit gating keyed
+to the run's own resolved sign-off state, and the missing
+`code`/`equipment_id` finding filters; independent Final Merge Gate:
+zero review threads, zero comments, CI green 6/6 on that exact head) —
+**that reviewed head is not the baseline**; the squash commit actually
+landed on the base branch, `76040d5e...`, is, independently verified
+tree-identical to that reviewed head with sole parent `896d92f8...`
+confirmed. Per this repository's standing process, **no separate
+"baseline adoption" PR is created** — the squash SHA became
+authoritative immediately upon merge, recorded here by PR22G (the next
+PR that legitimately touches these governance files), consistent with
+this repository's squash-baseline discipline.
 
 **Roadmap PR22 (Legacy Data Validation and Reconciliation)'s
 architecture design is merged (GitHub PR #112, folded into this
@@ -42,12 +44,15 @@ baseline) — the analysis engine, zero new migrations, 54 tests —
 **PR22D (Finding Review / Disposition API) is merged** (GitHub PR #118,
 folded into this baseline) — read endpoints for runs/findings plus an
 Administrator-only disposition-mutation endpoint, zero new migrations,
-47 tests — **and PR22E (Reconciliation Sign-off + Concurrency/Audit) is
+47 tests — **PR22E (Reconciliation Sign-off + Concurrency/Audit) is
 merged** (GitHub PR #119, folded into this baseline) — the final
-Administrator-only sign-off workflow, zero new migrations, 30 tests.
-**PR22F (Reconciliation Frontend Integration) implementation is in
-progress** — not yet merged; PR22G (governance close-out) is not
-started. **Roadmap PR22 overall remains open until both finish.**
+Administrator-only sign-off workflow, zero new migrations, 30 tests —
+**and PR22F (Reconciliation Frontend Integration) is merged** (GitHub
+PR #120, folded into this baseline) — the operator-facing frontend for
+runs/findings/disposition/sign-off, zero new backend routes, schema, or
+business logic. **PR22A-F implementation is now complete; PR22G
+(governance close-out) is in progress** — not yet merged. **Roadmap
+PR22 overall remains open until PR22G itself merges.**
 
 `d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` (GitHub PR #110, Roadmap
 PR21E — Legacy History Frontend Real Integration) is now historical,
@@ -55,7 +60,8 @@ superseded first by `e07a36a...` (GitHub PR #111, PR21F), then
 `c924d8b...` (GitHub PR #112, PR22A), then `c802d66...` (GitHub PR #113),
 then `f03af893...` (GitHub PR #115), then `c5e750c...` (GitHub PR #116),
 then `b45cf750...` (GitHub PR #117), then `966d7a71...` (GitHub PR #118),
-then `896d92f8...` (GitHub PR #119), and now by this baseline. With
+then `896d92f8...` (GitHub PR #119), then `76040d5e...` (GitHub PR
+#120), and now by this baseline. With
 PR21E merged, **Roadmap PR21 (Legacy Receive and Issue History Import)
 is now fully complete** — every implementation slice (Foundation, A, B,
 C, D1, D2, E0, E) is merged. See `docs/DECISION_LOG.md` ("Roadmap PR21
@@ -146,11 +152,19 @@ Administrator-only sign-off workflow (all eight preconditions), reusing
 PR22D's own Run-row-lock-first discipline — **is merged** (GitHub PR
 #119, squash SHA `896d92f8c00ee860c82892e4e4d466d5869dcf48`, see
 "Current baseline" above): zero new Alembic migrations, 30 regression
-tests. **Current work is PR22F** (Reconciliation Frontend Integration)
-— the operator-facing UI for the already-merged PR22B-E backend, **in
-progress, not yet merged**; still no governance close-out (PR22G). No
-other PR22B-G slice may begin ahead of its own ordinary implementation
-dependencies (e.g. PR22G depends on PR22F).
+tests. **PR22F** (Reconciliation Frontend Integration) — the
+operator-facing UI for the PR22B-E backend (run list/detail, finding
+filters incl. `code`/`severity`/`disposition`/`equipment_id`, finding
+detail/evidence, Administrator-only disposition mutation and final
+sign-off) — **is merged** (GitHub PR #120, squash SHA
+`76040d5e87223767c9dbe36eb67c6a156af12c0c`, see "Current baseline"
+above): zero new backend routes, schema, or business logic; the
+frontend never reimplements sign-off eligibility, every mutation is
+submitted to the backend and every response/error code decides the
+outcome. **Current work is PR22G** (governance close-out) — **in
+progress, not yet merged.** No other PR22B-G slice may begin ahead of
+its own ordinary implementation dependencies (PR22G depended on PR22F,
+now satisfied).
 
 ## Next sequence
 
@@ -164,10 +178,11 @@ Run/Snapshot Foundation) is merged (GitHub PR #116); PR22C
 #117); PR22D (Finding Review / Disposition API) is merged (GitHub PR
 #118); PR22E (Reconciliation Sign-off + Concurrency/Audit) is merged
 (GitHub PR #119, squash SHA `896d92f8c00ee860c82892e4e4d466d5869dcf48`);
-PR22F (Reconciliation Frontend Integration) implementation is in
-progress, not yet merged. Roadmap PR22 overall is not yet complete —
-it remains open until both PR22F and PR22G (governance close-out)
-finish** — per `docs/audits/04-consolidated-implementation-plan.md`
+PR22F (Reconciliation Frontend Integration) is merged (GitHub PR #120,
+squash SHA `76040d5e87223767c9dbe36eb67c6a156af12c0c`). PR22A-F
+implementation is now complete; PR22G (governance close-out) is in
+progress, not yet merged — Roadmap PR22 overall remains open until
+PR22G itself merges** — per `docs/audits/04-consolidated-implementation-plan.md`
 Part D, PR22 depends on PR20 and PR21 (both now satisfied) and covers:
 cross-import validation, reconciliation, source traceability
 verification, duplicate review, and unified legacy/new history
@@ -194,9 +209,9 @@ Decision — OD-PR22-1 — by this closure round, never silently finalized).
    (GitHub PR #117); PR22D (Finding Review / Disposition API) merged
    (GitHub PR #118); PR22E (Reconciliation Sign-off + Concurrency/Audit)
    merged (GitHub PR #119); PR22F (Reconciliation Frontend Integration)
-   implementation in progress, not yet merged. Roadmap PR22 overall is
-   not yet complete until PR22F and PR22G (governance close-out) both
-   finish.**
+   merged (GitHub PR #120). PR22A-F implementation complete; PR22G
+   (governance close-out) in progress, not yet merged. Roadmap PR22
+   overall is not yet complete until PR22G itself merges.**
 6. PR23 — Cutover readiness.
 7. PR24 — Go-live / deployment.
 
@@ -249,9 +264,11 @@ Legacy migration and reconciliation are mandatory before PR24.
   Review / Disposition API) has since merged (GitHub PR #118); PR22E
   (Reconciliation Sign-off + Concurrency/Audit) has since merged (GitHub
   PR #119, squash SHA `896d92f8c00ee860c82892e4e4d466d5869dcf48`); PR22F
-  (Reconciliation Frontend Integration) is in progress, not yet merged.
-  Roadmap PR22 overall is not yet complete until PR22F and PR22G
-  (governance close-out) both finish.** PR23 must
+  (Reconciliation Frontend Integration) has since merged (GitHub PR
+  #120, squash SHA `76040d5e87223767c9dbe36eb67c6a156af12c0c`). PR22A-F
+  implementation is complete; PR22G (governance close-out) is in
+  progress, not yet merged. Roadmap PR22 overall is not yet complete
+  until PR22G itself merges.** PR23 must
   define cutover evidence. PR19B's
   category labels were a UI preview only and did not resolve any of
   this — PR20's and PR21's own implementations are what actually resolved
