@@ -3,11 +3,14 @@
 **Status:** DESIGN MERGED (GitHub PR #112, folded into baseline
 `c924d8ba2c8c5d933ea36ea3d488e2550615df40`). All seven Owner Decisions
 (OD-PR22-1 through OD-PR22-7, §36) are **RESOLVED / OWNER APPROVED**.
-**Implementation is still not started** — no `backend/**`, `frontend/**`,
-`alembic/**`, or `tests/**` file is created or modified by this document
-or by the PR22 Owner Decision Closure round that resolved §36; every
-PR22B-G implementation slice becomes eligible only after the governance
-PR recording this closure round itself merges (§34).
+**PR22A-F implementation is complete and merged; PR22G (governance
+close-out) is in progress, not yet merged** — see `docs/ROADMAP.md`,
+`docs/ROADMAP_STATUS.md`, and `docs/DECISION_LOG.md` for current
+status. No `backend/**`, `frontend/**`, `alembic/**`, or `tests/**`
+file was created or modified by this document or by the PR22 Owner
+Decision Closure round that resolved §36 itself; every PR22B-G
+implementation slice became eligible only after the governance PR
+recording this closure round merged (§34).
 
 **Baseline (this closure round):** `c802d66c9d1e5395cd20591c451ebdc0cefbf7df`
 — the real squash-merge SHA of GitHub PR #113 (the post-PR22A
@@ -40,11 +43,14 @@ eventual sign-off — layered on top of already-immutable historical data.
 ## 1. Status
 
 DESIGN MERGED; all seven Owner Decisions RESOLVED / OWNER APPROVED
-(§36); implementation still not started, as stated above. This
-document's own governance footprint remains minimal by design: this
-Owner Decision Closure round records that the Owner approved OD-PR22-1
-through OD-PR22-7, and nothing more — it does not itself mark any
-implementation slice as begun, only as eligible (§34).
+(§36). PR22A-F implementation is complete and merged; PR22G
+(governance close-out) is in progress, not yet merged — see
+`docs/ROADMAP.md`/`docs/ROADMAP_STATUS.md`/`docs/DECISION_LOG.md` for
+current status. This document's own governance footprint remains
+minimal by design: this Owner Decision Closure round records that the
+Owner approved OD-PR22-1 through OD-PR22-7, and nothing more — it did
+not itself mark any implementation slice as begun, only as eligible
+(§34).
 
 ---
 
