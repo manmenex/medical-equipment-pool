@@ -287,8 +287,11 @@ which of PR19B/PR20 would be worked on first — the one item whose
 relative order was ever in question. **Roadmap PR20 has since also fully
 completed (see "Roadmap PR20 complete" above); its row has likewise moved
 off this table. Roadmap PR21 has since fully completed too (see "Roadmap
-PR21 complete" above); its row has also moved off this table, and PR22
-is now shown with sequence "Next" in the table above.** PR22 through
+PR21 complete" above); its row has also moved off this table. PR22A-F
+implementation has since also fully completed and merged; PR22 is now
+shown with sequence "Current" in the table above, since its own
+governance close-out (PR22G) is the current in-progress Roadmap work —
+see "Current baseline" above.** PR22 through
 PR24's ordering is preserved as-is because it reflects an existing
 authoritative dependency chain
 (`docs/audits/04-consolidated-implementation-plan.md` Part D, Group 8:
@@ -330,9 +333,11 @@ Decision Closure rounds (GitHub PR #101, #102, #106), PR21-Foundation
 (#100), PR21A–C (#103, #104, #105), and PR21D1/D2/E0/E (#107, #108,
 #109, #110) are all merged — see "Roadmap PR21 complete" above and
 `docs/DECISION_LOG.md` ("Roadmap PR21 complete: PR21D1–PR21F merged")
-for the full record. This table now begins with PR22, the next planned
-Roadmap item; PR19B's own historical relative-ordering note is preserved
-above.
+for the full record. This table now begins with PR22 — shown as the
+current in-progress Roadmap item now that PR22A-F implementation is
+complete and PR22G (governance close-out) is underway — followed by
+PR23, the next planned Roadmap item after PR22 closes, not yet started;
+PR19B's own historical relative-ordering note is preserved above.
 
 ## Scope guardrails for the planned sequence
 
