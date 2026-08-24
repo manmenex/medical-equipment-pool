@@ -65,8 +65,13 @@ export const RECONCILIATION_DISPOSITION_COLORS: Record<ReconciliationDisposition
 // Roadmap PR22C's current rule taxonomy (app.models.legacy_reconciliation
 // .RECONCILIATION_FINDING_CODES) -- reference only, not DB-enforced on
 // the backend, so this frontend label map must degrade safely (never
-// hard-fail) for a code it does not yet know about.
-const RECONCILIATION_FINDING_CODE_LABELS: Record<string, string> = {
+// hard-fail) for a code it does not yet know about. Exported (rather than
+// module-private) so the run detail page's finding-code filter can list
+// exactly these known codes as selectable options -- see §16/§6 of the
+// PR22F Fix Round 1 task: a future/unknown code still renders safely via
+// reconciliationFindingCodeLabel()'s fallback, it just isn't offered as a
+// filter choice until this map is extended.
+export const RECONCILIATION_FINDING_CODE_LABELS: Record<string, string> = {
   EQUIPMENT_IDENTITY: "ข้อมูลระบุตัวเครื่องมือไม่ตรงกัน",
   SOURCE_PROVENANCE: "ไม่พบที่มาของข้อมูลเดิม",
   DUPLICATE_EXACT: "ข้อมูลซ้ำซ้อนทั้งหมด",
@@ -77,6 +82,10 @@ const RECONCILIATION_FINDING_CODE_LABELS: Record<string, string> = {
   BME_TRACEABILITY_GAP: "ไม่สามารถตรวจสอบย้อนกลับผู้ดำเนินการ (BME) ได้",
   PAIRING_CANDIDATE: "รายการที่อาจจับคู่ได้",
 };
+
+export const RECONCILIATION_FINDING_CODE_FILTER_OPTIONS = Object.keys(
+  RECONCILIATION_FINDING_CODE_LABELS
+) as ReconciliationFindingCode[];
 
 // Never hard-fails on an unknown/future backend code (§16 of the task) --
 // falls back to the raw backend code string, since PR22C's taxonomy is

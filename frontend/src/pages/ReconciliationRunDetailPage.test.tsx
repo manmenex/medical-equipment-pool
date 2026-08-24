@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ReconciliationRunDetailPage } from "@/pages/ReconciliationRunDetailPage";
-import type { Page, UserProfile } from "@/types";
+import type { Equipment, Page, UserProfile } from "@/types";
 import type {
   ReconciliationFindingDetail,
   ReconciliationFindingListItem,
@@ -30,6 +30,19 @@ vi.mock("@/services/reconciliation", async () => {
     fetchReconciliationFinding: (...args: unknown[]) => fetchReconciliationFinding(...args),
     updateReconciliationFindingDisposition: (...args: unknown[]) => updateReconciliationFindingDisposition(...args),
     createReconciliationSignoff: (...args: unknown[]) => createReconciliationSignoff(...args),
+  };
+});
+
+// Roadmap PR22F Fix Round 1 (P1 #2): the equipment finding-filter reuses
+// the existing services/equipment.ts searchEquipment -- mocked here the
+// same way components/OperatorAutocomplete.test.tsx mocks its own search
+// dependency.
+const searchEquipment = vi.fn();
+vi.mock("@/services/equipment", async () => {
+  const actual = await vi.importActual<typeof import("@/services/equipment")>("@/services/equipment");
+  return {
+    ...actual,
+    searchEquipment: (...args: unknown[]) => searchEquipment(...args),
   };
 });
 
@@ -128,12 +141,34 @@ function findingsPage(items: ReconciliationFindingListItem[]): Page<Reconciliati
   return { items, next_cursor: null, total: items.length };
 }
 
+function makeEquipment(overrides: Partial<Equipment> = {}): Equipment {
+  return {
+    id: "equip-9",
+    asset_number: "AN-9",
+    serial_number: null,
+    equipment_name: "Infusion Pump 9",
+    category_id: null,
+    brand: null,
+    model: null,
+    department_owner_id: null,
+    current_location_id: null,
+    status: "available_at_pool",
+    bcm_code: "BCM9",
+    pm_due_date: null,
+    cal_due_date: null,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   mockUser = makeUser("administrator");
   fetchReconciliationRun.mockResolvedValue(makeRun());
   fetchReconciliationSignoff.mockRejectedValue(fakeApiError("RECONCILIATION_SIGNOFF_NOT_FOUND", "not signed", 404));
   fetchReconciliationFindings.mockResolvedValue(findingsPage([makeFindingListItem()]));
   fetchReconciliationFinding.mockResolvedValue(makeFindingDetail());
+  searchEquipment.mockResolvedValue({ items: [], next_cursor: null, total: 0 });
 });
 
 afterEach(() => {
@@ -194,7 +229,7 @@ describe("ReconciliationRunDetailPage -- role-aware usability gating", () => {
     const user = userEvent.setup();
     renderPage();
     await waitFor(() => expect(screen.getByText("ลงนามยืนยันผลการตรวจสอบ")).toBeInTheDocument());
-    await user.click(screen.getByText(reconciliationFindingLabel()));
+    await user.click(findingCardButton());
     expect(await screen.findByRole("button", { name: "บันทึกผลการตรวจสอบ" })).toBeInTheDocument();
   });
 
@@ -204,7 +239,7 @@ describe("ReconciliationRunDetailPage -- role-aware usability gating", () => {
     renderPage();
     await waitFor(() => expect(screen.getByText("รอบการตรวจสอบนี้ยังไม่ได้ลงนามยืนยัน")).toBeInTheDocument());
     expect(screen.queryByText("ลงนามยืนยันผลการตรวจสอบ")).not.toBeInTheDocument();
-    await user.click(screen.getByText(reconciliationFindingLabel()));
+    await user.click(findingCardButton());
     await waitFor(() => expect(fetchReconciliationFinding).toHaveBeenCalled());
     expect(screen.queryByRole("button", { name: "บันทึกผลการตรวจสอบ" })).not.toBeInTheDocument();
   });
@@ -221,6 +256,20 @@ function reconciliationFindingLabel() {
   return "ข้อมูลซ้ำซ้อนทั้งหมด";
 }
 
+// Roadmap PR22F Fix Round 1: the same Thai label also appears as an
+// <option> in the new finding-code filter <select> (both render from the
+// same RECONCILIATION_FINDING_CODE_LABELS map), so a plain getByText()
+// now matches two elements. Scope to the finding card's own button role,
+// whose accessible name is a superset containing this label, so clicking
+// it stays unambiguous.
+function findingCardButton() {
+  return screen.getByRole("button", { name: new RegExp(reconciliationFindingLabel()) });
+}
+
+function findFindingCardButton() {
+  return screen.findByRole("button", { name: new RegExp(reconciliationFindingLabel()) });
+}
+
 describe("ReconciliationRunDetailPage -- disposition", () => {
   beforeEach(() => {
     fetchReconciliationFinding.mockResolvedValue(makeFindingDetail());
@@ -229,8 +278,8 @@ describe("ReconciliationRunDetailPage -- disposition", () => {
   it("renders all four disposition options and never confirmed_pair", async () => {
     const user = userEvent.setup();
     renderPage();
-    await waitFor(() => expect(screen.getByText(reconciliationFindingLabel())).toBeInTheDocument());
-    await user.click(screen.getByText(reconciliationFindingLabel()));
+    await waitFor(() => expect(findingCardButton()).toBeInTheDocument());
+    await user.click(findingCardButton());
     await user.click(await screen.findByRole("button", { name: "บันทึกผลการตรวจสอบ" }));
 
     const dialog = await screen.findByRole("dialog", { name: "บันทึกผลการตรวจสอบรายการ" });
@@ -247,7 +296,7 @@ describe("ReconciliationRunDetailPage -- disposition", () => {
     updateReconciliationFindingDisposition.mockResolvedValue(makeFindingDetail({ disposition: "confirmed_valid", version: 1 }));
     const user = userEvent.setup();
     renderPage();
-    await user.click(await screen.findByText(reconciliationFindingLabel()));
+    await user.click(await findFindingCardButton());
     await user.click(await screen.findByRole("button", { name: "บันทึกผลการตรวจสอบ" }));
     const dialog = await screen.findByRole("dialog", { name: "บันทึกผลการตรวจสอบรายการ" });
     await user.click(within(dialog).getByLabelText("ยืนยันว่าข้อมูลถูกต้อง"));
@@ -267,7 +316,7 @@ describe("ReconciliationRunDetailPage -- disposition", () => {
     updateReconciliationFindingDisposition.mockRejectedValue(fakeApiError("RECONCILIATION_FINDING_VERSION_CONFLICT"));
     const user = userEvent.setup();
     renderPage();
-    await user.click(await screen.findByText(reconciliationFindingLabel()));
+    await user.click(await findFindingCardButton());
     await user.click(await screen.findByRole("button", { name: "บันทึกผลการตรวจสอบ" }));
     const dialog = await screen.findByRole("dialog", { name: "บันทึกผลการตรวจสอบรายการ" });
     await user.click(within(dialog).getByLabelText("ยืนยันว่าข้อมูลถูกต้อง"));
@@ -281,7 +330,7 @@ describe("ReconciliationRunDetailPage -- disposition", () => {
     updateReconciliationFindingDisposition.mockRejectedValue(fakeApiError("RECONCILIATION_FINDING_SIGNED_OFF"));
     const user = userEvent.setup();
     renderPage();
-    await user.click(await screen.findByText(reconciliationFindingLabel()));
+    await user.click(await findFindingCardButton());
     await user.click(await screen.findByRole("button", { name: "บันทึกผลการตรวจสอบ" }));
     const dialog = await screen.findByRole("dialog", { name: "บันทึกผลการตรวจสอบรายการ" });
     await user.click(within(dialog).getByLabelText("ยืนยันว่าข้อมูลถูกต้อง"));
@@ -377,5 +426,157 @@ describe("ReconciliationRunDetailPage -- sign-off", () => {
     renderPage();
     const button = await screen.findByRole("button", { name: "ลงนามยืนยันผลการตรวจสอบ" });
     expect(button).toBeDisabled();
+  });
+});
+
+// Roadmap PR22F Fix Round 1 (independent review P1 #1): once a run's
+// sign-off state is known, the disposition edit action must reflect it --
+// but "known" here means definitively resolved, not merely "not yet
+// known to be signed". The critical property under test is fail-CLOSED:
+// a loading or errored sign-off query must not be treated as "unsigned"
+// (which would transiently expose the edit action). Only an explicit
+// resolved-and-unsigned state (the default beforeEach's 404 NOT_FOUND,
+// exercised by the existing "administrator sees disposition and sign-off
+// actions" test above) opens the action.
+describe("ReconciliationRunDetailPage -- disposition edit gating (sign-off fail-closed)", () => {
+  it("hides the disposition edit action once the run's sign-off has loaded", async () => {
+    fetchReconciliationSignoff.mockResolvedValue(makeSignoff());
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(screen.getAllByText("ลงนามยืนยันแล้ว").length).toBeGreaterThan(0));
+    await user.click(await findFindingCardButton());
+    await screen.findByRole("dialog");
+    expect(screen.queryByRole("button", { name: "บันทึกผลการตรวจสอบ" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "แก้ไขผลการตรวจสอบ" })).not.toBeInTheDocument();
+    expect(updateReconciliationFindingDisposition).not.toHaveBeenCalled();
+  });
+
+  it("does not expose the disposition edit action while the sign-off query is still loading", async () => {
+    fetchReconciliationSignoff.mockImplementation(() => new Promise(() => {}));
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await findFindingCardButton());
+    await screen.findByRole("dialog");
+    expect(screen.queryByRole("button", { name: "บันทึกผลการตรวจสอบ" })).not.toBeInTheDocument();
+  });
+
+  it("does not expose the disposition edit action when the sign-off query errors for a reason other than not-found", async () => {
+    fetchReconciliationSignoff.mockRejectedValue(new Error("network boom"));
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await findFindingCardButton());
+    await screen.findByRole("dialog");
+    expect(screen.queryByRole("button", { name: "บันทึกผลการตรวจสอบ" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the disposition edit action available once sign-off resolves to confirmed-unsigned", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await findFindingCardButton());
+    expect(await screen.findByRole("button", { name: "บันทึกผลการตรวจสอบ" })).toBeInTheDocument();
+  });
+
+  it("keeps the backend's own SIGNED_OFF error handling as defense-in-depth if a stale UI still submits", async () => {
+    // The dialog-level SIGNED_OFF regression above (in the "disposition"
+    // describe block) already proves the backend response is still
+    // handled correctly -- this is a documentation-only cross-reference,
+    // not a duplicate assertion.
+    updateReconciliationFindingDisposition.mockRejectedValue(fakeApiError("RECONCILIATION_FINDING_SIGNED_OFF"));
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await findFindingCardButton());
+    await user.click(await screen.findByRole("button", { name: "บันทึกผลการตรวจสอบ" }));
+    const dialog = await screen.findByRole("dialog", { name: "บันทึกผลการตรวจสอบรายการ" });
+    await user.click(within(dialog).getByLabelText("ยืนยันว่าข้อมูลถูกต้อง"));
+    await user.click(within(dialog).getByRole("button", { name: "ยืนยันผลการตรวจสอบรายการนี้" }));
+    expect(await screen.findByText(/ถูกลงนามยืนยันแล้ว จึงไม่สามารถแก้ไขผลการตรวจสอบได้/)).toBeInTheDocument();
+  });
+});
+
+// Roadmap PR22F Fix Round 1 (independent review P1 #2): the run detail
+// page's finding filters must cover all four backend-supported params
+// (code, severity, disposition, equipment_id), every change must hit the
+// backend rather than filtering already-loaded rows client-side, and the
+// query key (reconciliationKeys.findings) must differentiate distinct
+// filter combinations -- proven here indirectly by asserting each
+// distinct selection produces a distinct backend request.
+describe("ReconciliationRunDetailPage -- finding filters (code + equipment_id)", () => {
+  it("renders exactly the known PR22C finding codes as filter options, plus the all-codes default", async () => {
+    renderPage();
+    const codeSelect = await screen.findByLabelText("ประเภทปัญหา");
+    expect(within(codeSelect).getAllByRole("option")).toHaveLength(10);
+    expect(within(codeSelect).getByText("ทั้งหมด")).toBeInTheDocument();
+  });
+
+  it("sends the selected finding code to the backend as a server-side filter", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const codeSelect = await screen.findByLabelText("ประเภทปัญหา");
+    await user.selectOptions(codeSelect, "DUPLICATE_EXACT");
+
+    await waitFor(() =>
+      expect(fetchReconciliationFindings).toHaveBeenLastCalledWith(
+        "run-1",
+        expect.objectContaining({ code: "DUPLICATE_EXACT", cursor: null })
+      )
+    );
+  });
+
+  it("looks up equipment via the existing equipment search API rather than a raw UUID field, and sends its id to the backend", async () => {
+    searchEquipment.mockResolvedValue({ items: [makeEquipment()], next_cursor: null, total: 1 });
+    const user = userEvent.setup();
+    renderPage();
+
+    const equipmentInput = await screen.findByLabelText("เครื่องมือ");
+    expect(equipmentInput.tagName).toBe("INPUT");
+    await user.type(equipmentInput, "Infusion");
+    await waitFor(() => expect(searchEquipment).toHaveBeenCalledWith(expect.objectContaining({ q: "Infusion" })));
+    await user.click(await screen.findByText("Infusion Pump 9"));
+
+    await waitFor(() =>
+      expect(fetchReconciliationFindings).toHaveBeenLastCalledWith(
+        "run-1",
+        expect.objectContaining({ equipment_id: "equip-9", cursor: null })
+      )
+    );
+  });
+
+  it("sends all four filters together, each as its own server-side param", async () => {
+    searchEquipment.mockResolvedValue({ items: [makeEquipment()], next_cursor: null, total: 1 });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.selectOptions(await screen.findByLabelText("สถานะการตรวจ"), "confirmed_valid");
+    await user.selectOptions(screen.getByLabelText("ความรุนแรง"), "high");
+    await user.selectOptions(screen.getByLabelText("ประเภทปัญหา"), "DUPLICATE_EXACT");
+    await user.type(screen.getByLabelText("เครื่องมือ"), "Infusion");
+    await user.click(await screen.findByText("Infusion Pump 9"));
+
+    await waitFor(() =>
+      expect(fetchReconciliationFindings).toHaveBeenLastCalledWith(
+        "run-1",
+        expect.objectContaining({
+          disposition: "confirmed_valid",
+          severity: "high",
+          code: "DUPLICATE_EXACT",
+          equipment_id: "equip-9",
+          cursor: null,
+        })
+      )
+    );
+  });
+
+  it("resets pagination (a fresh null cursor) whenever a filter changes rather than carrying over a stale cursor", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const severitySelect = await screen.findByLabelText("ความรุนแรง");
+    await waitFor(() => expect(fetchReconciliationFindings).toHaveBeenCalledWith("run-1", expect.objectContaining({ cursor: null })));
+    fetchReconciliationFindings.mockClear();
+
+    await user.selectOptions(severitySelect, "high");
+
+    await waitFor(() =>
+      expect(fetchReconciliationFindings).toHaveBeenCalledWith("run-1", expect.objectContaining({ severity: "high", cursor: null }))
+    );
   });
 });

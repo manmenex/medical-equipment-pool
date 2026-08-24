@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 
+import { EquipmentAutocomplete } from "@/components/EquipmentAutocomplete";
 import { ReconciliationDispositionDialog } from "@/components/ReconciliationDispositionDialog";
 import { ReconciliationSignOffDialog } from "@/components/ReconciliationSignOffDialog";
 import { canSetReconciliationDisposition, canSignOffReconciliation, useAuth } from "@/hooks/useAuth";
@@ -13,12 +14,19 @@ import {
   fetchReconciliationSignoff,
   reconciliationKeys,
 } from "@/services/reconciliation";
-import type { ReconciliationDisposition, ReconciliationFindingDetail, ReconciliationSeverity } from "@/types/reconciliation";
+import type { Equipment } from "@/types";
+import type {
+  ReconciliationDisposition,
+  ReconciliationFindingCode,
+  ReconciliationFindingDetail,
+  ReconciliationSeverity,
+} from "@/types/reconciliation";
 import { formatDateTimeInTimezone } from "@/utils/printFormat";
 import {
   RECONCILIATION_DISPOSITION_COLORS,
   RECONCILIATION_DISPOSITION_FILTER_LABELS,
   RECONCILIATION_DISPOSITION_LABELS,
+  RECONCILIATION_FINDING_CODE_FILTER_OPTIONS,
   RECONCILIATION_RUN_STATUS_COLORS,
   RECONCILIATION_RUN_STATUS_LABELS,
   RECONCILIATION_SEVERITY_COLORS,
@@ -49,6 +57,8 @@ export function ReconciliationRunDetailPage() {
 
   const [severityFilter, setSeverityFilter] = useState<ReconciliationSeverity | "">("");
   const [dispositionFilter, setDispositionFilter] = useState<"open" | ReconciliationDisposition | "">("");
+  const [codeFilter, setCodeFilter] = useState<ReconciliationFindingCode | "">("");
+  const [equipmentFilter, setEquipmentFilter] = useState<Equipment | null>(null);
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const [dispositionTarget, setDispositionTarget] = useState<string | null>(null);
   const [signOffDialogOpen, setSignOffDialogOpen] = useState(false);
@@ -81,10 +91,20 @@ export function ReconciliationRunDetailPage() {
     enabled: Boolean(runId),
   });
 
+  // Roadmap PR22F Fix Round 1 (§9-11 of the task): all four backend-
+  // supported filters live in this one object, which is also passed
+  // verbatim into reconciliationKeys.findings() as the query key's filter
+  // segment -- so changing any one of them (a) sends a fresh server-side
+  // query (never a client-side Array.filter over already-loaded rows) and
+  // (b) starts a brand-new useInfiniteQuery cache entry, which resets
+  // pagination to the first page for free instead of carrying over a
+  // cursor from a previous filter set.
   const findingsFilters = {
     limit: 25,
     severity: severityFilter || null,
     disposition: dispositionFilter || null,
+    code: codeFilter || null,
+    equipment_id: equipmentFilter?.id ?? null,
   };
   const findingsQuery = useInfiniteQuery({
     queryKey: reconciliationKeys.findings(runId ?? "", findingsFilters),
@@ -156,6 +176,23 @@ export function ReconciliationRunDetailPage() {
   const signoff = signoffQuery.data ?? null;
   const canDispose = canSetReconciliationDisposition(user);
   const canSign = canSignOffReconciliation(user);
+
+  // Roadmap PR22F Fix Round 1 (P1 #1 of the independent review): once a
+  // run's sign-off is signed, the disposition edit action must stop being
+  // offered in the UI -- the backend already rejects the write
+  // (RECONCILIATION_FINDING_SIGNED_OFF) and that handling is kept
+  // unchanged below as defense-in-depth, but for usability the action
+  // itself should disappear once the signed state is known. Critically,
+  // this must fail CLOSED: while the sign-off query is still loading, or
+  // has errored for a reason other than the normal "not found" case
+  // (already resolved to `null` above), "unknown" must never be treated
+  // as "unsigned" -- only an explicit resolved-and-unsigned state
+  // (isSuccess with data === null) opens the action. This is a usability
+  // gate only; it does not decide sign-off eligibility (§29 of the
+  // original task) and it never substitutes for the backend's own
+  // authorization/version/state checks.
+  const signoffResolvedUnsigned = signoffQuery.isSuccess && signoffQuery.data === null;
+  const canEditDisposition = canDispose && signoffResolvedUnsigned;
 
   return (
     <div className="flex flex-col gap-4">
@@ -290,11 +327,14 @@ export function ReconciliationRunDetailPage() {
         )}
       </section>
 
-      {/* D. Finding filters */}
+      {/* D. Finding filters -- all four backend-supported filters (§9 of
+          the Fix Round 1 task). A single-column stack on mobile, 2x2 on
+          wider screens; never a four-column toolbar that would overflow a
+          phone-width viewport (§14). */}
       <section className="surface rounded-xl border p-4">
         <h2 className="mb-3 text-sm font-semibold">รายการที่ตรวจพบ</h2>
-        <div className="flex flex-col gap-3 sm:flex-row">
-          <div className="flex-1">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
             <label htmlFor="reconciliation-disposition-filter" className="mb-1 block text-xs font-medium text-[var(--text-muted)]">
               สถานะการตรวจ
             </label>
@@ -312,7 +352,7 @@ export function ReconciliationRunDetailPage() {
               ))}
             </select>
           </div>
-          <div className="flex-1">
+          <div>
             <label htmlFor="reconciliation-severity-filter" className="mb-1 block text-xs font-medium text-[var(--text-muted)]">
               ความรุนแรง
             </label>
@@ -330,6 +370,29 @@ export function ReconciliationRunDetailPage() {
               ))}
             </select>
           </div>
+          <div>
+            <label htmlFor="reconciliation-code-filter" className="mb-1 block text-xs font-medium text-[var(--text-muted)]">
+              ประเภทปัญหา
+            </label>
+            <select
+              id="reconciliation-code-filter"
+              value={codeFilter}
+              onChange={(e) => setCodeFilter(e.target.value as typeof codeFilter)}
+              className="w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2.5 text-sm"
+            >
+              <option value="">ทั้งหมด</option>
+              {RECONCILIATION_FINDING_CODE_FILTER_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>
+                  {reconciliationFindingCodeLabel(opt)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <EquipmentAutocomplete
+            id="reconciliation-equipment-filter"
+            value={equipmentFilter}
+            onChange={setEquipmentFilter}
+          />
         </div>
 
         {/* E. Finding list */}
@@ -427,7 +490,7 @@ export function ReconciliationRunDetailPage() {
             {findingDetailQuery.data && (
               <FindingDetailContent
                 finding={findingDetailQuery.data}
-                canDispose={canDispose}
+                canEditDisposition={canEditDisposition}
                 onClose={() => setSelectedFindingId(null)}
                 onDispose={() => {
                   setDispositionTarget(findingDetailQuery.data.id);
@@ -468,7 +531,7 @@ export function ReconciliationRunDetailPage() {
 
 interface FindingDetailContentProps {
   finding: ReconciliationFindingDetail;
-  canDispose: boolean;
+  canEditDisposition: boolean;
   onClose: () => void;
   onDispose: () => void;
 }
@@ -478,7 +541,12 @@ interface FindingDetailContentProps {
 // rather than dumping JSON.stringify(...) as the primary UI. Never
 // fabricates an interpretation not present in the backend's own evidence
 // object.
-function FindingDetailContent({ finding, canDispose, onClose, onDispose }: FindingDetailContentProps) {
+//
+// `canEditDisposition` (Fix Round 1, P1 #1) already combines the
+// Administrator-only role capability with a definitively resolved
+// unsigned sign-off state -- this component does not re-derive either
+// condition, it only renders (or hides) the action from that one value.
+function FindingDetailContent({ finding, canEditDisposition, onClose, onDispose }: FindingDetailContentProps) {
   const evidenceEntries = Object.entries(finding.evidence ?? {});
 
   return (
@@ -551,7 +619,7 @@ function FindingDetailContent({ finding, canDispose, onClose, onDispose }: Findi
         </div>
       )}
 
-      {canDispose && (
+      {canEditDisposition && (
         <button
           type="button"
           onClick={onDispose}
