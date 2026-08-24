@@ -77,3 +77,27 @@ describe("AppShell legacy import nav entry", () => {
     expect(screen.queryByRole("link", { name: /นำเข้าข้อมูลเดิม/ })).not.toBeInTheDocument();
   });
 });
+
+// Roadmap PR22F §7/§37 of the task: unlike นำเข้าข้อมูลเดิม (Administrator-only,
+// shown on both the desktop sidebar and the mobile bottom nav), the
+// reconciliation entry is visible to every authenticated role (mirrors
+// backend VIEW_AND_REPORT_ROLES) but deliberately reaches mobile users
+// through the always-visible header row instead of the bottom nav, so it
+// never competes for space with ค้นหา/เบิก/รับคืน/รายงาน. This asserts
+// exactly two links (desktop sidebar + header), never a third link
+// added to the mobile bottom-nav <nav> block.
+describe("AppShell reconciliation nav entry", () => {
+  it.each(["administrator", "equipment_pool_staff", "read_only"] as const)(
+    "shows the ตรวจสอบข้อมูลย้อนหลัง link (sidebar + header, never bottom nav) for %s",
+    (role) => {
+      mockUser = makeUser(role);
+      renderShell();
+
+      const links = screen.getAllByRole("link", { name: /ตรวจสอบข้อมูลย้อนหลัง/ });
+      expect(links).toHaveLength(2);
+      for (const link of links) {
+        expect(link).toHaveAttribute("href", "/reconciliation");
+      }
+    }
+  );
+});

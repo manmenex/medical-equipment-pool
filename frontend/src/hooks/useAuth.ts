@@ -113,3 +113,26 @@ export function canDispatchOrReceiveEquipment(user: RoleLike): boolean {
 export function canManageLegacyImport(user: RoleLike): boolean {
   return hasRole(user, "administrator");
 }
+
+// Roadmap PR22F (Reconciliation Frontend Integration): mirrors the merged
+// PR22D/PR22E backend's real authorization boundary exactly --
+// VIEW_AND_REPORT_ROLES for every GET (run/finding/sign-off reads),
+// ADMINISTRATOR_ONLY_ROLES for the two mutations (disposition, sign-off).
+// As with every capability helper in this file, this is usability-only:
+// it decides whether to show/hide a control, never whether a request is
+// actually allowed -- every mutation call site must still handle a
+// backend 403 safely regardless of what these return, and must still
+// submit every mutation to the backend and honor its response (never a
+// frontend-side re-implementation of PR22E's eight sign-off
+// preconditions or PR22D's disposition rules).
+export function canReviewReconciliation(user: RoleLike): boolean {
+  return hasRole(user, "administrator", "equipment_pool_staff", "read_only");
+}
+
+export function canSetReconciliationDisposition(user: RoleLike): boolean {
+  return hasRole(user, "administrator");
+}
+
+export function canSignOffReconciliation(user: RoleLike): boolean {
+  return hasRole(user, "administrator");
+}

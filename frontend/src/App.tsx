@@ -36,6 +36,12 @@ const LegacyImportCreatePage = lazy(() =>
 const LegacyImportSessionDetailPage = lazy(() =>
   import("@/pages/LegacyImportSessionDetailPage").then((m) => ({ default: m.LegacyImportSessionDetailPage }))
 );
+const ReconciliationListPage = lazy(() =>
+  import("@/pages/ReconciliationListPage").then((m) => ({ default: m.ReconciliationListPage }))
+);
+const ReconciliationRunDetailPage = lazy(() =>
+  import("@/pages/ReconciliationRunDetailPage").then((m) => ({ default: m.ReconciliationRunDetailPage }))
+);
 const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 const NotFoundPage = lazy(() => import("@/pages/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
 
@@ -93,6 +99,15 @@ export function App() {
           <Route path="/imports" element={<LegacyImportListPage />} />
           <Route path="/imports/new" element={<LegacyImportCreatePage />} />
           <Route path="/imports/:sessionId" element={<LegacyImportSessionDetailPage />} />
+          {/* Roadmap PR22F: reconciliation review workflow (backend:
+              PR22D's finding review/disposition API, PR22E's sign-off
+              API). No standalone finding-detail route -- finding detail
+              is a panel inside the run detail page (§8 of the task).
+              Read-only for every authenticated role; disposition/sign-off
+              actions are gated by capability helpers inside the page
+              itself, not by the route. */}
+          <Route path="/reconciliation" element={<ReconciliationListPage />} />
+          <Route path="/reconciliation/:runId" element={<ReconciliationRunDetailPage />} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
