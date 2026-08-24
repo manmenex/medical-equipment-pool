@@ -4,6 +4,7 @@ import {
   canDispatchOrReceiveEquipment,
   canManageEquipmentMasterData,
   canManageLegacyImport,
+  canReviewReconciliation,
   roleLabel,
   useAuth,
 } from "@/hooks/useAuth";
@@ -113,6 +114,32 @@ export function AppShell() {
               นำเข้าข้อมูลเดิม
             </NavLink>
           )}
+          {/* Roadmap PR22F (§7/§37 of the task): a review/administrative
+              workflow, not part of the primary daily dispatch flow, so it
+              lives here in the desktop sidebar only -- deliberately NOT
+              added to the mobile bottom nav below, to avoid crowding out
+              ค้นหา/เบิก/รับคืน/รายงาน on a small screen. Visible to every
+              authenticated role (mirrors backend VIEW_AND_REPORT_ROLES,
+              see hooks/useAuth.ts's canReviewReconciliation), unlike
+              /admin and /imports above which are Administrator-only.
+              Mobile users reach this via the header link instead (see
+              below) -- an existing "secondary surface" already visible
+              at every breakpoint, per the task's own §7 guidance. */}
+          {canReviewReconciliation(user) && (
+            <NavLink
+              to="/reconciliation"
+              className={({ isActive }) =>
+                `rounded-lg px-3 py-2 text-sm font-medium transition ${
+                  isActive
+                    ? "bg-status-borrowed/15 text-status-borrowed"
+                    : "text-[var(--text-muted)] hover:bg-black/5 dark:hover:bg-white/5"
+                }`
+              }
+            >
+              <span className="mr-2">🔎</span>
+              ตรวจสอบข้อมูลย้อนหลัง
+            </NavLink>
+          )}
         </nav>
       </aside>
 
@@ -130,6 +157,16 @@ export function AppShell() {
             >
               {theme === "dark" ? "☀️" : "🌙"}
             </button>
+            {/* Roadmap PR22F: the header row renders at every breakpoint
+                (unlike the sidebar, hidden below md), so this is the
+                actual mobile access point for reconciliation review --
+                deliberately not added to the mobile bottom nav (see the
+                sidebar entry's own note above). */}
+            {canReviewReconciliation(user) && (
+              <NavLink to="/reconciliation" className="text-sm text-[var(--text-muted)] hover:underline md:hidden">
+                ตรวจสอบข้อมูลย้อนหลัง
+              </NavLink>
+            )}
             <NavLink to="/settings" className="text-sm text-[var(--text-muted)] hover:underline">
               ตั้งค่า
             </NavLink>

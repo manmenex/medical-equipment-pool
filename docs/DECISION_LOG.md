@@ -4586,3 +4586,143 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
 - **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
 - **Source:** the PR22E implementation task's own binding specification;
   the PR22E GitHub PR description.
+
+## 2026-08-24 — GitHub PR #119 merged; new authoritative baseline adopted
+
+- **Decision/record:** GitHub PR #119 (PR22E — Reconciliation Sign-off +
+  Concurrency/Audit, the entry above) merged via squash to
+  `claude/medical-equipment-pool-0c7fz0`, real squash-merge SHA
+  `896d92f8c00ee860c82892e4e4d466d5869dcf48`, sole parent
+  `966d7a712681e40780f954c8744a592316af56ec` (GitHub PR #118). Included
+  a Fix Round 1 addressing a non-blocking P2 finding from an independent
+  review: the `SignOff` row `INSERT` was moved to execute fully inside
+  the same `SAVEPOINT` used for the mandatory audit write, rather than
+  after it, so that an audit-write failure reliably rolls back the
+  sign-off row too under every backend. Diagnosing this required
+  identifying a genuine pysqlite/aiosqlite driver limitation: under this
+  repository's SQLite test engine, `db.begin_nested()` can leave a row
+  written before a `RELEASE SAVEPOINT` immune to a later plain
+  `ROLLBACK`, because pysqlite's legacy DML-detection heuristic does not
+  recognize `RELEASE SAVEPOINT` as a statement requiring an implicit
+  transaction. This behavior was verified absent under real PostgreSQL.
+  Because the affected regression test
+  (`test_signoff_audit_failure_rolls_back_signoff`) exercises a driver
+  quirk rather than application behavior, it was relocated from the
+  SQLite API test file to the PostgreSQL concurrency test file, where it
+  now runs against a real database; a fix to the shared SQLite test
+  engine configuration (`app/db/session.py`) that would let the test run
+  under SQLite too was identified but deliberately deferred as
+  out-of-scope for this fix round. Independently verified via this
+  repository's standard Final Merge Gate procedure: the exact reviewed
+  feature-branch head (`293c390988684f3cbdbde6317cf8ed5ca14a87d7`, after
+  the Fix Round 1 above) recorded zero review threads, zero reviews, and
+  zero comments, and CI green 6/6 on that exact head; after Draft→Ready,
+  head and CI were re-verified unchanged before the squash merge.
+  Post-merge, the squash commit's tree was independently confirmed
+  tree-identical to the reviewed feature-branch head via an empty
+  `git diff`, and its sole parent was independently confirmed to be
+  `966d7a71...`.
+- **New authoritative baseline:** `896d92f8c00ee860c82892e4e4d466d5869dcf48`
+  is now the repository's single current authoritative baseline,
+  recorded in `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, and
+  `knowledge/CONTEXT.md`'s own "Current baseline" sections, superseding
+  `966d7a71...` (GitHub PR #118). **Per this repository's standing
+  process, no separate self-referential "baseline adoption" PR is
+  created for this squash SHA** — it became authoritative immediately
+  upon merge, and its recording is folded into PR22F (the next PR that
+  legitimately touches these governance files).
+- **Status:** Roadmap PR22E (Reconciliation Sign-off + Concurrency/Audit)
+  is now fully complete and merged. PR22 backend implementation
+  (PR22B–PR22E) is now complete; PR22 overall is **not** complete —
+  PR22F (Reconciliation Frontend Integration) and PR22G (governance
+  close-out) remain open, recorded in the entry below.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14,
+  following the same Final Merge Gate precedent used for GitHub PR
+  #111/#112/#113/#115/#116/#117/#118.
+- **Source:** GitHub PR #119 description (including its Fix Round 1
+  section) and its Final Merge Gate verification evidence.
+- **Status:** Documentation-only. No backend, frontend, migration, test,
+  or CI file was modified to produce this baseline-recording entry
+  itself (it is folded into PR22F's own frontend-code PR).
+
+## 2026-08-24 — PR22F (Reconciliation Frontend Integration) implementation started — in progress, not merged
+
+- **Decision/record:** Implementation of Roadmap PR22F (Reconciliation
+  Frontend Integration) started on branch
+  `feature/pr22f-reconciliation-frontend`, based on baseline
+  `896d92f8c00ee860c82892e4e4d466d5869dcf48` (GitHub PR #119, the entry
+  above). Scope: the operator-facing frontend for the already-merged
+  PR22B–PR22E reconciliation backend — a run list page, a run detail
+  page with finding filters/list/detail, an Administrator disposition
+  form, and Administrator sign-off, all built against the existing
+  backend contract with zero new backend routes, schema, or business
+  logic. Added `frontend/src/types/reconciliation.ts` (TS DTOs mirroring
+  the backend Pydantic responses exactly, with finding code kept as an
+  open string type for forward-compatibility with future codes),
+  `frontend/src/services/reconciliation.ts` (typed HTTP calls plus a
+  centralized `reconciliationKeys` object, no business logic),
+  `frontend/src/utils/reconciliationLabels.ts` (Thai label/color maps
+  for run status, disposition, severity, and finding code, all with
+  safe fallback to the raw backend value for unrecognized inputs),
+  `frontend/src/pages/ReconciliationListPage.tsx`,
+  `frontend/src/pages/ReconciliationRunDetailPage.tsx`, and two
+  accessible focus-trapped dialogs
+  (`ReconciliationDispositionDialog.tsx`,
+  `ReconciliationSignOffDialog.tsx`) mirroring the existing
+  `WardCorrectionDialog.tsx` pattern. Extended
+  `frontend/src/hooks/useAuth.ts` with three usability-only capability
+  helpers (`canReviewReconciliation` — all three roles;
+  `canSetReconciliationDisposition` and `canSignOffReconciliation` —
+  Administrator only), mirroring the backend's `VIEW_AND_REPORT_ROLES`
+  and `ADMINISTRATOR_ONLY_ROLES` groups exactly. Added routes
+  `/reconciliation` and `/reconciliation/:runId` in `App.tsx` (lazy
+  loaded); finding detail is presented as a panel/modal inside the run
+  detail page rather than its own route, since a separate
+  `/reconciliation/:runId/findings/:findingId` route did not materially
+  improve mobile UX. 33 new frontend tests added across
+  `reconciliation.test.ts`, `ReconciliationListPage.test.tsx`, and
+  `ReconciliationRunDetailPage.test.tsx`, plus new capability-matrix
+  cases in `useAuth.test.ts` and a navigation-entry case in
+  `AppShell.test.tsx`.
+- **Key structural decisions:** Per this PR's own binding instruction,
+  the frontend never reimplements sign-off eligibility. There is no
+  `isSignoffEligible(run, findings)` function or equivalent anywhere in
+  this PR — the sign-off dialog may show informational aggregate text
+  (e.g. unreviewed/requires-correction counts already returned by the
+  backend) but every sign-off submission is sent to the backend
+  unconditionally with only `expected_version` in the request body, and
+  authorization is decided solely by the backend's response: a 2xx
+  means signed, and each of the nine documented error codes
+  (`RECONCILIATION_FINDING_VERSION_CONFLICT`,
+  `RECONCILIATION_FINDING_SIGNED_OFF`,
+  `RECONCILIATION_FINDING_RUN_NOT_COMPLETED`,
+  `RECONCILIATION_SIGNOFF_ALREADY_EXISTS`,
+  `RECONCILIATION_SIGNOFF_RUN_NOT_COMPLETED`,
+  `RECONCILIATION_SIGNOFF_VERSION_CONFLICT`,
+  `RECONCILIATION_SIGNOFF_FINDINGS_INCOMPLETE`,
+  `RECONCILIATION_SIGNOFF_REQUIRES_CORRECTION`,
+  `RECONCILIATION_SIGNOFF_EVIDENCE_INCONSISTENT`, and
+  `RECONCILIATION_COVERAGE_MISMATCH`) maps to a specific Thai message
+  with no client-side retry of a stale value — on a version conflict the
+  UI refetches fresh data and surfaces it rather than silently resending
+  the old `expected_version`. Service-layer tests assert this directly
+  by inspecting the exact request body sent to the backend. Disposition
+  mutation follows the identical discipline: the four backend-defined
+  disposition values (`confirmed_valid`, `confirmed_duplicate`,
+  `accepted_unresolved`, `requires_correction` — no `confirmed_pair`)
+  are the only options offered, and every mutation is submitted with
+  `expected_version` and reconciled against the backend's response, not
+  a locally computed guess. Reconciliation navigation was deliberately
+  kept out of the mobile bottom-nav `<nav>` array (unlike the existing
+  `/imports` link, which does appear there) to avoid competing with the
+  core Equipment Pool workflows (search, issue, receive, reports) the
+  bottom nav is reserved for; it remains reachable on mobile via a
+  header-row link (`md:hidden`) and via the desktop sidebar, both gated
+  by `canReviewReconciliation`.
+- **Status:** Draft, **not merged, PR22F implementation in progress**.
+  This entry documents work in progress, not completion — see the PR's
+  own description for current CI/review state. Roadmap PR22 overall
+  remains open until PR22F and PR22G (governance close-out) both finish.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the PR22F implementation task's own binding specification;
+  the PR22F GitHub PR description.

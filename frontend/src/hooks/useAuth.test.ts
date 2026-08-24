@@ -9,6 +9,9 @@ import {
   canManageUsers,
   canMarkEquipmentDefective,
   canReactivateEquipment,
+  canReviewReconciliation,
+  canSetReconciliationDisposition,
+  canSignOffReconciliation,
   roleLabel,
 } from "@/hooks/useAuth";
 import type { Role, UserProfile } from "@/types";
@@ -57,6 +60,46 @@ describe("capability layer (ADMINISTRATOR_ONLY_ROLES: administrator only)", () =
     ["canDecommissionEquipment", canDecommissionEquipment],
     ["canManageUsers", canManageUsers],
     ["canImportInventory", canImportInventory],
+  ];
+
+  for (const [name, fn] of cases) {
+    it(`${name}: administrator=true, equipment_pool_staff=false, read_only=false`, () => {
+      expect(fn(ADMIN)).toBe(true);
+      expect(fn(STAFF)).toBe(false);
+      expect(fn(READ_ONLY)).toBe(false);
+    });
+
+    it(`${name}: null/undefined user is denied`, () => {
+      expect(fn(null)).toBe(false);
+      expect(fn(undefined)).toBe(false);
+    });
+  }
+});
+
+// Roadmap PR22F (Reconciliation Frontend Integration): mirrors backend
+// VIEW_AND_REPORT_ROLES exactly -- reviewing (reading) a reconciliation
+// run/finding/sign-off is available to all three roles.
+describe("capability layer (VIEW_AND_REPORT_ROLES: all three roles)", () => {
+  it("canReviewReconciliation: administrator=true, equipment_pool_staff=true, read_only=true", () => {
+    expect(canReviewReconciliation(ADMIN)).toBe(true);
+    expect(canReviewReconciliation(STAFF)).toBe(true);
+    expect(canReviewReconciliation(READ_ONLY)).toBe(true);
+  });
+
+  it("canReviewReconciliation: null/undefined user is denied", () => {
+    expect(canReviewReconciliation(null)).toBe(false);
+    expect(canReviewReconciliation(undefined)).toBe(false);
+  });
+});
+
+// Roadmap PR22F: disposition mutation (PR22D, OD-PR22-5) and sign-off
+// (PR22E) are both Administrator-only, mirroring backend
+// ADMINISTRATOR_ONLY_ROLES exactly -- same matrix shape as the
+// ADMINISTRATOR_ONLY_ROLES block above.
+describe("capability layer (ADMINISTRATOR_ONLY_ROLES: reconciliation mutations)", () => {
+  const cases: [string, (u: typeof ADMIN | null | undefined) => boolean][] = [
+    ["canSetReconciliationDisposition", canSetReconciliationDisposition],
+    ["canSignOffReconciliation", canSignOffReconciliation],
   ];
 
   for (const [name, fn] of cases) {
