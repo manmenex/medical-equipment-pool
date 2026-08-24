@@ -92,19 +92,29 @@ Sources: `docs/PROJECT_PLAYBOOK.md`, `docs/ARCHITECTURE_GUARDRAILS.md`,
 
 ## Current baseline and Roadmap
 
-Current baseline: `d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` — the real
-squash-merge SHA of GitHub PR #110, the Roadmap PR21E implementation
-(Legacy History Frontend Real Integration). PR21E's final independently
-reviewed feature-branch head was
+Current baseline: `527ffc48966d7e5cda16a869f0ae464de8b7512a` — the real
+squash-merge SHA of GitHub PR #121, "PR22G — Roadmap PR22 Governance
+Close-out," squash-merged on top of `76040d5e87223767c9dbe36eb67c6a156af12c0c`
+(GitHub PR #120, PR22F). **Roadmap PR22 (Legacy Data Validation and
+Reconciliation) is now fully complete.** Roadmap PR23 (Cutover
+Readiness)'s first slice, PR23A (Architecture & Operational Design), is
+now in progress, not yet merged — see the "Roadmap PR22" paragraph
+below for full slice-by-slice detail.
+
+`d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` — the real squash-merge SHA
+of GitHub PR #110, the Roadmap PR21E implementation (Legacy History
+Frontend Real Integration) — is now historical, superseded by the chain
+of PR22 merges culminating in the baseline above. PR21E's final
+independently reviewed feature-branch head was
 `8c2b1dacac9996b7a4cab89ff70b6939471ef164` (zero review threads, zero
 findings of any kind — a genuine absence of findings, not an accepted
-P2 — CI green 6/6) — **that reviewed head is not the baseline**; the
-squash commit actually landed on the base branch, `d64d50d...`, is.
-**Every Roadmap PR21 implementation slice is now merged — Roadmap PR21
-(Legacy Receive and Issue History Import) is now fully complete.**
-Roadmap PR19 and PR20 remain fully complete, unaffected by PR21's
-completion; PR19B's mock Receive/Issue workflow has been fully removed
-by PR21E. See "Roadmap PR21" below for full detail.
+P2 — CI green 6/6) — that reviewed head was not itself the baseline;
+the squash commit actually landed on the base branch, `d64d50d...`, was.
+**Every Roadmap PR21 implementation slice is merged — Roadmap PR21
+(Legacy Receive and Issue History Import) is fully complete.** Roadmap
+PR19 and PR20 remain fully complete, unaffected by PR21's completion;
+PR19B's mock Receive/Issue workflow has been fully removed by PR21E.
+See "Roadmap PR21" below for full detail.
 
 That baseline follows `7f13a1e85e9b6a4828170c4b12bc2be27b15de39` — GitHub
 PR #86, the Roadmap PR19A3 implementation (Dry-run, Execution, Recovery,
@@ -203,21 +213,26 @@ Receive/Issue imports); each accepted row becomes an independent
 deferred to PR22-or-later; historical import never mutates current
 Equipment status/location. **Roadmap PR22 (Legacy Data Validation and
 Reconciliation) — architecture design, all seven Owner Decisions
-(OD-PR22-1 through OD-PR22-7), and every implementation slice
+(OD-PR22-1 through OD-PR22-7), every implementation slice
 (PR22B–PR22F: schema/run-snapshot foundation, deterministic analysis
 engine, finding review/disposition API, sign-off + concurrency/audit,
-frontend integration) — is now fully implemented and merged.** Current
-authoritative baseline entering PR22G: `76040d5e87223767c9dbe36eb67c6a156af12c0c`
-(GitHub PR #120, PR22F). **Current Roadmap work is PR22G — governance
-close-out — in progress, not yet merged; Roadmap PR22 overall remains
-open until PR22G itself merges.** The remaining Roadmap-numbered items
-are:
+frontend integration), and governance close-out (PR22G) — is now fully
+implemented, merged, and complete.** Current authoritative baseline:
+`527ffc48966d7e5cda16a869f0ae464de8b7512a` (GitHub PR #121, PR22G,
+squash-merged on top of `76040d5e...`, GitHub PR #120, PR22F). **Current
+Roadmap work is PR23 (Cutover Readiness)'s first slice, PR23A
+(Architecture & Operational Design) — in progress, not yet merged** —
+`docs/design/PR23_CUTOVER_READINESS_PLAN.md`, design/governance only,
+zero `backend/**`/`frontend/**`/`alembic/**`/`tests/**` change; it
+proposes a minimal PR23B–F implementation sequence and identifies six
+Owner Decisions that must resolve before any PR23B+ slice begins. The
+remaining Roadmap-numbered items are:
 
-- PR22: legacy data validation and reconciliation — **PR22A-F
-  implementation complete and merged; PR22G governance close-out in
-  progress, not yet merged**;
-- PR23: cutover readiness — **next planned Roadmap item after PR22
-  closes, not started**;
+- PR22: legacy data validation and reconciliation — **complete**
+  (PR22A–PR22G, GitHub PR #112/#115/#116/#117/#118/#119/#120/#121, all
+  merged);
+- PR23: cutover readiness — **PR23A (Architecture & Operational Design)
+  in progress, not yet merged**;
 - PR24: Go-live / deployment.
 
 Roadmap numbers and GitHub PR numbers are independent. Legacy migration is

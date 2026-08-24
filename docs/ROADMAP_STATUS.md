@@ -8,45 +8,37 @@ control detailed ordering, scope, dependencies, and acceptance criteria.
 
 ## Current baseline
 
-`76040d5e87223767c9dbe36eb67c6a156af12c0c` — the real squash-merge SHA of
-GitHub PR #120, "PR22F — Reconciliation Frontend Integration",
-merged on top of `896d92f8c00ee860c82892e4e4d466d5869dcf48`
-(GitHub PR #119, PR22E, now historical/superseded by this baseline).
-PR #120's final independently reviewed feature-branch head
-(`45c1205153b8061f82a61626c4ce04f14a30b11c`, after a Fix Round 1
-addressing two P1 findings — fail-closed disposition-edit gating on the
-run's own sign-off state, and the missing `code`/`equipment_id` finding
-filters) carried **zero review threads and zero comments**, with CI
-green (6/6) and the reviewed head's tree independently verified
-byte-identical to the merged squash commit's tree, sole parent
-`896d92f8...` confirmed — the squash commit actually landed on the base
-branch, `76040d5e...`, is the baseline. Per this repository's standing
-process, **no separate "baseline adoption" PR is created** — the squash
-SHA became authoritative immediately upon merge, recorded here by PR22G
-(the next PR that legitimately touches these governance files).
+`527ffc48966d7e5cda16a869f0ae464de8b7512a` — the real squash-merge SHA of
+GitHub PR #121, "PR22G — Roadmap PR22 Governance Close-out",
+merged on top of `76040d5e87223767c9dbe36eb67c6a156af12c0c`
+(GitHub PR #120, PR22F, now historical/superseded by this baseline).
+PR #121's final independently reviewed feature-branch head
+(`fafb40e7ef388a35b3b1848d04d26ba2f37c7281`, after three fix rounds
+correcting stale "PR22F in progress"/"PR22 is next" current-state prose
+across several governance files) carried **zero review threads and zero
+comments**, with CI green (6/6) and the reviewed head's tree
+independently verified byte-identical to the merged squash commit's
+tree, sole parent `76040d5e...` confirmed — the squash commit actually
+landed on the base branch, `527ffc4...`, is the baseline. Per this
+repository's standing process, **no separate "baseline adoption" PR is
+created** — the squash SHA became authoritative immediately upon merge,
+recorded here by PR23A (the next PR that legitimately touches these
+governance files).
 
-**Roadmap PR22 (Legacy Data Validation and Reconciliation)'s
-architecture design is merged** (GitHub PR #112, folded into this
-baseline) — **all seven Owner Decisions (OD-PR22-1 through
-OD-PR22-7) are RESOLVED / OWNER APPROVED** (GitHub PR #115, folded into
-this baseline) — **PR22B (Reconciliation Schema + Run/Snapshot
-Foundation) is merged** (GitHub PR #116, folded into this baseline):
-schema/persistence foundation only (six models, one additive Alembic
-migration, 63 tests) — **PR22C (Deterministic Reconciliation
-Analysis Engine) is merged** (GitHub PR #117, folded into this
-baseline): the analysis engine, zero new migrations, 54 tests —
-**PR22D (Finding Review / Disposition API) is merged** (GitHub PR #118,
-folded into this baseline): read endpoints for runs/findings plus an
-Administrator-only disposition-mutation endpoint, zero new migrations,
-47 tests — **PR22E (Reconciliation Sign-off + Concurrency/Audit) is
-merged** (GitHub PR #119, folded into this baseline): the final
-Administrator-only sign-off workflow, zero new migrations, 30 tests —
-and **PR22F (Reconciliation Frontend Integration) is merged** (GitHub
-PR #120, folded into this baseline): the operator-facing frontend for
-runs/findings/disposition/sign-off, zero new backend routes/schema/
-business logic. **PR22A-F implementation is now complete; PR22G
-(governance close-out) is in progress**, not yet merged. **Roadmap PR22
-overall is not complete until PR22G itself merges.**
+**Roadmap PR22 (Legacy Data Validation and Reconciliation) is now fully
+complete** — architecture design (GitHub PR #112), all seven Owner
+Decisions (GitHub PR #115), every implementation slice PR22B–PR22F
+(GitHub PR #116/#117/#118/#119/#120), and governance close-out PR22G
+(GitHub PR #121) are all merged. See `docs/ROADMAP.md`'s "Current
+baseline" section for the full slice-by-slice chronology.
+
+**Roadmap PR23 (Cutover Readiness)'s first slice, PR23A (Architecture &
+Operational Design), is in progress, not yet merged** —
+`docs/design/PR23_CUTOVER_READINESS_PLAN.md`, design/governance only.
+PR23B+ has not started and is pending resolution of the Owner Decisions
+PR23A identifies (source-of-truth transition, current-state/open-
+transaction handling, Go/No-Go and rollback authorization, rollback
+boundary, pilot scope, persisted evidence model).
 
 `d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` (GitHub PR #110, Roadmap
 PR21E — Legacy History Frontend Real Integration) is now historical,
@@ -55,7 +47,7 @@ superseded first by `e07a36a...` (GitHub PR #111, PR21F), then
 then `f03af893...` (GitHub PR #115), then `c5e750c...` (GitHub PR #116),
 then `b45cf750...` (GitHub PR #117), then `966d7a71...` (GitHub PR #118),
 then `896d92f8...` (GitHub PR #119), then `76040d5e...` (GitHub PR
-#120), and now by this baseline. With
+#120), then `527ffc4...` (GitHub PR #121), and now by this baseline. With
 PR21E merged, every Roadmap PR21 implementation slice — PR21-Foundation
 (#100), PR21A
 (#103), PR21B (#104), PR21C (#105), PR21D1 (#107), PR21D2 (#108), PR21E0
@@ -267,8 +259,7 @@ for the full slice-by-slice review chronology and closure record.
 
 | Sequence | Roadmap item | Status |
 |---|---|---|
-| Current | PR22 — Legacy Data Validation and Reconciliation | Depends on PR20 and PR21, both now complete. **Architecture design merged, all seven Owner Decisions RESOLVED / OWNER APPROVED** (`docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`, GitHub PR #112, squash SHA `c924d8ba2c8c5d933ea36ea3d488e2550615df40`; Owner Decision Closure GitHub PR #115, squash SHA `f03af893d727b221bd941466d83e5eceb9eb596a`) — **PR22B (Reconciliation Schema + Run/Snapshot Foundation) merged** (GitHub PR #116, squash SHA `c5e750cecd7458e9570c6dc1679abeacde0da369`) — **PR22C (Deterministic Reconciliation Analysis Engine) merged** (GitHub PR #117, squash SHA `b45cf7503a3ff941d4b65741c7ac14a0af6e7a25`) — **PR22D (Finding Review / Disposition API) merged** (GitHub PR #118, squash SHA `966d7a712681e40780f954c8744a592316af56ec`) — **PR22E (Reconciliation Sign-off + Concurrency/Audit) merged** (GitHub PR #119, squash SHA `896d92f8c00ee860c82892e4e4d466d5869dcf48`) — **PR22F (Reconciliation Frontend Integration) merged** (GitHub PR #120, squash SHA `76040d5e87223767c9dbe36eb67c6a156af12c0c`). **PR22A-F implementation complete; PR22G (governance close-out) is the current in-progress work**, not yet merged. Roadmap PR22 overall is not complete until PR22G itself merges |
-| Next | PR23 — Cutover Readiness | Not started |
+| Current | PR23 — Cutover Readiness | Depends on PR22 (now fully complete — see "Current baseline" above). **PR23A (Architecture & Operational Design) in progress, not yet merged** (`docs/design/PR23_CUTOVER_READINESS_PLAN.md`). PR23B+ not started, pending resolution of the Owner Decisions PR23A identifies |
 | After PR19–PR23 | PR24 — Go-live / deployment | Planned; blocked by PR19–PR23 |
 
 **Historical note on PR19B/PR20 relative ordering:** before PR19B merged,
@@ -287,11 +278,13 @@ which of PR19B/PR20 would be worked on first — the one item whose
 relative order was ever in question. **Roadmap PR20 has since also fully
 completed (see "Roadmap PR20 complete" above); its row has likewise moved
 off this table. Roadmap PR21 has since fully completed too (see "Roadmap
-PR21 complete" above); its row has also moved off this table. PR22A-F
-implementation has since also fully completed and merged; PR22 is now
-shown with sequence "Current" in the table above, since its own
-governance close-out (PR22G) is the current in-progress Roadmap work —
-see "Current baseline" above.** PR22 through
+PR21 complete" above); its row has also moved off this table. Roadmap
+PR22 has since also fully completed (design, all seven Owner Decisions,
+PR22B-F implementation, and PR22G governance close-out all merged — see
+"Current baseline" above); its row has likewise moved off this table,
+and PR23 is now shown with sequence "Current" in the table above, since
+PR23A (Architecture & Operational Design) is the current in-progress
+Roadmap work.** PR22 through
 PR24's ordering is preserved as-is because it reflects an existing
 authoritative dependency chain
 (`docs/audits/04-consolidated-implementation-plan.md` Part D, Group 8:
@@ -333,11 +326,16 @@ Decision Closure rounds (GitHub PR #101, #102, #106), PR21-Foundation
 (#100), PR21A–C (#103, #104, #105), and PR21D1/D2/E0/E (#107, #108,
 #109, #110) are all merged — see "Roadmap PR21 complete" above and
 `docs/DECISION_LOG.md` ("Roadmap PR21 complete: PR21D1–PR21F merged")
-for the full record. This table now begins with PR22 — shown as the
-current in-progress Roadmap item now that PR22A-F implementation is
-complete and PR22G (governance close-out) is underway — followed by
-PR23, the next planned Roadmap item after PR22 closes, not yet started;
-PR19B's own historical relative-ordering note is preserved above.
+for the full record. **Roadmap PR22 (Legacy Data Validation and
+Reconciliation) is also now fully complete and has moved off this
+table:** the design (GitHub PR #112), Owner Decision Closure (GitHub PR
+#115), PR22B–PR22F implementation (GitHub PR #116/#117/#118/#119/#120),
+and PR22G governance close-out (GitHub PR #121) are all merged — see
+"Current baseline" above and `docs/DECISION_LOG.md` for the full
+record. This table now begins with PR23 — shown as the current
+in-progress Roadmap item now that its first slice, PR23A, is underway
+(`docs/design/PR23_CUTOVER_READINESS_PLAN.md`); PR19B's own historical
+relative-ordering note is preserved above.
 
 ## Scope guardrails for the planned sequence
 

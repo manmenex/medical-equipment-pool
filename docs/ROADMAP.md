@@ -8,69 +8,46 @@
 ## Current baseline
 
 **The single current authoritative baseline is
-`76040d5e87223767c9dbe36eb67c6a156af12c0c`** — the real squash-merge SHA
-of GitHub PR **#120**, "PR22F — Reconciliation Frontend Integration",
+`527ffc48966d7e5cda16a869f0ae464de8b7512a`** — the real squash-merge SHA
+of GitHub PR **#121**, "PR22G — Roadmap PR22 Governance Close-out",
 squash-merged into `claude/medical-equipment-pool-0c7fz0` on top of
-`896d92f8c00ee860c82892e4e4d466d5869dcf48` (GitHub PR #119, PR22E, now
-historical/superseded by this baseline). PR #120's final independently
-reviewed feature-branch head (`45c1205153b8061f82a61626c4ce04f14a30b11c`,
-after a Fix Round 1 addressing two P1 findings — a fail-closed
-disposition-edit gate keyed to the run's own sign-off state, and the
-addition of the `code`/`equipment_id` finding filters) carried **zero
-review threads and zero comments**, CI green 6/6, and the reviewed
-head's tree was verified byte-identical to the merged squash commit's
-tree, sole parent `896d92f8...` confirmed — per this repository's
-standard squash-merge SHA-retrieval practice, the real baseline is the
-squash commit actually landed on the base branch, `76040d5e...`,
-distinct from any feature-branch head reviewed along the way. Per this
+`76040d5e87223767c9dbe36eb67c6a156af12c0c` (GitHub PR #120, PR22F, now
+historical/superseded by this baseline). PR #121's final independently
+reviewed feature-branch head (`fafb40e7ef388a35b3b1848d04d26ba2f37c7281`,
+after three fix rounds correcting stale "PR22F in progress"/"PR22 is
+next" current-state prose across `knowledge/PROJECT_MEMORY.md`,
+`docs/ROADMAP_STATUS.md`, `docs/audits/04-consolidated-implementation-plan.md`,
+`knowledge/CHANGE_HISTORY.md`, and `docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`)
+carried **zero review threads and zero comments**, CI green 6/6, and the
+reviewed head's tree was verified byte-identical to the merged squash
+commit's tree, sole parent `76040d5e...` confirmed. Per this
 repository's standing process, **no separate self-referential "baseline
-adoption" PR is created for PR #120's squash SHA** — it became
+adoption" PR is created for PR #121's squash SHA** — it became
 authoritative immediately upon merge, and its recording here is folded
-into PR22G (the next PR that legitimately touches these governance
+into PR23A (the next PR that legitimately touches these governance
 files).
 
-**Roadmap PR22 (Legacy Data Validation and Reconciliation)'s
-architecture design is merged** (`docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`,
-GitHub PR #112, squash SHA `c924d8ba2c8c5d933ea36ea3d488e2550615df40`,
-now historical/superseded by this baseline) — **all seven Owner
-Decisions (OD-PR22-1 through OD-PR22-7) are RESOLVED / OWNER APPROVED**
-(GitHub PR #115, now historical/superseded by this baseline) — **PR22B
-(Reconciliation Schema + Run/Snapshot Foundation) is merged** (GitHub PR
-#116, now historical/superseded by this baseline): six new models,
-one additive Alembic migration (`0020_reconciliation_foundation.py`),
-and 63 regression tests — **PR22C (Deterministic Reconciliation
-Analysis Engine) is merged** (GitHub PR #117, now historical/superseded
-by this baseline): the analysis engine that executes a
-`LegacyReconciliationRun` against one consistent PostgreSQL
-`REPEATABLE READ` snapshot and persists immutable findings via nine
-deterministic rule modules — zero new Alembic migrations, 54 regression
-tests (40 rule-level + 14 PostgreSQL engine-level) — **PR22D
-(Finding Review / Disposition API) is merged** (GitHub PR #118, now
-historical/superseded by this baseline): read endpoints for runs/findings
-plus an Administrator-only disposition-mutation endpoint (OD-PR22-5),
-zero new Alembic migrations, 47 regression tests (45 SQLite API tests +
-2 PostgreSQL concurrency tests) — **PR22E (Reconciliation Sign-off +
-Concurrency/Audit) is merged** (GitHub PR #119, now historical/superseded
-by this baseline): the final Administrator-only sign-off workflow (all
-eight preconditions, §20 of the design), reusing PR22D's own
-Run-row-lock-first discipline so it composes with disposition mutation
-without re-architecting it, zero new Alembic migrations, 30 regression
-tests (27 SQLite API tests + 3 PostgreSQL concurrency tests) — and
-**PR22F (Reconciliation Frontend Integration) is merged** (GitHub PR
-#120, folded into this baseline): the operator-facing UI for
-PR22B-E's backend (run list/detail, finding filters incl.
-`code`/`severity`/`disposition`/`equipment_id`, finding detail/evidence,
-Administrator-only disposition mutation and final sign-off), consuming
-the merged API contracts as-is with zero new backend routes, schema, or
-business logic — the frontend never reimplements sign-off eligibility;
-every mutation is submitted to the backend and every response/error
-code decides the outcome. **PR22A-F implementation is now complete;
-PR22G (governance close-out) is in progress, not yet merged.** Roadmap
-PR22 overall remains open until PR22G itself merges — PR22G's own real
-squash-merge SHA, once it merges, becomes the new authoritative
-baseline, superseding `76040d5e...` above — not recorded in advance
-here, per this repository's standing "do not fabricate a future squash
-SHA" discipline.
+**Roadmap PR22 (Legacy Data Validation and Reconciliation) is now fully
+complete** — architecture design (GitHub PR #112), all seven Owner
+Decisions OD-PR22-1 through OD-PR22-7 (GitHub PR #115), every
+implementation slice PR22B–PR22F (GitHub PR #116/#117/#118/#119/#120:
+schema/run-snapshot foundation, deterministic analysis engine, finding
+review/disposition API, sign-off + concurrency/audit, frontend
+integration), and governance close-out PR22G (GitHub PR #121) are all
+merged. See `docs/DECISION_LOG.md`'s PR22-prefixed entries and the
+"PR21 note"-style paragraph below for the full slice-by-slice
+chronology; every individual PR22B–F squash SHA is preserved there and
+in the Completed table, not repeated in full here.
+
+**Roadmap PR23 (Cutover Readiness)'s first slice, PR23A (Architecture &
+Operational Design), is in progress, not yet merged** —
+`docs/design/PR23_CUTOVER_READINESS_PLAN.md`, design/governance only,
+zero `backend/**`/`frontend/**`/`alembic/**`/`tests/**` change. PR23A
+proposes a minimal PR23B–F implementation sequence and identifies six
+Owner Decisions (source-of-truth transition, current-state/open-
+transaction handling, Go/No-Go and rollback authorization, rollback
+boundary, pilot scope, persisted evidence model) that must be resolved
+before any PR23B+ slice begins implementation.
 
 `d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` (GitHub PR #110, Roadmap
 PR21E — Legacy History Frontend Real Integration) is now historical,
@@ -555,9 +532,10 @@ full closure record. **Roadmap PR21 (Legacy Receive and Issue History
 Import) is now fully complete** — its own baseline at completion was
 `d64d50d...` (PR21E), now historical; see the current baseline at the
 top of this document. **Roadmap PR22 (Legacy Data Validation and
-Reconciliation)'s architecture design has since merged, all seven Owner
-Decisions are resolved, and PR22A-F implementation is now complete; PR22G
-(governance close-out) is in progress, not yet merged** (see the top of
+Reconciliation) has since fully completed** — architecture design, all
+seven Owner Decisions, every implementation slice (PR22B-F), and
+governance close-out (PR22G) are all merged; **Roadmap PR23 (Cutover
+Readiness)'s first slice, PR23A, is now in progress** (see the top of
 this document).
 
 ## Approved forward sequence
@@ -632,8 +610,8 @@ chronology.
 | PR19B | Legacy Import Frontend Skeleton (workflow-review prototype only; no real import) — **COMPLETE / MERGED** as GitHub PR #80, squash SHA `04f5bf5c76b51744981d1cc8072c074e604224e9` |
 | PR20 | Equipment Master Import: BCM, Item Number, equipment attributes, existing hospital QR linkage, equipment duplicate detection, and equipment-record validation — **COMPLETE / MERGED** (design #89; PR20A #90, PR20B #91, OD-1–OD-4 resolution #92, PR20C #93, PR20D #94, PR20E #95, PR20F #96), squash SHA `2743af849702ef551927b9c362421df08c80b5d9` (PR20F, historical baseline — superseded by PR21E, see below) |
 | PR21 | Legacy Receive and Issue History Import: Receive/Issue history, legacy BME-name preservation and user mapping, Ward normalization and mapping, transaction-row duplicate detection, and transaction source references — **COMPLETE / MERGED** (design #98/#99; PR21-Foundation #100; Owner Decision Closure Rounds 1-3 #101/#102/#106; PR21A #103, PR21B #104, PR21C #105, PR21D1 #107, PR21D2 #108, PR21E0 #109, PR21E #110), squash SHA `d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` (PR21E, historical baseline — superseded by PR21F then PR22A/PR113, see the top of this document) |
-| PR22 | Legacy Data Validation and Reconciliation: cross-import validation, reconciliation, source traceability verification, duplicate review, and unified legacy/new history validation — **DESIGN MERGED, OWNER DECISIONS RESOLVED, PR22B–PR22F ALL MERGED (IMPLEMENTATION COMPLETE), PR22G GOVERNANCE CLOSE-OUT IN PROGRESS** (architecture design `docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`, GitHub PR #112, squash SHA `c924d8ba2c8c5d933ea36ea3d488e2550615df40`; Owner Decision Closure round GitHub PR #115, squash SHA `f03af893d727b221bd941466d83e5eceb9eb596a`; PR22B — Reconciliation Schema + Run/Snapshot Foundation, GitHub PR #116, squash SHA `c5e750cecd7458e9570c6dc1679abeacde0da369`; PR22C — Deterministic Reconciliation Analysis Engine, GitHub PR #117, squash SHA `b45cf7503a3ff941d4b65741c7ac14a0af6e7a25`; PR22D — Finding Review / Disposition API, GitHub PR #118, squash SHA `966d7a712681e40780f954c8744a592316af56ec`; PR22E — Reconciliation Sign-off + Concurrency/Audit, GitHub PR #119, squash SHA `896d92f8c00ee860c82892e4e4d466d5869dcf48`; PR22F — Reconciliation Frontend Integration, GitHub PR #120, squash SHA `76040d5e87223767c9dbe36eb67c6a156af12c0c`); PR22G (governance close-out) is in progress, not yet merged. **Roadmap PR22 overall is not complete until PR22G itself merges.** |
-| PR23 | Cutover Readiness |
+| PR22 | Legacy Data Validation and Reconciliation: cross-import validation, reconciliation, source traceability verification, duplicate review, and unified legacy/new history validation — **COMPLETE / MERGED** (design #112, squash SHA `c924d8ba2c8c5d933ea36ea3d488e2550615df40`; Owner Decision Closure #115, squash SHA `f03af893d727b221bd941466d83e5eceb9eb596a`; PR22B #116, PR22C #117, PR22D #118, PR22E #119, PR22F #120; PR22G governance close-out #121, squash SHA `527ffc48966d7e5cda16a869f0ae464de8b7512a`), squash SHA `527ffc48966d7e5cda16a869f0ae464de8b7512a` (PR22G, current baseline — see the top of this document). **Roadmap PR22 is fully complete.** |
+| PR23 | Cutover Readiness — **PR23A (Architecture & Operational Design) in progress, not yet merged** (`docs/design/PR23_CUTOVER_READINESS_PLAN.md`); PR23B+ not started, pending Owner Decision resolution (see PR23A) |
 | PR24 | Go-live / deployment, blocked by PR19–PR23 |
 
 The documentation audit and Roadmap consistency work is an unnumbered
