@@ -946,9 +946,19 @@ architecture are listed. Numbering follows this repository's
 
 ## 27. Implementation Slices
 
-Proposed minimal sequence, **none of which is implemented by PR23A**,
-and no slice below should begin before this document — and specifically
-OD-PR23-1/OD-PR23-2 (§26) — receives Owner approval:
+**Implementation authorization gate (fail-closed):** No PR23B or later
+implementation slice may begin until all PR23A Owner Decisions that
+materially affect implementation are resolved. Under the current PR23A
+governance contract, OD-PR23-1 through OD-PR23-6 are all unresolved
+implementation-shaping decisions (§26); therefore **PR23B+ is blocked
+until all six are Owner-approved/resolved.** If a future governance
+change explicitly narrows dependencies per slice, a given slice may
+begin only after every Owner Decision that materially affects that
+specific slice is resolved — the per-slice mapping below is explanatory
+rationale for *why* each slice needs which decisions, not a claim that
+any subset of decisions alone authorizes implementation to start today.
+
+Proposed minimal sequence, **none of which is implemented by PR23A**:
 
 - **PR23B — Cutover Readiness Evidence Foundation.** Backend-only, if
   OD-PR23-6 confirms Option 2: a persisted, immutable
@@ -956,32 +966,56 @@ OD-PR23-1/OD-PR23-2 (§26) — receives Owner approval:
   identities in §15 (Alembic migration, additive only). No gate
   evaluation logic yet — schema only, mirroring PR22B's own
   "schema/persistence only" precedent.
+  *Depends on:* OD-PR23-1 (source-of-truth/freeze model shapes what
+  evidence is captured), OD-PR23-2 (current-state/open-transaction
+  method shapes the evidence identities in §15), OD-PR23-6 (persistence
+  model — Option 2 is this slice's own precondition).
 - **PR23C — Readiness Gate Evaluation.** Backend service that evaluates
   Gates A–F (§12) against live evidence (import status, reconciliation
   sign-off, migration head, etc.) and returns BLOCKER/WARNING/INFO
   (§13) — read-only, no mutation, no Go decision yet.
+  *Depends on:* PR23B's persisted schema plus every Owner Decision that
+  shapes what a gate evaluates — OD-PR23-1 (source-of-truth/freeze),
+  OD-PR23-2 (current-state/open-transaction — Gate E), OD-PR23-6
+  (evidence model consumed by gate evaluation).
 - **PR23D — Go/No-Go Decision + Current-State Re-Issue Support.**
   Administrator-only mutation endpoint(s) recording the Go/No-Go
   decision (Gate G) and, if OD-PR23-2 confirms the manual re-issue
   model, any bounded tooling needed to make that re-issue process
   efficient for staff (still using the *existing* issue workflow, not a
   new bulk-mutation mechanism).
+  *Depends on:* OD-PR23-3 (Go/No-Go and rollback authorization model —
+  this slice's own authorization contract), OD-PR23-2 (re-issue
+  tooling scope), and the evidence model (OD-PR23-6) the decision is
+  recorded against.
 - **PR23E — Frontend/Operator Workflow.** Thai-first UI for readiness
   status, blockers, and the Go/No-Go confirmation dialog (§22),
   mirroring PR22F's established patterns.
+  *Depends on:* the finalized PR23B–D backend/readiness/sign-off
+  contracts, which themselves depend on OD-PR23-1, OD-PR23-2,
+  OD-PR23-3, and OD-PR23-6.
 - **PR23F — Cutover Runbook + Governance.** Documentation-only:
   operational runbook (actual T0–T4 procedure, contact list, rollback
   steps), final governance sync recording Roadmap PR23 as complete once
   every prior slice has merged and the real cutover-readiness capability
   exists (not the cutover event itself — that is Pilot/Production
   execution, outside any PR's scope).
+  *Depends on:* OD-PR23-4 (rollback boundary — the runbook's rollback
+  steps have no defined boundary without it), OD-PR23-5 (pilot scope —
+  the runbook cannot name a pilot ward/duration without it), and every
+  decision consumed by PR23B–E, since this slice documents the
+  resulting end-to-end procedure.
 
-This is the **minimal sequence that preserves independent
-reviewability** — each slice is reviewable and revertible on its own,
-matching this repository's established one-objective-per-PR discipline
-(`AGENTS.md`, "Git Discipline"). Repository needs discovered during
-PR23B may justify collapsing or further splitting these; this is a
-recommendation, not a binding commitment.
+This per-slice mapping does not relax the gate stated above: **all six
+Owner Decisions remain required before any PR23B+ slice starts**, since
+every slice either directly depends on a decision or depends on an
+earlier slice that does. This is the **minimal sequence that preserves
+independent reviewability** — each slice is reviewable and revertible
+on its own, matching this repository's established
+one-objective-per-PR discipline (`AGENTS.md`, "Git Discipline").
+Repository needs discovered during PR23B may justify collapsing or
+further splitting these; this is a recommendation, not a binding
+commitment.
 
 ---
 
@@ -1046,7 +1080,10 @@ complete when:
   options, trade-offs, a recommendation, and a consequence-if-unresolved
   (§26).
 - A minimal, independently-reviewable implementation slice sequence is
-  proposed (§27).
+  proposed (§27), with an explicit fail-closed gate: no PR23B+ slice
+  may begin until all six Owner Decisions (OD-PR23-1 through OD-PR23-6)
+  are resolved, not merely the subset that most directly names a given
+  slice.
 - No runtime code — backend, frontend, migration, or test — was changed
   by this PR.
 

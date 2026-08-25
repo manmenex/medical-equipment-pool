@@ -4950,3 +4950,44 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
 - **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
 - **Source:** the PR23A implementation task's own binding specification;
   the PR23A GitHub PR description.
+
+## 2026-08-25 — PR23A Fix Round 1: correct the PR23B+ implementation authorization gate to fail-closed
+
+- **Decision/record:** An independent review of GitHub PR #122 (head
+  `9b55b03551697400eaa418f58bf7bd50d6f2bf19`) found that
+  `docs/design/PR23_CUTOVER_READINESS_PLAN.md` §27's opening sentence
+  named only OD-PR23-1 and OD-PR23-2 as the Owner Decisions gating
+  PR23B+, while the document's own §26 defines OD-PR23-3 (Go/No-Go and
+  rollback authorization), OD-PR23-4 (rollback boundary), OD-PR23-5
+  (pilot scope), and OD-PR23-6 (persisted evidence model) as additional
+  implementation-shaping decisions each proposed PR23B–F slice actually
+  depends on. This under-scoped §27's authorization gate relative to
+  the stricter rule already stated correctly elsewhere in this PR's own
+  governance updates (`knowledge/CONTEXT.md`: "identifies six Owner
+  Decisions ... that must be resolved before any PR23B+ slice begins
+  implementation").
+- **Fix:** §27 now opens with an explicit fail-closed authorization
+  gate: no PR23B+ implementation slice may begin until all six Owner
+  Decisions (OD-PR23-1 through OD-PR23-6) are resolved, since under the
+  current governance contract all six are unresolved
+  implementation-shaping decisions. Each proposed slice (PR23B–F) now
+  carries an explicit "*Depends on:*" line naming the specific Owner
+  Decisions that shape its own scope, as explanatory rationale only —
+  not as a claim that resolving a slice's named subset alone authorizes
+  that slice to begin. §29's acceptance criteria gained one bullet
+  restating the fail-closed rule explicitly. No Owner Decision's
+  substance (question, options, trade-offs, recommendation) was
+  reopened or changed — all six remain exactly as stated, unresolved,
+  pending Owner approval.
+- **Scope:** `docs/design/PR23_CUTOVER_READINESS_PLAN.md` only.
+  `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, `knowledge/CONTEXT.md`,
+  and `knowledge/PROJECT_MEMORY.md` were inspected and already state the
+  strict "all six" gate correctly — left unchanged to avoid churn. Zero
+  `backend/**`, `frontend/**`, `alembic/**`, or `tests/**` file touched;
+  no PR23B+ implementation started.
+- **Status:** Draft, **not merged, PR23A implementation in progress**
+  (Fix Round 1).
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the independent review finding on GitHub PR #122's head
+  `9b55b03551697400eaa418f58bf7bd50d6f2bf19`; the PR23A Fix Round 1
+  task's own binding specification.
