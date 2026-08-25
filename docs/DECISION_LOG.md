@@ -4865,3 +4865,129 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
 - **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
 - **Source:** the PR22G implementation task's own binding specification;
   the PR22G GitHub PR description.
+
+## 2026-08-24 — GitHub PR #121 merged; new authoritative baseline adopted; Roadmap PR22 fully complete
+
+- **Decision/record:** GitHub PR #121 ("PR22G — Roadmap PR22 Governance
+  Close-out") merged via squash merge. Real squash-merge SHA
+  `527ffc48966d7e5cda16a869f0ae464de8b7512a`, sole parent
+  `76040d5e87223767c9dbe36eb67c6a156af12c0c` (GitHub PR #120, PR22F, the
+  prior baseline). Final Merge Gate verification performed before merge:
+  exact reviewed head confirmed current, CI green 6/6 on that exact
+  head, zero open review threads and zero unresolved comments, Draft
+  promoted to Ready for review, re-checked immediately before merge.
+  Post-merge, tree identity between the reviewed feature-branch head and
+  the squash commit was independently verified (`git diff <reviewed-
+  head> 527ffc4... --stat` empty), and sole-parentage was independently
+  verified (`git cat-file -p 527ffc4...` shows exactly one `parent`
+  line, `76040d5e...`). Per this repository's standing process, no
+  separate "baseline adoption" PR is created — `527ffc4...` became
+  authoritative immediately upon merge, folded into the next PR that
+  legitimately touches these governance files (PR23A, recorded below).
+- **Consequence:** With GitHub PR #121 merged, **Roadmap PR22 (Legacy
+  Data Validation and Reconciliation) is now fully complete** —
+  architecture design (GitHub PR #112), all seven Owner Decisions
+  OD-PR22-1 through OD-PR22-7 (GitHub PR #115), every implementation
+  slice PR22B–PR22F (GitHub PR #116/#117/#118/#119/#120), and governance
+  close-out PR22G (GitHub PR #121) are all merged. The next Roadmap item
+  is PR23 — Cutover Readiness, per
+  `docs/audits/04-consolidated-implementation-plan.md` Part D.
+- **Status:** Merged, closed. This entry is historical from the moment
+  it is written; it does not describe work in progress.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14,
+  following the same Final Merge Gate precedent used for GitHub PR
+  #111/#112/#113/#115/#116/#117/#118/#119/#120.
+- **Source:** GitHub PR #121 description and its Final Merge Gate
+  verification evidence (exact head, CI status, tree-identity diff,
+  sole-parent `git cat-file` output).
+
+## 2026-08-24 — PR23A (Cutover Readiness Architecture & Operational Design) implementation started — in progress, not merged
+
+- **Decision/record:** Implementation of Roadmap PR23's first slice,
+  PR23A, started on branch `design/pr23-cutover-readiness`, based on
+  baseline `527ffc48966d7e5cda16a869f0ae464de8b7512a` (GitHub PR #121,
+  the entry above). Scope: design/governance only —
+  `docs/design/PR23_CUTOVER_READINESS_PLAN.md` (new), plus minimal
+  updates to `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`,
+  `knowledge/CONTEXT.md`, and `knowledge/PROJECT_MEMORY.md` recording
+  the new baseline and PR23A's start. Zero `backend/**`, `frontend/**`,
+  `alembic/**`, or `tests/**` file touched; no runtime cutover logic
+  implemented; no deployment performed; no production data migrated; no
+  pilot started.
+- **Key structural decisions:** The design document follows the
+  required order Business/Operational Workflow → Cutover Rules → Data
+  Readiness/Validation → API implications → Frontend implications →
+  Deployment/Pilot/Production procedure, per the task's own explicit
+  first-principle instruction. It preserves every existing business rule
+  (exactly four equipment states, cleaning not a lifecycle state,
+  existing receive/issue workflows, existing identifiers, no QR
+  redesign, exactly three application roles) and treats PR20/PR21/PR22
+  as inputs, not reimplementation — no second importer, no second
+  reconciliation engine, no replay of `LegacyEquipmentEvent` into
+  `BorrowTransaction`, no recomputation of historical truth by fuzzy
+  matching. Per this repository's self-referential-governance
+  discipline, the design document and every governance file this PR
+  touches describe PR23A's own status as **"in progress, not yet
+  merged"** — never "PR23A complete." **Legacy history replay is
+  explicitly rejected as the mechanism for establishing current live
+  equipment state or reconstructing open `BorrowTransaction` rows at
+  cutover** — PR21's event-first architecture deliberately separates
+  immutable historical evidence from current operational truth, and the
+  design document preserves that separation rather than collapsing it
+  for cutover convenience. Six Owner Decisions are identified
+  (OD-PR23-1 through OD-PR23-6: source-of-truth transition strategy,
+  current-state/open-transaction migration method, freeze-window
+  policy, Go/No-Go and rollback authorization, rollback boundary, and
+  persisted cutover-evidence model/pilot scope) and none is resolved
+  unilaterally by this PR — each is escalated with Question/Options/
+  Trade-offs/Recommendation/Consequence-if-unresolved, and no PR23B+
+  implementation slice may begin against an unresolved Owner Decision
+  that materially affects its own architecture. OD-PR22-6's completion
+  threshold and OD-PR22-7's three-boundary temporal model are read as
+  binding inputs, not reopened or loosened.
+- **Status:** Draft, **not merged, PR23A implementation in progress**.
+  This entry documents work in progress, not completion.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the PR23A implementation task's own binding specification;
+  the PR23A GitHub PR description.
+
+## 2026-08-25 — PR23A Fix Round 1: correct the PR23B+ implementation authorization gate to fail-closed
+
+- **Decision/record:** An independent review of GitHub PR #122 (head
+  `9b55b03551697400eaa418f58bf7bd50d6f2bf19`) found that
+  `docs/design/PR23_CUTOVER_READINESS_PLAN.md` §27's opening sentence
+  named only OD-PR23-1 and OD-PR23-2 as the Owner Decisions gating
+  PR23B+, while the document's own §26 defines OD-PR23-3 (Go/No-Go and
+  rollback authorization), OD-PR23-4 (rollback boundary), OD-PR23-5
+  (pilot scope), and OD-PR23-6 (persisted evidence model) as additional
+  implementation-shaping decisions each proposed PR23B–F slice actually
+  depends on. This under-scoped §27's authorization gate relative to
+  the stricter rule already stated correctly elsewhere in this PR's own
+  governance updates (`knowledge/CONTEXT.md`: "identifies six Owner
+  Decisions ... that must be resolved before any PR23B+ slice begins
+  implementation").
+- **Fix:** §27 now opens with an explicit fail-closed authorization
+  gate: no PR23B+ implementation slice may begin until all six Owner
+  Decisions (OD-PR23-1 through OD-PR23-6) are resolved, since under the
+  current governance contract all six are unresolved
+  implementation-shaping decisions. Each proposed slice (PR23B–F) now
+  carries an explicit "*Depends on:*" line naming the specific Owner
+  Decisions that shape its own scope, as explanatory rationale only —
+  not as a claim that resolving a slice's named subset alone authorizes
+  that slice to begin. §29's acceptance criteria gained one bullet
+  restating the fail-closed rule explicitly. No Owner Decision's
+  substance (question, options, trade-offs, recommendation) was
+  reopened or changed — all six remain exactly as stated, unresolved,
+  pending Owner approval.
+- **Scope:** `docs/design/PR23_CUTOVER_READINESS_PLAN.md` only.
+  `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, `knowledge/CONTEXT.md`,
+  and `knowledge/PROJECT_MEMORY.md` were inspected and already state the
+  strict "all six" gate correctly — left unchanged to avoid churn. Zero
+  `backend/**`, `frontend/**`, `alembic/**`, or `tests/**` file touched;
+  no PR23B+ implementation started.
+- **Status:** Draft, **not merged, PR23A implementation in progress**
+  (Fix Round 1).
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the independent review finding on GitHub PR #122's head
+  `9b55b03551697400eaa418f58bf7bd50d6f2bf19`; the PR23A Fix Round 1
+  task's own binding specification.
