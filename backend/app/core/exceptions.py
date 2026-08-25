@@ -622,8 +622,14 @@ class CutoverReadinessEvidenceInvalidError(DomainError):
     immutable snapshot must never mix evidence drawn from two unrelated
     provenance chains (Authority A + Coverage B, or Coverage A +
     ReconciliationRun B) even when every individual id independently
-    resolves to a real row. Reference integrity is never trusted from
-    client input alone -- every reference and every cross-reference is
+    resolves to a real row. **PR23C Fix Round 1**: also raised when
+    `equipment_master_import_source_id` references an `ImportSource`
+    whose owning `ImportSession.dataset_type` is not the Equipment
+    Master dataset type -- a field name is not type safety; a completed
+    source/session for a *different* dataset (e.g.
+    `legacy_transaction_history`) must never be accepted as Equipment
+    Master evidence. Reference integrity is never trusted from client
+    input alone -- every reference and every cross-reference is
     validated fresh, inside the same transaction as the completion
     `UPDATE`, before any row is written."""
 

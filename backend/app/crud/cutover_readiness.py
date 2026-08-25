@@ -48,7 +48,8 @@ from app.models.legacy_reconciliation import (
     LegacyReconciliationRun,
     LegacyReconciliationSignOff,
 )
-from app.models.import_session import ImportSource
+from app.models.import_session import ImportSession, ImportSource
+from app.services.import_adapters.equipment_master import DATASET_TYPE as EQUIPMENT_MASTER_DATASET_TYPE
 from app.models.master_data import Ward
 from app.models.user import User
 
@@ -190,19 +191,25 @@ class CompletionEvidence:
 async def _validate_evidence(
     db: AsyncSession, evidence: CompletionEvidence
 ) -> LegacyMigrationAuthorityCoverage:
-    """§26/§30 of the task, hardened by **PR23B Fix Round 1**: every
-    reference is validated to exist, AND the whole provenance chain --
-    `MigrationAuthority -> Coverage -> ReconciliationRun -> SignOff` --
-    is validated to be internally consistent, inside the same
-    transaction as the completion `UPDATE`. Existence alone is
-    insufficient: a syntactically valid but semantically mixed set of
-    references (e.g. Authority A + Coverage B, where Coverage B actually
-    belongs to Authority B) must never pass. Never trusted from client
-    input alone. Raises `CutoverReadinessEvidenceInvalidError` on the
-    first failure found; does not attempt to collect every failure at
-    once (matching this codebase's existing fail-fast validation style
-    elsewhere). Returns the validated `coverage` row so the caller does
-    not need to re-fetch it for the `cutover_instant` boundary check."""
+    """§26/§30 of the task, hardened by **PR23B Fix Round 1** and
+    **PR23C Fix Round 1**: every reference is validated to exist, AND
+    the whole provenance chain -- `MigrationAuthority -> Coverage ->
+    ReconciliationRun -> SignOff` -- is validated to be internally
+    consistent, AND `equipment_master_import_source_id`'s owning
+    `ImportSession.dataset_type` is validated to actually be the
+    Equipment Master dataset type (PR23C Fix Round 1 -- a field's name
+    is not type safety; existence alone is insufficient) -- all inside
+    the same transaction as the completion `UPDATE`. A syntactically
+    valid but semantically mixed set of references (e.g. Authority A +
+    Coverage B, where Coverage B actually belongs to Authority B, or an
+    `equipment_master_import_source_id` that actually references a
+    `legacy_transaction_history` import) must never pass. Never trusted
+    from client input alone. Raises `CutoverReadinessEvidenceInvalidError`
+    on the first failure found; does not attempt to collect every
+    failure at once (matching this codebase's existing fail-fast
+    validation style elsewhere). Returns the validated `coverage` row so
+    the caller does not need to re-fetch it for the `cutover_instant`
+    boundary check."""
     import_source = (
         await db.execute(select(ImportSource).where(ImportSource.id == evidence.equipment_master_import_source_id))
     ).scalar_one_or_none()
@@ -210,6 +217,25 @@ async def _validate_evidence(
         raise CutoverReadinessEvidenceInvalidError(
             f"equipment_master_import_source_id '{evidence.equipment_master_import_source_id}' does not "
             "reference an existing import source."
+        )
+    # PR23C Fix Round 1: `equipment_master_import_source_id` is only a
+    # UUID reference -- its field name alone does not guarantee the
+    # referenced ImportSource belongs to an Equipment Master
+    # ImportSession. A completed source/session for a different
+    # dataset_type (e.g. legacy_transaction_history) must never be
+    # accepted as Equipment Master evidence; evidence must be valid at
+    # capture/completion time, not only discovered invalid later by
+    # PR23C's own gate evaluation.
+    import_source_session = (
+        await db.execute(select(ImportSession).where(ImportSession.id == import_source.import_session_id))
+    ).scalar_one_or_none()
+    if import_source_session is None or import_source_session.dataset_type != EQUIPMENT_MASTER_DATASET_TYPE:
+        actual_dataset_type = import_source_session.dataset_type if import_source_session is not None else None
+        raise CutoverReadinessEvidenceInvalidError(
+            f"equipment_master_import_source_id '{evidence.equipment_master_import_source_id}' references an "
+            f"import source whose owning import session's dataset_type is '{actual_dataset_type}', not "
+            f"'{EQUIPMENT_MASTER_DATASET_TYPE}' -- Equipment Master evidence must reference an Equipment Master "
+            "import."
         )
 
     authority_exists = (
@@ -327,7 +353,9 @@ async def complete_readiness_run(
        coverage's authority, reconciliation run's coverage, and
        sign-off's run must each match the corresponding supplied id --
        existence of every individual row is insufficient on its own
-       (**PR23B Fix Round 1**).
+       (**PR23B Fix Round 1**); the equipment_master_import_source_id's
+       owning session must also actually be an Equipment Master import,
+       not merely exist (**PR23C Fix Round 1**).
     5. Validate `cutover_instant >= coverage.live_system_start` (design
        §9) -- the reconciliation evidence a Go decision would rely on
        later can never postdate the moment it claims to cover.

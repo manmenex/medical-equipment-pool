@@ -1128,6 +1128,23 @@ Proposed minimal sequence, **none of which is implemented by PR23A**:
   shapes what a gate evaluates — OD-PR23-1 (source-of-truth/freeze),
   OD-PR23-2 (current-state/open-transaction — Gate E), OD-PR23-6
   (evidence model consumed by gate evaluation).
+  **PR23C Fix Round 1** (independent review, one P1 finding): Gate B
+  resolved `equipment_master_import_source_id -> ImportSource ->
+  ImportSession` and checked only `ImportSession.status == 'completed'`,
+  never the owning session's `dataset_type` -- a completed source/
+  session for a *different* dataset (e.g. `legacy_transaction_history`)
+  could be cross-wired into this field and Gate B would incorrectly
+  report `GATE_B_SATISFIED`. Fixed at two layers: (1) `_evaluate_gate_b`
+  now also checks `dataset_type == EQUIPMENT_MASTER_DATASET_TYPE`,
+  BLOCKER (`GATE_B_WRONG_DATASET_TYPE`) on mismatch, distinct from
+  `GATE_B_IMPORT_NOT_COMPLETED`; (2) PR23B's own `complete_readiness_run`
+  (`_validate_evidence`) now rejects the same mismatch at completion
+  time (`CUTOVER_READINESS_EVIDENCE_INVALID`, 422) -- evidence must be
+  valid at capture time, not only discovered invalid later by this
+  gate's own read-only evaluation. No other evidence reference in
+  `CompletionEvidence` is an `ImportSource`/`ImportSession` reference
+  (Gate C already correctly scopes its own `dataset_type` check via its
+  checksum join), so no further same-class issue was found.
 - **PR23D — Go/No-Go Decision + Current-State Re-Issue Support.**
   Administrator-only mutation endpoint(s) recording the Go/No-Go
   decision (Gate G) and, if OD-PR23-2 confirms the manual re-issue

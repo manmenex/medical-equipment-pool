@@ -184,7 +184,18 @@ async def _evaluate_gate_b(db: AsyncSession, run: CutoverReadinessRun) -> list[G
     Ward mapping are enforced by PR20/PR21's own import-time validation,
     never re-derived here -- a `completed` import session is already
     proof of both, per the module docstring's "never a second, PR23-
-    owned computation" discipline."""
+    owned computation" discipline.
+
+    **PR23C Fix Round 1.** `equipment_master_import_source_id` is only a
+    UUID reference -- its field name does not by itself guarantee that
+    the referenced `ImportSource` belongs to an Equipment Master
+    `ImportSession`; a completed source/session for a *different*
+    `dataset_type` (e.g. `legacy_transaction_history`) can otherwise be
+    cross-wired into this field. Semantic dataset identity is only
+    established by reading the owning session's own `dataset_type` and
+    comparing it against `EQUIPMENT_MASTER_DATASET_TYPE` -- checked here
+    independently of, and before, the completion check, since a wrong
+    dataset and an incomplete import are different failure modes."""
     source = (
         await db.execute(select(ImportSource).where(ImportSource.id == run.equipment_master_import_source_id))
     ).scalar_one_or_none()
@@ -201,8 +212,7 @@ async def _evaluate_gate_b(db: AsyncSession, run: CutoverReadinessRun) -> list[G
     session = (
         await db.execute(select(ImportSession).where(ImportSession.id == source.import_session_id))
     ).scalar_one_or_none()
-    if session is None or session.status != "completed":
-        status = session.status if session is not None else None
+    if session is None:
         return [
             GateItem(
                 gate="B",
@@ -210,7 +220,35 @@ async def _evaluate_gate_b(db: AsyncSession, run: CutoverReadinessRun) -> list[G
                 code="GATE_B_IMPORT_NOT_COMPLETED",
                 message="The Equipment Master import session referenced by this run's evidence has not completed "
                 "successfully.",
-                detail={"import_session_status": status},
+                detail={"import_session_status": None},
+            )
+        ]
+
+    if session.dataset_type != EQUIPMENT_MASTER_DATASET_TYPE:
+        return [
+            GateItem(
+                gate="B",
+                category="blocker",
+                code="GATE_B_WRONG_DATASET_TYPE",
+                message="The import session referenced by this run's equipment_master_import_source_id evidence "
+                "is not an Equipment Master import -- the referenced ImportSource belongs to a different "
+                "dataset_type.",
+                detail={
+                    "expected_dataset_type": EQUIPMENT_MASTER_DATASET_TYPE,
+                    "actual_dataset_type": session.dataset_type,
+                },
+            )
+        ]
+
+    if session.status != "completed":
+        return [
+            GateItem(
+                gate="B",
+                category="blocker",
+                code="GATE_B_IMPORT_NOT_COMPLETED",
+                message="The Equipment Master import session referenced by this run's evidence has not completed "
+                "successfully.",
+                detail={"import_session_status": session.status},
             )
         ]
 
