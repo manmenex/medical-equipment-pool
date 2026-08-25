@@ -144,7 +144,6 @@ async def create_cutover_readiness_run(
         db,
         actor_id=actor.id,
         application_baseline_sha=payload.application_baseline_sha,
-        database_migration_head=payload.database_migration_head,
         cutover_instant=payload.cutover_instant,
         source_of_truth_strategy=payload.source_of_truth_strategy,
         freeze_window_reference=payload.freeze_window_reference,

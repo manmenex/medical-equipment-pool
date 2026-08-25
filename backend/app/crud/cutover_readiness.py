@@ -30,10 +30,12 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, func, or_, select, text, update
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import (
+    CutoverReadinessDatabaseMigrationHeadUnavailableError,
     CutoverReadinessEvidenceInvalidError,
     CutoverReadinessRunNotFoundError,
     CutoverReadinessRunNotMutableError,
@@ -59,12 +61,38 @@ def _use_for_update(db: AsyncSession):
     return db.get_bind().dialect.name == "postgresql"
 
 
+async def _get_current_database_migration_head(db: AsyncSession) -> str:
+    """PR23B Fix Round 1. Reads the database's own current Alembic
+    revision from `alembic_version` -- this repository's migration
+    policy assumes exactly one Alembic head (see `backend/alembic/
+    versions/*`: every revision's `down_revision` forms one linear
+    chain), so exactly one row is required; zero rows (never migrated)
+    or more than one row (a multi-head state this repository's
+    migration policy does not support) both fail closed rather than
+    silently selecting an arbitrary row. Never derives the value from a
+    hardcoded constant, a source-tree filename, an environment
+    variable, or client/API-caller input -- the value must reflect the
+    database itself, read at the moment this run is created."""
+    try:
+        rows = (await db.execute(text("SELECT version_num FROM alembic_version"))).all()
+    except DBAPIError as exc:
+        raise CutoverReadinessDatabaseMigrationHeadUnavailableError(
+            "Could not read the database's current Alembic revision from 'alembic_version' -- the readiness "
+            "evidence snapshot requires a genuine, database-observed schema-state fact."
+        ) from exc
+    if len(rows) != 1:
+        raise CutoverReadinessDatabaseMigrationHeadUnavailableError(
+            f"Expected exactly one row in 'alembic_version', found {len(rows)} -- cannot establish a single "
+            "authoritative database migration head."
+        )
+    return rows[0][0]
+
+
 async def create_readiness_run(
     db: AsyncSession,
     *,
     actor_id: uuid.UUID,
     application_baseline_sha: str,
-    database_migration_head: str,
     cutover_instant: datetime,
     source_of_truth_strategy: str = "hard_cutover",
     freeze_window_reference: str | None = None,
@@ -73,6 +101,14 @@ async def create_readiness_run(
     """§5-9 of the task. Creates a new `pending` run with no evidence
     references yet -- `complete_readiness_run` attaches and validates
     them atomically. Does **not** commit.
+
+    **PR23B Fix Round 1: `database_migration_head` is not, and has never
+    been, an accepted parameter of this function.** It is always
+    read server-side from `alembic_version` by
+    `_get_current_database_migration_head` -- a caller/API layer cannot
+    supply, override, or influence this value; see that helper's own
+    docstring for the fail-closed contract if the database's current
+    revision cannot be established.
 
     If `supersedes_run_id` is supplied, it is validated to exist before
     the new row is constructed -- a clean, structured
@@ -88,6 +124,8 @@ async def create_readiness_run(
             raise CutoverReadinessEvidenceInvalidError(
                 f"supersedes_run_id '{supersedes_run_id}' does not reference an existing cutover readiness run."
             )
+
+    database_migration_head = await _get_current_database_migration_head(db)
 
     run = CutoverReadinessRun(
         created_by_user_id=actor_id,
@@ -149,14 +187,22 @@ class CompletionEvidence:
     operational_approver_reference: str | None = None
 
 
-async def _validate_evidence(db: AsyncSession, evidence: CompletionEvidence) -> None:
-    """§26/§30 of the task: every reference is validated to exist, and the
-    sign-off/run pairing and `cutover_instant` boundary are validated,
-    inside the same transaction as the completion `UPDATE` -- never
-    trusted from client input alone. Raises
-    `CutoverReadinessEvidenceInvalidError` on the first failure found;
-    does not attempt to collect every failure at once (matching this
-    codebase's existing fail-fast validation style elsewhere)."""
+async def _validate_evidence(
+    db: AsyncSession, evidence: CompletionEvidence
+) -> LegacyMigrationAuthorityCoverage:
+    """§26/§30 of the task, hardened by **PR23B Fix Round 1**: every
+    reference is validated to exist, AND the whole provenance chain --
+    `MigrationAuthority -> Coverage -> ReconciliationRun -> SignOff` --
+    is validated to be internally consistent, inside the same
+    transaction as the completion `UPDATE`. Existence alone is
+    insufficient: a syntactically valid but semantically mixed set of
+    references (e.g. Authority A + Coverage B, where Coverage B actually
+    belongs to Authority B) must never pass. Never trusted from client
+    input alone. Raises `CutoverReadinessEvidenceInvalidError` on the
+    first failure found; does not attempt to collect every failure at
+    once (matching this codebase's existing fail-fast validation style
+    elsewhere). Returns the validated `coverage` row so the caller does
+    not need to re-fetch it for the `cutover_instant` boundary check."""
     import_source = (
         await db.execute(select(ImportSource).where(ImportSource.id == evidence.equipment_master_import_source_id))
     ).scalar_one_or_none()
@@ -190,16 +236,36 @@ async def _validate_evidence(db: AsyncSession, evidence: CompletionEvidence) -> 
         raise CutoverReadinessEvidenceInvalidError(
             f"legacy_coverage_id '{evidence.legacy_coverage_id}' does not reference an existing coverage artifact."
         )
-
-    reconciliation_run_exists = (
-        await db.execute(
-            select(LegacyReconciliationRun.id).where(LegacyReconciliationRun.id == evidence.reconciliation_run_id)
+    # PR23B Fix Round 1: the coverage's own approving authority must be
+    # the exact authority supplied, not merely some authority that
+    # happens to exist.
+    if coverage.migration_authority_id != evidence.legacy_migration_authority_id:
+        raise CutoverReadinessEvidenceInvalidError(
+            f"legacy_coverage_id '{evidence.legacy_coverage_id}' belongs to migration authority "
+            f"'{coverage.migration_authority_id}', not the supplied legacy_migration_authority_id "
+            f"'{evidence.legacy_migration_authority_id}' -- evidence references must form one internally "
+            "consistent provenance chain (design §15)."
         )
-    ).first()
-    if reconciliation_run_exists is None:
+
+    reconciliation_run = (
+        await db.execute(
+            select(LegacyReconciliationRun).where(LegacyReconciliationRun.id == evidence.reconciliation_run_id)
+        )
+    ).scalar_one_or_none()
+    if reconciliation_run is None:
         raise CutoverReadinessEvidenceInvalidError(
             f"reconciliation_run_id '{evidence.reconciliation_run_id}' does not reference an existing "
             "reconciliation run."
+        )
+    # PR23B Fix Round 1: the reconciliation run's own bound coverage must
+    # be the exact coverage supplied, not merely some coverage that
+    # happens to exist.
+    if reconciliation_run.coverage_id != evidence.legacy_coverage_id:
+        raise CutoverReadinessEvidenceInvalidError(
+            f"reconciliation_run_id '{evidence.reconciliation_run_id}' is bound to coverage "
+            f"'{reconciliation_run.coverage_id}', not the supplied legacy_coverage_id "
+            f"'{evidence.legacy_coverage_id}' -- evidence references must form one internally consistent "
+            "provenance chain (design §15)."
         )
 
     signoff = (
@@ -236,6 +302,8 @@ async def _validate_evidence(db: AsyncSession, evidence: CompletionEvidence) -> 
                 f"pilot_ward_id '{evidence.pilot_ward_id}' does not reference an existing ward."
             )
 
+    return coverage
+
 
 async def complete_readiness_run(
     db: AsyncSession,
@@ -254,9 +322,12 @@ async def complete_readiness_run(
        `completed`/`failed` run's evidence snapshot is permanently
        immutable (module docstring).
     3. Verify `expected_version == run.version` under the lock.
-    4. Validate every evidence reference exists and is internally
-       consistent (`_validate_evidence`), including the sign-off/run
-       pairing.
+    4. Validate every evidence reference exists AND that the whole
+       provenance chain is internally consistent (`_validate_evidence`):
+       coverage's authority, reconciliation run's coverage, and
+       sign-off's run must each match the corresponding supplied id --
+       existence of every individual row is insufficient on its own
+       (**PR23B Fix Round 1**).
     5. Validate `cutover_instant >= coverage.live_system_start` (design
        §9) -- the reconciliation evidence a Go decision would rely on
        later can never postdate the moment it claims to cover.
@@ -286,15 +357,8 @@ async def complete_readiness_run(
             "re-fetch the run and retry with its current version."
         )
 
-    await _validate_evidence(db, evidence)
+    coverage = await _validate_evidence(db, evidence)
 
-    coverage = (
-        await db.execute(
-            select(LegacyMigrationAuthorityCoverage).where(
-                LegacyMigrationAuthorityCoverage.id == evidence.legacy_coverage_id
-            )
-        )
-    ).scalar_one()
     if run.cutover_instant < coverage.live_system_start:
         raise CutoverReadinessEvidenceInvalidError(
             f"cutover_instant ({run.cutover_instant.isoformat()}) is earlier than the bound coverage artifact's "

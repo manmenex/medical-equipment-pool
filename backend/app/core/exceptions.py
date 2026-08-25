@@ -610,12 +610,40 @@ class CutoverReadinessEvidenceInvalidError(DomainError):
     `LegacyMigrationAuthorityCoverage`/`LegacyReconciliationRun`/
     `LegacyReconciliationSignOff`/`User`/`Ward` row does not exist, the
     supplied sign-off does not belong to the supplied reconciliation
-    run, or `cutover_instant` is earlier than the bound coverage
-    artifact's own `live_system_start` (design §9: "cutover_instant
-    must never be earlier than the signed-off run's live_system_
-    start"). Reference integrity is never trusted from client input
-    alone -- every reference is validated fresh, inside the same
-    transaction as the completion `UPDATE`, before any row is written."""
+    run, `cutover_instant` is earlier than the bound coverage artifact's
+    own `live_system_start` (design §9: "cutover_instant must never be
+    earlier than the signed-off run's live_system_start"), or the
+    supplied evidence references do not form one internally consistent
+    provenance chain -- **PR23B Fix Round 1**: the bound coverage's own
+    `migration_authority_id` must equal the supplied
+    `legacy_migration_authority_id`, and the bound reconciliation run's
+    own `coverage_id` must equal the supplied `legacy_coverage_id` (in
+    addition to the pre-existing sign-off/run pairing check) -- an
+    immutable snapshot must never mix evidence drawn from two unrelated
+    provenance chains (Authority A + Coverage B, or Coverage A +
+    ReconciliationRun B) even when every individual id independently
+    resolves to a real row. Reference integrity is never trusted from
+    client input alone -- every reference and every cross-reference is
+    validated fresh, inside the same transaction as the completion
+    `UPDATE`, before any row is written."""
 
     code = "CUTOVER_READINESS_EVIDENCE_INVALID"
     status_code = 422
+
+
+class CutoverReadinessDatabaseMigrationHeadUnavailableError(DomainError):
+    """Roadmap PR23B Fix Round 1 -- `create_readiness_run` could not
+    establish the database's own current Alembic revision by querying
+    `alembic_version` (the table/row does not exist, or more than one
+    row exists). `database_migration_head` is evidence that must prove
+    the actual schema state at capture time; it is never accepted from
+    client/API-caller input (see `app.crud.cutover_readiness`'s own
+    `_get_current_database_migration_head`). `503` (not a `4xx`) because
+    the request itself was well-formed -- this is a transient/
+    environment condition (mirrors `PdfRenderTimeoutError`/
+    `XlsxRenderTimeoutError`'s own "well-formed request, resource
+    condition" rationale), never a client input problem. No readiness
+    run is created when this is raised."""
+
+    code = "CUTOVER_READINESS_DATABASE_MIGRATION_HEAD_UNAVAILABLE"
+    status_code = 503

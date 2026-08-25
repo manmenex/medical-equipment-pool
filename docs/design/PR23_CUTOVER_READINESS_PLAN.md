@@ -1106,6 +1106,20 @@ Proposed minimal sequence, **none of which is implemented by PR23A**:
   evidence is captured), OD-PR23-2 (current-state/open-transaction
   method shapes the evidence identities in §15), OD-PR23-6 (persistence
   model — Option 2, now implemented as described above).
+  **PR23B Fix Round 1** (independent review, two P1 findings): (1)
+  `database_migration_head` is no longer a `RunCreateRequest` field --
+  it is always read server-side from `alembic_version` by
+  `_get_current_database_migration_head`, which fails closed
+  (`CUTOVER_READINESS_DATABASE_MIGRATION_HEAD_UNAVAILABLE`, 503) if the
+  database's own current revision cannot be established as exactly one
+  row; (2) completion now validates the whole evidence provenance chain
+  — `legacy_coverage_id`'s own `migration_authority_id` must match the
+  supplied `legacy_migration_authority_id`, and `reconciliation_run_id`'s
+  own `coverage_id` must match the supplied `legacy_coverage_id` — not
+  merely that each id independently resolves to an existing row, so an
+  immutable snapshot can never mix evidence drawn from two unrelated
+  provenance chains. No migration was added (the persisted column shape
+  was already correct; only the source/validation of its value changed).
 - **PR23C — Readiness Gate Evaluation.** Backend service that evaluates
   Gates A–F (§12) against live evidence (import status, reconciliation
   sign-off, migration head, etc.) and returns BLOCKER/WARNING/INFO

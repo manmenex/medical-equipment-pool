@@ -72,6 +72,21 @@ source_id`/`legacy_migration_authority_id`/`legacy_coverage_id`
 reference PR20/PR21/PR22's own provenance identities, never duplicating
 workbook contents or re-deriving temporal coverage.
 
+**One provenance chain, not four independent references (PR23B Fix
+Round 1).** `legacy_migration_authority_id`, `legacy_coverage_id`,
+`reconciliation_run_id`, and `reconciliation_signoff_id` are not
+validated for existence alone -- `app.crud.cutover_readiness.
+_validate_evidence` also proves `legacy_coverage_id`'s own
+`migration_authority_id` matches `legacy_migration_authority_id`, and
+`reconciliation_run_id`'s own `coverage_id` matches
+`legacy_coverage_id` (the pre-existing `reconciliation_signoff_id.
+run_id == reconciliation_run_id` check completes the chain:
+`MigrationAuthority -> Coverage -> ReconciliationRun -> SignOff`). A
+column-level FK only proves each id resolves to *some* row of the
+right type; it cannot express that those rows are mutually consistent
+with each other, so this binding is enforced in the completion
+service, not the schema.
+
 **Current-state verification is evidence, not mutation.** `current_
 state_verified_at`/`current_state_verified_by_user_id`/`current_state_
 verification_scope_count`/`current_state_verification_reference` record
@@ -224,9 +239,13 @@ class CutoverReadinessRun(UUIDPKMixin, Base):
     application_baseline_sha: Mapped[str] = mapped_column(String(40), nullable=False)
     # `alembic_version.version_num`'s own revision-id string (e.g.
     # `0021_cutover_readiness`), read from the database's own
-    # `alembic_version` table by the service layer at creation time --
-    # never client-supplied, matching this module's "reference, never
-    # trust client input for machine-owned facts" discipline.
+    # `alembic_version` table by
+    # `app.crud.cutover_readiness._get_current_database_migration_head`
+    # at creation time -- not a request-body field on
+    # `RunCreateRequest` at all (PR23B Fix Round 1), matching this
+    # module's "reference, never trust client input for machine-owned
+    # facts" discipline. Must prove the actual schema state at capture
+    # time; a client-supplied value could never do that.
     database_migration_head: Mapped[str] = mapped_column(String(255), nullable=False)
     source_of_truth_strategy: Mapped[str] = mapped_column(
         String(30), nullable=False, default="hard_cutover", server_default=text("'hard_cutover'")

@@ -23,8 +23,9 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
@@ -43,6 +44,40 @@ _COVERAGE_START = datetime(2020, 1, 1, tzinfo=timezone.utc)
 _COVERAGE_END = datetime(2024, 12, 31, tzinfo=timezone.utc)
 _LIVE_START = datetime(2025, 1, 1, tzinfo=timezone.utc)
 _CUTOVER_INSTANT = datetime(2025, 1, 5, tzinfo=timezone.utc)
+# PR23B Fix Round 1: a value distinct from any real revision id, so a
+# test asserting the API response equals this proves the value came
+# from `alembic_version` (seeded by `_seed_alembic_version` below), not
+# from a coincidentally-matching hardcoded string.
+_TEST_MIGRATION_HEAD = "0099_test_migration_head"
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _seed_alembic_version(db_engine):
+    """PR23B Fix Round 1: `create_readiness_run` reads
+    `database_migration_head` server-side from `alembic_version`
+    (`app.crud.cutover_readiness._get_current_database_migration_head`)
+    -- never from the request body. `alembic_version` is Alembic's own
+    bookkeeping table, not part of `Base.metadata`, so it is never
+    created by `db_engine`'s `Base.metadata.create_all()`; this fixture
+    seeds it explicitly (exactly one row, mirroring what a real
+    migrated database looks like) before any test in this module
+    creates a run. Runs against `db_engine` directly (not `db_session`)
+    so it lands before the test body regardless of `db_session`/
+    `client` fixture instantiation order -- SQLite's `StaticPool` here
+    means every session in a test shares one physical connection, so a
+    write committed here is immediately visible to all of them."""
+    async with db_engine.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS alembic_version ("
+                "version_num VARCHAR(32) NOT NULL, "
+                "CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num))"
+            )
+        )
+        await conn.execute(text("DELETE FROM alembic_version"))
+        await conn.execute(
+            text("INSERT INTO alembic_version (version_num) VALUES (:v)"), {"v": _TEST_MIGRATION_HEAD}
+        )
 
 
 async def _actor_id(db_session: AsyncSession) -> uuid.UUID:
@@ -141,7 +176,6 @@ async def _create_run(client: AsyncClient, headers: dict, *, seed: str) -> dict:
         headers=headers,
         json={
             "application_baseline_sha": _baseline_sha(seed),
-            "database_migration_head": "0021_cutover_readiness",
             "cutover_instant": _CUTOVER_INSTANT.isoformat(),
         },
     )
@@ -161,11 +195,17 @@ async def test_create_run_happy_path(client: AsyncClient, seeded_users, db_sessi
     assert body["version"] == 0
     assert body["source_of_truth_strategy"] == "hard_cutover"
     assert body["equipment_master_import_source_id"] is None
+    # PR23B Fix Round 1: proves the value came from the database's own
+    # `alembic_version` (seeded by `_seed_alembic_version` to
+    # `_TEST_MIGRATION_HEAD`), not from any client-supplied value --
+    # the request body sent by `_create_run` never includes this field.
+    assert body["database_migration_head"] == _TEST_MIGRATION_HEAD
 
     log = (
         await db_session.execute(select(AuditLog).where(AuditLog.entity_id == uuid.UUID(body["id"])))
     ).scalar_one()
     assert log.action == "cutover_readiness_run_created"
+    assert log.after_data["database_migration_head"] == _TEST_MIGRATION_HEAD
 
 
 async def test_create_run_rejects_short_baseline_sha(client: AsyncClient, seeded_users):
@@ -175,7 +215,6 @@ async def test_create_run_rejects_short_baseline_sha(client: AsyncClient, seeded
         headers=headers,
         json={
             "application_baseline_sha": "tooshort",
-            "database_migration_head": "0021_cutover_readiness",
             "cutover_instant": _CUTOVER_INSTANT.isoformat(),
         },
     )
@@ -190,7 +229,6 @@ async def test_create_run_denied_for_non_administrator(client: AsyncClient, seed
         headers=headers,
         json={
             "application_baseline_sha": _baseline_sha("z"),
-            "database_migration_head": "0021_cutover_readiness",
             "cutover_instant": _CUTOVER_INSTANT.isoformat(),
         },
     )
@@ -305,24 +343,32 @@ async def test_complete_run_rejects_missing_import_source(client: AsyncClient, s
 
 
 async def test_complete_run_rejects_signoff_not_belonging_to_run(client: AsyncClient, seeded_users, db_session):
+    """Isolates the sign-off/run pairing check specifically: authority,
+    coverage, and reconciliation run are all one mutually-consistent
+    chain ("a") -- only the sign-off is swapped for one belonging to an
+    unrelated run ("b"), so this fails exactly the pre-existing
+    `signoff.run_id == reconciliation_run_id` check, not either of the
+    newer PR23B Fix Round 1 provenance checks (which this fixture setup
+    does not violate)."""
     actor_id = await _actor_id(db_session)
     headers = await auth_headers(client)
     created = await _create_run(client, headers, seed="d2")
 
     source = await _seed_import_source(db_session, actor_id=actor_id, seed="d2a")
-    authority_a, coverage_a, run_a, signoff_a = await _seed_coverage_and_run_and_signoff(
+    authority_a, coverage_a, run_a, _signoff_a = await _seed_coverage_and_run_and_signoff(
         db_session, actor_id=actor_id, seed="d2a"
     )
-    _authority_b, _coverage_b, run_b, _signoff_b = await _seed_coverage_and_run_and_signoff(
+    _authority_b, _coverage_b, _run_b, signoff_b = await _seed_coverage_and_run_and_signoff(
         db_session, actor_id=actor_id, seed="d2b"
     )
 
     payload = _complete_payload(
-        source=source, authority=authority_a, coverage=coverage_a, run=run_b, signoff=signoff_a, actor_id=actor_id
+        source=source, authority=authority_a, coverage=coverage_a, run=run_a, signoff=signoff_b, actor_id=actor_id
     )
     resp = await client.post(f"/api/v1/cutover-readiness-runs/{created['id']}/complete", headers=headers, json=payload)
     assert resp.status_code == 422
     assert resp.json()["code"] == "CUTOVER_READINESS_EVIDENCE_INVALID"
+    assert "sign-off" in resp.json()["detail"] or "signoff" in resp.json()["detail"]
 
 
 async def test_complete_run_rejects_cutover_instant_before_live_system_start(
@@ -335,7 +381,6 @@ async def test_complete_run_rejects_cutover_instant_before_live_system_start(
         headers=await auth_headers(client),
         json={
             "application_baseline_sha": _baseline_sha("early"),
-            "database_migration_head": "0021_cutover_readiness",
             # Earlier than the coverage's live_system_start (2025-01-01)
             "cutover_instant": (_LIVE_START - timedelta(days=10)).isoformat(),
         },
@@ -434,7 +479,6 @@ async def test_create_run_with_supersedes_run_id(client: AsyncClient, seeded_use
         headers=headers,
         json={
             "application_baseline_sha": _baseline_sha("i2"),
-            "database_migration_head": "0021_cutover_readiness",
             "cutover_instant": _CUTOVER_INSTANT.isoformat(),
             "supersedes_run_id": prior["id"],
         },
@@ -450,10 +494,148 @@ async def test_create_run_with_unknown_supersedes_run_id_rejected(client: AsyncC
         headers=headers,
         json={
             "application_baseline_sha": _baseline_sha("i3"),
-            "database_migration_head": "0021_cutover_readiness",
             "cutover_instant": _CUTOVER_INSTANT.isoformat(),
             "supersedes_run_id": str(uuid.uuid4()),
         },
     )
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# G. Migration head server-derivation (PR23B Fix Round 1)
+# ---------------------------------------------------------------------------
+
+
+async def test_create_run_rejects_client_supplied_migration_head(client: AsyncClient, seeded_users):
+    """`database_migration_head` is not a field on `RunCreateRequest` at
+    all -- `model_config = {"extra": "forbid"}` means a caller sending
+    it anyway gets a hard 422, never a silently-ignored field and never
+    a chance for the value to reach `CutoverReadinessRun` unvalidated."""
+    headers = await auth_headers(client)
+    resp = await client.post(
+        "/api/v1/cutover-readiness-runs",
+        headers=headers,
+        json={
+            "application_baseline_sha": _baseline_sha("spoof"),
+            "database_migration_head": "attacker-supplied-fake-head",
+            "cutover_instant": _CUTOVER_INSTANT.isoformat(),
+        },
+    )
+    assert resp.status_code == 422
+
+
+async def test_create_run_migration_head_fails_closed_when_zero_rows(
+    client: AsyncClient, seeded_users, db_session
+):
+    """`alembic_version` exists but is empty (never migrated) -- fails
+    closed rather than creating a run with a missing/guessed migration
+    head."""
+    headers = await auth_headers(client)
+    await db_session.execute(text("DELETE FROM alembic_version"))
+    await db_session.commit()
+
+    resp = await client.post(
+        "/api/v1/cutover-readiness-runs",
+        headers=headers,
+        json={
+            "application_baseline_sha": _baseline_sha("zero"),
+            "cutover_instant": _CUTOVER_INSTANT.isoformat(),
+        },
+    )
+    assert resp.status_code == 503, resp.text
+    assert resp.json()["code"] == "CUTOVER_READINESS_DATABASE_MIGRATION_HEAD_UNAVAILABLE"
+
+
+async def test_create_run_migration_head_fails_closed_when_multiple_rows(
+    client: AsyncClient, seeded_users, db_session
+):
+    """`alembic_version` has more than one row -- a multi-head state
+    this repository's migration policy does not support. Fails closed
+    rather than silently picking an arbitrary row."""
+    headers = await auth_headers(client)
+    await db_session.execute(text("INSERT INTO alembic_version (version_num) VALUES (:v)"), {"v": "another_head"})
+    await db_session.commit()
+
+    resp = await client.post(
+        "/api/v1/cutover-readiness-runs",
+        headers=headers,
+        json={
+            "application_baseline_sha": _baseline_sha("multi"),
+            "cutover_instant": _CUTOVER_INSTANT.isoformat(),
+        },
+    )
+    assert resp.status_code == 503, resp.text
+    assert resp.json()["code"] == "CUTOVER_READINESS_DATABASE_MIGRATION_HEAD_UNAVAILABLE"
+
+
+# ---------------------------------------------------------------------------
+# H. Completion -- evidence provenance-chain binding (PR23B Fix Round 1)
+# ---------------------------------------------------------------------------
+
+
+async def test_complete_run_rejects_coverage_from_different_authority(
+    client: AsyncClient, seeded_users, db_session
+):
+    """Authority A + Coverage B, where Coverage B actually belongs to
+    Authority B -- both ids independently resolve to real rows, but
+    they do not form one consistent provenance chain. Existence-only
+    validation would have accepted this; the chain check must not."""
+    actor_id = await _actor_id(db_session)
+    headers = await auth_headers(client)
+    created = await _create_run(client, headers, seed="j1")
+
+    source = await _seed_import_source(db_session, actor_id=actor_id, seed="j1")
+    authority_a, _coverage_a, run_a, signoff_a = await _seed_coverage_and_run_and_signoff(
+        db_session, actor_id=actor_id, seed="j1a"
+    )
+    _authority_b, coverage_b, _run_b, _signoff_b = await _seed_coverage_and_run_and_signoff(
+        db_session, actor_id=actor_id, seed="j1b"
+    )
+
+    payload = _complete_payload(
+        source=source, authority=authority_a, coverage=coverage_b, run=run_a, signoff=signoff_a, actor_id=actor_id
+    )
+    resp = await client.post(f"/api/v1/cutover-readiness-runs/{created['id']}/complete", headers=headers, json=payload)
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["code"] == "CUTOVER_READINESS_EVIDENCE_INVALID"
+    assert "migration authority" in resp.json()["detail"]
+
+    # No partial completion: the run must remain pending and unmutated,
+    # never half-advanced by a rejected completion attempt.
+    r_detail = await client.get(f"/api/v1/cutover-readiness-runs/{created['id']}", headers=headers)
+    assert r_detail.json()["status"] == "pending"
+    assert r_detail.json()["version"] == 0
+    assert r_detail.json()["legacy_coverage_id"] is None
+
+
+async def test_complete_run_rejects_reconciliation_run_from_different_coverage(
+    client: AsyncClient, seeded_users, db_session
+):
+    """Coverage A + ReconciliationRun B, where Run B is actually bound
+    to Coverage B -- both ids independently resolve to real rows, but
+    they do not form one consistent provenance chain."""
+    actor_id = await _actor_id(db_session)
+    headers = await auth_headers(client)
+    created = await _create_run(client, headers, seed="j2")
+
+    source = await _seed_import_source(db_session, actor_id=actor_id, seed="j2")
+    authority_a, coverage_a, _run_a, _signoff_a = await _seed_coverage_and_run_and_signoff(
+        db_session, actor_id=actor_id, seed="j2a"
+    )
+    _authority_b, _coverage_b, run_b, signoff_b = await _seed_coverage_and_run_and_signoff(
+        db_session, actor_id=actor_id, seed="j2b"
+    )
+
+    payload = _complete_payload(
+        source=source, authority=authority_a, coverage=coverage_a, run=run_b, signoff=signoff_b, actor_id=actor_id
+    )
+    resp = await client.post(f"/api/v1/cutover-readiness-runs/{created['id']}/complete", headers=headers, json=payload)
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["code"] == "CUTOVER_READINESS_EVIDENCE_INVALID"
+    assert "coverage" in resp.json()["detail"]
+
+    r_detail = await client.get(f"/api/v1/cutover-readiness-runs/{created['id']}", headers=headers)
+    assert r_detail.json()["status"] == "pending"
+    assert r_detail.json()["version"] == 0
+    assert r_detail.json()["reconciliation_run_id"] is None
     assert resp.json()["code"] == "CUTOVER_READINESS_EVIDENCE_INVALID"
