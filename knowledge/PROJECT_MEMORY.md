@@ -92,19 +92,30 @@ Sources: `docs/PROJECT_PLAYBOOK.md`, `docs/ARCHITECTURE_GUARDRAILS.md`,
 
 ## Current baseline and Roadmap
 
-Current baseline: `527ffc48966d7e5cda16a869f0ae464de8b7512a` — the real
-squash-merge SHA of GitHub PR #121, "PR22G — Roadmap PR22 Governance
-Close-out," squash-merged on top of `76040d5e87223767c9dbe36eb67c6a156af12c0c`
-(GitHub PR #120, PR22F). **Roadmap PR22 (Legacy Data Validation and
-Reconciliation) is now fully complete.** Roadmap PR23 (Cutover
-Readiness)'s first slice, PR23A (Architecture & Operational Design), is
-now in progress, not yet merged — see the "Roadmap PR22" paragraph
-below for full slice-by-slice detail.
+Current baseline: `7ca9c87b4c525a1835403dac5d08e6e1be79d33b` — the real
+squash-merge SHA of GitHub PR #122, "PR23A — Cutover Readiness
+Architecture & Operational Design," squash-merged on top of
+`527ffc48966d7e5cda16a869f0ae464de8b7512a` (GitHub PR #121, PR22G).
+**Roadmap PR22 (Legacy Data Validation and Reconciliation) is now fully
+complete, and Roadmap PR23 (Cutover Readiness)'s first slice, PR23A
+(Architecture & Operational Design), is merged.** This PR is the PR23
+Owner Decision Closure round: the Repository Owner has approved all six
+PR23 Owner Decisions (OD-PR23-1 through OD-PR23-6) per Recommendation,
+with an explicit Owner clarification for OD-PR23-5's Pilot Ward
+selection/duration/exit-criteria rules. This closure round is itself
+governance/documentation only — PR23B+ remains not started, blocked
+until this closure round's own PR merges — see the "Roadmap PR22"
+paragraph below for full slice-by-slice detail.
+
+`527ffc48966d7e5cda16a869f0ae464de8b7512a` — the real squash-merge SHA
+of GitHub PR #121, the Roadmap PR22G implementation (Governance
+Close-out) — is now historical, superseded by PR23A's merge (GitHub PR
+#122) culminating in the baseline above.
 
 `d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` — the real squash-merge SHA
 of GitHub PR #110, the Roadmap PR21E implementation (Legacy History
 Frontend Real Integration) — is now historical, superseded by the chain
-of PR22 merges culminating in the baseline above. PR21E's final
+of PR22/PR23 merges culminating in the baseline above. PR21E's final
 independently reviewed feature-branch head was
 `8c2b1dacac9996b7a4cab89ff70b6939471ef164` (zero review threads, zero
 findings of any kind — a genuine absence of findings, not an accepted
@@ -217,22 +228,26 @@ Reconciliation) — architecture design, all seven Owner Decisions
 (PR22B–PR22F: schema/run-snapshot foundation, deterministic analysis
 engine, finding review/disposition API, sign-off + concurrency/audit,
 frontend integration), and governance close-out (PR22G) — is now fully
-implemented, merged, and complete.** Current authoritative baseline:
-`527ffc48966d7e5cda16a869f0ae464de8b7512a` (GitHub PR #121, PR22G,
-squash-merged on top of `76040d5e...`, GitHub PR #120, PR22F). **Current
-Roadmap work is PR23 (Cutover Readiness)'s first slice, PR23A
-(Architecture & Operational Design) — in progress, not yet merged** —
+implemented, merged, and complete.** Roadmap PR23 (Cutover Readiness)'s
+first slice, PR23A (Architecture & Operational Design), is also merged
+(GitHub PR #122). Current authoritative baseline:
+`7ca9c87b4c525a1835403dac5d08e6e1be79d33b` (GitHub PR #122, PR23A,
+squash-merged on top of `527ffc4...`, GitHub PR #121, PR22G). **Current
+Roadmap work is the PR23 Owner Decision Closure round: the Repository
+Owner has approved all six PR23 Owner Decisions PR23A identified
+(OD-PR23-1 through OD-PR23-6) per Recommendation** —
 `docs/design/PR23_CUTOVER_READINESS_PLAN.md`, design/governance only,
-zero `backend/**`/`frontend/**`/`alembic/**`/`tests/**` change; it
-proposes a minimal PR23B–F implementation sequence and identifies six
-Owner Decisions that must resolve before any PR23B+ slice begins. The
-remaining Roadmap-numbered items are:
+zero `backend/**`/`frontend/**`/`alembic/**`/`tests/**` change; PR23B+
+remains not started, blocked until this closure round's own PR merges.
+The remaining Roadmap-numbered items are:
 
 - PR22: legacy data validation and reconciliation — **complete**
   (PR22A–PR22G, GitHub PR #112/#115/#116/#117/#118/#119/#120/#121, all
   merged);
 - PR23: cutover readiness — **PR23A (Architecture & Operational Design)
-  in progress, not yet merged**;
+  COMPLETE / MERGED** (GitHub PR #122); **all six PR23 Owner Decisions
+  Owner-approved via the PR23 Owner Decision Closure round**; PR23B+
+  not yet started;
 - PR24: Go-live / deployment.
 
 Roadmap numbers and GitHub PR numbers are independent. Legacy migration is

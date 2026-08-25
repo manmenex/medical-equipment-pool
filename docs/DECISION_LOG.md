@@ -4991,3 +4991,133 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
 - **Source:** the independent review finding on GitHub PR #122's head
   `9b55b03551697400eaa418f58bf7bd50d6f2bf19`; the PR23A Fix Round 1
   task's own binding specification.
+
+## 2026-08-25 — GitHub PR #122 merged; new authoritative baseline adopted; PR23A fully complete
+
+- **Decision/record:** GitHub PR #122 ("PR23A — Cutover Readiness
+  Architecture & Operational Design") merged via squash merge. Real
+  squash-merge SHA `7ca9c87b4c525a1835403dac5d08e6e1be79d33b`, sole
+  parent `527ffc48966d7e5cda16a869f0ae464de8b7512a` (GitHub PR #121,
+  PR22G, the prior baseline). Final Merge Gate verification performed
+  before merge: exact reviewed head confirmed current
+  (`01af390a44abb837d25011b330ae9d26a4d665cf`, after Fix Round 1's
+  correction to the §27 implementation-authorization gate), CI green
+  6/6 on that exact head, zero reviews and zero comments, Draft
+  promoted to Ready for review, re-checked immediately before merge.
+  Post-merge, tree identity between the reviewed feature-branch head
+  and the squash commit was independently verified
+  (`git diff 01af390a...7ca9c87b4c... --stat` empty), and sole
+  parentage was independently verified
+  (`git cat-file -p 7ca9c87b4c...` shows exactly one `parent` line,
+  `527ffc48966d7e5cda16a869f0ae464de8b7512a`). Per this repository's
+  standing process, no separate "baseline adoption" PR is created —
+  `7ca9c87...` became authoritative immediately upon merge, folded into
+  the next PR that legitimately touches these governance files (the
+  PR23 Owner Decision Closure round, recorded below).
+- **Consequence:** With GitHub PR #122 merged, **PR23A (Cutover
+  Readiness Architecture & Operational Design) is fully complete**,
+  producing `docs/design/PR23_CUTOVER_READINESS_PLAN.md` and six Owner
+  Decisions (OD-PR23-1 through OD-PR23-6) requiring Owner approval
+  before any PR23B+ implementation slice begins.
+- **Status:** Merged, closed. This entry is historical from the moment
+  it is written; it does not describe work in progress.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14,
+  following the same Final Merge Gate precedent used for GitHub PR
+  #111/#112/#113/#115/#116/#117/#118/#119/#120/#121.
+- **Source:** GitHub PR #122 description and its Final Merge Gate
+  verification evidence (exact head, CI status, tree-identity diff,
+  sole-parent `git cat-file` output).
+
+## 2026-08-25 — PR23 Owner Decision Closure: OD-PR23-1 through OD-PR23-6 Owner-approved
+
+- **Decision/record:** The Repository Owner approved all six PR23
+  Owner Decisions raised by the merged PR23A design
+  (`docs/design/PR23_CUTOVER_READINESS_PLAN.md` §26), per Recommendation
+  in each case ("อนุมัติ OD-PR23-1 ถึง OD-PR23-6 ตาม Recommendation"),
+  with an explicit Owner clarification for OD-PR23-5. This closure
+  round is recorded on branch `docs/pr23-owner-decision-closure`,
+  based on baseline `7ca9c87b4c525a1835403dac5d08e6e1be79d33b` (GitHub
+  PR #122, the entry above). Scope: documentation/governance only —
+  `docs/design/PR23_CUTOVER_READINESS_PLAN.md` (§26 status/approved-
+  choice updates, §27 gate wording, header), `docs/ROADMAP.md`,
+  `docs/ROADMAP_STATUS.md`, `knowledge/CONTEXT.md`,
+  `knowledge/PROJECT_MEMORY.md`, `knowledge/CHANGE_HISTORY.md` (one
+  appended dated update note), and this log. Zero `backend/**`,
+  `frontend/**`, `alembic/**`, or `tests/**` file touched; no PR23B+
+  implementation started; no pilot started; no cutover performed.
+- **Approved choices:**
+  - **OD-PR23-1** (source-of-truth transition): hard cutover (Option
+    A) — legacy AppSheet becomes read-only for operational users after
+    cutover, the new system becomes sole operational writer, a short
+    controlled freeze window is used during final cutover validation
+    (exact duration/date remain operational inputs), uncontrolled
+    dual-write is not permitted.
+  - **OD-PR23-2** (current-state/open-transaction handling): manual/
+    physical verification of current equipment state (Gate E); no
+    automated `LegacyEquipmentEvent` replay into live
+    `BorrowTransaction`; confirmed outstanding equipment is represented
+    via the approved manual cutover procedure, preserving provenance
+    and avoiding duplicate OPEN transactions.
+  - **OD-PR23-3** (Go/No-Go and rollback authorization): no fourth
+    application role; the existing `administrator` role remains the
+    application authorization mechanism; final Go/No-Go accountability
+    is operational governance, recordable separately from application
+    role semantics.
+  - **OD-PR23-4** (rollback boundary): the before/after-first-accepted-
+    real-production-transaction boundary — full rollback permitted
+    before that point per the approved runbook, controlled forward-fix
+    the default strategy after it; no silent movement of operational
+    transactions between systems.
+  - **OD-PR23-5** (pilot scope) — **Owner-clarified**: Pilot Ward is
+    selected from existing Ward/department master data corresponding to
+    the legacy `แผนกที่ยืม` value (used only as a resolution reference,
+    never to auto-create a new Ward record); Pilot starts with one
+    controlled Ward; Pilot duration is not a fixed number of calendar
+    days (explicitly not "5 working days") — Pilot ends on operational
+    acceptance criteria (successful login/authorized operation, BCM
+    lookup, QR lookup, a successful Issue to the Pilot Ward, correct
+    first-receiving-Ward recorded, correct Transaction History, at
+    least one complete Issue→Receive cycle, usable Receive producing
+    `AVAILABLE_AT_POOL`, defective Receive validated only on a genuine
+    defective case — never manufactured to complete Pilot criteria — no
+    unresolved Critical/Blocking defect, and operational Owner
+    fit-for-replacement confirmation); Pilot does not require every
+    issued device to be returned first; the system records only the
+    first receiving Ward per transaction — later Equipment Pool → Ward
+    A → Ward B → Equipment Pool movement is explicitly **not** a
+    tracked V1 transfer workflow (no transfer endpoint, table, state,
+    lifecycle state, or UI).
+  - **OD-PR23-6** (persisted cutover evidence model): Option 2 — a
+    backend-persisted immutable Cutover Readiness evidence model
+    (persisted readiness snapshot/run, immutable Go/No-Go/sign-off
+    record, freshness/concurrency protection, permanent audit/
+    provenance references), reusing PR22's proven patterns where
+    appropriate without tight coupling; the actual schema/migration/
+    service/API implementation remains genuine PR23B+ scope, not
+    implemented by this closure round.
+- **Fail-closed gate while this PR is open:** `docs/design/
+  PR23_CUTOVER_READINESS_PLAN.md` §27 now states: "OD-PR23-1 through
+  OD-PR23-6 are Owner-approved in the proposed PR23 Owner Decision
+  Closure (§26); PR23B remains blocked until that closure PR itself
+  merges." This entry does **not** claim this closure PR itself is
+  merged while it remains open on its own branch — the self-
+  referential-governance discipline applied throughout PR22G and PR23A
+  applies here too. Once this closure PR's own real squash SHA is
+  known post-merge, PR23B becomes eligible to start from it, governed
+  by §27 together with the approved choices recorded above. No Owner
+  Decision's substance was reopened, reinterpreted, or extended beyond
+  the approved choice recorded for it.
+- **CHANGE_HISTORY.md:** one dated update note appended to the existing
+  Roadmap-PR21-complete historical paragraph's own prior "Update
+  (2026-08-24, ...)" note, correcting it to reflect PR22G's merge,
+  PR23A's merge, and this closure round — consistent with this file's
+  established append-only-dated-update convention; the original
+  historical sentences were left untouched.
+- **Status:** Draft, **not merged, PR23 Owner Decision Closure
+  implementation in progress**. This entry documents work in progress
+  (the closure PR itself), not the closure PR's own completion.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the PR23 Owner Decision Closure task's own binding
+  specification, including the Repository Owner's explicit approval
+  statement and OD-PR23-5 clarification; the PR23 Owner Decision
+  Closure GitHub PR description.
