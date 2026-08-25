@@ -1,17 +1,30 @@
 # Roadmap PR23 — Cutover Readiness: Architecture & Operational Design (PR23A)
 
-**Status:** DESIGN ONLY. No `backend/**`, `frontend/**`, `alembic/**`, or
-`tests/**` file is created or modified by this document. No cutover runtime
-logic, no deployment, no production data migration, no pilot has started.
-This is the first PR23 slice; it produces an architecture-approved plan
-and a set of Owner Decisions, nothing else.
+**Status:** DESIGN, GOVERNANCE, AND OWNER DECISION CLOSURE ONLY. No
+`backend/**`, `frontend/**`, `alembic/**`, or `tests/**` file has been
+created or modified by this document or by its Owner Decision Closure
+round. No cutover runtime logic, no deployment, no production data
+migration, no pilot has started. **PR23A (this document) is merged**
+(GitHub PR #122, squash SHA
+`7ca9c87b4c525a1835403dac5d08e6e1be79d33b`). **This Owner Decision
+Closure round records all six PR23 Owner Decisions (OD-PR23-1 through
+OD-PR23-6, §26) as Owner-approved; PR23B remains blocked until this
+closure round's own PR merges** (§27) — see that section for the exact
+gate wording while this closure PR is open.
 
-**Baseline:** `527ffc48966d7e5cda16a869f0ae464de8b7512a` — the real
-squash-merge SHA of GitHub PR #121 (PR22G — Roadmap PR22 Governance
-Close-out). **Roadmap PR22 (Legacy Data Validation and Reconciliation)
-is fully complete** as of this baseline: PR22A design, all seven Owner
-Decisions (OD-PR22-1 through OD-PR22-7), PR22B–PR22F implementation, and
-PR22G governance close-out are all merged.
+**Baseline (Owner Decision Closure round):**
+`7ca9c87b4c525a1835403dac5d08e6e1be79d33b` — the real squash-merge SHA
+of GitHub PR #122 (PR23A — Cutover Readiness Architecture & Operational
+Design). **Roadmap PR22 (Legacy Data Validation and Reconciliation) is
+fully complete**, and **PR23A is merged and architecture-approved**, as
+of this baseline: PR22A design, all seven Owner Decisions (OD-PR22-1
+through OD-PR22-7), PR22B–PR22F implementation, PR22G governance
+close-out, and PR23A itself are all merged.
+
+**Prior baseline (as of PR23A's own creation):**
+`527ffc48966d7e5cda16a869f0ae464de8b7512a` — the real squash-merge SHA
+of GitHub PR #121 (PR22G — Roadmap PR22 Governance Close-out), now
+historical/superseded by the baseline above.
 
 **Purpose:** Design Roadmap PR23 — Cutover Readiness — the workflow,
 gates, evidence model, and Owner Decisions that must exist before this
@@ -846,6 +859,13 @@ Per the task's own instruction, only decisions that materially affect
 architecture are listed. Numbering follows this repository's
 `OD-PR<n>-<m>` convention.
 
+**Closure note:** all six decisions below were **RESOLVED / OWNER
+APPROVED** by the PR23 Owner Decision Closure round ("อนุมัติ
+OD-PR23-1 ถึง OD-PR23-6 ตาม Recommendation", with an explicit Owner
+clarification for OD-PR23-5 — see that entry). Each entry below retains
+its original Question/Options/Trade-offs for decision provenance and
+adds the Owner-approved choice as the now-authoritative status.
+
 - **OD-PR23-1 — Source-of-truth transition strategy, freeze window, and
   `cutover_instant`-to-`live_system_start` alignment.**
   *Question:* Is Option A (hard cutover into a permanently read-only
@@ -861,6 +881,16 @@ architecture are listed. Numbering follows this repository's
   exact duration to be set operationally.
   *Consequence if unresolved:* PR23B+ cannot define the actual cutover
   sequencing logic; Gate G (§13) has no concrete procedure to execute.
+  *Status:* **RESOLVED / OWNER APPROVED.**
+  *Approved choice:* Hard cutover (Option A). Legacy AppSheet becomes
+  read-only for operational users after cutover; the new Medical
+  Equipment Pool system becomes the sole operational write system. A
+  short, controlled freeze window is used during final cutover
+  validation. Actual freeze duration and cutover date remain operational
+  inputs, not hardcoded by architecture. Uncontrolled dual-write is not
+  permitted. `cutover_instant`, legacy coverage, and `live_system_start`
+  must be explicitly governed and aligned per the PR23/PR22 temporal
+  model (§9).
 
 - **OD-PR23-2 — Current-state and outstanding-open-transaction
   migration method.**
@@ -879,6 +909,16 @@ architecture are listed. Numbering follows this repository's
   *Consequence if unresolved:* Gate E (§12) has no defined procedure;
   cutover could proceed with an application that silently
   under-represents currently-issued equipment.
+  *Status:* **RESOLVED / OWNER APPROVED.**
+  *Approved choice:* Manual/physical verification of current equipment
+  state is performed for cutover (Gate E). Imported legacy history is
+  not treated as current operational truth, and `LegacyEquipmentEvent`
+  is not automatically replayed into live `BorrowTransaction`. Equipment
+  confirmed as still issued to a ward is represented in the new
+  operational system only through the approved manual/current-state
+  cutover procedure, preserving provenance and avoiding duplicate OPEN
+  transactions. Current-state verification remains a mandatory cutover
+  gate.
 
 - **OD-PR23-3 — Go/No-Go and rollback authorization.**
   *Question:* Who is the accountable approver for the final Go decision
@@ -896,6 +936,14 @@ architecture are listed. Numbering follows this repository's
   *Consequence if unresolved:* Gate G (§13) has no defined approver;
   any `administrator` account holder could record Go, which may not
   match real hospital accountability requirements.
+  *Status:* **RESOLVED / OWNER APPROVED.**
+  *Approved choice:* No fourth application role is introduced;
+  application authorization continues to use the existing
+  `administrator` role. Final Go/No-Go accountability is an operational
+  governance responsibility, and the authorized accountable
+  person/committee may be recorded separately from application role
+  semantics. Backend authorization remains authoritative for any future
+  cutover mutation endpoint.
 
 - **OD-PR23-4 — Rollback boundary confirmation.**
   *Question:* Can AppSheet genuinely resume accepting writes on short
@@ -909,6 +957,14 @@ architecture are listed. Numbering follows this repository's
   *Recommendation:* the before/after-first-transaction boundary.
   *Consequence if unresolved:* §18 remains a recommendation only; a real
   incident during cutover would have no agreed recovery procedure.
+  *Status:* **RESOLVED / OWNER APPROVED.**
+  *Approved choice:* The before/after-first-accepted-real-production-
+  transaction boundary (§18). Before that point, full cutover rollback
+  may be permitted per the approved runbook. After that point,
+  controlled forward-fix is the default strategy. Operational
+  transactions are never silently moved back and forth between systems;
+  any exceptional post-boundary rollback requires explicit
+  incident/recovery handling, not automatic behavior.
 
 - **OD-PR23-5 — Pilot scope.**
   *Question:* Which ward(s), and for how long, participate in a Pilot
@@ -920,6 +976,46 @@ architecture are listed. Numbering follows this repository's
   *Consequence if unresolved:* Pilot Readiness (existing gate) cannot be
   entered; Production Readiness's "Pilot sign-off obtained" bullet has
   nothing to reference.
+  *Status:* **RESOLVED / OWNER APPROVED WITH OWNER CLARIFICATION.**
+  *Approved choice (Pilot Ward selection):* The Pilot Ward is selected
+  from the existing Ward/department master data corresponding to the
+  legacy `แผนกที่ยืม` value — that legacy column is used only as a
+  reference to identify/resolve an already-existing Ward/department
+  record, never to create a new Ward record automatically or to make
+  raw legacy text a new uncontrolled master-data authority. This
+  preserves existing Ward identity/mapping rules and data integrity.
+  Pilot begins with **one controlled Pilot Ward**.
+  *Approved choice (duration):* Pilot duration is **not** a fixed number
+  of calendar days (e.g. not "5 working days"). Pilot ends based on
+  operational acceptance criteria, not calendar duration, and depends on
+  real equipment usage and return behavior. Pilot does not need to wait
+  for every issued device to be returned before Pilot can be considered
+  complete.
+  *Approved Pilot exit criteria (minimum evidence):* successful
+  login/authorized operation; equipment lookup by BCM; QR lookup by
+  existing Item Number; a successful Issue from Equipment Pool to the
+  Pilot Ward; correct first-receiving-Ward recorded; correct Transaction
+  History; at least one representative complete Issue → Receive cycle; a
+  usable Receive correctly producing `AVAILABLE_AT_POOL`; defective
+  Receive behavior validated only when a genuine defective case occurs
+  during Pilot — a defective event must never be manufactured purely to
+  complete Pilot criteria (an approved non-production test/UAT procedure
+  may instead verify the defective workflow, if repository authority
+  permits, without mutating genuine production equipment); no unresolved
+  Critical/Blocking defect; and the responsible operational Owner
+  confirming the workflow is fit to replace AppSheet for the scoped
+  Pilot.
+  *Approved Ward-transfer clarification (not a new feature):* the system
+  records only the **first** receiving Ward/department for a
+  transaction. If physical equipment later moves Equipment Pool → Ward A
+  → Ward B → Equipment Pool, the transaction continues to record Ward A
+  as the receiving Ward; Ward A → Ward B is **not** a tracked transfer
+  workflow in V1 — no transfer endpoint, table, state, lifecycle state,
+  or UI is introduced. The final Receive back to Equipment Pool closes
+  the transaction according to existing business rules. The first
+  receiving Ward remains immutable except through the already-governed,
+  audited correction mechanism. This clarification does not change the
+  established V1 business model (§5, §30).
 
 - **OD-PR23-6 — Persisted cutover evidence model.**
   *Question:* Should cutover readiness/Go-No-Go evidence be (1)
@@ -941,6 +1037,17 @@ architecture are listed. Numbering follows this repository's
   *Consequence if unresolved:* PR23B+ cannot be scoped precisely (§27);
   the evidence model in §15 would need to be re-derived per-cutover
   from scattered sources rather than one queryable artifact.
+  *Status:* **RESOLVED / OWNER APPROVED.**
+  *Approved choice:* **Option 2** — a backend-persisted, immutable
+  Cutover Readiness evidence model: a persisted readiness snapshot/run,
+  an immutable Go/No-Go/sign-off record, freshness/concurrency
+  protection, and permanent audit/provenance references. The future
+  implementation should reuse architectural patterns proven by PR22
+  where appropriate, without tightly coupling PR23 to PR22 internals.
+  Expected future implementation may require additive schema, an
+  Alembic migration, a backend service, a REST API, an audit trail, and
+  concurrency/freshness checks — **none of which is implemented by this
+  Owner Decision Closure PR**; that work remains genuine PR23B+ scope.
 
 ---
 
@@ -948,15 +1055,19 @@ architecture are listed. Numbering follows this repository's
 
 **Implementation authorization gate (fail-closed):** No PR23B or later
 implementation slice may begin until all PR23A Owner Decisions that
-materially affect implementation are resolved. Under the current PR23A
-governance contract, OD-PR23-1 through OD-PR23-6 are all unresolved
-implementation-shaping decisions (§26); therefore **PR23B+ is blocked
-until all six are Owner-approved/resolved.** If a future governance
-change explicitly narrows dependencies per slice, a given slice may
-begin only after every Owner Decision that materially affects that
-specific slice is resolved — the per-slice mapping below is explanatory
-rationale for *why* each slice needs which decisions, not a claim that
-any subset of decisions alone authorizes implementation to start today.
+materially affect implementation are resolved. **OD-PR23-1 through
+OD-PR23-6 are Owner-approved in the proposed PR23 Owner Decision Closure
+(§26); PR23B remains blocked until that closure PR itself merges.**
+Once the closure PR merges, its real squash SHA becomes the new
+authoritative baseline and PR23B becomes eligible to start from it,
+governed by this §27 together with the approved choices recorded in
+§26. Until then, this document's own status remains as stated in the
+header above. If a future governance change explicitly narrows
+dependencies per slice, a given slice may begin only after every Owner
+Decision that materially affects that specific slice is resolved — the
+per-slice mapping below is explanatory rationale for *why* each slice
+needs which decisions, not a claim that any subset of decisions alone
+authorizes implementation to start today.
 
 Proposed minimal sequence, **none of which is implemented by PR23A**:
 

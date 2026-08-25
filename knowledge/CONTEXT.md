@@ -10,28 +10,26 @@ ordering
 
 ## Current baseline
 
-Current baseline: `527ffc48966d7e5cda16a869f0ae464de8b7512a` on
+Current baseline: `7ca9c87b4c525a1835403dac5d08e6e1be79d33b` on
 `claude/medical-equipment-pool-0c7fz0` — the real squash-merge SHA of
-GitHub PR #121, "PR22G — Roadmap PR22 Governance Close-out",
-squash-merged on top of
-`76040d5e87223767c9dbe36eb67c6a156af12c0c` (GitHub PR #120, PR22F,
-now historical/superseded by this baseline). PR #121's final
+GitHub PR #122, "PR23A — Cutover Readiness Architecture & Operational
+Design", squash-merged on top of
+`527ffc48966d7e5cda16a869f0ae464de8b7512a` (GitHub PR #121, PR22G,
+now historical/superseded by this baseline). PR #122's final
 independently reviewed feature-branch head
-(`fafb40e7ef388a35b3b1848d04d26ba2f37c7281`, after three fix rounds
-correcting stale "PR22F in progress"/"PR22 is next" current-state prose
-across `knowledge/PROJECT_MEMORY.md`, `docs/ROADMAP_STATUS.md`,
-`docs/audits/04-consolidated-implementation-plan.md`,
-`knowledge/CHANGE_HISTORY.md`, and
-`docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`; independent
-Final Merge Gate: zero review threads, zero comments, CI green 6/6 on
-that exact head) — **that reviewed head is not the baseline**; the
-squash commit actually landed on the base branch, `527ffc4...`, is,
-independently verified tree-identical to that reviewed head with sole
-parent `76040d5e...` confirmed. Per this repository's standing process,
-**no separate "baseline adoption" PR is created** — the squash SHA
-became authoritative immediately upon merge, recorded here by PR23A
-(the next PR that legitimately touches these governance files),
-consistent with this repository's squash-baseline discipline.
+(`01af390a44abb837d25011b330ae9d26a4d665cf`, after one fix round
+correcting an under-scoped PR23B+ implementation-authorization gate in
+`docs/design/PR23_CUTOVER_READINESS_PLAN.md` §27; independent Final
+Merge Gate: zero reviews, zero comments, CI green 6/6 on that exact
+head) — **that reviewed head is not the baseline**; the squash commit
+actually landed on the base branch, `7ca9c87...`, is, independently
+verified tree-identical to that reviewed head with sole parent
+`527ffc4...` confirmed. Per this repository's standing process, **no
+separate "baseline adoption" PR is created** — the squash SHA became
+authoritative immediately upon merge, recorded here by this PR23 Owner
+Decision Closure round (the next PR that legitimately touches these
+governance files), consistent with this repository's squash-baseline
+discipline.
 
 **Roadmap PR22 (Legacy Data Validation and Reconciliation) is now fully
 complete** — architecture design (GitHub PR #112), all seven Owner
@@ -44,14 +42,23 @@ merged. See `docs/ROADMAP.md`'s "Current baseline" section for the
 full slice-by-slice chronology.
 
 **Roadmap PR23 (Cutover Readiness)'s first slice, PR23A (Architecture &
-Operational Design), is in progress, not yet merged** —
+Operational Design), is merged** (GitHub PR #122, squash SHA
+`7ca9c87b4c525a1835403dac5d08e6e1be79d33b`) —
 `docs/design/PR23_CUTOVER_READINESS_PLAN.md`, design/governance only,
-zero `backend/**`/`frontend/**`/`alembic/**`/`tests/**` change. PR23A
-proposes a minimal PR23B–F implementation sequence and identifies six
-Owner Decisions (source-of-truth transition, current-state/open-
-transaction handling, Go/No-Go and rollback authorization, rollback
-boundary, pilot scope, persisted evidence model) that must be resolved
-before any PR23B+ slice begins implementation.
+zero `backend/**`/`frontend/**`/`alembic/**`/`tests/**` change. **This
+PR is the PR23 Owner Decision Closure round: the Repository Owner
+approved all six Owner Decisions PR23A identified (OD-PR23-1 through
+OD-PR23-6 — source-of-truth transition, current-state/open-transaction
+handling, Go/No-Go and rollback authorization, rollback boundary, pilot
+scope, persisted evidence model) per Recommendation**, with an explicit
+Owner clarification for OD-PR23-5's Pilot Ward selection (resolved from
+existing Ward/department master data via the legacy `แผนกที่ยืม`
+reference, never a new auto-created Ward), non-fixed criteria-based
+Pilot duration/exit criteria, and the explicit no-Ward-to-Ward-tracking
+clarification (see `docs/design/PR23_CUTOVER_READINESS_PLAN.md` §26).
+This closure round is itself governance/documentation only — **PR23B+
+remains not started, blocked until this closure round's own PR merges**
+(§27).
 
 `d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` (GitHub PR #110, Roadmap
 PR21E — Legacy History Frontend Real Integration) is now historical,
@@ -60,7 +67,8 @@ superseded first by `e07a36a...` (GitHub PR #111, PR21F), then
 then `f03af893...` (GitHub PR #115), then `c5e750c...` (GitHub PR #116),
 then `b45cf750...` (GitHub PR #117), then `966d7a71...` (GitHub PR #118),
 then `896d92f8...` (GitHub PR #119), then `76040d5e...` (GitHub PR
-#120), then `527ffc4...` (GitHub PR #121), and now by this baseline. With
+#120), then `527ffc4...` (GitHub PR #121), then `7ca9c87...` (GitHub PR
+#122), and now by this baseline. With
 PR21E merged, **Roadmap PR21 (Legacy Receive and Issue History Import)
 is now fully complete** — every implementation slice (Foundation, A, B,
 C, D1, D2, E0, E) is merged. See `docs/DECISION_LOG.md` ("Roadmap PR21
@@ -163,13 +171,16 @@ submitted to the backend and every response/error code decides the
 outcome. **PR22G** (governance close-out) — **is merged** (GitHub PR
 #121, squash SHA `527ffc48966d7e5cda16a869f0ae464de8b7512a`, see
 "Current baseline" above). **Roadmap PR22 (Legacy Data Validation and
-Reconciliation) is now fully complete.** **Current work is Roadmap
-PR23 (Cutover Readiness)'s first slice, PR23A** (Architecture &
-Operational Design) — **in progress, not yet merged** —
-`docs/design/PR23_CUTOVER_READINESS_PLAN.md`, design/governance only,
-zero `backend/**`/`frontend/**`/`alembic/**`/`tests/**` change. No
-PR23B+ implementation slice may begin ahead of PR23A's own design
-resolving the six Owner Decisions it identifies.
+Reconciliation) is now fully complete.** **Roadmap PR23 (Cutover
+Readiness)'s first slice, PR23A** (Architecture & Operational Design)
+— **is merged** (GitHub PR #122, squash SHA
+`7ca9c87b4c525a1835403dac5d08e6e1be79d33b`, see "Current baseline"
+above). **Current work is this PR23 Owner Decision Closure round**:
+the Repository Owner has approved all six Owner Decisions PR23A
+identified (OD-PR23-1 through OD-PR23-6) — governance/documentation
+only, no PR23B+ implementation slice begins in this round. PR23B+
+becomes eligible to start only once this closure round's own PR
+merges.
 
 ## Next sequence
 
@@ -185,9 +196,10 @@ depended on PR20 and PR21 (both satisfied) and covered: cross-import
 validation, reconciliation, source traceability verification,
 duplicate review, and unified legacy/new history validation, including
 Issue↔Receive pairing (resolved as OD-PR22-1). **Roadmap PR23 (Cutover
-Readiness)'s first slice, PR23A (Architecture & Operational Design), is
-now in progress, not yet merged** — see "Current baseline" and
-"Current work" above.
+Readiness)'s first slice, PR23A (Architecture & Operational Design),
+has merged (GitHub PR #122); all six PR23 Owner Decisions are
+Owner-approved via this PR23 Owner Decision Closure round** — see
+"Current baseline" and "Current work" above.
 
 1. PR19A — Legacy Import Foundation (backend) — **complete.**
 2. PR19B — Legacy Import Frontend Skeleton — **complete, merged as GitHub
@@ -208,8 +220,12 @@ now in progress, not yet merged** — see "Current baseline" and
    close-out PR22G (GitHub PR #121, squash SHA
    `527ffc48966d7e5cda16a869f0ae464de8b7512a`) are all merged.
 6. PR23 — Cutover readiness. **PR23A (Architecture & Operational Design)
-   is in progress, not yet merged** —
+   is COMPLETE / MERGED** (GitHub PR #122, squash SHA
+   `7ca9c87b4c525a1835403dac5d08e6e1be79d33b`) —
    `docs/design/PR23_CUTOVER_READINESS_PLAN.md`, design/governance only.
+   **All six PR23 Owner Decisions (OD-PR23-1 through OD-PR23-6) are
+   Owner-approved via this PR23 Owner Decision Closure round.** PR23B+
+   not yet started.
 7. PR24 — Go-live / deployment.
 
 Legacy migration and reconciliation are mandatory before PR24.
@@ -266,11 +282,13 @@ Legacy migration and reconciliation are mandatory before PR24.
   (governance close-out) has since merged (GitHub PR #121, squash SHA
   `527ffc48966d7e5cda16a869f0ae464de8b7512a`). **Roadmap PR22 is now
   fully complete.** PR23's first slice, PR23A (Architecture &
-  Operational Design), is in progress, not yet merged, and must define
-  cutover evidence — see "Current baseline" and "Current work" above.
-  PR19B's category labels were a UI preview only and did not resolve any
-  of this — PR20's and PR21's own implementations are what actually
-  resolved it.
+  Operational Design), has merged (GitHub PR #122, squash SHA
+  `7ca9c87b4c525a1835403dac5d08e6e1be79d33b`) and defines cutover
+  evidence; all six PR23 Owner Decisions (OD-PR23-1 through OD-PR23-6)
+  are Owner-approved via this PR23 Owner Decision Closure round — see
+  "Current baseline" and "Current work" above. PR19B's category labels
+  were a UI preview only and did not resolve any of this — PR20's and
+  PR21's own implementations are what actually resolved it.
 - PR19's approved PR19A/PR19B split (`docs/DECISION_LOG.md`, 2026-08-03) was
   an explicit Owner-approved exception to this repository's usual
   design-document-first slice precedent, since at the time no PR19 design
@@ -295,8 +313,10 @@ Legacy migration and reconciliation are mandatory before PR24.
   Issue workflow has been removed entirely by PR21E, and Roadmap PR22
   (Legacy Data Validation and Reconciliation) has since also fully
   completed (PR22A–PR22G, GitHub PR #112/#115/#116/#117/#118/#119/#120/
-  #121); Roadmap PR23 (Cutover Readiness)'s first slice, PR23A, is now
-  in progress.** GitHub PR #81, an earlier unsplit PR19A
+  #121); Roadmap PR23 (Cutover Readiness)'s first slice, PR23A, has
+  since merged (GitHub PR #122), and all six PR23 Owner Decisions are
+  Owner-approved via this PR23 Owner Decision Closure round.** GitHub
+  PR #81, an earlier unsplit PR19A
   candidate, was closed without merging, superseded by
   PR19A1/PR19A2/PR19A3.
 - Broader PR15 metrics/tracing/dashboards/aggregation/alerting work is still
