@@ -5121,3 +5121,77 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   specification, including the Repository Owner's explicit approval
   statement and OD-PR23-5 clarification; the PR23 Owner Decision
   Closure GitHub PR description.
+
+## 2026-08-25 — GitHub PR #123 merged; new authoritative baseline adopted; PR23 Owner Decision Closure fully complete
+
+- **Decision/record:** GitHub PR #123 ("PR23 Owner Decision Closure")
+  merged via squash merge. Real squash-merge SHA
+  `22ec7a25d686b0cd37d2a366172cb31a49eebff8`, sole parent
+  `7ca9c87b4c525a1835403dac5d08e6e1be79d33b` (GitHub PR #122, PR23A, the
+  prior baseline). Final Merge Gate verification performed before
+  merge: exact reviewed head confirmed current
+  (`59b072c029c1550bed6cfe98f1e0b98e832cbb61`), CI green 6/6 on that
+  exact head, zero reviews and zero comments, Draft promoted to Ready
+  for review, re-checked immediately before merge. Post-merge, tree
+  identity between the reviewed feature-branch head and the squash
+  commit was independently verified (`git diff
+  59b072c0...22ec7a25d6... --stat` empty), and sole parentage was
+  independently verified (`git cat-file -p 22ec7a25d6...` shows exactly
+  one `parent` line, `7ca9c87b4c525a1835403dac5d08e6e1be79d33b`). Per
+  this repository's standing process, no separate "baseline adoption"
+  PR is created — `22ec7a25...` became authoritative immediately upon
+  merge, folded into PR23B (the next PR that legitimately touches these
+  governance files, recorded below).
+- **Consequence:** With GitHub PR #123 merged, all six Owner Decisions
+  OD-PR23-1 through OD-PR23-6 are RESOLVED / OWNER APPROVED, and the
+  fail-closed PR23B+ implementation-authorization gate at
+  `docs/design/PR23_CUTOVER_READINESS_PLAN.md` §27 is released. PR23B
+  (Cutover Readiness Evidence Foundation) is now eligible to begin from
+  this baseline.
+- **Status:** Merged, closed. This entry is historical from the moment
+  it is written; it does not describe work in progress.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14,
+  following the same Final Merge Gate precedent used for GitHub PR
+  #111/#112/#113/#115/#116/#117/#118/#119/#120/#121/#122.
+- **Source:** GitHub PR #123 description and its Final Merge Gate
+  verification evidence (exact head, CI status, tree-identity diff,
+  sole-parent `git cat-file` output).
+
+## 2026-08-25 — PR23B (Cutover Readiness Evidence Foundation) implementation started — in progress, not merged
+
+- **Decision/record:** PR23B implementation started from baseline
+  `22ec7a25d686b0cd37d2a366172cb31a49eebff8` (GitHub PR #123), on branch
+  `feature/pr23b-cutover-readiness-foundation`. PR23B implements the
+  backend-persisted immutable Cutover Readiness evidence foundation
+  approved by OD-PR23-6 (Option 2): a new `CutoverReadinessRun` model
+  (`backend/app/models/cutover_readiness.py`), an additive Alembic
+  migration (`0021_cutover_readiness`, empirically verified against a
+  freshly-migrated PostgreSQL 16 database with a fail-closed catalog-
+  convergence check, upgrade/downgrade round-trip confirmed), a CRUD
+  module enforcing evidence-reference integrity and forward-only
+  supersession, minimal Administrator-only API routes under
+  `/api/v1/cutover-readiness-runs`, new exception classes and audit
+  action constants, and two backend test suites (schema/constraint
+  tests and API tests). Evidence references persisted: Equipment Master
+  import source (PR20), legacy migration authority (PR21), governed
+  temporal coverage (OD-PR22-7), legacy reconciliation run and sign-off
+  (PR22), current-state verification metadata, and an optional Pilot
+  Ward reference (FK-only, no raw `แผนกที่ยืม` text storage, no
+  pilot-only Ward table, no Ward-to-Ward transfer tracking).
+- **Explicit non-scope, per the PR23B task's own binding
+  specification:** PR23B implements **no** readiness-gate evaluation
+  (Gates A–G), **no** BLOCKER/WARNING/INFO classification, **no**
+  Go/No-Go decision or sign-off logic, **no** frontend, and **no**
+  mutation of `Equipment`/`BorrowTransaction`/`LegacyEquipmentEvent`.
+  `CutoverReadinessRun.status = 'completed'` means only that an
+  immutable evidence snapshot was successfully captured — never "ready
+  for cutover," "Go approved," or "production ready." This distinction
+  is documented directly in the model's own module docstring, the CRUD
+  module's docstring, and the API endpoint's docstring.
+- **Status:** Draft, **not merged, PR23B implementation in progress**.
+  This entry documents work in progress; it does not describe PR23B's
+  own completion.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the PR23B (Cutover Readiness Evidence Foundation) task's
+  own binding specification, including the six approved Owner
+  Decisions it conforms to and its PR scope guard.

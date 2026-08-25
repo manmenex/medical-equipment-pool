@@ -569,3 +569,53 @@ class ReconciliationSignOffEvidenceInconsistentError(DomainError):
 
     code = "RECONCILIATION_SIGNOFF_EVIDENCE_INCONSISTENT"
     status_code = 409
+
+
+class CutoverReadinessRunNotFoundError(DomainError):
+    """Roadmap PR23B (docs/design/PR23_CUTOVER_READINESS_PLAN.md §15/§26)
+    -- no `CutoverReadinessRun` matches the requested id."""
+
+    code = "CUTOVER_READINESS_RUN_NOT_FOUND"
+    status_code = 404
+
+
+class CutoverReadinessRunNotMutableError(DomainError):
+    """Roadmap PR23B -- `complete_readiness_run` was called for a run
+    whose `status` is not `pending`/`running` (already `completed` or
+    `failed`). A completed run's evidence snapshot is permanently
+    immutable (§6/§27 of the task) -- the caller must create a new run
+    (`supersedes_run_id`) instead of attempting to complete this one
+    again."""
+
+    code = "CUTOVER_READINESS_RUN_NOT_MUTABLE"
+    status_code = 409
+
+
+class CutoverReadinessRunVersionConflictError(DomainError):
+    """Roadmap PR23B -- the CAS claim
+    (`WHERE id=:id AND version=:expected_version`) on
+    `complete_readiness_run` matched zero rows: either a concurrent
+    caller already completed (or otherwise mutated) this run, or the
+    caller's `expected_version` is stale. The caller must re-fetch the
+    run and retry with its current version."""
+
+    code = "CUTOVER_READINESS_RUN_VERSION_CONFLICT"
+    status_code = 409
+
+
+class CutoverReadinessEvidenceInvalidError(DomainError):
+    """Roadmap PR23B (§26/§30 of the task) -- one of the evidence
+    references supplied to `complete_readiness_run` fails validation:
+    the referenced `ImportSource`/`LegacyMigrationAuthority`/
+    `LegacyMigrationAuthorityCoverage`/`LegacyReconciliationRun`/
+    `LegacyReconciliationSignOff`/`User`/`Ward` row does not exist, the
+    supplied sign-off does not belong to the supplied reconciliation
+    run, or `cutover_instant` is earlier than the bound coverage
+    artifact's own `live_system_start` (design §9: "cutover_instant
+    must never be earlier than the signed-off run's live_system_
+    start"). Reference integrity is never trusted from client input
+    alone -- every reference is validated fresh, inside the same
+    transaction as the completion `UPDATE`, before any row is written."""
+
+    code = "CUTOVER_READINESS_EVIDENCE_INVALID"
+    status_code = 422
