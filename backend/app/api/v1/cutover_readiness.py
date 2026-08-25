@@ -1,23 +1,32 @@
-"""Roadmap PR23B -- Cutover Readiness Evidence Foundation.
+"""Roadmap PR23B -- Cutover Readiness Evidence Foundation. Extended by
+Roadmap PR23C -- Readiness Gate Evaluation.
 
-Read surfaces (list/detail) are available to every authenticated role
-(`VIEW_AND_REPORT_ROLES`) -- reviewing is not itself a mutation. Both
-mutation endpoints (`POST /cutover-readiness-runs`, `POST .../complete`)
-are Administrator-only, mirroring PR22D/E's identical role gate for
-every reconciliation mutation.
+Read surfaces (list/detail/gate-evaluation) are available to every
+authenticated role (`VIEW_AND_REPORT_ROLES`) -- reviewing is not itself
+a mutation, per design §14 ("Viewing cutover readiness"). Both mutation
+endpoints (`POST /cutover-readiness-runs`, `POST .../complete`) are
+Administrator-only, mirroring PR22D/E's identical role gate for every
+reconciliation mutation.
 
 One route family (`/cutover-readiness-runs`), matching this
 repository's existing per-resource prefix convention.
 
+**PR23C's own `GET .../{run_id}/gate-evaluation` is read-only, exactly
+like PR22's `GET .../sign-off` sibling-endpoint precedent** --
+`app.services.cutover_readiness_gates.evaluate_gates` issues only
+`SELECT` statements, so this endpoint never opens a mutating
+transaction and never calls `record_audit_event` (mirroring every
+other pure-read endpoint in this module).
+
 Deliberately absent from this module (later PR23 slices' own scope):
-any readiness-gate evaluation (Gates A-G), any BLOCKER/WARNING/INFO
-classification, any Go/No-Go decision/sign-off endpoint, and any
-frontend.
+any Go/No-Go decision/sign-off endpoint (Gate G, PR23D), and any
+frontend (PR23E).
 """
 
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,13 +38,26 @@ from app.core.audit import (
     AUDIT_ENTITY_CUTOVER_READINESS_RUN,
     record_audit_event,
 )
-from app.core.exceptions import CutoverReadinessRunNotFoundError, InvalidInputError
+from app.core.exceptions import (
+    CutoverReadinessGateEvaluationRequiresCompletedRunError,
+    CutoverReadinessRunNotFoundError,
+    InvalidInputError,
+)
 from app.crud import cutover_readiness as cutover_readiness_crud
 from app.crud.cutover_readiness import CompletionEvidence
 from app.db.session import get_db
 from app.models.cutover_readiness import CutoverReadinessRun
 from app.schemas.common import Page
-from app.schemas.cutover_readiness import RunCompleteRequest, RunCreateRequest, RunDetail, RunListItem
+from app.schemas.cutover_readiness import (
+    GateEvaluationItem,
+    GateEvaluationResponse,
+    GateSummary,
+    RunCompleteRequest,
+    RunCreateRequest,
+    RunDetail,
+    RunListItem,
+)
+from app.services.cutover_readiness_gates import GATE_CODES, evaluate_gates
 from app.utils.pagination import decode_cursor, encode_cursor
 
 router = APIRouter(prefix="/cutover-readiness-runs", tags=["cutover-readiness"])
@@ -231,3 +253,45 @@ async def complete_cutover_readiness_run(
     # anything above raised -- neither lands at all.
     await db.commit()
     return RunDetail(**_run_detail_fields(updated))
+
+
+def _gate_status(items: list) -> str:
+    if any(item.category == "blocker" for item in items):
+        return "blocker"
+    if any(item.category == "warning" for item in items):
+        return "warning"
+    return "satisfied"
+
+
+@router.get("/{run_id}/gate-evaluation", response_model=GateEvaluationResponse)
+async def get_cutover_readiness_gate_evaluation(
+    run_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _actor=Depends(require_roles(*VIEW_AND_REPORT_ROLES)),
+):
+    """Roadmap PR23C (design §12/§13/§27). Evaluates Gates A-F against
+    this run's persisted evidence snapshot plus a small number of live
+    freshness re-checks (see `app.services.cutover_readiness_gates`'s
+    own module docstring). Read-only -- no mutation, no audit write, no
+    Go/No-Go decision (Gate G is PR23D's own scope). Requires
+    `run.status == "completed"`: a `pending`/`running`/`failed` run has
+    no evidence snapshot to evaluate."""
+    run = await _get_run_or_404(db, run_id)
+    if run.status != "completed":
+        raise CutoverReadinessGateEvaluationRequiresCompletedRunError(
+            f"Cutover readiness run '{run_id}' has status '{run.status}', not 'completed' -- gate evaluation "
+            "requires a fully captured evidence snapshot."
+        )
+
+    items = await evaluate_gates(db, run=run)
+    gates = [
+        GateSummary(gate=code, mandatory=True, status=_gate_status([item for item in items if item.gate == code]))
+        for code in GATE_CODES
+    ]
+    return GateEvaluationResponse(
+        cutover_readiness_run_id=str(run.id),
+        evaluated_at=datetime.now(timezone.utc),
+        has_blocker=any(gate.status == "blocker" for gate in gates),
+        gates=gates,
+        items=[GateEvaluationItem(**item.__dict__) for item in items],
+    )

@@ -5195,3 +5195,105 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
 - **Source:** the PR23B (Cutover Readiness Evidence Foundation) task's
   own binding specification, including the six approved Owner
   Decisions it conforms to and its PR scope guard.
+
+## 2026-08-25 — PR23B Fix Round 1: server-derive migration head, bind evidence provenance chain
+
+- **Decision/record:** Independent review of PR23B (GitHub PR #124) at
+  head `6ccfd961f87e70e46e09da6b2d60bf8dbdb81d31` found two P1
+  evidence-integrity findings, both fixed at head
+  `4171de2650917e89d46e8a432bd2043f8c57c129`: (1) `database_migration_
+  head` was accepted from `RunCreateRequest`'s own request body and
+  persisted directly, letting a caller record an arbitrary string as
+  trusted schema-state evidence -- fixed by removing the field from
+  both request DTOs entirely (`model_config = {"extra": "forbid"}`)
+  and always reading it server-side from `alembic_version` via a new
+  `get_current_database_migration_head` helper, failing closed
+  (`CUTOVER_READINESS_DATABASE_MIGRATION_HEAD_UNAVAILABLE`, 503) if
+  the database's own current revision cannot be established as
+  exactly one row; (2) completion validated that every evidence
+  reference existed but never that the whole provenance chain
+  (`MigrationAuthority -> Coverage -> ReconciliationRun -> SignOff`)
+  was internally consistent, permitting an immutable snapshot to mix
+  evidence from two unrelated chains while every individual id still
+  resolved to a real row -- fixed by adding `coverage.migration_
+  authority_id == legacy_migration_authority_id` and `reconciliation_
+  run.coverage_id == legacy_coverage_id` checks alongside the
+  pre-existing sign-off/run pairing check, all inside the same
+  completion transaction. No migration was added. 5 new/rewritten
+  tests added (client-supplied-migration-head rejection, migration-
+  head-unavailable fail-closed with zero/multiple `alembic_version`
+  rows, both provenance-chain mismatch cases with no-partial-
+  completion verification).
+- **Status:** Merged as part of GitHub PR #124 (see the entry below).
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the PR23B Fix Round 1 task's own binding specification
+  (independent review findings) and its required 38-item final report.
+
+## 2026-08-25 — GitHub PR #124 merged; new authoritative baseline adopted; PR23B fully complete
+
+- **Decision/record:** GitHub PR #124 ("PR23B — Cutover Readiness
+  Evidence Foundation") merged via squash merge. Real squash-merge SHA
+  `833f6758a93a78398207d64fbefa65ff2802cf46`, sole parent
+  `22ec7a25d686b0cd37d2a366172cb31a49eebff8` (GitHub PR #123, PR23
+  Owner Decision Closure, the prior baseline). Final Merge Gate
+  verification performed before merge: exact reviewed head confirmed
+  current (`4171de2650917e89d46e8a432bd2043f8c57c129`, after Fix Round
+  1's two P1 fixes above), CI green 6/6 on that exact head, zero
+  reviews and zero comments, Draft promoted to Ready for review,
+  re-checked immediately before merge. Post-merge, tree identity
+  between the reviewed feature-branch head and the squash commit was
+  independently verified (`git diff 4171de2...833f6758a9... --stat`
+  empty), and sole parentage was independently verified (`git cat-file
+  -p 833f6758a9...` shows exactly one `parent` line,
+  `22ec7a25d686b0cd37d2a366172cb31a49eebff8`). Per this repository's
+  standing process, no separate "baseline adoption" PR is created --
+  `833f6758...` became authoritative immediately upon merge, folded
+  into PR23C (the next PR that legitimately touches these governance
+  files, recorded below).
+- **Consequence:** With GitHub PR #124 merged, **PR23B (Cutover
+  Readiness Evidence Foundation) is fully complete** -- the persisted,
+  immutable `CutoverReadinessRun` evidence model OD-PR23-6 approved now
+  exists, hardened against client-spoofed migration-head evidence and
+  cross-wired evidence provenance chains. PR23C (Readiness Gate
+  Evaluation) is now eligible to begin from this baseline.
+- **Status:** Merged, closed. This entry is historical from the moment
+  it is written; it does not describe work in progress.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14,
+  following the same Final Merge Gate precedent used for GitHub PR
+  #111/#112/#113/#115/#116/#117/#118/#119/#120/#121/#122/#123.
+- **Source:** GitHub PR #124 description and its Final Merge Gate
+  verification evidence (exact head, CI status, tree-identity diff,
+  sole-parent `git cat-file` output).
+
+## 2026-08-25 — PR23C (Readiness Gate Evaluation) implementation started — in progress, not merged
+
+- **Decision/record:** PR23C implementation started from baseline
+  `833f6758a93a78398207d64fbefa65ff2802cf46` (GitHub PR #124), on
+  branch `feature/pr23c-readiness-evaluation`. PR23C implements the
+  read-only readiness-gate evaluation service the design document
+  (§12/§13/§27) describes: `app.services.cutover_readiness_gates.
+  evaluate_gates` evaluates Gates A-F against one already-`completed`
+  `CutoverReadinessRun`'s persisted evidence (PR23B), returning
+  BLOCKER/WARNING/INFO items, surfaced via a new read-only
+  `GET /api/v1/cutover-readiness-runs/{run_id}/gate-evaluation`
+  endpoint (`VIEW_AND_REPORT_ROLES`, mirroring PR22's own
+  `.../sign-off` sibling-endpoint precedent). Gate A's own migration-
+  head freshness sub-check and Gate D's own reconciliation-supersession/
+  version-freshness sub-checks reuse PR23B's own evidence exactly
+  (`get_current_database_migration_head`, `supersedes_run_id`,
+  `run_version_at_signoff`) rather than re-deriving anything PR20/21/22
+  already own. Sub-items with no corresponding persisted evidence
+  anywhere in this schema (required PRs merged, CI status, production
+  configuration, backup/restore procedure, staff training, manual
+  QR-workflow verification, the issue/receive smoke test) are
+  represented as explicit `manual_attestation_required` WARNING items,
+  never a fabricated automated pass. No migration, no persisted gate/
+  decision model (per design §13's own instruction), no Go/No-Go
+  decision (Gate G remains PR23D's own scope), and no frontend.
+- **Status:** Draft, **not merged, PR23C implementation in progress**.
+  This entry documents work in progress; it does not describe PR23C's
+  own completion.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the PR23C (Readiness Gate Evaluation) task's own binding
+  specification, including the exact repository-defined PR23C scope
+  (`docs/design/PR23_CUTOVER_READINESS_PLAN.md` §27) it conforms to.

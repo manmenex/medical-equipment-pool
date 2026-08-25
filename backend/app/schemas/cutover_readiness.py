@@ -99,3 +99,55 @@ class RunCompleteRequest(BaseModel):
     operational_approver_reference: str | None = Field(default=None, max_length=255)
 
     model_config = {"extra": "forbid"}
+
+
+# Roadmap PR23C -- Readiness Gate Evaluation. §12 Gate G (Cutover
+# authorization) is deliberately absent -- PR23D's own scope.
+GateCode = Literal["A", "B", "C", "D", "E", "F"]
+# §13 of the design -- the closed three-value category domain. Not a
+# persisted enum (computed fresh on every call, never stored).
+GateItemCategory = Literal["blocker", "warning", "info"]
+GateStatus = Literal["blocker", "warning", "satisfied"]
+
+
+class GateEvaluationItem(BaseModel):
+    """One evaluation finding for one gate. `manual_attestation_required`
+    is `True` only for sub-items this backend cannot verify from
+    persisted evidence at all -- never set for a genuine computed
+    pass/fail (see `app.services.cutover_readiness_gates`'s own module
+    docstring, "Honesty over automation theater")."""
+
+    gate: GateCode
+    category: GateItemCategory
+    code: str
+    message: str
+    manual_attestation_required: bool
+    detail: dict
+
+    model_config = {"from_attributes": True}
+
+
+class GateSummary(BaseModel):
+    """Per-gate roll-up: `blocker` if any BLOCKER item exists for this
+    gate, else `warning` if any WARNING item exists, else `satisfied`.
+    `mandatory` mirrors design §12/§13's own statement that Gates A-F
+    are all mandatory (Gate D always; A/B/C/E by direct consequence of
+    Gate D's dependency chain; F recommended mandatory)."""
+
+    gate: GateCode
+    mandatory: bool
+    status: GateStatus
+
+
+class GateEvaluationResponse(BaseModel):
+    """`GET .../gate-evaluation` response. `has_blocker` is a
+    convenience roll-up of `gates` -- `True` iff any gate's own
+    `status == "blocker"`. This response is never persisted (§13) --
+    computed fresh on every call against the run's evidence and the
+    live database state at the moment of the call."""
+
+    cutover_readiness_run_id: UUIDStr
+    evaluated_at: datetime
+    has_blocker: bool
+    gates: list[GateSummary]
+    items: list[GateEvaluationItem]

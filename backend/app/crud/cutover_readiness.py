@@ -61,7 +61,7 @@ def _use_for_update(db: AsyncSession):
     return db.get_bind().dialect.name == "postgresql"
 
 
-async def _get_current_database_migration_head(db: AsyncSession) -> str:
+async def get_current_database_migration_head(db: AsyncSession) -> str:
     """PR23B Fix Round 1. Reads the database's own current Alembic
     revision from `alembic_version` -- this repository's migration
     policy assumes exactly one Alembic head (see `backend/alembic/
@@ -105,7 +105,7 @@ async def create_readiness_run(
     **PR23B Fix Round 1: `database_migration_head` is not, and has never
     been, an accepted parameter of this function.** It is always
     read server-side from `alembic_version` by
-    `_get_current_database_migration_head` -- a caller/API layer cannot
+    `get_current_database_migration_head` -- a caller/API layer cannot
     supply, override, or influence this value; see that helper's own
     docstring for the fail-closed contract if the database's current
     revision cannot be established.
@@ -125,7 +125,7 @@ async def create_readiness_run(
                 f"supersedes_run_id '{supersedes_run_id}' does not reference an existing cutover readiness run."
             )
 
-    database_migration_head = await _get_current_database_migration_head(db)
+    database_migration_head = await get_current_database_migration_head(db)
 
     run = CutoverReadinessRun(
         created_by_user_id=actor_id,
