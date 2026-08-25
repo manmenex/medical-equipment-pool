@@ -1071,16 +1071,55 @@ authorizes implementation to start today.
 
 Proposed minimal sequence, **none of which is implemented by PR23A**:
 
-- **PR23B — Cutover Readiness Evidence Foundation.** Backend-only, if
-  OD-PR23-6 confirms Option 2: a persisted, immutable
-  `CutoverReadinessRun`/similar model referencing the exact evidence
-  identities in §15 (Alembic migration, additive only). No gate
-  evaluation logic yet — schema only, mirroring PR22B's own
-  "schema/persistence only" precedent.
-  *Depends on:* OD-PR23-1 (source-of-truth/freeze model shapes what
+- **PR23B — Cutover Readiness Evidence Foundation.** **Implemented.**
+  Backend-only: a persisted, immutable `CutoverReadinessRun` model
+  (`backend/app/models/cutover_readiness.py`) referencing the exact
+  evidence identities in §15 by id — PR20's `ImportSource`, PR21's
+  `LegacyMigrationAuthority`, PR22's
+  `LegacyMigrationAuthorityCoverage`/`LegacyReconciliationRun`/
+  `LegacyReconciliationSignOff`, and (optionally, per OD-PR23-5)
+  `Ward` — never duplicating their contents. One additive Alembic
+  migration (`0021_cutover_readiness.py`), empirically
+  convergence-verified against real PostgreSQL, mirroring PR22B's own
+  discipline. A minimal `pending`/`completed` (`running`/`failed`
+  reserved for a later slice) lifecycle with a `version` CAS column, a
+  DB-level CHECK requiring every mandatory evidence reference before
+  `status = 'completed'` (no partial snapshot ever persisted), and
+  forward-only supersession via `supersedes_run_id` mirroring
+  `LegacyReconciliationRun`'s OD-PR22-3 discipline. A minimal CRUD
+  module (`create_readiness_run`/`complete_readiness_run`/
+  `get_readiness_run`/`list_readiness_runs`,
+  `backend/app/crud/cutover_readiness.py`) validates every evidence
+  reference's existence, the sign-off/reconciliation-run pairing, and
+  `cutover_instant >= coverage.live_system_start` (§9) inside the same
+  transaction as the completion CAS `UPDATE`. A minimal Administrator-
+  only-mutation API (`POST/GET /cutover-readiness-runs`,
+  `POST .../complete`; read endpoints open to every role, mirroring
+  PR22D/E's precedent) exercises the foundation end-to-end. **No
+  readiness-gate evaluation (Gates A–G), no BLOCKER/WARNING/INFO
+  classification, no Go/No-Go decision/sign-off logic, no frontend, and
+  no mutation of `Equipment`/`BorrowTransaction`/`LegacyEquipmentEvent`
+  exists in this slice** — completion means only that the immutable
+  evidence snapshot was captured, never a readiness or Go/No-Go
+  judgment (see the model's own module docstring).
+  *Depended on:* OD-PR23-1 (source-of-truth/freeze model shapes what
   evidence is captured), OD-PR23-2 (current-state/open-transaction
   method shapes the evidence identities in §15), OD-PR23-6 (persistence
-  model — Option 2 is this slice's own precondition).
+  model — Option 2, now implemented as described above).
+  **PR23B Fix Round 1** (independent review, two P1 findings): (1)
+  `database_migration_head` is no longer a `RunCreateRequest` field --
+  it is always read server-side from `alembic_version` by
+  `_get_current_database_migration_head`, which fails closed
+  (`CUTOVER_READINESS_DATABASE_MIGRATION_HEAD_UNAVAILABLE`, 503) if the
+  database's own current revision cannot be established as exactly one
+  row; (2) completion now validates the whole evidence provenance chain
+  — `legacy_coverage_id`'s own `migration_authority_id` must match the
+  supplied `legacy_migration_authority_id`, and `reconciliation_run_id`'s
+  own `coverage_id` must match the supplied `legacy_coverage_id` — not
+  merely that each id independently resolves to an existing row, so an
+  immutable snapshot can never mix evidence drawn from two unrelated
+  provenance chains. No migration was added (the persisted column shape
+  was already correct; only the source/validation of its value changed).
 - **PR23C — Readiness Gate Evaluation.** Backend service that evaluates
   Gates A–F (§12) against live evidence (import status, reconciliation
   sign-off, migration head, etc.) and returns BLOCKER/WARNING/INFO

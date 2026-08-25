@@ -9,6 +9,7 @@ class Base(DeclarativeBase):
 # Alembic autogenerate and for `create_all` in tests.
 from app.models import (  # noqa: E402,F401
     audit,
+    cutover_readiness,
     equipment,
     import_session,
     legacy_history,

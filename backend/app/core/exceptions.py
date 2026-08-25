@@ -569,3 +569,81 @@ class ReconciliationSignOffEvidenceInconsistentError(DomainError):
 
     code = "RECONCILIATION_SIGNOFF_EVIDENCE_INCONSISTENT"
     status_code = 409
+
+
+class CutoverReadinessRunNotFoundError(DomainError):
+    """Roadmap PR23B (docs/design/PR23_CUTOVER_READINESS_PLAN.md §15/§26)
+    -- no `CutoverReadinessRun` matches the requested id."""
+
+    code = "CUTOVER_READINESS_RUN_NOT_FOUND"
+    status_code = 404
+
+
+class CutoverReadinessRunNotMutableError(DomainError):
+    """Roadmap PR23B -- `complete_readiness_run` was called for a run
+    whose `status` is not `pending`/`running` (already `completed` or
+    `failed`). A completed run's evidence snapshot is permanently
+    immutable (§6/§27 of the task) -- the caller must create a new run
+    (`supersedes_run_id`) instead of attempting to complete this one
+    again."""
+
+    code = "CUTOVER_READINESS_RUN_NOT_MUTABLE"
+    status_code = 409
+
+
+class CutoverReadinessRunVersionConflictError(DomainError):
+    """Roadmap PR23B -- the CAS claim
+    (`WHERE id=:id AND version=:expected_version`) on
+    `complete_readiness_run` matched zero rows: either a concurrent
+    caller already completed (or otherwise mutated) this run, or the
+    caller's `expected_version` is stale. The caller must re-fetch the
+    run and retry with its current version."""
+
+    code = "CUTOVER_READINESS_RUN_VERSION_CONFLICT"
+    status_code = 409
+
+
+class CutoverReadinessEvidenceInvalidError(DomainError):
+    """Roadmap PR23B (§26/§30 of the task) -- one of the evidence
+    references supplied to `complete_readiness_run` fails validation:
+    the referenced `ImportSource`/`LegacyMigrationAuthority`/
+    `LegacyMigrationAuthorityCoverage`/`LegacyReconciliationRun`/
+    `LegacyReconciliationSignOff`/`User`/`Ward` row does not exist, the
+    supplied sign-off does not belong to the supplied reconciliation
+    run, `cutover_instant` is earlier than the bound coverage artifact's
+    own `live_system_start` (design §9: "cutover_instant must never be
+    earlier than the signed-off run's live_system_start"), or the
+    supplied evidence references do not form one internally consistent
+    provenance chain -- **PR23B Fix Round 1**: the bound coverage's own
+    `migration_authority_id` must equal the supplied
+    `legacy_migration_authority_id`, and the bound reconciliation run's
+    own `coverage_id` must equal the supplied `legacy_coverage_id` (in
+    addition to the pre-existing sign-off/run pairing check) -- an
+    immutable snapshot must never mix evidence drawn from two unrelated
+    provenance chains (Authority A + Coverage B, or Coverage A +
+    ReconciliationRun B) even when every individual id independently
+    resolves to a real row. Reference integrity is never trusted from
+    client input alone -- every reference and every cross-reference is
+    validated fresh, inside the same transaction as the completion
+    `UPDATE`, before any row is written."""
+
+    code = "CUTOVER_READINESS_EVIDENCE_INVALID"
+    status_code = 422
+
+
+class CutoverReadinessDatabaseMigrationHeadUnavailableError(DomainError):
+    """Roadmap PR23B Fix Round 1 -- `create_readiness_run` could not
+    establish the database's own current Alembic revision by querying
+    `alembic_version` (the table/row does not exist, or more than one
+    row exists). `database_migration_head` is evidence that must prove
+    the actual schema state at capture time; it is never accepted from
+    client/API-caller input (see `app.crud.cutover_readiness`'s own
+    `_get_current_database_migration_head`). `503` (not a `4xx`) because
+    the request itself was well-formed -- this is a transient/
+    environment condition (mirrors `PdfRenderTimeoutError`/
+    `XlsxRenderTimeoutError`'s own "well-formed request, resource
+    condition" rationale), never a client input problem. No readiness
+    run is created when this is raised."""
+
+    code = "CUTOVER_READINESS_DATABASE_MIGRATION_HEAD_UNAVAILABLE"
+    status_code = 503

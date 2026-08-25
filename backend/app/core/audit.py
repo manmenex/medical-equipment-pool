@@ -107,6 +107,21 @@ AUDIT_ACTION_RECONCILIATION_FINDING_DISPOSED = "reconciliation_finding_disposed"
 # commits both together or neither.
 AUDIT_ACTION_RECONCILIATION_SIGNOFF = "reconciliation_signoff"
 
+# Roadmap PR23B. Written exactly once, on the first genuine creation of a
+# `CutoverReadinessRun` row (`POST /cutover-readiness-runs`) -- creation
+# only, mirroring AUDIT_ACTION_LEGACY_MIGRATION_AUTHORITY_APPROVED's
+# identical creation-only discipline.
+AUDIT_ACTION_CUTOVER_READINESS_RUN_CREATED = "cutover_readiness_run_created"
+
+# Roadmap PR23B. Written exactly once, when a `CutoverReadinessRun`
+# transitions to `status = 'completed'` (its immutable evidence snapshot
+# is captured) -- never on a rejected completion attempt (stale version,
+# invalid evidence reference, mismatched sign-off/run pairing). Written
+# in the same transaction as the completion `UPDATE` (mandatory, not
+# best-effort) -- see `app.api.v1.cutover_readiness`'s completion
+# endpoint, which commits both together or neither.
+AUDIT_ACTION_CUTOVER_READINESS_RUN_COMPLETED = "cutover_readiness_run_completed"
+
 # Audit entity-type values, same rationale as the actions above.
 AUDIT_ENTITY_EQUIPMENT = "equipment"
 AUDIT_ENTITY_USER = "user"
@@ -142,6 +157,10 @@ AUDIT_ENTITY_RECONCILIATION_FINDING = "reconciliation_finding"
 # sign-off row itself is the aggregate root for this action (distinct
 # from AUDIT_ENTITY_RECONCILIATION_FINDING above, which is per-finding).
 AUDIT_ENTITY_RECONCILIATION_SIGNOFF = "reconciliation_signoff"
+# Roadmap PR23B. entity_id is the CutoverReadinessRun.id -- the run
+# itself is the aggregate root for both cutover-readiness audit actions
+# above (creation and completion).
+AUDIT_ENTITY_CUTOVER_READINESS_RUN = "cutover_readiness_run"
 
 # Substrings matched case-insensitively against JSON keys in before/after
 # payloads. Deliberately broad (e.g. "token" covers access_token,

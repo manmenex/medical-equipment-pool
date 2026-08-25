@@ -7514,7 +7514,21 @@ async def test_migration_0013_fresh_database_all_foreign_keys_are_restrict():
                 # users (2); legacy_bme_user_aliases.resolved_user_id ->
                 # users, .created_by_user_id -> users (2).
                 # 54 + 14 = 68.
-                assert len(rows) == 68, f"expected exactly 68 foreign keys, found {len(rows)}: {rows}"
+                # + 10 added by migration 0021 (Roadmap PR23B):
+                # cutover_readiness_runs.created_by_user_id -> users,
+                # .completed_by_user_id -> users,
+                # .equipment_master_import_source_id -> import_sources,
+                # .legacy_migration_authority_id ->
+                # legacy_migration_authorities, .legacy_coverage_id ->
+                # legacy_migration_authority_coverages,
+                # .reconciliation_run_id -> legacy_reconciliation_runs,
+                # .reconciliation_signoff_id ->
+                # legacy_reconciliation_signoffs,
+                # .current_state_verified_by_user_id -> users,
+                # .pilot_ward_id -> wards, .supersedes_run_id ->
+                # cutover_readiness_runs (self-referencing) (10).
+                # 68 + 10 = 78.
+                assert len(rows) == 78, f"expected exactly 78 foreign keys, found {len(rows)}: {rows}"
                 for conname, confdeltype in rows:
                     assert confdeltype == "r", f"{conname} has confdeltype={confdeltype!r}, expected 'r' (RESTRICT)"
         finally:
