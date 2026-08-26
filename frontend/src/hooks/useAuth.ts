@@ -136,3 +136,22 @@ export function canSetReconciliationDisposition(user: RoleLike): boolean {
 export function canSignOffReconciliation(user: RoleLike): boolean {
   return hasRole(user, "administrator");
 }
+
+// Roadmap PR23E (Cutover Readiness Frontend / Operator Workflow): mirrors
+// the merged PR23B/C/D backend's real authorization boundary exactly --
+// VIEW_AND_REPORT_ROLES for every GET (run/gate-evaluation/decision
+// reads), ADMINISTRATOR_ONLY_ROLES for the one mutation (recording a
+// Go/No-Go decision). As with every capability helper in this file, this
+// is usability-only: it decides whether to show/hide a control, never
+// whether a request is actually allowed -- every mutation call site must
+// still handle a backend 403 safely regardless of what this returns, and
+// must still submit the decision to the backend and honor its response
+// (never a frontend-side re-implementation of PR23D's own fresh Gate A-F
+// re-evaluation, blocker rejection, or warning-acknowledgement checks).
+export function canReviewCutoverReadiness(user: RoleLike): boolean {
+  return hasRole(user, "administrator", "equipment_pool_staff", "read_only");
+}
+
+export function canRecordCutoverDecision(user: RoleLike): boolean {
+  return hasRole(user, "administrator");
+}

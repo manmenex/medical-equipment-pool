@@ -42,6 +42,12 @@ const ReconciliationListPage = lazy(() =>
 const ReconciliationRunDetailPage = lazy(() =>
   import("@/pages/ReconciliationRunDetailPage").then((m) => ({ default: m.ReconciliationRunDetailPage }))
 );
+const CutoverReadinessListPage = lazy(() =>
+  import("@/pages/CutoverReadinessListPage").then((m) => ({ default: m.CutoverReadinessListPage }))
+);
+const CutoverReadinessRunDetailPage = lazy(() =>
+  import("@/pages/CutoverReadinessRunDetailPage").then((m) => ({ default: m.CutoverReadinessRunDetailPage }))
+);
 const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 const NotFoundPage = lazy(() => import("@/pages/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
 
@@ -108,6 +114,17 @@ export function App() {
               itself, not by the route. */}
           <Route path="/reconciliation" element={<ReconciliationListPage />} />
           <Route path="/reconciliation/:runId" element={<ReconciliationRunDetailPage />} />
+          {/* Roadmap PR23E: cutover readiness review + Go/No-Go workflow
+              (backend: PR23B's run read, PR23C's gate-evaluation, PR23D's
+              decision read/write). Read-only for every authenticated
+              role; the decision action is gated by capability helpers
+              inside the detail page itself, not by the route -- mirrors
+              /reconciliation's own established convention exactly. No
+              run creation/completion route exists here (§36 of the
+              task) -- those endpoints have no merged frontend contract
+              in this PR's scope. */}
+          <Route path="/cutover-readiness" element={<CutoverReadinessListPage />} />
+          <Route path="/cutover-readiness/:runId" element={<CutoverReadinessRunDetailPage />} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
