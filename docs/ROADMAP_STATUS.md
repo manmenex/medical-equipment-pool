@@ -8,21 +8,26 @@ control detailed ordering, scope, dependencies, and acceptance criteria.
 
 ## Current baseline
 
-`833f6758a93a78398207d64fbefa65ff2802cf46` — the real squash-merge SHA of
-GitHub PR #124, "PR23B — Cutover Readiness Evidence Foundation", merged
-on top of `22ec7a25d686b0cd37d2a366172cb31a49eebff8`
-(GitHub PR #123, PR23 Owner Decision Closure, now historical/superseded
-by this baseline). PR #124's final independently reviewed feature-branch
-head (`4171de2650917e89d46e8a432bd2043f8c57c129`, after one fix round
-correcting two P1 evidence-integrity findings) carried **zero reviews
-and zero comments**, with CI green (6/6) and the reviewed head's tree
-independently verified byte-identical to the merged squash commit's
-tree, sole parent `22ec7a25d6...` confirmed — the squash commit actually
-landed on the base branch, `833f6758...`, is the baseline. Per this
-repository's standing process, **no separate "baseline adoption" PR is
-created** — the squash SHA became authoritative immediately upon merge,
-recorded here by PR23C (the next PR that legitimately touches these
-governance files).
+`c10f5082fdc5cb7fd66615fe25516a4982297026` — the real squash-merge SHA of
+GitHub PR #125, "PR23C — Readiness Gate Evaluation" (with PR23C Fix
+Round 1 folded in), merged on top of
+`833f6758a93a78398207d64fbefa65ff2802cf46` (GitHub PR #124, PR23B, now
+historical/superseded by this baseline). PR #125's final independently
+reviewed feature-branch head
+(`7022f01a90f45c873995a4f57126224025e4e739`, after one fix round
+correcting a P1 evidence-integrity finding — Gate B's evaluator and the
+PR23B completion boundary both accepted a cross-wired
+`legacy_transaction_history` source as Equipment Master evidence)
+carried **zero reviews and zero comments**, with CI green (6/6) and the
+reviewed head's tree independently verified byte-identical to the merged
+squash commit's tree, sole parent `833f6758...` confirmed — the squash
+commit actually landed on the base branch, `c10f5082...`, is the
+baseline. Per this repository's standing process, **no separate
+"baseline adoption" PR is created** — the squash SHA became authoritative
+immediately upon merge, recorded here by PR23D (the next PR that
+legitimately touches these governance files). **PR23D (Go/No-Go Decision
++ Current-State Re-Issue Support) implementation is now in progress, not
+yet merged.**
 
 **Roadmap PR22 (Legacy Data Validation and Reconciliation) is now fully
 complete** — architecture design (GitHub PR #112), all seven Owner
@@ -46,21 +51,31 @@ duration/exit-criteria rules (see `docs/design/PR23_CUTOVER_READINESS_
 PLAN.md` §26). That closure round released the fail-closed PR23B+
 implementation-authorization gate (§27). **PR23B (Cutover Readiness
 Evidence Foundation) is also merged** (GitHub PR #124, squash SHA
-`833f6758a93a78398207d64fbefa65ff2802cf46`, current baseline — see
-"Current baseline" above): an additive backend-only persistence
-foundation (`CutoverReadinessRun` model, migration
-`0021_cutover_readiness`, CRUD, minimal Administrator-only API)
-implementing OD-PR23-6's persisted-evidence approach, hardened by one
-fix round (server-derived `database_migration_head`; a bound evidence
-provenance chain), with no readiness-gate evaluation, Go/No-Go decision
-logic, frontend, pilot execution, cutover execution, rollback
+`833f6758a93a78398207d64fbefa65ff2802cf46`, historical): an additive
+backend-only persistence foundation (`CutoverReadinessRun` model,
+migration `0021_cutover_readiness`, CRUD, minimal Administrator-only
+API) implementing OD-PR23-6's persisted-evidence approach, hardened by
+one fix round (server-derived `database_migration_head`; a bound
+evidence provenance chain), with no readiness-gate evaluation, Go/No-Go
+decision logic, frontend, pilot execution, cutover execution, rollback
 execution, or Ward-to-Ward transfer tracking. **PR23C (Readiness Gate
-Evaluation) implementation is now in progress, not yet merged** — a
-read-only Gates A-F (§12) BLOCKER/WARNING/INFO (§13) evaluation
-endpoint against a completed run's persisted evidence; no mutation, no
-persisted gate/decision model, no Go/No-Go decision (Gate G remains
-PR23D's own scope). This baseline entry will be updated again once
-PR23C's own PR merges.
+Evaluation) is also merged** (GitHub PR #125, squash SHA
+`c10f5082fdc5cb7fd66615fe25516a4982297026`, current baseline — see
+"Current baseline" above): a read-only Gates A-F (§12) BLOCKER/WARNING/
+INFO (§13) evaluation endpoint against a completed run's persisted
+evidence; no mutation, no persisted gate/decision model, no Go/No-Go
+decision (Gate G remains PR23D's own scope), hardened by one fix round
+(Gate B dataset-type check, both at the evaluator and the PR23B
+completion boundary). **PR23D (Go/No-Go Decision + Current-State
+Re-Issue Support) implementation is now in progress, not yet merged** —
+an immutable `CutoverGoNoGoDecision` evidence record (Gate G), backed by
+migration `0022_cutover_go_no_go_decision`, requiring a fresh Gates A-F
+re-evaluation at decision time; `GO` requires zero live BLOCKER findings
+and full WARNING-code acknowledgement, `NO_GO` never requires readiness
+success; no current-state re-issue write endpoint was added (the
+existing `POST /borrow` Issue workflow already covers it). **Roadmap
+PR23 overall is not yet complete; PR23E and PR23F have not started.**
+This baseline entry will be updated again once PR23D's own PR merges.
 
 `d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` (GitHub PR #110, Roadmap
 PR21E — Legacy History Frontend Real Integration) is now historical,
@@ -283,7 +298,7 @@ for the full slice-by-slice review chronology and closure record.
 
 | Sequence | Roadmap item | Status |
 |---|---|---|
-| Current | PR23 — Cutover Readiness | Depends on PR22 (now fully complete — see "Current baseline" above). **PR23A (Architecture & Operational Design) COMPLETE / MERGED** (GitHub PR #122, squash SHA `7ca9c87b4c525a1835403dac5d08e6e1be79d33b`, historical). **PR23 Owner Decision Closure COMPLETE / MERGED** (all six OD-PR23-1 through OD-PR23-6 Owner-approved, GitHub PR #123, squash SHA `22ec7a25d686b0cd37d2a366172cb31a49eebff8`, historical). **PR23B (Cutover Readiness Evidence Foundation) COMPLETE / MERGED** (GitHub PR #124, squash SHA `833f6758a93a78398207d64fbefa65ff2802cf46`, current baseline — see "Current baseline" above). **PR23C (Readiness Gate Evaluation) implementation IN PROGRESS, not yet merged.** |
+| Current | PR23 — Cutover Readiness | Depends on PR22 (now fully complete — see "Current baseline" above). **PR23A (Architecture & Operational Design) COMPLETE / MERGED** (GitHub PR #122, squash SHA `7ca9c87b4c525a1835403dac5d08e6e1be79d33b`, historical). **PR23 Owner Decision Closure COMPLETE / MERGED** (all six OD-PR23-1 through OD-PR23-6 Owner-approved, GitHub PR #123, squash SHA `22ec7a25d686b0cd37d2a366172cb31a49eebff8`, historical). **PR23B (Cutover Readiness Evidence Foundation) COMPLETE / MERGED** (GitHub PR #124, squash SHA `833f6758a93a78398207d64fbefa65ff2802cf46`, historical). **PR23C (Readiness Gate Evaluation) COMPLETE / MERGED** (GitHub PR #125, squash SHA `c10f5082fdc5cb7fd66615fe25516a4982297026`, current baseline — see "Current baseline" above). **PR23D (Go/No-Go Decision + Current-State Re-Issue Support) implementation IN PROGRESS, not yet merged. PR23 overall not yet complete; PR23E/F not started.** |
 | After PR19–PR23 | PR24 — Go-live / deployment | Planned; blocked by PR19–PR23 |
 
 **Historical note on PR19B/PR20 relative ordering:** before PR19B merged,
@@ -311,9 +326,11 @@ PR23A (Architecture & Operational Design) has since merged, and all six
 PR23 Owner Decisions (OD-PR23-1 through OD-PR23-6) are Owner-approved
 via the PR23 Owner Decision Closure round, itself now merged; PR23B
 (Cutover Readiness Evidence Foundation) has since merged too; PR23C
-(Readiness Gate Evaluation) implementation is now in progress, not yet
-merged; PR23 remains the current Roadmap item until all PR23C+
-implementation is complete and Roadmap PR23 as a whole closes.** PR22
+(Readiness Gate Evaluation) has since merged too; PR23D (Go/No-Go
+Decision + Current-State Re-Issue Support) implementation is now in
+progress, not yet merged; PR23 remains the current Roadmap item until
+all PR23D+ implementation is complete and Roadmap PR23 as a whole
+closes.** PR22
 through
 PR24's ordering is preserved as-is because it reflects an existing
 authoritative dependency chain
@@ -368,9 +385,10 @@ item now that its first slice, PR23A, has merged
 six PR23 Owner Decisions are Owner-approved via the PR23 Owner
 Decision Closure round (GitHub PR #123, now merged), PR23B (Cutover
 Readiness Evidence Foundation) has since merged too (GitHub PR #124),
-and PR23C (Readiness Gate Evaluation) implementation is now in
-progress, not yet merged; PR19B's own historical relative-ordering note
-is preserved above.
+PR23C (Readiness Gate Evaluation) has since merged too (GitHub PR
+#125), and PR23D (Go/No-Go Decision + Current-State Re-Issue Support)
+implementation is now in progress, not yet merged; PR19B's own
+historical relative-ordering note is preserved above.
 
 ## Scope guardrails for the planned sequence
 

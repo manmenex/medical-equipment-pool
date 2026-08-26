@@ -122,6 +122,16 @@ AUDIT_ACTION_CUTOVER_READINESS_RUN_CREATED = "cutover_readiness_run_created"
 # endpoint, which commits both together or neither.
 AUDIT_ACTION_CUTOVER_READINESS_RUN_COMPLETED = "cutover_readiness_run_completed"
 
+# Roadmap PR23D. Written exactly once, on the first genuine creation of a
+# `CutoverGoNoGoDecision` row (`POST .../decision`) -- never on a rejected
+# attempt (stale version, superseded run, not completed, already decided,
+# blocked by readiness, warnings not acknowledged), mirroring
+# AUDIT_ACTION_RECONCILIATION_SIGNOFF's identical creation-only
+# discipline. Written in the same transaction as the decision INSERT
+# (mandatory, not best-effort) -- see `app.api.v1.cutover_readiness`'s
+# decision endpoint, which commits both together or neither.
+AUDIT_ACTION_CUTOVER_GO_NO_GO_DECISION_RECORDED = "cutover_go_no_go_decision_recorded"
+
 # Audit entity-type values, same rationale as the actions above.
 AUDIT_ENTITY_EQUIPMENT = "equipment"
 AUDIT_ENTITY_USER = "user"
@@ -161,6 +171,12 @@ AUDIT_ENTITY_RECONCILIATION_SIGNOFF = "reconciliation_signoff"
 # itself is the aggregate root for both cutover-readiness audit actions
 # above (creation and completion).
 AUDIT_ENTITY_CUTOVER_READINESS_RUN = "cutover_readiness_run"
+# Roadmap PR23D. entity_id is the CutoverGoNoGoDecision.id -- the
+# decision row itself is the aggregate root for this action (distinct
+# from AUDIT_ENTITY_CUTOVER_READINESS_RUN above, mirroring
+# AUDIT_ENTITY_RECONCILIATION_SIGNOFF's identical distinction from
+# AUDIT_ENTITY_RECONCILIATION_FINDING).
+AUDIT_ENTITY_CUTOVER_GO_NO_GO_DECISION = "cutover_go_no_go_decision"
 
 # Substrings matched case-insensitively against JSON keys in before/after
 # payloads. Deliberately broad (e.g. "token" covers access_token,

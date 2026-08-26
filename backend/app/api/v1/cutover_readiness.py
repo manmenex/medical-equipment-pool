@@ -1,12 +1,13 @@
 """Roadmap PR23B -- Cutover Readiness Evidence Foundation. Extended by
-Roadmap PR23C -- Readiness Gate Evaluation.
+Roadmap PR23C -- Readiness Gate Evaluation. Extended by Roadmap PR23D --
+Go/No-Go Decision + Current-State Re-Issue Support.
 
-Read surfaces (list/detail/gate-evaluation) are available to every
-authenticated role (`VIEW_AND_REPORT_ROLES`) -- reviewing is not itself
-a mutation, per design §14 ("Viewing cutover readiness"). Both mutation
-endpoints (`POST /cutover-readiness-runs`, `POST .../complete`) are
-Administrator-only, mirroring PR22D/E's identical role gate for every
-reconciliation mutation.
+Read surfaces (list/detail/gate-evaluation/decision) are available to
+every authenticated role (`VIEW_AND_REPORT_ROLES`) -- reviewing is not
+itself a mutation, per design §14 ("Viewing cutover readiness"). Every
+mutation endpoint (`POST /cutover-readiness-runs`, `POST .../complete`,
+`POST .../decision`) is Administrator-only, mirroring PR22D/E's
+identical role gate for every reconciliation mutation.
 
 One route family (`/cutover-readiness-runs`), matching this
 repository's existing per-resource prefix convention.
@@ -18,9 +19,22 @@ like PR22's `GET .../sign-off` sibling-endpoint precedent** --
 transaction and never calls `record_audit_event` (mirroring every
 other pure-read endpoint in this module).
 
-Deliberately absent from this module (later PR23 slices' own scope):
-any Go/No-Go decision/sign-off endpoint (Gate G, PR23D), and any
-frontend (PR23E).
+**PR23D's `POST .../{run_id}/decision` is Gate G** -- the final Go/No-Go
+decision, immutable once recorded. It re-evaluates Gates A-F fresh
+(`app.crud.cutover_readiness.create_go_no_go_decision`, never trusting
+an earlier `GET .../gate-evaluation` response) inside the same
+transaction as the decision `INSERT`, mirroring PR22E's own `POST
+.../sign-off` "evaluate-then-commit atomically" discipline. `GET
+.../{run_id}/decision` is its pure-read sibling, mirroring PR22E's own
+`GET .../sign-off`.
+
+Deliberately absent from this module (later PR23 slices' own scope): no
+current-state re-issue write endpoint (§24-26 of the PR23D task -- the
+existing `POST /borrow` issue workflow already prevents duplicate
+`OPEN` transactions via `EquipmentNotAvailableError` and requires
+explicit per-equipment/per-ward staff confirmation, so it is reused
+unchanged rather than duplicated; no new bulk or inference-based
+endpoint is introduced), and any frontend (PR23E).
 """
 
 from __future__ import annotations
@@ -33,12 +47,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import ADMINISTRATOR_ONLY_ROLES, VIEW_AND_REPORT_ROLES, require_roles
 from app.core.audit import (
+    AUDIT_ACTION_CUTOVER_GO_NO_GO_DECISION_RECORDED,
     AUDIT_ACTION_CUTOVER_READINESS_RUN_COMPLETED,
     AUDIT_ACTION_CUTOVER_READINESS_RUN_CREATED,
+    AUDIT_ENTITY_CUTOVER_GO_NO_GO_DECISION,
     AUDIT_ENTITY_CUTOVER_READINESS_RUN,
     record_audit_event,
 )
 from app.core.exceptions import (
+    CutoverDecisionNotFoundError,
     CutoverReadinessGateEvaluationRequiresCompletedRunError,
     CutoverReadinessRunNotFoundError,
     InvalidInputError,
@@ -46,9 +63,11 @@ from app.core.exceptions import (
 from app.crud import cutover_readiness as cutover_readiness_crud
 from app.crud.cutover_readiness import CompletionEvidence
 from app.db.session import get_db
-from app.models.cutover_readiness import CutoverReadinessRun
+from app.models.cutover_readiness import CutoverGoNoGoDecision, CutoverReadinessRun
 from app.schemas.common import Page
 from app.schemas.cutover_readiness import (
+    DecisionCreateRequest,
+    DecisionDetail,
     GateEvaluationItem,
     GateEvaluationResponse,
     GateSummary,
@@ -295,3 +314,88 @@ async def get_cutover_readiness_gate_evaluation(
         gates=gates,
         items=[GateEvaluationItem(**item.__dict__) for item in items],
     )
+
+
+def _decision_fields(decision: CutoverGoNoGoDecision) -> dict:
+    return {
+        "id": str(decision.id),
+        "cutover_readiness_run_id": str(decision.cutover_readiness_run_id),
+        "decision": decision.decision,
+        "recorded_by_user_id": str(decision.recorded_by_user_id),
+        "recorded_at": decision.recorded_at,
+        "run_version_at_decision": decision.run_version_at_decision,
+        "acknowledged_warning_codes": decision.acknowledged_warning_codes,
+        "no_go_reason": decision.no_go_reason,
+    }
+
+
+@router.get("/{run_id}/decision", response_model=DecisionDetail)
+async def get_cutover_go_no_go_decision(
+    run_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _actor=Depends(require_roles(*VIEW_AND_REPORT_ROLES)),
+):
+    """Roadmap PR23D. Pure read -- no mutation, no audit write. Distinct
+    404s: the run itself not existing (`CutoverReadinessRunNotFoundError`)
+    vs. the run existing but having no decision recorded yet
+    (`CutoverDecisionNotFoundError`)."""
+    await _get_run_or_404(db, run_id)
+    decision = await cutover_readiness_crud.get_go_no_go_decision(db, run_id=run_id)
+    if decision is None:
+        raise CutoverDecisionNotFoundError(
+            f"Cutover readiness run '{run_id}' has no recorded Go/No-Go decision yet."
+        )
+    return DecisionDetail(**_decision_fields(decision))
+
+
+@router.post("/{run_id}/decision", response_model=DecisionDetail, status_code=201)
+async def create_cutover_go_no_go_decision(
+    run_id: uuid.UUID,
+    payload: DecisionCreateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    actor=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
+):
+    """Roadmap PR23D (design §12 Gate G, §13, §16). Records the final,
+    immutable Go/No-Go decision for one `CutoverReadinessRun`. Re-
+    evaluates Gates A-F fresh, inside the same transaction as the
+    decision itself (`app.crud.cutover_readiness.
+    create_go_no_go_decision`'s own docstring has the full precondition/
+    lock-order contract) -- `GO` is rejected if any BLOCKER exists or any
+    currently-live WARNING is unacknowledged; `NO_GO` is never blocked by
+    readiness. Recording `GO` does **not** itself perform any cutover
+    action (disable AppSheet, mutate Equipment, execute migration, etc.)
+    -- it records governed authorization evidence only; actual cutover
+    execution remains operational/runbook scope (§27 of the design,
+    PR23F)."""
+    decision = await cutover_readiness_crud.create_go_no_go_decision(
+        db,
+        run_id=run_id,
+        expected_version=payload.expected_version,
+        actor_id=actor.id,
+        decision=payload.decision,
+        acknowledged_warning_codes=payload.acknowledged_warning_codes,
+        no_go_reason=payload.no_go_reason,
+    )
+    await record_audit_event(
+        db,
+        actor_user_id=actor.id,
+        action=AUDIT_ACTION_CUTOVER_GO_NO_GO_DECISION_RECORDED,
+        entity_type=AUDIT_ENTITY_CUTOVER_GO_NO_GO_DECISION,
+        entity_id=decision.id,
+        after={
+            "decision_id": str(decision.id),
+            "cutover_readiness_run_id": str(decision.cutover_readiness_run_id),
+            "decision": decision.decision,
+            "recorded_by_user_id": str(decision.recorded_by_user_id),
+            "recorded_at": decision.recorded_at.isoformat(),
+            "run_version_at_decision": decision.run_version_at_decision,
+            "acknowledged_warning_codes": decision.acknowledged_warning_codes,
+        },
+        request=request,
+    )
+    # One atomic transaction: the decision INSERT above (not yet
+    # committed, still flushed only) and this audit write land together
+    # here, or -- if anything above raised -- neither lands at all.
+    await db.commit()
+    return DecisionDetail(**_decision_fields(decision))

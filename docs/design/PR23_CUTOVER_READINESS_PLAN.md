@@ -1120,10 +1120,11 @@ Proposed minimal sequence, **none of which is implemented by PR23A**:
   immutable snapshot can never mix evidence drawn from two unrelated
   provenance chains. No migration was added (the persisted column shape
   was already correct; only the source/validation of its value changed).
-- **PR23C — Readiness Gate Evaluation.** Backend service that evaluates
-  Gates A–F (§12) against live evidence (import status, reconciliation
-  sign-off, migration head, etc.) and returns BLOCKER/WARNING/INFO
-  (§13) — read-only, no mutation, no Go decision yet.
+- **PR23C — Readiness Gate Evaluation.** **Implemented.** Backend
+  service that evaluates Gates A–F (§12) against live evidence (import
+  status, reconciliation sign-off, migration head, etc.) and returns
+  BLOCKER/WARNING/INFO (§13) — read-only, no mutation, no Go decision
+  yet.
   *Depends on:* PR23B's persisted schema plus every Owner Decision that
   shapes what a gate evaluates — OD-PR23-1 (source-of-truth/freeze),
   OD-PR23-2 (current-state/open-transaction — Gate E), OD-PR23-6
@@ -1146,11 +1147,44 @@ Proposed minimal sequence, **none of which is implemented by PR23A**:
   (Gate C already correctly scopes its own `dataset_type` check via its
   checksum join), so no further same-class issue was found.
 - **PR23D — Go/No-Go Decision + Current-State Re-Issue Support.**
-  Administrator-only mutation endpoint(s) recording the Go/No-Go
-  decision (Gate G) and, if OD-PR23-2 confirms the manual re-issue
-  model, any bounded tooling needed to make that re-issue process
-  efficient for staff (still using the *existing* issue workflow, not a
-  new bulk-mutation mechanism).
+  **Implementation in progress, not yet merged.** Administrator-only
+  mutation endpoint recording the Go/No-Go decision (Gate G): an
+  immutable `CutoverGoNoGoDecision` model
+  (`backend/app/models/cutover_readiness.py`,
+  `UNIQUE(cutover_readiness_run_id)`, closed `GO`/`NO_GO` vocabulary),
+  one additive Alembic migration (`0022_cutover_go_no_go_decision.py`,
+  empirically convergence-verified against real PostgreSQL, mirroring
+  PR23B's own discipline), and
+  `POST/GET /cutover-readiness-runs/{run_id}/decision`
+  (`app/crud/cutover_readiness.create_go_no_go_decision`). Recording a
+  decision always performs a fresh re-evaluation of Gates A-F at
+  decision time (never a cached or client-supplied evaluation): `GO` is
+  rejected if any live BLOCKER exists or any live WARNING code is not
+  present in the caller's acknowledgement (the backend stores its own
+  canonical, sorted, live-warning-code set, never the raw client
+  payload); `NO_GO` never requires readiness success. The same
+  lock-order/transaction discipline PR22E's `create_signoff`
+  established is reused: lock the run `FOR UPDATE` first, validate
+  `status == 'completed'`, validate the run has not itself been
+  superseded (a new check distinct from Gate D's own
+  `LegacyReconciliationRun` supersession check), validate
+  `expected_version`, re-evaluate gates, then insert the decision row
+  inside a `db.begin_nested()` SAVEPOINT so a concurrent duplicate
+  submission is rejected as a clean structured conflict rather than a
+  raw `IntegrityError`, proven by a genuine two-connection PostgreSQL
+  concurrency test. Gate A's migration-head check and Gate D's
+  reconciliation-freshness check are reused verbatim from PR23C, never
+  re-derived; PR23C Fix Round 1's Gate B dataset-type correction is
+  preserved unchanged. **No current-state re-issue write endpoint was
+  added**: inspection of the existing `POST /borrow` Issue workflow
+  confirmed it already satisfies OD-PR23-2's manual re-issue model
+  (per-equipment, staff-confirmed, duplicate-OPEN-transaction
+  protection already enforced) — no new bulk-mutation mechanism, no
+  replay of `LegacyEquipmentEvent` history. Recording a `GO` decision
+  performs no cutover action itself (no AppSheet disablement, no
+  `Equipment` mutation, no migration execution, no Pilot start) —
+  evidence-recording only; actual cutover execution remains PR23F/
+  operational-runbook scope.
   *Depends on:* OD-PR23-3 (Go/No-Go and rollback authorization model —
   this slice's own authorization contract), OD-PR23-2 (re-issue
   tooling scope), and the evidence model (OD-PR23-6) the decision is

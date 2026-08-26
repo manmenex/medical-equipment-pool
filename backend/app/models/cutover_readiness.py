@@ -131,11 +131,19 @@ exact shape.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String, func, text
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String, UniqueConstraint, func, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.types import JSON
 
 from app.db.base import Base
 from app.models.mixins import UTCDateTime, UUIDPKMixin
+
+# Roadmap PR23D (docs/design/PR23_CUTOVER_READINESS_PLAN.md §12 Gate G,
+# §13, §26 OD-PR23-3/OD-PR23-6). Same PostgreSQL-JSONB/SQLite-JSON
+# variant type already used by `app.models.legacy_reconciliation`/
+# `app.models.import_session` -- not a new pattern.
+_DecisionJSONType = JSONB().with_variant(JSON(), "sqlite")
 
 # §7 of the task. `running` is reserved for a future PR23C-or-later slice
 # that may perform multi-step evidence gathering before completion -- no
@@ -329,3 +337,105 @@ class CutoverReadinessRun(UUIDPKMixin, Base):
     supersedes_run_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("cutover_readiness_runs.id", ondelete="RESTRICT"), nullable=True
     )
+
+
+# Roadmap PR23D. §12 Gate G / §13's closed BLOCKER/WARNING/INFO category
+# domain does not apply here -- this is the final decision *value*
+# domain, a different concept. `PENDING`/`APPROVED`/`REJECTED`/
+# `CUTOVER`/`MIGRATING` are deliberately not introduced -- Go/No-Go is
+# cutover governance evidence, not an Equipment lifecycle state (§40 of
+# the task; `app.models.equipment.EquipmentStatus` is untouched by this
+# module).
+CUTOVER_GO_NO_GO_DECISIONS = ("GO", "NO_GO")
+
+
+class CutoverGoNoGoDecision(UUIDPKMixin, Base):
+    """Roadmap PR23D (docs/design/PR23_CUTOVER_READINESS_PLAN.md §12 Gate
+    G, §13 Go/No-Go, §14 Authorization, §15 Evidence/Audit, §16
+    Concurrency/Freshness, §26 OD-PR23-3/OD-PR23-6). The immutable final
+    Go/No-Go decision for one `CutoverReadinessRun` -- exactly the
+    additive decision/sign-off table the PR23B model docstring already
+    anticipated ("a future PR23D-or-later slice may add its own
+    additive decision/sign-off table referencing cutover_readiness_
+    runs.id, exactly as LegacyReconciliationSignOff references
+    legacy_reconciliation_runs.id"). Mirrors `LegacyReconciliationSignOff`'s
+    shape: `UNIQUE(cutover_readiness_run_id)` enforces at most one final
+    decision per run at the schema level; no mutable fields, no update
+    timestamp -- a decision is never edited after creation. If readiness
+    changes after a decision was recorded, a **new** `CutoverReadinessRun`
+    (via `supersedes_run_id`) is created and a fresh decision recorded
+    against it -- this row is never reopened or mutated (mirrors
+    `CutoverReadinessRun`'s own forward-only supersession discipline;
+    see that model's docstring).
+
+    **Never a persisted gate-evaluation snapshot.** Design §13
+    deliberately does not introduce a persisted BLOCKER/WARNING/INFO
+    model -- `app.services.cutover_readiness_gates.evaluate_gates` is
+    computed fresh on every call, never stored. This table therefore
+    does not duplicate that evaluation; `run_version_at_decision`
+    (mirroring `LegacyReconciliationSignOff.run_version_at_signoff`'s
+    exact freshness-proof shape) records which exact `CutoverReadinessRun
+    .version` was observed, live, at the moment this decision was
+    recorded -- proof of freshness without a redundant persisted
+    evaluation. `acknowledged_warning_codes` records exactly which
+    currently-live WARNING item codes the approver acknowledged for a
+    `GO` decision (§13: "Go remains possible but the approver must
+    explicitly acknowledge each WARNING") -- always the empty array for
+    `NO_GO`, since a `NO_GO` decision never requires or considers
+    warnings (recording that cutover does not proceed needs no
+    readiness justification). Acknowledgement here means *the
+    accountable approver explicitly reviewed/accepted this item for the
+    GO decision*, never that the application itself independently
+    verified the underlying operational fact -- see `app.services.
+    cutover_readiness_gates`'s own "Honesty over automation theater"
+    docstring section; this table preserves, never collapses, that
+    distinction.
+
+    **No fourth role, no accountable-authority FK (OD-PR23-3).**
+    `recorded_by_user_id` is the `administrator` application account
+    that recorded the decision -- not necessarily the same individual
+    as the operationally accountable approver, whose identity is
+    recorded outside the application's role system (see
+    `CutoverReadinessRun.operational_approver_reference`'s identical
+    rationale). This table introduces no new accountable-authority FK
+    of its own.
+
+    **No PHI, no secrets, no workbook duplication** -- `no_go_reason` is
+    a short, optional, bounded operational text field only (never
+    authoritative readiness logic, never clinical/patient content), the
+    same discipline `CutoverReadinessRun.current_state_verification_
+    reference` already establishes."""
+
+    __tablename__ = "cutover_go_no_go_decisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "cutover_readiness_run_id", name="uq_cutover_go_no_go_decisions_cutover_readiness_run_id"
+        ),
+        CheckConstraint("decision IN ('GO','NO_GO')", name="ck_cutover_go_no_go_decisions_decision"),
+        CheckConstraint(
+            "run_version_at_decision >= 0", name="ck_cutover_go_no_go_decisions_run_version_at_decision"
+        ),
+        CheckConstraint("LENGTH(no_go_reason) <= 2000", name="ck_cutover_go_no_go_decisions_no_go_reason_length"),
+        Index("ix_cutover_go_no_go_decisions_recorded_at", "recorded_at"),
+    )
+
+    cutover_readiness_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("cutover_readiness_runs.id", ondelete="RESTRICT"), nullable=False
+    )
+    decision: Mapped[str] = mapped_column(String(10), nullable=False)
+    recorded_by_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, server_default=func.now())
+    # Freshness proof (§16) -- the exact `CutoverReadinessRun.version`
+    # CAS value observed, live, under lock, at the moment this decision
+    # was recorded. Mirrors `LegacyReconciliationSignOff.run_version_at_
+    # signoff`'s identical purpose and shape.
+    run_version_at_decision: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Always `[]` for `NO_GO`. For `GO`, the canonical (sorted, backend-
+    # computed) list of every currently-live WARNING item `code` (per
+    # `app.services.cutover_readiness_gates`) the approver acknowledged
+    # at decision time -- never the raw, unvalidated client payload, so
+    # a stale/unknown code the client sent can never appear here (see
+    # `app.crud.cutover_readiness.create_go_no_go_decision`'s own
+    # docstring for the exact acknowledgement-coverage check).
+    acknowledged_warning_codes: Mapped[list] = mapped_column(_DecisionJSONType, nullable=False, default=list)
+    no_go_reason: Mapped[str | None] = mapped_column(String(2000), nullable=True)
