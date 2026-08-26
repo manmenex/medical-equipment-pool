@@ -206,7 +206,7 @@ repository, verified directly against source, not assumed:
   **liveness** signal (the process is up and serving HTTP) and as a
   **diagnostic** endpoint (a human or dashboard can read the body), but
   it is **not, by itself, a safe status-code-only production readiness
-  probe** — see §14.5 (Liveness vs. Readiness) for what this requires
+  probe** — see §15A (Liveness vs. Readiness) for what this requires
   before it is used to gate production traffic routing.
 - **Object storage (MinIO/S3):** `S3_ENDPOINT`/`S3_BUCKET`/
   `S3_ACCESS_KEY`/`S3_SECRET_KEY` are declared in `Settings` and in
