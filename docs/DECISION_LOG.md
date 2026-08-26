@@ -5525,3 +5525,92 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   binding specification, including the exact repository-defined
   PR23E scope (`docs/design/PR23_CUTOVER_READINESS_PLAN.md` §27) it
   conforms to.
+
+## 2026-08-26 — PR23E (Frontend / Operator Workflow) merged — GitHub PR #127
+
+- **Decision/record:** GitHub PR #127 ("PR23E — Cutover Readiness
+  Frontend / Operator Workflow") was taken through the Final Merge
+  Gate and squash-merged. Before merge: head was confirmed unchanged
+  at `d2ebb8ed95807cdbd15fdfac3a50165179eb170d`, CI confirmed 6/6 green
+  on that exact SHA, and reviews/comments/threads confirmed as
+  zero -- no new findings. The PR was converted Draft -> Ready; after
+  Ready, head was re-confirmed unchanged, `mergeable_state: clean` was
+  confirmed, and CI was re-confirmed 6/6 green. The PR was then
+  squash-merged. The real squash-merge SHA is
+  `8644536403eeec269e6dadf835f1bda3844b6cce`. Tree identity was
+  independently verified (`git diff
+  d2ebb8ed95807cdbd15fdfac3a50165179eb170d
+  8644536403eeec269e6dadf835f1bda3844b6cce --stat` produced no
+  output -- the squash commit's tree is byte-identical to the
+  pre-merge branch head), and sole parentage was independently
+  verified (the squash commit's sole parent is exactly
+  `2da80231d4f037136b291863e379e739aa2905dd`, GitHub PR #126, PR23D).
+  Per this repository's standing process, no separate "baseline
+  adoption" PR is created -- `8644536...` became authoritative
+  immediately upon merge, folded into PR23F (the next PR that
+  legitimately touches these governance files, recorded below).
+- **Consequence:** With GitHub PR #127 merged, **PR23E (Frontend /
+  Operator Workflow) is fully complete** -- the Thai-first operator UI
+  (run list, run detail, Gates A-F presentation, GO/NO_GO decision
+  workflow) over the already-merged PR23B-D backend now exists and is
+  merged, completing every implementation slice of Roadmap PR23 except
+  PR23F. PR23F (Cutover Runbook + Final Governance Close-out) is now
+  eligible to begin from this baseline.
+- **Status:** Merged, closed. This entry is historical from the moment
+  it is written; it does not describe work in progress.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14,
+  following the same Final Merge Gate precedent used for GitHub PR
+  #111/#112/#113/#115/#116/#117/#118/#119/#120/#121/#122/#123/#124/#125/#126.
+- **Source:** GitHub PR #127 description and its Final Merge Gate
+  verification evidence (exact head, CI status, tree-identity diff,
+  sole-parent `git cat-file` output).
+
+## 2026-08-26 — PR23F (Cutover Runbook + Final Governance Close-out) implementation started — in progress, not merged
+
+- **Decision/record:** PR23F implementation started from baseline
+  `8644536403eeec269e6dadf835f1bda3844b6cce` (GitHub PR #127), on
+  branch `docs/pr23f-cutover-runbook-governance`. PR23F is
+  **documentation-only**: it adds one authoritative operational runbook
+  (`docs/runbooks/PR23_CUTOVER_RUNBOOK.md` -- Thai-first for
+  operator-facing instructions, English for technical
+  identifiers/error codes where precision matters) covering the
+  contact/responsibility matrix, execution-time fields, freeze-window
+  rules, the T0-T4 procedure, the Gates A-F review procedure, the Gate
+  G / Go-No-Go procedure (GO checklist, NO-GO procedure), the
+  pre-/post-first-production-transaction rollback boundary (OD-PR23-4),
+  the first-production-transaction marker, the manual current-state
+  re-issue procedure (OD-PR23-2), the Pilot procedure and exit criteria
+  (OD-PR23-5), the Ward-transfer clarification, post-cutover
+  validation, the Production Readiness distinction (explicitly
+  **not** claiming backup/restore rehearsal or a selected production
+  deployment target are resolved -- both remain genuinely open
+  operational/infrastructure items per
+  `docs/audits/04-consolidated-implementation-plan.md` §14 item 7 and
+  `docs/ARCHITECTURE_DECISIONS.md` "Managed deployment preferred"),
+  the communication plan, the cutover evidence record template, and
+  security/PHI handling rules. It plus this governance sync -- marking
+  PR23D "Implemented" (already recorded, PR23D merged) and PR23E
+  "Implemented" in `docs/design/PR23_CUTOVER_READINESS_PLAN.md` §27,
+  and syncing the current baseline across `docs/ROADMAP.md`,
+  `docs/ROADMAP_STATUS.md`, `knowledge/CONTEXT.md`, and
+  `knowledge/PROJECT_MEMORY.md` -- is PR23F's **entire** file surface.
+  **No backend, frontend, migration, or test file was touched.** No new
+  Owner Decision was created; every operational blank in the runbook
+  (date, contact, freeze duration, actual Pilot Ward) is an execution
+  input, never a new architecture decision. This runbook explicitly
+  does not, and cannot, claim that Pilot has been executed, that
+  Production cutover has occurred, that AppSheet has actually been
+  made read-only, that UAT/Pilot/Production sign-off has been
+  obtained, that a production deployment target has been selected, or
+  that backup/restore has been successfully rehearsed -- those remain
+  real operational execution activities outside this PR's (and any
+  documentation PR's) scope to fabricate.
+- **Status:** Draft, **not merged, PR23F implementation in progress**.
+  This entry documents work in progress; it does not describe PR23F's
+  own completion, and it does not describe Roadmap PR23 as complete --
+  Roadmap PR23 closes only when this PR merges.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the PR23F (Cutover Runbook + Final Governance
+  Close-out) task's own binding specification, including the exact
+  repository-defined PR23F scope
+  (`docs/design/PR23_CUTOVER_READINESS_PLAN.md` §27) it conforms to.

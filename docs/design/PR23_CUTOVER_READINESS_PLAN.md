@@ -1197,8 +1197,7 @@ Proposed minimal sequence, **none of which is implemented by PR23A**:
   (`assert 80 == 78`). Fixed by bumping the expected count to 80 and
   extending the test's own running per-migration commentary; no
   production code changed.
-- **PR23E — Frontend/Operator Workflow.** **Implementation in
-  progress, not yet merged.** Thai-first
+- **PR23E — Frontend/Operator Workflow.** **Implemented.** Thai-first
   UI for readiness status, blockers, and the Go/No-Go confirmation
   dialog (§22), mirroring PR22F's established patterns file-for-file
   (`ReconciliationListPage`/`ReconciliationRunDetailPage`/
@@ -1238,12 +1237,17 @@ Proposed minimal sequence, **none of which is implemented by PR23A**:
   *Depends on:* the finalized PR23B–D backend/readiness/sign-off
   contracts, which themselves depend on OD-PR23-1, OD-PR23-2,
   OD-PR23-3, and OD-PR23-6.
-- **PR23F — Cutover Runbook + Governance.** Documentation-only:
-  operational runbook (actual T0–T4 procedure, contact list, rollback
-  steps), final governance sync recording Roadmap PR23 as complete once
-  every prior slice has merged and the real cutover-readiness capability
-  exists (not the cutover event itself — that is Pilot/Production
-  execution, outside any PR's scope).
+- **PR23F — Cutover Runbook + Governance.** **Implementation in
+  progress, not yet merged.** Documentation-only:
+  operational runbook (`docs/runbooks/PR23_CUTOVER_RUNBOOK.md` — actual
+  T0–T4 procedure, contact/responsibility matrix, rollback steps,
+  Pilot procedure/exit criteria, evidence templates), final governance
+  sync recording Roadmap PR23 implementation as complete once this
+  slice merges (not the cutover event itself, and not Pilot/Production
+  execution — those remain real hospital operational activities this
+  slice records evidence templates for, never fabricates as already
+  performed). Zero `backend/**`/`frontend/**`/`alembic/**`/`tests/**`
+  change.
   *Depends on:* OD-PR23-4 (rollback boundary — the runbook's rollback
   steps have no defined boundary without it), OD-PR23-5 (pilot scope —
   the runbook cannot name a pilot ward/duration without it), and every
