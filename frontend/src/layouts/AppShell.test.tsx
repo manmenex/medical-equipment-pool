@@ -101,3 +101,24 @@ describe("AppShell reconciliation nav entry", () => {
     }
   );
 });
+
+// Roadmap PR23E: same placement rationale/assertion shape as the
+// reconciliation nav entry directly above -- visible to every
+// authenticated role (mirrors backend VIEW_AND_REPORT_ROLES, see
+// hooks/useAuth.ts's canReviewCutoverReadiness), sidebar + header only,
+// never the mobile bottom nav.
+describe("AppShell cutover readiness nav entry", () => {
+  it.each(["administrator", "equipment_pool_staff", "read_only"] as const)(
+    "shows the ความพร้อมก่อนเปลี่ยนระบบ link (sidebar + header, never bottom nav) for %s",
+    (role) => {
+      mockUser = makeUser(role);
+      renderShell();
+
+      const links = screen.getAllByRole("link", { name: /ความพร้อมก่อนเปลี่ยนระบบ/ });
+      expect(links).toHaveLength(2);
+      for (const link of links) {
+        expect(link).toHaveAttribute("href", "/cutover-readiness");
+      }
+    }
+  );
+});

@@ -4,6 +4,7 @@ import {
   canDispatchOrReceiveEquipment,
   canManageEquipmentMasterData,
   canManageLegacyImport,
+  canReviewCutoverReadiness,
   canReviewReconciliation,
   roleLabel,
   useAuth,
@@ -140,6 +141,27 @@ export function AppShell() {
               ตรวจสอบข้อมูลย้อนหลัง
             </NavLink>
           )}
+          {/* Roadmap PR23E: another review/administrative workflow, same
+              placement rationale as /reconciliation directly above --
+              desktop sidebar only, reached on mobile via the header link
+              below, visible to every authenticated role (mirrors backend
+              VIEW_AND_REPORT_ROLES, see hooks/useAuth.ts's
+              canReviewCutoverReadiness). */}
+          {canReviewCutoverReadiness(user) && (
+            <NavLink
+              to="/cutover-readiness"
+              className={({ isActive }) =>
+                `rounded-lg px-3 py-2 text-sm font-medium transition ${
+                  isActive
+                    ? "bg-status-borrowed/15 text-status-borrowed"
+                    : "text-[var(--text-muted)] hover:bg-black/5 dark:hover:bg-white/5"
+                }`
+              }
+            >
+              <span className="mr-2">🚦</span>
+              ความพร้อมก่อนเปลี่ยนระบบ
+            </NavLink>
+          )}
         </nav>
       </aside>
 
@@ -165,6 +187,11 @@ export function AppShell() {
             {canReviewReconciliation(user) && (
               <NavLink to="/reconciliation" className="text-sm text-[var(--text-muted)] hover:underline md:hidden">
                 ตรวจสอบข้อมูลย้อนหลัง
+              </NavLink>
+            )}
+            {canReviewCutoverReadiness(user) && (
+              <NavLink to="/cutover-readiness" className="text-sm text-[var(--text-muted)] hover:underline md:hidden">
+                ความพร้อมก่อนเปลี่ยนระบบ
               </NavLink>
             )}
             <NavLink to="/settings" className="text-sm text-[var(--text-muted)] hover:underline">

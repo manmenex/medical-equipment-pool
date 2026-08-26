@@ -1147,7 +1147,7 @@ Proposed minimal sequence, **none of which is implemented by PR23A**:
   (Gate C already correctly scopes its own `dataset_type` check via its
   checksum join), so no further same-class issue was found.
 - **PR23D — Go/No-Go Decision + Current-State Re-Issue Support.**
-  **Implementation in progress, not yet merged.** Administrator-only
+  **Implemented.** Administrator-only
   mutation endpoint recording the Go/No-Go decision (Gate G): an
   immutable `CutoverGoNoGoDecision` model
   (`backend/app/models/cutover_readiness.py`,
@@ -1189,9 +1189,52 @@ Proposed minimal sequence, **none of which is implemented by PR23A**:
   this slice's own authorization contract), OD-PR23-2 (re-issue
   tooling scope), and the evidence model (OD-PR23-6) the decision is
   recorded against.
-- **PR23E — Frontend/Operator Workflow.** Thai-first UI for readiness
-  status, blockers, and the Go/No-Go confirmation dialog (§22),
-  mirroring PR22F's established patterns.
+  **PR23D Fix Round 1** (CI-red on the PR23D PR itself, one finding):
+  migration `0022_cutover_go_no_go_decision`'s two new `ON DELETE
+  RESTRICT` foreign keys were not yet rolled into the pre-existing
+  whole-schema regression test
+  `test_migration_0013_fresh_database_all_foreign_keys_are_restrict`
+  (`assert 80 == 78`). Fixed by bumping the expected count to 80 and
+  extending the test's own running per-migration commentary; no
+  production code changed.
+- **PR23E — Frontend/Operator Workflow.** **Implementation in
+  progress, not yet merged.** Thai-first
+  UI for readiness status, blockers, and the Go/No-Go confirmation
+  dialog (§22), mirroring PR22F's established patterns file-for-file
+  (`ReconciliationListPage`/`ReconciliationRunDetailPage`/
+  `ReconciliationSignOffDialog`). Delivers a run list page
+  (`CutoverReadinessListPage.tsx`), a run detail page
+  (`CutoverReadinessRunDetailPage.tsx`) presenting Gates A-F
+  (BLOCKER/WARNING/INFO items, manual-attestation items) and the
+  immutable decision once recorded, and a GO/NO_GO confirmation
+  dialog (`CutoverGoNoGoDialog.tsx`). The frontend never computes
+  readiness, eligibility, or gate status itself — it only reads and
+  renders `GET .../gate-evaluation` and `GET .../decision` verbatim,
+  and the dialog submits exactly the four documented
+  `DecisionCreateRequest` fields, proven by a dedicated test asserting
+  the exact key-set of the submitted payload. The decision action
+  (both GO and NO_GO) is shown only under a fail-closed visibility
+  rule requiring Administrator role plus a successfully loaded run,
+  gate evaluation, and (confirmed-absent) existing decision —
+  mirroring PR22F Fix Round 1's own `canEditDisposition` fail-closed
+  pattern; loading/error states are never treated as "safe to
+  mutate." Only the exact `CUTOVER_DECISION_NOT_FOUND` error code is
+  normalized to "no decision yet" inside the decision query; every
+  other error re-throws and surfaces as a genuine error state,
+  mirroring `ReconciliationRunDetailPage`'s own `signoffQuery`
+  pattern. Warning acknowledgement is a checkbox list populated
+  exclusively from the current gate-evaluation's live warning items —
+  never pre-checked, never a free-text input path, so
+  `acknowledged_warning_codes` can only ever contain codes the
+  backend itself just reported as live. `NO_GO` remains usable even
+  while a BLOCKER exists (it records "not approved," not a readiness
+  pass); `GO` is independently re-checked against Gates A-F by the
+  backend on every submission regardless of what the frontend allowed
+  through — the frontend's `disabled={hasBlocker}` on the GO trigger
+  is UX-only guidance, never authoritative. No run-creation or
+  run-completion UI, and no new current-state re-issue write endpoint
+  or page, were added — the Gate E card links to the existing
+  `/borrow` route only.
   *Depends on:* the finalized PR23B–D backend/readiness/sign-off
   contracts, which themselves depend on OD-PR23-1, OD-PR23-2,
   OD-PR23-3, and OD-PR23-6.

@@ -5432,3 +5432,96 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   Support) task's own binding specification, including the exact
   repository-defined PR23D scope
   (`docs/design/PR23_CUTOVER_READINESS_PLAN.md` §27) it conforms to.
+
+## 2026-08-26 — PR23D (Go/No-Go Decision + Current-State Re-Issue Support) merged — GitHub PR #126
+
+- **Decision/record:** GitHub PR #126 ("PR23D — Go/No-Go Decision +
+  Current-State Re-Issue Support") was taken through the Final Merge
+  Gate and squash-merged. Fix Round 1 corrected a whole-schema
+  RESTRICT-FK-count regression test
+  (`test_migration_0013_fresh_database_all_foreign_keys_are_restrict`)
+  that this PR's own migration `0022_cutover_go_no_go_decision`
+  (two new `ON DELETE RESTRICT` foreign keys) had not yet been rolled
+  into (`assert 80 == 78` on the CI run for commit `93315b5`; fixed by
+  bumping the expected count to 80 and extending the test's own
+  running per-migration commentary, committed as `1533b15`, verified
+  green). Before merge: head was re-confirmed unchanged at
+  `1533b15c106133a224c6aa646ac3661c5fbb6c88`, CI re-confirmed 6/6 green
+  on that exact SHA, and reviews/comments/threads re-checked with no
+  new findings. The PR was converted Draft → Ready; after Ready, head
+  was re-confirmed unchanged, `mergeable_state: clean` was confirmed,
+  and CI was re-confirmed 6/6 green. The PR was then squash-merged.
+  The real squash-merge SHA is
+  `2da80231d4f037136b291863e379e739aa2905dd`. Tree identity was
+  independently verified (`git diff
+  1533b15c106133a224c6aa646ac3661c5fbb6c88
+  2da80231d4f037136b291863e379e739aa2905dd --stat` produced no
+  output -- the squash commit's tree is byte-identical to the
+  pre-merge branch head), and sole parentage was independently
+  verified (the squash commit's sole parent is exactly
+  `c10f5082fdc5cb7fd66615fe25516a4982297026`, GitHub PR #125, PR23C).
+  Per this repository's standing process, no separate "baseline
+  adoption" PR is created -- `2da80231...` became authoritative
+  immediately upon merge, folded into PR23E (the next PR that
+  legitimately touches these governance files, recorded below).
+- **Consequence:** With GitHub PR #126 merged, **PR23D (Go/No-Go
+  Decision + Current-State Re-Issue Support) is fully complete** --
+  the immutable `CutoverGoNoGoDecision` evidence record (Gate G), its
+  fresh Gates A-F re-evaluation at decision time, and confirmation
+  that the existing `POST /borrow` Issue workflow already satisfies
+  the design document's current-state re-issue requirements (no new
+  write endpoint added) now all exist and are merged. PR23E (Frontend
+  / Operator Workflow) is now eligible to begin from this baseline.
+- **Status:** Merged, closed. This entry is historical from the moment
+  it is written; it does not describe work in progress.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14,
+  following the same Final Merge Gate precedent used for GitHub PR
+  #111/#112/#113/#115/#116/#117/#118/#119/#120/#121/#122/#123/#124/#125.
+- **Source:** GitHub PR #126 description and its Final Merge Gate
+  verification evidence (exact head, CI status, tree-identity diff,
+  sole-parent `git cat-file` output).
+
+## 2026-08-26 — PR23E (Frontend / Operator Workflow) implementation started — in progress, not merged
+
+- **Decision/record:** PR23E implementation started from baseline
+  `2da80231d4f037136b291863e379e739aa2905dd` (GitHub PR #126), on
+  branch `feature/pr23e-cutover-readiness-frontend`. PR23E implements
+  the Thai-first operator-facing frontend for the PR23B-D backend:
+  a run list page and a run detail page presenting Gates A-F
+  (BLOCKER/WARNING/INFO items, manual-attestation items) and the
+  GO/NO_GO decision workflow, directly mirroring PR22F's own
+  `ReconciliationListPage`/`ReconciliationRunDetailPage`/
+  `ReconciliationSignOffDialog` patterns. The frontend never computes
+  readiness, eligibility, or gate status itself -- it only reads and
+  renders the backend's own `GET .../gate-evaluation` and
+  `GET .../decision` responses verbatim, and the GO/NO_GO
+  confirmation dialog submits exactly the four documented
+  `DecisionCreateRequest` fields (`expected_version`, `decision`,
+  `acknowledged_warning_codes`, `no_go_reason`) with no additional
+  client-computed field. The decision action (both GO and NO_GO) is
+  shown only under a fail-closed visibility rule requiring all of:
+  Administrator role, a successfully loaded run, a successfully
+  loaded gate evaluation, and a successfully loaded (and confirmed
+  absent) existing decision -- mirroring PR22F Fix Round 1's own
+  `canEditDisposition` fail-closed pattern. Only the exact
+  `CUTOVER_DECISION_NOT_FOUND` error code is normalized to "no
+  decision yet exists" inside the decision query; every other error
+  (including `CUTOVER_READINESS_RUN_NOT_FOUND` or a network failure)
+  surfaces as a genuine error state. Warning acknowledgement is
+  presented as a checkbox list populated exclusively from the current
+  gate-evaluation's live warning items -- there is no free-text input
+  path for a warning code, so `acknowledged_warning_codes` can only
+  ever contain codes the backend itself just reported as live. No
+  run-creation or run-completion UI, and no new current-state
+  re-issue write endpoint or page, were added -- the Gate E card links
+  to the existing `/borrow` route only. No backend files, migrations,
+  or error codes were changed; this PR is frontend-only plus this
+  governance sync.
+- **Status:** Draft, **not merged, PR23E implementation in progress**.
+  This entry documents work in progress; it does not describe PR23E's
+  own completion.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the PR23E (Frontend / Operator Workflow) task's own
+  binding specification, including the exact repository-defined
+  PR23E scope (`docs/design/PR23_CUTOVER_READINESS_PLAN.md` §27) it
+  conforms to.
