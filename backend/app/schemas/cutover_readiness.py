@@ -151,3 +151,46 @@ class GateEvaluationResponse(BaseModel):
     has_blocker: bool
     gates: list[GateSummary]
     items: list[GateEvaluationItem]
+
+
+# Roadmap PR23D -- Go/No-Go Decision (§12 Gate G, §13). A different
+# domain than `GateItemCategory` above -- this is the final decision
+# *value*, never an Equipment lifecycle state (§40 of the task).
+GoNoGoDecisionValue = Literal["GO", "NO_GO"]
+
+
+class DecisionCreateRequest(BaseModel):
+    """POST .../decision request body. `acknowledged_warning_codes` is
+    only meaningful for `GO` (§13: "the approver must explicitly
+    acknowledge each WARNING") -- ignored for `NO_GO`, which never
+    requires or considers warnings. `no_go_reason` is a short, optional,
+    operational text field only -- never authoritative readiness logic
+    (see `app.models.cutover_readiness.CutoverGoNoGoDecision`'s own
+    docstring). `model_config = {"extra": "forbid"}` for the same reason
+    as `RunCreateRequest`/`RunCompleteRequest` above."""
+
+    expected_version: int = Field(ge=0)
+    decision: GoNoGoDecisionValue
+    acknowledged_warning_codes: list[str] = Field(default_factory=list)
+    no_go_reason: str | None = Field(default=None, max_length=2000)
+
+    model_config = {"extra": "forbid"}
+
+
+class DecisionDetail(BaseModel):
+    """`POST`/`GET .../decision` response. Every field is server-derived
+    -- no client-supplied trusted actor/timestamp. `acknowledged_warning_
+    codes` reflects exactly what the backend recorded (the canonical,
+    fresh-evaluation-derived set for `GO`; always `[]` for `NO_GO`),
+    never the raw request payload."""
+
+    id: UUIDStr
+    cutover_readiness_run_id: UUIDStr
+    decision: GoNoGoDecisionValue
+    recorded_by_user_id: UUIDStr
+    recorded_at: datetime
+    run_version_at_decision: int
+    acknowledged_warning_codes: list[str]
+    no_go_reason: str | None
+
+    model_config = {"from_attributes": True}

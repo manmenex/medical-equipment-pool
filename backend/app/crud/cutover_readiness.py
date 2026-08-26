@@ -30,18 +30,24 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import and_, func, or_, select, text, update
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy import and_, exists, func, or_, select, text, update
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import (
+    CutoverDecisionAlreadyExistsError,
+    CutoverDecisionBlockedByReadinessError,
+    CutoverDecisionRequiresCompletedRunError,
+    CutoverDecisionRunSupersededError,
+    CutoverDecisionStaleVersionError,
+    CutoverDecisionWarningsNotAcknowledgedError,
     CutoverReadinessDatabaseMigrationHeadUnavailableError,
     CutoverReadinessEvidenceInvalidError,
     CutoverReadinessRunNotFoundError,
     CutoverReadinessRunNotMutableError,
     CutoverReadinessRunVersionConflictError,
 )
-from app.models.cutover_readiness import CutoverReadinessRun
+from app.models.cutover_readiness import CutoverGoNoGoDecision, CutoverReadinessRun
 from app.models.legacy_history import LegacyMigrationAuthority
 from app.models.legacy_reconciliation import (
     LegacyMigrationAuthorityCoverage,
@@ -423,3 +429,154 @@ async def complete_readiness_run(
             f"Run '{run_id}' was modified concurrently, or expected_version {expected_version} is stale."
         )
     return updated
+
+
+async def get_go_no_go_decision(db: AsyncSession, *, run_id: uuid.UUID) -> CutoverGoNoGoDecision | None:
+    return (
+        await db.execute(select(CutoverGoNoGoDecision).where(CutoverGoNoGoDecision.cutover_readiness_run_id == run_id))
+    ).scalar_one_or_none()
+
+
+async def create_go_no_go_decision(
+    db: AsyncSession,
+    *,
+    run_id: uuid.UUID,
+    expected_version: int,
+    actor_id: uuid.UUID,
+    decision: str,
+    acknowledged_warning_codes: list[str],
+    no_go_reason: str | None,
+) -> CutoverGoNoGoDecision:
+    """Roadmap PR23D (design §12 Gate G, §13, §16). Does **not** commit --
+    the caller (the API layer) commits once, together with the mandatory
+    audit write, mirroring every other mutation in this module.
+
+    Order, every step inside one transaction (mirrors
+    `app.crud.legacy_reconciliation.create_signoff`'s lock-order
+    discipline, adapted for this table's own preconditions):
+
+    1. `SELECT ... FOR UPDATE` the `CutoverReadinessRun` row -- always
+       first.
+    2. Verify `status == 'completed'` under the lock -- a decision is
+       only ever recorded against a run whose immutable evidence
+       snapshot was fully captured.
+    3. Verify this run has not since been superseded (no other
+       `CutoverReadinessRun.supersedes_run_id` points back at it) --
+       design §16: "final Gate G decision only on the current
+       non-superseded completed run." This is a genuinely new check for
+       PR23D (distinct from PR23C's own Gate D, which checks
+       `LegacyReconciliationRun` supersession, not `CutoverReadinessRun`
+       supersession).
+    4. Verify `expected_version == run.version` under the lock.
+    5. Check for an existing `CutoverGoNoGoDecision` for this run --
+       still under the run lock, so no concurrent decision insertion
+       (following the same lock order) can land between this check and
+       the `INSERT` below.
+    6. **Fresh Gate A-F re-evaluation** (`app.services.
+       cutover_readiness_gates.evaluate_gates`, imported locally to
+       avoid a circular import with that module's own dependency on
+       `get_current_database_migration_head` above) against the exact
+       locked/current run -- never a client-supplied or earlier `GET
+       .../gate-evaluation` response. For `GO` only: any BLOCKER item
+       rejects the decision outright (§13: "cutover Go is
+       deterministically impossible while any mandatory gate fails");
+       every currently-live WARNING item `code` must appear in
+       `acknowledged_warning_codes`, or the decision is rejected --
+       comparison is against this fresh evaluation's own warning-code
+       set, so a stale/unknown code the caller supplied can never
+       satisfy a *different*, currently-live warning. `NO_GO` skips
+       both checks entirely (§13: recording that cutover does not
+       proceed requires no readiness justification) and is not itself
+       gate-evaluated.
+    7. `INSERT` the decision row, storing (for `GO`) the canonical
+       sorted list of exactly the warning codes that were live and
+       acknowledged at this moment -- never the raw client payload --
+       or `[]` for `NO_GO`. `UNIQUE(cutover_readiness_run_id)` is caught
+       as defense-in-depth (structurally redundant with step 5 under
+       the run lock) and translated to the same structured conflict,
+       never a raw `IntegrityError` (mirrors `create_signoff`'s
+       identical `SAVEPOINT` pattern).
+    """
+    from app.services.cutover_readiness_gates import evaluate_gates
+
+    run_stmt = select(CutoverReadinessRun).where(CutoverReadinessRun.id == run_id)
+    if _use_for_update(db):
+        run_stmt = run_stmt.with_for_update()
+    run = (await db.execute(run_stmt)).scalar_one_or_none()
+    if run is None:
+        raise CutoverReadinessRunNotFoundError(f"Cutover readiness run '{run_id}' not found.")
+
+    if run.status != "completed":
+        raise CutoverDecisionRequiresCompletedRunError(
+            f"Cutover readiness run '{run_id}' has status '{run.status}', not 'completed' -- a Go/No-Go decision "
+            "requires a fully captured evidence snapshot."
+        )
+
+    superseded = (
+        await db.execute(select(exists().where(CutoverReadinessRun.supersedes_run_id == run_id)))
+    ).scalar_one()
+    if superseded:
+        raise CutoverDecisionRunSupersededError(
+            f"Cutover readiness run '{run_id}' has since been superseded by a newer run -- record the decision "
+            "against the current governing run instead."
+        )
+
+    if run.version != expected_version:
+        raise CutoverDecisionStaleVersionError(
+            f"Run '{run_id}' has version {run.version}, but expected_version {expected_version} was supplied -- "
+            "re-fetch the run and retry with its current version."
+        )
+
+    if await get_go_no_go_decision(db, run_id=run_id) is not None:
+        raise CutoverDecisionAlreadyExistsError(
+            f"Cutover readiness run '{run_id}' already has a recorded Go/No-Go decision -- a decision is never "
+            "created twice or modified; GET the existing decision instead."
+        )
+
+    stored_acknowledged_warning_codes: list[str] = []
+    if decision == "GO":
+        items = await evaluate_gates(db, run=run)
+        blockers = [item for item in items if item.category == "blocker"]
+        if blockers:
+            raise CutoverDecisionBlockedByReadinessError(
+                "GO is rejected: a fresh re-evaluation of Gates A-F found "
+                f"{len(blockers)} BLOCKER item(s) -- "
+                + "; ".join(f"[{b.gate}] {b.code}" for b in blockers)
+                + "."
+            )
+        live_warning_codes = {item.code for item in items if item.category == "warning"}
+        acknowledged = set(acknowledged_warning_codes)
+        missing = live_warning_codes - acknowledged
+        if missing:
+            raise CutoverDecisionWarningsNotAcknowledgedError(
+                "GO is rejected: the following currently-live WARNING item code(s) were not acknowledged -- "
+                f"{sorted(missing)}."
+            )
+        stored_acknowledged_warning_codes = sorted(live_warning_codes)
+
+    try:
+        # SAVEPOINT, not a bare flush -- same rationale as
+        # `create_signoff`'s identical comment: on the (structurally
+        # unreachable under the run lock, but handled explicitly rather
+        # than assumed away) IntegrityError branch below, this rolls
+        # back only the failed INSERT, leaving the caller's own outer
+        # transaction (and the run lock it holds) usable to continue.
+        async with db.begin_nested():
+            record = CutoverGoNoGoDecision(
+                cutover_readiness_run_id=run_id,
+                decision=decision,
+                recorded_by_user_id=actor_id,
+                run_version_at_decision=run.version,
+                acknowledged_warning_codes=stored_acknowledged_warning_codes,
+                no_go_reason=no_go_reason,
+            )
+            db.add(record)
+            await db.flush()
+    except IntegrityError as exc:
+        raise CutoverDecisionAlreadyExistsError(
+            f"Cutover readiness run '{run_id}' already has a recorded Go/No-Go decision -- a decision is never "
+            "created twice or modified; GET the existing decision instead."
+        ) from exc
+
+    await db.refresh(record)
+    return record

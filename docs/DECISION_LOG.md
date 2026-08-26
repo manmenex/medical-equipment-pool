@@ -5297,3 +5297,138 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
 - **Source:** the PR23C (Readiness Gate Evaluation) task's own binding
   specification, including the exact repository-defined PR23C scope
   (`docs/design/PR23_CUTOVER_READINESS_PLAN.md` §27) it conforms to.
+
+## 2026-08-25 — PR23C Fix Round 1: Gate B dataset-type check, both at the evaluator and the PR23B completion boundary
+
+- **Decision/record:** An independent review of PR #125 found that
+  Gate B's evaluator (`_evaluate_gate_b` in
+  `app.services.cutover_readiness_gates`) checked only
+  `ImportSession.status == "completed"` for the run's
+  `equipment_master_import_source_id`, never verifying
+  `ImportSession.dataset_type == "equipment_master"` -- so a
+  cross-wired `legacy_transaction_history` import source could pass as
+  Equipment Master evidence. Per explicit instruction, the fix was made
+  at **both** layers, not evaluator-only: (1) Gate B's evaluator now
+  raises a new BLOCKER code `GATE_B_WRONG_DATASET_TYPE` when the
+  dataset type does not match; (2) `app.crud.cutover_readiness.
+  _validate_evidence` (the PR23B completion-boundary function that
+  validates evidence at `complete_readiness_run` time) was hardened
+  with the identical dataset-type check, reusing
+  `CutoverReadinessEvidenceInvalidError` rather than a new exception
+  class -- so a `CutoverReadinessRun` can never even reach `completed`
+  status with semantically-wrong evidence in the first place, closing
+  the gap the reviewer identified: fixing only the evaluator would have
+  left the system able to persist a `completed` run with wrong evidence
+  and only discover the defect later at read/evaluate time, a weaker
+  evidence foundation than intended. Two regression tests were added to
+  `tests/test_pr23c_readiness_gate_evaluation.py`, both independently
+  confirmed (via `git stash`) to fail against the pre-fix code and pass
+  after the fix. A same-class review of every other typed evidence
+  reference in `_validate_evidence` and the gate evaluators found no
+  other instance of this bug class. Full backend suite: 1923 passed.
+- **Consequence:** Gate B and the PR23B completion boundary now share
+  one hardened dataset-type contract; a `CutoverReadinessRun` cannot be
+  completed with a cross-wired import source, and Gate B's own
+  evaluation cannot be fooled by one either, regardless of how it
+  entered the row.
+- **Status:** Fix Round 1 merged as part of GitHub PR #125 (see the
+  merge entry below); this entry is historical from the moment it is
+  written.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the independent-review finding on PR #125 and the
+  reviewer's own explicit instruction to fix both the evaluator and the
+  PR23B completion boundary, not evaluator-only.
+
+## 2026-08-26 — GitHub PR #125 merged; new authoritative baseline adopted; PR23C fully complete
+
+- **Decision/record:** GitHub PR #125, "PR23C — Readiness Gate
+  Evaluation" (including Fix Round 1's Gate B dataset-type hardening),
+  squash-merged into `claude/medical-equipment-pool-0c7fz0` on top of
+  `833f6758a93a78398207d64fbefa65ff2802cf46` (GitHub PR #124, PR23B).
+  Final Merge Gate: reviewed feature-branch head confirmed current
+  (`7022f01a90f45c873995a4f57126224025e4e739`, after Fix Round 1's two
+  fixes above), CI green 6/6 on that exact head, zero reviews and zero
+  comments, Draft promoted to Ready for review, re-checked immediately
+  before merge (`mergeable_state: clean`). Post-merge, tree identity
+  between the reviewed feature-branch head and the squash commit was
+  independently verified (`git diff 7022f01a9...c10f5082f... --stat`
+  empty), and sole parentage was independently verified (`git cat-file
+  -p c10f5082f...` shows exactly one `parent` line,
+  `833f6758a93a78398207d64fbefa65ff2802cf46`). Per this repository's
+  standing process, no separate "baseline adoption" PR is created --
+  `c10f5082...` became authoritative immediately upon merge, folded
+  into PR23D (the next PR that legitimately touches these governance
+  files, recorded below).
+- **Consequence:** With GitHub PR #125 merged, **PR23C (Readiness Gate
+  Evaluation) is fully complete** -- the read-only Gates A-F
+  BLOCKER/WARNING/INFO evaluation service and endpoint now exist,
+  hardened against the Gate B cross-wired-evidence defect Fix Round 1
+  corrected. PR23D (Go/No-Go Decision + Current-State Re-Issue Support)
+  is now eligible to begin from this baseline.
+- **Status:** Merged, closed. This entry is historical from the moment
+  it is written; it does not describe work in progress.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14,
+  following the same Final Merge Gate precedent used for GitHub PR
+  #111/#112/#113/#115/#116/#117/#118/#119/#120/#121/#122/#123/#124.
+- **Source:** GitHub PR #125 description and its Final Merge Gate
+  verification evidence (exact head, CI status, tree-identity diff,
+  sole-parent `git cat-file` output).
+
+## 2026-08-26 — PR23D (Go/No-Go Decision + Current-State Re-Issue Support) implementation started — in progress, not merged
+
+- **Decision/record:** PR23D implementation started from baseline
+  `c10f5082fdc5cb7fd66615fe25516a4982297026` (GitHub PR #125), on
+  branch `feature/pr23d-go-no-go-decision`. PR23D implements Gate G
+  (§12/§13 of the design document): an immutable
+  `CutoverGoNoGoDecision` evidence record (mirroring PR22E's
+  `LegacyReconciliationSignOff` model shape), backed by additive
+  migration `0022_cutover_go_no_go_decision`
+  (`UNIQUE(cutover_readiness_run_id)`, `CHECK (decision IN ('GO',
+  'NO_GO'))`, `FK ... ON DELETE RESTRICT`), surfaced via
+  `POST/GET /api/v1/cutover-readiness-runs/{run_id}/decision`
+  (Administrator-only mutation, broad read access -- no new role).
+  Recording a decision always performs a **fresh** re-evaluation of
+  Gates A-F at decision time via `app.services.cutover_readiness_gates.
+  evaluate_gates` (never a cached or client-supplied evaluation): `GO`
+  is rejected with `CUTOVER_DECISION_BLOCKED_BY_READINESS` if any live
+  BLOCKER exists, and with `CUTOVER_DECISION_WARNINGS_NOT_ACKNOWLEDGED`
+  if any live WARNING code is not present in the caller's
+  `acknowledged_warning_codes` (the backend stores its own
+  canonical, sorted, live-warning-code set, never the raw client
+  payload); `NO_GO` never requires readiness success or warning
+  acknowledgement. `app.crud.cutover_readiness.create_go_no_go_decision`
+  follows PR22E's own proven lock-order/transaction discipline: lock
+  the run `FOR UPDATE` first, validate `status == "completed"`
+  (`CUTOVER_DECISION_REQUIRES_COMPLETED_RUN`), validate the run has not
+  itself been superseded (`CUTOVER_DECISION_RUN_SUPERSEDED` -- a new
+  check distinct from Gate D's own `LegacyReconciliationRun`
+  supersession check), validate `expected_version`
+  (`CUTOVER_DECISION_STALE_VERSION`), re-evaluate gates, then insert the
+  decision row inside a `db.begin_nested()` SAVEPOINT so a concurrent
+  duplicate is rejected as a clean `CUTOVER_DECISION_ALREADY_EXISTS`
+  (409) rather than a raw `IntegrityError`, proven by a genuine
+  two-connection PostgreSQL concurrency test. The canonical audit write
+  happens in the same transaction as the endpoint's single commit,
+  mirroring PR22E's own shape exactly. No current-state re-issue write
+  endpoint was added: inspection of the existing `POST /borrow` Issue
+  workflow (`app.services.borrow_service`, `EquipmentNotAvailableError`
+  duplicate-OPEN-transaction protection) confirmed it already satisfies
+  every requirement the design document's re-issue scope describes --
+  manual, per-equipment, staff-confirmed re-issue through the normal
+  workflow, never a replay of `LegacyEquipmentEvent` history and never
+  a bulk-created `BorrowTransaction`. Recording a `GO` decision performs
+  no cutover action itself (no AppSheet disablement, no `Equipment`
+  mutation, no migration execution, no Pilot start) -- evidence-
+  recording only; actual cutover execution remains PR23F/operational-
+  runbook scope. Gate A's migration-head check and Gate D's
+  reconciliation-freshness check are reused verbatim from PR23C, never
+  re-derived; PR23C Fix Round 1's Gate B dataset-type correction is
+  preserved unchanged.
+- **Status:** Draft, **not merged, PR23D implementation in progress**.
+  This entry documents work in progress; it does not describe PR23D's
+  own completion.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the PR23D (Go/No-Go Decision + Current-State Re-Issue
+  Support) task's own binding specification, including the exact
+  repository-defined PR23D scope
+  (`docs/design/PR23_CUTOVER_READINESS_PLAN.md` §27) it conforms to.

@@ -668,3 +668,96 @@ class CutoverReadinessGateEvaluationRequiresCompletedRunError(DomainError):
 
     code = "CUTOVER_READINESS_GATE_EVALUATION_REQUIRES_COMPLETED_RUN"
     status_code = 422
+
+
+class CutoverDecisionRequiresCompletedRunError(DomainError):
+    """Roadmap PR23D -- `POST .../decision` was called for a
+    `CutoverReadinessRun` whose `status` is not `completed`. Mirrors
+    `CutoverReadinessGateEvaluationRequiresCompletedRunError`'s identical
+    rationale: a Go/No-Go decision is meaningless against a run with no
+    captured evidence snapshot."""
+
+    code = "CUTOVER_DECISION_REQUIRES_COMPLETED_RUN"
+    status_code = 422
+
+
+class CutoverDecisionRunSupersededError(DomainError):
+    """Roadmap PR23D (design §16) -- `POST .../decision` was called for
+    a `CutoverReadinessRun` that has since been superseded by a newer
+    run (some other `CutoverReadinessRun.supersedes_run_id` points back
+    at this one). A final Gate G decision is only ever recorded against
+    the current, non-superseded readiness run -- never a stale snapshot
+    carried forward. The caller must record the decision against the
+    current governing run instead."""
+
+    code = "CUTOVER_DECISION_RUN_SUPERSEDED"
+    status_code = 409
+
+
+class CutoverDecisionStaleVersionError(DomainError):
+    """Roadmap PR23D -- the caller's `expected_version` no longer
+    matches the `CutoverReadinessRun`'s current `version`, checked under
+    the run's own `SELECT ... FOR UPDATE` lock. Mirrors
+    `CutoverReadinessRunVersionConflictError`'s identical rationale. The
+    caller must re-fetch the run and retry with its current version."""
+
+    code = "CUTOVER_DECISION_STALE_VERSION"
+    status_code = 409
+
+
+class CutoverDecisionAlreadyExistsError(DomainError):
+    """Roadmap PR23D -- `POST .../decision` was called for a run that
+    already has a persisted `CutoverGoNoGoDecision` row (`UNIQUE
+    (cutover_readiness_run_id)`). A decision is never created twice or
+    modified -- the caller must `GET .../decision` to read the existing,
+    immutable decision. Checked under the same `CutoverReadinessRun` row
+    lock the decision-creation transaction acquires first, so two
+    concurrent POSTs can never both observe "no existing decision" and
+    race an INSERT -- whichever acquires the lock first commits (or
+    fails on an earlier precondition) before the second's own existence
+    check runs. `UNIQUE(cutover_readiness_run_id)` at the schema level
+    remains defense-in-depth only, translated to this same structured
+    error rather than a raw `IntegrityError` (mirrors
+    `ReconciliationSignOffAlreadyExistsError`'s identical pattern)."""
+
+    code = "CUTOVER_DECISION_ALREADY_EXISTS"
+    status_code = 409
+
+
+class CutoverDecisionBlockedByReadinessError(DomainError):
+    """Roadmap PR23D (design §12/§13) -- a `GO` decision was attempted
+    while a fresh re-evaluation of Gates A-F (`app.services.
+    cutover_readiness_gates.evaluate_gates`, re-run immediately before
+    recording the decision, never trusted from an earlier `GET
+    .../gate-evaluation` response) still returns at least one BLOCKER
+    item. Cutover Go is deterministically impossible while any mandatory
+    gate fails (§13) -- there is no subjective override. `NO_GO` is
+    never blocked by this check (§13: recording that cutover does not
+    proceed requires no readiness justification)."""
+
+    code = "CUTOVER_DECISION_BLOCKED_BY_READINESS"
+    status_code = 422
+
+
+class CutoverDecisionWarningsNotAcknowledgedError(DomainError):
+    """Roadmap PR23D (design §13) -- a `GO` decision was attempted
+    without acknowledging every currently-live WARNING item code from a
+    fresh Gate A-F re-evaluation. `acknowledged_warning_codes` in the
+    request is compared against the live warning-code set computed at
+    decision time, never against an earlier/stale evaluation -- a code
+    for a warning that has since disappeared does not count toward
+    acknowledging a different, currently-live warning. Only raised for
+    `GO`; `NO_GO` never requires warning acknowledgement."""
+
+    code = "CUTOVER_DECISION_WARNINGS_NOT_ACKNOWLEDGED"
+    status_code = 422
+
+
+class CutoverDecisionNotFoundError(DomainError):
+    """Roadmap PR23D -- `GET .../decision` was called for a
+    `CutoverReadinessRun` that has no persisted `CutoverGoNoGoDecision`
+    row yet. Distinct from `CutoverReadinessRunNotFoundError`: the run
+    itself may exist and simply not have a final decision recorded."""
+
+    code = "CUTOVER_DECISION_NOT_FOUND"
+    status_code = 404
