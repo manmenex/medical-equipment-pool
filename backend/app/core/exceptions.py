@@ -622,8 +622,14 @@ class CutoverReadinessEvidenceInvalidError(DomainError):
     immutable snapshot must never mix evidence drawn from two unrelated
     provenance chains (Authority A + Coverage B, or Coverage A +
     ReconciliationRun B) even when every individual id independently
-    resolves to a real row. Reference integrity is never trusted from
-    client input alone -- every reference and every cross-reference is
+    resolves to a real row. **PR23C Fix Round 1**: also raised when
+    `equipment_master_import_source_id` references an `ImportSource`
+    whose owning `ImportSession.dataset_type` is not the Equipment
+    Master dataset type -- a field name is not type safety; a completed
+    source/session for a *different* dataset (e.g.
+    `legacy_transaction_history`) must never be accepted as Equipment
+    Master evidence. Reference integrity is never trusted from client
+    input alone -- every reference and every cross-reference is
     validated fresh, inside the same transaction as the completion
     `UPDATE`, before any row is written."""
 
@@ -638,12 +644,27 @@ class CutoverReadinessDatabaseMigrationHeadUnavailableError(DomainError):
     row exists). `database_migration_head` is evidence that must prove
     the actual schema state at capture time; it is never accepted from
     client/API-caller input (see `app.crud.cutover_readiness`'s own
-    `_get_current_database_migration_head`). `503` (not a `4xx`) because
-    the request itself was well-formed -- this is a transient/
-    environment condition (mirrors `PdfRenderTimeoutError`/
+    `get_current_database_migration_head`). Reused by Roadmap PR23C's
+    Gate A freshness re-check for the identical reason. `503` (not a
+    `4xx`) because the request itself was well-formed -- this is a
+    transient/environment condition (mirrors `PdfRenderTimeoutError`/
     `XlsxRenderTimeoutError`'s own "well-formed request, resource
     condition" rationale), never a client input problem. No readiness
-    run is created when this is raised."""
+    run is created (PR23B), and no gate evaluation is returned (PR23C),
+    when this is raised."""
 
     code = "CUTOVER_READINESS_DATABASE_MIGRATION_HEAD_UNAVAILABLE"
     status_code = 503
+
+
+class CutoverReadinessGateEvaluationRequiresCompletedRunError(DomainError):
+    """Roadmap PR23C -- `GET .../gate-evaluation` was called for a
+    `CutoverReadinessRun` whose `status` is not `completed`. Gates A-F
+    are evaluated against a run's persisted evidence snapshot (PR23B);
+    a `pending`/`running`/`failed` run has no such snapshot (every
+    evidence-reference column is still `NULL`), so gate evaluation is
+    meaningless until the run reaches `completed`. Never silently
+    evaluated against a partial/absent snapshot."""
+
+    code = "CUTOVER_READINESS_GATE_EVALUATION_REQUIRES_COMPLETED_RUN"
+    status_code = 422
