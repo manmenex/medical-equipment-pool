@@ -8,21 +8,25 @@ control detailed ordering, scope, dependencies, and acceptance criteria.
 
 ## Current baseline
 
-`8644536403eeec269e6dadf835f1bda3844b6cce` — the real squash-merge SHA of
-GitHub PR #127, "PR23E — Cutover Readiness Frontend / Operator
-Workflow", merged on top of
-`2da80231d4f037136b291863e379e739aa2905dd` (GitHub PR #126, PR23D, now
-historical/superseded by this baseline). PR #127's final reviewed
-feature-branch head (`d2ebb8ed95807cdbd15fdfac3a50165179eb170d`) carried
+`f35fe716d57c51042d86a661657f679799b6a9e3` — the real squash-merge SHA of
+GitHub PR #128, "PR23F — Cutover Runbook + Final Governance
+Close-out", merged on top of
+`8644536403eeec269e6dadf835f1bda3844b6cce` (GitHub PR #127, PR23E, now
+historical/superseded by this baseline). PR #128's final reviewed
+feature-branch head (`dcaac117ca6a4bdbf94bdc1dd727f0e2b98594c4`) carried
 **zero reviews** and zero comments, with CI green (6/6) and the reviewed
 head's tree independently verified byte-identical to the merged squash
-commit's tree, sole parent `2da80231...` confirmed — the squash commit
-actually landed on the base branch, `8644536...`, is the baseline. Per
+commit's tree, sole parent `8644536...` confirmed — the squash commit
+actually landed on the base branch, `f35fe716...`, is the baseline. Per
 this repository's standing process, **no separate "baseline adoption"
 PR is created** — the squash SHA became authoritative immediately upon
-merge, recorded here by PR23F (the next PR that legitimately touches
-these governance files). **PR23F (Cutover Runbook + Final Governance
-Close-out) implementation is now in progress, not yet merged.**
+merge, recorded here by the Production Deployment & Go-Live Architecture
+Planning round (the next PR that legitimately touches these governance
+files). **Roadmap PR23 (Cutover Readiness) is now fully implementation-
+complete** — see
+`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` for the
+architecture-planning round now underway before any Roadmap PR24
+implementation.
 
 **Roadmap PR22 (Legacy Data Validation and Reconciliation) is now fully
 complete** — architecture design (GitHub PR #112), all seven Owner
@@ -72,16 +76,21 @@ was added (the existing `POST /borrow` Issue workflow already covers
 it), hardened by one fix round (a whole-schema `ON DELETE RESTRICT`
 foreign-key-count regression test correction). **PR23E (Frontend /
 Operator Workflow) is also merged** (GitHub PR #127, squash SHA
-`8644536403eeec269e6dadf835f1bda3844b6cce`, current baseline — see
-"Current baseline" above) — Thai-first operator UI (run list/detail,
-Gates A-F presentation, Go/No-Go decision workflow) over the
-already-merged PR23B-D backend, only reading and rendering
-backend-computed readiness state; no new backend route, no migration.
-**PR23F (Cutover Runbook + Final Governance Close-out) implementation
-is now in progress, not yet merged** — a documentation-only operational
-runbook plus the final governance close-out. **Roadmap PR23 overall is
-not yet complete; it closes when PR23F merges.** This baseline entry
-will be updated again once PR23F's own PR merges.
+`8644536403eeec269e6dadf835f1bda3844b6cce`, historical) — Thai-first
+operator UI (run list/detail, Gates A-F presentation, Go/No-Go decision
+workflow) over the already-merged PR23B-D backend, only reading and
+rendering backend-computed readiness state; no new backend route, no
+migration. **PR23F (Cutover Runbook + Final Governance Close-out) is
+also merged** (GitHub PR #128, squash SHA
+`f35fe716d57c51042d86a661657f679799b6a9e3`, current baseline — see
+"Current baseline" above) — a documentation-only operational runbook
+(`docs/runbooks/PR23_CUTOVER_RUNBOOK.md`) plus the final governance
+close-out. **Roadmap PR23 overall is now fully implementation-
+complete.** Real Pilot execution, Production cutover, AppSheet's actual
+read-only transition, a selected production deployment target, and a
+rehearsed backup/restore procedure have **not** occurred. This baseline
+entry will be updated again once the next governance-touching PR
+merges.
 
 `d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` (GitHub PR #110, Roadmap
 PR21E — Legacy History Frontend Real Integration) is now historical,
@@ -304,8 +313,7 @@ for the full slice-by-slice review chronology and closure record.
 
 | Sequence | Roadmap item | Status |
 |---|---|---|
-| Current | PR23 — Cutover Readiness | Depends on PR22 (now fully complete — see "Current baseline" above). **PR23A (Architecture & Operational Design) COMPLETE / MERGED** (GitHub PR #122, squash SHA `7ca9c87b4c525a1835403dac5d08e6e1be79d33b`, historical). **PR23 Owner Decision Closure COMPLETE / MERGED** (all six OD-PR23-1 through OD-PR23-6 Owner-approved, GitHub PR #123, squash SHA `22ec7a25d686b0cd37d2a366172cb31a49eebff8`, historical). **PR23B (Cutover Readiness Evidence Foundation) COMPLETE / MERGED** (GitHub PR #124, squash SHA `833f6758a93a78398207d64fbefa65ff2802cf46`, historical). **PR23C (Readiness Gate Evaluation) COMPLETE / MERGED** (GitHub PR #125, squash SHA `c10f5082fdc5cb7fd66615fe25516a4982297026`, historical). **PR23D (Go/No-Go Decision + Current-State Re-Issue Support) COMPLETE / MERGED** (GitHub PR #126, squash SHA `2da80231d4f037136b291863e379e739aa2905dd`, historical). **PR23E (Frontend / Operator Workflow) COMPLETE / MERGED** (GitHub PR #127, squash SHA `8644536403eeec269e6dadf835f1bda3844b6cce`, current baseline — see "Current baseline" above). **PR23F (Cutover Runbook + Final Governance Close-out) implementation IN PROGRESS, not yet merged. PR23 overall not yet complete; it closes when PR23F merges.** |
-| After PR19–PR23 | PR24 — Go-live / deployment | Planned; blocked by PR19–PR23 |
+| Current | PR24 — Go-live / deployment | Dependency (PR19–PR23) satisfied — Roadmap PR23 is now fully implementation-complete (see "Current baseline" above). **Production Deployment & Go-Live Architecture Planning round OPEN, not yet merged** (`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`) — no PR24 implementation slice may begin until this round's Owner Decisions (OD-PR24-1 through OD-PR24-6) are resolved. |
 
 **Historical note on PR19B/PR20 relative ordering:** before PR19B merged,
 while it was still a provisional, unreviewed Draft (GitHub PR #80), this
@@ -326,25 +334,25 @@ off this table. Roadmap PR21 has since fully completed too (see "Roadmap
 PR21 complete" above); its row has also moved off this table. Roadmap
 PR22 has since also fully completed (design, all seven Owner Decisions,
 PR22B-F implementation, and PR22G governance close-out all merged — see
-"Current baseline" above); its row has likewise moved off this table,
-and PR23 is now shown with sequence "Current" in the table above.
-PR23A (Architecture & Operational Design) has since merged, and all six
-PR23 Owner Decisions (OD-PR23-1 through OD-PR23-6) are Owner-approved
-via the PR23 Owner Decision Closure round, itself now merged; PR23B
-(Cutover Readiness Evidence Foundation) has since merged too; PR23C
-(Readiness Gate Evaluation) has since merged too; PR23D (Go/No-Go
-Decision + Current-State Re-Issue Support) has since merged too; PR23E
-(Frontend / Operator Workflow) has since merged too; PR23F (Cutover
-Runbook + Final Governance Close-out) implementation is now in
-progress, not yet merged; PR23 remains the current Roadmap item until
-PR23F merges and Roadmap PR23 as a whole closes.** PR22
-through
-PR24's ordering is preserved as-is because it reflects an existing
-authoritative dependency chain
+"Current baseline" above); its row has likewise moved off this table.
+**Roadmap PR23 has since also fully completed** — PR23A (Architecture &
+Operational Design), all six PR23 Owner Decisions (OD-PR23-1 through
+OD-PR23-6) via the PR23 Owner Decision Closure round, PR23B (Cutover
+Readiness Evidence Foundation), PR23C (Readiness Gate Evaluation), PR23D
+(Go/No-Go Decision + Current-State Re-Issue Support), PR23E (Frontend /
+Operator Workflow), and PR23F (Cutover Runbook + Final Governance
+Close-out) are all merged; **Roadmap PR23 overall is now fully
+implementation-complete**; its row has likewise moved off this table,
+and PR24 is now shown with sequence "Current" in the table above — with
+implementation itself gated on the Production Deployment & Go-Live
+Architecture Planning round's own Owner Decisions (OD-PR24-1 through
+OD-PR24-6, `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`).**
+PR22 through PR24's ordering is preserved as-is because it reflects an
+existing authoritative dependency chain
 (`docs/audits/04-consolidated-implementation-plan.md` Part D, Group 8:
 PR21 depended on PR20 — satisfied; PR22 depends on PR20 and PR21, both
-now complete; PR24 is blocked by PR19–PR23), not a new sequencing
-decision introduced by this or any prior governance sync.
+now complete; PR24 depends on PR19–PR23, now satisfied), not a new
+sequencing decision introduced by this or any prior governance sync.
 
 Roadmap PR15B (Schema Hygiene implementation, GitHub PR #54), the
 documentation audit and Roadmap consistency work that preceded it
@@ -386,19 +394,21 @@ table:** the design (GitHub PR #112), Owner Decision Closure (GitHub PR
 #115), PR22B–PR22F implementation (GitHub PR #116/#117/#118/#119/#120),
 and PR22G governance close-out (GitHub PR #121) are all merged — see
 "Current baseline" above and `docs/DECISION_LOG.md` for the full
-record. This table now begins with PR23 — shown as the current Roadmap
-item now that its first slice, PR23A, has merged
-(`docs/design/PR23_CUTOVER_READINESS_PLAN.md`, GitHub PR #122), all
-six PR23 Owner Decisions are Owner-approved via the PR23 Owner
-Decision Closure round (GitHub PR #123, now merged), PR23B (Cutover
-Readiness Evidence Foundation) has since merged too (GitHub PR #124),
-PR23C (Readiness Gate Evaluation) has since merged too (GitHub PR
-#125), PR23D (Go/No-Go Decision + Current-State Re-Issue Support) has
-since merged too (GitHub PR #126), PR23E (Frontend / Operator Workflow)
-has since merged too (GitHub PR #127), and PR23F (Cutover Runbook +
-Final Governance Close-out) implementation is now in progress, not yet
-merged; PR19B's own historical relative-ordering note is preserved
-above.
+record. **Roadmap PR23 has since also fully completed:** its first
+slice, PR23A, merged (`docs/design/PR23_CUTOVER_READINESS_PLAN.md`,
+GitHub PR #122), all six PR23 Owner Decisions are Owner-approved via
+the PR23 Owner Decision Closure round (GitHub PR #123), PR23B (Cutover
+Readiness Evidence Foundation) merged (GitHub PR #124), PR23C
+(Readiness Gate Evaluation) merged (GitHub PR #125), PR23D (Go/No-Go
+Decision + Current-State Re-Issue Support) merged (GitHub PR #126),
+PR23E (Frontend / Operator Workflow) merged (GitHub PR #127), and
+PR23F (Cutover Runbook + Final Governance Close-out) merged (GitHub PR
+#128) — **Roadmap PR23 overall is now fully implementation-complete.**
+This table now begins with PR24 — shown as the current Roadmap item,
+with implementation gated on the Production Deployment & Go-Live
+Architecture Planning round's own Owner Decisions
+(`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`); PR19B's own
+historical relative-ordering note is preserved above.
 
 ## Scope guardrails for the planned sequence
 
