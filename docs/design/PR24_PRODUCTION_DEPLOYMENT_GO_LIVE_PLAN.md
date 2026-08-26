@@ -199,7 +199,15 @@ repository, verified directly against source, not assumed:
 - **`GET /api/v1/health`** (`backend/app/api/v1/health.py`) — already
   exists, unauthenticated, checks both `SELECT 1` against the database
   and a Redis `PING`, returning `{"status": "ok", "db": ..., "redis":
-  ...}`. Already suitable as a platform health-check target.
+  ...}` in the response body. **Confirmed by inspection: this endpoint
+  always returns HTTP 200, even when the `db` or `redis` field in its
+  own body reports `"error"`** — the route never sets a non-2xx status
+  code based on the dependency checks it performs. It is suitable as a
+  **liveness** signal (the process is up and serving HTTP) and as a
+  **diagnostic** endpoint (a human or dashboard can read the body), but
+  it is **not, by itself, a safe status-code-only production readiness
+  probe** — see §14.5 (Liveness vs. Readiness) for what this requires
+  before it is used to gate production traffic routing.
 - **Object storage (MinIO/S3):** `S3_ENDPOINT`/`S3_BUCKET`/
   `S3_ACCESS_KEY`/`S3_SECRET_KEY` are declared in `Settings` and in
   `docker-compose.yml`'s `minio` service, **but a repository-wide
@@ -648,8 +656,11 @@ sufficient for V1, exactly as already decided.
   for request-handling capacity once the scheduler is made
   safely multi-instance.
 - **Health checks:** `GET /api/v1/health` already exists and already
-  checks both DB and Redis (§5) — used directly as the platform's
-  liveness/readiness probe target, no new endpoint needed.
+  checks both DB and Redis (§5) — suitable as the platform's **liveness**
+  probe target as-is. **It must not be used directly as a status-code-
+  only production readiness probe without additional fail-closed
+  semantics** — see §15A (Liveness vs. Readiness — Production Probe
+  Contract) immediately below for the required design.
 - **Startup migration behavior:** migrations are **not** run
   automatically on application boot (confirmed — `app/main.py`'s
   `lifespan` only starts/stops the scheduler); they are applied as an
@@ -687,6 +698,250 @@ sufficient for V1, exactly as already decided.
 anywhere in this section** — every recommendation above builds on the
 already-Dockerized, already-non-root, already-health-checked
 production image (`backend/Dockerfile`), not `uvicorn --reload`.
+
+---
+
+## 15A. Liveness vs. Readiness — Production Probe Contract
+
+**Added in Fix Round 1**, following an independent review finding
+(P1, blocking): the original draft of this document treated
+`GET /api/v1/health` as directly usable as a production readiness
+probe without qualification. That was incorrect — see below.
+
+### Definitions
+
+- **Liveness** answers: *"Is the application process running and able
+  to serve HTTP at all?"* A liveness check exists to tell the platform
+  when to **restart** an instance (it has hung, deadlocked, or crashed
+  internally). It does not need to reflect whether the instance's
+  dependencies are healthy — an instance whose database connection is
+  temporarily down is still *alive* (the process is fine and can
+  recover once the database returns); restarting it would not help and
+  would just add churn.
+- **Readiness** answers: *"Can this instance safely receive production
+  traffic right now?"* A readiness check exists to tell the platform's
+  load balancer/router when to **include or exclude** an instance from
+  traffic routing. An instance that cannot reach a dependency required
+  for normal operation (§15A.3) must be excluded from traffic — serving
+  requests it cannot actually complete correctly is worse than serving
+  none.
+
+**These are never interchangeable in this design.** A single endpoint
+that conflates them (always returns HTTP 200 regardless of dependency
+state) can only ever safely answer the liveness question — using it to
+answer the readiness question means a load balancer keeps routing
+production traffic to an instance whose database is unreachable, which
+defeats the entire purpose of a readiness gate.
+
+### §15A.1 — Current `/api/v1/health` is not a safe readiness probe
+
+Confirmed by direct inspection of `backend/app/api/v1/health.py`
+(§5): the endpoint checks `SELECT 1` against the database and a Redis
+`PING`, reports the result of each in its **response body**
+(`{"status": "ok", "db": ..., "redis": ...}`), but **always returns
+HTTP 200** regardless of what those checks find — there is no code
+path that sets a non-2xx status based on `db`/`redis` failing. Most
+production platform readiness probes (managed-platform health checks,
+container orchestrators, load balancers) are **status-code-based** —
+they treat any 2xx as healthy and never parse the response body. Given
+that, **this endpoint, used as-is, would tell every such platform the
+instance is ready even while its database is unreachable.**
+
+**Normative rule for this document and any later PR24 implementation
+slice: `GET /api/v1/health` MUST NOT be relied upon as a status-code-
+only production readiness probe without one of the two changes in
+§15A.2.** It remains valid, unmodified, as a liveness probe and as a
+human/dashboard diagnostic endpoint.
+
+### §15A.2 — Required fail-closed strategy (pick one)
+
+**Option A — Dedicated readiness endpoint (recommended).**
+
+A new route, e.g. `GET /api/v1/ready` (exact path a repository-
+consistent implementation detail, not fixed by this document):
+
+- Returns HTTP 200 **only** when every dependency required for normal
+  production request handling (§15A.3) is reachable.
+- Returns a non-2xx status — **HTTP 503 Service Unavailable**
+  preferred — when a required dependency is unavailable.
+- May still return a structured body describing per-component status,
+  for human/dashboard consumption, but the **HTTP status code is the
+  contract the platform's probe actually depends on**, not the body.
+- Is backend-owned: the backend decides what "ready" means, the
+  platform only asks the question.
+- `GET /api/v1/health` is left unmodified, continuing to serve
+  liveness/diagnostic purposes — no existing client of the current
+  endpoint (if any exists) is broken by this addition.
+
+**Option B — Existing health endpoint gains fail-closed status
+semantics.**
+
+If a future implementation slice deliberately chooses to keep exactly
+one endpoint rather than add a second:
+
+- `GET /api/v1/health`'s own status code must change to non-2xx when a
+  required dependency check fails — no longer unconditionally 200.
+- A **separate** liveness signal must still exist for the platform if
+  it needs pure process-liveness detection independent of dependency
+  state (e.g. a orchestrator that would otherwise restart an instance
+  merely because a dependency is briefly down) — collapsing liveness
+  and readiness into the same status code reintroduces the exact
+  failure mode this section exists to prevent, just from the opposite
+  direction (an instance killed for a transient dependency blip that
+  would have recovered on its own).
+
+**This document does not pick between Option A and Option B on the
+implementation team's behalf** — that remains a genuine, narrowly
+scoped implementation decision for the slice that builds it (§29,
+PR24B). **Option A is the recommendation** (§15A.4), but either
+satisfies the fail-closed requirement in §15A.1.
+
+### §15A.3 — Required-dependency policy (do not over-block)
+
+Readiness must fail only when a dependency **required for normal
+application operation** is unavailable — not merely because some
+integration is checked at all. Applying this repository's own actual
+runtime behavior (§5, §13), not a blanket "check everything":
+
+- **PostgreSQL — required.** Nearly every endpoint depends on the
+  database; the application cannot correctly serve normal traffic
+  without it. A readiness check **must** fail closed when PostgreSQL
+  is unreachable.
+- **Redis — optional, must NOT unconditionally block readiness.**
+  Confirmed in `backend/app/core/redis.py` (§13): every Redis-dependent
+  code path in this codebase is already deliberately fail-open or
+  fail-soft — `cache_get`/`cache_set` silently degrade to "no cache" on
+  any Redis error, and `is_refresh_token_valid` explicitly treats a
+  token as valid (fails open) when Redis is unreachable, precisely so
+  the application keeps working without it. A readiness check that
+  hard-fails on Redis being down would contradict the application's
+  own already-established fail-open design for that dependency, and
+  would take an otherwise-fully-functional instance out of rotation
+  over a non-blocking integration. **Recommendation: Redis health may
+  still be reported in the readiness response body as a degraded/
+  warning-level signal for observability (§22), but must not by itself
+  flip the overall HTTP status to non-2xx.**
+- **No other mandatory auth/session/cache dependency exists** in this
+  codebase beyond PostgreSQL and the already-covered Redis case — no
+  additional required-dependency check is proposed.
+
+If a future implementation genuinely needs to treat some other
+integration as hard-required, that determination should be made
+against that integration's own actual fail-open/fail-closed behavior
+in code, the same way this section resolved PostgreSQL vs. Redis —
+never assumed merely because a health check currently touches it.
+
+### §15A.4 — Recommendation
+
+**Dedicated fail-closed readiness endpoint (§15A.2, Option A) +
+unmodified liveness endpoint (`GET /api/v1/health` as-is).**
+
+Rationale: standard cloud/container/managed-platform probes understand
+HTTP status codes natively (§15A.5) — this needs no custom body
+parsing on the platform side, keeps alerting and load-balancer
+integration simple, cleanly separates the liveness and readiness
+concerns (§15A per its own definitions), and does not touch or risk
+breaking any existing behavior or caller of `GET /api/v1/health`.
+**Not implemented in this PR** — this PR is design/governance only
+(§30); building the endpoint is PR24B's own scope (§29).
+
+### §15A.5 — Body-aware probe fallback (only if Option A/B is not adopted)
+
+If a future implementation instead keeps `GET /api/v1/health`
+completely unmodified (status always 200) and relies on the deployment
+platform to inspect the response body directly, the platform's probe
+configuration must be **explicitly body-aware** — e.g. a rule requiring
+HTTP 200 **and** `body.db == "ok"` **and** (per §15A.3) treating
+`body.redis` as informational only, never itself gating readiness.
+
+This fallback is **not preferred**: it is less portable across
+platforms (many managed-platform/load-balancer health checks support
+status-code-only probing, not arbitrary JSON-body assertions), it
+creates a hidden coupling between the exact response schema and the
+platform's probe configuration, and it does not resolve the underlying
+problem for any consumer of the endpoint that only checks the status
+code (§15A.1). It is documented here only as an explicit trade-off, not
+as this document's recommendation.
+
+### §15A.6 — Startup / migration readiness state
+
+Readiness must also fail closed — not merely on dependency
+reachability, but on the instance's own completeness — during:
+
+- Application startup that has not yet finished initializing (the
+  process is listening on the HTTP port before it is actually able to
+  serve correct responses is a real failure mode this section exists
+  to prevent — "process listening" and "ready for traffic" are not the
+  same claim).
+- A running instance whose database schema is not compatible with the
+  application version it is running (e.g. mid-rollout, before the
+  corresponding migration has been applied — §20).
+- Any other mandatory startup initialization that failed.
+
+**Verifying migration-schema compatibility at the readiness-check
+level is explicitly out of this document's scope to design in detail**
+— §20's own migration deployment procedure already sequences
+migrations as a separate, verified step *before* an application
+version is exposed to traffic, which is the primary control for this
+risk. If a future implementation slice wants an additional, defense-
+in-depth compatibility check inside the readiness endpoint itself
+(e.g. comparing the running application's expected Alembic head
+against the database's actual `alembic_version`), that is a genuine
+option for that slice to design and build — this document names it as
+a dependency of the readiness-endpoint work (§29, PR24B) rather than
+fabricating a specific runtime check here.
+
+### §15A.7 — Security / exposure constraints
+
+Whichever endpoint(s) implement liveness/readiness must never expose,
+in their response body or logs:
+
+- Credentials, connection strings, or any secret value.
+- Raw exception text or stack traces.
+- Infrastructure topology beyond what an operator needs to diagnose a
+  failure (e.g. "database unreachable" is appropriate; the database's
+  hostname/port/credentials are not).
+
+Bounded, structured status only (matching the existing endpoint's own
+`{"status": ..., "db": ..., "redis": ...}` shape). **No authentication
+requirement is invented for these endpoints by this document** —
+whether a platform's probe mechanism can supply credentials at all
+varies by platform, and inventing an auth requirement without first
+confirming the selected platform's actual probe capability (a genuine
+dependency of OD-PR24-1) would risk designing something the eventual
+platform cannot satisfy; if authentication is later found necessary,
+that is a narrow addition for the implementing slice, not a decision
+this document makes speculatively.
+
+### §15A.8 — Platform independence
+
+This design is deliberately **not** written for one vendor. The
+recommended approach (§15A.4, status-code-based readiness) works
+identically against common reverse proxies, load balancers, container
+orchestrators, and managed application platforms — it depends on
+nothing beyond standard HTTP semantics. This is itself part of why
+Option A is preferred over the body-aware fallback (§15A.5): a
+platform-specific body-parsing rule is exactly the kind of coupling
+this document otherwise avoids when comparing architecture options
+(§6/§7) without committing to a vendor.
+
+### §15A.9 — Interaction with Owner Decisions
+
+This section's **recommendation** (dedicated, status-code-based,
+fail-closed readiness endpoint) does not require a new Owner Decision
+— it is derived directly from this codebase's own already-implemented
+fail-open/fail-closed behavior (§15A.3) and from standard, platform-
+agnostic HTTP probe semantics (§15A.8), the same class of
+directly-derivable finding as §12's MinIO/S3 disposition and §13's
+Redis disposition, neither of which was escalated to an Owner Decision
+either. It does not silently resolve **OD-PR24-1** (hosting/provider
+selection) — the recommendation is deliberately platform-independent
+specifically so it does not depend on that decision's outcome. If the
+Owner ultimately selects a platform genuinely incapable of ordinary
+HTTP-status-code probing (uncommon, but not this document's to rule
+out), the body-aware fallback (§15A.5) — already documented as a
+trade-off, not invented fresh at that point — would need to be
+revisited against that platform's actual capability.
 
 ---
 
@@ -788,8 +1043,10 @@ Manual production-approval gate (a human, not automatic)
 Deploy to Production (image already built and smoke-tested — no
   rebuild at this step, preserving immutability)
    ↓
-Post-deploy health/verification check (GET /api/v1/health, plus a
-  minimal smoke check)
+Post-deploy readiness/verification check (the fail-closed readiness
+  endpoint per §15A — not GET /api/v1/health's status code alone —
+  plus a minimal smoke check, before traffic is fully routed to the
+  new instance)
 ```
 
 **Production is never deployed automatically on every merge** — the
@@ -938,9 +1195,10 @@ blockers, not already-delivered capability:**
   failure with no alert defeats the entire backup design).
 
 **Recommendation:** close the minimum viable subset before Production
-go-live (not before this document's own merge): uptime/health-check
-monitoring against `GET /api/v1/health` (§15) with alerting on
-failure, and backup-failure alerting (§11) at minimum — both of which
+go-live (not before this document's own merge): uptime monitoring
+against the liveness endpoint (`GET /api/v1/health`, §15) **and**
+against the fail-closed readiness endpoint (§15A) with alerting on
+either failing, and backup-failure alerting (§11) at minimum — both of which
 most Option A managed platforms provide as a built-in or low-effort
 add-on, reducing the amount of new engineering this actually requires.
 Metrics/tracing/dashboards remain valuable but are not blocking at
@@ -1036,7 +1294,12 @@ Staging/UAT deployment (§19) — **not claimed passed by this document**:
 - [ ] Production-like deployment (same images, same architecture
       class as the Production target).
 - [ ] Migrations apply cleanly (`alembic upgrade head`, §20).
-- [ ] `GET /api/v1/health` reports healthy (DB + Redis).
+- [ ] `GET /api/v1/health` (liveness) reports healthy.
+- [ ] The fail-closed readiness endpoint (§15A) returns 200 when
+      dependencies are healthy, and a non-2xx status when PostgreSQL
+      is made unreachable in a controlled Staging test — proving the
+      fail-closed contract actually holds, not merely that the happy
+      path returns 200.
 - [ ] Login and role-based authorization correct for all three roles.
 - [ ] BCM Code lookup.
 - [ ] Item Number QR lookup.
@@ -1109,7 +1372,9 @@ PR23_CUTOVER_RUNBOOK.md`'s own business rules:
   Production environment provisioned (§7, per OD-PR24-1)
   → Secrets configured (§16)
   → Database migrated to the intended head (§20)
-  → Application deployed and health-verified (§15, §18)
+  → Application deployed and readiness-verified (§15, §15A, §18 — the
+    fail-closed readiness endpoint reports 200, not merely the
+    liveness endpoint)
   → Backup/restore rehearsed against Staging at least once (§11, §25)
   → Observability minimum viable subset in place (§22)
   (Application infrastructure MAY be deployed before T0 — the runbook's
@@ -1128,8 +1393,9 @@ PR23_CUTOVER_RUNBOOK.md`'s own business rules:
 Gates A-F/G semantics, its rollback boundary (OD-PR23-4), its Pilot
 rules (OD-PR23-5), or any other PR23 business rule.** It only clarifies
 that the infrastructure the runbook's T0-T4 sequence *runs on top of*
-must already exist, be migrated, and be verified healthy **before** T0
-is even attempted — Gate A (`docs/design/PR23_CUTOVER_READINESS_PLAN.md`
+must already exist, be migrated, and be verified **ready** (§15A —
+the fail-closed readiness endpoint, not merely a liveness check)
+**before** T0 is even attempted — Gate A (`docs/design/PR23_CUTOVER_READINESS_PLAN.md`
 §12) already requires exactly this ("required PRs merged... CI green
 on the exact deployed head, database migrations applied and verified...
 production configuration validated... backup/restore procedure
@@ -1261,9 +1527,10 @@ maintainable next sequence this document proposes is:
   precedent, rather than bundled into this same PR).
 - **PR24B — Deployment Foundation** *(proposed, not started)*:
   provision the selected architecture (OD-PR24-1), configure secrets
-  (§16), build the safe admin-bootstrap mechanism (§17), close the
-  scheduler single-instance gap (§15) at the deployment-configuration
-  level. No Pilot/Production traffic yet.
+  (§16), build the safe admin-bootstrap mechanism (§17), build the
+  fail-closed readiness endpoint (§15A) alongside the existing
+  liveness endpoint, close the scheduler single-instance gap (§15) at
+  the deployment-configuration level. No Pilot/Production traffic yet.
 - **PR24C — Backup & Restore** *(proposed, not started)*: implement
   and rehearse the backup/restore procedure (§11) against Staging,
   against the RPO/RTO targets from OD-PR24-3.
