@@ -431,15 +431,17 @@ allowlisting if the hospital can supply a stable IP range — see
 
 - **Production hostname:** not invented here — use a placeholder
   (`https://mep.<hospital-domain-placeholder>.example`) until a real
-  domain is confirmed. **Per OD-PR24-5's Owner-approved resolution
-  (§28):** the Owner currently has no custom production domain; the
-  HTTPS hostname supplied by the selected managed provider (OD-PR24-1)
-  is an approved, sufficient hostname for Staging and for the
-  Deployment Foundation (PR24B) slice — the lack of a custom domain
-  does **not** block PR24B. A real custom production hostname/domain
-  must still be explicitly determined **before Production Go-Live**
-  (§27); TLS/HTTPS remains mandatory at every stage regardless of
-  which hostname is in use.
+  domain is selected. **Per OD-PR24-5's Owner-approved
+  hostname-deferral policy (§28, fully resolved — not open):** the
+  Owner currently has no custom production domain; the HTTPS hostname
+  supplied by the selected managed provider (OD-PR24-1) is an approved,
+  sufficient hostname for Staging and for the Deployment Foundation
+  (PR24B) slice — the lack of a custom domain does **not** block PR24B.
+  The real custom production hostname is a **Production-Go-Live
+  execution/configuration input** — it must be selected, DNS-delegated,
+  and TLS-validated **before Production Go-Live** (§27), but selecting
+  it does not reopen OD-PR24-5. TLS/HTTPS remains mandatory at every
+  stage regardless of which hostname is in use.
 - **HTTPS/TLS:** mandatory, no plain-HTTP production traffic.
   `frontend/nginx.conf` currently terminates HTTP only —
   `docker-compose.prod.yml`'s own comment already flags this gap.
@@ -1541,22 +1543,42 @@ the Owner's approval of all six.**
   *Consequence if unresolved:* §9's TLS/domain design has only a
   placeholder to work with; go-live cannot proceed without a real,
   resolvable hostname.
-  *Status:* **RESOLVED / OWNER APPROVED — deferral strategy** (PR24
-  Owner Decision Closure round).
-  *Approved choice:* The Owner currently has **no custom production
-  domain**. **Approved strategy:** Staging and the initial Deployment
-  Foundation (PR24B) may use the HTTPS hostname supplied by the
-  selected managed provider (OD-PR24-1) — the lack of a custom
-  production domain does **not** block PR24B. A custom production
-  hostname/domain must be explicitly determined **before Production
-  Go-Live** (§27) — it remains a pre-Production-Go-Live requirement,
-  not an implementation blocker. TLS/HTTPS remains mandatory at every
-  stage (§9). This changes the *practical consequence* of this
-  decision from "blocks all PR24 implementation" to "blocks Production
-  Go-Live only" — it does not change the underlying question, which
-  remains genuinely open until a real domain is confirmed. No specific
-  eventual domain name is invented, purchased, registered, or
-  configured by this closure round.
+  *Status:* **RESOLVED / OWNER APPROVED — explicit hostname-deferral
+  policy** (PR24 Owner Decision Closure round). The Owner Decision
+  itself — the *policy* governing production hostname strategy and
+  timing — is fully resolved, not partially open; only the *concrete
+  hostname value* is deferred, and that deferral is itself the
+  resolution, not a symptom of the decision remaining unresolved.
+  *Approved choice:* The Owner approves an explicit hostname-deferral
+  policy:
+  - The provider-managed HTTPS hostname (from the architecture
+    selected under OD-PR24-1) is acceptable for Staging and for the
+    initial Deployment Foundation (PR24B) — no custom domain is
+    required to begin PR24B, PR24C, or PR24D.
+  - The Owner currently has no custom production domain; this policy
+    does not invent, purchase, register, or configure one.
+  - The **concrete future production hostname is a Production-Go-Live
+    execution/configuration input, not an unresolved architecture or
+    Owner Decision.** It must be selected, DNS-delegated, TLS-
+    validated, and recorded as evidence **before Production Go-Live**
+    (§27) — this is a Go-Live *execution prerequisite*, distinct from,
+    and never conflated with, the Owner-Decision implementation gate
+    this §28 governs.
+  - Selecting that concrete hostname later, under this already-
+    approved policy, does **not** reopen OD-PR24-5 and requires no
+    further Owner approval — a new Owner Decision would only be
+    needed if a future proposal changed the underlying architecture
+    itself (e.g. abandoning managed-provider hosting, requiring
+    VPN-only or hospital-network-only access, or dropping mandatory
+    HTTPS), none of which this policy does.
+  - TLS/HTTPS remains mandatory at every stage (§9) regardless of
+    which hostname is in use.
+  *Rationale:* the architecture decision is the hostname *strategy and
+  timing boundary* (provider hostname now, custom hostname required
+  before Go-Live) — the concrete DNS name itself is an operational
+  value supplied later under that already-resolved policy, exactly as
+  OD-PR24-1 resolves the hosting *architecture class* without resolving
+  the eventual concrete provider account.
 
 - **OD-PR24-6 — Production support/incident ownership.**
   *Question:* Beyond the operational roles `docs/runbooks/
@@ -1605,9 +1627,18 @@ unmerged PR does not itself authorize PR24B — only the closure PR's
 own merge does. Once this closure round merges, its real squash SHA
 becomes the new authoritative baseline and PR24B becomes eligible to
 start from it, governed by this §28 together with the approved choices
-recorded above. The readiness/liveness probe contract (§15A) and the
-PostgreSQL/Redis readiness semantics it defines are unchanged by this
-closure round and are not reopened here.
+recorded above. **This gate and OD-PR24-5's Production-Go-Live hostname
+prerequisite are two distinct checkpoints, never conflated:** the
+**Owner-Decision Gate** (this paragraph) controls whether PR24B
+implementation may begin, and is satisfied in full by this closure
+round's merge — the still-undetermined concrete production hostname
+does **not** re-block it. The **Production-Go-Live Prerequisite**
+(OD-PR24-5, §27) separately controls whether PR24G / actual Production
+Go-Live may proceed, and requires the concrete hostname to be selected,
+DNS-delegated, and TLS-validated by that later point. The
+readiness/liveness probe contract (§15A) and the PostgreSQL/Redis
+readiness semantics it defines are unchanged by this closure round and
+are not reopened here.
 
 ---
 

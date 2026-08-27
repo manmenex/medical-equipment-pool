@@ -5814,16 +5814,19 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
     environments (Development, Staging/UAT, Production), per
     Recommendation -- no dedicated fourth Pilot environment; Pilot runs
     inside Production per OD-PR23-5's own already-approved model.
-  - **OD-PR24-5** (production domain/DNS ownership): the Owner
-    currently has no custom production domain. Approved deferral
-    strategy: the provider-supplied HTTPS hostname (OD-PR24-1) is
-    sufficient for Staging and for PR24B -- it does **not** block PR24B
-    -- but a real custom production hostname must be determined before
-    Production Go-Live. This changes the *practical consequence* of
-    this decision (no longer "blocks all PR24 implementation," now
-    "blocks Production Go-Live only") without resolving the underlying
-    question, which remains genuinely open. No domain name is invented,
-    purchased, or configured by this closure round.
+  - **OD-PR24-5** (production domain/DNS ownership): **fully resolved
+    by an explicit hostname-deferral policy** -- not partially open.
+    The Owner currently has no custom production domain; the approved
+    policy is that the provider-supplied HTTPS hostname (OD-PR24-1) is
+    sufficient for Staging and for PR24B -- it does **not** block
+    PR24B. The concrete future production hostname is a
+    **Production-Go-Live execution/configuration input**, not an
+    unresolved architecture or Owner Decision: it must be selected,
+    DNS-delegated, and TLS-validated before Production Go-Live, but
+    supplying that value later under this already-approved policy does
+    not reopen OD-PR24-5 and requires no further Owner approval unless
+    it changes the underlying approved architecture itself. No domain
+    name is invented, purchased, or configured by this closure round.
   - **OD-PR24-6** (production support/incident ownership): the project
     Owner is the Primary Technical/Support/Incident Owner, recorded as
     an ongoing *operational* responsibility -- not a new application
