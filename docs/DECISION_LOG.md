@@ -5614,3 +5614,114 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   Close-out) task's own binding specification, including the exact
   repository-defined PR23F scope
   (`docs/design/PR23_CUTOVER_READINESS_PLAN.md` §27) it conforms to.
+
+## 2026-08-26 — PR23F (Cutover Runbook + Final Governance Close-out) merged — GitHub PR #128 — Roadmap PR23 fully implementation-complete
+
+- **Decision/record:** GitHub PR #128 ("PR23F — Cutover Runbook +
+  Final Governance Close-out") was taken through the Final Merge Gate
+  and squash-merged. Before merge: head was confirmed unchanged at
+  `dcaac117ca6a4bdbf94bdc1dd727f0e2b98594c4`, CI confirmed 6/6 green on
+  that exact SHA, and reviews/comments/threads confirmed as zero -- no
+  new findings. The PR was converted Draft -> Ready; after Ready, head
+  was re-confirmed unchanged, `mergeable_state: clean` was confirmed,
+  and CI was re-confirmed 6/6 green. The PR was then squash-merged. The
+  real squash-merge SHA is `f35fe716d57c51042d86a661657f679799b6a9e3`.
+  Tree identity was independently verified (`git diff
+  dcaac117ca6a4bdbf94bdc1dd727f0e2b98594c4
+  f35fe716d57c51042d86a661657f679799b6a9e3 --stat` produced no output
+  -- the squash commit's tree is byte-identical to the pre-merge branch
+  head), and sole parentage was independently verified (the squash
+  commit's sole parent is exactly
+  `8644536403eeec269e6dadf835f1bda3844b6cce`, GitHub PR #127, PR23E).
+  Per this repository's standing process, no separate "baseline
+  adoption" PR is created -- `f35fe716...` became authoritative
+  immediately upon merge, folded into the Production Deployment &
+  Go-Live Architecture Planning round (the next PR that legitimately
+  touches these governance files, recorded below).
+- **Consequence:** With GitHub PR #128 merged, **PR23F is fully
+  complete** -- the authoritative operational cutover runbook
+  (`docs/runbooks/PR23_CUTOVER_RUNBOOK.md`) now exists, and **Roadmap
+  PR23 (Cutover Readiness) as a whole is now fully implementation-
+  complete** — PR23A through PR23F are all merged. This is capability/
+  documentation completion only: real Pilot execution, Production
+  cutover, AppSheet's actual read-only transition, a selected
+  production deployment target, and a rehearsed backup/restore
+  procedure have **not** occurred and are not claimed to have occurred
+  by this entry.
+- **Status:** Merged, closed. This entry is historical from the moment
+  it is written; it does not describe work in progress.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14,
+  following the same Final Merge Gate precedent used for GitHub PR
+  #111/#112/#113/#115/#116/#117/#118/#119/#120/#121/#122/#123/#124/#125/#126/#127.
+- **Source:** GitHub PR #128 description and its Final Merge Gate
+  verification evidence (exact head, CI status, tree-identity diff,
+  sole-parent `git cat-file` output).
+
+## 2026-08-26 — Production Deployment & Go-Live Architecture Planning round started — in progress, not merged
+
+- **Decision/record:** This planning round started from baseline
+  `f35fe716d57c51042d86a661657f679799b6a9e3` (GitHub PR #128), on
+  branch `docs/production-deployment-go-live-architecture`. It is
+  **design/architecture/Owner-Decision-raising only** -- no
+  `backend/**`, `frontend/**`, `alembic/**`, or `tests/**` file was
+  touched, and no production infrastructure, credential, DNS record,
+  or cloud account was created or mutated. It adds
+  `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`, the
+  architecture design document for Roadmap PR24 ("Go-live /
+  deployment" -- previously named only as a one-line placeholder in
+  `docs/audits/04-consolidated-implementation-plan.md` Part D, with no
+  prior architecture, scope, or acceptance criteria, exactly as "PR23
+  -- Cutover Readiness" existed only as a placeholder before PR23A).
+  The document: (1) inspects the current runtime deployment state
+  (`docker-compose.yml`/`docker-compose.prod.yml`, both Dockerfiles,
+  `backend/app/core/config.py`'s already-implemented fail-closed
+  production-secret guard, the existing `GET /api/v1/health` endpoint,
+  `.github/workflows/ci.yml`'s PR-validation-only scope) and records
+  two concrete findings: MinIO/S3 object storage is declared in
+  configuration but has zero actual runtime usage anywhere in
+  `backend/app` (all persisted file content lives in PostgreSQL as
+  `BYTEA` via `ImportSourceBlob`), and the in-process APScheduler
+  (`app/worker/scheduler.py`) has no leader-election guard, so running
+  multiple workers/replicas as currently configured would duplicate
+  the daily PM/CAL notification job; (2) compares four deployment
+  architecture classes (managed application platform + managed
+  PostgreSQL; managed VPS/VM with Docker Compose; hospital-managed/
+  on-prem, evaluated only as a constraint comparison per this
+  repository's own "Managed deployment preferred" decision; and
+  Kubernetes/serverless, both explicitly not recommended) and
+  recommends the managed-platform class without naming a commercial
+  provider; (3) designs the network/access model, domain/TLS
+  requirements, PostgreSQL/backup-restore/object-storage/Redis
+  disposition, frontend/backend hosting, secret management, a safe
+  admin-bootstrap procedure (replacing the current
+  `backend/app/scripts/seed.py` hardcoded-credential mechanism, which
+  is confirmed unsafe for production), CI/CD staging, environment
+  topology (Development/Staging-UAT/Production, with Pilot running
+  inside Production per OD-PR23-5's own already-approved model, not a
+  separate Pilot environment), Alembic deployment procedure,
+  application-version rollback (explicitly separate from PR23's own
+  operational cutover rollback), observability gaps, security
+  requirements, and UAT/Pilot/Production mapping onto
+  `docs/runbooks/PR23_CUTOVER_RUNBOOK.md`'s own unchanged T0-T4
+  procedure; (4) raises six Owner Decisions (OD-PR24-1 through
+  OD-PR24-6: hosting architecture/provider selection, access/network
+  model, backup RPO/RTO/retention, staging/Pilot environment topology,
+  production domain/DNS ownership, production support/incident
+  ownership) that gate any PR24 implementation slice, mirroring PR23's
+  own fail-closed all-Owner-Decisions-before-implementation gate; and
+  (5) proposes, but does not commit to, a PR24B-G implementation
+  sequence, explicitly marked as a proposal subject to Owner approval.
+  Folds in the PR23F merge/baseline governance sync (recorded above)
+  since this is the next PR that legitimately touches these governance
+  files.
+- **Status:** Draft, **not merged, this planning round in progress**.
+  This entry documents work in progress; it does not describe this
+  round's own completion, and it does not claim any PR24
+  implementation has started -- none has, and none may until the
+  Owner Decisions above are resolved.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the Production Deployment & Go-Live Architecture
+  Planning task's own binding specification, cross-checked against
+  `docs/audits/04-consolidated-implementation-plan.md` Part D's own
+  PR24 placeholder and `docs/ARCHITECTURE_DECISIONS.md`'s existing
+  "Managed deployment preferred" constraint.
