@@ -11,6 +11,15 @@ JWT_SECRET_MIN_LENGTH = 32
 
 DEFAULT_JWT_SECRET_KEY = "change-me-in-production-use-a-random-64-byte-value"
 
+# PR24B (docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md §14): the
+# same class of risk as DEFAULT_JWT_SECRET_KEY above -- a deployment that
+# silently boots ENVIRONMENT=production against the shipped local-dev
+# default DATABASE_URL, or with ALLOWED_ORIGINS still unset to the shipped
+# localhost dev origins, is a real, easy-to-make misconfiguration
+# (forgetting to override an env var), not a hypothetical.
+DEFAULT_DATABASE_URL = "postgresql+asyncpg://mep_user:mep_password@localhost:5432/mep_db"
+DEFAULT_ALLOWED_ORIGINS = "http://localhost:5173,http://localhost"
+
 # The only ENVIRONMENT values this deployment recognizes (see .env.example,
 # docker-compose.yml, docker-compose.prod.yml). Anything else is treated as
 # a misconfiguration rather than silently falling back to development.
@@ -184,6 +193,23 @@ def validate_production_secrets(settings: Settings) -> None:
             f"JWT_SECRET_KEY is only {len(settings.JWT_SECRET_KEY)} characters, below the minimum "
             f"accepted length of {JWT_SECRET_MIN_LENGTH} for ENVIRONMENT=production. Generate a "
             'longer secret with: python -c "import secrets; print(secrets.token_urlsafe(64))"'
+        )
+
+    if settings.DATABASE_URL == DEFAULT_DATABASE_URL:
+        raise InsecureConfigurationError(
+            "DATABASE_URL is set to the shipped local-development default "
+            f"({DEFAULT_DATABASE_URL!r}). Refusing to start with ENVIRONMENT=production and no "
+            "real production database configured. Set DATABASE_URL to the actual production "
+            "PostgreSQL connection string."
+        )
+
+    if settings.ALLOWED_ORIGINS == DEFAULT_ALLOWED_ORIGINS:
+        raise InsecureConfigurationError(
+            "ALLOWED_ORIGINS is set to the shipped local-development defaults "
+            f"({DEFAULT_ALLOWED_ORIGINS!r}). Refusing to start with ENVIRONMENT=production and no "
+            "real production origin configured (docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md "
+            "§9: must be the exact production hostname(s), never a development default). Set "
+            "ALLOWED_ORIGINS to the actual production frontend origin(s)."
         )
 
 

@@ -5862,3 +5862,105 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   specification, including the Repository Owner's explicit approval
   statement and exact approved choices for each of the six Owner
   Decisions; the PR24 Owner Decision Closure GitHub PR description.
+
+## 2026-08-27 — GitHub PR #130 merged; new authoritative baseline adopted; all six PR24 Owner Decisions complete
+
+- **Decision/record:** GitHub PR #130 ("PR24 — Owner Decision Closure")
+  merged via squash merge. Real squash-merge SHA
+  `f64f7d148ba956adef43c5d363ad52680398541c`, sole parent
+  `599478992de363e1eda2fe8005ff79d565dee76d` (GitHub PR #129, the
+  current baseline before this merge) -- confirmed via `git log -1
+  --format=%P`. The final reviewed feature-branch head
+  `d66fd59cd0d0b4755ed923c85dfc365fd03ab1c2` was independently verified
+  tree-identical to the merged squash commit (`git diff d66fd59...
+  f64f7d1... --stat` produced no output) and carried **zero reviews**
+  and **zero comments** at merge time, with CI green 6/6 on that exact
+  head. Before the Final Merge Gate, this PR went through **Fix Round
+  1**: an independent review found OD-PR24-5 marked `RESOLVED / OWNER
+  APPROVED` while its own text said the underlying hostname question
+  "remains genuinely open" -- an internal contradiction undermining the
+  PR's own fail-closed gate. Fixed by resolving OD-PR24-5 via an
+  explicit hostname-deferral policy: the policy itself (provider
+  hostname acceptable for Staging/PR24B, custom hostname required
+  before Production Go-Live, TLS mandatory throughout) is the
+  resolution; the concrete future hostname value was reclassified as a
+  Production-Go-Live execution/configuration input, not an unresolved
+  Owner Decision. No new Owner Decision (no OD-PR24-7) was created. Zero
+  `backend/**`, `frontend/**`, `alembic/**`, or `tests/**` file was
+  touched by either the original round or Fix Round 1.
+- **Status:** Merged, closed. This entry is historical from the moment
+  it is written; it does not describe work in progress.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14,
+  following the same Final Merge Gate precedent used for GitHub PR
+  #111 through #129.
+- **Source:** GitHub PR #130 description and its Final Merge Gate
+  verification evidence (exact head, CI status, tree-identity diff,
+  sole-parent `git log` output).
+
+## 2026-08-27 — PR24B (Deployment Foundation) started -- in progress, not merged
+
+- **Decision/record:** PR24B started from baseline
+  `f64f7d148ba956adef43c5d363ad52680398541c` (GitHub PR #130), on branch
+  `feature/pr24b-deployment-foundation`. Implements the deployment
+  foundation authorized by `docs/design/
+  PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §15/§15A/§17/§28, now
+  that all six PR24 Owner Decisions are Owner-approved:
+  1. **Fail-closed readiness endpoint** -- `GET /api/v1/ready`
+     (`backend/app/api/v1/health.py`, `backend/app/schemas/health.py`'s
+     `ReadinessOut`), exactly per §15A's Option A recommendation: HTTP
+     200/`status: "ready"` when PostgreSQL is reachable, HTTP
+     503/`status: "not_ready"` otherwise; `redis: "ok"|"degraded"` is
+     reported but never blocks readiness, per the codebase's own
+     already-established Redis fail-open behavior
+     (`backend/app/core/redis.py`). `GET /api/v1/health` is
+     byte-for-byte unchanged.
+  2. **Production-safe admin bootstrap** --
+     `backend/app/scripts/bootstrap_admin.py`
+     (`python -m app.scripts.bootstrap_admin`), replacing
+     `backend/app/scripts/seed.py` for production use: creates exactly
+     one administrator with a freshly generated random password
+     (printed once, never logged/stored), no demo/sample data, refuses
+     if an administrator already exists, serialized against concurrent
+     invocations via a `SELECT ... FOR UPDATE` lock on the
+     already-seeded `administrator` role row (the same
+     PostgreSQL-conditional locking convention every other
+     concurrency-sensitive CRUD module in this codebase already
+     follows), and records an `AuditLog` entry with `user_id=None` (a
+     deliberate, non-fabricated actor -- no authenticated User exists
+     yet at bootstrap time).
+  3. **Scheduler single-instance deployment invariant** --
+     `backend/Dockerfile`'s CMD now runs `--workers 1` (was `2`), and
+     `docker-compose.prod.yml`'s backend service now sets `replicas: 1`
+     (was `3`), both commented as a hard invariant (not a tunable)
+     until `app/worker/scheduler.py` gains leader election.
+  4. **Two additional fail-closed production configuration checks** --
+     `validate_production_secrets` (`backend/app/core/config.py`) now
+     also refuses to boot in production with `DATABASE_URL` or
+     `ALLOWED_ORIGINS` still equal to their shipped local-development
+     defaults, mirroring the existing `JWT_SECRET_KEY` check.
+  Explicitly out of scope: no cloud account, paid resource, domain, or
+  DNS record is created; no commercial provider is selected
+  (OD-PR24-1 remains a PR24B-or-later implementation choice); no
+  backup rehearsal (PR24C); no CI/CD staging pipeline (PR24D); no UAT
+  execution (PR24E); no Pilot or Production execution (PR24F/PR24G).
+- **Tests:** `backend/tests/test_pr24b_readiness.py` (SQLite: DB
+  healthy/unhealthy, Redis healthy/degraded/multiple failure forms,
+  no-leak response, `/health` regression, no-auth-required),
+  `backend/tests/test_pr24b_admin_bootstrap.py` (SQLite: creation, no
+  demo data, password never persisted in plaintext, audit shape,
+  refusal when an administrator exists, rollback on identifier
+  collision), `backend/tests/test_pr24b_postgres.py` (PostgreSQL-marked:
+  two concurrent bootstrap attempts produce exactly one administrator).
+  `backend/tests/test_startup_security.py` extended with the two new
+  production-config-default checks; every pre-existing
+  `Settings(ENVIRONMENT="production", ...)` test in that file updated
+  to also supply non-default `DATABASE_URL`/`ALLOWED_ORIGINS` so the
+  new checks do not regress them.
+- **Status:** Draft, **not merged, PR24B implementation in progress**.
+  This entry documents work in progress; it does not describe PR24B's
+  own completion, and it does not claim PR24C or later has started.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the PR24B — Deployment Foundation task's own binding
+  specification, cross-checked against
+  `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §15/§15A/§17
+  and the six approved Owner Decisions in §28.
