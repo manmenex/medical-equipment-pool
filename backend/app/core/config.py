@@ -1,4 +1,5 @@
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 from pydantic import AnyUrl, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -19,6 +20,35 @@ DEFAULT_JWT_SECRET_KEY = "change-me-in-production-use-a-random-64-byte-value"
 # (forgetting to override an env var), not a hypothetical.
 DEFAULT_DATABASE_URL = "postgresql+asyncpg://mep_user:mep_password@localhost:5432/mep_db"
 DEFAULT_ALLOWED_ORIGINS = "http://localhost:5173,http://localhost"
+
+# PR24B Fix Round 1 (independent review, P1): the repository ships more
+# than one literal placeholder for JWT_SECRET_KEY and more than one
+# resolved default for DATABASE_URL -- config.py's own field default /
+# docker-compose.yml's inline default use different wording from
+# .env.example's separate copy-paste placeholder, and docker-compose.yml
+# (unchanged by docker-compose.prod.yml) computes a DATABASE_URL against
+# the "postgres" service hostname and .env.example's POSTGRES_PASSWORD
+# placeholder ("change-me"), not against DEFAULT_DATABASE_URL's
+# "localhost"/"mep_password" pair. A single exact-match check against only
+# one of these misses the other -- the same defect class as the
+# ALLOWED_ORIGINS order mismatch this fix round addresses. Both known
+# literals are rejected below.
+KNOWN_INSECURE_JWT_SECRET_KEYS = frozenset(
+    {
+        DEFAULT_JWT_SECRET_KEY,  # config.py Settings field default / docker-compose.yml inline default
+        "change-me-to-a-random-64-byte-value",  # .env.example's own placeholder text
+    }
+)
+KNOWN_INSECURE_DATABASE_URLS = frozenset(
+    {
+        DEFAULT_DATABASE_URL,  # config.py Settings field default (local, non-Docker dev)
+        # docker-compose.yml's computed default when .env.example is copied
+        # verbatim: POSTGRES_USER/POSTGRES_DB match their compose defaults,
+        # POSTGRES_PASSWORD is left at .env.example's "change-me" placeholder,
+        # and the host is the "postgres" service name, not "localhost".
+        "postgresql+asyncpg://mep_user:change-me@postgres:5432/mep_db",
+    }
+)
 
 # The only ENVIRONMENT values this deployment recognizes (see .env.example,
 # docker-compose.yml, docker-compose.prod.yml). Anything else is treated as
@@ -54,7 +84,7 @@ class Settings(BaseSettings):
     JWT_ACCESS_EXPIRE_MINUTES: int = 15
     JWT_REFRESH_EXPIRE_DAYS: int = 7
 
-    ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost"
+    ALLOWED_ORIGINS: str = DEFAULT_ALLOWED_ORIGINS
 
     S3_ENDPOINT: str | None = None
     S3_BUCKET: str = "mep-attachments"
@@ -155,6 +185,21 @@ class Settings(BaseSettings):
         return value.strip().lower()
 
 
+def _is_shipped_localhost_dev_origin(origin: str) -> bool:
+    """True for the plain-HTTP `localhost` origin pattern that repository
+    authority explicitly names as the forbidden production default
+    (docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md §9: "never the
+    development defaults (`http://localhost*`)") -- any port, scheme fixed
+    to `http` since that is what `.env.example` / `docker-compose.yml`
+    actually ship. Deliberately scoped to what the design doc names rather
+    than a general loopback/private-network guess: e.g. 127.0.0.1 is not
+    named anywhere in repository authority, so it is not treated as an
+    equivalent here.
+    """
+    parsed = urlsplit(origin)
+    return parsed.scheme.lower() == "http" and parsed.hostname == "localhost"
+
+
 def validate_production_secrets(settings: Settings) -> None:
     """Refuse to run in production with a missing, default, or too-short JWT secret.
 
@@ -181,11 +226,13 @@ def validate_production_secrets(settings: Settings) -> None:
             "JWT signing key configured. Set JWT_SECRET_KEY to a unique, randomly-generated value."
         )
 
-    if settings.JWT_SECRET_KEY == DEFAULT_JWT_SECRET_KEY:
+    if settings.JWT_SECRET_KEY in KNOWN_INSECURE_JWT_SECRET_KEYS:
         raise InsecureConfigurationError(
-            "JWT_SECRET_KEY is set to the publicly-documented default value shipped in source "
-            "control. Refusing to start with ENVIRONMENT=production. Generate a real secret with: "
-            'python -c "import secrets; print(secrets.token_urlsafe(64))" and set it as JWT_SECRET_KEY.'
+            "JWT_SECRET_KEY is set to a publicly-documented placeholder value shipped in source "
+            "control (config.py's own default, docker-compose.yml's inline default, or "
+            ".env.example's copy-paste placeholder). Refusing to start with ENVIRONMENT=production. "
+            'Generate a real secret with: python -c "import secrets; print(secrets.token_urlsafe(64))" '
+            "and set it as JWT_SECRET_KEY."
         )
 
     if len(settings.JWT_SECRET_KEY) < JWT_SECRET_MIN_LENGTH:
@@ -195,21 +242,31 @@ def validate_production_secrets(settings: Settings) -> None:
             'longer secret with: python -c "import secrets; print(secrets.token_urlsafe(64))"'
         )
 
-    if settings.DATABASE_URL == DEFAULT_DATABASE_URL:
+    if settings.DATABASE_URL in KNOWN_INSECURE_DATABASE_URLS:
         raise InsecureConfigurationError(
-            "DATABASE_URL is set to the shipped local-development default "
-            f"({DEFAULT_DATABASE_URL!r}). Refusing to start with ENVIRONMENT=production and no "
+            "DATABASE_URL is set to a shipped local-development default "
+            f"({settings.DATABASE_URL!r}). Refusing to start with ENVIRONMENT=production and no "
             "real production database configured. Set DATABASE_URL to the actual production "
             "PostgreSQL connection string."
         )
 
-    if settings.ALLOWED_ORIGINS == DEFAULT_ALLOWED_ORIGINS:
+    origins = frozenset(settings.allowed_origins_list)
+    if not origins:
         raise InsecureConfigurationError(
-            "ALLOWED_ORIGINS is set to the shipped local-development defaults "
-            f"({DEFAULT_ALLOWED_ORIGINS!r}). Refusing to start with ENVIRONMENT=production and no "
-            "real production origin configured (docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md "
-            "§9: must be the exact production hostname(s), never a development default). Set "
-            "ALLOWED_ORIGINS to the actual production frontend origin(s)."
+            "ALLOWED_ORIGINS is empty. Refusing to start with ENVIRONMENT=production and no real "
+            "production origin configured. Set ALLOWED_ORIGINS to the actual production frontend "
+            "origin(s)."
+        )
+
+    if all(_is_shipped_localhost_dev_origin(origin) for origin in origins):
+        raise InsecureConfigurationError(
+            "ALLOWED_ORIGINS resolves entirely to the shipped development-only localhost origin "
+            f"pattern ({sorted(origins)!r}), regardless of ordering, spacing, or duplicates. "
+            "Refusing to start with ENVIRONMENT=production and no real production origin configured "
+            "(docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md §9: ALLOWED_ORIGINS must be set "
+            "to the exact production hostname(s) only -- never a wildcard, never the development "
+            "defaults `http://localhost*`). Set ALLOWED_ORIGINS to the actual production frontend "
+            "origin(s)."
         )
 
 

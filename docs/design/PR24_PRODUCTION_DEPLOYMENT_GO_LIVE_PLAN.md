@@ -993,13 +993,20 @@ revisited against that platform's actual capability.
 - **Database credentials:** issued by the selected managed PostgreSQL
   provider (§10) or generated at VM-provisioning time (Option B);
   never the `docker-compose.yml` development defaults
-  (`mep_user`/`mep_password`). **Enforced in PR24B:**
-  `validate_production_secrets` now also refuses to boot in production
-  with `DATABASE_URL` still equal to the shipped local-development
-  default, and with `ALLOWED_ORIGINS` still equal to the shipped
-  localhost dev origins (§9's own "never the development defaults"
-  requirement) — the same fail-closed pattern as the JWT secret check
-  above, not a new mechanism.
+  (`mep_user`/`mep_password`). **Enforced in PR24B, hardened in PR24B
+  Fix Round 1:** `validate_production_secrets` refuses to boot in
+  production with `DATABASE_URL` equal to either known shipped
+  local-development literal (the non-Docker `localhost` default or
+  `docker-compose.yml`'s computed default when `.env.example` is
+  copied verbatim), and with `ALLOWED_ORIGINS` resolving — after
+  order/whitespace/duplicate-independent parsing — entirely to the
+  shipped `http://localhost*` development pattern (§9's own "never the
+  development defaults" requirement), regardless of which of the
+  repository's own literal orderings it happens to ship in. The same
+  fail-closed pattern as the JWT secret check above, not a new
+  mechanism; `JWT_SECRET_KEY` itself is checked against both of its own
+  known shipped placeholder literals (config.py's/docker-compose.yml's
+  wording and `.env.example`'s separate wording) for the same reason.
 - **Object-storage credentials:** not applicable — §12 recommends not
   deploying object storage at all.
 - **Deployment secrets** (e.g. a platform API token used by CI to

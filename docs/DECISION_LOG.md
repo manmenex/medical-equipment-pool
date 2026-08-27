@@ -5964,3 +5964,91 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   specification, cross-checked against
   `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §15/§15A/§17
   and the six approved Owner Decisions in §28.
+
+## 2026-08-27 — PR24B Fix Round 1 (independent review, P1): production config defaults compared against only one of several shipped literals -- fixed, not merged
+
+- **Finding (independent review, P1, blocking):** `validate_production_
+  secrets` (`backend/app/core/config.py`) rejected `ALLOWED_ORIGINS`
+  only when it exactly equaled `"http://localhost:5173,http://localhost"`
+  (config.py's own field default / `DEFAULT_ALLOWED_ORIGINS`). But
+  `.env.example` and `docker-compose.yml` ship the reverse order,
+  `"http://localhost,http://localhost:5173"` -- since
+  `docker-compose.prod.yml` does not override `ALLOWED_ORIGINS`, a
+  Production deployment that simply inherited the shipped Compose
+  default (forgetting to set `ALLOWED_ORIGINS`) would boot successfully
+  with localhost-only CORS origins.
+- **Fix:** `ALLOWED_ORIGINS` production validation is now semantic
+  instead of an exact string comparison: `settings.allowed_origins_list`
+  (the codebase's own existing comma-split/trim/drop-empty parsing,
+  reused rather than duplicated) is turned into a `frozenset` --
+  order-, whitespace-, and duplicate-independent -- and Production is
+  refused only when *every* resulting origin matches the shipped
+  development pattern named by
+  `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §9 itself
+  ("never the development defaults (`http://localhost*`)"): scheme
+  `http`, hostname exactly `localhost` (any port). A production origin
+  set that mixes one real origin with a leftover `localhost` entry is
+  accepted, per the same §9 "must not consist solely of
+  localhost/development origins" reading; an empty/blank-only
+  `ALLOWED_ORIGINS` is refused. `DEFAULT_ALLOWED_ORIGINS` is still
+  defined (used as `Settings.ALLOWED_ORIGINS`'s own field default, and
+  by existing/new dev-mode tests) but is no longer the sole literal
+  checked against.
+- **Same-class review (§17 of the fix-round task) found two more
+  instances of the identical defect and fixed both:**
+  - `JWT_SECRET_KEY`: `.env.example`'s own placeholder text
+    (`"change-me-to-a-random-64-byte-value"`) is a different literal
+    from `DEFAULT_JWT_SECRET_KEY`
+    (`"change-me-in-production-use-a-random-64-byte-value"`, used by
+    config.py's field default and docker-compose.yml's inline
+    default) and is 35 characters -- above `JWT_SECRET_MIN_LENGTH`
+    (32) -- so it previously passed both the exact-match and
+    minimum-length checks unrejected. Now checked via membership in
+    `KNOWN_INSECURE_JWT_SECRET_KEYS` (both literals).
+  - `DATABASE_URL`: `docker-compose.yml`'s computed default when
+    `.env.example` is copied verbatim
+    (`"postgresql+asyncpg://mep_user:change-me@postgres:5432/mep_db"`,
+    host `postgres`, password `change-me`) is a different literal from
+    `DEFAULT_DATABASE_URL`
+    (`"postgresql+asyncpg://mep_user:mep_password@localhost:5432/mep_db"`,
+    host `localhost`, password `mep_password`, the non-Docker local-dev
+    default) and was previously not rejected.
+    `docker-compose.prod.yml` does not override either
+    `POSTGRES_PASSWORD` or `DATABASE_URL`. Now checked via membership
+    in `KNOWN_INSECURE_DATABASE_URLS` (both literals).
+  - No other same-class exact-string-default mistake was found in
+    `validate_production_secrets` (the `JWT_SECRET_KEY` minimum-length
+    check and the `ENVIRONMENT` membership check are not comma-
+    separated/multi-literal values, so this defect class does not
+    apply to them).
+- **Explicitly not added:** a per-origin HTTPS-scheme requirement on
+  `ALLOWED_ORIGINS` values. `docs/design/
+  PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §9's "HTTPS/TLS:
+  mandatory" is an edge/TLS-termination requirement
+  (`frontend/nginx.conf` / the platform edge), not a documented
+  constraint on the literal `ALLOWED_ORIGINS` CORS string, and no
+  existing code or test enforced it before this fix round; adding it
+  now would be scope creep beyond the reported P1 finding, not a
+  same-class fix of it.
+- **Preserved unchanged:** the readiness endpoint contract, admin
+  bootstrap mechanism, and scheduler single-instance deployment
+  invariant recorded in the PR24B entry above -- this fix round touches
+  only `backend/app/core/config.py` and
+  `backend/tests/test_startup_security.py`.
+- **Tests:** `backend/tests/test_startup_security.py` gains coverage
+  for the shipped `.env.example`/`docker-compose.yml` origin order, the
+  originally-covered reversed order, whitespace/duplicate variants,
+  empty `ALLOWED_ORIGINS`, a valid single provider HTTPS origin,
+  multiple valid HTTPS origins, one real origin mixed with a leftover
+  `localhost` entry, the `.env.example` JWT placeholder, and the
+  docker-compose-computed `DATABASE_URL` default. The shipped-order
+  test was verified to fail against the pre-fix code (reviewed head
+  `4d38f3f8876cf412d520ac2376b44dbcab24379e`) before the fix and pass
+  after it.
+- **Status:** Draft, **not merged, PR24B implementation in progress**.
+  This is a fix round on the same in-progress PR24B, not a new PR and
+  not the start of PR24C.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** independent review of GitHub PR #131 at reviewed head
+  `4d38f3f8876cf412d520ac2376b44dbcab24379e`, and the PR24B — Fix Round
+  1 task's own binding specification.
