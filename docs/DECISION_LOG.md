@@ -5725,3 +5725,140 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   `docs/audits/04-consolidated-implementation-plan.md` Part D's own
   PR24 placeholder and `docs/ARCHITECTURE_DECISIONS.md`'s existing
   "Managed deployment preferred" constraint.
+
+## 2026-08-26 — GitHub PR #129 merged; new authoritative baseline adopted; PR24 architecture round complete (including Fix Round 1)
+
+- **Decision/record:** GitHub PR #129 ("Production Deployment &
+  Go-Live Architecture Planning") merged via squash merge. Real
+  squash-merge SHA `599478992de363e1eda2fe8005ff79d565dee76d`, sole
+  parent `f35fe716d57c51042d86a661657f679799b6a9e3` (GitHub PR #128,
+  PR23F, the current baseline before this merge) -- confirmed via
+  `git log -1 --format=%P`. The final reviewed feature-branch head
+  `37553ba43f1350335b9354b2f4f1f2e066d490ec` was independently verified
+  tree-identical to the merged squash commit
+  (`git diff 37553ba... 599478992... --stat` produced no output) and
+  carried **zero reviews** and **zero comments** at merge time, with CI
+  green 6/6 on that exact head. Before the Final Merge Gate, this PR
+  went through **Fix Round 1**: an independent review found the
+  original design incorrectly treated `GET /api/v1/health` as a safe,
+  status-code-only production readiness probe, when the route always
+  returns HTTP 200 regardless of its own DB/Redis dependency-check
+  results. The fix added a dedicated `## 15A. Liveness vs. Readiness --
+  Production Probe Contract` section (letter-suffixed to avoid
+  renumbering 123 existing cross-references) that: separates liveness
+  from readiness as non-interchangeable concerns; states normatively
+  that the current health endpoint must not be relied upon as a
+  readiness probe as-is; requires a dedicated fail-closed
+  `GET /api/v1/ready`-style endpoint (recommended) or an equivalent
+  status-semantics change plus a separate liveness signal; documents a
+  body-aware fallback as an explicit non-preferred trade-off; and
+  defines the required-dependency policy from this codebase's own
+  actual fail-open behavior (PostgreSQL required, Redis must not by
+  itself block readiness, per `backend/app/core/redis.py`'s own
+  fail-open `cache_get`/`cache_set`/`is_refresh_token_valid` logic). A
+  follow-up commit corrected one remaining stale cross-reference
+  (`§14.5` -> the actual `§15A`) found by a repository-wide grep sweep.
+  Zero `backend/**`, `frontend/**`, `alembic/**`, or `tests/**` file was
+  touched by either the original round or Fix Round 1.
+- **Status:** Merged, closed. This entry is historical from the moment
+  it is written; it does not describe work in progress.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14,
+  following the same Final Merge Gate precedent used for GitHub PR
+  #111/#112/#113/#115/#116/#117/#118/#119/#120/#121/#122/#123/#124/#125/#126/#127/#128.
+- **Source:** GitHub PR #129 description and its Final Merge Gate
+  verification evidence (exact head, CI status, tree-identity diff,
+  sole-parent `git log` output).
+
+## 2026-08-26 — PR24 Owner Decision Closure: OD-PR24-1 through OD-PR24-6 Owner-approved
+
+- **Decision/record:** The Repository Owner approved all six PR24
+  Owner Decisions raised by the merged PR24 design
+  (`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §28), with
+  explicit approved choices for each rather than a blanket "per
+  Recommendation" (unlike PR23's closure, several PR24 decisions had no
+  Recommendation to approve -- OD-PR24-3 and OD-PR24-6 in particular
+  were genuine Owner inputs with no repository-derivable default).
+  This closure round is recorded on branch
+  `docs/pr24-owner-decision-closure`, based on baseline
+  `599478992de363e1eda2fe8005ff79d565dee76d` (GitHub PR #129, the entry
+  above). Scope: documentation/governance only --
+  `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` (header,
+  §5/§9 in-text updates, §28 status/approved-choice updates, §29
+  sequence update, plus 8 corrected stale `§27`->`§28` self-references
+  discovered during this round's own required reading -- a pre-existing
+  numbering error unrelated to Fix Round 1's own §15A insertion),
+  `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, `knowledge/CONTEXT.md`,
+  `knowledge/PROJECT_MEMORY.md`, and this log. Zero `backend/**`,
+  `frontend/**`, `alembic/**`, or `tests/**` file touched; no PR24B
+  implementation started; no infrastructure provisioned; no pilot or
+  production execution performed.
+- **Approved choices:**
+  - **OD-PR24-1** (hosting architecture/provider selection): Option A
+    -- Managed Application Platform + Managed PostgreSQL, per
+    Recommendation. Approves the architecture *class*, not a specific
+    commercial provider; provider selection remains PR24B's own scope,
+    provided it stays within this approved class.
+  - **OD-PR24-2** (access/network model): public HTTPS with the
+    existing application authentication, per Recommendation, as the
+    baseline production access model; IP allowlisting optional future
+    hardening; no VPN/native-client/hospital-network-only requirement
+    unless a future decision changes this.
+  - **OD-PR24-3** (backup RPO/RTO/retention): RPO <=1 hour, RTO <=4
+    hours, 30-day retention -- targets only, a genuine Owner input with
+    no Recommendation to approve. Production GO remains blocked until a
+    real backup/restore rehearsal (PR24C) demonstrates the restore
+    procedure meets the RTO target; no rehearsal has occurred and no
+    claim is made that current infrastructure already satisfies these
+    targets.
+  - **OD-PR24-4** (Staging/UAT environment topology): three
+    environments (Development, Staging/UAT, Production), per
+    Recommendation -- no dedicated fourth Pilot environment; Pilot runs
+    inside Production per OD-PR23-5's own already-approved model.
+  - **OD-PR24-5** (production domain/DNS ownership): **fully resolved
+    by an explicit hostname-deferral policy** -- not partially open.
+    The Owner currently has no custom production domain; the approved
+    policy is that the provider-supplied HTTPS hostname (OD-PR24-1) is
+    sufficient for Staging and for PR24B -- it does **not** block
+    PR24B. The concrete future production hostname is a
+    **Production-Go-Live execution/configuration input**, not an
+    unresolved architecture or Owner Decision: it must be selected,
+    DNS-delegated, and TLS-validated before Production Go-Live, but
+    supplying that value later under this already-approved policy does
+    not reopen OD-PR24-5 and requires no further Owner approval unless
+    it changes the underlying approved architecture itself. No domain
+    name is invented, purchased, or configured by this closure round.
+  - **OD-PR24-6** (production support/incident ownership): the project
+    Owner is the Primary Technical/Support/Incident Owner, recorded as
+    an ongoing *operational* responsibility -- not a new application
+    role, authorization role, or database user type. After-hours/deputy
+    coverage is not yet defined and is not fabricated; it remains a
+    future explicit decision if and when needed.
+- **Fail-closed gate while this PR is open:** `docs/design/
+  PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §28 now states: "OD-PR24-1
+  through OD-PR24-6 are Owner-approved above; ... no PR24 implementation
+  slice may begin until this PR24 Owner Decision Closure round itself
+  merges." This entry does **not** claim this closure PR itself is
+  merged while it remains open on its own branch -- the
+  self-referential-governance discipline applied throughout PR22G,
+  PR23A, and the PR23 Owner Decision Closure round applies here too.
+  Once this closure PR's own real squash SHA is known post-merge, PR24B
+  becomes eligible to start from it, governed by §28 together with the
+  approved choices recorded above. No Owner Decision's substance was
+  reopened, reinterpreted, or extended beyond the approved choice
+  recorded for it; the readiness/liveness probe contract (§15A) from
+  Fix Round 1 is unchanged and not reopened.
+- **CHANGE_HISTORY.md:** left unchanged this round -- a conscious
+  decision, not an oversight. Its documented scope is conceptual
+  (mental-model) changes, not per-PR-slice merge tracking (the same
+  rationale recorded for PR22G and every governance round since); no
+  entry was added there for the individual PR23 or PR24 slices either,
+  and this closure round raises no new conceptual/mental-model change
+  that isn't already covered by the design document itself.
+- **Status:** Draft, **not merged, PR24 Owner Decision Closure
+  implementation in progress**. This entry documents work in progress
+  (the closure PR itself), not the closure PR's own completion.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the PR24 Owner Decision Closure task's own binding
+  specification, including the Repository Owner's explicit approval
+  statement and exact approved choices for each of the six Owner
+  Decisions; the PR24 Owner Decision Closure GitHub PR description.

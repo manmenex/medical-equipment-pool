@@ -8,25 +8,28 @@ control detailed ordering, scope, dependencies, and acceptance criteria.
 
 ## Current baseline
 
-`f35fe716d57c51042d86a661657f679799b6a9e3` — the real squash-merge SHA of
-GitHub PR #128, "PR23F — Cutover Runbook + Final Governance
-Close-out", merged on top of
-`8644536403eeec269e6dadf835f1bda3844b6cce` (GitHub PR #127, PR23E, now
-historical/superseded by this baseline). PR #128's final reviewed
-feature-branch head (`dcaac117ca6a4bdbf94bdc1dd727f0e2b98594c4`) carried
+`599478992de363e1eda2fe8005ff79d565dee76d` — the real squash-merge SHA of
+GitHub PR #129, "Production Deployment & Go-Live Architecture Planning"
+(Roadmap PR24's architecture design, including Fix Round 1's §15A
+liveness/readiness contract), merged on top of
+`f35fe716d57c51042d86a661657f679799b6a9e3` (GitHub PR #128, PR23F, now
+historical/superseded by this baseline). PR #129's final reviewed
+feature-branch head (`37553ba43f1350335b9354b2f4f1f2e066d490ec`) carried
 **zero reviews** and zero comments, with CI green (6/6) and the reviewed
 head's tree independently verified byte-identical to the merged squash
-commit's tree, sole parent `8644536...` confirmed — the squash commit
-actually landed on the base branch, `f35fe716...`, is the baseline. Per
+commit's tree, sole parent `f35fe716...` confirmed — the squash commit
+actually landed on the base branch, `599478992...`, is the baseline. Per
 this repository's standing process, **no separate "baseline adoption"
 PR is created** — the squash SHA became authoritative immediately upon
-merge, recorded here by the Production Deployment & Go-Live Architecture
-Planning round (the next PR that legitimately touches these governance
-files). **Roadmap PR23 (Cutover Readiness) is now fully implementation-
-complete** — see
-`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` for the
-architecture-planning round now underway before any Roadmap PR24
-implementation.
+merge, recorded here by the PR24 Owner Decision Closure round (the next
+PR that legitimately touches these governance files). **Roadmap PR23
+(Cutover Readiness) is fully implementation-complete; Roadmap PR24's
+architecture/design round is also merged, and all six Owner Decisions
+this round raised (OD-PR24-1 through OD-PR24-6) are Owner-approved via
+this closure round** — see
+`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §28.
+**PR24B (Deployment Foundation) remains blocked until this closure
+round's own PR merges.**
 
 **Roadmap PR22 (Legacy Data Validation and Reconciliation) is now fully
 complete** — architecture design (GitHub PR #112), all seven Owner
@@ -313,7 +316,7 @@ for the full slice-by-slice review chronology and closure record.
 
 | Sequence | Roadmap item | Status |
 |---|---|---|
-| Current | PR24 — Go-live / deployment | Dependency (PR19–PR23) satisfied — Roadmap PR23 is now fully implementation-complete (see "Current baseline" above). **Production Deployment & Go-Live Architecture Planning round OPEN, not yet merged** (`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`) — no PR24 implementation slice may begin until this round's Owner Decisions (OD-PR24-1 through OD-PR24-6) are resolved. |
+| Current | PR24 — Go-live / deployment | Dependency (PR19–PR23) satisfied — Roadmap PR23 is fully implementation-complete (see "Current baseline" above). **Architecture & Go-Live Planning round MERGED** (GitHub PR #129, squash SHA `599478992de363e1eda2fe8005ff79d565dee76d`, current baseline; `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`, including Fix Round 1's §15A liveness/readiness contract). **All six Owner Decisions (OD-PR24-1 through OD-PR24-6) are Owner-approved (§28) in the proposed PR24 Owner Decision Closure round — Draft, not yet merged.** No PR24 implementation slice (PR24B onward) may begin until this closure round's own PR merges. |
 
 **Historical note on PR19B/PR20 relative ordering:** before PR19B merged,
 while it was still a provisional, unreviewed Draft (GitHub PR #80), this
@@ -343,10 +346,16 @@ Readiness Evidence Foundation), PR23C (Readiness Gate Evaluation), PR23D
 Operator Workflow), and PR23F (Cutover Runbook + Final Governance
 Close-out) are all merged; **Roadmap PR23 overall is now fully
 implementation-complete**; its row has likewise moved off this table,
-and PR24 is now shown with sequence "Current" in the table above — with
-implementation itself gated on the Production Deployment & Go-Live
-Architecture Planning round's own Owner Decisions (OD-PR24-1 through
-OD-PR24-6, `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`).**
+and PR24 is now shown with sequence "Current" in the table above. **The
+Production Deployment & Go-Live Architecture Planning round has since
+merged too** (GitHub PR #129, squash SHA
+`599478992de363e1eda2fe8005ff79d565dee76d`, current baseline; includes
+Fix Round 1's §15A liveness/readiness contract), **and all six Owner
+Decisions it raised (OD-PR24-1 through OD-PR24-6,
+`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §28) are
+Owner-approved via the PR24 Owner Decision Closure round — PR24B
+(Deployment Foundation) remains blocked until that closure round's own
+PR merges.**
 PR22 through PR24's ordering is preserved as-is because it reflects an
 existing authoritative dependency chain
 (`docs/audits/04-consolidated-implementation-plan.md` Part D, Group 8:
@@ -404,11 +413,16 @@ Decision + Current-State Re-Issue Support) merged (GitHub PR #126),
 PR23E (Frontend / Operator Workflow) merged (GitHub PR #127), and
 PR23F (Cutover Runbook + Final Governance Close-out) merged (GitHub PR
 #128) — **Roadmap PR23 overall is now fully implementation-complete.**
-This table now begins with PR24 — shown as the current Roadmap item,
-with implementation gated on the Production Deployment & Go-Live
-Architecture Planning round's own Owner Decisions
-(`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`); PR19B's own
-historical relative-ordering note is preserved above.
+This table now begins with PR24 — shown as the current Roadmap item.
+**The Production Deployment & Go-Live Architecture Planning round has
+since merged** (GitHub PR #129, squash SHA
+`599478992de363e1eda2fe8005ff79d565dee76d`, current baseline;
+`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`, including Fix
+Round 1's §15A liveness/readiness contract), **and all six Owner
+Decisions it raised are Owner-approved via the PR24 Owner Decision
+Closure round (§28) — PR24B (Deployment Foundation) remains blocked
+until that closure round's own PR merges.** PR19B's own historical
+relative-ordering note is preserved above.
 
 ## Scope guardrails for the planned sequence
 

@@ -10,30 +10,33 @@ ordering
 
 ## Current baseline
 
-Current baseline: `f35fe716d57c51042d86a661657f679799b6a9e3` on
+Current baseline: `599478992de363e1eda2fe8005ff79d565dee76d` on
 `claude/medical-equipment-pool-0c7fz0` — the real squash-merge SHA of
-GitHub PR #128, "PR23F — Cutover Runbook + Final Governance
-Close-out", squash-merged on top of
-`8644536403eeec269e6dadf835f1bda3844b6cce` (GitHub PR #127, PR23E, now
-historical/superseded by this baseline). PR #128's final reviewed
-feature-branch head (`dcaac117ca6a4bdbf94bdc1dd727f0e2b98594c4`;
+GitHub PR #129, "Production Deployment & Go-Live Architecture
+Planning" (Roadmap PR24's architecture design, including Fix Round 1's
+§15A liveness/readiness contract), squash-merged on top of
+`f35fe716d57c51042d86a661657f679799b6a9e3` (GitHub PR #128, PR23F, now
+historical/superseded by this baseline). PR #129's final reviewed
+feature-branch head (`37553ba43f1350335b9354b2f4f1f2e066d490ec`;
 independent Final Merge Gate: zero reviews, zero comments, CI green 6/6
 on that exact head) — **that reviewed head is not the baseline**; the
-squash commit actually landed on the base branch, `f35fe716...`, is,
+squash commit actually landed on the base branch, `599478992...`, is,
 independently verified tree-identical to that reviewed head with sole
-parent `8644536...` confirmed. Per this repository's standing process,
+parent `f35fe716...` confirmed. Per this repository's standing process,
 **no separate "baseline adoption" PR is created** — the squash SHA
-became authoritative immediately upon merge, recorded here by the
-Production Deployment & Go-Live Architecture Planning round (the next
-PR that legitimately touches these governance files), consistent with
-this repository's squash-baseline discipline. **Roadmap PR23 (Cutover
-Readiness) is now fully implementation-complete** — PR23A through
-PR23F are all merged; real Pilot execution, Production cutover,
-AppSheet's actual read-only transition, a selected production
-deployment target, and a rehearsed backup/restore procedure have
-**not** occurred. See
-`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` for the
-architecture-planning round now underway.
+became authoritative immediately upon merge, recorded here by the PR24
+Owner Decision Closure round (the next PR that legitimately touches
+these governance files), consistent with this repository's
+squash-baseline discipline. **Roadmap PR23 (Cutover Readiness) is
+fully implementation-complete; Roadmap PR24's architecture/design round
+is also merged, and all six Owner Decisions it raised (OD-PR24-1
+through OD-PR24-6) are Owner-approved via this PR24 Owner Decision
+Closure round** — see
+`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §28. **PR24B
+(Deployment Foundation) remains blocked until this closure round's own
+PR merges.** Real Pilot execution, Production cutover, AppSheet's
+actual read-only transition, a selected commercial provider, and a
+rehearsed backup/restore procedure have **not** occurred.
 
 **Roadmap PR22 (Legacy Data Validation and Reconciliation) is now fully
 complete** — architecture design (GitHub PR #112), all seven Owner
@@ -91,15 +94,20 @@ operator UI over the merged PR23B-D backend that only reads and
 renders backend-computed readiness state, no new backend route or
 migration. **PR23F (Cutover Runbook + Final Governance Close-out) is
 also merged** (GitHub PR #128, squash SHA
-`f35fe716d57c51042d86a661657f679799b6a9e3`, see above): a
+`f35fe716d57c51042d86a661657f679799b6a9e3`, historical, see above): a
 documentation-only operational runbook
 (`docs/runbooks/PR23_CUTOVER_RUNBOOK.md`) plus the final governance
 close-out — **Roadmap PR23 overall is now fully implementation-
-complete.** **Current work is the Production Deployment & Go-Live
-Architecture Planning round**
-(`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`): design/
-Owner-Decisions only, no PR24 implementation slice may begin until its
-Owner Decisions are resolved. See "Current work" below.
+complete.** **The Production Deployment & Go-Live Architecture
+Planning round is also merged** (GitHub PR #129, squash SHA
+`599478992de363e1eda2fe8005ff79d565dee76d`, current baseline, see
+above; `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`,
+including Fix Round 1's §15A liveness/readiness contract): design/
+Owner-Decisions only. **Current work is the PR24 Owner Decision
+Closure round**, recording all six Owner Decisions it raised
+(OD-PR24-1 through OD-PR24-6, §28) as Owner-approved — PR24B
+(Deployment Foundation) remains blocked until this closure round's own
+PR merges. See "Current work" below.
 
 `d64d50d09cdf8ed7ddc1f5116b38805dfcbc7810` (GitHub PR #110, Roadmap
 PR21E — Legacy History Frontend Real Integration) is now historical,
@@ -240,12 +248,17 @@ Operator Workflow) is also merged** (GitHub PR #127, squash SHA
 `8644536403eeec269e6dadf835f1bda3844b6cce`, historical) — Thai-first
 operator UI over the merged PR23B-D backend. **PR23F (Cutover Runbook +
 Final Governance Close-out) is also merged** (GitHub PR #128, squash
-SHA `f35fe716d57c51042d86a661657f679799b6a9e3`, see "Current baseline"
-above) — documentation-only operational runbook plus final governance
+SHA `f35fe716d57c51042d86a661657f679799b6a9e3`, historical) —
+documentation-only operational runbook plus final governance
 close-out. **Roadmap PR23 overall is now fully implementation-
-complete. Current work is the Production Deployment & Go-Live
-Architecture Planning round** (design/Owner-Decisions only,
-`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`).
+complete. The Production Deployment & Go-Live Architecture Planning
+round is also merged** (GitHub PR #129, squash SHA
+`599478992de363e1eda2fe8005ff79d565dee76d`, see "Current baseline"
+above; design/Owner-Decisions only,
+`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`). **Current
+work is the PR24 Owner Decision Closure round** — all six Owner
+Decisions (OD-PR24-1 through OD-PR24-6, §28) Owner-approved; PR24B
+remains blocked until this closure round's own PR merges.
 
 ## Next sequence
 
@@ -313,13 +326,17 @@ is the Production Deployment & Go-Live Architecture Planning round
    `8644536403eeec269e6dadf835f1bda3844b6cce`, historical).
    **PR23F (Cutover Runbook + Final Governance Close-out) is COMPLETE /
    MERGED** (GitHub PR #128, squash SHA
-   `f35fe716d57c51042d86a661657f679799b6a9e3`, current baseline).
+   `f35fe716d57c51042d86a661657f679799b6a9e3`, historical).
    **Roadmap PR23 overall is now fully implementation-complete.**
-7. PR24 — Go-live / deployment. Dependency (PR19-PR23) satisfied;
-   implementation gated on the Production Deployment & Go-Live
-   Architecture Planning round's own Owner Decisions
-   (`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`, OPEN, not
-   yet merged).
+7. PR24 — Go-live / deployment. Dependency (PR19-PR23) satisfied.
+   **Architecture & Go-Live Planning is COMPLETE / MERGED** (GitHub PR
+   #129, squash SHA `599478992de363e1eda2fe8005ff79d565dee76d`, current
+   baseline; `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`,
+   including Fix Round 1's §15A liveness/readiness contract). **All six
+   Owner Decisions (OD-PR24-1 through OD-PR24-6, §28) are Owner-approved
+   in the proposed PR24 Owner Decision Closure round — Draft, not yet
+   merged.** PR24B (Deployment Foundation) remains blocked until that
+   closure round's own PR merges.
 
 Legacy migration and reconciliation are mandatory before PR24.
 

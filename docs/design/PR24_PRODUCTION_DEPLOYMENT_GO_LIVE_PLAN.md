@@ -1,23 +1,38 @@
 # Roadmap PR24 — Production Deployment & Go-Live Architecture Planning
 
-**Status:** DESIGN / ARCHITECTURE / OWNER-DECISION-RAISING ONLY. No
+**Status:** DESIGN / ARCHITECTURE / OWNER-DECISION-CLOSURE ONLY. No
 `backend/**`, `frontend/**`, `alembic/**`, `tests/**`, deployment
 configuration, secret, credential, DNS, or cloud-account file has been
-created, modified, or provisioned by this document. No production
-infrastructure exists as a result of this PR. No Pilot or Production
-execution has occurred.
+created, modified, or provisioned by this document or by its Owner
+Decision Closure round. No production infrastructure exists as a
+result of any PR24-round PR. No Pilot or Production execution has
+occurred. **PR24 (this document) is merged** (GitHub PR #129, squash
+SHA `599478992de363e1eda2fe8005ff79d565dee76d`, including Fix Round
+1's §15A liveness/readiness contract). **This Owner Decision Closure
+round records all six PR24 Owner Decisions (OD-PR24-1 through
+OD-PR24-6, §28) as Owner-approved; PR24B remains blocked until this
+closure round's own PR merges** (§28) — see that section for the
+exact gate wording while this closure PR is open.
 
-**Baseline:** `f35fe716d57c51042d86a661657f679799b6a9e3` — the real
-squash-merge SHA of GitHub PR #128 ("PR23F — Cutover Runbook + Final
-Governance Close-out"), squash-merged into
+**Baseline (Owner Decision Closure round):**
+`599478992de363e1eda2fe8005ff79d565dee76d` — the real squash-merge SHA
+of GitHub PR #129 (PR24 — Production Deployment & Go-Live Architecture
+Planning, including Fix Round 1). **Roadmap PR23 (Cutover Readiness)
+is fully implementation-complete**, and **PR24 is merged and
+architecture-approved**, as of this baseline. Real Pilot execution,
+Production cutover, AppSheet's actual read-only transition, a selected
+commercial provider, and a rehearsed backup/restore procedure have
+**not** occurred — this closure round resolves the Owner Decisions
+that gate the next implementation slice (PR24B); it does not perform
+any of them.
+
+**Prior baseline (as of PR24's own creation):**
+`f35fe716d57c51042d86a661657f679799b6a9e3` — the real squash-merge SHA
+of GitHub PR #128 ("PR23F — Cutover Runbook + Final Governance
+Close-out"), squash-merged into
 `claude/medical-equipment-pool-0c7fz0` on top of
-`8644536403eeec269e6dadf835f1bda3844b6cce` (GitHub PR #127, PR23E).
-**Roadmap PR23 (Cutover Readiness) is now fully implementation-complete**
-— PR23A through PR23F are all merged. Real Pilot execution, Production
-cutover, AppSheet's actual read-only transition, a selected production
-deployment target, and a rehearsed backup/restore procedure have **not**
-occurred — this document exists to plan the path toward those, not to
-claim they are done.
+`8644536403eeec269e6dadf835f1bda3844b6cce` (GitHub PR #127, PR23E) —
+now historical/superseded by the baseline above.
 
 **Purpose:** Design the production deployment and go-live architecture
 needed to move this repository from "the PR23 cutover-readiness
@@ -85,7 +100,7 @@ is created for it). This planning round folds that sync in:
 - **Production cutover:** **not executed.**
 - **AppSheet operational read-only transition:** **not yet executed.**
 - **Production deployment target:** **not selected** (this document's
-  own §6/§27 raises the Owner Decision to select one).
+  own §6/§28 raises the Owner Decision to select one).
 - **Backup/restore rehearsal:** **not yet completed** (this document's
   §10 designs what rehearsal must prove; it does not perform it).
 - **UAT/Pilot/Production sign-off:** **not yet obtained.**
@@ -379,7 +394,7 @@ capability for an internal ~8-user hospital application.
 **No specific commercial provider is selected in this document** — per
 the task's own explicit instruction (§31 of the task, "No provider
 marketing decision"), naming a vendor now would skip an Owner Decision.
-See **OD-PR24-1** (§27) for provider selection within this architecture
+See **OD-PR24-1** (§28) for provider selection within this architecture
 class, including the concrete alternative of Option B if the Owner's
 own operational preference or existing vendor relationships favor it.
 
@@ -408,7 +423,7 @@ not been confirmed anywhere in repository authority.** The
 recommendation is **public HTTPS with the existing authenticated
 application as the access boundary**, optionally hardened with IP
 allowlisting if the hospital can supply a stable IP range — see
-**OD-PR24-2** (§27).
+**OD-PR24-2** (§28).
 
 ---
 
@@ -416,10 +431,17 @@ allowlisting if the hospital can supply a stable IP range — see
 
 - **Production hostname:** not invented here — use a placeholder
   (`https://mep.<hospital-domain-placeholder>.example`) until a real
-  domain is confirmed (§27, OD-PR24-5, if domain ownership is
-  architecture-impacting — e.g. if the hospital insists on a
-  subdomain of their own zone, DNS delegation timing becomes a
-  go-live dependency).
+  domain is selected. **Per OD-PR24-5's Owner-approved
+  hostname-deferral policy (§28, fully resolved — not open):** the
+  Owner currently has no custom production domain; the HTTPS hostname
+  supplied by the selected managed provider (OD-PR24-1) is an approved,
+  sufficient hostname for Staging and for the Deployment Foundation
+  (PR24B) slice — the lack of a custom domain does **not** block PR24B.
+  The real custom production hostname is a **Production-Go-Live
+  execution/configuration input** — it must be selected, DNS-delegated,
+  and TLS-validated **before Production Go-Live** (§27), but selecting
+  it does not reopen OD-PR24-5. TLS/HTTPS remains mandatory at every
+  stage regardless of which hostname is in use.
 - **HTTPS/TLS:** mandatory, no plain-HTTP production traffic.
   `frontend/nginx.conf` currently terminates HTTP only —
   `docker-compose.prod.yml`'s own comment already flags this gap.
@@ -518,7 +540,7 @@ any of it.
 - **Backup frequency:** at minimum daily full backups; if the selected
   provider supports continuous WAL archiving/PITR (§10), that is
   preferred over frequency alone.
-- **Retention:** must be set explicitly by the Owner (§27, OD-PR24-3)
+- **Retention:** must be set explicitly by the Owner (§28, OD-PR24-3)
   — this repository has no existing retention policy to reuse for
   *infrastructure* backups (its existing retention policies, e.g.
   `IMPORT_RETENTION_DAYS`, govern *application-level* evidence
@@ -537,7 +559,7 @@ any of it.
 - **RPO/RTO targets:** **not determinable from repository authority**
   — no existing document states an acceptable data-loss window or
   recovery-time target for this application. Raised as **OD-PR24-3**
-  (§27); this document does not invent a number.
+  (§28); this document does not invent a number.
 - **Responsibility:** the "Database/backup contact" role already named
   in `docs/runbooks/PR23_CUTOVER_RUNBOOK.md` §1's contact matrix is the
   natural owner of this procedure — no new role is introduced.
@@ -1279,7 +1301,7 @@ document:
   retention contract.
 - **Backups** — retention is the one genuinely new retention question
   this document raises, and it is explicitly escalated as **OD-PR24-3**
-  (§27), not invented here.
+  (§28), not invented here.
 
 **This document proposes deleting nothing** that any existing PR20-23
 contract requires to be kept.
@@ -1410,7 +1432,9 @@ to be validated against.
 Following this repository's `OD-PR<n>-<m>` numbering convention (not
 the task prompt's own illustrative `OD-NEXT-*` placeholders), scoped
 to Roadmap PR24 exactly as OD-PR23-1 through OD-PR23-6 were scoped to
-PR23. **This document does not approve any of these itself.**
+PR23. **This document, as originally written, did not approve any of
+these itself. The PR24 Owner Decision Closure round (below) records
+the Owner's approval of all six.**
 
 - **OD-PR24-1 — Production hosting architecture/provider selection.**
   *Question:* Within the recommended architecture class (§7, Option A
@@ -1427,8 +1451,19 @@ PR23. **This document does not approve any of these itself.**
   bias) — provider research is a genuine next step *after* this
   Owner Decision confirms the architecture class.
   *Consequence if unresolved:* no infrastructure can be provisioned;
-  §17/§28's proposed "Deployment Foundation" slice has no concrete
+  §17/§29's proposed "Deployment Foundation" slice has no concrete
   target to build against.
+  *Status:* **RESOLVED / OWNER APPROVED** (PR24 Owner Decision
+  Closure round).
+  *Approved choice:* **Option A — Managed Application Platform +
+  Managed PostgreSQL**, exactly per Recommendation. This approves the
+  architecture *class*, not a specific commercial provider — provider
+  evaluation/selection may happen during the Deployment Foundation
+  (PR24B) work, provided the selected provider stays within this
+  approved architecture class. Do not silently substitute a
+  self-managed VPS, a hospital-managed server, Kubernetes, or
+  unmanaged PostgreSQL for this approved class unless a future,
+  explicit Owner Decision changes it.
 
 - **OD-PR24-2 — Production access/network model.**
   *Question:* Is public HTTPS with the existing authenticated
@@ -1442,6 +1477,16 @@ PR23. **This document does not approve any of these itself.**
   *Recommendation:* public HTTPS, optionally IP-allowlisted.
   *Consequence if unresolved:* the network/firewall configuration for
   whichever provider is selected under OD-PR24-1 cannot be finalized.
+  *Status:* **RESOLVED / OWNER APPROVED** (PR24 Owner Decision
+  Closure round).
+  *Approved choice:* **Public HTTPS with the existing application
+  authentication**, exactly per Recommendation, as the baseline
+  production access model. IP allowlisting may be added later as
+  optional hardening if the hospital supplies stable source IP ranges.
+  VPN, a native client, installed hospital software, or
+  hospital-network-only access are **not** required unless a future,
+  explicit operational requirement changes this decision. HTTPS
+  remains mandatory regardless (§9).
 
 - **OD-PR24-3 — Backup RPO/RTO and retention targets.**
   *Question:* What is an acceptable data-loss window (RPO) and
@@ -1455,6 +1500,15 @@ PR23. **This document does not approve any of these itself.**
   *Consequence if unresolved:* §11's backup design has evidence
   fields with no target to be measured against; Gate A's "backup/
   restore procedure validated" clause has no pass/fail criterion.
+  *Status:* **RESOLVED / OWNER APPROVED — targets only** (PR24 Owner
+  Decision Closure round).
+  *Approved choice:* **RPO ≤ 1 hour; RTO ≤ 4 hours; backup retention
+  30 days.** These are targets, not a claim that they are already met
+  — **Production GO remains blocked until a real backup/restore
+  rehearsal (§11, PR24C) is completed and its evidence demonstrates
+  the restore procedure actually meets the approved RTO target.** No
+  rehearsal has occurred as of this closure round, and current
+  infrastructure is not claimed to already satisfy these targets.
 
 - **OD-PR24-4 — Staging/UAT environment topology confirmation.**
   *Question:* Does the Owner agree with §19's recommendation of
@@ -1469,6 +1523,15 @@ PR23. **This document does not approve any of these itself.**
   *Recommendation:* accept §19 as designed.
   *Consequence if unresolved:* the CI/CD pipeline (§18) has an
   ambiguous number of deploy targets to build.
+  *Status:* **RESOLVED / OWNER APPROVED** (PR24 Owner Decision
+  Closure round).
+  *Approved choice:* **Three environments — Development, Staging/UAT,
+  Production** — exactly per Recommendation, no dedicated fourth Pilot
+  environment. Pilot runs inside Production, scoped to the approved
+  controlled Pilot Ward model from OD-PR23-5. Pilot is not
+  reinterpreted as synthetic-only testing, a separate database, or a
+  fourth environment; the existing PR23 Pilot business rules (§26)
+  remain unchanged.
 
 - **OD-PR24-5 — Production domain/DNS ownership.**
   *Question:* What is the real production hostname, and who controls
@@ -1480,6 +1543,42 @@ PR23. **This document does not approve any of these itself.**
   *Consequence if unresolved:* §9's TLS/domain design has only a
   placeholder to work with; go-live cannot proceed without a real,
   resolvable hostname.
+  *Status:* **RESOLVED / OWNER APPROVED — explicit hostname-deferral
+  policy** (PR24 Owner Decision Closure round). The Owner Decision
+  itself — the *policy* governing production hostname strategy and
+  timing — is fully resolved, not partially open; only the *concrete
+  hostname value* is deferred, and that deferral is itself the
+  resolution, not a symptom of the decision remaining unresolved.
+  *Approved choice:* The Owner approves an explicit hostname-deferral
+  policy:
+  - The provider-managed HTTPS hostname (from the architecture
+    selected under OD-PR24-1) is acceptable for Staging and for the
+    initial Deployment Foundation (PR24B) — no custom domain is
+    required to begin PR24B, PR24C, or PR24D.
+  - The Owner currently has no custom production domain; this policy
+    does not invent, purchase, register, or configure one.
+  - The **concrete future production hostname is a Production-Go-Live
+    execution/configuration input, not an unresolved architecture or
+    Owner Decision.** It must be selected, DNS-delegated, TLS-
+    validated, and recorded as evidence **before Production Go-Live**
+    (§27) — this is a Go-Live *execution prerequisite*, distinct from,
+    and never conflated with, the Owner-Decision implementation gate
+    this §28 governs.
+  - Selecting that concrete hostname later, under this already-
+    approved policy, does **not** reopen OD-PR24-5 and requires no
+    further Owner approval — a new Owner Decision would only be
+    needed if a future proposal changed the underlying architecture
+    itself (e.g. abandoning managed-provider hosting, requiring
+    VPN-only or hospital-network-only access, or dropping mandatory
+    HTTPS), none of which this policy does.
+  - TLS/HTTPS remains mandatory at every stage (§9) regardless of
+    which hostname is in use.
+  *Rationale:* the architecture decision is the hostname *strategy and
+  timing boundary* (provider hostname now, custom hostname required
+  before Go-Live) — the concrete DNS name itself is an operational
+  value supplied later under that already-resolved policy, exactly as
+  OD-PR24-1 resolves the hosting *architecture class* without resolving
+  the eventual concrete provider account.
 
 - **OD-PR24-6 — Production support/incident ownership.**
   *Question:* Beyond the operational roles `docs/runbooks/
@@ -1497,6 +1596,18 @@ PR23. **This document does not approve any of these itself.**
   *Consequence if unresolved:* §22's alerting design has no confirmed
   recipient; an incident could fire an alert nobody is designated to
   receive.
+  *Status:* **RESOLVED / OWNER APPROVED** (PR24 Owner Decision
+  Closure round).
+  *Approved choice:* **The project Owner is the Primary Technical /
+  Support / Incident Owner** for the Medical Equipment Pool system —
+  recorded as an ongoing *operational* responsibility, not as a new
+  application role, a new authorization role, or a database user type;
+  the existing application roles (§17 and elsewhere) are unchanged.
+  After-hours or deputy coverage is not yet defined and is **not**
+  fabricated here — the Primary Technical Owner is confirmed as the
+  first-line ongoing technical and incident responsibility; any
+  after-hours/deputy scheme remains a future, explicit decision if and
+  when it becomes necessary.
 
 **No new Owner Decision is raised for object storage (§12) or Redis
 (§13)** — both are resolved directly by repository runtime evidence,
@@ -1504,6 +1615,30 @@ not by operational/risk-tolerance judgment, so they do not meet this
 repository's own "only decisions that materially affect architecture
 and cannot be derived from source" bar (the same bar
 `docs/design/PR23_CUTOVER_READINESS_PLAN.md` §26 applied).
+
+**Implementation authorization gate (fail-closed):** No PR24B or later
+implementation slice may begin until all six Owner Decisions above are
+resolved. **OD-PR24-1 through OD-PR24-6 are Owner-approved above; per
+this repository's standing process (mirroring
+`docs/design/PR23_CUTOVER_READINESS_PLAN.md` §27's own governing
+pattern), no PR24 implementation slice may begin until this PR24 Owner
+Decision Closure round itself merges.** Approval recorded in an open,
+unmerged PR does not itself authorize PR24B — only the closure PR's
+own merge does. Once this closure round merges, its real squash SHA
+becomes the new authoritative baseline and PR24B becomes eligible to
+start from it, governed by this §28 together with the approved choices
+recorded above. **This gate and OD-PR24-5's Production-Go-Live hostname
+prerequisite are two distinct checkpoints, never conflated:** the
+**Owner-Decision Gate** (this paragraph) controls whether PR24B
+implementation may begin, and is satisfied in full by this closure
+round's merge — the still-undetermined concrete production hostname
+does **not** re-block it. The **Production-Go-Live Prerequisite**
+(OD-PR24-5, §27) separately controls whether PR24G / actual Production
+Go-Live may proceed, and requires the concrete hostname to be selected,
+DNS-delegated, and TLS-validated by that later point. The
+readiness/liveness probe contract (§15A) and the PostgreSQL/Redis
+readiness semantics it defines are unchanged by this closure round and
+are not reopened here.
 
 ---
 
@@ -1520,17 +1655,29 @@ through OD-PR24-6 are resolved (mirroring PR23's own fail-closed
 maintainable next sequence this document proposes is:
 
 - **PR24 (this document)** — Production Deployment & Go-Live
-  Architecture Planning. Design and Owner Decisions only. **Complete
-  once this document merges and the Owner Decisions above are
-  resolved** (resolution itself may be a short follow-up governance
-  round, mirroring the PR23 Owner Decision Closure round's own
-  precedent, rather than bundled into this same PR).
-- **PR24B — Deployment Foundation** *(proposed, not started)*:
-  provision the selected architecture (OD-PR24-1), configure secrets
-  (§16), build the safe admin-bootstrap mechanism (§17), build the
+  Architecture Planning. Design and Owner Decisions only. **Merged**
+  (GitHub PR #129, squash SHA
+  `599478992de363e1eda2fe8005ff79d565dee76d`, including Fix Round 1's
+  §15A liveness/readiness contract). **All six Owner Decisions
+  (OD-PR24-1 through OD-PR24-6) are now Owner-approved (§28)** via the
+  PR24 Owner Decision Closure round — following the PR23 Owner
+  Decision Closure round's own precedent, resolution was a short
+  follow-up governance round rather than bundled into this same PR.
+  **PR24 overall (architecture + Owner Decisions) is complete once the
+  closure round itself merges** — approval recorded while the closure
+  PR is still open does not itself complete PR24 or authorize PR24B
+  (§28's own fail-closed gate).
+- **PR24B — Deployment Foundation** *(proposed, not started; eligible
+  to start only after the PR24 Owner Decision Closure round merges,
+  §28)*: provision the selected architecture (OD-PR24-1 — Managed
+  Application Platform + Managed PostgreSQL), configure secrets (§16),
+  build the safe admin-bootstrap mechanism (§17), build the
   fail-closed readiness endpoint (§15A) alongside the existing
   liveness endpoint, close the scheduler single-instance gap (§15) at
-  the deployment-configuration level. No Pilot/Production traffic yet.
+  the deployment-configuration level. Redis is retained but non-
+  critical to readiness (§13, §15A.5); no MinIO/S3 production
+  dependency (§12); the provider-supplied HTTPS hostname is acceptable
+  initially (OD-PR24-5). No Pilot/Production traffic yet.
 - **PR24C — Backup & Restore** *(proposed, not started)*: implement
   and rehearse the backup/restore procedure (§11) against Staging,
   against the RPO/RTO targets from OD-PR24-3.
@@ -1567,7 +1714,7 @@ these.
 - No production infrastructure is provisioned by this document.
 - No credential, secret, or DNS record is created.
 - No cloud account is mutated.
-- No commercial provider is selected (§7, §27 OD-PR24-1).
+- No commercial provider is selected (§7, §28 OD-PR24-1).
 - No backend, frontend, or migration code is changed.
 - No new Owner Decision is raised for choices repository evidence
   already resolves (§12, §13, §28's own closing note).

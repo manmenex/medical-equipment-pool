@@ -92,10 +92,12 @@ Sources: `docs/PROJECT_PLAYBOOK.md`, `docs/ARCHITECTURE_GUARDRAILS.md`,
 
 ## Current baseline and Roadmap
 
-Current baseline: `f35fe716d57c51042d86a661657f679799b6a9e3` — the real
-squash-merge SHA of GitHub PR #128, "PR23F — Cutover Runbook + Final
-Governance Close-out", squash-merged on top of
-`8644536403eeec269e6dadf835f1bda3844b6cce` (GitHub PR #127, PR23E).
+Current baseline: `599478992de363e1eda2fe8005ff79d565dee76d` — the real
+squash-merge SHA of GitHub PR #129, "Production Deployment & Go-Live
+Architecture Planning" (Roadmap PR24's architecture design, including
+Fix Round 1's §15A liveness/readiness contract), squash-merged on top
+of `f35fe716d57c51042d86a661657f679799b6a9e3` (GitHub PR #128, PR23F,
+now historical/superseded).
 **Roadmap PR22 (Legacy Data Validation and Reconciliation) is now fully
 complete; Roadmap PR23 (Cutover Readiness)'s first slice, PR23A
 (Architecture & Operational Design), the PR23 Owner Decision Closure
@@ -132,12 +134,17 @@ client-side. PR23F delivered the single authoritative operational
 runbook (`docs/runbooks/PR23_CUTOVER_RUNBOOK.md` — T0-T4 procedure,
 rollback, contact/evidence templates) plus the final governance
 close-out; zero `backend/**`/`frontend/**`/`alembic/**` change.
-**Roadmap PR23 overall is now fully implementation-complete.** Real
-Pilot execution, Production cutover, AppSheet's actual read-only
-transition, a selected production deployment target, and a rehearsed
-backup/restore procedure have **not** occurred — see
-`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` for the
-architecture-planning round now underway. See the "Roadmap PR22"
+**Roadmap PR23 overall is now fully implementation-complete.** **The
+Production Deployment & Go-Live Architecture Planning round is also
+merged** (GitHub PR #129, squash SHA
+`599478992de363e1eda2fe8005ff79d565dee76d`, current baseline —
+`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`), **and all
+six Owner Decisions it raised (OD-PR24-1 through OD-PR24-6, §28) are
+Owner-approved via the PR24 Owner Decision Closure round** — PR24B
+(Deployment Foundation) remains blocked until that closure round's own
+PR merges. Real Pilot execution, Production cutover, AppSheet's actual
+read-only transition, a selected commercial provider, and a rehearsed
+backup/restore procedure have **not** occurred. See the "Roadmap PR22"
 paragraph below for full slice-by-slice detail.
 
 `8644536403eeec269e6dadf835f1bda3844b6cce` — the real squash-merge SHA
@@ -292,9 +299,11 @@ merged (GitHub PR #125), PR23D (Go/No-Go Decision + Current-State
 Re-Issue Support) is also merged (GitHub PR #126), PR23E (Frontend
 / Operator Workflow) is also merged (GitHub PR #127), and PR23F
 (Cutover Runbook + Final Governance Close-out) is also merged (GitHub
-PR #128). Current authoritative baseline:
-`f35fe716d57c51042d86a661657f679799b6a9e3` (GitHub PR #128, PR23F,
-squash-merged on top of `8644536...`, GitHub PR #127, PR23E). **All six
+PR #128, squash SHA `f35fe716d57c51042d86a661657f679799b6a9e3`, now
+historical/superseded). Current authoritative baseline:
+`599478992de363e1eda2fe8005ff79d565dee76d` (GitHub PR #129, Production
+Deployment & Go-Live Architecture Planning, squash-merged on top of
+`f35fe716...`, GitHub PR #128, PR23F). **All six
 PR23 Owner Decisions PR23A identified (OD-PR23-1 through OD-PR23-6) are
 Owner-approved per Recommendation**, releasing the fail-closed PR23B+
 implementation-authorization gate. PR23B delivered an additive
@@ -314,11 +323,15 @@ never recalculating readiness client-side. PR23F delivered the single
 authoritative operational runbook
 (`docs/runbooks/PR23_CUTOVER_RUNBOOK.md`) plus the final governance
 close-out; zero runtime change. **Roadmap PR23 overall is now fully
-implementation-complete. Current Roadmap work is the Production
-Deployment & Go-Live Architecture Planning round**
-(`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`): design/
-Owner-Decisions only, no PR24 implementation slice may begin until its
-Owner Decisions (OD-PR24-1 through OD-PR24-6) are resolved.
+implementation-complete. The Production Deployment & Go-Live
+Architecture Planning round is also merged** (GitHub PR #129, squash
+SHA `599478992de363e1eda2fe8005ff79d565dee76d`, current baseline —
+`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`, including Fix
+Round 1's §15A liveness/readiness contract): design/Owner-Decisions
+only. **Current Roadmap work is the PR24 Owner Decision Closure
+round** — all six Owner Decisions (OD-PR24-1 through OD-PR24-6, §28)
+Owner-approved; PR24B (Deployment Foundation) remains blocked until
+this closure round's own PR merges.
 The remaining Roadmap-numbered items are:
 
 - PR22: legacy data validation and reconciliation — **complete**
@@ -334,13 +347,17 @@ The remaining Roadmap-numbered items are:
   MERGED** (GitHub PR #126); **PR23E (Frontend / Operator Workflow)
   COMPLETE / MERGED** (GitHub PR #127); **PR23F (Cutover Runbook +
   Final Governance Close-out) COMPLETE / MERGED** (GitHub PR #128,
-  current baseline); **Roadmap PR23 overall is now fully
+  historical); **Roadmap PR23 overall is now fully
   implementation-complete**;
-- PR24: Go-live / deployment. Dependency (PR19–PR23) satisfied;
-  implementation gated on the Production Deployment & Go-Live
-  Architecture Planning round's own Owner Decisions
-  (`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`, OPEN, not
-  yet merged).
+- PR24: Go-live / deployment. Dependency (PR19–PR23) satisfied.
+  **Architecture & Go-Live Planning COMPLETE / MERGED** (GitHub PR
+  #129, squash SHA `599478992de363e1eda2fe8005ff79d565dee76d`, current
+  baseline; `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`,
+  including Fix Round 1's §15A liveness/readiness contract). **All six
+  Owner Decisions (OD-PR24-1 through OD-PR24-6, §28) are Owner-approved
+  in the proposed PR24 Owner Decision Closure round — Draft, not yet
+  merged.** PR24B (Deployment Foundation) remains blocked until that
+  closure round's own PR merges.
 
 Roadmap numbers and GitHub PR numbers are independent. Legacy migration is
 mandatory before Go-live.
