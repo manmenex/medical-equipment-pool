@@ -133,12 +133,46 @@ def parse_database_url(database_url: str) -> ConnectionParams:
     )
 
 
+@dataclasses.dataclass(frozen=True)
+class DatabaseIdentity:
+    """Identifies a database purely by where it is (host+port+database
+    name) -- deliberately excludes credentials, since the same physical
+    database can be reached with different users/passwords. Fix Round 1
+    (PR #132 independent review): this is the type restore-target safety
+    guards compare, and it is always derived from the backup manifest --
+    never optionally supplied by the operator -- so the guard cannot be
+    silently skipped by omitting a CLI flag."""
+
+    host: str
+    port: int
+    database_name: str
+
+    def matches(self, other: "DatabaseIdentity") -> bool:
+        return (self.host.lower(), self.port, self.database_name) == (
+            other.host.lower(),
+            other.port,
+            other.database_name,
+        )
+
+    def redacted(self) -> str:
+        """No credentials in a DatabaseIdentity to begin with -- safe to print/log as-is."""
+        return f"{self.host}:{self.port}/{self.database_name}"
+
+    @staticmethod
+    def from_connection_params(params: "ConnectionParams") -> "DatabaseIdentity":
+        return DatabaseIdentity(host=params.host, port=params.port, database_name=params.dbname)
+
+    @staticmethod
+    def from_manifest(manifest: "BackupManifest") -> "DatabaseIdentity":
+        return DatabaseIdentity(host=manifest.host, port=manifest.port, database_name=manifest.database_name)
+
+
 def same_database_target(a: ConnectionParams, b: ConnectionParams) -> bool:
     """True if two connection targets point at the same physical
     database (host+port+database name) -- deliberately ignores
     user/password, since the same database can be reached with
     different credentials."""
-    return (a.host.lower(), a.port, a.dbname) == (b.host.lower(), b.port, b.dbname)
+    return DatabaseIdentity.from_connection_params(a).matches(DatabaseIdentity.from_connection_params(b))
 
 
 class ProductionRestoreRefused(RuntimeError):
@@ -149,18 +183,27 @@ def guard_restore_target(
     *,
     target: ConnectionParams,
     target_environment: str,
-    source: ConnectionParams | None = None,
+    source_identity: DatabaseIdentity,
 ) -> None:
     """PR24C §15/§24: restore tooling must refuse a Production target by
     default, with no override flag anywhere in this module. Two
-    independent checks:
+    independent, UNCONDITIONAL checks:
 
       1. `target_environment` must not be "production" (case-insensitive,
-         whitespace-trimmed) -- always enforced, this is the primary
-         guard and requires no other argument.
-      2. If `source` is given, the target must be a physically different
-         database (host+port+dbname) than the source -- restoring
-         "into" the exact source database would `--clean` it in place.
+         whitespace-trimmed).
+      2. The target must be a physically different database
+         (host+port+database name, ignoring credentials) than
+         `source_identity` -- restoring "into" the exact source database
+         would `--clean` it in place.
+
+    Fix Round 1 (PR #132 independent review, [P1]): `source_identity` is
+    a required argument, not an optional one gated on whether the
+    operator happened to pass --source-database-url. The backup manifest
+    always records the source database's host/port/database name (see
+    BackupManifest), so callers must derive `source_identity` from the
+    manifest via `DatabaseIdentity.from_manifest()` -- restore-target
+    safety must never depend on an operator remembering an optional CLI
+    flag. See backend/scripts/restore_postgres.py.
 
     There is deliberately no `--allow-production-restore` escape hatch
     (PR24C §24's own explicit instruction) -- if this needs to change,
@@ -172,11 +215,12 @@ def guard_restore_target(
             "Restore rehearsal must target a disposable, non-production database. There is no "
             "override flag for this check -- see backend/scripts/pg_backup_lib.py guard_restore_target()."
         )
-    if source is not None and same_database_target(source, target):
+    target_identity = DatabaseIdentity.from_connection_params(target)
+    if target_identity.matches(source_identity):
         raise ProductionRestoreRefused(
-            "Refusing to restore: --target-database-url resolves to the same host/port/database as "
-            "--source-database-url. Restore must target a separate, disposable database -- never the "
-            "source database (or Production) as the 'test'."
+            f"Refusing to restore: target ({target_identity.redacted()}) matches the source database "
+            f"recorded in the backup manifest ({source_identity.redacted()}). Restore must target a "
+            "separate, disposable database -- never the source database (or Production) as the 'test'."
         )
 
 

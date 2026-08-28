@@ -8,6 +8,16 @@ disposable database -- NEVER restored directly over Production "as the
 test." This script has no `--allow-production-restore` flag anywhere;
 see pg_backup_lib.guard_restore_target() for the two independent guards.
 
+Fix Round 1 (PR #132 independent review, [P1]): the same-source-database
+guard is now UNCONDITIONAL. The backup manifest always records the
+source database's host/port/database name, and that manifest-derived
+identity is always what the restore target is checked against --
+whether or not --source-database-url is supplied. --source-database-url
+is optional and only enables an *additional* live source connection
+(for row-count comparison); it never enables or disables the guard
+itself, and it must match the manifest's recorded source identity or
+the restore is refused before any destructive action.
+
 Usage:
     python scripts/restore_postgres.py \\
         --backup-file backups/postgres/mep-postgres-staging-20260828T120000Z.dump \\
@@ -19,15 +29,21 @@ Usage:
 Procedure (docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md §11,
 this task's own §16):
     1. verify backup checksum against its manifest (hard fail on mismatch)
-    2. guard: refuse a target labeled production, or identical to source
-    3. guard: refuse a non-empty target unless --force-non-empty-target
-    4. pg_restore into the target
-    5. verify the restored Alembic revision matches the manifest's
+    2. derive source identity (host/port/database name) from the manifest
+    3. guard: refuse a target labeled production, or matching the
+       manifest-derived source identity -- unconditional, not gated on
+       --source-database-url
+    4. if --source-database-url is given, verify it agrees with the
+       manifest's source identity (fail closed on mismatch) before using
+       it for live verification
+    5. guard: refuse a non-empty target unless --force-non-empty-target
+    6. pg_restore into the target
+    7. verify the restored Alembic revision matches the manifest's
        (never runs `alembic upgrade` -- restore fidelity is proven
        before any migration upgrade, per this task's own §17)
-    6. verify representative table row counts (and diff against the
+    8. verify representative table row counts (and diff against the
        source database's own counts, if --source-database-url is given)
-    7. print elapsed wall-clock time, for comparison against the
+    9. print elapsed wall-clock time, for comparison against the
        Owner-approved RTO target (<= 4 hours, OD-PR24-3) -- this script
        reports the number, it does not itself claim pass/fail against a
        target that is a runbook/operator judgment (docs/runbooks/
@@ -49,6 +65,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.pg_backup_lib import (  # noqa: E402
     BackupManifest,
+    DatabaseIdentity,
     ProductionRestoreRefused,
     guard_restore_target,
     manifest_filename_for,
@@ -81,8 +98,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--source-database-url",
         default=None,
-        help="Optional: the DATABASE_URL the backup was taken from. If given, restore refuses a target "
-        "identical to it, and row counts are diffed against it.",
+        help="Optional. The backup manifest always supplies source identity for restore-target safety -- "
+        "this flag does not enable or disable that protection. If given, it is used only for additional "
+        "live source verification (row-count comparison), and it must match the manifest's recorded "
+        "source host/port/database name or the restore is refused before any destructive action.",
     )
     parser.add_argument(
         "--force-non-empty-target",
@@ -126,6 +145,18 @@ def main() -> int:
         print(f"[restore] FAIL: invalid --target-database-url: {exc}", file=sys.stderr)
         return 1
 
+    # Fix Round 1 (PR #132 independent review, [P1]): source identity for
+    # the same-database guard is ALWAYS derived from the backup manifest,
+    # never from the optional --source-database-url flag -- an operator
+    # forgetting that flag must not silently disable this protection.
+    source_identity = DatabaseIdentity.from_manifest(manifest)
+
+    try:
+        guard_restore_target(target=target, target_environment=args.target_environment, source_identity=source_identity)
+    except ProductionRestoreRefused as exc:
+        print(f"[restore] FAIL: {exc}", file=sys.stderr)
+        return 1
+
     source = None
     if args.source_database_url:
         try:
@@ -133,12 +164,16 @@ def main() -> int:
         except ValueError as exc:
             print(f"[restore] FAIL: invalid --source-database-url: {exc}", file=sys.stderr)
             return 1
-
-    try:
-        guard_restore_target(target=target, target_environment=args.target_environment, source=source)
-    except ProductionRestoreRefused as exc:
-        print(f"[restore] FAIL: {exc}", file=sys.stderr)
-        return 1
+        source_url_identity = DatabaseIdentity.from_connection_params(source)
+        if not source_url_identity.matches(source_identity):
+            print(
+                f"[restore] FAIL: --source-database-url ({source_url_identity.redacted()}) does not match "
+                f"the source database recorded in the backup manifest ({source_identity.redacted()}). "
+                "Refusing to compare row counts against a source inconsistent with this backup's "
+                "recorded provenance -- the manifest is authoritative.",
+                file=sys.stderr,
+            )
+            return 1
 
     try:
         target_empty = asyncio.run(target_database_is_empty(target))

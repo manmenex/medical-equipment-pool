@@ -143,8 +143,12 @@ python scripts/restore_postgres.py \
     --source-database-url "$DATABASE_URL"
 ```
 
-`--source-database-url` is optional; when given, the script also diffs
-representative-table row counts between source and restored databases.
+`--source-database-url` is optional. The backup manifest always supplies the
+source database's identity (host/port/database name) for restore-target
+safety — this flag does **not** enable or disable that protection. If given,
+it is used only for additional live source verification (row-count
+comparison), and it must agree with the manifest's recorded source identity
+or the restore is refused before any destructive action.
 
 **Restore target protection — no normal command path restores over
 Production:**
@@ -153,23 +157,33 @@ Production:**
 - `--target-environment` is **required** and refused outright if it equals
   `production` (case-insensitive) — there is no `--allow-production-restore`
   flag anywhere in this tooling, and none should be added.
-- If `--source-database-url` is given, the target must be a physically
-  different database (host+port+database name) than the source.
+- The target must be a physically different database (host+port+database
+  name, ignoring credentials) than the source database recorded in the
+  backup manifest — enforced **unconditionally**, whether or not
+  `--source-database-url` is supplied. Fix Round 1 (PR #132 independent
+  review) closed a gap where this check was previously skipped if the
+  operator omitted that optional flag.
 - The target database must be empty (no existing tables) unless
   `--force-non-empty-target` is passed — an extra guard beyond what a
-  rehearsal normally needs to override.
+  rehearsal normally needs to override. This flag only ever bypasses the
+  empty-target check; it never bypasses the Production or same-source
+  guards above.
 
 **What the script verifies, in order:**
 
 1. Backup checksum matches the manifest (hard fail on mismatch — never
    restores a corrupted/tampered artifact).
-2. Restore-target guard (above).
-3. `pg_restore` completes successfully.
-4. The restored database's `alembic_version` matches the manifest's recorded
+2. Restore-target guard (above) — using the source identity derived from the
+   manifest, unconditionally.
+3. If `--source-database-url` was given, it is checked against the
+   manifest's recorded source identity (fail closed on mismatch) before it
+   is used for any live verification.
+4. `pg_restore` completes successfully.
+5. The restored database's `alembic_version` matches the manifest's recorded
    revision — proving restore *fidelity*, before any question of running
    `alembic upgrade` (deliberately not run automatically; that is a separate,
    later step if the restored instance is ever used beyond verification).
-5. Representative table row counts (`equipment`, `wards`, `users`,
+6. Representative table row counts (`equipment`, `wards`, `users`,
    `borrow_transactions`, `audit_logs`) — diffed against the source if
    `--source-database-url` was given.
 

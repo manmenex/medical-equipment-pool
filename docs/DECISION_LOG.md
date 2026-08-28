@@ -6259,3 +6259,113 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   specification, cross-checked against
   `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §11/§24/§28
   OD-PR24-3, and `docs/runbooks/PR23_CUTOVER_RUNBOOK.md` §1/§17.
+
+
+## 2026-08-28 — PR24C Fix Round 1 (independent review, P1): same-source restore guard was conditional on an optional CLI flag -- fixed, not merged
+
+- **Finding (independent review, P1, blocking):** at reviewed head
+  `a20bbd9182cfe2ab2c57bdc99f0b5c6f8381d455`, `restore_postgres.py`
+  only refused a restore target identical to the backup's source
+  database when the operator explicitly passed
+  `--source-database-url`. Without that flag, `guard_restore_target()`
+  received `source=None` and skipped the same-database comparison
+  entirely -- so the normal restore command (no
+  `--source-database-url`) would silently allow a restore directly
+  over the exact database a backup was taken from, even though the
+  backup manifest already recorded that database's host, port, and
+  name. Empirically reproduced against the reviewed head: calling
+  `guard_restore_target(target=<same host/port/db, different
+  credentials>, target_environment="staging", source=None)` returned
+  without raising.
+- **Fix:** same-source restore protection is now derived from the
+  backup manifest and enforced **unconditionally**, never gated on an
+  optional CLI flag:
+  - `backend/scripts/pg_backup_lib.py` gains `DatabaseIdentity`
+    (host + port + database name only -- deliberately no
+    username/password, since the same physical database can be
+    reached with different credentials), with
+    `DatabaseIdentity.from_manifest()` and
+    `.from_connection_params()` constructors and a credential-blind
+    `.matches()` comparison.
+  - `guard_restore_target()`'s `source: ConnectionParams | None = None`
+    parameter is replaced with a **required**
+    `source_identity: DatabaseIdentity` parameter -- there is no code
+    path that can construct a call without it, so the guard can no
+    longer be silently skipped.
+  - `restore_postgres.py` now always derives `source_identity =
+    DatabaseIdentity.from_manifest(manifest)` before calling the
+    guard, regardless of whether `--source-database-url` was given.
+  - `--source-database-url` is repurposed as optional, live-source-only
+    input (row-count comparison): if supplied, it is validated against
+    the manifest's recorded source identity and the restore is
+    refused **before any destructive action** if they disagree --
+    the manifest remains the sole authority for source provenance;
+    the CLI flag can never override it.
+  - `--force-non-empty-target` continues to bypass only the
+    target-emptiness check; it has no code path into the
+    Production or same-source guards (verified by a dedicated
+    regression and by `guard_restore_target()`'s signature itself,
+    which has no `force`-shaped parameter at all).
+  - No credentials were added to `BackupManifest` -- its existing
+    `host`/`port`/`database_name` fields were already sufficient for
+    identity comparison; `username`/`password` remain intentionally
+    absent from the manifest schema.
+  - Order of operations in `restore_postgres.py`'s `main()`: load
+    manifest -> verify checksum -> parse target -> derive
+    `source_identity` from the manifest -> enforce the
+    Production/same-source guard -> validate an optional
+    `--source-database-url` against the manifest (fail closed on
+    mismatch) -> target-emptiness check -> `pg_restore`. The
+    same-source refusal happens before any target-side database
+    connection or destructive action.
+  - Error messages name only host/port/database name (never
+    username/password/DATABASE_URL), consistent with PR24B's
+    non-leak principle.
+- **Tests:** `backend/tests/test_pr24c_backup_restore.py` gains:
+  `DatabaseIdentity` unit tests (manifest/`ConnectionParams`
+  construction, case-insensitive host matching, credential-free
+  `redacted()`); `guard_restore_target()` regressions proving the
+  same-database refusal fires with no `ConnectionParams` "source" in
+  the call at all, ignores credentials, is not bypassed by an omitted
+  port (`parse_database_url()` already materializes the default
+  5432), and correctly allows same-host/different-database and
+  different-host/same-database targets; and CLI-level regressions
+  that invoke `restore_postgres.main()` in-process (with
+  `target_database_is_empty`/`subprocess.run` monkeypatched to raise
+  if ever reached) proving: (a) a same-source target is refused with
+  no `--source-database-url` at all; (b) a genuinely distinct target
+  is *not* refused (control case); (c) a `--source-database-url` that
+  disagrees with the manifest is refused before any live connection;
+  (d) `--force-non-empty-target` bypasses neither the same-source nor
+  the Production guard. Each guard-refusal assertion checks the
+  specific refusal message (not just a non-zero exit code), since a
+  generic connection-failure exception would also exit non-zero and
+  could otherwise mask a guard that failed to fire for the right
+  reason. The core defect-reproduction scenario was independently
+  verified to fail (return without raising) when run against the
+  reviewed head's pre-fix `guard_restore_target()` and to raise
+  `ProductionRestoreRefused` after the fix.
+- **Docs:** `backend/scripts/restore_postgres.py`'s module docstring,
+  procedure list, and `--source-database-url` help text updated to
+  describe the new unconditional semantics.
+  `docs/runbooks/PR24_BACKUP_RESTORE_RUNBOOK.md` §5's restore-target
+  protection bullets and verification-order list corrected to match
+  (previously implied the same-source guard was conditional on
+  `--source-database-url` being given).
+- **Preserved unchanged:** `pg_dump` backup mechanism, SHA-256
+  checksum, manifest generation/schema (no fields added or removed),
+  30-day retention/pruning logic, restore-into-disposable-target
+  workflow, Alembic revision verification, representative row-count
+  verification, RTO measurement, RPO evidence strategy, the
+  Production-target guard (still independent and unconditional), and
+  the "no `--allow-production-restore` flag" invariant. No PR24D+
+  scope added. Real Staging-class rehearsal remains explicitly
+  **PENDING** -- this fix round does not change that, and does not
+  mark the Production GO backup gate as passed.
+- **Status:** Draft, **not merged, PR24C implementation in progress**.
+  This is a fix round on the same in-progress PR24C, not a new PR and
+  not the start of PR24D.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** independent review of GitHub PR #132 at reviewed head
+  `a20bbd9182cfe2ab2c57bdc99f0b5c6f8381d455`, and the PR24C — Fix
+  Round 1 task's own binding specification.
