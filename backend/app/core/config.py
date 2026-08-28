@@ -1,4 +1,5 @@
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 from pydantic import AnyUrl, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -10,6 +11,52 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 JWT_SECRET_MIN_LENGTH = 32
 
 DEFAULT_JWT_SECRET_KEY = "change-me-in-production-use-a-random-64-byte-value"
+
+# PR24B (docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md §14): the
+# same class of risk as DEFAULT_JWT_SECRET_KEY above -- a deployment that
+# silently boots ENVIRONMENT=production against the shipped local-dev
+# default DATABASE_URL, or with ALLOWED_ORIGINS still unset to the shipped
+# localhost dev origins, is a real, easy-to-make misconfiguration
+# (forgetting to override an env var), not a hypothetical.
+DEFAULT_DATABASE_URL = "postgresql+asyncpg://mep_user:mep_password@localhost:5432/mep_db"
+DEFAULT_ALLOWED_ORIGINS = "http://localhost:5173,http://localhost"
+
+# PR24B Fix Round 1 (independent review, P1): the repository ships more
+# than one literal placeholder for JWT_SECRET_KEY -- config.py's own field
+# default / docker-compose.yml's inline default use different wording
+# from .env.example's separate copy-paste placeholder. A single exact-
+# match check against only one of these misses the other -- the same
+# defect class as the ALLOWED_ORIGINS order mismatch this fix round
+# addresses. Both known literals are rejected below.
+KNOWN_INSECURE_JWT_SECRET_KEYS = frozenset(
+    {
+        DEFAULT_JWT_SECRET_KEY,  # config.py Settings field default / docker-compose.yml inline default
+        "change-me-to-a-random-64-byte-value",  # .env.example's own placeholder text
+    }
+)
+
+# PR24B Fix Round 2 (independent re-review, P1): DATABASE_URL has more
+# shipped-default resolutions than Fix Round 1's two-literal set covered.
+# docker-compose.yml computes DATABASE_URL from POSTGRES_USER/
+# POSTGRES_PASSWORD/POSTGRES_DB, each with its own `${VAR:-default}`
+# fallback -- so *no* `.env` at all (docker-compose.yml's own native
+# defaults, host "postgres", password "mep_password") is a THIRD distinct
+# literal, on top of Fix Round 1's local-dev default (host "localhost",
+# password "mep_password") and .env.example-copied default (host
+# "postgres", password "change-me"). A closed set of full-URL literals
+# would need a new entry for every host x password combination the
+# repository ever ships; instead this checks the four identity
+# components independently -- username, database name, host, and
+# password each drawn from their own small known-shipped set. A managed-
+# provider URL would need to accidentally reuse all four simultaneously
+# to be misclassified, which is not a realistic production
+# configuration, and no new literal is needed if a future host/password
+# combination is added to docker-compose.yml or .env.example as long as
+# the username/database stay "mep_user"/"mep_db".
+INSECURE_DATABASE_USERNAME = "mep_user"
+INSECURE_DATABASE_NAME = "mep_db"
+INSECURE_DATABASE_HOSTS = frozenset({"localhost", "postgres"})
+INSECURE_DATABASE_PASSWORDS = frozenset({"mep_password", "change-me"})
 
 # The only ENVIRONMENT values this deployment recognizes (see .env.example,
 # docker-compose.yml, docker-compose.prod.yml). Anything else is treated as
@@ -45,7 +92,7 @@ class Settings(BaseSettings):
     JWT_ACCESS_EXPIRE_MINUTES: int = 15
     JWT_REFRESH_EXPIRE_DAYS: int = 7
 
-    ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost"
+    ALLOWED_ORIGINS: str = DEFAULT_ALLOWED_ORIGINS
 
     S3_ENDPOINT: str | None = None
     S3_BUCKET: str = "mep-attachments"
@@ -146,6 +193,47 @@ class Settings(BaseSettings):
         return value.strip().lower()
 
 
+def _is_shipped_localhost_dev_origin(origin: str) -> bool:
+    """True for the plain-HTTP `localhost` origin pattern that repository
+    authority explicitly names as the forbidden production default
+    (docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md §9: "never the
+    development defaults (`http://localhost*`)") -- any port, scheme fixed
+    to `http` since that is what `.env.example` / `docker-compose.yml`
+    actually ship. Deliberately scoped to what the design doc names rather
+    than a general loopback/private-network guess: e.g. 127.0.0.1 is not
+    named anywhere in repository authority, so it is not treated as an
+    equivalent here.
+    """
+    parsed = urlsplit(origin)
+    return parsed.scheme.lower() == "http" and parsed.hostname == "localhost"
+
+
+def _is_shipped_insecure_database_url(database_url: str) -> bool:
+    """True when database_url's connection identity matches every
+    component of a repository-shipped default (PR24B Fix Round 2): a
+    username of `mep_user`, a database name of `mep_db`, a host of
+    `localhost` (config.py's own local-dev default) or `postgres`
+    (docker-compose.yml's service name), and a password of
+    `mep_password` (docker-compose.yml's own native default, or
+    config.py's local-dev default) or `change-me` (.env.example's
+    placeholder). Checking components independently rather than a
+    closed set of full-URL literals means a legitimate managed-provider
+    URL is misclassified only if it happens to reuse all four shipped
+    values simultaneously -- not a realistic production configuration --
+    and no new literal needs adding if a future host/password
+    combination is introduced as long as the username/database stay
+    their shipped values.
+    """
+    parsed = urlsplit(database_url)
+    database_name = parsed.path.lstrip("/")
+    return (
+        parsed.username == INSECURE_DATABASE_USERNAME
+        and parsed.password in INSECURE_DATABASE_PASSWORDS
+        and parsed.hostname in INSECURE_DATABASE_HOSTS
+        and database_name == INSECURE_DATABASE_NAME
+    )
+
+
 def validate_production_secrets(settings: Settings) -> None:
     """Refuse to run in production with a missing, default, or too-short JWT secret.
 
@@ -172,11 +260,13 @@ def validate_production_secrets(settings: Settings) -> None:
             "JWT signing key configured. Set JWT_SECRET_KEY to a unique, randomly-generated value."
         )
 
-    if settings.JWT_SECRET_KEY == DEFAULT_JWT_SECRET_KEY:
+    if settings.JWT_SECRET_KEY in KNOWN_INSECURE_JWT_SECRET_KEYS:
         raise InsecureConfigurationError(
-            "JWT_SECRET_KEY is set to the publicly-documented default value shipped in source "
-            "control. Refusing to start with ENVIRONMENT=production. Generate a real secret with: "
-            'python -c "import secrets; print(secrets.token_urlsafe(64))" and set it as JWT_SECRET_KEY.'
+            "JWT_SECRET_KEY is set to a publicly-documented placeholder value shipped in source "
+            "control (config.py's own default, docker-compose.yml's inline default, or "
+            ".env.example's copy-paste placeholder). Refusing to start with ENVIRONMENT=production. "
+            'Generate a real secret with: python -c "import secrets; print(secrets.token_urlsafe(64))" '
+            "and set it as JWT_SECRET_KEY."
         )
 
     if len(settings.JWT_SECRET_KEY) < JWT_SECRET_MIN_LENGTH:
@@ -184,6 +274,35 @@ def validate_production_secrets(settings: Settings) -> None:
             f"JWT_SECRET_KEY is only {len(settings.JWT_SECRET_KEY)} characters, below the minimum "
             f"accepted length of {JWT_SECRET_MIN_LENGTH} for ENVIRONMENT=production. Generate a "
             'longer secret with: python -c "import secrets; print(secrets.token_urlsafe(64))"'
+        )
+
+    if _is_shipped_insecure_database_url(settings.DATABASE_URL):
+        raise InsecureConfigurationError(
+            "DATABASE_URL resolves to a repository-shipped development/default database "
+            "configuration (matching the shipped username, database name, host, and password "
+            "identity). Refusing to start with ENVIRONMENT=production and no real production "
+            "database configured. Set DATABASE_URL to the actual production PostgreSQL connection "
+            "string. (The connection string itself is intentionally not included in this message, "
+            "since DATABASE_URL commonly carries a username and password.)"
+        )
+
+    origins = frozenset(settings.allowed_origins_list)
+    if not origins:
+        raise InsecureConfigurationError(
+            "ALLOWED_ORIGINS is empty. Refusing to start with ENVIRONMENT=production and no real "
+            "production origin configured. Set ALLOWED_ORIGINS to the actual production frontend "
+            "origin(s)."
+        )
+
+    if all(_is_shipped_localhost_dev_origin(origin) for origin in origins):
+        raise InsecureConfigurationError(
+            "ALLOWED_ORIGINS resolves entirely to the shipped development-only localhost origin "
+            f"pattern ({sorted(origins)!r}), regardless of ordering, spacing, or duplicates. "
+            "Refusing to start with ENVIRONMENT=production and no real production origin configured "
+            "(docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md §9: ALLOWED_ORIGINS must be set "
+            "to the exact production hostname(s) only -- never a wildcard, never the development "
+            "defaults `http://localhost*`). Set ALLOWED_ORIGINS to the actual production frontend "
+            "origin(s)."
         )
 
 

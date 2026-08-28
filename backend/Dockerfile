@@ -33,4 +33,14 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8000/api/v1/health || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# PR24B (docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md §15/§15A):
+# exactly 1 worker. app.worker.scheduler starts an in-process
+# AsyncIOScheduler per worker/replica with no leader-election guard --
+# more than one backend instance running the embedded scheduler
+# duplicates the daily 06:00 PM/CAL notification job. This deployment
+# invariant ("backend application instances running the embedded
+# scheduler must remain exactly 1 until scheduler leadership is
+# redesigned") also applies to docker-compose.prod.yml's own
+# `replicas` setting and to any managed-platform instance-count
+# configuration -- see that file's own comment.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

@@ -1,38 +1,47 @@
 # Roadmap PR24 — Production Deployment & Go-Live Architecture Planning
 
-**Status:** DESIGN / ARCHITECTURE / OWNER-DECISION-CLOSURE ONLY. No
-`backend/**`, `frontend/**`, `alembic/**`, `tests/**`, deployment
-configuration, secret, credential, DNS, or cloud-account file has been
-created, modified, or provisioned by this document or by its Owner
-Decision Closure round. No production infrastructure exists as a
-result of any PR24-round PR. No Pilot or Production execution has
-occurred. **PR24 (this document) is merged** (GitHub PR #129, squash
-SHA `599478992de363e1eda2fe8005ff79d565dee76d`, including Fix Round
-1's §15A liveness/readiness contract). **This Owner Decision Closure
-round records all six PR24 Owner Decisions (OD-PR24-1 through
-OD-PR24-6, §28) as Owner-approved; PR24B remains blocked until this
-closure round's own PR merges** (§28) — see that section for the
-exact gate wording while this closure PR is open.
+**Status:** DESIGN COMPLETE; PR24B (DEPLOYMENT FOUNDATION) IN PROGRESS.
+No production infrastructure is provisioned, no cloud account, paid
+resource, domain, or DNS record is created, by this document, the
+Owner Decision Closure round, or PR24B. No Pilot or Production
+execution has occurred. **PR24 (this document) is merged** (GitHub PR
+#129, squash SHA `599478992de363e1eda2fe8005ff79d565dee76d`, including
+Fix Round 1's §15A liveness/readiness contract). **The PR24 Owner
+Decision Closure round is also merged** (GitHub PR #130, squash SHA
+`f64f7d148ba956adef43c5d363ad52680398541c`) — all six Owner Decisions
+(OD-PR24-1 through OD-PR24-6, §28) are Owner-approved. **PR24B
+(Deployment Foundation) is now in progress**, implementing the
+fail-closed readiness endpoint (§15A), the production-safe admin
+bootstrap script (§17), the scheduler single-instance deployment
+invariant (§15), and two additional fail-closed production
+configuration checks (§16) — see §29 for exact scope and what remains
+explicitly out of it (PR24C onward, and all actual infrastructure
+provisioning).
 
-**Baseline (Owner Decision Closure round):**
+**Baseline (PR24B — Deployment Foundation):**
+`f64f7d148ba956adef43c5d363ad52680398541c` — the real squash-merge SHA
+of GitHub PR #130 (PR24 Owner Decision Closure). **Roadmap PR23
+(Cutover Readiness) is fully implementation-complete; PR24's own
+architecture and all six Owner Decisions are complete**, as of this
+baseline. Real Pilot execution, Production cutover, AppSheet's actual
+read-only transition, a selected commercial provider, and a rehearsed
+backup/restore procedure have **not** occurred — PR24B prepares the
+deployable application-level foundation only; it does not provision
+infrastructure or perform any of the above.
+
+**Prior baseline (Owner Decision Closure round):**
 `599478992de363e1eda2fe8005ff79d565dee76d` — the real squash-merge SHA
 of GitHub PR #129 (PR24 — Production Deployment & Go-Live Architecture
-Planning, including Fix Round 1). **Roadmap PR23 (Cutover Readiness)
-is fully implementation-complete**, and **PR24 is merged and
-architecture-approved**, as of this baseline. Real Pilot execution,
-Production cutover, AppSheet's actual read-only transition, a selected
-commercial provider, and a rehearsed backup/restore procedure have
-**not** occurred — this closure round resolves the Owner Decisions
-that gate the next implementation slice (PR24B); it does not perform
-any of them.
+Planning, including Fix Round 1), now historical/superseded by the
+baseline above.
 
-**Prior baseline (as of PR24's own creation):**
+**Earlier baseline (as of PR24's own creation):**
 `f35fe716d57c51042d86a661657f679799b6a9e3` — the real squash-merge SHA
 of GitHub PR #128 ("PR23F — Cutover Runbook + Final Governance
 Close-out"), squash-merged into
 `claude/medical-equipment-pool-0c7fz0` on top of
 `8644536403eeec269e6dadf835f1bda3844b6cce` (GitHub PR #127, PR23E) —
-now historical/superseded by the baseline above.
+now historical/superseded.
 
 **Purpose:** Design the production deployment and go-live architecture
 needed to move this repository from "the PR23 cutover-readiness
@@ -660,19 +669,16 @@ sufficient for V1, exactly as already decided.
 
 ## 15. FastAPI Production Runtime
 
-- **Process model:** the existing `backend/Dockerfile` CMD
-  (`uvicorn app.main:app --workers 2`) is a reasonable starting point
-  for ~8 users, **but must be reconciled with the scheduler-duplication
-  risk found in §5.** Recommendation: until a leader-election or
-  distributed-lock mechanism is added to `app/worker/scheduler.py` (a
-  future implementation-slice item, not this document's to build),
-  run the scheduled-job-owning process as a **single instance**
-  (`--workers 1`, `replicas: 1` for the backend service, or an
-  equivalent "only one instance runs the scheduler" configuration on
-  the selected platform) — trading a small amount of request-handling
-  headroom for correctness of the daily PM/CAL notification job, given
-  the confirmed ~8-user scale does not need multiple workers for
-  throughput reasons alone.
+- **Process model:** **enforced in PR24B** — `backend/Dockerfile`'s CMD
+  now runs `uvicorn app.main:app --workers 1` (was `--workers 2`), and
+  `docker-compose.prod.yml`'s backend service now sets `replicas: 1`
+  (was `3`), both with a comment recording this as a hard deployment
+  invariant, not a tunable, until a leader-election or distributed-lock
+  mechanism is added to `app/worker/scheduler.py` (still a future
+  implementation-slice item — not built in PR24B) — trading a small
+  amount of request-handling headroom for correctness of the daily
+  PM/CAL notification job, given the confirmed ~8-user scale does not
+  need multiple workers for throughput reasons alone.
 - **Worker strategy:** single-worker as above until the scheduler gap
   is closed; horizontal scale-out (more replicas) remains available
   for request-handling capacity once the scheduler is made
@@ -813,10 +819,12 @@ one endpoint rather than add a second:
   would have recovered on its own).
 
 **This document does not pick between Option A and Option B on the
-implementation team's behalf** — that remains a genuine, narrowly
+implementation team's behalf** — that remained a genuine, narrowly
 scoped implementation decision for the slice that builds it (§29,
-PR24B). **Option A is the recommendation** (§15A.4), but either
-satisfies the fail-closed requirement in §15A.1.
+PR24B). **Option A is the recommendation** (§15A.4), and PR24B
+implements it exactly: `GET /api/v1/ready`
+(`backend/app/api/v1/health.py`), leaving `GET /api/v1/health`
+byte-for-byte unmodified.
 
 ### §15A.3 — Required-dependency policy (do not over-block)
 
@@ -864,8 +872,12 @@ parsing on the platform side, keeps alerting and load-balancer
 integration simple, cleanly separates the liveness and readiness
 concerns (§15A per its own definitions), and does not touch or risk
 breaking any existing behavior or caller of `GET /api/v1/health`.
-**Not implemented in this PR** — this PR is design/governance only
-(§30); building the endpoint is PR24B's own scope (§29).
+**Implemented in PR24B** as `GET /api/v1/ready`
+(`backend/app/schemas/health.py`'s `ReadinessOut`, `backend/app/api/v1/
+health.py`) — HTTP 200 with `status: "ready"` when PostgreSQL is
+reachable, HTTP 503 with `status: "not_ready"` otherwise; `redis` is
+reported (`"ok"`/`"degraded"`) but never changes the HTTP status, per
+§15A.3. Covered by `backend/tests/test_pr24b_readiness.py`.
 
 ### §15A.5 — Body-aware probe fallback (only if Option A/B is not adopted)
 
@@ -909,9 +921,11 @@ risk. If a future implementation slice wants an additional, defense-
 in-depth compatibility check inside the readiness endpoint itself
 (e.g. comparing the running application's expected Alembic head
 against the database's actual `alembic_version`), that is a genuine
-option for that slice to design and build — this document names it as
-a dependency of the readiness-endpoint work (§29, PR24B) rather than
-fabricating a specific runtime check here.
+option for a future slice to design and build. **PR24B's own `GET
+/api/v1/ready` implementation does not include this check** — it
+verifies PostgreSQL connectivity (`SELECT 1`) only, exactly as
+designed above; schema-compatibility-at-readiness remains explicitly
+out of scope, not silently added, and not fabricated here.
 
 ### §15A.7 — Security / exposure constraints
 
@@ -979,7 +993,29 @@ revisited against that platform's actual capability.
 - **Database credentials:** issued by the selected managed PostgreSQL
   provider (§10) or generated at VM-provisioning time (Option B);
   never the `docker-compose.yml` development defaults
-  (`mep_user`/`mep_password`).
+  (`mep_user`/`mep_password`). **Enforced in PR24B, hardened in PR24B
+  Fix Round 1 and Fix Round 2:** `validate_production_secrets` refuses
+  to boot in production when `DATABASE_URL`'s connection identity
+  (username, password, host, and database name, parsed independently —
+  not a closed set of full-URL literals) matches every component of a
+  repository-shipped default: username `mep_user`, database `mep_db`,
+  host `localhost` (the non-Docker local-dev default) or `postgres`
+  (`docker-compose.yml`'s service name), and password `mep_password`
+  (`docker-compose.yml`'s own native default with no `.env` override at
+  all) or `change-me` (`.env.example`'s copy-paste placeholder) — this
+  covers all three ways the repository can resolve an insecure
+  `DATABASE_URL` without a new literal needing to be added for each. The
+  error message intentionally does not echo the connection string, since
+  `DATABASE_URL` commonly carries a password. `ALLOWED_ORIGINS` is
+  refused when it resolves — after order/whitespace/duplicate-
+  independent parsing — entirely to the shipped `http://localhost*`
+  development pattern (§9's own "never the development defaults"
+  requirement), regardless of which of the repository's own literal
+  orderings it happens to ship in. The same fail-closed pattern as the
+  JWT secret check above, not a new mechanism; `JWT_SECRET_KEY` itself is
+  checked against both of its own known shipped placeholder literals
+  (config.py's/docker-compose.yml's wording and `.env.example`'s
+  separate wording) for the same reason.
 - **Object-storage credentials:** not applicable — §12 recommends not
   deploying object storage at all.
 - **Deployment secrets** (e.g. a platform API token used by CI to
@@ -1008,37 +1044,45 @@ Per §5's finding: today, the only path to a first Administrator account
 is `backend/app/scripts/seed.py`'s hardcoded `ADMIN001`/`Admin@12345`
 — explicitly a development/demo mechanism, unsafe for production.
 
-**Design for a safe production bootstrap** (implementation deferred to
-a future slice, §28 — not built in this document):
+**Implemented in PR24B** as `python -m app.scripts.bootstrap_admin`
+(`backend/app/scripts/bootstrap_admin.py`), matching every requirement
+originally designed here:
 
 1. A dedicated, one-time bootstrap procedure — distinct from
    `app.scripts.seed` (which also creates unrelated sample
    equipment/transaction data never appropriate for a real production
    database) — that creates exactly one `administrator` account with a
-   **freshly generated random password**, never a hardcoded literal.
-2. The generated password is displayed once (e.g. to the operator's
-   terminal at bootstrap time) and never logged or stored anywhere
-   persistent.
-3. **Forced credential change on first login** is recommended if the
-   existing auth flow can support it without a redesign — if not
-   supported today, the bootstrap procedure must at minimum instruct
-   the operator to change the password immediately after first login
-   through the existing user-management UI.
-4. This bootstrap script must refuse to run more than once against a
-   database that already has an `administrator` account (mirroring
-   this repository's own fail-closed convention, e.g.
-   `validate_production_secrets`'s refuse-to-boot pattern) — never
-   silently create a second bootstrap admin.
-5. **Audit expectation:** the bootstrap action itself should be
-   captured in the existing audit-log framework
-   (`docs/design/PR3...` audit framework, referenced by
-   `docs/ARCHITECTURE_DECISIONS.md`, "Reusable audit framework
-   boundary") the same way any other administrator-creating action
-   would be, for provenance.
+   **freshly generated random password** (`secrets.token_urlsafe`),
+   never a hardcoded literal.
+2. The generated password is printed once to the operator's terminal at
+   bootstrap time and never logged or stored anywhere persistent.
+3. No forced-credential-change-on-first-login flag exists on the `User`
+   model today, and this slice does not invent one (§28's own
+   non-goal) — the script instead prints an explicit operational
+   instruction to rotate the password immediately using the existing
+   `PATCH /users/{id}` password-update capability
+   (`UserUpdate.password`, `backend/app/schemas/master_data.py`).
+4. The script refuses to run if an `administrator` account already
+   exists, serialized against concurrent invocations via a `SELECT ...
+   FOR UPDATE` lock on the (already-seeded-by-migration-0009)
+   `administrator` role row — the same PostgreSQL-conditional locking
+   convention every other concurrency-sensitive CRUD module in this
+   codebase already follows (e.g. `app/crud/legacy_reconciliation.py`,
+   `app/crud/equipment.py`), not a new locking primitive. A defensive
+   `IntegrityError` catch (unique `employee_code`/`email`) backs this
+   up and never leaves partial state.
+5. **Audit:** each bootstrap records an `AuditLog` row
+   (`action="ADMIN_BOOTSTRAP"`) with `user_id=None` — a deliberate,
+   non-fabricated actor, since `AuditLog.user_id` is nullable exactly
+   for the case where no authenticated User exists yet. Never audits
+   the plaintext password.
 
-**This document does not create any production user, password, or
-account.** Item 1 above is named explicitly as a required
-pre-Production implementation item in §28's proposed sequence.
+Covered by `backend/tests/test_pr24b_admin_bootstrap.py` (SQLite:
+creation, refusal, no demo data, password never persisted in
+plaintext, audit shape, rollback on identifier collision) and
+`backend/tests/test_pr24b_postgres.py` (PostgreSQL-marked: two
+concurrent bootstrap attempts produce exactly one administrator, never
+two, never a crash).
 
 ---
 
@@ -1618,16 +1662,14 @@ and cannot be derived from source" bar (the same bar
 
 **Implementation authorization gate (fail-closed):** No PR24B or later
 implementation slice may begin until all six Owner Decisions above are
-resolved. **OD-PR24-1 through OD-PR24-6 are Owner-approved above; per
-this repository's standing process (mirroring
-`docs/design/PR23_CUTOVER_READINESS_PLAN.md` §27's own governing
-pattern), no PR24 implementation slice may begin until this PR24 Owner
-Decision Closure round itself merges.** Approval recorded in an open,
-unmerged PR does not itself authorize PR24B — only the closure PR's
-own merge does. Once this closure round merges, its real squash SHA
-becomes the new authoritative baseline and PR24B becomes eligible to
-start from it, governed by this §28 together with the approved choices
-recorded above. **This gate and OD-PR24-5's Production-Go-Live hostname
+resolved. **OD-PR24-1 through OD-PR24-6 are Owner-approved above, and
+the PR24 Owner Decision Closure round is itself merged** (GitHub PR
+#130, squash SHA `f64f7d148ba956adef43c5d363ad52680398541c`) — per this
+repository's standing process (mirroring `docs/design/
+PR23_CUTOVER_READINESS_PLAN.md` §27's own governing pattern), this gate
+is satisfied and **PR24B is authorized to proceed from that baseline**,
+governed by this §28 together with the approved choices recorded
+above. **This gate and OD-PR24-5's Production-Go-Live hostname
 prerequisite are two distinct checkpoints, never conflated:** the
 **Owner-Decision Gate** (this paragraph) controls whether PR24B
 implementation may begin, and is satisfied in full by this closure
@@ -1659,25 +1701,26 @@ maintainable next sequence this document proposes is:
   (GitHub PR #129, squash SHA
   `599478992de363e1eda2fe8005ff79d565dee76d`, including Fix Round 1's
   §15A liveness/readiness contract). **All six Owner Decisions
-  (OD-PR24-1 through OD-PR24-6) are now Owner-approved (§28)** via the
-  PR24 Owner Decision Closure round — following the PR23 Owner
-  Decision Closure round's own precedent, resolution was a short
-  follow-up governance round rather than bundled into this same PR.
-  **PR24 overall (architecture + Owner Decisions) is complete once the
-  closure round itself merges** — approval recorded while the closure
-  PR is still open does not itself complete PR24 or authorize PR24B
-  (§28's own fail-closed gate).
-- **PR24B — Deployment Foundation** *(proposed, not started; eligible
-  to start only after the PR24 Owner Decision Closure round merges,
-  §28)*: provision the selected architecture (OD-PR24-1 — Managed
-  Application Platform + Managed PostgreSQL), configure secrets (§16),
-  build the safe admin-bootstrap mechanism (§17), build the
-  fail-closed readiness endpoint (§15A) alongside the existing
-  liveness endpoint, close the scheduler single-instance gap (§15) at
-  the deployment-configuration level. Redis is retained but non-
-  critical to readiness (§13, §15A.5); no MinIO/S3 production
-  dependency (§12); the provider-supplied HTTPS hostname is acceptable
-  initially (OD-PR24-5). No Pilot/Production traffic yet.
+  (OD-PR24-1 through OD-PR24-6) are Owner-approved (§28) and the PR24
+  Owner Decision Closure round is itself merged** (GitHub PR #130,
+  squash SHA `f64f7d148ba956adef43c5d363ad52680398541c`). **PR24
+  overall (architecture + Owner Decisions) is complete** — PR24B is
+  eligible to start from that baseline (§28's own fail-closed gate,
+  now released).
+- **PR24B — Deployment Foundation** *(in progress — this PR)*:
+  configures secrets (§16), builds the safe admin-bootstrap mechanism
+  (§17), builds the fail-closed readiness endpoint (§15A) alongside the
+  existing liveness endpoint, closes the scheduler single-instance gap
+  (§15) at the deployment-configuration level (`backend/Dockerfile`
+  `--workers 1`, `docker-compose.prod.yml` `replicas: 1`). Redis
+  remains retained but non-critical to readiness (§13, §15A.3); no
+  MinIO/S3 production dependency (§12); the provider-supplied HTTPS
+  hostname remains acceptable (OD-PR24-5). **Provisioning the selected
+  architecture's actual infrastructure (OD-PR24-1) is explicitly out
+  of this slice's scope** — no cloud account, paid resource, domain, or
+  DNS record is created by PR24B; it prepares the deployable
+  configuration only. No Pilot/Production traffic served by this
+  slice.
 - **PR24C — Backup & Restore** *(proposed, not started)*: implement
   and rehearse the backup/restore procedure (§11) against Staging,
   against the RPO/RTO targets from OD-PR24-3.

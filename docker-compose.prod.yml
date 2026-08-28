@@ -8,7 +8,15 @@ services:
       ENVIRONMENT: production
       DEBUG: "false"
     deploy:
-      replicas: 3
+      # PR24B (docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md
+      # §15/§15A/§28): must stay 1. The embedded APScheduler
+      # (app/worker/scheduler.py) has no leader-election guard --
+      # replicas > 1 would duplicate the daily PM/CAL notification job.
+      # This is a hard deployment invariant until scheduler leadership
+      # is redesigned in a future slice, not a tunable for throughput;
+      # backend/Dockerfile's own `--workers` flag carries the same
+      # invariant for the single-process case.
+      replicas: 1
       restart_policy:
         condition: on-failure
     ports: []

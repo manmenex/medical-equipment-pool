@@ -5862,3 +5862,279 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   specification, including the Repository Owner's explicit approval
   statement and exact approved choices for each of the six Owner
   Decisions; the PR24 Owner Decision Closure GitHub PR description.
+
+## 2026-08-27 — GitHub PR #130 merged; new authoritative baseline adopted; all six PR24 Owner Decisions complete
+
+- **Decision/record:** GitHub PR #130 ("PR24 — Owner Decision Closure")
+  merged via squash merge. Real squash-merge SHA
+  `f64f7d148ba956adef43c5d363ad52680398541c`, sole parent
+  `599478992de363e1eda2fe8005ff79d565dee76d` (GitHub PR #129, the
+  current baseline before this merge) -- confirmed via `git log -1
+  --format=%P`. The final reviewed feature-branch head
+  `d66fd59cd0d0b4755ed923c85dfc365fd03ab1c2` was independently verified
+  tree-identical to the merged squash commit (`git diff d66fd59...
+  f64f7d1... --stat` produced no output) and carried **zero reviews**
+  and **zero comments** at merge time, with CI green 6/6 on that exact
+  head. Before the Final Merge Gate, this PR went through **Fix Round
+  1**: an independent review found OD-PR24-5 marked `RESOLVED / OWNER
+  APPROVED` while its own text said the underlying hostname question
+  "remains genuinely open" -- an internal contradiction undermining the
+  PR's own fail-closed gate. Fixed by resolving OD-PR24-5 via an
+  explicit hostname-deferral policy: the policy itself (provider
+  hostname acceptable for Staging/PR24B, custom hostname required
+  before Production Go-Live, TLS mandatory throughout) is the
+  resolution; the concrete future hostname value was reclassified as a
+  Production-Go-Live execution/configuration input, not an unresolved
+  Owner Decision. No new Owner Decision (no OD-PR24-7) was created. Zero
+  `backend/**`, `frontend/**`, `alembic/**`, or `tests/**` file was
+  touched by either the original round or Fix Round 1.
+- **Status:** Merged, closed. This entry is historical from the moment
+  it is written; it does not describe work in progress.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14,
+  following the same Final Merge Gate precedent used for GitHub PR
+  #111 through #129.
+- **Source:** GitHub PR #130 description and its Final Merge Gate
+  verification evidence (exact head, CI status, tree-identity diff,
+  sole-parent `git log` output).
+
+## 2026-08-27 — PR24B (Deployment Foundation) started -- in progress, not merged
+
+- **Decision/record:** PR24B started from baseline
+  `f64f7d148ba956adef43c5d363ad52680398541c` (GitHub PR #130), on branch
+  `feature/pr24b-deployment-foundation`. Implements the deployment
+  foundation authorized by `docs/design/
+  PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §15/§15A/§17/§28, now
+  that all six PR24 Owner Decisions are Owner-approved:
+  1. **Fail-closed readiness endpoint** -- `GET /api/v1/ready`
+     (`backend/app/api/v1/health.py`, `backend/app/schemas/health.py`'s
+     `ReadinessOut`), exactly per §15A's Option A recommendation: HTTP
+     200/`status: "ready"` when PostgreSQL is reachable, HTTP
+     503/`status: "not_ready"` otherwise; `redis: "ok"|"degraded"` is
+     reported but never blocks readiness, per the codebase's own
+     already-established Redis fail-open behavior
+     (`backend/app/core/redis.py`). `GET /api/v1/health` is
+     byte-for-byte unchanged.
+  2. **Production-safe admin bootstrap** --
+     `backend/app/scripts/bootstrap_admin.py`
+     (`python -m app.scripts.bootstrap_admin`), replacing
+     `backend/app/scripts/seed.py` for production use: creates exactly
+     one administrator with a freshly generated random password
+     (printed once, never logged/stored), no demo/sample data, refuses
+     if an administrator already exists, serialized against concurrent
+     invocations via a `SELECT ... FOR UPDATE` lock on the
+     already-seeded `administrator` role row (the same
+     PostgreSQL-conditional locking convention every other
+     concurrency-sensitive CRUD module in this codebase already
+     follows), and records an `AuditLog` entry with `user_id=None` (a
+     deliberate, non-fabricated actor -- no authenticated User exists
+     yet at bootstrap time).
+  3. **Scheduler single-instance deployment invariant** --
+     `backend/Dockerfile`'s CMD now runs `--workers 1` (was `2`), and
+     `docker-compose.prod.yml`'s backend service now sets `replicas: 1`
+     (was `3`), both commented as a hard invariant (not a tunable)
+     until `app/worker/scheduler.py` gains leader election.
+  4. **Two additional fail-closed production configuration checks** --
+     `validate_production_secrets` (`backend/app/core/config.py`) now
+     also refuses to boot in production with `DATABASE_URL` or
+     `ALLOWED_ORIGINS` still equal to their shipped local-development
+     defaults, mirroring the existing `JWT_SECRET_KEY` check.
+  Explicitly out of scope: no cloud account, paid resource, domain, or
+  DNS record is created; no commercial provider is selected
+  (OD-PR24-1 remains a PR24B-or-later implementation choice); no
+  backup rehearsal (PR24C); no CI/CD staging pipeline (PR24D); no UAT
+  execution (PR24E); no Pilot or Production execution (PR24F/PR24G).
+- **Tests:** `backend/tests/test_pr24b_readiness.py` (SQLite: DB
+  healthy/unhealthy, Redis healthy/degraded/multiple failure forms,
+  no-leak response, `/health` regression, no-auth-required),
+  `backend/tests/test_pr24b_admin_bootstrap.py` (SQLite: creation, no
+  demo data, password never persisted in plaintext, audit shape,
+  refusal when an administrator exists, rollback on identifier
+  collision), `backend/tests/test_pr24b_postgres.py` (PostgreSQL-marked:
+  two concurrent bootstrap attempts produce exactly one administrator).
+  `backend/tests/test_startup_security.py` extended with the two new
+  production-config-default checks; every pre-existing
+  `Settings(ENVIRONMENT="production", ...)` test in that file updated
+  to also supply non-default `DATABASE_URL`/`ALLOWED_ORIGINS` so the
+  new checks do not regress them.
+- **Status:** Draft, **not merged, PR24B implementation in progress**.
+  This entry documents work in progress; it does not describe PR24B's
+  own completion, and it does not claim PR24C or later has started.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the PR24B — Deployment Foundation task's own binding
+  specification, cross-checked against
+  `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §15/§15A/§17
+  and the six approved Owner Decisions in §28.
+
+## 2026-08-27 — PR24B Fix Round 1 (independent review, P1): production config defaults compared against only one of several shipped literals -- fixed, not merged
+
+- **Finding (independent review, P1, blocking):** `validate_production_
+  secrets` (`backend/app/core/config.py`) rejected `ALLOWED_ORIGINS`
+  only when it exactly equaled `"http://localhost:5173,http://localhost"`
+  (config.py's own field default / `DEFAULT_ALLOWED_ORIGINS`). But
+  `.env.example` and `docker-compose.yml` ship the reverse order,
+  `"http://localhost,http://localhost:5173"` -- since
+  `docker-compose.prod.yml` does not override `ALLOWED_ORIGINS`, a
+  Production deployment that simply inherited the shipped Compose
+  default (forgetting to set `ALLOWED_ORIGINS`) would boot successfully
+  with localhost-only CORS origins.
+- **Fix:** `ALLOWED_ORIGINS` production validation is now semantic
+  instead of an exact string comparison: `settings.allowed_origins_list`
+  (the codebase's own existing comma-split/trim/drop-empty parsing,
+  reused rather than duplicated) is turned into a `frozenset` --
+  order-, whitespace-, and duplicate-independent -- and Production is
+  refused only when *every* resulting origin matches the shipped
+  development pattern named by
+  `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §9 itself
+  ("never the development defaults (`http://localhost*`)"): scheme
+  `http`, hostname exactly `localhost` (any port). A production origin
+  set that mixes one real origin with a leftover `localhost` entry is
+  accepted, per the same §9 "must not consist solely of
+  localhost/development origins" reading; an empty/blank-only
+  `ALLOWED_ORIGINS` is refused. `DEFAULT_ALLOWED_ORIGINS` is still
+  defined (used as `Settings.ALLOWED_ORIGINS`'s own field default, and
+  by existing/new dev-mode tests) but is no longer the sole literal
+  checked against.
+- **Same-class review (§17 of the fix-round task) found two more
+  instances of the identical defect and fixed both:**
+  - `JWT_SECRET_KEY`: `.env.example`'s own placeholder text
+    (`"change-me-to-a-random-64-byte-value"`) is a different literal
+    from `DEFAULT_JWT_SECRET_KEY`
+    (`"change-me-in-production-use-a-random-64-byte-value"`, used by
+    config.py's field default and docker-compose.yml's inline
+    default) and is 35 characters -- above `JWT_SECRET_MIN_LENGTH`
+    (32) -- so it previously passed both the exact-match and
+    minimum-length checks unrejected. Now checked via membership in
+    `KNOWN_INSECURE_JWT_SECRET_KEYS` (both literals).
+  - `DATABASE_URL`: `docker-compose.yml`'s computed default when
+    `.env.example` is copied verbatim
+    (`"postgresql+asyncpg://mep_user:change-me@postgres:5432/mep_db"`,
+    host `postgres`, password `change-me`) is a different literal from
+    `DEFAULT_DATABASE_URL`
+    (`"postgresql+asyncpg://mep_user:mep_password@localhost:5432/mep_db"`,
+    host `localhost`, password `mep_password`, the non-Docker local-dev
+    default) and was previously not rejected.
+    `docker-compose.prod.yml` does not override either
+    `POSTGRES_PASSWORD` or `DATABASE_URL`. Now checked via membership
+    in `KNOWN_INSECURE_DATABASE_URLS` (both literals).
+  - No other same-class exact-string-default mistake was found in
+    `validate_production_secrets` (the `JWT_SECRET_KEY` minimum-length
+    check and the `ENVIRONMENT` membership check are not comma-
+    separated/multi-literal values, so this defect class does not
+    apply to them).
+- **Explicitly not added:** a per-origin HTTPS-scheme requirement on
+  `ALLOWED_ORIGINS` values. `docs/design/
+  PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §9's "HTTPS/TLS:
+  mandatory" is an edge/TLS-termination requirement
+  (`frontend/nginx.conf` / the platform edge), not a documented
+  constraint on the literal `ALLOWED_ORIGINS` CORS string, and no
+  existing code or test enforced it before this fix round; adding it
+  now would be scope creep beyond the reported P1 finding, not a
+  same-class fix of it.
+- **Preserved unchanged:** the readiness endpoint contract, admin
+  bootstrap mechanism, and scheduler single-instance deployment
+  invariant recorded in the PR24B entry above -- this fix round touches
+  only `backend/app/core/config.py` and
+  `backend/tests/test_startup_security.py`.
+- **Tests:** `backend/tests/test_startup_security.py` gains coverage
+  for the shipped `.env.example`/`docker-compose.yml` origin order, the
+  originally-covered reversed order, whitespace/duplicate variants,
+  empty `ALLOWED_ORIGINS`, a valid single provider HTTPS origin,
+  multiple valid HTTPS origins, one real origin mixed with a leftover
+  `localhost` entry, the `.env.example` JWT placeholder, and the
+  docker-compose-computed `DATABASE_URL` default. The shipped-order
+  test was verified to fail against the pre-fix code (reviewed head
+  `4d38f3f8876cf412d520ac2376b44dbcab24379e`) before the fix and pass
+  after it.
+- **Status:** Draft, **not merged, PR24B implementation in progress**.
+  This is a fix round on the same in-progress PR24B, not a new PR and
+  not the start of PR24C.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** independent review of GitHub PR #131 at reviewed head
+  `4d38f3f8876cf412d520ac2376b44dbcab24379e`, and the PR24B — Fix Round
+  1 task's own binding specification.
+
+
+## 2026-08-27 — PR24B Fix Round 2 (independent re-review, P1): remaining docker-compose-native DATABASE_URL default -- fixed, not merged
+
+- **Finding (independent re-review, P1, blocking):** at reviewed head
+  `abc0fa068de5291e482bf2b5acbcf3c1da711ed8`, Fix Round 1's
+  `KNOWN_INSECURE_DATABASE_URLS` covered two literals (the non-Docker
+  local-dev default, host `localhost`, and `.env.example`'s copied
+  default, host `postgres`/password `change-me`) but missed a third:
+  `docker-compose.yml` computes `DATABASE_URL` from
+  `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB`, each with its own
+  `${VAR:-default}` fallback, so with **no** `.env` override at all the
+  resolved value is
+  `postgresql+asyncpg://mep_user:mep_password@postgres:5432/mep_db` --
+  distinct from both known literals (host `postgres`, password
+  `mep_password`, whereas the two known literals pair `localhost` with
+  `mep_password` and `postgres` with `change-me`). This was previously
+  accepted in production.
+- **Fix:** replaced the closed two-literal `KNOWN_INSECURE_DATABASE_URLS`
+  set with `_is_shipped_insecure_database_url` (`backend/app/core/
+  config.py`), which parses `DATABASE_URL` and checks its four identity
+  components independently: username `mep_user`
+  (`INSECURE_DATABASE_USERNAME`), database name `mep_db`
+  (`INSECURE_DATABASE_NAME`), host `localhost` or `postgres`
+  (`INSECURE_DATABASE_HOSTS`), and password `mep_password` or
+  `change-me` (`INSECURE_DATABASE_PASSWORDS`). This covers all three
+  known shipped resolutions -- the config.py local-dev default, the
+  docker-compose-native default (this fix round's finding), and the
+  `.env.example`-copied default -- without needing a new literal added
+  for a future host/password combination, as long as the username and
+  database name stay their shipped values. Chosen over accumulating a
+  fourth literal because the reviewer's own analysis showed the literal-
+  set approach was the root cause: a closed set needs one entry per
+  host x password combination, and the repository already ships two
+  hosts x two passwords = up to four combinations from
+  `docker-compose.yml`/`.env.example` alone.
+- **Same-class sweep (this fix round's own §8):** searched
+  `backend/app/core/config.py`, `.env.example`, `docker-compose.yml`,
+  `docker-compose.prod.yml`, and `.github/workflows/ci.yml` for every
+  shipped `DATABASE_URL`/`POSTGRES_*` default combination.
+  `docker-compose.prod.yml` adds no `POSTGRES_*`/`DATABASE_URL`
+  override (confirmed already in the PR24B baseline entry above). CI's
+  own PostgreSQL-job credentials (`mep_test`/`mep_test_password`,
+  `mep_smoke`/`mep_smoke_password`) use a different username than
+  `mep_user`, so they are not -- and would not be, even if
+  `ENVIRONMENT=production` were ever set for those jobs, which it is
+  not -- misclassified by the new username-must-match check. No
+  additional shipped-default DATABASE_URL resolution was found beyond
+  the three already covered.
+- **Security fix (independent reviewer's own flagged concern):** the
+  Fix Round 1 error message included `f"({settings.DATABASE_URL!r})"`,
+  echoing the full connection string -- including the username and
+  password -- into the raised exception (and therefore into any
+  process/log that surfaces it). Rewritten to a generic message that
+  identifies the problem (shipped development identity match) and the
+  remedy without including the connection string itself. A new
+  regression test
+  (`test_database_url_insecure_default_error_does_not_leak_credentials_or_uri`)
+  asserts the raised message contains neither `mep_password` nor
+  `change-me` nor the `postgresql+asyncpg://` scheme nor the exact
+  `DATABASE_URL` value.
+- **Preserved unchanged:** Fix Round 1's `ALLOWED_ORIGINS` semantic
+  check (order/whitespace/duplicate-independent, shipped-localhost-only
+  rejected, valid provider origins accepted) and the `JWT_SECRET_KEY`
+  known-placeholder-set check are untouched by this fix round; so are
+  the readiness endpoint, admin bootstrap, and scheduler single-instance
+  invariant from the base PR24B commit.
+- **Tests:** `backend/tests/test_startup_security.py` gains
+  `test_rejects_production_with_docker_compose_native_database_url_default`
+  (this fix round's exact finding; verified to fail against the
+  pre-fix reviewed head `abc0fa068de5291e482bf2b5acbcf3c1da711ed8` via
+  `git stash` reproduction before the fix, and to pass after it),
+  `test_allows_production_with_legitimate_managed_postgresql_url`
+  (a synthetic managed-provider URL sharing none of the four shipped
+  identity components must not be over-blocked), and
+  `test_database_url_insecure_default_error_does_not_leak_credentials_or_uri`.
+  The two pre-existing DATABASE_URL-default tests (local-dev literal,
+  `.env.example`-copied literal) are retained unchanged and still pass
+  under the new semantic check.
+- **Status:** Draft, **not merged, PR24B implementation in progress**.
+  This is a second fix round on the same in-progress PR24B, not a new
+  PR and not the start of PR24C.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** independent re-review of GitHub PR #131 at reviewed head
+  `abc0fa068de5291e482bf2b5acbcf3c1da711ed8`, and the PR24B — Fix Round
+  2 task's own binding specification.
