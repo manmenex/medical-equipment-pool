@@ -6052,3 +6052,89 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
 - **Source:** independent review of GitHub PR #131 at reviewed head
   `4d38f3f8876cf412d520ac2376b44dbcab24379e`, and the PR24B — Fix Round
   1 task's own binding specification.
+
+
+## 2026-08-27 — PR24B Fix Round 2 (independent re-review, P1): remaining docker-compose-native DATABASE_URL default -- fixed, not merged
+
+- **Finding (independent re-review, P1, blocking):** at reviewed head
+  `abc0fa068de5291e482bf2b5acbcf3c1da711ed8`, Fix Round 1's
+  `KNOWN_INSECURE_DATABASE_URLS` covered two literals (the non-Docker
+  local-dev default, host `localhost`, and `.env.example`'s copied
+  default, host `postgres`/password `change-me`) but missed a third:
+  `docker-compose.yml` computes `DATABASE_URL` from
+  `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB`, each with its own
+  `${VAR:-default}` fallback, so with **no** `.env` override at all the
+  resolved value is
+  `postgresql+asyncpg://mep_user:mep_password@postgres:5432/mep_db` --
+  distinct from both known literals (host `postgres`, password
+  `mep_password`, whereas the two known literals pair `localhost` with
+  `mep_password` and `postgres` with `change-me`). This was previously
+  accepted in production.
+- **Fix:** replaced the closed two-literal `KNOWN_INSECURE_DATABASE_URLS`
+  set with `_is_shipped_insecure_database_url` (`backend/app/core/
+  config.py`), which parses `DATABASE_URL` and checks its four identity
+  components independently: username `mep_user`
+  (`INSECURE_DATABASE_USERNAME`), database name `mep_db`
+  (`INSECURE_DATABASE_NAME`), host `localhost` or `postgres`
+  (`INSECURE_DATABASE_HOSTS`), and password `mep_password` or
+  `change-me` (`INSECURE_DATABASE_PASSWORDS`). This covers all three
+  known shipped resolutions -- the config.py local-dev default, the
+  docker-compose-native default (this fix round's finding), and the
+  `.env.example`-copied default -- without needing a new literal added
+  for a future host/password combination, as long as the username and
+  database name stay their shipped values. Chosen over accumulating a
+  fourth literal because the reviewer's own analysis showed the literal-
+  set approach was the root cause: a closed set needs one entry per
+  host x password combination, and the repository already ships two
+  hosts x two passwords = up to four combinations from
+  `docker-compose.yml`/`.env.example` alone.
+- **Same-class sweep (this fix round's own §8):** searched
+  `backend/app/core/config.py`, `.env.example`, `docker-compose.yml`,
+  `docker-compose.prod.yml`, and `.github/workflows/ci.yml` for every
+  shipped `DATABASE_URL`/`POSTGRES_*` default combination.
+  `docker-compose.prod.yml` adds no `POSTGRES_*`/`DATABASE_URL`
+  override (confirmed already in the PR24B baseline entry above). CI's
+  own PostgreSQL-job credentials (`mep_test`/`mep_test_password`,
+  `mep_smoke`/`mep_smoke_password`) use a different username than
+  `mep_user`, so they are not -- and would not be, even if
+  `ENVIRONMENT=production` were ever set for those jobs, which it is
+  not -- misclassified by the new username-must-match check. No
+  additional shipped-default DATABASE_URL resolution was found beyond
+  the three already covered.
+- **Security fix (independent reviewer's own flagged concern):** the
+  Fix Round 1 error message included `f"({settings.DATABASE_URL!r})"`,
+  echoing the full connection string -- including the username and
+  password -- into the raised exception (and therefore into any
+  process/log that surfaces it). Rewritten to a generic message that
+  identifies the problem (shipped development identity match) and the
+  remedy without including the connection string itself. A new
+  regression test
+  (`test_database_url_insecure_default_error_does_not_leak_credentials_or_uri`)
+  asserts the raised message contains neither `mep_password` nor
+  `change-me` nor the `postgresql+asyncpg://` scheme nor the exact
+  `DATABASE_URL` value.
+- **Preserved unchanged:** Fix Round 1's `ALLOWED_ORIGINS` semantic
+  check (order/whitespace/duplicate-independent, shipped-localhost-only
+  rejected, valid provider origins accepted) and the `JWT_SECRET_KEY`
+  known-placeholder-set check are untouched by this fix round; so are
+  the readiness endpoint, admin bootstrap, and scheduler single-instance
+  invariant from the base PR24B commit.
+- **Tests:** `backend/tests/test_startup_security.py` gains
+  `test_rejects_production_with_docker_compose_native_database_url_default`
+  (this fix round's exact finding; verified to fail against the
+  pre-fix reviewed head `abc0fa068de5291e482bf2b5acbcf3c1da711ed8` via
+  `git stash` reproduction before the fix, and to pass after it),
+  `test_allows_production_with_legitimate_managed_postgresql_url`
+  (a synthetic managed-provider URL sharing none of the four shipped
+  identity components must not be over-blocked), and
+  `test_database_url_insecure_default_error_does_not_leak_credentials_or_uri`.
+  The two pre-existing DATABASE_URL-default tests (local-dev literal,
+  `.env.example`-copied literal) are retained unchanged and still pass
+  under the new semantic check.
+- **Status:** Draft, **not merged, PR24B implementation in progress**.
+  This is a second fix round on the same in-progress PR24B, not a new
+  PR and not the start of PR24C.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** independent re-review of GitHub PR #131 at reviewed head
+  `abc0fa068de5291e482bf2b5acbcf3c1da711ed8`, and the PR24B — Fix Round
+  2 task's own binding specification.

@@ -279,6 +279,64 @@ def test_rejects_production_with_docker_compose_computed_database_url_default():
 
 
 # ---------------------------------------------------------------------------
+# PR24B Fix Round 2 (independent re-review, P1): docker-compose.yml
+# computes DATABASE_URL from POSTGRES_USER/POSTGRES_PASSWORD/POSTGRES_DB,
+# each with its own `${VAR:-default}` fallback -- so with *no* `.env` at
+# all, the resolved DATABASE_URL is
+# "postgresql+asyncpg://mep_user:mep_password@postgres:5432/mep_db", a
+# THIRD literal distinct from both Fix Round 1 literals (the local-dev
+# "@localhost" default and the .env.example-copied "change-me" default).
+# Fix Round 1's two-literal set missed this one; the fix now checks the
+# DATABASE_URL's identity components (username/password/host/database)
+# independently instead of accumulating a closed set of full-URL
+# literals.
+# ---------------------------------------------------------------------------
+
+
+def test_rejects_production_with_docker_compose_native_database_url_default():
+    # docker-compose.yml with NO .env override at all -- this is the
+    # exact defect this fix round addresses: this string was previously
+    # accepted because it matched neither of Fix Round 1's two literals.
+    settings = Settings(
+        ENVIRONMENT="production",
+        JWT_SECRET_KEY="a" * 64,
+        DATABASE_URL="postgresql+asyncpg://mep_user:mep_password@postgres:5432/mep_db",
+        ALLOWED_ORIGINS=_NON_DEFAULT_ALLOWED_ORIGINS,
+    )
+    with pytest.raises(InsecureConfigurationError):
+        validate_production_secrets(settings)
+
+
+def test_allows_production_with_legitimate_managed_postgresql_url():
+    # A real production DATABASE_URL does not share the shipped identity
+    # (username, password, host, and database name) -- must not be
+    # over-blocked merely for using a private-looking hostname.
+    settings = Settings(
+        ENVIRONMENT="production",
+        JWT_SECRET_KEY="a" * 64,
+        DATABASE_URL="postgresql+asyncpg://prod_user:strong_password@db.provider.example:5432/mep_prod",
+        ALLOWED_ORIGINS=_NON_DEFAULT_ALLOWED_ORIGINS,
+    )
+    validate_production_secrets(settings)
+
+
+def test_database_url_insecure_default_error_does_not_leak_credentials_or_uri():
+    settings = Settings(
+        ENVIRONMENT="production",
+        JWT_SECRET_KEY="a" * 64,
+        DATABASE_URL="postgresql+asyncpg://mep_user:mep_password@postgres:5432/mep_db",
+        ALLOWED_ORIGINS=_NON_DEFAULT_ALLOWED_ORIGINS,
+    )
+    with pytest.raises(InsecureConfigurationError) as exc_info:
+        validate_production_secrets(settings)
+    message = str(exc_info.value)
+    assert "mep_password" not in message
+    assert "change-me" not in message
+    assert "postgresql+asyncpg://" not in message
+    assert settings.DATABASE_URL not in message
+
+
+# ---------------------------------------------------------------------------
 # PR19A3 review fix round 1 (H2): fail-fast validation of every
 # safety-critical PR19 lease/claim/retention timing setting, at
 # `Settings()` construction (application startup), never deferred to the

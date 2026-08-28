@@ -22,33 +22,41 @@ DEFAULT_DATABASE_URL = "postgresql+asyncpg://mep_user:mep_password@localhost:543
 DEFAULT_ALLOWED_ORIGINS = "http://localhost:5173,http://localhost"
 
 # PR24B Fix Round 1 (independent review, P1): the repository ships more
-# than one literal placeholder for JWT_SECRET_KEY and more than one
-# resolved default for DATABASE_URL -- config.py's own field default /
-# docker-compose.yml's inline default use different wording from
-# .env.example's separate copy-paste placeholder, and docker-compose.yml
-# (unchanged by docker-compose.prod.yml) computes a DATABASE_URL against
-# the "postgres" service hostname and .env.example's POSTGRES_PASSWORD
-# placeholder ("change-me"), not against DEFAULT_DATABASE_URL's
-# "localhost"/"mep_password" pair. A single exact-match check against only
-# one of these misses the other -- the same defect class as the
-# ALLOWED_ORIGINS order mismatch this fix round addresses. Both known
-# literals are rejected below.
+# than one literal placeholder for JWT_SECRET_KEY -- config.py's own field
+# default / docker-compose.yml's inline default use different wording
+# from .env.example's separate copy-paste placeholder. A single exact-
+# match check against only one of these misses the other -- the same
+# defect class as the ALLOWED_ORIGINS order mismatch this fix round
+# addresses. Both known literals are rejected below.
 KNOWN_INSECURE_JWT_SECRET_KEYS = frozenset(
     {
         DEFAULT_JWT_SECRET_KEY,  # config.py Settings field default / docker-compose.yml inline default
         "change-me-to-a-random-64-byte-value",  # .env.example's own placeholder text
     }
 )
-KNOWN_INSECURE_DATABASE_URLS = frozenset(
-    {
-        DEFAULT_DATABASE_URL,  # config.py Settings field default (local, non-Docker dev)
-        # docker-compose.yml's computed default when .env.example is copied
-        # verbatim: POSTGRES_USER/POSTGRES_DB match their compose defaults,
-        # POSTGRES_PASSWORD is left at .env.example's "change-me" placeholder,
-        # and the host is the "postgres" service name, not "localhost".
-        "postgresql+asyncpg://mep_user:change-me@postgres:5432/mep_db",
-    }
-)
+
+# PR24B Fix Round 2 (independent re-review, P1): DATABASE_URL has more
+# shipped-default resolutions than Fix Round 1's two-literal set covered.
+# docker-compose.yml computes DATABASE_URL from POSTGRES_USER/
+# POSTGRES_PASSWORD/POSTGRES_DB, each with its own `${VAR:-default}`
+# fallback -- so *no* `.env` at all (docker-compose.yml's own native
+# defaults, host "postgres", password "mep_password") is a THIRD distinct
+# literal, on top of Fix Round 1's local-dev default (host "localhost",
+# password "mep_password") and .env.example-copied default (host
+# "postgres", password "change-me"). A closed set of full-URL literals
+# would need a new entry for every host x password combination the
+# repository ever ships; instead this checks the four identity
+# components independently -- username, database name, host, and
+# password each drawn from their own small known-shipped set. A managed-
+# provider URL would need to accidentally reuse all four simultaneously
+# to be misclassified, which is not a realistic production
+# configuration, and no new literal is needed if a future host/password
+# combination is added to docker-compose.yml or .env.example as long as
+# the username/database stay "mep_user"/"mep_db".
+INSECURE_DATABASE_USERNAME = "mep_user"
+INSECURE_DATABASE_NAME = "mep_db"
+INSECURE_DATABASE_HOSTS = frozenset({"localhost", "postgres"})
+INSECURE_DATABASE_PASSWORDS = frozenset({"mep_password", "change-me"})
 
 # The only ENVIRONMENT values this deployment recognizes (see .env.example,
 # docker-compose.yml, docker-compose.prod.yml). Anything else is treated as
@@ -200,6 +208,32 @@ def _is_shipped_localhost_dev_origin(origin: str) -> bool:
     return parsed.scheme.lower() == "http" and parsed.hostname == "localhost"
 
 
+def _is_shipped_insecure_database_url(database_url: str) -> bool:
+    """True when database_url's connection identity matches every
+    component of a repository-shipped default (PR24B Fix Round 2): a
+    username of `mep_user`, a database name of `mep_db`, a host of
+    `localhost` (config.py's own local-dev default) or `postgres`
+    (docker-compose.yml's service name), and a password of
+    `mep_password` (docker-compose.yml's own native default, or
+    config.py's local-dev default) or `change-me` (.env.example's
+    placeholder). Checking components independently rather than a
+    closed set of full-URL literals means a legitimate managed-provider
+    URL is misclassified only if it happens to reuse all four shipped
+    values simultaneously -- not a realistic production configuration --
+    and no new literal needs adding if a future host/password
+    combination is introduced as long as the username/database stay
+    their shipped values.
+    """
+    parsed = urlsplit(database_url)
+    database_name = parsed.path.lstrip("/")
+    return (
+        parsed.username == INSECURE_DATABASE_USERNAME
+        and parsed.password in INSECURE_DATABASE_PASSWORDS
+        and parsed.hostname in INSECURE_DATABASE_HOSTS
+        and database_name == INSECURE_DATABASE_NAME
+    )
+
+
 def validate_production_secrets(settings: Settings) -> None:
     """Refuse to run in production with a missing, default, or too-short JWT secret.
 
@@ -242,12 +276,14 @@ def validate_production_secrets(settings: Settings) -> None:
             'longer secret with: python -c "import secrets; print(secrets.token_urlsafe(64))"'
         )
 
-    if settings.DATABASE_URL in KNOWN_INSECURE_DATABASE_URLS:
+    if _is_shipped_insecure_database_url(settings.DATABASE_URL):
         raise InsecureConfigurationError(
-            "DATABASE_URL is set to a shipped local-development default "
-            f"({settings.DATABASE_URL!r}). Refusing to start with ENVIRONMENT=production and no "
-            "real production database configured. Set DATABASE_URL to the actual production "
-            "PostgreSQL connection string."
+            "DATABASE_URL resolves to a repository-shipped development/default database "
+            "configuration (matching the shipped username, database name, host, and password "
+            "identity). Refusing to start with ENVIRONMENT=production and no real production "
+            "database configured. Set DATABASE_URL to the actual production PostgreSQL connection "
+            "string. (The connection string itself is intentionally not included in this message, "
+            "since DATABASE_URL commonly carries a username and password.)"
         )
 
     origins = frozenset(settings.allowed_origins_list)

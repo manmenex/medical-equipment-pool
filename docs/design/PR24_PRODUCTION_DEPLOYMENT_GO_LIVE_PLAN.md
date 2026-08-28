@@ -994,19 +994,28 @@ revisited against that platform's actual capability.
   provider (§10) or generated at VM-provisioning time (Option B);
   never the `docker-compose.yml` development defaults
   (`mep_user`/`mep_password`). **Enforced in PR24B, hardened in PR24B
-  Fix Round 1:** `validate_production_secrets` refuses to boot in
-  production with `DATABASE_URL` equal to either known shipped
-  local-development literal (the non-Docker `localhost` default or
-  `docker-compose.yml`'s computed default when `.env.example` is
-  copied verbatim), and with `ALLOWED_ORIGINS` resolving — after
-  order/whitespace/duplicate-independent parsing — entirely to the
-  shipped `http://localhost*` development pattern (§9's own "never the
-  development defaults" requirement), regardless of which of the
-  repository's own literal orderings it happens to ship in. The same
-  fail-closed pattern as the JWT secret check above, not a new
-  mechanism; `JWT_SECRET_KEY` itself is checked against both of its own
-  known shipped placeholder literals (config.py's/docker-compose.yml's
-  wording and `.env.example`'s separate wording) for the same reason.
+  Fix Round 1 and Fix Round 2:** `validate_production_secrets` refuses
+  to boot in production when `DATABASE_URL`'s connection identity
+  (username, password, host, and database name, parsed independently —
+  not a closed set of full-URL literals) matches every component of a
+  repository-shipped default: username `mep_user`, database `mep_db`,
+  host `localhost` (the non-Docker local-dev default) or `postgres`
+  (`docker-compose.yml`'s service name), and password `mep_password`
+  (`docker-compose.yml`'s own native default with no `.env` override at
+  all) or `change-me` (`.env.example`'s copy-paste placeholder) — this
+  covers all three ways the repository can resolve an insecure
+  `DATABASE_URL` without a new literal needing to be added for each. The
+  error message intentionally does not echo the connection string, since
+  `DATABASE_URL` commonly carries a password. `ALLOWED_ORIGINS` is
+  refused when it resolves — after order/whitespace/duplicate-
+  independent parsing — entirely to the shipped `http://localhost*`
+  development pattern (§9's own "never the development defaults"
+  requirement), regardless of which of the repository's own literal
+  orderings it happens to ship in. The same fail-closed pattern as the
+  JWT secret check above, not a new mechanism; `JWT_SECRET_KEY` itself is
+  checked against both of its own known shipped placeholder literals
+  (config.py's/docker-compose.yml's wording and `.env.example`'s
+  separate wording) for the same reason.
 - **Object-storage credentials:** not applicable — §12 recommends not
   deploying object storage at all.
 - **Deployment secrets** (e.g. a platform API token used by CI to
