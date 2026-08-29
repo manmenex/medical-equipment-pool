@@ -1,47 +1,48 @@
 # Roadmap PR24 — Production Deployment & Go-Live Architecture Planning
 
-**Status:** DESIGN COMPLETE; PR24B (DEPLOYMENT FOUNDATION) IN PROGRESS.
-No production infrastructure is provisioned, no cloud account, paid
-resource, domain, or DNS record is created, by this document, the
-Owner Decision Closure round, or PR24B. No Pilot or Production
-execution has occurred. **PR24 (this document) is merged** (GitHub PR
-#129, squash SHA `599478992de363e1eda2fe8005ff79d565dee76d`, including
-Fix Round 1's §15A liveness/readiness contract). **The PR24 Owner
-Decision Closure round is also merged** (GitHub PR #130, squash SHA
+**Status:** DESIGN COMPLETE; PR24B (DEPLOYMENT FOUNDATION) COMPLETE;
+PR24C (BACKUP & RESTORE) IN PROGRESS. No production infrastructure is
+provisioned, no cloud account, paid resource, domain, or DNS record is
+created, by this document, the Owner Decision Closure round, PR24B, or
+PR24C. No Pilot or Production execution has occurred. **PR24 (this
+document) is merged** (GitHub PR #129, squash SHA
+`599478992de363e1eda2fe8005ff79d565dee76d`, including Fix Round 1's
+§15A liveness/readiness contract). **The PR24 Owner Decision Closure
+round is also merged** (GitHub PR #130, squash SHA
 `f64f7d148ba956adef43c5d363ad52680398541c`) — all six Owner Decisions
 (OD-PR24-1 through OD-PR24-6, §28) are Owner-approved. **PR24B
-(Deployment Foundation) is now in progress**, implementing the
+(Deployment Foundation) is merged** (GitHub PR #131, squash SHA
+`d4a40349f62d76d129dcc6f1feea3e7e8fc8f28d`), implementing the
 fail-closed readiness endpoint (§15A), the production-safe admin
 bootstrap script (§17), the scheduler single-instance deployment
-invariant (§15), and two additional fail-closed production
-configuration checks (§16) — see §29 for exact scope and what remains
-explicitly out of it (PR24C onward, and all actual infrastructure
-provisioning).
+invariant (§15), and fail-closed production configuration checks
+(§16). **PR24C (Backup & Restore) is now in progress**, implementing
+the backup/restore/prune tooling and operator runbook designed in §11
+— see §29 for exact scope and what remains explicitly out of it (PR24D
+onward, and all actual infrastructure provisioning).
 
-**Baseline (PR24B — Deployment Foundation):**
-`f64f7d148ba956adef43c5d363ad52680398541c` — the real squash-merge SHA
-of GitHub PR #130 (PR24 Owner Decision Closure). **Roadmap PR23
+**Baseline (PR24C — Backup & Restore):**
+`d4a40349f62d76d129dcc6f1feea3e7e8fc8f28d` — the real squash-merge SHA
+of GitHub PR #131 (PR24B — Deployment Foundation). **Roadmap PR23
 (Cutover Readiness) is fully implementation-complete; PR24's own
-architecture and all six Owner Decisions are complete**, as of this
-baseline. Real Pilot execution, Production cutover, AppSheet's actual
-read-only transition, a selected commercial provider, and a rehearsed
-backup/restore procedure have **not** occurred — PR24B prepares the
-deployable application-level foundation only; it does not provision
-infrastructure or perform any of the above.
+architecture, all six Owner Decisions, and PR24B are complete**, as of
+this baseline. Real Pilot execution, Production cutover, AppSheet's
+actual read-only transition, a selected commercial provider, and a
+rehearsed backup/restore procedure have **not** occurred — PR24C
+builds the backup/restore capability and rehearsal contract only; it
+does not provision infrastructure, select a provider, or perform a
+real Staging-class rehearsal (that requires PR24D's Staging
+environment).
 
-**Prior baseline (Owner Decision Closure round):**
+**Prior baseline (PR24B — Deployment Foundation):**
+`f64f7d148ba956adef43c5d363ad52680398541c` — the real squash-merge SHA
+of GitHub PR #130 (PR24 Owner Decision Closure), now historical/superseded
+by the baseline above.
+
+**Earlier baseline (Owner Decision Closure round):**
 `599478992de363e1eda2fe8005ff79d565dee76d` — the real squash-merge SHA
 of GitHub PR #129 (PR24 — Production Deployment & Go-Live Architecture
-Planning, including Fix Round 1), now historical/superseded by the
-baseline above.
-
-**Earlier baseline (as of PR24's own creation):**
-`f35fe716d57c51042d86a661657f679799b6a9e3` — the real squash-merge SHA
-of GitHub PR #128 ("PR23F — Cutover Runbook + Final Governance
-Close-out"), squash-merged into
-`claude/medical-equipment-pool-0c7fz0` on top of
-`8644536403eeec269e6dadf835f1bda3844b6cce` (GitHub PR #127, PR23E) —
-now historical/superseded.
+Planning, including Fix Round 1), now historical/superseded.
 
 **Purpose:** Design the production deployment and go-live architecture
 needed to move this repository from "the PR23 cutover-readiness
@@ -540,6 +541,23 @@ allowlisting if the hospital can supply a stable IP range — see
 This is the gap `docs/runbooks/PR23_CUTOVER_RUNBOOK.md` §17 correctly
 left open. This section designs what must exist; it does not perform
 any of it.
+
+**Tooling implemented in PR24C:** `backend/scripts/backup_postgres.py`
+(logical `pg_dump --format=custom` backup, SHA-256-checksummed,
+timestamped filename + JSON manifest sidecar), `backend/scripts/
+restore_postgres.py` (checksum verification, a hard restore-target
+guard that refuses a `production`-labeled or source-identical target
+with no override flag, `pg_restore`, then Alembic-revision and
+representative-row-count verification), and `backend/scripts/
+prune_backups.py` (30-day retention cleanup, never deletes the newest
+backup). Operator procedure and the rehearsal evidence template are in
+`docs/runbooks/PR24_BACKUP_RESTORE_RUNBOOK.md`. **This still does not
+constitute a completed rehearsal** — see that runbook's own explicit
+"CI proves tooling, Staging rehearsal proves operational readiness"
+distinction, and the "This document does not claim a rehearsal has
+happened" paragraph below, which remains true until PR24D provisions a
+real Staging-class environment and the rehearsal is actually run
+against it.
 
 - **What is backed up:** the production PostgreSQL database in full
   (all application tables, including `import_source_blobs`'s binary
@@ -1707,26 +1725,33 @@ maintainable next sequence this document proposes is:
   overall (architecture + Owner Decisions) is complete** — PR24B is
   eligible to start from that baseline (§28's own fail-closed gate,
   now released).
-- **PR24B — Deployment Foundation** *(in progress — this PR)*:
-  configures secrets (§16), builds the safe admin-bootstrap mechanism
-  (§17), builds the fail-closed readiness endpoint (§15A) alongside the
-  existing liveness endpoint, closes the scheduler single-instance gap
-  (§15) at the deployment-configuration level (`backend/Dockerfile`
-  `--workers 1`, `docker-compose.prod.yml` `replicas: 1`). Redis
-  remains retained but non-critical to readiness (§13, §15A.3); no
-  MinIO/S3 production dependency (§12); the provider-supplied HTTPS
-  hostname remains acceptable (OD-PR24-5). **Provisioning the selected
-  architecture's actual infrastructure (OD-PR24-1) is explicitly out
-  of this slice's scope** — no cloud account, paid resource, domain, or
-  DNS record is created by PR24B; it prepares the deployable
-  configuration only. No Pilot/Production traffic served by this
-  slice.
-- **PR24C — Backup & Restore** *(proposed, not started)*: implement
-  and rehearse the backup/restore procedure (§11) against Staging,
-  against the RPO/RTO targets from OD-PR24-3.
-  every existing PR20-23 evidence/retention contract preserved (§24).
+- **PR24B — Deployment Foundation** *(complete — GitHub PR #131, squash
+  SHA `d4a40349f62d76d129dcc6f1feea3e7e8fc8f28d`)*: configures secrets
+  (§16), builds the safe admin-bootstrap mechanism (§17), builds the
+  fail-closed readiness endpoint (§15A) alongside the existing liveness
+  endpoint, closes the scheduler single-instance gap (§15) at the
+  deployment-configuration level (`backend/Dockerfile` `--workers 1`,
+  `docker-compose.prod.yml` `replicas: 1`). Redis remains retained but
+  non-critical to readiness (§13, §15A.3); no MinIO/S3 production
+  dependency (§12); the provider-supplied HTTPS hostname remains
+  acceptable (OD-PR24-5). **Provisioning the selected architecture's
+  actual infrastructure (OD-PR24-1) was explicitly out of this slice's
+  scope** — no cloud account, paid resource, domain, or DNS record was
+  created by PR24B; it prepared the deployable configuration only. No
+  Pilot/Production traffic was served by this slice.
+- **PR24C — Backup & Restore** *(in progress — this PR)*: build and
+  prove the backup/restore/prune tooling (§11) — a real `pg_dump`/
+  `pg_restore` round trip against ephemeral CI-provisioned PostgreSQL
+  databases, plus the operator runbook and rehearsal evidence template
+  (`docs/runbooks/PR24_BACKUP_RESTORE_RUNBOOK.md`). **This proves the
+  tooling, not operational readiness** — a real rehearsal against a
+  genuine Staging-class environment is deferred until PR24D provisions
+  one (PR24D does not yet exist; do not read this bullet as claiming
+  otherwise), matching every existing PR20-23 evidence/retention
+  contract (§24) unchanged.
 - **PR24D — CI/CD & Staging** *(proposed, not started)*: build the
-  staged pipeline (§18), stand up the Staging/UAT environment (§19).
+  staged pipeline (§18), stand up the Staging/UAT environment (§19) —
+  the environment PR24C's tooling gets genuinely rehearsed against.
 - **PR24E — UAT Readiness** *(proposed, not started)*: execute and
   record the §25 checklist against Staging — the first point at which
   this repository can honestly claim UAT evidence exists.

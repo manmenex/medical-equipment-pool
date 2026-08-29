@@ -6138,3 +6138,234 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
 - **Source:** independent re-review of GitHub PR #131 at reviewed head
   `abc0fa068de5291e482bf2b5acbcf3c1da711ed8`, and the PR24B — Fix Round
   2 task's own binding specification.
+
+
+## 2026-08-28 — GitHub PR #131 merged -- PR24B (Deployment Foundation) complete; PR24C (Backup & Restore) started, not merged
+
+- **Decision/record:** GitHub PR #131 ("PR24B — Deployment Foundation")
+  squash-merged into `claude/medical-equipment-pool-0c7fz0`. Real
+  squash-merge SHA independently verified via `git fetch` + `git log`
+  (not trusted from the merge API response alone):
+  `d4a40349f62d76d129dcc6f1feea3e7e8fc8f28d`, sole parent
+  `f64f7d148ba956adef43c5d363ad52680398541c` (GitHub PR #130) confirmed,
+  tree independently verified byte-identical to the final reviewed
+  feature-branch head
+  (`a1185833bab730b1ce40d000dfa269c97d159c29`) via
+  `git diff <head> <squash-sha> --stat` (empty output). That reviewed
+  head carried zero reviews, zero comments, and 6/6 green CI, confirmed
+  via a full 10-step Final Merge Gate (independent head verification,
+  CI check, review/comment check, Draft->Ready, post-Ready re-check,
+  squash merge, SHA verification, tree-identity verification, sole-
+  parent verification, baseline adoption). **This is `d4a40349f62d76d129dcc6f1feea3e7e8fc8f28d`'s
+  sole recording as the new authoritative baseline** — per this
+  repository's standing process, no separate self-referential "baseline
+  adoption" PR is created; recording is folded into PR24C (the next PR
+  that legitimately touches these governance files), consistent with
+  every prior squash-baseline adoption in this repository's history.
+- **PR24B (Deployment Foundation) is now COMPLETE.** Delivered, across
+  its base commit and two independent-review fix rounds: the
+  fail-closed readiness endpoint (`GET /api/v1/ready`), the
+  production-safe admin bootstrap script
+  (`app.scripts.bootstrap_admin`), the scheduler single-instance
+  deployment invariant, and fail-closed production configuration
+  checks for `JWT_SECRET_KEY`/`DATABASE_URL`/`ALLOWED_ORIGINS`
+  (`backend/app/core/config.py`) -- see the three PR24B entries above
+  this one for full detail. No infrastructure was provisioned, no
+  commercial provider was selected, no Pilot/Production traffic was
+  served.
+- **PR24C (Backup & Restore) started -- in progress, not merged**, from
+  baseline `d4a40349f62d76d129dcc6f1feea3e7e8fc8f28d` (GitHub PR #131),
+  on branch `feature/pr24c-backup-restore`. Implements the backup/
+  restore/prune capability designed in
+  `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §11, now
+  that PR24B is complete:
+  1. **`backend/scripts/backup_postgres.py`** -- a logical `pg_dump
+     --format=custom` backup of the full application PostgreSQL
+     database (the complete backup; no separate object-storage backup
+     stream, per §12's own finding). Deterministic timestamped
+     filename (`mep-postgres-<environment>-<UTCTIMESTAMP>.dump`) plus a
+     JSON manifest sidecar recording created_at, environment, baseline
+     SHA, the source database's Alembic revision at backup time, file
+     size, SHA-256 checksum, and `pg_dump` tool/version. On failure:
+     non-zero exit, no manifest written, any partial `.dump` removed,
+     previous valid backups untouched.
+  2. **`backend/scripts/restore_postgres.py`** -- verifies the backup's
+     checksum against its manifest (hard fail on mismatch), then a
+     restore-target guard
+     (`backend/scripts/pg_backup_lib.py:guard_restore_target`) that
+     refuses any target explicitly labeled `production` or physically
+     identical to the source database, with no
+     `--allow-production-restore` override flag anywhere in this
+     tooling, then `pg_restore` into the (by default, required-empty)
+     target, then verifies the restored `alembic_version` matches the
+     manifest's recorded revision (proving restore fidelity before any
+     question of an `alembic upgrade`, deliberately not run
+     automatically) and representative-table row counts (`equipment`,
+     `wards`, `users`, `borrow_transactions`, `audit_logs`), diffed
+     against the source database when `--source-database-url` is
+     given. Reports elapsed wall-clock time for RTO comparison.
+  3. **`backend/scripts/prune_backups.py`** -- deletes backups older
+     than the Owner-approved 30-day retention (OD-PR24-3), scoped only
+     to files directly inside the configured backup directory matching
+     the exact naming pattern (never a generic `rm -rf`), with
+     `--dry-run` support, and never deletes the single newest backup
+     even if it is itself past the cutoff.
+  4. **`docs/runbooks/PR24_BACKUP_RESTORE_RUNBOOK.md`** -- operator
+     procedure and the rehearsal evidence template (built on the
+     evidence-slot fields `docs/runbooks/PR23_CUTOVER_RUNBOOK.md` §17
+     already defined), explicit about the CI-proves-tooling vs.
+     Staging-rehearsal-proves-operational-readiness distinction, and
+     that Production GO remains blocked until a real rehearsal exists.
+  Explicitly out of scope: PR24D's CI/CD staging pipeline and Staging
+  environment (not created by PR24C -- a real Staging-class rehearsal
+  is deferred until PR24D provisions one); PR24E UAT execution; PR24F
+  Pilot execution; PR24G Production Go-Live; any cloud account, paid
+  resource, domain, or DNS record; any provider selection.
+  `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §29's own
+  proposed-sequence sketch for PR24C previously said "rehearse... against
+  Staging" -- corrected in this PR to match the task's own explicit
+  PR24C/PR24D boundary (PR24C proves tooling via CI; PR24D provisions
+  the Staging environment the real rehearsal needs), since that
+  sentence was a non-binding proposal sketch, not an Owner Decision,
+  and was never accurate against the actual PR24C/PR24D split.
+- **Same-class DATABASE_URL/credential-handling review:** the restore/
+  backup scripts never place `DATABASE_URL` or the database password on
+  a subprocess command line (`ps`-visible) -- both are passed only via
+  the `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` subprocess
+  environment (`backend/scripts/pg_backup_lib.py:ConnectionParams.
+  as_libpq_env`), mirroring PR24B Fix Round 2's own DATABASE_URL
+  non-leak principle.
+- **Tests:** `backend/tests/test_pr24c_backup_restore.py` (36 pure-logic
+  unit tests: filename generation/parsing, SHA-256 checksum, retention
+  cutoff including the never-delete-the-newest-backup invariant,
+  DATABASE_URL parsing, the production-restore guard including source/
+  target identity and case/whitespace-insensitive label matching,
+  manifest JSON round-trip and no-secret-leakage). `backend/tests/
+  test_pr24c_postgres.py` (`pytest.mark.postgres`: a real `pg_dump`/
+  `pg_restore` round trip against ephemeral CI-provisioned PostgreSQL
+  databases -- seed representative data, back up, restore into a
+  disposable scratch database via the same `CREATE DATABASE`/`DROP
+  DATABASE` scratch-database pattern `tests/test_postgres_integration.py`
+  and `scripts/postgres_ci_gate.py` already establish, verify row
+  counts match; plus a negative test proving the production-target
+  guard refuses a restore attempt without touching the source
+  database).
+- **Status:** Draft, **not merged, PR24C implementation in progress**.
+  This entry documents work in progress; it does not claim a real
+  Staging-class rehearsal has occurred, and does not describe PR24D or
+  later as started.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the PR24C — Backup & Restore task's own binding
+  specification, cross-checked against
+  `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §11/§24/§28
+  OD-PR24-3, and `docs/runbooks/PR23_CUTOVER_RUNBOOK.md` §1/§17.
+
+
+## 2026-08-28 — PR24C Fix Round 1 (independent review, P1): same-source restore guard was conditional on an optional CLI flag -- fixed, not merged
+
+- **Finding (independent review, P1, blocking):** at reviewed head
+  `a20bbd9182cfe2ab2c57bdc99f0b5c6f8381d455`, `restore_postgres.py`
+  only refused a restore target identical to the backup's source
+  database when the operator explicitly passed
+  `--source-database-url`. Without that flag, `guard_restore_target()`
+  received `source=None` and skipped the same-database comparison
+  entirely -- so the normal restore command (no
+  `--source-database-url`) would silently allow a restore directly
+  over the exact database a backup was taken from, even though the
+  backup manifest already recorded that database's host, port, and
+  name. Empirically reproduced against the reviewed head: calling
+  `guard_restore_target(target=<same host/port/db, different
+  credentials>, target_environment="staging", source=None)` returned
+  without raising.
+- **Fix:** same-source restore protection is now derived from the
+  backup manifest and enforced **unconditionally**, never gated on an
+  optional CLI flag:
+  - `backend/scripts/pg_backup_lib.py` gains `DatabaseIdentity`
+    (host + port + database name only -- deliberately no
+    username/password, since the same physical database can be
+    reached with different credentials), with
+    `DatabaseIdentity.from_manifest()` and
+    `.from_connection_params()` constructors and a credential-blind
+    `.matches()` comparison.
+  - `guard_restore_target()`'s `source: ConnectionParams | None = None`
+    parameter is replaced with a **required**
+    `source_identity: DatabaseIdentity` parameter -- there is no code
+    path that can construct a call without it, so the guard can no
+    longer be silently skipped.
+  - `restore_postgres.py` now always derives `source_identity =
+    DatabaseIdentity.from_manifest(manifest)` before calling the
+    guard, regardless of whether `--source-database-url` was given.
+  - `--source-database-url` is repurposed as optional, live-source-only
+    input (row-count comparison): if supplied, it is validated against
+    the manifest's recorded source identity and the restore is
+    refused **before any destructive action** if they disagree --
+    the manifest remains the sole authority for source provenance;
+    the CLI flag can never override it.
+  - `--force-non-empty-target` continues to bypass only the
+    target-emptiness check; it has no code path into the
+    Production or same-source guards (verified by a dedicated
+    regression and by `guard_restore_target()`'s signature itself,
+    which has no `force`-shaped parameter at all).
+  - No credentials were added to `BackupManifest` -- its existing
+    `host`/`port`/`database_name` fields were already sufficient for
+    identity comparison; `username`/`password` remain intentionally
+    absent from the manifest schema.
+  - Order of operations in `restore_postgres.py`'s `main()`: load
+    manifest -> verify checksum -> parse target -> derive
+    `source_identity` from the manifest -> enforce the
+    Production/same-source guard -> validate an optional
+    `--source-database-url` against the manifest (fail closed on
+    mismatch) -> target-emptiness check -> `pg_restore`. The
+    same-source refusal happens before any target-side database
+    connection or destructive action.
+  - Error messages name only host/port/database name (never
+    username/password/DATABASE_URL), consistent with PR24B's
+    non-leak principle.
+- **Tests:** `backend/tests/test_pr24c_backup_restore.py` gains:
+  `DatabaseIdentity` unit tests (manifest/`ConnectionParams`
+  construction, case-insensitive host matching, credential-free
+  `redacted()`); `guard_restore_target()` regressions proving the
+  same-database refusal fires with no `ConnectionParams` "source" in
+  the call at all, ignores credentials, is not bypassed by an omitted
+  port (`parse_database_url()` already materializes the default
+  5432), and correctly allows same-host/different-database and
+  different-host/same-database targets; and CLI-level regressions
+  that invoke `restore_postgres.main()` in-process (with
+  `target_database_is_empty`/`subprocess.run` monkeypatched to raise
+  if ever reached) proving: (a) a same-source target is refused with
+  no `--source-database-url` at all; (b) a genuinely distinct target
+  is *not* refused (control case); (c) a `--source-database-url` that
+  disagrees with the manifest is refused before any live connection;
+  (d) `--force-non-empty-target` bypasses neither the same-source nor
+  the Production guard. Each guard-refusal assertion checks the
+  specific refusal message (not just a non-zero exit code), since a
+  generic connection-failure exception would also exit non-zero and
+  could otherwise mask a guard that failed to fire for the right
+  reason. The core defect-reproduction scenario was independently
+  verified to fail (return without raising) when run against the
+  reviewed head's pre-fix `guard_restore_target()` and to raise
+  `ProductionRestoreRefused` after the fix.
+- **Docs:** `backend/scripts/restore_postgres.py`'s module docstring,
+  procedure list, and `--source-database-url` help text updated to
+  describe the new unconditional semantics.
+  `docs/runbooks/PR24_BACKUP_RESTORE_RUNBOOK.md` §5's restore-target
+  protection bullets and verification-order list corrected to match
+  (previously implied the same-source guard was conditional on
+  `--source-database-url` being given).
+- **Preserved unchanged:** `pg_dump` backup mechanism, SHA-256
+  checksum, manifest generation/schema (no fields added or removed),
+  30-day retention/pruning logic, restore-into-disposable-target
+  workflow, Alembic revision verification, representative row-count
+  verification, RTO measurement, RPO evidence strategy, the
+  Production-target guard (still independent and unconditional), and
+  the "no `--allow-production-restore` flag" invariant. No PR24D+
+  scope added. Real Staging-class rehearsal remains explicitly
+  **PENDING** -- this fix round does not change that, and does not
+  mark the Production GO backup gate as passed.
+- **Status:** Draft, **not merged, PR24C implementation in progress**.
+  This is a fix round on the same in-progress PR24C, not a new PR and
+  not the start of PR24D.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** independent review of GitHub PR #132 at reviewed head
+  `a20bbd9182cfe2ab2c57bdc99f0b5c6f8381d455`, and the PR24C — Fix
+  Round 1 task's own binding specification.
