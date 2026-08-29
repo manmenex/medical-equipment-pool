@@ -1,0 +1,365 @@
+name: CD - Staging (manual)
+
+# Roadmap PR24D (docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md
+# §18): the immutable-artifact build/scan/migrate/verify mechanism.
+#
+# This workflow proves the CD *mechanism* -- it does NOT deploy to any
+# real, persistent Staging infrastructure. No hosting provider has been
+# selected yet (docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md
+# §28 OD-PR24-1 approves only the architecture *class*, "Managed
+# Application Platform + Managed PostgreSQL" -- not a specific vendor),
+# and this workflow creates no paid or external resource. The
+# `migrate-and-verify` job below runs the exact same build-once,
+# migrate-then-deploy, readiness-gated sequence a real Staging
+# deployment would use, but against an ephemeral, CI-provisioned
+# PostgreSQL service container and a container run on the Actions
+# runner itself -- not a real Staging environment. See
+# docs/runbooks/PR24_STAGING_DEPLOYMENT_RUNBOOK.md for the exact,
+# explicit distinction between "this workflow passed" and "a real
+# Staging environment exists and was deployed to" -- the same
+# "CI proves tooling, not operational readiness" discipline PR24C
+# established for backup/restore.
+#
+# Manual trigger only (workflow_dispatch) -- per the task's own explicit
+# instruction, deployment (even of this proof-of-mechanism kind) remains
+# operator-triggered, never automatic on every push/PR, while the system
+# is not yet in routine production delivery.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: >-
+          Exact 40-character commit SHA to build/verify. Must be
+          reachable from the trusted branch
+          (claude/medical-equipment-pool-0c7fz0). Leave empty to use
+          the trusted branch's current tip.
+        required: false
+        default: ''
+
+# Least privilege: read the repository by default; only the job that
+# actually pushes images elevates to package-write, and only for
+# itself.
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-staging
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
+  REGISTRY: ghcr.io
+
+jobs:
+  resolve-ref:
+    name: Resolve and validate trusted deployment ref
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - name: Checkout trusted branch (full history)
+        uses: actions/checkout@v4
+        with:
+          ref: claude/medical-equipment-pool-0c7fz0
+          fetch-depth: 0
+          persist-credentials: false
+
+      # PR24D §34/§35: never deploy an arbitrary/unvalidated ref.
+      # Resolve to the trusted branch tip if no input was given;
+      # otherwise require the input to be a full 40-hex-char commit SHA
+      # that is actually an ancestor of (reachable from) the trusted
+      # branch -- rejects branch names, "latest", short SHAs, and any
+      # commit that only exists on an untrusted fork/PR branch.
+      - name: Resolve and validate ref
+        id: resolve
+        run: |
+          set -euo pipefail
+          INPUT_REF="${{ inputs.ref }}"
+          TRUSTED_TIP="$(git rev-parse HEAD)"
+          if [ -z "$INPUT_REF" ]; then
+            RESOLVED="$TRUSTED_TIP"
+            echo "No ref supplied; using trusted branch tip: $RESOLVED"
+          else
+            if ! echo "$INPUT_REF" | grep -qE '^[0-9a-f]{40}$'; then
+              echo "::error::ref input must be a full 40-character lowercase hex commit SHA, got: $INPUT_REF"
+              exit 1
+            fi
+            if ! git cat-file -e "$INPUT_REF^{commit}" 2>/dev/null; then
+              echo "::error::ref $INPUT_REF does not exist in this repository's history"
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "$INPUT_REF" "$TRUSTED_TIP"; then
+              echo "::error::ref $INPUT_REF is not reachable from the trusted branch tip ($TRUSTED_TIP) -- refusing to deploy an untrusted commit"
+              exit 1
+            fi
+            RESOLVED="$INPUT_REF"
+            echo "Validated ref is an ancestor of the trusted branch: $RESOLVED"
+          fi
+          echo "sha=$RESOLVED" >> "$GITHUB_OUTPUT"
+
+  build-push-images:
+    name: Build and push immutable images (commit-SHA tagged)
+    needs: resolve-ref
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      backend_image: ${{ steps.tags.outputs.backend_image }}
+      frontend_image: ${{ steps.tags.outputs.frontend_image }}
+    steps:
+      - name: Checkout resolved ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-ref.outputs.sha }}
+          persist-credentials: false
+
+      - name: Compute image tags
+        id: tags
+        run: |
+          set -euo pipefail
+          SHA="${{ needs.resolve-ref.outputs.sha }}"
+          REPO_LC=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "backend_image=${{ env.REGISTRY }}/${REPO_LC}-backend:${SHA}" >> "$GITHUB_OUTPUT"
+          echo "frontend_image=${{ env.REGISTRY }}/${REPO_LC}-frontend:${SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build once (docs/design/... §18/§19's "build once, promote" model)
+      # -- this exact SHA-tagged image is what migrate-and-verify below
+      # runs, never a rebuild.
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ steps.tags.outputs.backend_image }}
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ steps.tags.outputs.frontend_image }}
+
+  dependency-scan:
+    name: Dependency vulnerability scan (informational)
+    needs: resolve-ref
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout resolved ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-ref.outputs.sha }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # Severity policy (PR24D §22): pip-audit's OSV-backed findings do
+      # not carry a uniform, machine-filterable severity field across
+      # every advisory source, so this scan is intentionally
+      # informational (continue-on-error) rather than blocking on any
+      # finding -- the alternative (blocking on every finding
+      # regardless of severity) would fail the pipeline on
+      # low-relevance/informational advisories, which the task's own
+      # instruction explicitly warns against. Findings are still
+      # surfaced in the job log for operator review on every run; a
+      # blocking policy remains a documented future tightening (see
+      # docs/runbooks/PR24_STAGING_DEPLOYMENT_RUNBOOK.md), not silently
+      # dropped.
+      - name: pip-audit (backend dependencies)
+        working-directory: backend
+        continue-on-error: true
+        run: |
+          pip install --quiet pip-audit
+          pip-audit -r requirements.txt --desc
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # Same informational policy as pip-audit above, for the same
+      # reason -- npm audit's severity buckets are reported for operator
+      # review, not used to fail this job.
+      - name: npm audit (frontend dependencies)
+        working-directory: frontend
+        continue-on-error: true
+        run: |
+          npm ci
+          npm audit --omit=dev
+
+  image-scan:
+    name: Container image vulnerability scan
+    needs: [resolve-ref, build-push-images]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Severity policy (PR24D §22): CRITICAL findings block this job
+      # (exit-code 1); HIGH/MEDIUM/LOW are reported in the log only.
+      # This is a documented, deliberate threshold -- not every
+      # informational finding blocks the build.
+      - name: Trivy scan -- backend image (blocking on CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ needs.build-push-images.outputs.backend_image }}
+          severity: CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
+
+      - name: Trivy scan -- frontend image (blocking on CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ needs.build-push-images.outputs.frontend_image }}
+          severity: CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
+
+  migrate-and-verify:
+    name: Migrate + deploy + readiness-gate (CD mechanism proof, ephemeral)
+    needs: [resolve-ref, build-push-images]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          # Test-only credentials for this ephemeral CD-mechanism-proof
+          # database -- not a real Staging database, never real hospital
+          # data. Deliberately distinct from
+          # backend/app/core/config.py's own shipped-insecure-default
+          # identity (username mep_user / db mep_db) so this run also
+          # incidentally proves validate_production_secrets() accepts a
+          # genuinely non-default DATABASE_URL under ENVIRONMENT=production,
+          # matching how a real Staging deployment is configured (§19:
+          # "Production-like deployment, same architecture class").
+          POSTGRES_DB: mep_cd_verify_db
+          POSTGRES_USER: mep_cd_verify
+          POSTGRES_PASSWORD: mep_cd_verify_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mep_cd_verify -d mep_cd_verify_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout resolved ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-ref.outputs.sha }}
+          persist-credentials: false
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull the exact built backend image (no rebuild)
+        run: docker pull ${{ needs.build-push-images.outputs.backend_image }}
+
+      # PR24D §14/§15: migration is an explicit, separate step, run
+      # against the exact pushed image, strictly before the application
+      # receives any traffic. A random per-run JWT secret is generated
+      # here (never logged, never a repository secret, discarded when
+      # the job ends) so this ephemeral verification also exercises the
+      # real ENVIRONMENT=production secret-validation path
+      # (backend/app/core/config.py validate_production_secrets) a real
+      # Staging deployment would run under -- never DATABASE_URL or the
+      # generated secret is printed to the log.
+      - name: Generate ephemeral run secrets
+        run: |
+          set -euo pipefail
+          GENERATED_SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(64))')"
+          echo "::add-mask::$GENERATED_SECRET"
+          echo "JWT_SECRET_KEY=$GENERATED_SECRET" >> "$GITHUB_ENV"
+
+      - name: Run explicit migration deployment step
+        env:
+          DATABASE_URL: postgresql+asyncpg://mep_cd_verify:mep_cd_verify_password@localhost:5432/mep_cd_verify_db
+        run: |
+          docker run --rm --network host \
+            -e DATABASE_URL="$DATABASE_URL" \
+            ${{ needs.build-push-images.outputs.backend_image }} \
+            python scripts/deploy_migrate.py \
+              --target-environment cd-mechanism-proof \
+              --artifact-sha ${{ needs.resolve-ref.outputs.sha }}
+
+      - name: Start the deployed container
+        env:
+          DATABASE_URL: postgresql+asyncpg://mep_cd_verify:mep_cd_verify_password@localhost:5432/mep_cd_verify_db
+        run: |
+          docker run -d --name mep-backend-cd --network host \
+            -e ENVIRONMENT=production \
+            -e DATABASE_URL="$DATABASE_URL" \
+            -e JWT_SECRET_KEY="$JWT_SECRET_KEY" \
+            -e ALLOWED_ORIGINS=https://cd-mechanism-proof.invalid \
+            -e CACHE_ENABLED=false \
+            ${{ needs.build-push-images.outputs.backend_image }}
+
+      - name: Wait for liveness
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/api/v1/health > /dev/null; then
+              echo "Container is serving HTTP after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Container did not become live in time"
+          docker logs mep-backend-cd
+          exit 1
+
+      - name: Set up Python (for the smoke-check script's own dependencies)
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install backend dependencies (for the smoke-check script)
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      # PR24D §18/§32: readiness-gated post-deploy smoke check, reusing
+      # the exact same script a real Staging/Production deployment would
+      # run -- proves this is a real, working gate, not merely wired.
+      - name: Post-deploy smoke check (readiness-gated)
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://mep_cd_verify:mep_cd_verify_password@localhost:5432/mep_cd_verify_db
+        run: |
+          python scripts/staging_smoke_check.py \
+            --base-url http://localhost:8000 \
+            --expected-alembic-revision "$(python -m alembic heads | awk '{print $1}')"
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker logs mep-backend-cd
+
+      - name: Stop and remove the container
+        if: always()
+        run: docker rm -f mep-backend-cd || true

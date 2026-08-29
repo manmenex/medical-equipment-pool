@@ -6369,3 +6369,128 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
 - **Source:** independent review of GitHub PR #132 at reviewed head
   `a20bbd9182cfe2ab2c57bdc99f0b5c6f8381d455`, and the PR24C — Fix
   Round 1 task's own binding specification.
+
+
+## 2026-08-29 — GitHub PR #132 merged -- PR24C (Backup & Restore) complete; PR24D (CI/CD & Staging) started, not merged
+
+- **Decision/record:** GitHub PR #132 ("PR24C — Backup & Restore")
+  squash-merged into `claude/medical-equipment-pool-0c7fz0`. Real
+  squash-merge SHA independently verified via `git fetch` +
+  `git rev-parse` (not trusted from the merge API response alone):
+  `cd9764ef5ba5e56062ee41266c8d96e50f1152c0`, sole parent
+  `d4a40349f62d76d129dcc6f1feea3e7e8fc8f28d` (GitHub PR #131) confirmed,
+  tree independently verified byte-identical to the final reviewed
+  feature-branch head (`0754c8f3193de5db33645ff6af939d888f748901`) via
+  `git diff <head> <squash-sha> --stat` (empty output). That reviewed
+  head carried zero reviews, zero comments, and 6/6 green CI, confirmed
+  via a full 10-step Final Merge Gate (independent head verification,
+  CI check, review/comment check, Draft->Ready, post-Ready re-check,
+  squash merge, SHA verification, tree-identity verification, sole-
+  parent verification, baseline adoption). **This is
+  `cd9764ef5ba5e56062ee41266c8d96e50f1152c0`'s sole recording as the
+  new authoritative baseline** — per this repository's standing
+  process, no separate self-referential "baseline adoption" PR is
+  created; recording is folded into PR24D (the next PR that
+  legitimately touches these governance files), consistent with every
+  prior squash-baseline adoption in this repository's history.
+- **PR24C (Backup & Restore) is now COMPLETE.** Delivered, across its
+  base commit and Fix Round 1: `backend/scripts/backup_postgres.py`/
+  `restore_postgres.py`/`prune_backups.py` (logical `pg_dump`/
+  `pg_restore` backup, SHA-256 checksum verification, a hard restore-
+  target guard refusing any Production-labeled or source-identical
+  target -- made unconditional, manifest-derived rather than gated on
+  an optional CLI flag by Fix Round 1 -- 30-day retention cleanup),
+  proven via a real round trip against ephemeral CI-provisioned
+  PostgreSQL, plus the operator runbook
+  (`docs/runbooks/PR24_BACKUP_RESTORE_RUNBOOK.md`) -- see the PR24C
+  entries above this one for full detail. No infrastructure was
+  provisioned, no commercial provider was selected, no Pilot/
+  Production traffic was served, and no real Staging-class rehearsal
+  occurred.
+- **PR24D (CI/CD & Staging) started -- in progress, not merged**, from
+  baseline `cd9764ef5ba5e56062ee41266c8d96e50f1152c0` (GitHub PR #132),
+  on branch `feature/pr24d-ci-cd-staging`. Implements the immutable-
+  artifact CI/CD mechanism designed in
+  `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §18, now
+  that PR24C is complete:
+  1. **`backend/scripts/cd_lib.py`** -- pure, testable helpers:
+     `is_valid_commit_sha()` (rejects branch names, `latest`, short
+     SHAs -- only a full 40-character lowercase hex commit SHA is
+     accepted as a deployment target) and `image_tag()` (builds a
+     `registry/repo-component:sha` reference, refusing to build one
+     from a non-commit-SHA value).
+  2. **`backend/scripts/deploy_migrate.py`** -- the explicit, separate
+     migration deployment step (never run automatically on application
+     boot): reads `DATABASE_URL` from the environment only (never a
+     CLI argument, never echoed), records target environment, artifact
+     SHA, Alembic revision before, `alembic upgrade head` result, and
+     Alembic revision after; fails closed (non-zero exit) on an
+     unreachable database, a non-zero `alembic upgrade` exit, or an
+     unverifiable post-migration revision -- ambiguity is treated as
+     failure, not assumed success.
+  3. **`backend/scripts/staging_smoke_check.py`** -- the readiness-
+     gated post-deploy verification: base-URL reachability, `GET
+     /api/v1/health` (liveness), `GET /api/v1/ready` (fail-closed
+     readiness -- the actual go/no-go signal), an optional frontend-
+     serves check, and an optional Alembic-revision-matches check.
+     Never performs a login, a write, or any other business-workflow
+     transaction -- read-only GETs to fixed diagnostic endpoints only,
+     stdlib `urllib.request` only (no extra runtime dependency).
+  4. **`.github/workflows/cd-staging.yml`** (new workflow, `ci.yml`
+     untouched) -- manual `workflow_dispatch` trigger only; a
+     `resolve-ref` job validates the deployment ref is a full commit
+     SHA reachable from the trusted branch (`git merge-base
+     --is-ancestor`) before anything is built; `build-push-images`
+     builds backend/frontend images once and pushes them, commit-SHA-
+     tagged, to GHCR (build-once/promote model, §18/§19);
+     `dependency-scan` (`pip-audit`/`npm audit`, informational --
+     documented severity-policy rationale in the workflow's own
+     comments and the new runbook) and `image-scan` (Trivy, blocking
+     only on CRITICAL, `ignore-unfixed: true`) run in parallel;
+     `migrate-and-verify` pulls the exact pushed image (no rebuild),
+     runs `deploy_migrate.py` against an ephemeral CI-provisioned
+     PostgreSQL service container, starts the container under
+     `ENVIRONMENT=production` with a freshly generated per-run JWT
+     secret, and runs `staging_smoke_check.py` against it.
+  5. **`docs/runbooks/PR24_STAGING_DEPLOYMENT_RUNBOOK.md`** (new) --
+     bilingual operator runbook: provider-selection candidates/trade-
+     offs (mirroring design doc §6, no vendor recommended), the
+     immutable-artifact model, the deployment trigger, the full
+     sequence, the security-scanning policy, the migration step, the
+     smoke check, the scheduler single-instance invariant (unchanged
+     from PR24B), Staging database/Redis isolation, admin bootstrap,
+     rollback, the real-rehearsal trigger point, and an evidence
+     template (no field pre-filled with PASS).
+  6. **Explicit, repeated distinction throughout (workflow comments,
+     runbook §0, design doc §18/§29):** this PR proves the CD
+     *mechanism* against an ephemeral, CI-provisioned target. **No
+     hosting provider has been selected** (OD-PR24-1 approves only the
+     architecture class, Managed Application Platform + Managed
+     PostgreSQL, not a specific vendor), **no real, persistent Staging
+     infrastructure is provisioned, and no paid or external resource is
+     created** by this PR. GHCR (GitHub Container Registry) is used for
+     image storage -- already part of this repository's own GitHub
+     organization, not a new external account or paid resource. Per the
+     task's own explicit instruction, this PR does not select or
+     provision a provider; §2 of the new runbook records the candidate
+     evaluation criteria for the Owner's future decision instead.
+  7. **Preserved unchanged:** the scheduler single-instance deployment
+     invariant, the fail-closed production configuration checks
+     (`validate_production_secrets`), the readiness/liveness endpoint
+     contract (§15A), the existing 6-check PR-validation CI
+     (`ci.yml`), and every PR20-23 business rule/lifecycle/QR
+     invariant. No PR24E+ work, no Pilot, no Production execution.
+  8. **Tests:** `backend/tests/test_pr24d_deploy.py` (27 pure-logic/
+     mocked-I/O unit tests -- `cd_lib` commit-SHA validation and image-
+     tag construction; `deploy_migrate.py` fail-closed behavior,
+     evidence recording, and no-credential-leak verification;
+     `staging_smoke_check.py` pass/fail-closed behavior for each check,
+     including proof it never requests a login/auth endpoint). None
+     require a real PostgreSQL connection, container, or network
+     access -- the workflow's own live behavior is a separate, provable
+     mechanism, not claimed equivalent to a real Staging deployment.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the PR24D — CI/CD & Staging task's own binding
+  specification, cross-checked against
+  `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §14-§21/§28
+  OD-PR24-1, and `docs/runbooks/PR24_BACKUP_RESTORE_RUNBOOK.md`.
