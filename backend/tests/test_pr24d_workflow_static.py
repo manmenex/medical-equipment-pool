@@ -16,6 +16,8 @@ required, consistent with PR24C/PR24D's "prove the tooling without
 needing live infrastructure" precedent.
 """
 
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -148,3 +150,132 @@ def test_workflow_still_manual_dispatch_only(workflow):
     assert "workflow_dispatch" in triggers
     assert "push" not in triggers
     assert "pull_request" not in triggers
+
+
+# ---------------------------------------------------------------------------
+# Fix Round 2 (independent review, P1): workflow_dispatch input shell
+# injection.
+#
+# GitHub substitutes `${{ }}` expressions into a `run:` step's shell
+# script text BEFORE Bash executes it. `resolve-ref`'s original
+# `INPUT_REF="${{ inputs.ref }}"` line meant a crafted `ref` input
+# containing shell metacharacters could terminate that assignment and
+# inject arbitrary shell commands -- including forging a fake `sha=`
+# line into $GITHUB_OUTPUT -- *before* the intended regex/existence/
+# ancestor validation ever ran, potentially feeding an attacker-chosen
+# value to the package-write build job downstream.
+#
+# Fix: `inputs.ref` is now passed through this step's `env:` mapping
+# (`INPUT_REF: ${{ inputs.ref }}`) instead of being interpolated
+# directly into the shell source -- GitHub then supplies it as
+# environment data, which the script can only ever consume as the
+# quoted string "$INPUT_REF", never as executable shell syntax.
+# ---------------------------------------------------------------------------
+
+
+def _resolve_ref_step(jobs):
+    for step in jobs["resolve-ref"]["steps"]:
+        if step.get("id") == "resolve":
+            return step
+    raise AssertionError("could not find the id: resolve step in the resolve-ref job")
+
+
+def test_no_run_block_directly_interpolates_workflow_dispatch_input(jobs):
+    # Static regression (item 6/7 of the fix-round spec): sweep every
+    # step in every job of this workflow file for a shell `run:` body
+    # that contains a raw `${{ inputs.` (or `${{ github.event.`)
+    # expression -- the exact defect class, generalized narrowly to
+    # this file, not just the one step that happened to be reported.
+    for job_name, job in jobs.items():
+        for step in job.get("steps", []):
+            run = step.get("run")
+            if not run:
+                continue
+            assert "${{ inputs." not in run, (
+                f"job {job_name!r} step {step.get('name')!r} directly interpolates a "
+                "workflow_dispatch input into its shell source -- pass it through `env:` instead"
+            )
+            assert "${{ github.event." not in run, (
+                f"job {job_name!r} step {step.get('name')!r} directly interpolates a "
+                "github.event value into its shell source -- pass it through `env:` instead"
+            )
+
+
+def test_resolve_ref_step_receives_input_via_env_not_inline_interpolation(jobs):
+    step = _resolve_ref_step(jobs)
+    env = step.get("env", {})
+    assert env.get("INPUT_REF") == "${{ inputs.ref }}", (
+        "the untrusted ref input must be passed through this step's env: mapping"
+    )
+    assert "${{ inputs.ref }}" not in step["run"], "the run: body must not itself reference the raw input expression"
+
+
+def test_resolve_ref_still_validates_regex_existence_and_ancestry(jobs):
+    # Fix Round 2 must not weaken Fix Round 1's (and the original)
+    # trusted-ref validation contract -- only how the input reaches the
+    # shell changed, not what is checked.
+    run = _resolve_ref_step(jobs)["run"]
+    assert "[0-9a-f]{40}" in run, "full 40-hex-char SHA format check must be preserved"
+    assert "git cat-file -e" in run, "commit-exists check must be preserved"
+    assert "git merge-base --is-ancestor" in run, "trusted-ancestor check must be preserved"
+
+
+def test_resolve_ref_only_writes_output_after_validation(jobs):
+    run = _resolve_ref_step(jobs)["run"]
+    output_write_index = run.index('echo "sha=$RESOLVED" >> "$GITHUB_OUTPUT"')
+    ancestor_check_index = run.index("git merge-base --is-ancestor")
+    assert ancestor_check_index < output_write_index, "the ancestor check must run before $GITHUB_OUTPUT is written"
+
+
+def test_resolve_ref_script_treats_malicious_ref_as_inert_data(tmp_path):
+    # Behavioral proof, not just structural: extract the REAL script
+    # from the REAL workflow file and actually run it with a
+    # shell-metacharacter payload delivered the same way GitHub now
+    # delivers it -- via the environment, never substituted into the
+    # script text. If this fix regresses back to inline interpolation,
+    # this test's own harness would need to change to keep injecting
+    # the payload textually to still "pass" -- so it also acts as a
+    # trip-wire: test_resolve_ref_step_receives_input_via_env_not_inline_interpolation
+    # (above) independently guards the wiring itself.
+    with WORKFLOW_PATH.open() as fh:
+        data = yaml.safe_load(fh)
+    script = _resolve_ref_step(data["jobs"])["run"]
+
+    malicious_ref = '"; echo "sha=deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" >> "$GITHUB_OUTPUT"; exit 0; #'
+    github_output = tmp_path / "github_output"
+    github_output.write_text("")
+
+    repo_root = WORKFLOW_PATH.resolve().parents[2]
+    result = subprocess.run(
+        ["bash", "-c", script],
+        cwd=str(repo_root),
+        env={**os.environ, "INPUT_REF": malicious_ref, "GITHUB_OUTPUT": str(github_output)},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    output_contents = github_output.read_text()
+    assert "deadbeef" not in output_contents, "the malicious payload must never reach $GITHUB_OUTPUT as if it were a validated SHA"
+    assert "sha=" not in output_contents, "no sha= line may be written for an invalid/malicious ref"
+    assert result.returncode != 0, "the script must fail closed on a malicious/invalid ref, not exit 0"
+
+
+def test_naive_direct_interpolation_pattern_would_have_been_exploitable(tmp_path):
+    # Documents, for the record, the exact vulnerability class Fix
+    # Round 2 closes: if a payload IS substituted directly into shell
+    # source (simulating GitHub's own `${{ }}` textual templating,
+    # which is what the pre-fix `INPUT_REF="${{ inputs.ref }}"` line
+    # did), it breaks out of the assignment and executes injected
+    # commands. This is a synthetic reproduction of the defect class
+    # itself, not a test of the real (already-fixed) workflow file --
+    # see test_resolve_ref_script_treats_malicious_ref_as_inert_data
+    # above for the actual regression against the real script.
+    proof_file = tmp_path / "injection_proof"
+    malicious_ref = f'"; touch {proof_file}; exit 0; #'
+    naive_script = f'set -euo pipefail\nINPUT_REF="{malicious_ref}"\necho "unreachable: $INPUT_REF"\n'
+
+    result = subprocess.run(["bash", "-c", naive_script], capture_output=True, text=True, timeout=30)
+
+    assert proof_file.exists(), "the naive direct-interpolation pattern must be demonstrably exploitable (sanity check on the reproduction itself)"
+    assert result.returncode == 0, "the injected 'exit 0' must have taken effect, bypassing any validation that would follow"

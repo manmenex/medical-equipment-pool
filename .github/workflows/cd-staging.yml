@@ -82,11 +82,25 @@ jobs:
       # that is actually an ancestor of (reachable from) the trusted
       # branch -- rejects branch names, "latest", short SHAs, and any
       # commit that only exists on an untrusted fork/PR branch.
+      #
+      # Fix Round 2 (independent review, P1): `inputs.ref` is untrusted
+      # workflow_dispatch operator input and is passed through `env:`,
+      # never interpolated directly into this step's shell source via
+      # `${{ inputs.ref }}` inside `run:`. GitHub substitutes `${{ }}`
+      # expressions into the script text BEFORE Bash executes it -- a
+      # crafted input containing shell metacharacters could otherwise
+      # terminate the intended assignment and inject arbitrary commands
+      # (including forging a fake `sha=` line into $GITHUB_OUTPUT)
+      # *before* any of the validation below ever runs. Routing through
+      # `env:` makes GitHub supply the value as environment data, not
+      # shell syntax, so it can only ever be consumed as the quoted
+      # string "$INPUT_REF" -- validated below exactly as before.
       - name: Resolve and validate ref
         id: resolve
+        env:
+          INPUT_REF: ${{ inputs.ref }}
         run: |
           set -euo pipefail
-          INPUT_REF="${{ inputs.ref }}"
           TRUSTED_TIP="$(git rev-parse HEAD)"
           if [ -z "$INPUT_REF" ]; then
             RESOLVED="$TRUSTED_TIP"

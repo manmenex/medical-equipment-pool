@@ -6630,3 +6630,89 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
 - **Source:** independent review of GitHub PR #133 at reviewed head
   `36465a22623ed3260dd46c82fa47647a76279a3c`, and the PR24D — Fix
   Round 1 task's own binding specification.
+
+
+## 2026-08-30 — PR24D Fix Round 2 (independent review, P1): workflow_dispatch input shell injection before trusted-ref validation -- fixed, not merged
+
+- **Finding (independent review, P1, blocking):** at reviewed head
+  `9d0a170702ae13783a3cad989a2af00e957921c9`, `.github/workflows/
+  cd-staging.yml`'s `resolve-ref` job's `Resolve and validate ref` step
+  assigned the untrusted `workflow_dispatch` operator input directly
+  via `INPUT_REF="${{ inputs.ref }}"` inside its `run:` shell body.
+  GitHub substitutes `${{ }}` expressions into the script text *before*
+  Bash executes it -- a crafted `ref` input containing shell
+  metacharacters could terminate that assignment and inject arbitrary
+  shell commands, including forging a fake `sha=<attacker-chosen-value>`
+  line into `$GITHUB_OUTPUT`, **before** the intended regex/existence/
+  ancestor validation later in the same script ever ran. Since
+  `resolve-ref`'s output feeds `build-push-images` (a `packages: write`
+  job), this could have fed an attacker-controlled value past the
+  trusted-ref restriction entirely.
+  **Empirically reproduced:** the reported payload
+  (`"; echo "sha=deadbeef...deadbeef" >> "$GITHUB_OUTPUT"; exit 0; #`),
+  substituted textually into the reviewed head's actual script (the
+  same substitution GitHub itself performs) and executed, forged
+  `sha=deadbeefdeadbeefdeadbeefdeadbeefdeadbeef` into `$GITHUB_OUTPUT`
+  and exited 0 -- full exploitation confirmed before writing the fix.
+- **Fix:** the step now declares `env: INPUT_REF: ${{ inputs.ref }}`
+  and its shell body no longer contains `${{ inputs.ref }}` anywhere --
+  GitHub supplies the value as environment data, which the script can
+  only ever consume as the quoted string `"$INPUT_REF"`, never as
+  executable shell syntax. The same malicious payload, delivered via
+  `env` against the fixed script, was independently re-verified to
+  produce exit code 1 and leave `$GITHUB_OUTPUT` empty -- the payload
+  is printed only as an inert string inside the existing
+  `::error::ref input must be a full 40-character...` diagnostic
+  message, never executed. The pre-existing validation contract
+  (empty input -> trusted branch tip; otherwise full 40-hex-char SHA
+  format check -> commit-exists check -> `git merge-base
+  --is-ancestor` reachability check -> only then write `sha=` to
+  `$GITHUB_OUTPUT`) is unchanged -- only how the input reaches the
+  shell changed, not what is validated or in what order.
+- **Same-class sweep (item 7/8 of the fix-round task):** every step in
+  every job of `cd-staging.yml` was checked for a `run:` body
+  containing a raw `${{ inputs.` or `${{ github.event.` expression.
+  Result: the one instance found and fixed above was the only
+  instance in the file -- no other step referenced `inputs.*` or
+  `github.event.*` directly in shell source anywhere in this workflow.
+  `needs.resolve-ref.outputs.sha` and the `build-push-images` digest/
+  ref outputs consumed elsewhere in the file are not raw external
+  input -- they are values this workflow's own prior steps validated
+  or derived (the SHA is guaranteed `^[0-9a-f]{40}$` and
+  trusted-branch-reachable by `resolve-ref` itself; the digests
+  originate from `docker/build-push-action@v6`'s own trusted step
+  outputs plus a validated repository name) -- left unchanged.
+- **Tests:** `backend/tests/test_pr24d_workflow_static.py` gains 6
+  tests: a workflow-wide static sweep asserting no `run:` body in any
+  job contains `${{ inputs.` or `${{ github.event.`; a check that the
+  `resolve-ref` step's `env:` mapping carries `INPUT_REF: ${{ inputs.ref }}`
+  and that its `run:` body no longer references the raw expression; a
+  check that the regex/commit-exists/ancestor-reachability validation
+  lines are all still present; a check that the `$GITHUB_OUTPUT` write
+  textually follows the ancestor check in the script; a behavioral
+  test that extracts the real script from the real workflow file and
+  actually executes it (via `subprocess`, in this repository's own
+  checkout) with the malicious payload delivered through the
+  environment, asserting it exits non-zero and never writes the
+  payload or a forged `sha=` line to `$GITHUB_OUTPUT`; and a
+  self-contained reproduction of the vulnerability class itself
+  (a hand-written naive-interpolation snippet, clearly distinguished
+  from the real-script test, proving the exploit technique is real and
+  the harness would have caught it).
+- **Preserved unchanged, not re-litigated:** Fix Round 1's image-scan
+  blocking gate (`migrate-and-verify` still `needs: image-scan`) and
+  digest-pinned artifact identity (Trivy/migration/runtime still
+  consume only `*_image_ref`, never `*_image_tag`); `PyYAML` remains
+  test-only; workflow permissions unchanged (`contents: read` default,
+  `packages: write`/`read` scoped per job -- this fix required zero
+  permission expansion); the manual `workflow_dispatch`-only trigger;
+  every PR20-23 business rule/lifecycle/QR invariant. No PR24E+ scope
+  added. No real Staging environment provisioned; no provider
+  selected; real PR24C backup/restore rehearsal remains PENDING.
+- **Status:** Draft, **not merged, PR24D implementation in progress**.
+  This is a fix round on the same in-progress PR24D, not a new PR and
+  not the start of PR24E.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** independent review of GitHub PR #133 at reviewed head
+  `9d0a170702ae13783a3cad989a2af00e957921c9`, and the PR24D — Fix
+  Round 2 task's own binding specification.
