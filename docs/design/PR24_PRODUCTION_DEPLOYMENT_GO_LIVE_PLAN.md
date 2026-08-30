@@ -1,7 +1,8 @@
 # Roadmap PR24 — Production Deployment & Go-Live Architecture Planning
 
 **Status:** DESIGN COMPLETE; PR24B (DEPLOYMENT FOUNDATION) COMPLETE;
-PR24C (BACKUP & RESTORE) COMPLETE; PR24D (CI/CD & STAGING) IN PROGRESS.
+PR24C (BACKUP & RESTORE) COMPLETE; PR24D (CI/CD & STAGING) CODE/TOOLING
+COMPLETE, MERGED — OPERATIONAL STAGING EVIDENCE PENDING (see below).
 No production infrastructure is provisioned, no cloud account, paid
 resource, domain, or DNS record is created, by this document, the
 Owner Decision Closure round, PR24B, PR24C, or PR24D. No Pilot or
@@ -21,24 +22,41 @@ SHA `cd9764ef5ba5e56062ee41266c8d96e50f1152c0`), implementing the
 `pg_dump`/`pg_restore`/prune tooling and operator runbook designed in
 §11 — proven via a real round trip against ephemeral CI-provisioned
 PostgreSQL, not yet a real Staging-class rehearsal. **PR24D (CI/CD &
-Staging) is now in progress**, implementing the immutable-artifact
-build/scan/migrate/deploy/verify mechanism designed in §18 — see §29
-for exact scope and what remains explicitly out of it (PR24E onward,
-real infrastructure provisioning, and provider selection).
+Staging) is merged and code/tooling-complete** (GitHub PR #133, squash
+SHA `84144f096aacb9e2687422c7cd84cc1354346aa7`), implementing the
+immutable-artifact build/scan/migrate/deploy/verify mechanism designed
+in §18, including two independent-review fix rounds (CRITICAL image
+scan hardened into a structural pre-migration gate with digest-pinned
+immutable artifact identity; a `workflow_dispatch` input
+shell-injection path closed) — see §29 for exact scope and what remains
+explicitly out of it (PR24E onward, real infrastructure provisioning,
+and provider selection). **Operational Staging evidence remains
+pending: the manual `cd-staging.yml` workflow has not yet been
+executed even once, no hosting provider has been selected, no real
+persistent Staging environment exists, and the real PR24C
+backup/restore rehearsal has not yet been performed.**
 
 **Baseline (PR24D — CI/CD & Staging):**
-`cd9764ef5ba5e56062ee41266c8d96e50f1152c0` — the real squash-merge SHA
-of GitHub PR #132 (PR24C — Backup & Restore). **Roadmap PR23 (Cutover
+`84144f096aacb9e2687422c7cd84cc1354346aa7` — the real squash-merge SHA
+of GitHub PR #133 (PR24D — CI/CD & Staging). **Roadmap PR23 (Cutover
 Readiness) is fully implementation-complete; PR24's own architecture,
-all six Owner Decisions, PR24B, and PR24C are complete**, as of this
-baseline. Real Pilot execution, Production cutover, AppSheet's actual
-read-only transition, a selected commercial provider, a rehearsed
-backup/restore procedure, and a real Staging environment have **not**
-occurred — PR24D builds the CD mechanism and proves it against an
-ephemeral, CI-provisioned target only; it does not provision real
-infrastructure, select a provider, or create any paid resource.
+all six Owner Decisions, PR24B, PR24C, and PR24D's code/tooling are
+complete**, as of this baseline. Real Pilot execution, Production
+cutover, AppSheet's actual read-only transition, a selected commercial
+provider, a rehearsed backup/restore procedure, a real Staging
+environment, and even a single manual execution of `cd-staging.yml`
+have **not** occurred — PR24D built the CD mechanism and proved it
+against an ephemeral, CI-provisioned target only; it does not provision
+real infrastructure, select a provider, or create any paid resource.
+PR24E (UAT Readiness) remains not started, gated on real Staging
+availability and sufficient operational deployment/backup evidence.
 
 **Prior baseline (PR24C — Backup & Restore):**
+`cd9764ef5ba5e56062ee41266c8d96e50f1152c0` — the real squash-merge SHA
+of GitHub PR #132 (PR24C — Backup & Restore), now historical/
+superseded by the baseline above.
+
+**Prior baseline (PR24B — Deployment Foundation):**
 `d4a40349f62d76d129dcc6f1feea3e7e8fc8f28d` — the real squash-merge SHA
 of GitHub PR #131 (PR24B — Deployment Foundation), now historical/
 superseded by the baseline above.
@@ -110,8 +128,13 @@ was only knowable after that merge completed — per this repository's
 standing process, no separate self-referential "baseline adoption" PR
 is created for it). This planning round folds that sync in:
 
-- **Current authoritative baseline:** `f35fe716d57c51042d86a661657f679799b6a9e3`
-  (GitHub PR #128, PR23F).
+- **Baseline at the time this PR24 planning round began (historical):**
+  `f35fe716d57c51042d86a661657f679799b6a9e3` (GitHub PR #128, PR23F).
+  The repository's current authoritative baseline is now
+  `84144f096aacb9e2687422c7cd84cc1354346aa7` (GitHub PR #133, PR24D —
+  CI/CD & Staging) — see `docs/ROADMAP.md`'s "Current baseline" section
+  for the live value, which has advanced multiple times since this
+  planning round (PR24 Owner Decision Closure, PR24B, PR24C, PR24D).
 - **PR23A–PR23F:** merged and complete.
 - **Roadmap PR23:** implementation complete.
 - **Pilot:** **not executed.**
@@ -1788,15 +1811,20 @@ maintainable next sequence this document proposes is:
   Staging environment is real (§13 of this document's proposed
   sequence), matching every existing PR20-23 evidence/retention
   contract (§24) unchanged.
-- **PR24D — CI/CD & Staging** *(in progress — this PR)*: build the
-  immutable-artifact CD mechanism (§18) and prove it against an
-  ephemeral, CI-provisioned target — the environment PR24C's tooling
-  will genuinely be rehearsed against once real Staging infrastructure
-  is provisioned under a selected provider (OD-PR24-1's architecture
-  class is approved; the specific vendor is not yet selected). **This
-  does not itself stand up real, persistent Staging infrastructure** —
-  see `docs/runbooks/PR24_STAGING_DEPLOYMENT_RUNBOOK.md` §0's explicit
-  "CD mechanism proof" vs. "real Staging environment exists" distinction.
+- **PR24D — CI/CD & Staging** *(code/tooling complete — merged, GitHub
+  PR #133, squash SHA `84144f096aacb9e2687422c7cd84cc1354346aa7`)*:
+  built the immutable-artifact CD mechanism (§18), including two
+  independent-review fix rounds (CRITICAL image-scan hard-gating +
+  digest-pinned artifact identity; a `workflow_dispatch` shell-injection
+  fix), and proved it against an ephemeral, CI-provisioned target — the
+  environment PR24C's tooling will genuinely be rehearsed against once
+  real Staging infrastructure is provisioned under a selected provider
+  (OD-PR24-1's architecture class is approved; the specific vendor is
+  not yet selected). **This does not itself stand up real, persistent
+  Staging infrastructure, and the manual `cd-staging.yml` workflow has
+  not yet been executed even once** — see `docs/runbooks/
+  PR24_STAGING_DEPLOYMENT_RUNBOOK.md` §0's explicit "CD mechanism proof"
+  vs. "real Staging environment exists" distinction.
 - **PR24E — UAT Readiness** *(proposed, not started)*: execute and
   record the §25 checklist against Staging — the first point at which
   this repository can honestly claim UAT evidence exists.
