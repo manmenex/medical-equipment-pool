@@ -6494,3 +6494,139 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
   specification, cross-checked against
   `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §14-§21/§28
   OD-PR24-1, and `docs/runbooks/PR24_BACKUP_RESTORE_RUNBOOK.md`.
+
+
+## 2026-08-29 — PR24D Fix Round 1 (independent review, two P1): image-scan did not block migration, and commit-SHA tags were treated as immutable artifact identity -- fixed, not merged
+
+- **Finding A (independent review, P1, blocking):** at reviewed head
+  `36465a22623ed3260dd46c82fa47647a76279a3c`,
+  `.github/workflows/cd-staging.yml`'s `migrate-and-verify` job listed
+  `needs: [resolve-ref, build-push-images]` -- it did **not** depend on
+  `image-scan`. A CRITICAL Trivy finding failed the `image-scan` job,
+  but nothing structurally prevented `migrate-and-verify` from running
+  concurrently with, or even completing before, that blocking scan
+  result. Empirically reproduced: `git show <reviewed-head>:.github/
+  workflows/cd-staging.yml`, parsed with `yaml.safe_load`, confirms
+  `jobs['migrate-and-verify']['needs']` omitted `'image-scan'`.
+- **Finding B (independent review, P1, blocking):** the workflow's
+  `build-push-images` job pushed images tagged only by commit SHA
+  (`...-backend:<sha>`) and treated that tag as if it were the
+  immutable artifact identity every downstream step consumed
+  (`docker pull`/`docker run`/Trivy `image-ref` all referenced the bare
+  tag output). A registry tag is a mutable pointer -- a workflow re-run
+  for the same commit SHA, or a moved Dockerfile base-image tag
+  (`python:3.12-slim`/`node:22-slim`/`nginx:1.27-alpine`, all
+  tag-pinned, not digest-pinned), can make the same tag point at
+  different bytes later. Empirically reproduced: the reviewed head's
+  `build-push-images` job had no digest-capture step and no `*_ref`
+  output at all -- every Trivy/pull/run step referenced
+  `outputs.backend_image`/`outputs.frontend_image` (the tag) directly.
+- **Fix A:** `migrate-and-verify` now lists `needs: [resolve-ref,
+  build-push-images, image-scan]`. `image-scan`'s two blocking Trivy
+  steps carry no `continue-on-error`/`if: always()` escape hatch, so a
+  CRITICAL finding fails that job outright and GitHub Actions skips
+  `migrate-and-verify` as a direct, structural consequence -- migration
+  and application start can never run ahead of, or concurrently with, a
+  blocking scan result.
+- **Fix B:** `build-push-images`'s two `docker/build-push-action@v6`
+  steps are given explicit ids (`build_backend`/`build_frontend`); a
+  new `validate_digests` step reads each step's own `outputs.digest`,
+  fails the job closed (non-zero exit) if either digest is missing or
+  does not match `^sha256:[0-9a-f]{64}$`, and constructs digest-pinned
+  references (`ghcr.io/<owner>/<repo>-backend@sha256:...`). The job now
+  exports six outputs: `backend_image_tag`/`frontend_image_tag`
+  (traceability aliases -- pushed for human/source lookup, never
+  consumed downstream), `backend_image_digest`/`frontend_image_digest`,
+  and `backend_image_ref`/`frontend_image_ref` (the digest-pinned
+  references every later step must use). `image-scan`'s Trivy steps,
+  `migrate-and-verify`'s `docker pull`/migration/application-start
+  steps, and a new `Record release evidence` step all consume only the
+  `*_image_ref` outputs -- never `*_image_tag` -- verified by a
+  dedicated static test (below) that greps every `docker pull`/`docker
+  run` line in `migrate-and-verify` for `_image_tag` and fails if found.
+- **Identity contract established (not previously distinguished in this
+  repository):** a Git commit SHA identifies **source provenance**
+  ("which revision produced this build?"); a registry digest identifies
+  the **immutable release artifact** ("which exact bytes were scanned,
+  migrated, deployed, verified, promoted, or rolled back?"); the
+  commit-SHA image tag is a traceability **alias** only -- a mutable
+  registry pointer, useful for humans, never itself an artifact
+  identity. A workflow re-run moving a SHA tag to different bytes is
+  explicitly documented as safe *because* every operation inside a
+  given run captures and uses that run's own digest, never re-resolving
+  the tag later.
+- **Promotion/rollback contract corrected:** Staging-to-Production
+  promotion now means redeploying the exact digest-pinned references
+  already scanned and verified, never re-pulling by the SHA tag or
+  rebuilding from the same source SHA. Application rollback means
+  redeploying the previously recorded backend/frontend image digests
+  associated with a known-good release SHA, not "redeploy the prior SHA
+  tag." Updated in `docs/runbooks/PR24_STAGING_DEPLOYMENT_RUNBOOK.md`
+  §3 (new identity-contract table + promotion/rollback subsections) and
+  §12 (rollback), and in `docs/design/
+  PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §18 (PR24D mechanism
+  summary) and §21 (Application Rollback).
+- **Base-image mutability explicitly scoped out, not silently ignored:**
+  `docs/runbooks/PR24_STAGING_DEPLOYMENT_RUNBOOK.md` §3 now documents
+  that `backend/Dockerfile`/`frontend/Dockerfile`'s base images are
+  tag-pinned, not digest-pinned, so byte-for-byte reproducibility across
+  *separate* builds of the same source SHA is not guaranteed -- the
+  digest-identity fix solves *release* correctness (the digest scanned
+  within one workflow run is provably the digest deployed within that
+  same run), not cross-run reproducibility. Digest-pinning Dockerfile
+  base images was evaluated and deliberately not implemented: no
+  existing PR24 design document requirement calls for it, and adding it
+  now would be scope expansion beyond the two reported P1 findings, per
+  the task's own explicit instruction.
+- **Severity/threshold policy unchanged, not re-litigated:** Trivy
+  remains CRITICAL-blocking with `ignore-unfixed: true`;
+  `dependency-scan` (`pip-audit`/`npm audit`) remains informational and
+  parallel, not added to `migrate-and-verify`'s `needs` -- both
+  confirmed unchanged by a dedicated regression test.
+- **`PyYAML` added as a test-only dependency:** `backend/tests/
+  test_pr24d_workflow_static.py` parses the workflow YAML directly to
+  assert this fix's structural guarantees; `PyYAML` was not previously
+  declared anywhere in `backend/requirements.txt` (only present in this
+  sandbox transitively via an unrelated tool) and would not have been
+  installed by CI's own `pip install -r requirements.txt`. Added under
+  requirements.txt's existing "testing" section and excluded from the
+  production image via `backend/Dockerfile`'s existing test-dependency
+  filter (same mechanism already used for `pytest`/`httpx`/`pdfplumber`
+  etc.) -- never shipped at runtime.
+- **Tests:** `backend/tests/test_pr24d_workflow_static.py` (new, 14
+  tests) -- pure YAML-structure assertions, no live workflow execution
+  required: `migrate-and-verify` depends on `image-scan`; neither Trivy
+  step has a soft-failure escape hatch; both build steps carry explicit
+  ids and `validate_digests` exists; all six digest/ref/tag outputs are
+  exported; the digest-validation step fails closed on a missing/
+  malformed digest; both Trivy steps scan `*_image_ref`, never
+  `*_image_tag`; the Trivy severity/threshold policy is unchanged;
+  every `docker pull`/`docker run` line in `migrate-and-verify`
+  consumes `*_image_ref`, never `*_image_tag`; the release-evidence
+  step records `source_sha` plus both components' digests/refs;
+  `dependency-scan` remains informational and outside
+  `migrate-and-verify`'s `needs`; workflow permissions remain
+  least-privilege; the workflow remains `workflow_dispatch`-only (no
+  `push`/`pull_request` trigger added). Both reported defects were
+  independently reproduced against the reviewed head's actual workflow
+  YAML (via `yaml.safe_load` on `git show <reviewed-head>:.github/
+  workflows/cd-staging.yml`) before the fix, confirming
+  `image-scan` was absent from `needs` and the Trivy/pull/run steps
+  referenced the bare tag output with no digest output existing at all.
+- **Preserved unchanged:** the trusted-ref validation
+  (`git merge-base --is-ancestor`), the ephemeral CI-provisioned
+  PostgreSQL verification target (still explicitly not real Staging),
+  `deploy_migrate.py`/`staging_smoke_check.py`'s own internal logic
+  (unchanged, only the image reference passed to them changed), the
+  scheduler single-instance invariant, workflow permissions
+  (`contents: read` default, `packages: write`/`read` scoped per job),
+  and every PR20-23 business rule/lifecycle/QR invariant. No PR24E+
+  scope added. No real Staging environment provisioned; no provider
+  selected; real PR24C backup/restore rehearsal remains PENDING.
+- **Status:** Draft, **not merged, PR24D implementation in progress**.
+  This is a fix round on the same in-progress PR24D, not a new PR and
+  not the start of PR24E.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** independent review of GitHub PR #133 at reviewed head
+  `36465a22623ed3260dd46c82fa47647a76279a3c`, and the PR24D — Fix
+  Round 1 task's own binding specification.

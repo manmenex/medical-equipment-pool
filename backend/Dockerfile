@@ -20,7 +20,7 @@ COPY requirements.txt .
 # install; CI's backend-tests/backend-postgres-tests jobs still
 # `pip install -r requirements.txt` directly (the full file, unfiltered) on
 # the runner, so pytest continues to see every test dependency there.
-RUN grep -vE '^(aiosqlite|pytest|pytest-asyncio|httpx|pdfplumber)([><=~! ]|$)' requirements.txt > requirements.runtime.txt \
+RUN grep -vE '^(aiosqlite|pytest|pytest-asyncio|httpx|pdfplumber|PyYAML)([><=~! ]|$)' requirements.txt > requirements.runtime.txt \
     && pip install --no-cache-dir -r requirements.runtime.txt
 
 COPY . .

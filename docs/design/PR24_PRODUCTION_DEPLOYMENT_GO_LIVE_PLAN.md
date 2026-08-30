@@ -1119,18 +1119,25 @@ staged pipeline, **not implemented by this document**:
 
 **Mechanism implemented in PR24D:** `.github/workflows/cd-staging.yml`
 (manual `workflow_dispatch` trigger, a trusted-ref check via `git
-merge-base --is-ancestor`, immutable commit-SHA-tagged image build/push
-to GHCR, informational dependency scanning + CRITICAL-blocking image
-scanning, and a `migrate-and-verify` job that runs `backend/scripts/
-deploy_migrate.py` — the explicit, fail-closed migration step — then
-`backend/scripts/staging_smoke_check.py` — the readiness-gated
-post-deploy verification) against an **ephemeral, CI-provisioned**
-PostgreSQL database and container run on the Actions runner. **This
-proves the CD mechanism, not a real Staging deployment** — no hosting
-provider has been selected (OD-PR24-1 approves only the architecture
-class) and no external/paid resource is provisioned by PR24D. See
-`docs/runbooks/PR24_STAGING_DEPLOYMENT_RUNBOOK.md` for the operator
-procedure once a real Staging environment exists.
+merge-base --is-ancestor`, an image build/push to GHCR tagged by commit
+SHA for traceability, with the registry **digest** each build returns
+captured and validated as the actual immutable artifact identity —
+Fix Round 1, independent review, P1-B: a commit-SHA tag is a mutable
+registry pointer, not itself an immutable reference — informational
+dependency scanning + CRITICAL-blocking image scanning of the
+digest-pinned images, and a `migrate-and-verify` job, gated on the image
+scan succeeding (Fix Round 1, P1-A), that runs `backend/scripts/
+deploy_migrate.py` — the explicit, fail-closed migration step — against
+the digest-pinned image, then `backend/scripts/staging_smoke_check.py`
+— the readiness-gated post-deploy verification) against an
+**ephemeral, CI-provisioned** PostgreSQL database and container run on
+the Actions runner. **This proves the CD mechanism, not a real Staging
+deployment** — no hosting provider has been selected (OD-PR24-1
+approves only the architecture class) and no external/paid resource is
+provisioned by PR24D. See `docs/runbooks/PR24_STAGING_DEPLOYMENT_RUNBOOK.md`
+§3 for the full artifact-identity contract (Git SHA = source
+provenance; registry digest = immutable release artifact) and the
+operator procedure once a real Staging environment exists.
 
 ```
 PR opened → existing CI (unchanged: backend tests ×2, migrations, Docker smoke test, frontend build, git diff --check)
@@ -1248,9 +1255,15 @@ about rolling back the **application's own deployed version**, a
 different, narrower concern:
 
 - **Rolling back the application image/version:** under the immutable-
-  artifact model (§18), rollback means redeploying the prior
-  commit-SHA-tagged image — no rebuild, no code change, just pointing
-  traffic back at a known-good previously-built artifact.
+  artifact model (§18), rollback means redeploying the prior known-good
+  release's **digest-pinned** image reference (`docs/runbooks/
+  PR24_STAGING_DEPLOYMENT_RUNBOOK.md` §3) — no rebuild, no code change,
+  just pointing traffic back at a known-good previously-built artifact.
+  The commit SHA and its registry tag identify the source revision for
+  traceability; the registry digest recorded in that release's evidence
+  is the actual artifact redeployed, since a SHA tag is a mutable
+  registry pointer and must not be treated as the rollback target
+  itself (Fix Round 1, independent review, P1-B).
 - **Database compatibility constraint:** an application rollback is
   only safe if the prior application version is compatible with the
   **current** database schema. If the failed deployment included a

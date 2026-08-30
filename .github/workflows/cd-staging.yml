@@ -3,6 +3,16 @@ name: CD - Staging (manual)
 # Roadmap PR24D (docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md
 # §18): the immutable-artifact build/scan/migrate/verify mechanism.
 #
+# Artifact identity contract (Fix Round 1, independent review, P1-B):
+# the Git commit SHA is source PROVENANCE ("which revision produced
+# this build?"); the registry DIGEST captured in build-push-images is
+# the immutable ARTIFACT identity ("which exact bytes were scanned,
+# migrated, deployed, and verified?"). The commit-SHA image tag pushed
+# alongside is a traceability ALIAS for humans -- a mutable registry
+# pointer, not an immutable reference -- and is never consumed by any
+# scan/migrate/deploy step below; only the `*_image_ref` (digest-pinned)
+# outputs are.
+#
 # This workflow proves the CD *mechanism* -- it does NOT deploy to any
 # real, persistent Staging infrastructure. No hosting provider has been
 # selected yet (docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md
@@ -100,15 +110,27 @@ jobs:
           echo "sha=$RESOLVED" >> "$GITHUB_OUTPUT"
 
   build-push-images:
-    name: Build and push immutable images (commit-SHA tagged)
+    name: Build and push immutable images (SHA tag + digest identity)
     needs: resolve-ref
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     outputs:
-      backend_image: ${{ steps.tags.outputs.backend_image }}
-      frontend_image: ${{ steps.tags.outputs.frontend_image }}
+      # Fix Round 1 (independent review, P1-B): the commit-SHA tag is a
+      # traceability ALIAS only -- it is a mutable registry pointer. A
+      # workflow re-run for the same source SHA (or a moved Dockerfile
+      # base-image tag) can make this alias point at different bytes
+      # later. The registry DIGEST captured below is the immutable
+      # artifact identity -- every downstream step (scan/migrate/deploy/
+      # promote/rollback) must consume `*_image_ref` (digest-pinned),
+      # never `*_image_tag` alone.
+      backend_image_tag: ${{ steps.tags.outputs.backend_image_tag }}
+      frontend_image_tag: ${{ steps.tags.outputs.frontend_image_tag }}
+      backend_image_digest: ${{ steps.validate_digests.outputs.backend_image_digest }}
+      frontend_image_digest: ${{ steps.validate_digests.outputs.frontend_image_digest }}
+      backend_image_ref: ${{ steps.validate_digests.outputs.backend_image_ref }}
+      frontend_image_ref: ${{ steps.validate_digests.outputs.frontend_image_ref }}
     steps:
       - name: Checkout resolved ref
         uses: actions/checkout@v4
@@ -116,14 +138,15 @@ jobs:
           ref: ${{ needs.resolve-ref.outputs.sha }}
           persist-credentials: false
 
-      - name: Compute image tags
+      - name: Compute image tag (traceability alias only)
         id: tags
         run: |
           set -euo pipefail
           SHA="${{ needs.resolve-ref.outputs.sha }}"
           REPO_LC=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          echo "backend_image=${{ env.REGISTRY }}/${REPO_LC}-backend:${SHA}" >> "$GITHUB_OUTPUT"
-          echo "frontend_image=${{ env.REGISTRY }}/${REPO_LC}-frontend:${SHA}" >> "$GITHUB_OUTPUT"
+          echo "backend_image_tag=${{ env.REGISTRY }}/${REPO_LC}-backend:${SHA}" >> "$GITHUB_OUTPUT"
+          echo "frontend_image_tag=${{ env.REGISTRY }}/${REPO_LC}-frontend:${SHA}" >> "$GITHUB_OUTPUT"
+          echo "repo_lc=${REPO_LC}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -132,22 +155,57 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build once (docs/design/... §18/§19's "build once, promote" model)
-      # -- this exact SHA-tagged image is what migrate-and-verify below
-      # runs, never a rebuild.
+      # Build once (docs/design/... §18/§19's "build once, promote"
+      # model). The SHA tag above is pushed alongside for human/source
+      # traceability, but the digest this step returns (captured and
+      # validated below) is what every later step in this run actually
+      # consumes -- the tag is never re-resolved after this point.
       - name: Build and push backend image
+        id: build_backend
         uses: docker/build-push-action@v6
         with:
           context: ./backend
           push: true
-          tags: ${{ steps.tags.outputs.backend_image }}
+          tags: ${{ steps.tags.outputs.backend_image_tag }}
 
       - name: Build and push frontend image
+        id: build_frontend
         uses: docker/build-push-action@v6
         with:
           context: ./frontend
           push: true
-          tags: ${{ steps.tags.outputs.frontend_image }}
+          tags: ${{ steps.tags.outputs.frontend_image_tag }}
+
+      # Fail closed if either digest output is missing or malformed --
+      # this mechanism must never silently fall back to the mutable SHA
+      # tag as if it were an immutable artifact reference.
+      - name: Validate digests and construct immutable image references
+        id: validate_digests
+        run: |
+          set -euo pipefail
+          REPO_LC="${{ steps.tags.outputs.repo_lc }}"
+
+          check_digest() {
+            local component="$1" digest="$2"
+            if [ -z "$digest" ]; then
+              echo "::error::${component} build did not return a digest output -- refusing to fall back to the mutable SHA tag as an artifact identity"
+              exit 1
+            fi
+            if ! echo "$digest" | grep -qE '^sha256:[0-9a-f]{64}$'; then
+              echo "::error::${component} digest output is malformed: $digest"
+              exit 1
+            fi
+          }
+
+          BACKEND_DIGEST="${{ steps.build_backend.outputs.digest }}"
+          FRONTEND_DIGEST="${{ steps.build_frontend.outputs.digest }}"
+          check_digest backend "$BACKEND_DIGEST"
+          check_digest frontend "$FRONTEND_DIGEST"
+
+          echo "backend_image_digest=$BACKEND_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "frontend_image_digest=$FRONTEND_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "backend_image_ref=${{ env.REGISTRY }}/${REPO_LC}-backend@$BACKEND_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "frontend_image_ref=${{ env.REGISTRY }}/${REPO_LC}-frontend@$FRONTEND_DIGEST" >> "$GITHUB_OUTPUT"
 
   dependency-scan:
     name: Dependency vulnerability scan (informational)
@@ -202,7 +260,7 @@ jobs:
           npm audit --omit=dev
 
   image-scan:
-    name: Container image vulnerability scan
+    name: Container image vulnerability scan (digest-pinned, blocking)
     needs: [resolve-ref, build-push-images]
     runs-on: ubuntu-latest
     permissions:
@@ -216,14 +274,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Severity policy (PR24D §22): CRITICAL findings block this job
-      # (exit-code 1); HIGH/MEDIUM/LOW are reported in the log only.
-      # This is a documented, deliberate threshold -- not every
-      # informational finding blocks the build.
+      # Fix Round 1 (independent review, P1-B): scan the digest-pinned
+      # reference, never the mutable SHA tag -- this guarantees the
+      # exact bytes scanned here are the exact bytes migrate-and-verify
+      # later pulls and runs (no possibility of the tag having moved
+      # between these two jobs).
+      #
+      # Severity policy (PR24D §22, unchanged): CRITICAL findings block
+      # this job (exit-code 1); HIGH/MEDIUM/LOW are reported in the log
+      # only. This job has no `continue-on-error`/`if: always()` on
+      # either scan step -- a CRITICAL finding fails this job outright,
+      # and migrate-and-verify (which now `needs: image-scan`, see
+      # below) is skipped by GitHub Actions as a direct consequence,
+      # never merely "best-effort" gated.
       - name: Trivy scan -- backend image (blocking on CRITICAL)
         uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: ${{ needs.build-push-images.outputs.backend_image }}
+          image-ref: ${{ needs.build-push-images.outputs.backend_image_ref }}
           severity: CRITICAL
           exit-code: '1'
           ignore-unfixed: true
@@ -231,14 +298,22 @@ jobs:
       - name: Trivy scan -- frontend image (blocking on CRITICAL)
         uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: ${{ needs.build-push-images.outputs.frontend_image }}
+          image-ref: ${{ needs.build-push-images.outputs.frontend_image_ref }}
           severity: CRITICAL
           exit-code: '1'
           ignore-unfixed: true
 
   migrate-and-verify:
     name: Migrate + deploy + readiness-gate (CD mechanism proof, ephemeral)
-    needs: [resolve-ref, build-push-images]
+    # Fix Round 1 (independent review, P1-A): this job now requires
+    # image-scan to succeed first. image-scan has no
+    # `continue-on-error`/`if: always()` on its blocking Trivy steps
+    # (see that job's own comments), so a CRITICAL finding fails
+    # image-scan outright, and GitHub Actions skips this job as a
+    # direct, structural consequence -- migration/application
+    # start/verification can never run concurrently with, or ahead of,
+    # a blocking scan result.
+    needs: [resolve-ref, build-push-images, image-scan]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -280,18 +355,38 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull the exact built backend image (no rebuild)
-        run: docker pull ${{ needs.build-push-images.outputs.backend_image }}
+      # Fix Round 1 (independent review, P1-B): record the release
+      # evidence -- source SHA plus both components' SHA tag, digest,
+      # and digest-pinned reference -- before doing anything else, so
+      # every step below (and this job's log) is traceable back to the
+      # exact scanned bytes. No credential appears in this evidence.
+      - name: Record release evidence (source SHA + digests)
+        run: |
+          {
+            echo "source_sha=${{ needs.resolve-ref.outputs.sha }}"
+            echo "backend_image_tag=${{ needs.build-push-images.outputs.backend_image_tag }}"
+            echo "backend_image_digest=${{ needs.build-push-images.outputs.backend_image_digest }}"
+            echo "backend_image_ref=${{ needs.build-push-images.outputs.backend_image_ref }}"
+            echo "frontend_image_tag=${{ needs.build-push-images.outputs.frontend_image_tag }}"
+            echo "frontend_image_digest=${{ needs.build-push-images.outputs.frontend_image_digest }}"
+            echo "frontend_image_ref=${{ needs.build-push-images.outputs.frontend_image_ref }}"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Digest-pinned pull: the exact bytes image-scan just scanned,
+      # never the mutable SHA tag re-resolved at this later point.
+      - name: Pull the exact scanned backend image by digest (no rebuild)
+        run: docker pull ${{ needs.build-push-images.outputs.backend_image_ref }}
 
       # PR24D §14/§15: migration is an explicit, separate step, run
-      # against the exact pushed image, strictly before the application
-      # receives any traffic. A random per-run JWT secret is generated
-      # here (never logged, never a repository secret, discarded when
-      # the job ends) so this ephemeral verification also exercises the
-      # real ENVIRONMENT=production secret-validation path
-      # (backend/app/core/config.py validate_production_secrets) a real
-      # Staging deployment would run under -- never DATABASE_URL or the
-      # generated secret is printed to the log.
+      # against the exact scanned, digest-pinned image, strictly before
+      # the application receives any traffic. A random per-run JWT
+      # secret is generated here (never logged, never a repository
+      # secret, discarded when the job ends) so this ephemeral
+      # verification also exercises the real ENVIRONMENT=production
+      # secret-validation path (backend/app/core/config.py
+      # validate_production_secrets) a real Staging deployment would
+      # run under -- never DATABASE_URL or the generated secret is
+      # printed to the log.
       - name: Generate ephemeral run secrets
         run: |
           set -euo pipefail
@@ -299,18 +394,18 @@ jobs:
           echo "::add-mask::$GENERATED_SECRET"
           echo "JWT_SECRET_KEY=$GENERATED_SECRET" >> "$GITHUB_ENV"
 
-      - name: Run explicit migration deployment step
+      - name: Run explicit migration deployment step (digest-pinned image)
         env:
           DATABASE_URL: postgresql+asyncpg://mep_cd_verify:mep_cd_verify_password@localhost:5432/mep_cd_verify_db
         run: |
           docker run --rm --network host \
             -e DATABASE_URL="$DATABASE_URL" \
-            ${{ needs.build-push-images.outputs.backend_image }} \
+            ${{ needs.build-push-images.outputs.backend_image_ref }} \
             python scripts/deploy_migrate.py \
               --target-environment cd-mechanism-proof \
               --artifact-sha ${{ needs.resolve-ref.outputs.sha }}
 
-      - name: Start the deployed container
+      - name: Start the deployed container (digest-pinned image)
         env:
           DATABASE_URL: postgresql+asyncpg://mep_cd_verify:mep_cd_verify_password@localhost:5432/mep_cd_verify_db
         run: |
@@ -320,7 +415,7 @@ jobs:
             -e JWT_SECRET_KEY="$JWT_SECRET_KEY" \
             -e ALLOWED_ORIGINS=https://cd-mechanism-proof.invalid \
             -e CACHE_ENABLED=false \
-            ${{ needs.build-push-images.outputs.backend_image }}
+            ${{ needs.build-push-images.outputs.backend_image_ref }}
 
       - name: Wait for liveness
         run: |

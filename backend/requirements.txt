@@ -28,6 +28,12 @@ pytest>=8.3.0
 pytest-asyncio>=0.24.0
 httpx>=0.27.0
 
+# PR24D Fix Round 1: used only by
+# tests/test_pr24d_workflow_static.py to parse
+# .github/workflows/cd-staging.yml for structural validation -- never
+# imported by application/runtime code.
+PyYAML>=6.0
+
 # Roadmap PR18D: PDF structure/text parser used only by the test suite to
 # validate generated PDF content (embedded fonts, extracted text) -- never
 # imported by application/runtime code. Exact-pinned alongside weasyprint
