@@ -6716,3 +6716,98 @@ For example, **GitHub PR #14 implemented Roadmap PR5** (equipment identifiers). 
 - **Source:** independent review of GitHub PR #133 at reviewed head
   `9d0a170702ae13783a3cad989a2af00e957921c9`, and the PR24D — Fix
   Round 2 task's own binding specification.
+
+
+## 2026-08-30 — GitHub PR #133 merged -- PR24D (CI/CD & Staging)
+code/tooling complete; operational Staging evidence still pending
+
+- **Merge recorded:** GitHub PR #133, "PR24D — CI/CD & Staging",
+  squash-merged into `claude/medical-equipment-pool-0c7fz0` on top of
+  `cd9764ef5ba5e56062ee41266c8d96e50f1152c0` (GitHub PR #132, PR24C).
+  Real squash-merge SHA: `84144f096aacb9e2687422c7cd84cc1354346aa7`.
+  Final reviewed feature-branch head:
+  `c394c680ec54ad1a224dd11ab0f61cdd7dc723b3` — independent Final Merge
+  Gate confirmed **zero reviews, zero comments, zero review threads**,
+  CI green 6/6 on that exact head, the reviewed head's tree verified
+  byte-identical to the merged squash commit's tree
+  (`git diff c394c680... 84144f0... --stat` produced no output), and
+  the squash commit's sole parent confirmed as
+  `cd9764ef5ba5e56062ee41266c8d96e50f1152c0`. Per this repository's
+  standing process, no separate self-referential "baseline adoption" PR
+  was created for PR #133's squash SHA — it became authoritative
+  immediately upon merge, recorded here by this governance close-out PR
+  (`docs/pr24d-post-merge-governance-closeout`).
+- **What PR #133 delivered:** the immutable-artifact
+  build/scan/migrate/deploy/verify CD mechanism designed in
+  `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §18
+  (`.github/workflows/cd-staging.yml`,
+  `backend/scripts/deploy_migrate.py`,
+  `backend/scripts/staging_smoke_check.py`), across the base PR plus
+  two independent-review fix rounds already recorded above: Fix Round 1
+  (CRITICAL image scan hardened into a structural pre-migration gate;
+  mutable commit-SHA image tags replaced by digest-pinned immutable
+  artifact identity) and Fix Round 2 (a `workflow_dispatch` input
+  shell-injection path in the `resolve-ref` job's trusted-ref
+  validation closed via `env:` routing). Both fix rounds are preserved
+  unchanged by this merge and by this governance close-out — neither is
+  reopened here.
+- **What PR #133 did NOT deliver — operational Staging evidence remains
+  PENDING:** the manual `cd-staging.yml` `workflow_dispatch` has not
+  been executed even once (GitHub requires a `workflow_dispatch`
+  workflow to exist on the repository's default branch before it can be
+  dispatched via API/UI, and this could not be obtained pre-merge — see
+  PR #133's own Fix Round 2 final report); no hosting provider has been
+  selected; no real, persistent Staging environment exists; no paid
+  external resource has been created; and the real PR24C backup/restore
+  rehearsal against a genuine Staging-class target has not been
+  performed. **"CD mechanism merged" is explicitly not the same claim
+  as "real Staging exists" or "a real deployment/rehearsal has
+  occurred."**
+- **Provider status:** OD-PR24-1 remains resolved at the
+  architecture-class level (Managed Application Platform + Managed
+  PostgreSQL) — this governance close-out does not reopen it. Selecting
+  a specific vendor within that approved class is now an
+  execution/configuration decision, not an unresolved Owner Decision;
+  any paid resource provisioning still requires explicit Owner
+  approval, per existing policy.
+- **Hostname status:** OD-PR24-5's explicit hostname-deferral policy
+  remains resolved and is not reopened — the provider-managed HTTPS
+  hostname remains sufficient for Staging; the concrete Production
+  custom hostname remains a later Production-Go-Live
+  execution/configuration input.
+- **PR24E/F/G status:** PR24E (UAT Readiness), PR24F (Pilot Execution),
+  and PR24G (Production Go-Live Governance) all remain **NOT STARTED**.
+  PR24E's start is gated on real Staging availability and sufficient
+  operational deployment/backup evidence, not merely on PR24D's
+  code/tooling being merged. Pilot and Production have not been
+  executed. **PR24 overall remains in progress, not complete.**
+- **Governance docs synced by this PR
+  (`docs/pr24d-post-merge-governance-closeout`):** `docs/ROADMAP.md`,
+  `docs/ROADMAP_STATUS.md`, `knowledge/CONTEXT.md`,
+  `knowledge/PROJECT_MEMORY.md`, and
+  `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` (header
+  status line, §18 mechanism note, §29 PR24D bullet) — every
+  "current baseline"/"PR24D in progress"/"PR24C ... current baseline"
+  occurrence swept to the new baseline and the code/tooling-complete-
+  but-operationally-pending distinction above, while every purely
+  historical baseline-chain entry (PR24B's `d4a40349f...`, PR24C's
+  `cd9764ef...`, and earlier) was left as historical record, not
+  erased. `docs/runbooks/PR24_STAGING_DEPLOYMENT_RUNBOOK.md` and
+  `docs/runbooks/PR24_BACKUP_RESTORE_RUNBOOK.md` were inspected and
+  found not stale — both already correctly describe the "CD mechanism
+  proof" vs. "real Staging exists" and "CI proves tooling" vs. "Staging
+  rehearsal proves operational readiness" distinctions in present tense
+  that remains accurate after this merge, so neither was edited.
+  `knowledge/CHANGE_HISTORY.md` was left unchanged, consistent with this
+  repository's standing practice of not recording routine PR merges
+  there (see prior governance close-out entries for the same rationale).
+- **No new Owner Decisions created.** No `backend/**`, `frontend/**`,
+  `.github/workflows/**`, `docker-compose*`, `Dockerfile*`,
+  `alembic/**`, or `tests/**` file was touched by this governance
+  close-out — docs/knowledge only.
+- **Status:** This governance close-out PR itself is Draft, **not
+  merged**.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** GitHub PR #133's own merge record and Final Merge Gate
+  verification, and the "PR24D Post-Merge Governance Close-out" task's
+  own binding specification.
