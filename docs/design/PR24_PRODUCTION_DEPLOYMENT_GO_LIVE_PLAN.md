@@ -128,8 +128,13 @@ was only knowable after that merge completed — per this repository's
 standing process, no separate self-referential "baseline adoption" PR
 is created for it). This planning round folds that sync in:
 
-- **Current authoritative baseline:** `f35fe716d57c51042d86a661657f679799b6a9e3`
-  (GitHub PR #128, PR23F).
+- **Baseline at the time this PR24 planning round began (historical):**
+  `f35fe716d57c51042d86a661657f679799b6a9e3` (GitHub PR #128, PR23F).
+  The repository's current authoritative baseline is now
+  `84144f096aacb9e2687422c7cd84cc1354346aa7` (GitHub PR #133, PR24D —
+  CI/CD & Staging) — see `docs/ROADMAP.md`'s "Current baseline" section
+  for the live value, which has advanced multiple times since this
+  planning round (PR24 Owner Decision Closure, PR24B, PR24C, PR24D).
 - **PR23A–PR23F:** merged and complete.
 - **Roadmap PR23:** implementation complete.
 - **Pilot:** **not executed.**

@@ -6811,3 +6811,106 @@ code/tooling complete; operational Staging evidence still pending
 - **Source:** GitHub PR #133's own merge record and Final Merge Gate
   verification, and the "PR24D Post-Merge Governance Close-out" task's
   own binding specification.
+
+
+## 2026-08-30 — PR #134 Fix Round 1 (independent review, P1): stale-state
+sweep incomplete — four confirmed stale current/normative items
+corrected, full six-file re-sweep performed, still not merged
+
+- **Finding (independent review, P1, blocking):** at reviewed head
+  `895e41e10181093c2194f110d0bdb04f5e93d1c5`, the base-round sweep
+  fixed every occurrence tied to the *most recent* baseline transition
+  (PR24C → PR24D) but missed four older, pre-existing stale items that
+  predate this governance PR — each either directly labeled a
+  long-superseded SHA as the "current baseline" or described an
+  already-merged PR as still in progress:
+  1. `docs/ROADMAP.md`: PR23C's paragraph (squash SHA `c10f5082...`)
+     read "... current baseline — see the top of this document)"
+     instead of "historical — see the top of this document)" — an
+     isolated copy-paste inconsistency, since every sibling paragraph
+     in the same list (PR23B, PR23D) correctly said "historical."
+  2. `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §2: "
+     **Current authoritative baseline:** `f35fe716...` (GitHub PR #128,
+     PR23F)." — accurate when this planning round began, now stale;
+     the baseline has since advanced four times (PR24 Owner Decision
+     Closure, PR24B, PR24C, PR24D).
+  3. `knowledge/PROJECT_MEMORY.md`: two separate instances —
+     (a) "Current authoritative baseline: `599478992d...`" inside a
+     long historical narrative paragraph describing the state right
+     after GitHub PR #129 merged, never re-labeled as historical when
+     later baselines superseded it; (b) "...itself since superseded by
+     `d64d50d...`, PR21E, **the current baseline**; see 'Current
+     baseline and Roadmap' above" — the appositive directly (if
+     ambiguously) labeled the old PR21E SHA itself as the current
+     baseline, rather than only pointing the reader to the current
+     baseline section.
+  4. `knowledge/CONTEXT.md`: "PR23F (Cutover Runbook + Final Governance
+     Close-out) is now in progress, not yet merged." — PR23F merged as
+     GitHub PR #128 long ago; this sentence was never updated after
+     that merge.
+- **Fix:** each item reclassified as historical/merged with an explicit
+  qualifier and, where useful, a pointer to the true current baseline —
+  never deleted, never silently replaced with the new SHA as if it had
+  always been current. Specifically: (1) `c10f5082...` now reads
+  "historical" matching its siblings; (2) the design doc's §2 baseline
+  line now reads "Baseline at the time this PR24 planning round began
+  (historical): `f35fe716...` ... The repository's current
+  authoritative baseline is now `84144f096aacb9e2687422c7cd84cc1354346aa7`
+  ... see `docs/ROADMAP.md`'s 'Current baseline' section"; (3a) the
+  PROJECT_MEMORY.md `599478992d...` line now reads "**Historical —
+  baseline at that point in this narrative (before PR24B/C/D merged;
+  now historical/superseded — see 'Current baseline and Roadmap' at
+  the top of this document for the live value,
+  `84144f096aacb9e2687422c7cd84cc1354346aa7`):**"; (3b) the PR21E
+  appositive now reads "...itself since superseded by `d64d50d...`,
+  PR21E's own baseline at that time, itself since superseded multiple
+  times over; see 'Current baseline and Roadmap' above for the live
+  value" — no SHA is now described as *being* the current baseline
+  except `84144f096aacb9e2687422c7cd84cc1354346aa7` itself; (4) the
+  CONTEXT.md sentence now reads "PR23F ... has since also merged too
+  (GitHub PR #128, historical) — **Roadmap PR23 overall is fully
+  implementation-complete.** PR24's architecture/design, all six Owner
+  Decisions, PR24B, PR24C, and PR24D's code/tooling have since also
+  merged too — see 'Current baseline' above for the live baseline
+  (`84144f096aacb9e2687422c7cd84cc1354346aa7`)."
+- **Full six-file re-sweep performed** (not just the four reported
+  items): grepped `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`,
+  `knowledge/CONTEXT.md`, `knowledge/PROJECT_MEMORY.md`,
+  `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`, and
+  `docs/DECISION_LOG.md` for `current baseline`, `current authoritative
+  baseline`, `authoritative baseline`, `repository baseline`, `baseline
+  entering`, `baseline is`, `in progress`, `not yet merged`,
+  `unmerged`, `pending merge`, and every older baseline SHA
+  (`c10f5082...`, `d4a40349f...`, `cd9764ef...`, `599478992d...`,
+  `f35fe716...`, `f64f7d1...`). Every hit was read in full surrounding
+  context and classified: (A) current/normative stale — the four items
+  above, all fixed; (B) historical and already clearly labeled ("
+  Historical — superseded by...", "...historical)", a dated
+  `## YYYY-MM-DD —` `DECISION_LOG.md` entry header) — left unchanged,
+  no history erased; (C) ambiguous — none remained after the fix; every
+  occurrence now unambiguously reads either as the one current
+  baseline (`84144f096aacb9e2687422c7cd84cc1354346aa7`) or as
+  explicitly historical. `docs/ROADMAP.md`'s many "...the current
+  baseline above/at the top of this document/section" phrases are
+  cross-reference pointers to the live "Current baseline" section, not
+  appositives naming an old SHA as current, and were correctly left
+  as-is. `docs/DECISION_LOG.md`'s own dozens of "new authoritative
+  baseline" statements are inside dated, append-only historical log
+  entries (this repository's standing convention: entries are never
+  retroactively edited) and were correctly left as-is.
+- **Single-current-baseline contract verified:** after the fix, every
+  changed file's normative prose that answers "what is the repository's
+  current authoritative baseline" gives exactly one value —
+  `84144f096aacb9e2687422c7cd84cc1354346aa7` — with no competing
+  answer remaining in current/normative text.
+- **Preserved unchanged:** PR24D code/tooling-complete vs.
+  operational-Staging-evidence-pending distinction (not collapsed into
+  a bare "PR24D complete" anywhere); PR24E/F/G not-started status;
+  OD-PR24-1/OD-PR24-5 not reopened; no new Owner Decision created; the
+  "baseline entering this governance close-out" wording (never
+  "baseline adoption"); no future squash SHA invented.
+- **Status:** Draft, **not merged, still in progress**.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** independent review of GitHub PR #134 at reviewed head
+  `895e41e10181093c2194f110d0bdb04f5e93d1c5`, and the "PR #134 — Fix
+  Round 1" task's own binding specification.

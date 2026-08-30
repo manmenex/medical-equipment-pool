@@ -503,7 +503,12 @@ Legacy migration and reconciliation are mandatory before PR24.
   `2da80231d4f037136b291863e379e739aa2905dd`); PR23E (Frontend /
   Operator Workflow) has since merged too (GitHub PR #127, squash SHA
   `8644536403eeec269e6dadf835f1bda3844b6cce`); PR23F (Cutover Runbook +
-  Final Governance Close-out) is now in progress, not yet merged.**
+  Final Governance Close-out) has since also merged too (GitHub PR
+  #128, historical) — **Roadmap PR23 overall is fully
+  implementation-complete.** PR24's architecture/design, all six Owner
+  Decisions, PR24B, PR24C, and PR24D's code/tooling have since also
+  merged too — see "Current baseline" above for the live baseline
+  (`84144f096aacb9e2687422c7cd84cc1354346aa7`).**
   GitHub PR #81, an earlier unsplit PR19A
   candidate, was closed without merging, superseded by
   PR19A1/PR19A2/PR19A3.

@@ -278,8 +278,9 @@ CHANGES on remaining finding PR80-H1R; final reviewed head
 PR19B merged with real squash-merge SHA
 `04f5bf5c76b51744981d1cc8072c074e604224e9` — historical for current-state
 purposes (superseded by `2743af8...`, PR20F's own baseline at the time,
-itself since superseded by `d64d50d...`, PR21E, the current baseline;
-see "Current baseline and Roadmap" above). GitHub PR #81, an earlier
+itself since superseded by `d64d50d...`, PR21E's own baseline at that
+time, itself since superseded multiple times over; see "Current
+baseline and Roadmap" above for the live value). GitHub PR #81, an earlier
 unsplit PR19A candidate, was closed without merging, superseded by
 PR19A1/PR19A2/PR19A3. **Both PR19A and PR19B are now complete; Roadmap
 PR19 (Legacy Import Foundation, backend + frontend skeleton) as a whole is
@@ -336,7 +337,10 @@ Re-Issue Support) is also merged (GitHub PR #126), PR23E (Frontend
 / Operator Workflow) is also merged (GitHub PR #127), and PR23F
 (Cutover Runbook + Final Governance Close-out) is also merged (GitHub
 PR #128, squash SHA `f35fe716d57c51042d86a661657f679799b6a9e3`, now
-historical/superseded). Current authoritative baseline:
+historical/superseded). **Historical — baseline at that point in this
+narrative (before PR24B/C/D merged; now historical/superseded — see
+"Current baseline and Roadmap" at the top of this document for the
+live value, `84144f096aacb9e2687422c7cd84cc1354346aa7`):**
 `599478992de363e1eda2fe8005ff79d565dee76d` (GitHub PR #129, Production
 Deployment & Go-Live Architecture Planning, squash-merged on top of
 `f35fe716...`, GitHub PR #128, PR23F). **All six

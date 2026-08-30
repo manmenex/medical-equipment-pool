@@ -125,7 +125,7 @@ references). PR23B does **not** implement readiness-gate evaluation,
 Go/No-Go decision logic, frontend, pilot execution, cutover execution,
 rollback execution, or Ward-to-Ward transfer tracking. **PR23C
 (Readiness Gate Evaluation) is also merged** (GitHub PR #125, squash SHA
-`c10f5082fdc5cb7fd66615fe25516a4982297026`, current baseline — see the
+`c10f5082fdc5cb7fd66615fe25516a4982297026`, historical — see the
 top of this document): a read-only backend service/endpoint
 (`GET .../cutover-readiness-runs/{run_id}/gate-evaluation`) evaluating
 Gates A-F (§12) against a completed run's persisted evidence, returning
