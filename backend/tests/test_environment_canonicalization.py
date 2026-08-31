@@ -50,7 +50,9 @@ def test_refresh_cookie_is_not_secure_for_development(monkeypatch, environment_v
     assert "Secure" not in set_cookie_header
 
 
-# PR24D-L1 (docs/runbooks/PR24_LOCAL_STAGING_INSTALLATION_RUNBOOK.md):
+# PR24D-L1 (docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md §32;
+# the full operator runbook is planned for PR24D-L3 and does not exist
+# yet):
 # COOKIE_SECURE decouples the refresh cookie's Secure attribute from
 # ENVIRONMENT so local Staging/UAT (ENVIRONMENT=production, plain HTTP on
 # a LAN, no TLS) can explicitly opt out without weakening real Production,

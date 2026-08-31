@@ -7064,3 +7064,101 @@ corrected, full six-file re-sweep performed, still not merged
 - **Source:** the "PR24D-L — Local Staging Execution & Installer
   Foundation" task's own binding specification, and GitHub PR #134's
   own merge record and Final Merge Gate verification.
+
+## 2026-08-31 — GitHub PR #135 Fix Round 1 (independent review, REQUEST
+CHANGES): Redis startup gating, single-backend structural guard, stale
+runbook references
+
+- **Review scope:** PR #135 ("PR24D-L1 — Local Docker Staging/UAT
+  Foundation"), reviewed exact head `08214ef0e75a246b58c62e13b7c3f8c9795ca766`
+  against base `7e2bfb2001642ea9a9754310b85d1911b7b2be5c` (GitHub PR
+  #134). Verdict: REQUEST CHANGES — two blocking findings (P1-A, P1-B),
+  one non-blocking-but-fix-this-round finding (P2).
+- **P1-A — Redis was accidentally a hard startup dependency:**
+  `deployment/local-staging/compose.yml`'s `backend` service depended on
+  `redis: condition: service_healthy`, contradicting the binding runtime
+  contract (`GET /api/v1/ready`: PostgreSQL blocking, Redis degraded/
+  non-blocking) — an unhealthy Redis would have prevented `backend`
+  (and therefore `frontend`, which waits on `backend`) from starting at
+  all. **Fix:** the `redis` health-gated dependency was removed from
+  `backend`'s `depends_on` entirely (not downgraded to
+  `service_started`) — verified via `backend/app/core/redis.py` that
+  every Redis-touching function already wraps its call in try/except and
+  fails open (cache misses become no-ops; refresh-token validation
+  treats an unreachable Redis as valid rather than locking users out),
+  so no ordering guarantee was being relied on in the first place.
+  `postgres`'s `service_healthy` dependency is unchanged. New regression
+  test: `test_redis_is_not_a_health_gated_startup_dependency_for_backend`.
+- **P1-B — single-backend/single-scheduler invariant was documented but
+  not structurally enforced:** a comment saying "never run `--scale
+  backend=N`" does not stop anyone from running it. **Fix:** `backend`
+  now sets a fixed `container_name: mep-local-staging-backend` —
+  Compose refuses to create two containers sharing one name, so
+  `docker compose up --scale backend=2` fails structurally, not just by
+  convention. Rationale documented at the `container_name` line itself
+  (not merely "do not scale"). New regression tests:
+  `test_backend_has_fixed_container_name_to_structurally_block_scaling`
+  and `test_backend_dockerfile_worker_count_is_one` (asserts
+  `backend/Dockerfile`'s CMD specifies exactly `--workers 1` directly,
+  since the container-count guard alone says nothing about worker count
+  inside a single container). Actual `docker compose up --scale
+  backend=2` failure was **not executed** — this sandbox has no Docker
+  daemon (`docker info` fails to reach `/var/run/docker.sock`, consistent
+  with every prior PR24 round); the guard is proven statically
+  (`container_name` present in `docker compose config` output) and by
+  the Compose semantics documented above, not by a live run.
+- **P2 — stale forward-references to the not-yet-existing operator
+  runbook:** `deployment/local-staging/compose.yml`'s header,
+  `backend/app/core/config.py`'s `COOKIE_SECURE` comment, and
+  `backend/tests/test_environment_canonicalization.py`'s test-section
+  comment all pointed to `docs/runbooks/PR24_LOCAL_STAGING_INSTALLATION_RUNBOOK.md`
+  as if it already existed; it is planned for PR24D-L3 and does not
+  exist yet. **Fix:** all three (plus
+  `backend/tests/test_pr24d_local_staging_compose.py`'s module docstring,
+  found during the same-class sweep) now point to
+  `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §32 as
+  current authority, with the runbook explicitly labeled "planned for
+  PR24D-L3, does not exist yet." Swept the full PR #135 diff against
+  base `7e2bfb2` for any other L2/L3-only path (`install.ps1`,
+  `start.ps1`, `stop.ps1`, `status.ps1`, `update.ps1`, `backup.ps1`,
+  `restore.ps1`, `uninstall.ps1`, `lib/Common.ps1`, `Setup.exe`)
+  referenced as if it existed — none found. The two remaining mentions
+  of the runbook filename (design doc §32's own "planned PR24D-L3"
+  paragraph, and compose.yml's own corrected header) are both already
+  explicitly labeled planned, not presented as a current navigation
+  target.
+- **Same-class sweep (review item 14):** confirmed no other optional
+  service in the compose file is incorrectly health-gated as a hard
+  dependency — only `postgres` (required infrastructure) and `backend`
+  (via `frontend`'s dependency on it, itself required for the readiness
+  contract) use `service_healthy`.
+- **Preserved unchanged, per the review's own instructions:** the
+  `/api/v1/health` (liveness) / `/api/v1/ready` (PostgreSQL-blocking,
+  Redis degraded/non-blocking) readiness contract; the `COOKIE_SECURE`
+  decoupling fix and its regression tests; all production-secret/DB/
+  origin hardening; PostgreSQL/Redis LAN non-exposure; no scope
+  expansion into PR24D-L2 (installer scripts), PR24D-L3 (backup/restore
+  wrappers, runbook), Setup.exe, any cloud provider, or PR24E+.
+- **Validation:** `python3 -c "import yaml; yaml.safe_load(...)"` on
+  the edited compose file; `docker compose -f compose.yml --env-file
+  <test-env> config` renders cleanly with `container_name` present and
+  no `redis` key under `backend.depends_on`; the same command with
+  `POSTGRES_PASSWORD` unset still fails closed with its original error
+  message (no regression to the required-secret fail-closed behavior);
+  `pytest backend/tests/test_pr24d_local_staging_compose.py
+  backend/tests/test_environment_canonicalization.py
+  backend/tests/test_startup_security.py
+  backend/tests/test_pr24d_workflow_static.py` → 107 passed (104 prior
+  + 3 new); `git diff --check` clean; changed-file scope confirmed as
+  exactly `deployment/local-staging/compose.yml`,
+  `backend/app/core/config.py`,
+  `backend/tests/test_environment_canonicalization.py`,
+  `backend/tests/test_pr24d_local_staging_compose.py` — no L2/L3 files
+  added.
+- **Status:** Draft, not merged. Fix Round 1 addressed; awaiting CI and
+  independent re-review of the new exact head.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** PR #135's independent review (Fix Round 1, REQUEST
+  CHANGES) and this repository's own `backend/app/core/redis.py`/
+  `backend/Dockerfile`/`backend/app/worker/scheduler.py` as the
+  evidentiary basis for both fixes.

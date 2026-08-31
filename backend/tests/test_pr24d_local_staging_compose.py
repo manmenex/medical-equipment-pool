@@ -1,12 +1,15 @@
-"""PR24D-L1 (docs/runbooks/PR24_LOCAL_STAGING_INSTALLATION_RUNBOOK.md):
+"""PR24D-L1 (docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md §32;
+the full operator runbook is planned for PR24D-L3 and does not exist yet):
 static structural assertions on deployment/local-staging/compose.yml.
 
 These are pure YAML-structure checks (no Docker daemon required, no live
 `docker compose` invocation) proving the security/architecture invariants
 the local Staging/UAT execution mode must never regress: no PostgreSQL/
-Redis LAN exposure, exactly one backend replica/worker, no committed
-secrets or defaults, the readiness endpoint (not the liveness-only one)
-gates traffic, and the generated .env file is excluded from Git.
+Redis LAN exposure, exactly one backend replica/worker (structurally, not
+just documented), Redis is never a startup-blocking dependency, no
+committed secrets or defaults, the readiness endpoint (not the
+liveness-only one) gates traffic, and the generated .env file is excluded
+from Git.
 """
 
 from pathlib import Path
@@ -16,6 +19,7 @@ import yaml
 COMPOSE_PATH = Path(__file__).resolve().parents[2] / "deployment" / "local-staging" / "compose.yml"
 ENV_EXAMPLE_PATH = COMPOSE_PATH.parent / ".env.example"
 GITIGNORE_PATH = Path(__file__).resolve().parents[2] / ".gitignore"
+DOCKERFILE_PATH = Path(__file__).resolve().parents[2] / "backend" / "Dockerfile"
 
 
 def _load_compose() -> dict:
@@ -70,12 +74,55 @@ def test_postgres_has_persistent_named_volume():
 def test_no_deploy_replicas_key_present():
     # deploy.replicas is a Swarm-only directive silently ignored by plain
     # `docker compose up` -- its presence here would be misleading, not
-    # protective. The real one-replica/one-worker invariant comes from
-    # never running `--scale backend=N` (documented in compose.yml's own
-    # header) plus backend/Dockerfile's own `--workers 1`.
+    # protective. The real one-replica/one-worker invariant comes from the
+    # fixed `container_name` guard (see
+    # test_backend_has_fixed_container_name_to_structurally_block_scaling)
+    # plus backend/Dockerfile's own `--workers 1`.
     services = _load_compose()["services"]
     assert "deploy" not in services.get("backend", {}), (
         "deploy.replicas is Swarm-only and ignored by `docker compose up` -- do not rely on it here"
+    )
+
+
+def test_backend_has_fixed_container_name_to_structurally_block_scaling():
+    # A fixed container_name makes `docker compose up --scale backend=2`
+    # fail (Compose refuses to create two containers sharing one name) --
+    # this is the structural enforcement of the single-backend invariant,
+    # not just a comment. The embedded APScheduler (app/worker/scheduler.py)
+    # has no leader-election guard, so a second backend container would
+    # duplicate the daily PM/CAL notification job.
+    services = _load_compose()["services"]
+    container_name = services["backend"].get("container_name")
+    assert container_name, "backend must set a fixed container_name to structurally block --scale backend=N"
+
+
+def test_backend_dockerfile_worker_count_is_one():
+    # The container-count guard above only prevents *multiple containers*;
+    # it says nothing about a single container running multiple Uvicorn
+    # worker processes. Assert the actual launch command directly.
+    dockerfile_text = DOCKERFILE_PATH.read_text()
+    import re
+
+    match = re.search(r'"--workers",\s*"(\d+)"', dockerfile_text)
+    assert match, "backend/Dockerfile's CMD must specify --workers explicitly"
+    assert match.group(1) == "1", (
+        f"backend/Dockerfile must run exactly 1 Uvicorn worker, found {match.group(1)!r} "
+        "-- the embedded APScheduler has no leader-election guard"
+    )
+
+
+def test_redis_is_not_a_health_gated_startup_dependency_for_backend():
+    # backend/app/core/redis.py wraps every Redis call in try/except and
+    # fails open (cache misses become no-ops; refresh-token validation
+    # treats an unreachable Redis as valid) -- GET /api/v1/ready reports
+    # Redis but never blocks on it. Gating backend startup on Redis health
+    # here would make an already-non-critical dependency accidentally
+    # block the whole stack (and therefore `frontend`, which waits on
+    # backend), contradicting that contract.
+    services = _load_compose()["services"]
+    redis_dep = services["backend"].get("depends_on", {}).get("redis")
+    assert redis_dep is None or redis_dep.get("condition") != "service_healthy", (
+        "backend must not have a service_healthy-gated dependency on redis"
     )
 
 

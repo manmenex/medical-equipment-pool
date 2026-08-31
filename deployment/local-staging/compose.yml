@@ -1,5 +1,8 @@
-# PR24D-L — Local Staging/UAT Deployment (docs/runbooks/
-# PR24_LOCAL_STAGING_INSTALLATION_RUNBOOK.md).
+# PR24D-L — Local Staging/UAT Deployment. Current authority:
+# docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md §32. The full
+# operator runbook (docs/runbooks/PR24_LOCAL_STAGING_INSTALLATION_RUNBOOK.md)
+# is planned for PR24D-L3 and does not exist yet -- do not follow that path
+# as a current navigation target.
 #
 # THIS IS NOT A FOURTH ENVIRONMENT. OD-PR24-4's taxonomy (Development,
 # Staging/UAT, Production) is unchanged -- this file is a zero-cost LOCAL
@@ -31,8 +34,11 @@
 # docker-compose.prod.yml: exactly one backend replica running exactly one
 # Uvicorn worker. The embedded APScheduler (app/worker/scheduler.py) has
 # no leader-election guard -- running more than one backend instance
-# duplicates the daily PM/CAL notification job. Never run `docker compose
-# ... up --scale backend=N` for N > 1 against this file.
+# duplicates the daily PM/CAL notification job. This is not just a
+# documented convention: the `backend` service below has a fixed
+# `container_name`, so `docker compose up --scale backend=2` fails
+# structurally (Compose refuses to create two containers sharing one
+# name) -- see that service's own comment.
 #
 # No committed secrets, no default admin password, no demo/seed data.
 # Every `${VAR:?...}` below fails `docker compose config`/`up` closed if
@@ -67,6 +73,14 @@ services:
 
   backend:
     build: ../../backend
+    # Fixed container name intentionally makes `docker compose up
+    # --scale backend=2` fail (Compose refuses two containers with the
+    # same name) -- the embedded APScheduler (app/worker/scheduler.py)
+    # has no leader-election guard, so more than one backend container
+    # would duplicate the daily PM/CAL notification job. This is a
+    # structural guard, not just documentation; see
+    # test_pr24d_local_staging_compose.py's own scale-guard test.
+    container_name: mep-local-staging-backend
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:?POSTGRES_USER must be set}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB must be set}
       REDIS_URL: redis://redis:6379/0
@@ -78,8 +92,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
+      # Redis is intentionally NOT a startup dependency here (health-gated
+      # or otherwise): backend/app/core/redis.py wraps every Redis call in
+      # try/except and fails open (cache misses become no-ops; refresh-
+      # token validation treats an unreachable Redis as valid rather than
+      # locking users out) -- see GET /api/v1/ready's own `redis: "ok" |
+      # "degraded"`, never blocking, contract. Gating backend startup on
+      # Redis health here would make an already-non-critical dependency
+      # accidentally block the whole stack, contradicting that contract.
     healthcheck:
       # Overrides the Dockerfile's own liveness-only HEALTHCHECK
       # (`/api/v1/health`, always 200) with the fail-closed readiness

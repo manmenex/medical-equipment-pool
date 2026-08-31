@@ -94,7 +94,9 @@ class Settings(BaseSettings):
 
     ALLOWED_ORIGINS: str = DEFAULT_ALLOWED_ORIGINS
 
-    # PR24D-L1 (docs/runbooks/PR24_LOCAL_STAGING_INSTALLATION_RUNBOOK.md):
+    # PR24D-L1 (docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md §32;
+    # the full operator runbook is planned for PR24D-L3 and does not exist
+    # yet):
     # the refresh-token cookie's `Secure` attribute was previously tied
     # directly to `ENVIRONMENT == "production"` in app.api.v1.auth. Local
     # Staging/UAT execution (Docker on a LAN host, no TLS) also runs under
