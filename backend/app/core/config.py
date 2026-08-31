@@ -94,6 +94,21 @@ class Settings(BaseSettings):
 
     ALLOWED_ORIGINS: str = DEFAULT_ALLOWED_ORIGINS
 
+    # PR24D-L1 (docs/runbooks/PR24_LOCAL_STAGING_INSTALLATION_RUNBOOK.md):
+    # the refresh-token cookie's `Secure` attribute was previously tied
+    # directly to `ENVIRONMENT == "production"` in app.api.v1.auth. Local
+    # Staging/UAT execution (Docker on a LAN host, no TLS) also runs under
+    # ENVIRONMENT=production -- deliberately, to keep
+    # validate_production_secrets()'s hardened checks (no default secrets/
+    # database/origins) in effect -- but a browser silently drops a Secure
+    # cookie set over plain HTTP, breaking token refresh. None (the
+    # default) preserves the exact previous behavior for every existing
+    # deployment (derived from ENVIRONMENT below); only a deployment that
+    # explicitly sets COOKIE_SECURE=false (the local installer) opts out.
+    # Real Production is unaffected unless it, too, explicitly overrides
+    # this -- which it must never do.
+    COOKIE_SECURE: bool | None = None
+
     S3_ENDPOINT: str | None = None
     S3_BUCKET: str = "mep-attachments"
     S3_ACCESS_KEY: str | None = None
@@ -129,6 +144,16 @@ class Settings(BaseSettings):
     @property
     def allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",") if origin.strip()]
+
+    @property
+    def cookie_secure(self) -> bool:
+        """Whether the refresh-token cookie's `Secure` attribute should be
+        set. Defaults to `ENVIRONMENT == "production"` (the historical,
+        unconditional behavior) unless COOKIE_SECURE is explicitly set,
+        which always wins regardless of ENVIRONMENT."""
+        if self.COOKIE_SECURE is not None:
+            return self.COOKIE_SECURE
+        return self.ENVIRONMENT == "production"
 
     @field_validator(
         "IMPORT_JOB_LEASE_DURATION_SECONDS",

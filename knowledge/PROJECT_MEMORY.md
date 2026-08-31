@@ -92,18 +92,39 @@ Sources: `docs/PROJECT_PLAYBOOK.md`, `docs/ARCHITECTURE_GUARDRAILS.md`,
 
 ## Current baseline and Roadmap
 
-Current baseline: `84144f096aacb9e2687422c7cd84cc1354346aa7` — the real
-squash-merge SHA of GitHub PR #133, "PR24D — CI/CD & Staging" (the
+Current baseline: `7e2bfb2001642ea9a9754310b85d1911b7b2be5c` — the real
+squash-merge SHA of GitHub PR #134, "PR24D — Post-Merge Governance
+Close-out" (folded in PR #133's real squash SHA across governance
+authority docs; a Fix Round 1 then closed four older, pre-existing
+stale current-baseline/status references found by a full six-file
+re-sweep — see `docs/DECISION_LOG.md`), squash-merged on top of
+`84144f096aacb9e2687422c7cd84cc1354346aa7` (GitHub PR #133, PR24D — the
 immutable-artifact build/scan/migrate/deploy/verify mechanism —
 `.github/workflows/cd-staging.yml`, `backend/scripts/deploy_migrate.py`,
-`backend/scripts/staging_smoke_check.py` — across the base PR plus two
-independent-review fix rounds: Fix Round 1 made the CRITICAL image scan
-a hard structural gate on migration and replaced the mutable
+`backend/scripts/staging_smoke_check.py` — across its own base PR plus
+two independent-review fix rounds: Fix Round 1 made the CRITICAL image
+scan a hard structural gate on migration and replaced the mutable
 commit-SHA image tag with digest-pinned immutable artifact identity;
 Fix Round 2 closed a `workflow_dispatch` input shell-injection path in
-the `resolve-ref` job's trusted-ref validation via `env:` routing),
-squash-merged on top of `cd9764ef5ba5e56062ee41266c8d96e50f1152c0`
-(GitHub PR #132, PR24C, now historical/superseded).
+the `resolve-ref` job's trusted-ref validation via `env:` routing —
+now historical/superseded by this baseline).
+
+**Owner direction (recorded 2026-08-30): no current budget for paid
+cloud infrastructure.** The Owner explicitly approved a zero-cost
+**local execution of the existing Staging/UAT environment class** using
+Docker on a Windows PC, LAN-reachable by other authorized devices, plus
+an installer/deployment mechanism (Setup.exe deferred until a
+script-based installer engine is proven). **This is not a fourth
+environment** — OD-PR24-4's taxonomy is unchanged. **PR24D-L1 (Local
+Docker Staging/UAT Foundation) is now in progress**:
+`deployment/local-staging/compose.yml` (PostgreSQL/Redis never
+LAN-exposed, exactly one backend replica/Uvicorn worker, no committed
+secrets/default credentials/demo data) plus a `COOKIE_SECURE` backend
+setting decoupling the refresh-token cookie's `Secure` attribute from
+`ENVIRONMENT` for this local mode only — see
+`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §32 for the
+full architecture and the binding "LOCAL evidence, never real
+managed-Staging evidence" classification.
 **Roadmap PR22 (Legacy Data Validation and Reconciliation) is now fully
 complete; Roadmap PR23 (Cutover Readiness)'s first slice, PR23A
 (Architecture & Operational Design), the PR23 Owner Decision Closure
@@ -162,9 +183,11 @@ cleanup, proven via a real round trip against ephemeral CI PostgreSQL
 databases, plus the operator runbook (`docs/runbooks/
 PR24_BACKUP_RESTORE_RUNBOOK.md`) — no infrastructure provisioned.
 **PR24D (CI/CD & Staging) code/tooling has since merged too** (GitHub
-PR #133, squash SHA `84144f096aacb9e2687422c7cd84cc1354346aa7`, current
-baseline): the immutable-artifact build/scan/migrate/deploy/verify
-mechanism (`.github/workflows/cd-staging.yml`,
+PR #133, squash SHA `84144f096aacb9e2687422c7cd84cc1354346aa7`,
+historical — superseded by GitHub PR #134's governance close-out, see
+"Current baseline and Roadmap" above): the immutable-artifact
+build/scan/migrate/deploy/verify mechanism
+(`.github/workflows/cd-staging.yml`,
 `backend/scripts/deploy_migrate.py`,
 `backend/scripts/staging_smoke_check.py`), including two
 independent-review fix rounds (CRITICAL image-scan hard-gating +
@@ -340,7 +363,7 @@ PR #128, squash SHA `f35fe716d57c51042d86a661657f679799b6a9e3`, now
 historical/superseded). **Historical — baseline at that point in this
 narrative (before PR24B/C/D merged; now historical/superseded — see
 "Current baseline and Roadmap" at the top of this document for the
-live value, `84144f096aacb9e2687422c7cd84cc1354346aa7`):**
+live value, `7e2bfb2001642ea9a9754310b85d1911b7b2be5c`):**
 `599478992de363e1eda2fe8005ff79d565dee76d` (GitHub PR #129, Production
 Deployment & Go-Live Architecture Planning, squash-merged on top of
 `f35fe716...`, GitHub PR #128, PR23F). **All six
@@ -382,12 +405,15 @@ squash SHA `cd9764ef5ba5e56062ee41266c8d96e50f1152c0`, historical —
 superseded by PR24D): `pg_dump`/`pg_restore`/prune tooling, CI-proven
 round trip, operator runbook; no real Staging rehearsal yet. **PR24D
 (CI/CD & Staging) code/tooling has since merged too** (GitHub PR #133,
-squash SHA `84144f096aacb9e2687422c7cd84cc1354346aa7`, current
-baseline): immutable-artifact build/scan/migrate/deploy/verify
-mechanism, proven against an ephemeral CI-provisioned target only —
-operational Staging evidence remains pending. **Current Roadmap status:
-PR24D code/tooling complete; PR24E not started**, gated on real Staging
-availability and sufficient operational evidence.
+squash SHA `84144f096aacb9e2687422c7cd84cc1354346aa7`, historical —
+superseded by GitHub PR #134's governance close-out): immutable-artifact
+build/scan/migrate/deploy/verify mechanism, proven against an ephemeral
+CI-provisioned target only — operational Staging evidence remains
+pending. **Current Roadmap status: PR24D code/tooling complete; PR24E
+not started**, gated on real managed-Staging availability and
+sufficient operational evidence; **PR24D-L1 (Local Docker Staging/UAT
+Foundation) in progress**, Owner-approved zero-cost local execution,
+not a fourth environment.
 The remaining Roadmap-numbered items are:
 
 - PR22: legacy data validation and reconciliation — **complete**
@@ -424,7 +450,8 @@ The remaining Roadmap-numbered items are:
   CI-proven round trip, operator runbook; no real Staging rehearsal
   yet. **PR24D (CI/CD & Staging) code/tooling COMPLETE / MERGED**
   (GitHub PR #133, squash SHA
-  `84144f096aacb9e2687422c7cd84cc1354346aa7`, current baseline) —
+  `84144f096aacb9e2687422c7cd84cc1354346aa7`, historical — superseded
+  by GitHub PR #134's governance close-out) —
   immutable-artifact build/scan/migrate/deploy/verify mechanism,
   including two independent-review fix rounds, proven against an
   ephemeral CI-provisioned target only; manual workflow execution

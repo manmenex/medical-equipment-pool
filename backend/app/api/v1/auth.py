@@ -16,7 +16,7 @@ def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=settings.ENVIRONMENT == "production",
+        secure=settings.cookie_secure,
         samesite="strict",
         max_age=settings.JWT_REFRESH_EXPIRE_DAYS * 24 * 3600,
         path="/api/v1/auth",
