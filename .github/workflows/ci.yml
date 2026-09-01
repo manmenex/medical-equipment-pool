@@ -370,3 +370,45 @@ jobs:
 
       - name: git diff --check against base
         run: git diff --check "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}"
+
+  powershell-validation:
+    name: PowerShell script validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # PR24D-L2: ubuntu-latest GitHub-hosted runners ship pwsh
+      # preinstalled -- no separate install step. This parses every
+      # installer script with the real PowerShell language parser
+      # (syntax only, nothing is executed) so a script that would fail to
+      # load on the target Windows host is caught here rather than left
+      # as untested prose. Structural checks (no Invoke-Expression, no
+      # default credentials, secret-preservation behavior, etc.) live in
+      # backend/tests/test_pr24d_l2_installer_scripts.py instead of being
+      # duplicated here.
+      - name: Parse all deployment/local-staging PowerShell scripts
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -Path deployment/local-staging -Filter *.ps1 -Recurse
+          if ($files.Count -eq 0) {
+            Write-Error "No .ps1 files found under deployment/local-staging -- expected at least install.ps1 and lib/Common.ps1."
+            exit 1
+          }
+          $failed = $false
+          foreach ($file in $files) {
+            $errors = $null
+            $tokens = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) {
+              Write-Host "PARSE ERROR in $($file.FullName):"
+              $errors | ForEach-Object { Write-Host "  $_" }
+              $failed = $true
+            }
+            else {
+              Write-Host "OK: $($file.FullName)"
+            }
+          }
+          if ($failed) { exit 1 }

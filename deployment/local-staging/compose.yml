@@ -43,11 +43,23 @@
 # No committed secrets, no default admin password, no demo/seed data.
 # Every `${VAR:?...}` below fails `docker compose config`/`up` closed if
 # the corresponding .env value is missing -- see .env.example for the
-# full list an operator (or the Round 2 installer) must supply.
+# full list an operator (or the PR24D-L2 installer) must supply.
+#
+# PR24D-L2: every service below sets `restart: unless-stopped` -- L1 did
+# not, and the installer's own operational assumption (Windows boots ->
+# Docker Desktop starts -> containers recover) requires it. "unless-
+# stopped" specifically means a container an operator explicitly stopped
+# (e.g. via stop.ps1's `docker compose stop`) stays stopped across a
+# Docker Desktop restart, while one that was running restarts
+# automatically -- this still requires Docker Desktop itself to be
+# running/configured to start with Windows, which this compose file
+# cannot control. No Windows service, Task Scheduler job, or registry Run
+# entry is created; see install.ps1/start.ps1's own module docstrings.
 
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: "${POSTGRES_DB:?POSTGRES_DB must be set, see .env.example}"
       POSTGRES_USER: "${POSTGRES_USER:?POSTGRES_USER must be set, see .env.example}"
@@ -62,6 +74,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     command: redis-server --appendonly yes
     volumes:
       - local_staging_redis_data:/data
@@ -81,6 +94,7 @@ services:
     # structural guard, not just documentation; see
     # test_pr24d_local_staging_compose.py's own scale-guard test.
     container_name: mep-local-staging-backend
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:?POSTGRES_USER must be set}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB must be set}
       REDIS_URL: redis://redis:6379/0
@@ -117,6 +131,7 @@ services:
 
   frontend:
     build: ../../frontend
+    restart: unless-stopped
     depends_on:
       backend:
         condition: service_healthy

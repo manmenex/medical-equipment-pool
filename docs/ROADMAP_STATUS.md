@@ -8,25 +8,25 @@ control detailed ordering, scope, dependencies, and acceptance criteria.
 
 ## Current baseline
 
-`7e2bfb2001642ea9a9754310b85d1911b7b2be5c` — the real squash-merge SHA
-of GitHub PR #134, "PR24D — Post-Merge Governance Close-out" (folded
-in PR #133's real squash SHA across governance authority docs; a Fix
-Round 1 then closed four older, pre-existing stale current-baseline/
-status references predating that PR, found by a full six-file re-sweep
-— see `docs/DECISION_LOG.md`'s two PR #134 entries for the exact
-before/after text of each), merged on top of
-`84144f096aacb9e2687422c7cd84cc1354346aa7` (GitHub PR #133, PR24D, now
-historical/superseded by this baseline). PR #134's final reviewed
-feature-branch head (`32998db1794e479a676f5d6cdaa7ac248f9a8b80`) carried
+`73652b062fb2ad6fdab4f7bbc0b743ff5f548e86` — the real squash-merge SHA
+of GitHub PR #135, "PR24D-L1 — Local Docker Staging/UAT Foundation"
+(three independent-review fix rounds: Redis non-blocking-startup
+correction, structural single-backend scale guard via a fixed
+`container_name`, and two stale-documentation-wording cleanups — see
+`docs/DECISION_LOG.md`'s PR #135 entries for the exact before/after
+text of each), merged on top of `7e2bfb2001642ea9a9754310b85d1911b7b2be5c`
+(GitHub PR #134, PR24D — Post-Merge Governance Close-out, now
+historical/superseded by this baseline). PR #135's final reviewed
+feature-branch head (`85c0d0075a141ae50cba4a63f96b8cc39896de0f`) carried
 **zero reviews**, zero comments, and zero review threads, with CI green
 (6/6) and the reviewed head's tree independently verified
 byte-identical to the merged squash commit's tree, sole parent
-`84144f0...` confirmed. Per this repository's standing process, **no
+`7e2bfb2...` confirmed. Per this repository's standing process, **no
 separate "baseline adoption" PR is created** — the squash SHA became
-authoritative immediately upon merge, recorded here by this PR (the
-next PR that legitimately touches these governance files). **PR24D
+authoritative immediately upon merge, recorded here by this PR (PR24D-L2,
+the next PR that legitimately touches these governance files). **PR24D
 (CI/CD & Staging) code/tooling is merged and complete. Operational
-Staging evidence remains pending:** the manual `cd-staging.yml`
+managed-Staging evidence remains pending:** the manual `cd-staging.yml`
 workflow has not yet been executed even once, no hosting provider has
 been selected, no real persistent managed-Staging environment exists,
 and the real PR24C backup/restore rehearsal against a managed-Staging
@@ -51,25 +51,35 @@ the same LAN, plus building an installer/deployment mechanism for it
 is proven). **This is NOT a fourth environment** — OD-PR24-4's
 taxonomy (Development, Staging/UAT, Production) is unchanged; local
 execution is a hosting/execution method for the existing Staging/UAT
-class only. **PR24D-L1 (Local Docker Staging/UAT Foundation) is now in
-progress**: `deployment/local-staging/compose.yml` (PostgreSQL, Redis,
-backend, frontend; PostgreSQL/Redis never exposed to the LAN; exactly
-one backend replica/Uvicorn worker; no committed secrets, default
+class only. **PR24D-L1 (Local Docker Staging/UAT Foundation) is
+COMPLETE / MERGED** (GitHub PR #135, squash SHA
+`73652b062fb2ad6fdab4f7bbc0b743ff5f548e86`, current baseline above):
+`deployment/local-staging/compose.yml` (PostgreSQL, Redis, backend,
+frontend; PostgreSQL/Redis never exposed to the LAN; exactly one
+backend replica/Uvicorn worker; no committed secrets, default
 credentials, or demo data) plus a `COOKIE_SECURE` backend setting
 (`backend/app/core/config.py`) decoupling the refresh-token cookie's
 `Secure` attribute from `ENVIRONMENT` — real Production is unaffected;
 only this local execution mode explicitly opts out, since it runs
 `ENVIRONMENT=production` (to keep `validate_production_secrets()`'s
 hardened checks) over plain HTTP on a trusted LAN, where a `Secure`
-cookie would be silently dropped by the browser. See
-`docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §32 for the
-full architecture and the planned PR24D-L2 (installer/operations
-scripts)/PR24D-L3 (local backup/restore rehearsal + runbook + final
-governance sync) split. Local execution of this mechanism does **not**
-constitute real managed-Staging evidence, a real managed-Staging
-backup/restore rehearsal, or grounds to start PR24E — see the
-"Operational Staging evidence remains pending" sentence above, which
-this local-execution work does not change.
+cookie would be silently dropped by the browser. **PR24D-L2 (Local
+Staging/UAT Installer & Operations Engine) is now in progress**: the
+script-based installer (`install.ps1`/`start.ps1`/`stop.ps1`/
+`status.ps1`/`update.ps1`/`uninstall.ps1` + shared `lib/Common.ps1`),
+reusing the existing PR24B `app.scripts.bootstrap_admin` Administrator
+bootstrap and PR24D `backend/scripts/deploy_migrate.py` explicit
+migration mechanism unchanged, preserving the fixed backend
+`container_name`/one-worker structural guard and the
+PostgreSQL-blocking/Redis-non-blocking readiness contract, explicitly
+not Setup.exe. See `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`
+§32 for the full architecture and the still-ahead PR24D-L3 (local
+backup/restore rehearsal + runbook + final governance sync) scope.
+Local execution of this mechanism does **not** constitute real
+managed-Staging evidence, a real managed-Staging backup/restore
+rehearsal, or grounds to start PR24E — see the "Operational
+managed-Staging evidence remains pending" sentence above, which this
+local-execution work does not change.
 
 **Roadmap PR22 (Legacy Data Validation and Reconciliation) is now fully
 complete** — architecture design (GitHub PR #112), all seven Owner
@@ -357,7 +367,7 @@ for the full slice-by-slice review chronology and closure record.
 
 | Sequence | Roadmap item | Status |
 |---|---|---|
-| Current | PR24 — Go-live / deployment | Dependency (PR19–PR23) satisfied — Roadmap PR23 is fully implementation-complete (see "Current baseline" above). **Architecture & Go-Live Planning round MERGED** (GitHub PR #129, squash SHA `599478992de363e1eda2fe8005ff79d565dee76d`, historical; `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`, including Fix Round 1's §15A liveness/readiness contract). **PR24 Owner Decision Closure round MERGED** (GitHub PR #130, squash SHA `f64f7d148ba956adef43c5d363ad52680398541c`, historical; all six Owner Decisions OD-PR24-1 through OD-PR24-6 Owner-approved, §28). **PR24B (Deployment Foundation) MERGED** (GitHub PR #131, squash SHA `d4a40349f62d76d129dcc6f1feea3e7e8fc8f28d`, historical): fail-closed readiness endpoint, production-safe admin bootstrap script, scheduler single-instance deployment invariant, fail-closed production configuration checks — no infrastructure provisioned, no provider selected. **PR24C (Backup & Restore) MERGED** (GitHub PR #132, squash SHA `cd9764ef5ba5e56062ee41266c8d96e50f1152c0`, historical — superseded by PR24D): `pg_dump`/`pg_restore`/prune tooling, CI-proven round trip, operator runbook — no real Staging rehearsal yet. **PR24D (CI/CD & Staging) code/tooling MERGED** (GitHub PR #133, squash SHA `84144f096aacb9e2687422c7cd84cc1354346aa7`, historical — superseded by GitHub PR #134's governance close-out): immutable-artifact build/scan/migrate/deploy/verify mechanism, including two independent-review fix rounds, proven against an ephemeral CI-provisioned target only — manual workflow execution pending, no provider selected, no real Staging infrastructure provisioned, no real backup/restore rehearsal performed. **PR24D — Post-Merge Governance Close-out MERGED** (GitHub PR #134, squash SHA `7e2bfb2001642ea9a9754310b85d1911b7b2be5c`, current baseline — see "Current baseline" above). **PR24D-L1 (Local Docker Staging/UAT Foundation) IN PROGRESS** — Owner-approved zero-cost local execution of the existing Staging/UAT class via Docker on a LAN host, not a fourth environment. PR24E through PR24G not started. |
+| Current | PR24 — Go-live / deployment | Dependency (PR19–PR23) satisfied — Roadmap PR23 is fully implementation-complete (see "Current baseline" above). **Architecture & Go-Live Planning round MERGED** (GitHub PR #129, squash SHA `599478992de363e1eda2fe8005ff79d565dee76d`, historical; `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`, including Fix Round 1's §15A liveness/readiness contract). **PR24 Owner Decision Closure round MERGED** (GitHub PR #130, squash SHA `f64f7d148ba956adef43c5d363ad52680398541c`, historical; all six Owner Decisions OD-PR24-1 through OD-PR24-6 Owner-approved, §28). **PR24B (Deployment Foundation) MERGED** (GitHub PR #131, squash SHA `d4a40349f62d76d129dcc6f1feea3e7e8fc8f28d`, historical): fail-closed readiness endpoint, production-safe admin bootstrap script, scheduler single-instance deployment invariant, fail-closed production configuration checks — no infrastructure provisioned, no provider selected. **PR24C (Backup & Restore) MERGED** (GitHub PR #132, squash SHA `cd9764ef5ba5e56062ee41266c8d96e50f1152c0`, historical — superseded by PR24D): `pg_dump`/`pg_restore`/prune tooling, CI-proven round trip, operator runbook — no real Staging rehearsal yet. **PR24D (CI/CD & Staging) code/tooling MERGED** (GitHub PR #133, squash SHA `84144f096aacb9e2687422c7cd84cc1354346aa7`, historical — superseded by GitHub PR #134's governance close-out): immutable-artifact build/scan/migrate/deploy/verify mechanism, including two independent-review fix rounds, proven against an ephemeral CI-provisioned target only — manual workflow execution pending, no provider selected, no real Staging infrastructure provisioned, no real backup/restore rehearsal performed. **PR24D — Post-Merge Governance Close-out MERGED** (GitHub PR #134, squash SHA `7e2bfb2001642ea9a9754310b85d1911b7b2be5c`, historical — superseded by GitHub PR #135). **PR24D-L1 (Local Docker Staging/UAT Foundation) MERGED** (GitHub PR #135, squash SHA `73652b062fb2ad6fdab4f7bbc0b743ff5f548e86`, current baseline — see "Current baseline" above) — Owner-approved zero-cost local execution of the existing Staging/UAT class via Docker on a LAN host, not a fourth environment. **PR24D-L2 (Local Staging/UAT Installer & Operations Engine) IN PROGRESS** — script-based installer/operations engine. PR24D-L3, PR24E through PR24G not started. |
 
 **Historical note on PR19B/PR20 relative ordering:** before PR19B merged,
 while it was still a provisional, unreviewed Draft (GitHub PR #80), this
@@ -403,10 +413,16 @@ historical) — **PR24B (Deployment Foundation) has since merged too**
 `cd9764ef5ba5e56062ee41266c8d96e50f1152c0`, historical — superseded by
 PR24D) — **PR24D (CI/CD & Staging) code/tooling has since merged too**
 (GitHub PR #133, squash SHA `84144f096aacb9e2687422c7cd84cc1354346aa7`,
-current baseline) — operational Staging evidence (manual workflow
-execution, provider selection, real Staging infrastructure, real
-backup/restore rehearsal) remains pending; PR24E through PR24G not
-started.
+historical — superseded, see "Current baseline" above) — **PR24D —
+Post-Merge Governance Close-out has since merged too** (GitHub PR #134,
+squash SHA `7e2bfb2001642ea9a9754310b85d1911b7b2be5c`, historical —
+superseded) — **PR24D-L1 (Local Docker Staging/UAT Foundation) has
+since merged too** (GitHub PR #135, squash SHA
+`73652b062fb2ad6fdab4f7bbc0b743ff5f548e86`, current baseline) —
+operational managed-Staging evidence (manual workflow execution,
+provider selection, real Staging infrastructure, real backup/restore
+rehearsal) remains pending; PR24D-L2 in progress, PR24D-L3 through
+PR24G not started.
 PR22 through PR24's ordering is preserved as-is because it reflects an
 existing authoritative dependency chain
 (`docs/audits/04-consolidated-implementation-plan.md` Part D, Group 8:
@@ -480,10 +496,15 @@ squash SHA `cd9764ef5ba5e56062ee41266c8d96e50f1152c0`, historical —
 superseded by PR24D) — **PR24D (CI/CD & Staging) code/tooling has since
 merged too** (GitHub PR #133, squash SHA
 `84144f096aacb9e2687422c7cd84cc1354346aa7`, historical — superseded by
-GitHub PR #134's governance close-out, current baseline
-`7e2bfb2001642ea9a9754310b85d1911b7b2be5c`, see "Current baseline"
-above) — operational managed-Staging evidence remains pending. PR19B's
-own historical relative-ordering note is preserved above.
+GitHub PR #134's governance close-out) — **PR24D — Post-Merge
+Governance Close-out has since merged too** (GitHub PR #134, squash SHA
+`7e2bfb2001642ea9a9754310b85d1911b7b2be5c`, historical — superseded by
+GitHub PR #135) — **PR24D-L1 (Local Docker Staging/UAT Foundation) has
+since merged too** (GitHub PR #135, squash SHA
+`73652b062fb2ad6fdab4f7bbc0b743ff5f548e86`, current baseline, see
+"Current baseline" above) — operational managed-Staging evidence
+remains pending. PR19B's own historical relative-ordering note is
+preserved above.
 
 ## Scope guardrails for the planned sequence
 

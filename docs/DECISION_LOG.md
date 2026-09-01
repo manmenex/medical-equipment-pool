@@ -7225,3 +7225,181 @@ status accuracy
 - **Source:** PR #135's incremental review (Fix Round 2, APPROVE WITH
   NON-BLOCKING COMMENTS) and `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`
   §32 as the evidentiary basis for the corrected cross-reference.
+
+## 2026-08-31 — PR #135 Fix Round 3 (final exact-head review, APPROVE
+WITH ONE NON-BLOCKING DOCUMENTATION COMMENT): DECISION_LOG
+functional-fix-surface wording clarified
+
+- **Review scope:** PR #135, reviewed exact head
+  `918edbc7bb1963e4e71b1fe9471f80772789daf0`. Verdict: APPROVE WITH ONE
+  NON-BLOCKING DOCUMENTATION COMMENT — all previous functional and
+  architectural findings (Fix Rounds 1 and 2) confirmed resolved; only
+  one documentation/evidence wording issue remained.
+- **Finding:** this log's own Fix Round 2 entry (immediately above)
+  said the changed-file scope for that round "was exactly
+  `deployment/local-staging/compose.yml`," but that round's commit also
+  changed `docs/DECISION_LOG.md` itself (this file) to record the round.
+  Technically inaccurate as written -- conflated the functional fix
+  surface with this file's own governance/review-evidence append.
+- **Fix:** the Fix Round 2 entry's validation bullet was edited in
+  place (not superseded by a new entry, since the underlying fact
+  pattern was already fully and correctly described elsewhere in that
+  same entry) to read: "functional fix surface confirmed as exactly
+  `deployment/local-staging/compose.yml` -- this DECISION_LOG file was
+  also updated in the same commit, but append-only, to record this
+  round's governance/review evidence, not as part of the functional fix
+  surface itself."
+- **No runtime, architectural, test, or Compose behavior change** — the
+  only diff in this round was the one-sentence DECISION_LOG wording fix.
+- **Validation:** `git diff --check` clean; diff confirmed docs-only
+  (`docs/DECISION_LOG.md`); CI 6/6 green on new exact head
+  `85c0d0075a141ae50cba4a63f96b8cc39896de0f`.
+- **Status:** Draft, not merged at the time of this round; merged
+  shortly after (see the next entry).
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** PR #135's final exact-head review (Fix Round 3, APPROVE
+  WITH ONE NON-BLOCKING DOCUMENTATION COMMENT).
+
+## 2026-09-01 — GitHub PR #135 merged -- PR24D-L1 (Local Docker
+Staging/UAT Foundation); PR24D-L2 (Local Staging/UAT Installer &
+Operations Engine) started, not merged
+
+- **Merge recorded:** GitHub PR #135, "PR24D-L1 — Local Docker
+  Staging/UAT Foundation", squash-merged into
+  `claude/medical-equipment-pool-0c7fz0` on top of
+  `7e2bfb2001642ea9a9754310b85d1911b7b2be5c` (GitHub PR #134, PR24D —
+  Post-Merge Governance Close-out). Real squash-merge SHA:
+  `73652b062fb2ad6fdab4f7bbc0b743ff5f548e86`. Final reviewed
+  feature-branch head: `85c0d0075a141ae50cba4a63f96b8cc39896de0f` —
+  independent Final Merge Gate confirmed **zero reviews, zero comments,
+  zero review threads**, CI green 6/6 on that exact head (post Fix
+  Rounds 1-3), the reviewed head's tree verified byte-identical to the
+  merged squash commit's tree (`git diff 85c0d00... 73652b0... --stat`
+  produced no output), and the squash commit's sole parent confirmed as
+  `7e2bfb2001642ea9a9754310b85d1911b7b2be5c`. Per this repository's
+  standing process, no separate self-referential "baseline adoption" PR
+  was created — it became authoritative immediately upon merge,
+  recorded here by this PR (`feat/pr24d-l2-local-installer-engine`, the
+  next PR that legitimately touches these governance files).
+- **Fold-in swept across:** `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`,
+  `knowledge/CONTEXT.md`, `knowledge/PROJECT_MEMORY.md` — every "current
+  baseline"/"current authoritative baseline"/"live value" occurrence
+  previously pointing at `7e2bfb2...` (GitHub PR #134) reclassified as
+  historical, pointing to `73652b0...` (GitHub PR #135) as the sole
+  current value; two additional genuinely-stale pre-existing
+  `84144f0...`-as-current-baseline references found during this sweep
+  (one in `docs/ROADMAP_STATUS.md`'s "Current and planned sequence"
+  paragraph, one in `knowledge/PROJECT_MEMORY.md`'s "live value"
+  pointer) were also corrected; no historical entry erased.
+- **PR24D-L2 (Local Staging/UAT Installer & Operations Engine) started,
+  not merged**, from baseline `73652b062fb2ad6fdab4f7bbc0b743ff5f548e86`,
+  per the second of the three PR24D-L slices agreed for PR24D-L1
+  (PR24D-L3 — local backup/restore rehearsal + operator runbook + final
+  governance sync — remains planned, not started).
+- **Scope:** the script-based installer/operations engine —
+  `deployment/local-staging/install.ps1`/`start.ps1`/`stop.ps1`/
+  `status.ps1`/`update.ps1`/`uninstall.ps1` + shared
+  `deployment/local-staging/lib/Common.ps1` — plus `compose.yml`'s own
+  `restart: unless-stopped` addition (L1 did not set a restart policy;
+  the installer's "Windows boots -> Docker Desktop starts -> containers
+  recover" operational assumption requires one). Explicitly not
+  Setup.exe (deferred, per Owner direction, until this script engine is
+  proven); explicitly not `backup.ps1`/`restore.ps1` (PR24D-L3).
+- **Administrator bootstrap:** reuses `app.scripts.bootstrap_admin`
+  (PR24B) completely unchanged, invoked via `docker compose exec`
+  against the running `mep-local-staging-backend` container. That CLI
+  takes no `--password` argument at all -- it generates its own
+  one-time password internally and prints it to stdout once -- so
+  `install.ps1` never accepts, transports, stores, or logs a password;
+  the bootstrap subprocess's output streams directly to the console
+  (never captured into a PowerShell variable this script could later
+  write to its own log file). No architecture gap requiring a STOP was
+  found here (repository §3's own contingency).
+- **Migration:** reuses `backend/scripts/deploy_migrate.py` (PR24D)
+  completely unchanged, invoked via `docker compose run --rm --name
+  mep-local-staging-migrate --no-deps backend python
+  scripts/deploy_migrate.py --target-environment local-staging
+  --artifact-sha <git rev-parse HEAD>` -- the explicit `--name` avoids
+  colliding with the `backend` service's own fixed `container_name`
+  (`mep-local-staging-backend`) that PR24D-L1 relies on for its
+  structural scale guard. `start.ps1` never runs a migration; only
+  `install.ps1` and `update.ps1` do, and only before the application
+  starts, never as part of its boot.
+- **Readiness/health-wait design:** uses Compose v2's own `docker
+  compose up -d --wait --wait-timeout <N>` (health-gated dependency
+  wait) instead of a hand-rolled HTTP polling loop, called twice --
+  once naming only `postgres` (before migration), once naming only
+  `backend`/`frontend` (after) -- so `redis` is never named on either
+  `--wait` invocation and can therefore never block installation,
+  preserving PR24D-L1's Redis-non-blocking contract structurally, not
+  just by convention. Verified by a new regression test
+  (`test_compose_redis_never_a_wait_gated_dependency_in_scripts`).
+- **Secret generation:** `New-UrlSafeSecret` in `lib/Common.ps1` uses
+  `System.Security.Cryptography.RandomNumberGenerator` (never
+  `Get-Random`), base64url-encoded (alphabet-safe for direct
+  interpolation into compose.yml's `DATABASE_URL`), empirically
+  verified via real PowerShell 7.4.6 execution in this sandbox
+  (installed from the official Microsoft release tarball) to produce
+  distinct, correctly-charset-restricted values. `.env` generation
+  (`New-LocalStagingEnvFile`) refuses to run if `.env` already exists;
+  `install.ps1` only calls it inside the `Test-EnvFileExists`-guarded
+  fresh-install branch, never on reinstall/existing-state paths --
+  covered by new regression tests.
+- **Uninstall safety:** default path (`docker compose down`, no `-v`)
+  preserves all data; `-RemoveData` requires typing an exact
+  confirmation phrase (`DELETE LOCAL STAGING DATA`) before the guarded
+  `--volumes` removal call executes. Verified by a new regression test
+  asserting the `--volumes` call is textually gated behind the
+  `-RemoveData` parameter reference.
+- **Update safety foundation:** `update.ps1` rebuilds from the
+  currently checked-out repository source only (`docker compose build`,
+  no image `:latest` pull, no `git pull`/`git checkout` of any kind --
+  source acquisition is explicitly out of scope for this slice) and
+  refuses to proceed at all unless `-AcknowledgeUpdateRisk` is passed,
+  since PR24D-L3's backup/restore safety net does not exist yet --
+  documented in the script's own module docstring as a known,
+  deliberate limitation rather than a false claim of production-grade
+  update safety.
+- **Restart policy:** `restart: unless-stopped` added to all four
+  compose.yml services (postgres/redis/backend/frontend) -- L1 did not
+  set one; no Windows service, Task Scheduler job, or registry Run
+  entry created (repository §28's own preference for the Docker-native
+  mechanism, confirmed sufficient by inspection).
+- **Validation evidence, explicitly classified:** STATIC VERIFIED (all
+  7 `.ps1` files parsed cleanly with the real PowerShell 7.4.6 language
+  parser, installed and run directly in this sandbox -- not merely
+  claimed; `docker compose config` renders cleanly with `restart:
+  unless-stopped` present on all four services; 24 new
+  `backend/tests/test_pr24d_l2_installer_scripts.py` structural
+  assertions plus all 107 prior PR24D-L1 tests pass, 131 total). CI
+  VERIFIED: a new "PowerShell script validation" CI job (7th check,
+  using ubuntu-latest's preinstalled `pwsh`) parses the same 7 files
+  independently in CI. DOCKER EXECUTED / WINDOWS EXECUTED: **not
+  performed** -- this sandbox has no Docker daemon (consistent with
+  every prior PR24 round) and is not Windows; actual `docker compose
+  up`, a real clean install, reinstall, start/stop/status cycle, LAN
+  reachability, and the `--scale backend=2` structural-failure guard
+  remain unverified until run on real Windows/Docker Desktop hardware.
+  This is stated explicitly, not implied as done.
+- **Preserved unchanged, not re-litigated:** all PR24B/C/D/D-L1
+  invariants (fixed backend `container_name`, one Uvicorn worker,
+  PostgreSQL-blocking/Redis-non-blocking readiness, `COOKIE_SECURE`
+  decoupling, no PostgreSQL/Redis LAN exposure, no committed secrets);
+  OD-PR24-4 taxonomy (still exactly Development/Staging/UAT/
+  Production, no fourth environment introduced); OD-PR24-1
+  architecture-class-only; no lifecycle/business-rule change. **PR24E
+  remains NOT STARTED and is not being started by this PR** — a working
+  local installer is still preparatory operational infrastructure, not
+  managed-Staging evidence; whether to begin PR24D-L3 or reconsider the
+  local-vs-managed path further is an Owner/next-task decision this PR
+  does not make.
+- **Status:** Draft, not merged. PR24D-L2 in progress — this is the
+  second of three planned PR24D-L slices, not the start of PR24E, and
+  Setup.exe was explicitly not implemented in this PR.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the "PR24D-L2 — Local Staging/UAT Installer & Operations
+  Engine" task's own binding specification, GitHub PR #135's own merge
+  record and Final Merge Gate verification, and this repository's own
+  `backend/app/scripts/bootstrap_admin.py`/
+  `backend/scripts/deploy_migrate.py`/`backend/app/core/redis.py` as
+  the evidentiary basis for every reuse decision above.
