@@ -7162,3 +7162,63 @@ runbook references
   CHANGES) and this repository's own `backend/app/core/redis.py`/
   `backend/Dockerfile`/`backend/app/worker/scheduler.py` as the
   evidentiary basis for both fixes.
+
+## 2026-08-31 — GitHub PR #135 Fix Round 2 (incremental review, APPROVE
+WITH NON-BLOCKING COMMENTS): final stale-runbook sentence, PR body CI
+status accuracy
+
+- **Review scope:** PR #135, reviewed exact head
+  `5f77d313cafae3d982205205dd62a5936a0086ac` against base
+  `7e2bfb2001642ea9a9754310b85d1911b7b2be5c`. Verdict: APPROVE WITH
+  NON-BLOCKING COMMENTS — both Fix Round 1 P1 findings (Redis startup
+  gating, single-backend structural guard) confirmed resolved and
+  explicitly not reopened; two P2 documentation cleanups remained.
+- **P2-1 — one stale future-runbook sentence survived Fix Round 1:**
+  `deployment/local-staging/compose.yml`'s header still read "...not a
+  substitute for a real managed Staging environment or a real
+  managed-Staging backup/restore rehearsal -- see that runbook's own
+  evidence-classification section for why," where "that runbook" meant
+  the not-yet-existing `docs/runbooks/PR24_LOCAL_STAGING_INSTALLATION_RUNBOOK.md`
+  — a broken current navigation target, the same class of issue Fix
+  Round 1 corrected elsewhere in the same file. **Fix:** reworded to
+  point at `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`
+  §32's own "Evidence classification" paragraph (verified to exist at
+  that file's line 1959) instead. Re-swept the full diff for
+  `PR24_LOCAL_STAGING_INSTALLATION_RUNBOOK.md`: the only two remaining
+  occurrences (compose.yml's own header naming it as "planned for
+  PR24D-L3 and does not exist yet," and design doc §32's own "planned
+  PR24D-L3" paragraph) are both already explicitly labeled planned, not
+  a current navigation target; a third occurrence in this log's own Fix
+  Round 1 entry is an accurate historical record of what was fixed then,
+  left unchanged per this log's append-only convention.
+- **P2-2 — PR body understated its own CI status:** the body still said
+  "Was 6/6 green on `08214ef`; re-verify on new head after Fix Round 1
+  push" and left the CI checklist item unchecked, even though GitHub
+  had already reported 6/6 green on exact head `5f77d313...` before this
+  round began. **Fix:** PR body's Evidence table and merge-readiness
+  checklist updated to state CI verified 6/6 green on `5f77d313...`
+  exactly, plus a new "Fix Round 2" section.
+- **No runtime/architecture change in this round**, per the review's own
+  instruction — the only diff is the one compose.yml comment sentence
+  plus the PR body/DECISION_LOG documentation updates. Re-verified after
+  editing: `backend.depends_on` is PostgreSQL-only (`service_healthy`),
+  Redis remains absent from `backend.depends_on`, `container_name:
+  mep-local-staging-backend` unchanged, `backend/Dockerfile` still
+  specifies exactly one Uvicorn worker — all four P1 invariants intact.
+- **Validation:** `python3 -c "import yaml; yaml.safe_load(...)"` on the
+  edited compose file; `docker compose -f compose.yml --env-file
+  <test-env> config` renders cleanly with `container_name` and the
+  PostgreSQL-only `depends_on` both still present; `pytest
+  backend/tests/test_pr24d_local_staging_compose.py
+  backend/tests/test_environment_canonicalization.py
+  backend/tests/test_startup_security.py
+  backend/tests/test_pr24d_workflow_static.py` → 107 passed (no change
+  in count, confirming no test-affecting regression); `git diff --check`
+  clean; changed-file scope confirmed as exactly
+  `deployment/local-staging/compose.yml`.
+- **Status:** Draft, not merged. Fix Round 2 addressed; awaiting CI and
+  final independent re-review of the new exact head.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** PR #135's incremental review (Fix Round 2, APPROVE WITH
+  NON-BLOCKING COMMENTS) and `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`
+  §32 as the evidentiary basis for the corrected cross-reference.

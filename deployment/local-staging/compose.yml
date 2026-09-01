@@ -10,8 +10,8 @@
 # single Windows PC with Docker Desktop, reachable by other authorized
 # devices on the same LAN over plain HTTP. It is not a substitute for a
 # real managed Staging environment or a real managed-Staging backup/
-# restore rehearsal -- see that runbook's own evidence-classification
-# section for why.
+# restore rehearsal -- see design doc §32's own "Evidence classification"
+# paragraph for why.
 #
 # Reuses the existing production application images (../../backend,
 # ../../frontend) unchanged -- no separate local-only application build.
