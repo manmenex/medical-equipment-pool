@@ -6914,3 +6914,314 @@ corrected, full six-file re-sweep performed, still not merged
 - **Source:** independent review of GitHub PR #134 at reviewed head
   `895e41e10181093c2194f110d0bdb04f5e93d1c5`, and the "PR #134 — Fix
   Round 1" task's own binding specification.
+
+
+## 2026-08-30 — GitHub PR #134 merged -- baseline folded in; PR24D-L1
+(Local Docker Staging/UAT Foundation) started, not merged
+
+- **Merge recorded:** GitHub PR #134, "PR24D — Post-Merge Governance
+  Close-out", squash-merged into `claude/medical-equipment-pool-0c7fz0`
+  on top of `84144f096aacb9e2687422c7cd84cc1354346aa7` (GitHub PR #133,
+  PR24D). Real squash-merge SHA:
+  `7e2bfb2001642ea9a9754310b85d1911b7b2be5c`. Final reviewed
+  feature-branch head: `32998db1794e479a676f5d6cdaa7ac248f9a8b80` —
+  independent Final Merge Gate confirmed **zero reviews, zero comments,
+  zero review threads**, CI green 6/6 on that exact head, the reviewed
+  head's tree verified byte-identical to the merged squash commit's
+  tree (`git diff 32998db... 7e2bfb2... --stat` produced no output),
+  and the squash commit's sole parent confirmed as
+  `84144f096aacb9e2687422c7cd84cc1354346aa7`. Per this repository's
+  standing process, no separate self-referential "baseline adoption" PR
+  was created — it became authoritative immediately upon merge,
+  recorded here by this PR (`feat/pr24d-local-staging-installer`, the
+  next PR that legitimately touches these governance files).
+- **Fold-in swept across:** `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`,
+  `knowledge/CONTEXT.md`, `knowledge/PROJECT_MEMORY.md` — every
+  "current baseline"/"current authoritative baseline" occurrence
+  previously pointing at `84144f0...` (GitHub PR #133) reclassified as
+  historical, pointing to `7e2bfb2...` (GitHub PR #134) as the sole
+  current value; no historical entry erased.
+- **Owner direction (2026-08-30): no current budget for paid cloud
+  infrastructure.** The Owner explicitly approved proceeding with a
+  zero-cost **local execution of the existing Staging/UAT environment
+  class** using Docker on a Windows PC, reachable by other authorized
+  devices on the same LAN over plain HTTP, plus building an
+  installer/deployment mechanism for it — Setup.exe/GUI explicitly
+  deferred until a script-based installer engine is proven. **This is
+  explicitly NOT a fourth environment** — OD-PR24-4's taxonomy
+  (Development, Staging/UAT, Production, §28 of
+  `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`) is
+  unchanged; local execution is a hosting/execution method for the
+  existing Staging/UAT class only. This is treated as an
+  execution/configuration decision under already-approved PR24
+  architecture, not a new Owner Decision — no new OD ID was created.
+- **PR24D-L1 (Local Docker Staging/UAT Foundation) started, not
+  merged**, from baseline `7e2bfb2001642ea9a9754310b85d1911b7b2be5c`.
+  Split proposed and Owner-confirmed per the task's own §43 (three
+  slices, reviewability over convenience, matching this repository's
+  usual one-concern-per-PR precedent): **PR24D-L1 (this round)** —
+  `deployment/local-staging/compose.yml` + `.env.example`; **PR24D-L2
+  (planned)** — the script-based installer engine; **PR24D-L3
+  (planned)** — local backup/restore rehearsal wrappers + the full
+  operator runbook + final governance sync.
+- **Architecture finding surfaced during required reading, resolved by
+  explicit Owner choice before implementation:** the refresh-token
+  cookie's `Secure` attribute (`backend/app/api/v1/auth.py`) was
+  unconditionally tied to `ENVIRONMENT == "production"`, and this
+  repository's Staging/UAT proof mechanism (`cd-staging.yml`) has
+  always run under `ENVIRONMENT=production` (to keep
+  `validate_production_secrets()`'s hardened checks in effect). Local
+  execution on a LAN host has no TLS certificate available without paid
+  infrastructure or internal PKI — plain HTTP — and a browser silently
+  drops a `Secure` cookie set over plain HTTP, breaking token refresh.
+  Presented to the Owner as a three-way choice (decouple the cookie
+  flag from `ENVIRONMENT` via a new explicit setting; run local
+  execution under `ENVIRONMENT=development` instead, losing
+  `validate_production_secrets()`'s hardened checks; or accept forced
+  re-login roughly every 15 minutes as a documented limitation). Owner
+  chose the first. **Fix:** a new `COOKIE_SECURE: bool | None = None`
+  setting (`backend/app/core/config.py`) with a `cookie_secure`
+  property defaulting to `ENVIRONMENT == "production"` (the exact
+  previous behavior — real Production and every other existing
+  deployment are unaffected unless they, too, explicitly override it,
+  which they must never do) unless explicitly set, which always wins.
+  `app.api.v1.auth._set_refresh_cookie` now reads `settings.cookie_secure`
+  instead of `settings.ENVIRONMENT == "production"` directly. Only
+  `deployment/local-staging/compose.yml` sets `COOKIE_SECURE=false`.
+- **`deployment/local-staging/compose.yml`:** PostgreSQL, Redis,
+  backend, frontend — reuses the existing `backend/Dockerfile`/
+  `frontend/Dockerfile` unchanged, no separate local-only application
+  build. PostgreSQL and Redis are never published to the host (LAN
+  clients reach only `frontend`'s nginx reverse proxy, which already
+  proxies `/api/` to `backend` over the internal Docker network per
+  the existing `frontend/nginx.conf` — browser requests are same-origin,
+  so LAN clients need no CORS configuration and hit no
+  `localhost`-means-a-different-machine trap). Exactly one backend
+  replica running exactly one Uvicorn worker (unchanged
+  `backend/Dockerfile` `--workers 1` invariant; `deploy.replicas` is
+  deliberately not set since it is Swarm-only and silently ignored by
+  plain `docker compose up` — the real invariant is "never run
+  `--scale backend=N`", documented in the file's own header and
+  asserted by a static test). `ENVIRONMENT=production` fixed (not
+  configurable) to keep `validate_production_secrets()` in effect;
+  `COOKIE_SECURE=false` fixed for the reason above. Every secret-shaped
+  variable (`POSTGRES_PASSWORD`, `JWT_SECRET_KEY`, `ALLOWED_ORIGINS`)
+  uses Compose's required (`:?`) interpolation form, never a silent
+  default (`:-`) — `docker compose config` fails closed if any is
+  unset, empirically verified against both a fully-populated and a
+  missing-secret `.env`. No MinIO/S3 service is included: confirmed via
+  `grep -rln S3_ENDPOINT backend/app` that no application code actually
+  consumes it (`import_source_blobs` content lives in PostgreSQL, per
+  PR24C's own §5 finding) — matches the task's own required-services
+  list (PostgreSQL, Redis, backend, frontend) and avoids exposing an
+  unused attack surface. `deployment/local-staging/.env` is covered by
+  the existing root `.gitignore`'s unqualified `.env` pattern (verified
+  empirically: staging the directory with a populated `.env` present
+  adds only `compose.yml`/`.env.example`).
+- **Tests:** `backend/tests/test_environment_canonicalization.py`
+  gains 5 tests for the `COOKIE_SECURE` override (default-derives-from-
+  ENVIRONMENT in both directions; explicit `False` overrides
+  `ENVIRONMENT=production`; explicit `True` overrides
+  `ENVIRONMENT=development`; the actual `Set-Cookie` header reflects
+  the override in both the overridden and un-overridden production
+  case) — all existing cookie/environment tests in that file continue
+  to pass unchanged. `backend/tests/test_pr24d_local_staging_compose.py`
+  (new, 15 tests) — pure YAML-structure assertions against
+  `deployment/local-staging/compose.yml`: no PostgreSQL/Redis/backend
+  host-port exposure, only `frontend` publishes a port, PostgreSQL's
+  persistent named volume, no `deploy.replicas` reliance, the backend
+  healthcheck gates on `/api/v1/ready` (not `/health`), frontend waits
+  on backend `service_healthy`, `ENVIRONMENT`/`COOKIE_SECURE` fixed
+  values, no hardcoded secret literal or IP address anywhere in the
+  file, every secret-shaped variable uses the required (not default)
+  interpolation form, `.env.example` ships with every secret field
+  left blank, and `.env` remains gitignored.
+- **Design doc updated:** `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`
+  gains §32 ("Local Staging/UAT Execution Mode (PR24D-L)") — full
+  architecture diagram, the identity contract with §18's existing CD
+  mechanism, the `COOKIE_SECURE` deviation and why, the binding **"LOCAL
+  evidence, never real managed-Staging evidence"** classification
+  (matching §18/§21's existing "CD mechanism proof" vs. "real Staging
+  exists" distinction and `docs/runbooks/PR24_BACKUP_RESTORE_RUNBOOK.md`'s
+  "CI proves tooling" vs. "Staging rehearsal proves operational
+  readiness" distinction), the planned PR24D-L2/L3 slice sequence, and
+  the explicit out-of-scope list.
+- **Preserved unchanged, not re-litigated:** every PR24B/C/D invariant
+  (§9/§14/§15/§15A production configuration checks, the readiness
+  contract, the scheduler single-instance invariant, the digest-pinned
+  CD mechanism); OD-PR24-4's three-environment taxonomy (not a fourth
+  environment); OD-PR24-1's architecture-class-only resolution (no
+  provider selected, no paid resource provisioned); OD-PR24-5's
+  hostname-deferral policy; no equipment lifecycle/business-rule
+  change; no PWA/offline application mode. PR24E remains **NOT
+  STARTED** and is not being started by this PR — local execution is
+  preparatory operational infrastructure work only; whether to begin
+  limited local UAT preparation or require further operational
+  validation first is an Owner decision this PR does not make.
+- **Status:** Draft, **not merged, PR24D-L1 in progress**. This is the
+  first of three planned PR24D-L slices, not the start of PR24E.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the "PR24D-L — Local Staging Execution & Installer
+  Foundation" task's own binding specification, and GitHub PR #134's
+  own merge record and Final Merge Gate verification.
+
+## 2026-08-31 — GitHub PR #135 Fix Round 1 (independent review, REQUEST
+CHANGES): Redis startup gating, single-backend structural guard, stale
+runbook references
+
+- **Review scope:** PR #135 ("PR24D-L1 — Local Docker Staging/UAT
+  Foundation"), reviewed exact head `08214ef0e75a246b58c62e13b7c3f8c9795ca766`
+  against base `7e2bfb2001642ea9a9754310b85d1911b7b2be5c` (GitHub PR
+  #134). Verdict: REQUEST CHANGES — two blocking findings (P1-A, P1-B),
+  one non-blocking-but-fix-this-round finding (P2).
+- **P1-A — Redis was accidentally a hard startup dependency:**
+  `deployment/local-staging/compose.yml`'s `backend` service depended on
+  `redis: condition: service_healthy`, contradicting the binding runtime
+  contract (`GET /api/v1/ready`: PostgreSQL blocking, Redis degraded/
+  non-blocking) — an unhealthy Redis would have prevented `backend`
+  (and therefore `frontend`, which waits on `backend`) from starting at
+  all. **Fix:** the `redis` health-gated dependency was removed from
+  `backend`'s `depends_on` entirely (not downgraded to
+  `service_started`) — verified via `backend/app/core/redis.py` that
+  every Redis-touching function already wraps its call in try/except and
+  fails open (cache misses become no-ops; refresh-token validation
+  treats an unreachable Redis as valid rather than locking users out),
+  so no ordering guarantee was being relied on in the first place.
+  `postgres`'s `service_healthy` dependency is unchanged. New regression
+  test: `test_redis_is_not_a_health_gated_startup_dependency_for_backend`.
+- **P1-B — single-backend/single-scheduler invariant was documented but
+  not structurally enforced:** a comment saying "never run `--scale
+  backend=N`" does not stop anyone from running it. **Fix:** `backend`
+  now sets a fixed `container_name: mep-local-staging-backend` —
+  Compose refuses to create two containers sharing one name, so
+  `docker compose up --scale backend=2` fails structurally, not just by
+  convention. Rationale documented at the `container_name` line itself
+  (not merely "do not scale"). New regression tests:
+  `test_backend_has_fixed_container_name_to_structurally_block_scaling`
+  and `test_backend_dockerfile_worker_count_is_one` (asserts
+  `backend/Dockerfile`'s CMD specifies exactly `--workers 1` directly,
+  since the container-count guard alone says nothing about worker count
+  inside a single container). Actual `docker compose up --scale
+  backend=2` failure was **not executed** — this sandbox has no Docker
+  daemon (`docker info` fails to reach `/var/run/docker.sock`, consistent
+  with every prior PR24 round); the guard is proven statically
+  (`container_name` present in `docker compose config` output) and by
+  the Compose semantics documented above, not by a live run.
+- **P2 — stale forward-references to the not-yet-existing operator
+  runbook:** `deployment/local-staging/compose.yml`'s header,
+  `backend/app/core/config.py`'s `COOKIE_SECURE` comment, and
+  `backend/tests/test_environment_canonicalization.py`'s test-section
+  comment all pointed to `docs/runbooks/PR24_LOCAL_STAGING_INSTALLATION_RUNBOOK.md`
+  as if it already existed; it is planned for PR24D-L3 and does not
+  exist yet. **Fix:** all three (plus
+  `backend/tests/test_pr24d_local_staging_compose.py`'s module docstring,
+  found during the same-class sweep) now point to
+  `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §32 as
+  current authority, with the runbook explicitly labeled "planned for
+  PR24D-L3, does not exist yet." Swept the full PR #135 diff against
+  base `7e2bfb2` for any other L2/L3-only path (`install.ps1`,
+  `start.ps1`, `stop.ps1`, `status.ps1`, `update.ps1`, `backup.ps1`,
+  `restore.ps1`, `uninstall.ps1`, `lib/Common.ps1`, `Setup.exe`)
+  referenced as if it existed — none found. The two remaining mentions
+  of the runbook filename (design doc §32's own "planned PR24D-L3"
+  paragraph, and compose.yml's own corrected header) are both already
+  explicitly labeled planned, not presented as a current navigation
+  target.
+- **Same-class sweep (review item 14):** confirmed no other optional
+  service in the compose file is incorrectly health-gated as a hard
+  dependency — only `postgres` (required infrastructure) and `backend`
+  (via `frontend`'s dependency on it, itself required for the readiness
+  contract) use `service_healthy`.
+- **Preserved unchanged, per the review's own instructions:** the
+  `/api/v1/health` (liveness) / `/api/v1/ready` (PostgreSQL-blocking,
+  Redis degraded/non-blocking) readiness contract; the `COOKIE_SECURE`
+  decoupling fix and its regression tests; all production-secret/DB/
+  origin hardening; PostgreSQL/Redis LAN non-exposure; no scope
+  expansion into PR24D-L2 (installer scripts), PR24D-L3 (backup/restore
+  wrappers, runbook), Setup.exe, any cloud provider, or PR24E+.
+- **Validation:** `python3 -c "import yaml; yaml.safe_load(...)"` on
+  the edited compose file; `docker compose -f compose.yml --env-file
+  <test-env> config` renders cleanly with `container_name` present and
+  no `redis` key under `backend.depends_on`; the same command with
+  `POSTGRES_PASSWORD` unset still fails closed with its original error
+  message (no regression to the required-secret fail-closed behavior);
+  `pytest backend/tests/test_pr24d_local_staging_compose.py
+  backend/tests/test_environment_canonicalization.py
+  backend/tests/test_startup_security.py
+  backend/tests/test_pr24d_workflow_static.py` → 107 passed (104 prior
+  + 3 new); `git diff --check` clean; changed-file scope confirmed as
+  exactly `deployment/local-staging/compose.yml`,
+  `backend/app/core/config.py`,
+  `backend/tests/test_environment_canonicalization.py`,
+  `backend/tests/test_pr24d_local_staging_compose.py` — no L2/L3 files
+  added.
+- **Status:** Draft, not merged. Fix Round 1 addressed; awaiting CI and
+  independent re-review of the new exact head.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** PR #135's independent review (Fix Round 1, REQUEST
+  CHANGES) and this repository's own `backend/app/core/redis.py`/
+  `backend/Dockerfile`/`backend/app/worker/scheduler.py` as the
+  evidentiary basis for both fixes.
+
+## 2026-08-31 — GitHub PR #135 Fix Round 2 (incremental review, APPROVE
+WITH NON-BLOCKING COMMENTS): final stale-runbook sentence, PR body CI
+status accuracy
+
+- **Review scope:** PR #135, reviewed exact head
+  `5f77d313cafae3d982205205dd62a5936a0086ac` against base
+  `7e2bfb2001642ea9a9754310b85d1911b7b2be5c`. Verdict: APPROVE WITH
+  NON-BLOCKING COMMENTS — both Fix Round 1 P1 findings (Redis startup
+  gating, single-backend structural guard) confirmed resolved and
+  explicitly not reopened; two P2 documentation cleanups remained.
+- **P2-1 — one stale future-runbook sentence survived Fix Round 1:**
+  `deployment/local-staging/compose.yml`'s header still read "...not a
+  substitute for a real managed Staging environment or a real
+  managed-Staging backup/restore rehearsal -- see that runbook's own
+  evidence-classification section for why," where "that runbook" meant
+  the not-yet-existing `docs/runbooks/PR24_LOCAL_STAGING_INSTALLATION_RUNBOOK.md`
+  — a broken current navigation target, the same class of issue Fix
+  Round 1 corrected elsewhere in the same file. **Fix:** reworded to
+  point at `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`
+  §32's own "Evidence classification" paragraph (verified to exist at
+  that file's line 1959) instead. Re-swept the full diff for
+  `PR24_LOCAL_STAGING_INSTALLATION_RUNBOOK.md`: the only two remaining
+  occurrences (compose.yml's own header naming it as "planned for
+  PR24D-L3 and does not exist yet," and design doc §32's own "planned
+  PR24D-L3" paragraph) are both already explicitly labeled planned, not
+  a current navigation target; a third occurrence in this log's own Fix
+  Round 1 entry is an accurate historical record of what was fixed then,
+  left unchanged per this log's append-only convention.
+- **P2-2 — PR body understated its own CI status:** the body still said
+  "Was 6/6 green on `08214ef`; re-verify on new head after Fix Round 1
+  push" and left the CI checklist item unchecked, even though GitHub
+  had already reported 6/6 green on exact head `5f77d313...` before this
+  round began. **Fix:** PR body's Evidence table and merge-readiness
+  checklist updated to state CI verified 6/6 green on `5f77d313...`
+  exactly, plus a new "Fix Round 2" section.
+- **No runtime/architecture change in this round**, per the review's own
+  instruction — the only diff is the one compose.yml comment sentence
+  plus the PR body/DECISION_LOG documentation updates. Re-verified after
+  editing: `backend.depends_on` is PostgreSQL-only (`service_healthy`),
+  Redis remains absent from `backend.depends_on`, `container_name:
+  mep-local-staging-backend` unchanged, `backend/Dockerfile` still
+  specifies exactly one Uvicorn worker — all four P1 invariants intact.
+- **Validation:** `python3 -c "import yaml; yaml.safe_load(...)"` on the
+  edited compose file; `docker compose -f compose.yml --env-file
+  <test-env> config` renders cleanly with `container_name` and the
+  PostgreSQL-only `depends_on` both still present; `pytest
+  backend/tests/test_pr24d_local_staging_compose.py
+  backend/tests/test_environment_canonicalization.py
+  backend/tests/test_startup_security.py
+  backend/tests/test_pr24d_workflow_static.py` → 107 passed (no change
+  in count, confirming no test-affecting regression); `git diff --check`
+  clean; functional fix surface confirmed as exactly
+  `deployment/local-staging/compose.yml` -- this DECISION_LOG file was
+  also updated in the same commit, but append-only, to record this
+  round's governance/review evidence, not as part of the functional fix
+  surface itself.
+- **Status:** Draft, not merged. Fix Round 2 addressed; awaiting CI and
+  final independent re-review of the new exact head.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** PR #135's incremental review (Fix Round 2, APPROVE WITH
+  NON-BLOCKING COMMENTS) and `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`
+  §32 as the evidentiary basis for the corrected cross-reference.

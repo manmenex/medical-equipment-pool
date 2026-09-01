@@ -1,0 +1,128 @@
+# PR24D-L — Local Staging/UAT Deployment. Current authority:
+# docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md §32. The full
+# operator runbook (docs/runbooks/PR24_LOCAL_STAGING_INSTALLATION_RUNBOOK.md)
+# is planned for PR24D-L3 and does not exist yet -- do not follow that path
+# as a current navigation target.
+#
+# THIS IS NOT A FOURTH ENVIRONMENT. OD-PR24-4's taxonomy (Development,
+# Staging/UAT, Production) is unchanged -- this file is a zero-cost LOCAL
+# EXECUTION MODE for the existing Staging/UAT environment class, run on a
+# single Windows PC with Docker Desktop, reachable by other authorized
+# devices on the same LAN over plain HTTP. It is not a substitute for a
+# real managed Staging environment or a real managed-Staging backup/
+# restore rehearsal -- see design doc §32's own "Evidence classification"
+# paragraph for why.
+#
+# Reuses the existing production application images (../../backend,
+# ../../frontend) unchanged -- no separate local-only application build.
+# ENVIRONMENT=production is intentional here (not a bug): it keeps
+# backend/app/core/config.py's validate_production_secrets() hardened
+# checks in effect (rejects default secrets/database/origins) even for
+# this local execution mode. COOKIE_SECURE=false is the one deliberate
+# override this mode needs on top of that -- see config.py's own
+# COOKIE_SECURE docstring for why.
+#
+# Architecture: LAN clients only ever reach the `frontend` service (nginx,
+# port 80 by default). frontend/nginx.conf proxies `/api/` to `backend`
+# over the internal Docker network -- browser requests are same-origin,
+# so no CORS configuration and no `localhost`-means-a-different-machine
+# trap for LAN clients. `postgres` and `redis` are not published to the
+# host at all -- minimum attack surface, matching docker-compose.prod.yml's
+# own established pattern for this repository.
+#
+# Deployment invariant, unchanged from backend/Dockerfile and
+# docker-compose.prod.yml: exactly one backend replica running exactly one
+# Uvicorn worker. The embedded APScheduler (app/worker/scheduler.py) has
+# no leader-election guard -- running more than one backend instance
+# duplicates the daily PM/CAL notification job. This is not just a
+# documented convention: the `backend` service below has a fixed
+# `container_name`, so `docker compose up --scale backend=2` fails
+# structurally (Compose refuses to create two containers sharing one
+# name) -- see that service's own comment.
+#
+# No committed secrets, no default admin password, no demo/seed data.
+# Every `${VAR:?...}` below fails `docker compose config`/`up` closed if
+# the corresponding .env value is missing -- see .env.example for the
+# full list an operator (or the Round 2 installer) must supply.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:?POSTGRES_DB must be set, see .env.example}"
+      POSTGRES_USER: "${POSTGRES_USER:?POSTGRES_USER must be set, see .env.example}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set. Generate a real secret, never a placeholder.}"
+    volumes:
+      - local_staging_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:?POSTGRES_USER must be set} -d ${POSTGRES_DB:?POSTGRES_DB must be set}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - local_staging_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ../../backend
+    # Fixed container name intentionally makes `docker compose up
+    # --scale backend=2` fail (Compose refuses two containers with the
+    # same name) -- the embedded APScheduler (app/worker/scheduler.py)
+    # has no leader-election guard, so more than one backend container
+    # would duplicate the daily PM/CAL notification job. This is a
+    # structural guard, not just documentation; see
+    # test_pr24d_local_staging_compose.py's own scale-guard test.
+    container_name: mep-local-staging-backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:?POSTGRES_USER must be set}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB must be set}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set. Generate one with the Python secrets module.}"
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:?ALLOWED_ORIGINS must be set to this host's actual LAN URL (see .env.example) -- never a hardcoded hospital IP committed to source control}"
+      ENVIRONMENT: production
+      DEBUG: "false"
+      COOKIE_SECURE: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # Redis is intentionally NOT a startup dependency here (health-gated
+      # or otherwise): backend/app/core/redis.py wraps every Redis call in
+      # try/except and fails open (cache misses become no-ops; refresh-
+      # token validation treats an unreachable Redis as valid rather than
+      # locking users out) -- see GET /api/v1/ready's own `redis: "ok" |
+      # "degraded"`, never blocking, contract. Gating backend startup on
+      # Redis health here would make an already-non-critical dependency
+      # accidentally block the whole stack, contradicting that contract.
+    healthcheck:
+      # Overrides the Dockerfile's own liveness-only HEALTHCHECK
+      # (`/api/v1/health`, always 200) with the fail-closed readiness
+      # probe (`/api/v1/ready`, PostgreSQL-blocking) -- so `frontend`'s
+      # `condition: service_healthy` below only starts routing LAN
+      # traffic once the backend can actually reach its database, not
+      # merely once the process is alive.
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    # No host port: LAN clients reach this service only through
+    # `frontend`'s nginx reverse proxy on the internal Docker network.
+
+  frontend:
+    build: ../../frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${LOCAL_STAGING_HTTP_PORT:-80}:80"
+
+volumes:
+  local_staging_postgres_data:
+  local_staging_redis_data:

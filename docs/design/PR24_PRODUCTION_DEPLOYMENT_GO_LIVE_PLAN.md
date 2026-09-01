@@ -1888,3 +1888,117 @@ when:
   in this document.
 - The proposed Roadmap sequence (§29) is explicitly marked as a
   proposal, not an authoritative commitment.
+
+---
+
+## 32. Local Staging/UAT Execution Mode (PR24D-L)
+
+Added post-hoc by PR24D-L1, entering at baseline
+`7e2bfb2001642ea9a9754310b85d1911b7b2be5c` (GitHub PR #134). Owner
+direction (2026-08-30): no current budget for paid cloud
+infrastructure; proceed with a zero-cost **local execution of the
+existing Staging/UAT environment class** using Docker on a Windows PC,
+reachable by other authorized devices on the same LAN; build an
+installer/deployment mechanism for it (Setup.exe/GUI explicitly
+deferred until a script-based installer engine is proven).
+
+**This is not a fourth environment.** OD-PR24-4's taxonomy (§28:
+Development, Staging/UAT, Production) is unchanged. Local execution is
+a hosting/execution *method* for the existing Staging/UAT class, not a
+new class — the same way running the existing test suite locally is
+not a fourth kind of CI.
+
+**Architecture:**
+
+```
+Windows host
+    |
+    +-- Docker Compose (deployment/local-staging/compose.yml)
+          |
+          +-- frontend (nginx, port 80 by default -- the only
+          |     service reachable from the LAN; proxies /api/ to
+          |     backend over the internal Docker network, so browser
+          |     requests are same-origin -- no CORS configuration and
+          |     no `localhost`-means-a-different-machine trap for LAN
+          |     clients)
+          +-- backend (FastAPI/Uvicorn, exactly 1 replica, exactly 1
+          |     worker -- unchanged deployment invariant, see §15/
+          |     §15A; not published to the host)
+          +-- postgres (persistent named volume; not published to the
+          |     host or the LAN)
+          `-- redis (persistent named volume, non-blocking to
+                readiness per §15A; not published to the host or the
+                LAN)
+```
+
+**Identity contract with the rest of §18's CD mechanism:** unchanged.
+`deployment/local-staging/compose.yml` builds the same
+`backend/Dockerfile`/`frontend/Dockerfile` this repository already
+ships for every other execution mode -- no separate local-only
+application implementation. `ENVIRONMENT=production` is set
+deliberately (not a bug) so `validate_production_secrets()` (§9)
+continues to reject default secrets/database/origins even for this
+local mode.
+
+**The one deliberate deviation, and why:** the refresh-token cookie's
+`Secure` attribute (`backend/app/api/v1/auth.py`) was previously tied
+unconditionally to `ENVIRONMENT == "production"`. Local execution runs
+plain HTTP on a trusted LAN (no TLS certificate is obtainable for an
+internal, DHCP-assigned address without paid infrastructure or
+internal PKI) -- a browser silently drops a `Secure` cookie set over
+plain HTTP, breaking token refresh. A new `COOKIE_SECURE` setting
+(`backend/app/core/config.py`) decouples the two: it defaults to
+`ENVIRONMENT == "production"` (the exact previous behavior, so real
+Production and every other existing deployment are unaffected unless
+they, too, explicitly override it -- which they must never do), and
+only `deployment/local-staging/compose.yml` explicitly sets it
+`COOKIE_SECURE=false`. This is the sole security-relevant application
+code change local execution requires; every other §9/§14/§15/§15A
+invariant is unchanged.
+
+**Evidence classification (binding, matches §18/§21's existing "CD
+mechanism proof" vs. "real Staging exists" distinction and
+`docs/runbooks/PR24_BACKUP_RESTORE_RUNBOOK.md`'s "CI proves tooling"
+vs. "Staging rehearsal proves operational readiness" distinction):** a
+successful local execution, a local backup/restore rehearsal against
+this local deployment, or LAN-device access to it is **LOCAL
+evidence**, never **real managed-Staging evidence**. It does not
+satisfy the Production-GO prerequisite for a genuine managed
+Staging-class restore rehearsal (§11, §21) unless a future, explicit
+governance decision approves that equivalence -- none has. Starting
+PR24E remains gated on real managed-Staging availability and
+sufficient *managed-Staging* operational evidence, not on local
+execution succeeding.
+
+**Planned slice sequence** (§43 split, reviewability over convenience,
+matching this repository's usual one-concern-per-PR precedent):
+
+- **PR24D-L1 (this slice):** `deployment/local-staging/compose.yml` +
+  `.env.example`, the `COOKIE_SECURE` backend change, static
+  regression tests (compose-structure invariants, cookie-override
+  behavior), `docker compose config` validation. No installer script,
+  no runbook yet.
+- **PR24D-L2 (planned):** the script-based installer engine
+  (`install.ps1`/`start.ps1`/`stop.ps1`/`status.ps1`/`update.ps1`/
+  `uninstall.ps1` + a shared `lib/Common.ps1`) -- prerequisite checks,
+  secret generation, Administrator bootstrap via the existing
+  `app.scripts.bootstrap_admin` CLI (§17), the explicit Alembic
+  migration step (§20) via the existing pattern, install idempotency,
+  Windows-restart-safe Docker-native restart policies. Explicitly not
+  Setup.exe -- a later phase reuses this same tested engine underneath
+  a GUI, never a duplicated installation logic path.
+- **PR24D-L3 (planned):** `backup.ps1`/`restore.ps1` wrappers reusing
+  the existing PR24C `backend/scripts/backup_postgres.py`/
+  `restore_postgres.py` tooling unchanged (never a second independent
+  backup engine), the documented local backup/restore rehearsal
+  procedure (explicitly classified as LOCAL evidence, per above), the
+  full `docs/runbooks/PR24_LOCAL_STAGING_INSTALLATION_RUNBOOK.md`, and
+  the final governance sync recording PR24D-L1/L2/L3's completion
+  together.
+
+**Explicitly out of scope for the whole PR24D-L effort:** Setup.exe/
+GUI installer, any cloud provider (Render/Koyeb/Supabase/Neon/Railway
+or otherwise -- §6's candidate list remains an Owner-approved
+architecture class only, no vendor selected), any paid infrastructure,
+Production execution, Pilot execution, PR24E+ start, any equipment
+lifecycle/business-rule change, offline/PWA application mode.

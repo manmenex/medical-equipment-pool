@@ -10,50 +10,64 @@ ordering
 
 ## Current baseline
 
-Current baseline: `84144f096aacb9e2687422c7cd84cc1354346aa7` on
+Current baseline: `7e2bfb2001642ea9a9754310b85d1911b7b2be5c` on
 `claude/medical-equipment-pool-0c7fz0` — the real squash-merge SHA of
-GitHub PR #133, "PR24D — CI/CD & Staging" (the immutable-artifact
-build/scan/migrate/deploy/verify mechanism —
-`.github/workflows/cd-staging.yml`, `backend/scripts/deploy_migrate.py`,
-`backend/scripts/staging_smoke_check.py` — across the base PR plus two
-independent-review fix rounds: Fix Round 1 made the CRITICAL image scan
-a hard structural gate on migration and replaced the mutable
-commit-SHA image tag with digest-pinned immutable artifact identity;
-Fix Round 2 closed a `workflow_dispatch` input shell-injection path in
-the `resolve-ref` job's trusted-ref validation via `env:` routing),
-squash-merged on top of `cd9764ef5ba5e56062ee41266c8d96e50f1152c0`
-(GitHub PR #132, PR24C, now historical/superseded by this baseline).
-PR #133's final reviewed feature-branch head
-(`c394c680ec54ad1a224dd11ab0f61cdd7dc723b3`; independent Final Merge
+GitHub PR #134, "PR24D — Post-Merge Governance Close-out" (folded in
+PR #133's real squash SHA across governance authority docs; a Fix
+Round 1 then closed four older, pre-existing stale current-baseline/
+status references found by a full six-file re-sweep — see
+`docs/DECISION_LOG.md` for the exact before/after text), squash-merged
+on top of `84144f096aacb9e2687422c7cd84cc1354346aa7` (GitHub PR #133,
+PR24D, now historical/superseded by this baseline). PR #134's final
+reviewed feature-branch head
+(`32998db1794e479a676f5d6cdaa7ac248f9a8b80`; independent Final Merge
 Gate: zero reviews, zero comments, zero review threads, CI green 6/6 on
 that exact head) — **that reviewed head is not the baseline**; the
-squash commit actually landed on the base branch, `84144f0...`, is,
+squash commit actually landed on the base branch, `7e2bfb2...`, is,
 independently verified tree-identical to that reviewed head with sole
-parent `cd9764ef...` confirmed. Per this repository's standing process,
+parent `84144f0...` confirmed. Per this repository's standing process,
 **no separate "baseline adoption" PR is created** — the squash SHA
-became authoritative immediately upon merge, recorded here by this
-governance close-out PR (the next PR that legitimately touches these
-governance files), consistent with this repository's squash-baseline
-discipline. **PR24D (CI/CD & Staging) code/tooling is merged and
-complete. Operational Staging evidence remains pending:** the manual
-`cd-staging.yml` workflow has not yet been executed even once, no
-hosting provider has been selected, no real persistent Staging
-environment exists, and the real PR24C backup/restore rehearsal has not
-yet been performed (see
+became authoritative immediately upon merge, recorded here by this PR
+(the next PR that legitimately touches these governance files),
+consistent with this repository's squash-baseline discipline. **PR24D
+(CI/CD & Staging) code/tooling is merged and complete. Operational
+Staging evidence remains pending:** the manual `cd-staging.yml`
+workflow has not yet been executed even once, no hosting provider has
+been selected, no real persistent managed-Staging environment exists,
+and the real PR24C backup/restore rehearsal against a managed-Staging
+target has not yet been performed (see
 `docs/runbooks/PR24_STAGING_DEPLOYMENT_RUNBOOK.md`). OD-PR24-1 remains
 resolved at the architecture-class level (Managed Application Platform +
 Managed PostgreSQL) — the specific provider is an
 execution/configuration decision within that approved class, not a
 reopened Owner Decision; any paid resource provisioning still requires
 explicit Owner approval. **PR24E (UAT Readiness) remains not started**,
-gated on real Staging availability and sufficient operational
+gated on real managed-Staging availability and sufficient operational
 deployment/backup evidence; PR24F (Pilot Execution) and PR24G
 (Production Go-Live Governance) also remain not started. **PR24 overall
 is in progress, not complete.** Real Pilot execution, Production
 cutover, AppSheet's actual read-only transition, a selected commercial
-provider, and a real Staging-class backup/restore rehearsal have
-**not** occurred (the rehearsal specifically awaits real Staging
-infrastructure).
+provider, and a real managed-Staging-class backup/restore rehearsal
+have **not** occurred.
+
+**Owner direction (recorded 2026-08-30): no current budget for paid
+cloud infrastructure.** The Owner explicitly approved a zero-cost
+**local execution of the existing Staging/UAT environment class** using
+Docker on a Windows PC, LAN-reachable by other authorized devices, plus
+an installer/deployment mechanism (Setup.exe deferred until a
+script-based installer engine is proven). **This is not a fourth
+environment** — OD-PR24-4's taxonomy (Development, Staging/UAT,
+Production) is unchanged. **PR24D-L1 (Local Docker Staging/UAT
+Foundation) is now in progress**: `deployment/local-staging/compose.yml`
+(PostgreSQL/Redis never LAN-exposed, exactly one backend replica/
+Uvicorn worker, no committed secrets/default credentials/demo data)
+plus a `COOKIE_SECURE` backend setting (`backend/app/core/config.py`)
+decoupling the refresh-token cookie's `Secure` attribute from
+`ENVIRONMENT` for this local mode only — real Production is unaffected.
+See `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §32 for
+the full architecture, the planned PR24D-L2/L3 split, and the binding
+"LOCAL evidence, never real managed-Staging evidence" classification —
+local execution does not satisfy PR24E's real managed-Staging gate.
 
 **Roadmap PR22 (Legacy Data Validation and Reconciliation) is now fully
 complete** — architecture design (GitHub PR #112), all seven Owner
@@ -134,7 +148,8 @@ Restore) has since merged too** (GitHub PR #132, squash SHA
 `cd9764ef5ba5e56062ee41266c8d96e50f1152c0`, historical — superseded by
 PR24D). **PR24D (CI/CD & Staging) code/tooling has since merged too**
 (GitHub PR #133, squash SHA `84144f096aacb9e2687422c7cd84cc1354346aa7`,
-current baseline, see above) — operational Staging evidence remains
+historical — superseded by GitHub PR #134's governance close-out, see
+"Current baseline" above) — operational Staging evidence remains
 pending. **PR24 overall is now in progress, not yet complete; PR24E is
 not started.** See "Current work" below.
 
@@ -386,12 +401,14 @@ is the Production Deployment & Go-Live Architecture Planning round
    PR24D) — `pg_dump`/`pg_restore`/prune tooling, CI-proven round trip,
    operator runbook; no real Staging rehearsal yet. **PR24D (CI/CD &
    Staging) code/tooling COMPLETE / MERGED** (GitHub PR #133, squash SHA
-   `84144f096aacb9e2687422c7cd84cc1354346aa7`, current baseline) —
-   immutable-artifact build/scan/migrate/deploy/verify mechanism,
-   including two independent-review fix rounds, proven against an
-   ephemeral CI-provisioned target only; manual workflow execution
-   pending, no provider selected, no real Staging infrastructure
-   provisioned, no real backup/restore rehearsal performed.
+   `84144f096aacb9e2687422c7cd84cc1354346aa7`, historical — superseded
+   by GitHub PR #134's governance close-out, current baseline
+   `7e2bfb2001642ea9a9754310b85d1911b7b2be5c`) — immutable-artifact
+   build/scan/migrate/deploy/verify mechanism, including two
+   independent-review fix rounds, proven against an ephemeral
+   CI-provisioned target only; manual workflow execution pending, no
+   provider selected, no real Staging infrastructure provisioned, no
+   real backup/restore rehearsal performed.
 
 Legacy migration and reconciliation are mandatory before PR24.
 
@@ -507,8 +524,9 @@ Legacy migration and reconciliation are mandatory before PR24.
   #128, historical) — **Roadmap PR23 overall is fully
   implementation-complete.** PR24's architecture/design, all six Owner
   Decisions, PR24B, PR24C, and PR24D's code/tooling have since also
-  merged too — see "Current baseline" above for the live baseline
-  (`84144f096aacb9e2687422c7cd84cc1354346aa7`).**
+  merged too, and PR24D's own post-merge governance close-out (GitHub
+  PR #134) has since merged as well — see "Current baseline" above for
+  the live baseline (`7e2bfb2001642ea9a9754310b85d1911b7b2be5c`).**
   GitHub PR #81, an earlier unsplit PR19A
   candidate, was closed without merging, superseded by
   PR19A1/PR19A2/PR19A3.
