@@ -7214,8 +7214,11 @@ status accuracy
   backend/tests/test_startup_security.py
   backend/tests/test_pr24d_workflow_static.py` → 107 passed (no change
   in count, confirming no test-affecting regression); `git diff --check`
-  clean; changed-file scope confirmed as exactly
-  `deployment/local-staging/compose.yml`.
+  clean; functional fix surface confirmed as exactly
+  `deployment/local-staging/compose.yml` -- this DECISION_LOG file was
+  also updated in the same commit, but append-only, to record this
+  round's governance/review evidence, not as part of the functional fix
+  surface itself.
 - **Status:** Draft, not merged. Fix Round 2 addressed; awaiting CI and
   final independent re-review of the new exact head.
 - **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
