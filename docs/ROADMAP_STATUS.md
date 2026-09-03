@@ -66,7 +66,8 @@ hardened checks) over plain HTTP on a trusted LAN, where a `Secure`
 cookie would be silently dropped by the browser. **PR24D-L2 (Local
 Staging/UAT Installer & Operations Engine) is now in progress**: the
 script-based installer (`install.ps1`/`start.ps1`/`stop.ps1`/
-`status.ps1`/`update.ps1`/`uninstall.ps1` + shared `lib/Common.ps1`),
+`status.ps1`/`update.ps1`/`uninstall.ps1` + shared `lib/Common.ps1`
+and `lib/Operations.ps1`),
 reusing the existing PR24B `app.scripts.bootstrap_admin` Administrator
 bootstrap and PR24D `backend/scripts/deploy_migrate.py` explicit
 migration mechanism unchanged, preserving the fixed backend

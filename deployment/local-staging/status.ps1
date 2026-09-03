@@ -2,7 +2,17 @@
 .SYNOPSIS
 PR24D-L2: prints concise operator status for the local Staging/UAT
 deployment. Never prints a secret, token, or credential-bearing
-DATABASE_URL (repository §25).
+DATABASE_URL.
+
+.DESCRIPTION
+Read-only: deliberately does NOT take the deployment mutation lock, so
+status stays usable while an install or update is running. It reports
+whether such an operation is in progress by probing the lock without
+holding it.
+
+Uses `docker compose ps --all` so stopped/exited services are visible --
+plain `ps` hides them and would make a fully stopped installation look
+like it had no containers at all.
 
 .OUTPUTS
 Exit code 0 if the application is ready (GET /api/v1/ready passing);
@@ -33,42 +43,50 @@ if (-not (Test-EnvFileExists)) {
     exit 1
 }
 
-function Get-ServiceStatusMap {
-    $result = Invoke-DockerCompose -Arguments @('ps', '--format', 'json') -PassThru
-    $map = @{}
-    if ($result.ExitCode -ne 0 -or -not $result.Output) { return $map }
-    foreach ($line in $result.Output) {
-        if (-not $line -or $line.Trim() -eq '') { continue }
-        try {
-            $svc = $line | ConvertFrom-Json
-        }
-        catch { continue }
-        $map[$svc.Service] = $svc
-    }
-    return $map
+# Probe the mutation lock without holding it: if another operation owns
+# it, report BUSY rather than blocking or failing.
+$busy = $false
+try {
+    $probe = Enter-MepMutationLock
+    Exit-MepMutationLock $probe
+}
+catch {
+    $busy = $true
+}
+if ($busy) {
+    Write-Host 'Deployment operation: BUSY (an install/update/stop is currently running)' -ForegroundColor Yellow
 }
 
 function Format-ServiceHealth {
     param($Entry, [string]$HealthyWord = 'Healthy', [string]$OtherWord = 'Degraded')
-    if (-not $Entry) { return 'Stopped' }
+    if (-not $Entry) { return 'Not created' }
     if ($Entry.State -ne 'running') { return 'Stopped' }
-    if (-not $Entry.Health -or $Entry.Health -eq '') { return 'Running' }
+    if (-not $Entry.PSObject.Properties.Name.Contains('Health') -or -not $Entry.Health -or $Entry.Health -eq '') { return 'Running' }
     if ($Entry.Health -eq 'healthy') { return $HealthyWord }
     return $OtherWord
 }
 
-$services = Get-ServiceStatusMap
+$services = Get-MepServiceStates
+if ($null -eq $services) {
+    Write-Host 'Could not inspect container state (docker compose ps failed).' -ForegroundColor Red
+    exit 1
+}
 
-Write-Host "PostgreSQL:  $(Format-ServiceHealth $services['postgres'])"
-Write-Host "Redis:       $(Format-ServiceHealth $services['redis'])"
-Write-Host "Backend:     $(if ($services['backend'] -and $services['backend'].State -eq 'running') { 'Running' } else { 'Stopped' })"
-Write-Host "Frontend:    $(if ($services['frontend'] -and $services['frontend'].State -eq 'running') { 'Running' } else { 'Stopped' })"
+$pg = if ($services.ContainsKey('postgres')) { $services['postgres'] } else { $null }
+$redis = if ($services.ContainsKey('redis')) { $services['redis'] } else { $null }
+$backend = if ($services.ContainsKey('backend')) { $services['backend'] } else { $null }
+$frontend = if ($services.ContainsKey('frontend')) { $services['frontend'] } else { $null }
 
-$env = Read-EnvFile
-$port = if ($env.ContainsKey('LOCAL_STAGING_HTTP_PORT') -and $env['LOCAL_STAGING_HTTP_PORT']) { $env['LOCAL_STAGING_HTTP_PORT'] } else { 80 }
+Write-Host "PostgreSQL:  $(Format-ServiceHealth $pg)"
+Write-Host "Redis:       $(Format-ServiceHealth $redis)"
+Write-Host "Backend:     $(if ($backend -and $backend.State -eq 'running') { 'Running' } elseif ($backend) { 'Stopped' } else { 'Not created' })"
+Write-Host "Frontend:    $(if ($frontend -and $frontend.State -eq 'running') { 'Running' } elseif ($frontend) { 'Stopped' } else { 'Not created' })"
+Write-Host "State:       $(Get-InstallationState)"
+
+$port = Get-ConfiguredHttpPort
 
 $isReady = $false
-if ($services['frontend'] -and $services['frontend'].State -eq 'running') {
+if ($frontend -and $frontend.State -eq 'running') {
     # Avoids -SkipHttpErrorCheck (PowerShell 7.4+ only) so this also works
     # on Windows PowerShell 5.1: a 503 (not ready) throws a terminating
     # error here, which the catch below correctly treats as Not Ready.

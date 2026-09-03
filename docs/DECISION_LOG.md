@@ -7403,3 +7403,116 @@ Operations Engine) started, not merged
   `backend/app/scripts/bootstrap_admin.py`/
   `backend/scripts/deploy_migrate.py`/`backend/app/core/redis.py` as
   the evidentiary basis for every reuse decision above.
+
+## 2026-09-03 — GitHub PR #136 Fix Round 1 (independent review, REQUEST CHANGES): four P1 installer-correctness defects + one P2 state-detection defect -- fixed, not merged
+
+- **Context:** PR #136 (PR24D-L2, Local Staging/UAT Installer &
+  Operations Engine) received an independent review returning REQUEST
+  CHANGES with four P1 blockers and one P2. The review's finding was
+  that the installer's *documented* guarantees were not *structurally*
+  enforced: several failure paths continued past a failed mutating step,
+  and the installation lock could not actually exclude a second process.
+- **P1-A — build was implicit, so migration could run against a stale
+  image.** `install.ps1`/`update.ps1` relied on `docker compose up`'s
+  implicit build behavior, so a cached image could satisfy the run and
+  the migration could execute code that was not the reviewed source.
+  Fixed by an explicit `docker compose build backend frontend`
+  (`Invoke-MepBuildImages`) that runs BEFORE migration in both install
+  and update and fails closed on a non-zero exit; the migration then
+  uses `docker compose run --rm --no-build ...`, so it can only use the
+  image that was just built. No `:latest` semantics and no claim of
+  immutable artifact promotion: this is local-source mode, and the
+  recorded provenance is the git `rev-parse HEAD` of the working tree.
+- **P1-B — a fresh installation could complete without a usable
+  Administrator.** Bootstrap failure was previously non-fatal. It is now
+  mandatory whenever the installation has never completed: blank or
+  cancelled operator input, or any non-zero exit from
+  `app.scripts.bootstrap_admin`, is a hard install failure, and success
+  metadata is NOT written. The backend remains the source of truth for
+  whether an administrator exists -- the installer runs the existing
+  backend CLI and classifies its refusal message ("an administrator
+  already exists" is a satisfied precondition, not a failure); admin
+  existence is never inferred from local installer metadata alone. The
+  CLI's one-time generated password is printed to the console only and
+  never passed to `Write-InstallLog`, and no password ever appears on a
+  process command line.
+- **P1-C — update ignored a failed stop before migrating.** The stop
+  step's exit code is now checked, AND the backend is separately
+  verified to be not running via `Get-MepServiceStates` before the
+  migration runs -- an exit code alone is not accepted as proof. A
+  failed stop aborts the update before any schema change. Ordering was
+  also corrected so a failed build never leaves the previously working
+  application stopped: build first, stop second.
+- **P1-D — the installation lock was non-atomic.** The previous
+  `Test-Path`-then-`Set-Content` lock file was a TOCTOU race and left
+  stale locks behind after a crash. Replaced with a single named mutex
+  (`Enter-MepMutationLock`/`Exit-MepMutationLock`) in one shared
+  namespace covering install, update, uninstall, start, and stop;
+  release is exception-safe via `finally`, and the OS releases the mutex
+  automatically if the process dies. Contention fails immediately with a
+  clear operator message rather than waiting silently. `status.ps1`
+  remains read-only: it probes the lock to report BUSY but never holds
+  it.
+- **P2 — state detection hid stopped containers.** `docker compose ps`
+  was replaced by `docker compose ps --all` everywhere (plain `ps` omits
+  exited containers, so a fully stopped installation looked like it had
+  no containers at all). State classification now validates the expected
+  service set (postgres/redis/backend/frontend) and returns
+  FRESH/EXISTING_HEALTHY/EXISTING_STOPPED/PARTIAL/AMBIGUOUS; metadata
+  alone never implies healthy.
+- **Structural change that made the above testable:** all native command
+  execution was centralized behind a single seam, `Invoke-MepCommand`
+  (executable plus an argument array; never `Invoke-Expression`), and
+  the orchestration was extracted from the entry scripts into
+  `deployment/local-staging/lib/Operations.ps1`. The entry scripts are
+  now thin lock-holding wrappers. `$LASTEXITCODE` is handled in exactly
+  one place instead of being duplicated inconsistently per script.
+- **Same-class sweep (beyond the five reported findings):** one
+  additional defect of the P1-C class was found and fixed --
+  `-RemoveData` uninstall deleted `.env` and the install metadata with
+  `-ErrorAction SilentlyContinue` and then reported "Data removed" even
+  if the files survived, which would tell an operator their generated
+  secrets were gone while they were still on disk. Removal is now
+  verified and fails closed. Also swept and found clean: every
+  `-AllowNonZeroExit` call site inspects its exit code (the single
+  warning-only path, Redis, is deliberate and contract-backed); no
+  `2>$null` suppression; no `| Out-Null` discarding a native command
+  result; success metadata is written last in both install and update;
+  every mutating entry script acquires the lock and releases it in
+  `finally`.
+- **Test evidence, explicitly classified.** POWERSHELL UNIT/MOCK: 26
+  behavior tests in
+  `deployment/local-staging/tests/Invoke-InstallerTests.ps1` dot-source
+  the REAL `Common.ps1`/`Operations.ps1` and mock only the
+  `Invoke-MepCommand` seam, so they exercise the shipped orchestration
+  rather than duplicated pseudo-code; they were proved non-vacuous by
+  mutation testing (deleting the build-before-migrate step, the stop
+  exit-code check, and the uninstall removal verification each produced
+  the expected failures, and each file was then restored byte-identical).
+  These tests execute NO Docker command and are NOT an end-to-end
+  installation. STATIC VERIFIED: 37 assertions in
+  `backend/tests/test_pr24d_l2_installer_scripts.py`, plus all 8 `.ps1`
+  files parsed with the real PowerShell 7.4.6 language parser. CI
+  VERIFIED: the "PowerShell script validation" job now both parses every
+  script and runs the behavior tests. DOCKER EXECUTED / WINDOWS
+  EXECUTED: **not performed** -- this sandbox has no Docker daemon and
+  is not Windows, so a real build, install, update, LAN check, and the
+  mutex's behavior under real Windows contention remain unverified on
+  target hardware. Cross-process mutual exclusion WAS verified
+  empirically, but on Linux `pwsh` in this sandbox only.
+- **Preserved unchanged, not reopened:** every PR24D-L1 invariant (fixed
+  backend `container_name`, one Uvicorn worker, PostgreSQL-blocking and
+  Redis-non-blocking readiness, `COOKIE_SECURE` decoupling, no
+  PostgreSQL/Redis LAN exposure, no committed secrets) and every L2
+  security property (no default administrator credentials, no secret
+  logging, no password in argv, no `Invoke-Expression`, no automatic
+  firewall weakening, no `down -v` in the default uninstall path, no
+  `git pull`, no `:latest`).
+- **Status:** Draft, not merged. PR24D-L3 NOT started; PR24E NOT
+  started; Setup.exe NOT implemented; no cloud resources provisioned.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** GitHub PR #136's own Fix Round 1 review text, and this
+  repository's `backend/app/scripts/bootstrap_admin.py`,
+  `backend/scripts/deploy_migrate.py`, and `backend/app/core/redis.py`
+  as the evidentiary basis for the bootstrap, migration, and
+  Redis-non-blocking decisions above.

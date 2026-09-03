@@ -129,7 +129,8 @@ setting decoupling the refresh-token cookie's `Secure` attribute from
 `ENVIRONMENT` for this local mode only. **PR24D-L2 (Local Staging/UAT
 Installer & Operations Engine) is now in progress**: the script-based
 installer (`install.ps1`/`start.ps1`/`stop.ps1`/`status.ps1`/
-`update.ps1`/`uninstall.ps1` + shared `lib/Common.ps1`), reusing the
+`update.ps1`/`uninstall.ps1` + shared `lib/Common.ps1` and
+`lib/Operations.ps1`), reusing the
 existing PR24B Administrator bootstrap and PR24D explicit-migration
 mechanisms unchanged, no Setup.exe — see
 `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §32 for the

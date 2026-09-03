@@ -412,3 +412,16 @@ jobs:
             }
           }
           if ($failed) { exit 1 }
+
+      # PR24D-L2 Fix Round 1: parsing alone cannot prove that the
+      # installer BUILDS before it migrates, that a failed stop aborts an
+      # update, or that the deployment lock actually excludes a second
+      # process. These behavior tests dot-source the real orchestration
+      # functions in lib/Operations.ps1 and replace only the single
+      # native-command seam (Invoke-MepCommand) with a recording mock, so
+      # the orchestration under test is the shipped code path -- not a
+      # re-implementation of it. They run no Docker command and are not
+      # an end-to-end installation.
+      - name: Run PowerShell installer orchestration behavior tests
+        shell: pwsh
+        run: pwsh -NoProfile -File deployment/local-staging/tests/Invoke-InstallerTests.ps1

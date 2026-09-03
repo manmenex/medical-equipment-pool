@@ -1,10 +1,9 @@
 # PR24D-L2 (docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md §32):
-# shared helper functions for install.ps1/start.ps1/stop.ps1/status.ps1/
-# update.ps1/uninstall.ps1. Kept as a single module per that section's own
-# already-committed target file structure ("a shared lib/Common.ps1") --
-# functions below are grouped by concern (logging, Docker/Compose,
-# prerequisites, secrets, config, network, lock, metadata) rather than
-# split into several files for six thin call sites.
+# shared primitives for the local Staging/UAT installer/operations
+# scripts. Orchestration sequences live in lib/Operations.ps1, which is
+# built on top of this file -- keeping the two apart is what lets
+# tests/Invoke-InstallerTests.ps1 exercise the real install/update
+# sequences with a mocked command layer instead of duplicated pseudo-code.
 #
 # THIS IS NOT A FOURTH ENVIRONMENT. OD-PR24-4's taxonomy (Development,
 # Staging/UAT, Production) is unchanged -- see compose.yml's own header.
@@ -12,27 +11,34 @@
 Set-StrictMode -Version Latest
 
 # ---------------------------------------------------------------------------
-# Paths
+# Paths and deployment identity
 # ---------------------------------------------------------------------------
 
 # $PSScriptRoot here is deployment/local-staging/lib -- resolve everything
 # relative to the deployment directory itself, never the operator's current
 # working directory, so scripts behave the same regardless of where they are
-# invoked from (repository §15: "scripts must not accidentally create
-# separate Compose projects depending on current working directory").
+# invoked from.
 $Script:DeploymentRoot = Split-Path -Parent $PSScriptRoot
 $Script:ComposeFilePath = Join-Path $Script:DeploymentRoot 'compose.yml'
 $Script:EnvFilePath = Join-Path $Script:DeploymentRoot '.env'
 $Script:EnvExamplePath = Join-Path $Script:DeploymentRoot '.env.example'
 $Script:LogDirectory = Join-Path $Script:DeploymentRoot 'logs'
-$Script:LockFilePath = Join-Path $Script:DeploymentRoot '.install.lock'
 $Script:MetadataFilePath = Join-Path $Script:DeploymentRoot '.install-metadata.json'
 
-# Deterministic Compose project identity (repository §15): every script
-# below passes this explicitly with -p so install/start/stop/status/update/
-# uninstall always operate on the same deployment, never a second project
-# accidentally created by directory-dependent Compose defaults.
+# Deterministic Compose project identity: every Compose call below passes
+# this explicitly with -p, so install/start/stop/status/update/uninstall
+# always operate on the same deployment regardless of invocation directory.
 $Script:ComposeProjectName = 'mep-local-staging'
+
+# The complete set of services this deployment expects to exist. State
+# classification validates against this set rather than inferring health
+# from any single service (Fix Round 1, P2).
+$Script:ExpectedServices = @('postgres', 'redis', 'backend', 'frontend')
+
+# Single mutation-lock namespace shared by every state-changing script
+# (install/update/start/stop/uninstall). status.ps1 is read-only and does
+# not take it.
+$Script:MutationLockName = 'MEP-LocalStaging-Deployment-Mutation'
 
 # ---------------------------------------------------------------------------
 # Logging (never logs secrets -- see Protect-LogValue)
@@ -78,28 +84,78 @@ function Protect-LogValue {
 }
 
 # ---------------------------------------------------------------------------
-# Safe command execution (never Invoke-Expression; argument arrays only)
+# Centralized native command execution (Fix Round 1, review §21)
 # ---------------------------------------------------------------------------
+
+function Invoke-MepCommand {
+    <#
+    .SYNOPSIS
+    The single seam through which every native command in this installer
+    runs. Never uses Invoke-Expression; always an executable plus an
+    argument array, so paths containing spaces and values containing
+    shell metacharacters are passed through safely.
+
+    .DESCRIPTION
+    Always inspects the native exit code explicitly -- PowerShell does not
+    do this for you, and a silently-ignored `$LASTEXITCODE` is exactly the
+    class of bug Fix Round 1 found. By default a non-zero exit throws;
+    pass -AllowNonZeroExit when the caller genuinely needs to branch on
+    the code (and then it must check .ExitCode itself).
+
+    Returns [pscustomobject] @{ ExitCode; Output } where Output is the
+    combined stdout/stderr lines.
+
+    .PARAMETER NoCapture
+    Streams output straight to the console instead of capturing it. Used
+    for the Administrator bootstrap path, whose stdout carries a one-time
+    password that must never be written to the installer log.
+    #>
+    param(
+        [Parameter(Mandatory)] [string]$FilePath,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Arguments,
+        [switch]$AllowNonZeroExit,
+        [switch]$NoCapture,
+        [string]$Phase = 'command'
+    )
+
+    if ($NoCapture) {
+        & $FilePath @Arguments
+        $exitCode = $LASTEXITCODE
+        $output = @()
+    }
+    else {
+        $output = & $FilePath @Arguments 2>&1 | ForEach-Object { "$_" }
+        $exitCode = $LASTEXITCODE
+    }
+
+    if ($exitCode -ne 0 -and -not $AllowNonZeroExit) {
+        # Never echoes the argument array: it can legitimately contain a
+        # value derived from .env (e.g. a compose --env-file path) and the
+        # command's own output may contain a connection string.
+        throw "$FilePath exited with code $exitCode during phase '$Phase'. See the console output above for details."
+    }
+
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Output   = $output
+    }
+}
 
 function Invoke-DockerCompose {
     <#
     .SYNOPSIS
-    Runs `docker compose` against this installation's compose file/env
-    file/project name. Returns the exit code; caller decides whether to
-    treat a non-zero exit as fatal (never assumes success).
+    Runs `docker compose` against this installation's compose file, env
+    file, and deterministic project name, through Invoke-MepCommand.
     #>
     param(
         [Parameter(Mandatory)] [string[]]$Arguments,
-        [switch]$PassThru
+        [switch]$AllowNonZeroExit,
+        [switch]$NoCapture,
+        [string]$Phase = 'compose'
     )
     $baseArgs = @('compose', '-p', $Script:ComposeProjectName, '-f', $Script:ComposeFilePath, '--env-file', $Script:EnvFilePath)
-    $allArgs = $baseArgs + $Arguments
-    if ($PassThru) {
-        $output = & docker @allArgs 2>&1
-        return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $output }
-    }
-    & docker @allArgs
-    return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $null }
+    return Invoke-MepCommand -FilePath 'docker' -Arguments ($baseArgs + $Arguments) `
+        -AllowNonZeroExit:$AllowNonZeroExit -NoCapture:$NoCapture -Phase $Phase
 }
 
 function Invoke-DockerComposeConfigOnly {
@@ -109,9 +165,61 @@ function Invoke-DockerComposeConfigOnly {
     prerequisite checks to validate the compose file/env combination is at
     least well-formed before anything is started.
     #>
-    $baseArgs = @('compose', '-f', $Script:ComposeFilePath, '--env-file', $Script:EnvFilePath, 'config', '--quiet')
-    & docker @baseArgs 2>&1
-    return $LASTEXITCODE
+    $result = Invoke-MepCommand -FilePath 'docker' `
+        -Arguments @('compose', '-f', $Script:ComposeFilePath, '--env-file', $Script:EnvFilePath, 'config', '--quiet') `
+        -AllowNonZeroExit -Phase 'compose-config'
+    return $result.ExitCode
+}
+
+# ---------------------------------------------------------------------------
+# Atomic mutation lock (Fix Round 1, P1-D)
+# ---------------------------------------------------------------------------
+
+function Enter-MepMutationLock {
+    <#
+    .SYNOPSIS
+    Acquires the single deployment mutation lock atomically, or fails
+    immediately with an actionable message.
+
+    .DESCRIPTION
+    Uses a named mutex rather than the previous Test-Path-then-write file
+    pattern, which had a check-then-act (TOCTOU) race: two installers
+    could both observe "no lock file" and both proceed. A named mutex's
+    acquisition is atomic at the OS level and is released automatically if
+    the owning process dies, so there is no stale-lock file to reason
+    about. Verified to serialize correctly across separate processes on
+    both Windows and Linux PowerShell.
+
+    Returns the mutex, which the caller MUST release in a finally block
+    via Exit-MepMutationLock.
+    #>
+    param([int]$TimeoutMilliseconds = 0)
+
+    $createdNew = $false
+    $mutex = [System.Threading.Mutex]::new($false, $Script:MutationLockName, [ref]$createdNew)
+    $acquired = $false
+    try {
+        $acquired = $mutex.WaitOne($TimeoutMilliseconds)
+    }
+    catch [System.Threading.AbandonedMutexException] {
+        # The previous owner died without releasing. The lock is ours now,
+        # and any half-finished state it left behind is exactly what the
+        # installer's own state detection is designed to classify.
+        $acquired = $true
+    }
+
+    if (-not $acquired) {
+        $mutex.Dispose()
+        throw "Another Medical Equipment Pool deployment operation is already in progress.`nACTION: Wait for it to finish, then retry."
+    }
+    return $mutex
+}
+
+function Exit-MepMutationLock {
+    param($Mutex)
+    if ($null -eq $Mutex) { return }
+    try { $Mutex.ReleaseMutex() } catch { }
+    $Mutex.Dispose()
 }
 
 # ---------------------------------------------------------------------------
@@ -123,13 +231,15 @@ function Test-DockerCliAvailable {
 }
 
 function Test-DockerEngineRunning {
-    docker info > $null 2>&1
-    return $LASTEXITCODE -eq 0
+    if (-not (Test-DockerCliAvailable)) { return $false }
+    $result = Invoke-MepCommand -FilePath 'docker' -Arguments @('info') -AllowNonZeroExit -Phase 'docker-info'
+    return $result.ExitCode -eq 0
 }
 
 function Test-DockerComposeV2Available {
-    docker compose version > $null 2>&1
-    return $LASTEXITCODE -eq 0
+    if (-not (Test-DockerCliAvailable)) { return $false }
+    $result = Invoke-MepCommand -FilePath 'docker' -Arguments @('compose', 'version') -AllowNonZeroExit -Phase 'compose-version'
+    return $result.ExitCode -eq 0
 }
 
 function Test-PortAvailable {
@@ -137,8 +247,7 @@ function Test-PortAvailable {
     .SYNOPSIS
     Best-effort TCP bind test on all interfaces. Returns $true if the port
     can be bound (i.e. nothing is listening on it right now). Never kills
-    or inspects the owning process -- repository §12: "do not kill
-    arbitrary processes automatically."
+    or inspects the owning process.
     #>
     param([Parameter(Mandatory)] [int]$Port)
     $listener = $null
@@ -158,12 +267,12 @@ function Test-PortAvailable {
 function Test-PortOwnedByThisInstallation {
     <#
     .SYNOPSIS
-    Distinguishes "port is free" from "port is already ours" (repository
-    §13: EXISTING_HEALTHY is not the same failure as an unrelated process
-    occupying the port).
+    Distinguishes "port is free" from "port is already ours" -- an
+    EXISTING_HEALTHY installation holding its own port is not the same
+    failure as an unrelated process occupying it.
     #>
     param([Parameter(Mandatory)] [int]$Port)
-    $result = Invoke-DockerCompose -Arguments @('ps', '--format', 'json', 'frontend') -PassThru
+    $result = Invoke-DockerCompose -Arguments @('ps', '--all', '--format', 'json', 'frontend') -AllowNonZeroExit -Phase 'port-owner'
     if ($result.ExitCode -ne 0 -or -not $result.Output) { return $false }
     foreach ($line in $result.Output) {
         if ($line -match [regex]::Escape(":$Port->") -or $line -match [regex]::Escape("0.0.0.0:$Port")) {
@@ -216,8 +325,8 @@ function Invoke-PrerequisiteChecks {
     <#
     .SYNOPSIS
     Runs every prerequisite check and returns a list of failures (empty
-    list = all passed). Each failure carries an actionable message --
-    repository §6: never a bare "failed", always an ERROR + ACTION pair.
+    list = all passed). Each failure carries an actionable message -- never
+    a bare "failed", always an ERROR + ACTION pair.
     #>
     param([int]$FrontendPort = 80)
 
@@ -225,23 +334,23 @@ function Invoke-PrerequisiteChecks {
 
     if (-not (Test-DockerCliAvailable)) {
         $failures += [pscustomobject]@{
-            Check   = 'Docker CLI'
-            Error   = 'Docker CLI was not found on PATH.'
-            Action  = 'Install Docker Desktop for Windows, then rerun this script from a new PowerShell session.'
+            Check  = 'Docker CLI'
+            Error  = 'Docker CLI was not found on PATH.'
+            Action = 'Install Docker Desktop for Windows, then rerun this script from a new PowerShell session.'
         }
     }
     elseif (-not (Test-DockerEngineRunning)) {
         $failures += [pscustomobject]@{
-            Check   = 'Docker Engine'
-            Error   = 'Docker CLI was found but Docker Engine is not responding.'
-            Action  = 'Start Docker Desktop, wait until it reports "Engine running", then rerun this script.'
+            Check  = 'Docker Engine'
+            Error  = 'Docker CLI was found but Docker Engine is not responding.'
+            Action = 'Start Docker Desktop, wait until it reports "Engine running", then rerun this script.'
         }
     }
     elseif (-not (Test-DockerComposeV2Available)) {
         $failures += [pscustomobject]@{
-            Check   = 'Docker Compose v2'
-            Error   = 'Docker Compose v2 (the `docker compose` subcommand) is not available.'
-            Action  = 'Update Docker Desktop to a version that bundles Compose v2, then rerun this script.'
+            Check  = 'Docker Compose v2'
+            Error  = 'Docker Compose v2 (the `docker compose` subcommand) is not available.'
+            Action = 'Update Docker Desktop to a version that bundles Compose v2, then rerun this script.'
         }
     }
 
@@ -299,8 +408,7 @@ function New-UrlSafeSecret {
     .SYNOPSIS
     Base64url-encoded random bytes, mirroring Python's
     `secrets.token_urlsafe()` (already the documented generation method in
-    .env.example and backend/app/core/config.py's own COOKIE_SECURE
-    comment). Base64url's alphabet (A-Z a-z 0-9 - _) contains no
+    .env.example). Base64url's alphabet (A-Z a-z 0-9 - _) contains no
     URL-reserved character, so the result is always safe to interpolate
     directly into compose.yml's `postgresql+asyncpg://user:PASSWORD@...`
     connection string without additional encoding.
@@ -347,13 +455,20 @@ function Read-EnvFile {
     return $values
 }
 
+function Get-ConfiguredHttpPort {
+    $env = Read-EnvFile
+    if ($env.ContainsKey('LOCAL_STAGING_HTTP_PORT') -and $env['LOCAL_STAGING_HTTP_PORT']) {
+        return [int]$env['LOCAL_STAGING_HTTP_PORT']
+    }
+    return 80
+}
+
 function New-LocalStagingEnvFile {
     <#
     .SYNOPSIS
     Fresh-install only. Generates POSTGRES_PASSWORD/JWT_SECRET_KEY with
-    New-UrlSafeSecret; never called against an existing .env (repository
-    §8/§9: reinstall/update must preserve existing secrets, never
-    regenerate them).
+    New-UrlSafeSecret; never called against an existing .env -- reinstall
+    and update must preserve existing secrets, never regenerate them.
     #>
     param(
         [Parameter(Mandatory)] [string]$AllowedOrigins,
@@ -375,7 +490,7 @@ function New-LocalStagingEnvFile {
         "ALLOWED_ORIGINS=$AllowedOrigins",
         "LOCAL_STAGING_HTTP_PORT=$HttpPort"
     )
-    Set-Content -LiteralPath $Script:EnvFilePath -Value $lines -NoNewline:$false
+    Set-Content -LiteralPath $Script:EnvFilePath -Value $lines
     Write-InstallLog -Phase 'config' -Message 'Generated new .env with fresh secrets (values never logged).'
 }
 
@@ -390,7 +505,7 @@ function Get-LikelyLanIPv4Addresses {
     (169.254.0.0/16), and container/virtual-adapter-looking interfaces
     where practical. Never modifies networking; returns candidates for the
     operator/caller to choose from rather than silently picking one when
-    more than one is plausible (repository §26).
+    more than one is plausible.
     #>
     $candidates = @()
     try {
@@ -412,70 +527,123 @@ function Get-LikelyLanIPv4Addresses {
         # Best-effort only -- an inability to enumerate interfaces must not
         # crash the installer; caller falls back to prompting the operator.
     }
-    return $candidates | Select-Object -Unique
+    return @($candidates | Select-Object -Unique)
 }
 
 # ---------------------------------------------------------------------------
-# Readiness
+# Service/state inspection (Fix Round 1, P2: always --all)
 # ---------------------------------------------------------------------------
 
-function Wait-ComposeServicesHealthy {
+function Get-MepServiceStates {
     <#
     .SYNOPSIS
-    Wraps `docker compose up -d --wait`, which uses Compose's own
-    health-gated dependency graph (already encodes the PostgreSQL-blocking/
-    Redis-non-blocking contract via compose.yml's own depends_on/
-    healthcheck) instead of a hand-rolled HTTP polling loop. Bounded by
-    -wait-timeout; never loops forever.
+    Returns a hashtable of service name -> parsed `docker compose ps`
+    entry, using --all so stopped/exited containers are visible. Plain
+    `docker compose ps` hides them, which previously let a fully stopped
+    installation be misclassified.
     #>
-    param(
-        [Parameter(Mandatory)] [string[]]$Services,
-        [int]$TimeoutSeconds = 180
-    )
-    $composeArgs = @('up', '-d', '--wait', '--wait-timeout', "$TimeoutSeconds") + $Services
-    $result = Invoke-DockerCompose -Arguments $composeArgs -PassThru
-    return $result
-}
-
-# ---------------------------------------------------------------------------
-# Install lock (prevents two install/update operations mutating state
-# concurrently -- repository §37)
-# ---------------------------------------------------------------------------
-
-function Enter-InstallLock {
-    param([int]$StaleAfterMinutes = 60)
-    if (Test-Path -LiteralPath $Script:LockFilePath) {
+    $result = Invoke-DockerCompose -Arguments @('ps', '--all', '--format', 'json') -AllowNonZeroExit -Phase 'ps'
+    if ($result.ExitCode -ne 0) { return $null }
+    $map = @{}
+    foreach ($line in @($result.Output)) {
+        if (-not $line -or "$line".Trim() -eq '') { continue }
         try {
-            $existing = Get-Content -LiteralPath $Script:LockFilePath -Raw | ConvertFrom-Json
-            $age = (Get-Date).ToUniversalTime() - [datetime]::Parse($existing.AcquiredAtUtc)
-            if ($age.TotalMinutes -lt $StaleAfterMinutes) {
-                throw "Another install/update operation appears to be in progress (pid=$($existing.ProcessId), started $($existing.AcquiredAtUtc)). If that process no longer exists, delete $Script:LockFilePath and retry."
-            }
-            Write-InstallLog -Phase 'lock' -Level 'WARN' -Message "Ignoring stale lock file (older than $StaleAfterMinutes minutes)."
-        }
-        catch [System.Management.Automation.RuntimeException] {
-            throw
+            $entry = "$line" | ConvertFrom-Json
         }
         catch {
-            Write-InstallLog -Phase 'lock' -Level 'WARN' -Message 'Existing lock file could not be parsed; treating as stale.'
+            continue
+        }
+        # Compose emits either one JSON object per line or a single JSON
+        # array depending on version; handle both.
+        foreach ($svc in @($entry)) {
+            if ($svc.PSObject.Properties.Name -contains 'Service') {
+                $map[$svc.Service] = $svc
+            }
         }
     }
-    $lock = [pscustomobject]@{
-        ProcessId    = $PID
-        AcquiredAtUtc = (Get-Date).ToUniversalTime().ToString('o')
-    }
-    $lock | ConvertTo-Json | Set-Content -LiteralPath $Script:LockFilePath
+    return $map
 }
 
-function Exit-InstallLock {
-    if (Test-Path -LiteralPath $Script:LockFilePath) {
-        Remove-Item -LiteralPath $Script:LockFilePath -Force -ErrorAction SilentlyContinue
+function Test-MepServiceRunning {
+    param($ServiceStates, [Parameter(Mandatory)] [string]$Service)
+    if ($null -eq $ServiceStates -or -not $ServiceStates.ContainsKey($Service)) { return $false }
+    return $ServiceStates[$Service].State -eq 'running'
+}
+
+function Test-MepInstallCompleted {
+    <#
+    .SYNOPSIS
+    True only when metadata records a *completed* installation. Metadata
+    is written as one of the final install steps, so its absence means the
+    installation never finished -- including the case where Administrator
+    bootstrap failed (Fix Round 1, P1-B/§8).
+    #>
+    $metadata = Get-InstallMetadata
+    return ($null -ne $metadata) -and ($metadata.PSObject.Properties.Name -contains 'InstallCompleted') -and ($metadata.InstallCompleted -eq $true)
+}
+
+function Get-InstallationState {
+    <#
+    .SYNOPSIS
+    Classifies the deployment into FRESH / EXISTING_HEALTHY /
+    EXISTING_STOPPED / PARTIAL / AMBIGUOUS by cross-checking .env,
+    completed-install metadata, and the full (`--all`) container set --
+    never from any single signal (Fix Round 1, P2/§17/§18).
+    #>
+    $envExists = Test-EnvFileExists
+    $states = Get-MepServiceStates
+
+    if ($null -eq $states) {
+        # `docker compose ps` itself failed: nothing can be concluded safely.
+        return 'AMBIGUOUS'
     }
+
+    $known = @($Script:ExpectedServices | Where-Object { $states.ContainsKey($_) })
+
+    if (-not $envExists) {
+        if ($known.Count -eq 0) { return 'FRESH' }
+        # Containers exist for this project but the configuration that
+        # created them is gone -- conflicting signals, never guessed at.
+        return 'AMBIGUOUS'
+    }
+
+    if ($known.Count -eq 0) {
+        # .env exists but nothing was ever created (or everything was
+        # removed by `uninstall.ps1`): an incomplete installation, not a
+        # healthy one.
+        return 'PARTIAL'
+    }
+
+    $backendRunning = Test-MepServiceRunning -ServiceStates $states -Service 'backend'
+    $frontendRunning = Test-MepServiceRunning -ServiceStates $states -Service 'frontend'
+    $anyRunning = @($Script:ExpectedServices | Where-Object { Test-MepServiceRunning -ServiceStates $states -Service $_ }).Count -gt 0
+
+    if (-not (Test-MepInstallCompleted)) {
+        # The installer never recorded a completed installation (e.g. it
+        # failed at migration or Administrator bootstrap) -- converge it,
+        # never treat it as healthy.
+        return 'PARTIAL'
+    }
+
+    if ($known.Count -lt $Script:ExpectedServices.Count) {
+        return 'PARTIAL'
+    }
+
+    if ($backendRunning -and $frontendRunning) {
+        return 'EXISTING_HEALTHY'
+    }
+
+    if (-not $anyRunning) {
+        return 'EXISTING_STOPPED'
+    }
+
+    # A mix: some services up, the application itself not fully up.
+    return 'PARTIAL'
 }
 
 # ---------------------------------------------------------------------------
 # Installation metadata (non-secret only -- never a source of truth for
-# database state; repository §38)
+# database state)
 # ---------------------------------------------------------------------------
 
 function Get-InstallMetadata {
@@ -489,66 +657,45 @@ function Get-InstallMetadata {
 }
 
 function Set-InstallMetadata {
+    <#
+    .SYNOPSIS
+    Records a *successful* installation/update. Callers must only reach
+    this after images built, migration succeeded, the application became
+    ready, and (on a first install) Administrator bootstrap succeeded.
+    #>
     param(
         [Parameter(Mandatory)] [string]$SourceSha,
         [string]$SchemaVersion = '1'
     )
     $existing = Get-InstallMetadata
-    $installedAt = if ($existing -and $existing.InstalledAtUtc) { $existing.InstalledAtUtc } else { (Get-Date).ToUniversalTime().ToString('o') }
+    $installedAt = if ($existing -and ($existing.PSObject.Properties.Name -contains 'InstalledAtUtc') -and $existing.InstalledAtUtc) {
+        $existing.InstalledAtUtc
+    }
+    else { (Get-Date).ToUniversalTime().ToString('o') }
     $metadata = [pscustomobject]@{
         InstallerSchemaVersion = $SchemaVersion
+        InstallCompleted       = $true
         SourceSha              = $SourceSha
         InstalledAtUtc         = $installedAt
-        LastUpdatedAtUtc        = (Get-Date).ToUniversalTime().ToString('o')
+        LastUpdatedAtUtc       = (Get-Date).ToUniversalTime().ToString('o')
     }
     $metadata | ConvertTo-Json | Set-Content -LiteralPath $Script:MetadataFilePath
 }
 
 # ---------------------------------------------------------------------------
-# Installation state detection (repository §13)
-# ---------------------------------------------------------------------------
-
-function Get-InstallationState {
-    if (-not (Test-EnvFileExists)) {
-        return 'FRESH'
-    }
-    $psResult = Invoke-DockerCompose -Arguments @('ps', '--format', 'json') -PassThru
-    if ($psResult.ExitCode -ne 0) {
-        return 'AMBIGUOUS'
-    }
-    $lines = @($psResult.Output | Where-Object { $_ -and $_.Trim() -ne '' })
-    if ($lines.Count -eq 0) {
-        return 'EXISTING_STOPPED'
-    }
-    $runningCount = 0
-    $unhealthyCount = 0
-    foreach ($line in $lines) {
-        try {
-            $svc = $line | ConvertFrom-Json
-        }
-        catch {
-            continue
-        }
-        if ($svc.State -eq 'running') { $runningCount++ }
-        if ($svc.Health -and $svc.Health -ne 'healthy' -and $svc.Health -ne '') { $unhealthyCount++ }
-    }
-    if ($runningCount -eq 0) { return 'EXISTING_STOPPED' }
-    if ($unhealthyCount -gt 0) { return 'PARTIAL' }
-    return 'EXISTING_HEALTHY'
-}
-
-# ---------------------------------------------------------------------------
 # Git source SHA (best-effort, for installation metadata / migration
-# evidence only -- repository §30: current mode is source-build, not a
-# digest-pinned artifact, and must never claim otherwise)
+# evidence only -- the current mode is a source build, not a digest-pinned
+# artifact, and must never claim otherwise)
 # ---------------------------------------------------------------------------
 
 function Get-CurrentSourceSha {
     $repoRoot = Split-Path -Parent (Split-Path -Parent $Script:DeploymentRoot)
     Push-Location $repoRoot
     try {
-        $sha = git rev-parse HEAD 2>$null
-        if ($LASTEXITCODE -eq 0 -and $sha) { return $sha.Trim() }
+        $result = Invoke-MepCommand -FilePath 'git' -Arguments @('rev-parse', 'HEAD') -AllowNonZeroExit -Phase 'source-sha'
+        if ($result.ExitCode -eq 0 -and $result.Output -and $result.Output.Count -gt 0) {
+            return "$($result.Output[0])".Trim()
+        }
     }
     catch {
         # fall through
