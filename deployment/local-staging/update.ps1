@@ -29,21 +29,28 @@ completed.
 Sequence (see Invoke-MepUpdate in lib/Operations.ps1, which owns it and
 is covered by tests/Invoke-InstallerTests.ps1): acquire the deployment
 mutation lock -> require a previously completed installation -> capture
-the initial state ONCE -> BUILD the intended images -> stop the
-application (only when it was running) -> converge PostgreSQL to healthy
--> explicit migration -> start the new stack -> readiness -> refresh
-metadata.
+the initial state ONCE -> BUILD the intended images -> take a MANDATORY
+VERIFIED BACKUP -> stop the application (only when it was running) ->
+converge PostgreSQL to healthy -> explicit migration -> start the new
+stack -> readiness -> refresh metadata.
+
+The backup step is not optional and has no bypass; it is described in
+full under MANDATORY PRE-UPDATE BACKUP below. It runs BEFORE anything is
+stopped, so a backup failure leaves a healthy deployment untouched and
+still serving.
 
 Both accepted entry states are handled explicitly:
 
-  EXISTING_HEALTHY -> build -> stop backend/frontend and VERIFY they are
-    actually stopped -> ensure PostgreSQL healthy -> migrate -> start ->
-    ready -> metadata.
+  EXISTING_HEALTHY -> build -> BACKUP (verified) -> stop backend/frontend
+    and VERIFY they are actually stopped -> ensure PostgreSQL healthy ->
+    migrate -> start -> ready -> metadata.
 
-  EXISTING_STOPPED -> build -> no stop is issued (the application is
-    already down, and a "failed to stop" error against an intentionally
-    stopped deployment would be misleading) -> START PostgreSQL and wait
-    for it to be healthy -> migrate -> start -> ready -> metadata.
+  EXISTING_STOPPED -> build -> BACKUP (verified; the shared backup path
+    starts ONLY PostgreSQL to take it, never the backend) -> no stop is
+    issued (the application is already down, and a "failed to stop" error
+    against an intentionally stopped deployment would be misleading) ->
+    START PostgreSQL and wait for it to be healthy -> migrate -> start ->
+    ready -> metadata.
 
 PostgreSQL availability is a HARD precondition of the migration, not an
 assumption: the migration container runs with --no-deps, so Compose will
@@ -64,41 +71,32 @@ unverified stop never allows a migration to run; an unhealthy PostgreSQL
 never allows a migration to run; and update can never be the operation
 that marks an installation completed for the first time.
 
-PR24D-L3 has not been implemented yet, so no local backup/restore wrapper
-exists to protect against an update's migration going wrong. Until then,
-this script REFUSES to run unless the operator passes
--AcknowledgeUpdateRisk, making that gap explicit rather than silently
-updating as if it were already production-safe.
+MANDATORY PRE-UPDATE BACKUP (PR24D-L3). A verified backup is taken before
+anything is stopped or migrated, using the same shared backup path as
+.\backup.ps1 (PR24C's engine). If the backup fails, the update stops
+there: nothing is stopped, no migration runs, and no metadata advances.
+The contract is simply NO BACKUP, NO UPDATE.
 
-.PARAMETER AcknowledgeUpdateRisk
-Required. Confirms the operator understands that no automated
-backup/restore safety net exists yet for this update (planned PR24D-L3).
+This replaced the L2 -AcknowledgeUpdateRisk switch, which existed only
+because no backup safety net had shipped yet. An operator's
+acknowledgement is not a substitute for a restorable backup, so the
+switch was removed rather than left as a bypass that would permit a
+schema-changing update with no backup.
 
 .EXAMPLE
-.\update.ps1 -AcknowledgeUpdateRisk
+.\update.ps1
 #>
 [CmdletBinding()]
-param(
-    [switch]$AcknowledgeUpdateRisk
-)
+param()
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib/Common.ps1')
 . (Join-Path $PSScriptRoot 'lib/Operations.ps1')
+. (Join-Path $PSScriptRoot 'lib/Backup.ps1')
 
 Write-Host ''
 Write-Host '=== Medical Equipment Pool -- Local Staging/UAT Update ===' -ForegroundColor Cyan
 Write-InstallLog -Phase 'update' -Message 'update.ps1 started.'
-
-if (-not $AcknowledgeUpdateRisk) {
-    Write-Host 'This update will rebuild the application and may apply a database migration.' -ForegroundColor Yellow
-    Write-Host 'PR24D-L3 (local backup/restore rehearsal) has not shipped yet, so there is no' -ForegroundColor Yellow
-    Write-Host 'automated safety net if a migration goes wrong. Refusing to proceed.' -ForegroundColor Yellow
-    Write-Host ''
-    Write-Host 'Rerun with -AcknowledgeUpdateRisk once you accept this, e.g.:' -ForegroundColor Yellow
-    Write-Host '  .\update.ps1 -AcknowledgeUpdateRisk' -ForegroundColor Yellow
-    exit 1
-}
 
 $lock = $null
 try {

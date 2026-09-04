@@ -307,9 +307,27 @@ function Invoke-MepInstall {
 function Invoke-MepUpdate {
     <#
     .SYNOPSIS
-    Conservative update sequence. Caller holds the mutation lock and is
-    responsible for having already enforced the -AcknowledgeUpdateRisk
-    gate (no automated backup safety net exists until PR24D-L3).
+    Conservative update sequence. The caller holds the mutation lock; this
+    function owns every safety gate itself.
+
+    .DESCRIPTION
+    Sequence, whichever state the deployment starts from:
+
+        build -> MANDATORY BACKUP (this run's own verified artifact)
+              -> stop (only if it was running)
+              -> PostgreSQL health gate -> migrate
+              -> start -> readiness -> metadata
+
+    The backup is not advisory. If it fails, or if the archive it produced
+    cannot be identified and verified against its own manifest and
+    checksum, nothing is stopped, no migration runs, and no metadata
+    advances. A pre-existing backup can never satisfy this gate.
+
+    PR24D-L3 replaced L2's -AcknowledgeUpdateRisk switch with that gate.
+    The switch existed only because no automated backup safety net had
+    shipped yet; an operator's acknowledgement is not a substitute for a
+    restorable backup, so the parameter was removed rather than kept as a
+    bypass. Callers must not reintroduce an acknowledgement gate.
     #>
     if (-not (Test-EnvFileExists)) {
         throw (New-MepFailure 'No existing installation found. Run .\install.ps1 first; update.ps1 only operates on an existing installation.')
@@ -348,6 +366,38 @@ bootstrap. update.ps1 is not an installation-recovery mechanism.
     # stopped, so nothing is stopped until the new images exist.
     Invoke-MepBuildImages
 
+    # PR24D-L3 (§19/§21/§41): a schema-changing update may not proceed
+    # without a verified backup. This replaces the L2
+    # -AcknowledgeUpdateRisk switch, which existed only because no backup
+    # safety net had shipped yet -- an operator's acknowledgement is not a
+    # substitute for a restorable backup. The contract is now simply:
+    # no backup, no update.
+    #
+    # The backup runs BEFORE the application is stopped, so a backup
+    # failure leaves a healthy deployment untouched and still serving.
+    # PR24C's logical backup is transactionally consistent
+    # (pg_dump --format=custom), so an active application does not
+    # compromise the snapshot and the writers do not need to be quiesced
+    # first. Invoke-MepBackup converges PostgreSQL to healthy itself, so
+    # this works from EXISTING_STOPPED too -- and it starts ONLY
+    # PostgreSQL, never the backend, to take the backup.
+    #
+    # This calls the SAME shared Invoke-MepBackup that backup.ps1 calls --
+    # there is no "quick backup" variant here. It deliberately does NOT
+    # shell out to backup.ps1: that script acquires the mutation lock this
+    # update already holds, and re-acquiring the same named mutex is not a
+    # re-entrancy we have proven. The lock stays at the entry-script
+    # boundary; the shared function is what both paths reuse (§22).
+    #
+    # Fix Round 2 (P1): the gate is satisfied by the archive THIS call
+    # produced, verified against its own manifest and checksum -- not by
+    # whatever backup happens to be newest in the directory. A
+    # pre-existing archive can never satisfy the current update's gate,
+    # because Invoke-MepBackup identifies its artifact from PR24C's own
+    # reported path and throws if that cannot be established.
+    $preUpdateBackup = Invoke-MepBackup -Reason 'pre-update'
+    Write-InstallLog -Phase 'update' -Message "Pre-update backup gate satisfied by archive $($preUpdateBackup.Name) created by this update run."
+
     if ($initialState -eq 'EXISTING_HEALTHY') {
         # Stop the application writers (and the scheduler with them) and
         # verify they are really down before any schema change. Only
@@ -366,15 +416,12 @@ bootstrap. update.ps1 is not an installation-recovery mechanism.
     # Fix Round 4 (P1): database availability is a HARD precondition of the
     # migration, not an assumption. The migration container runs with
     # --no-deps (deliberately -- it must run before the application), so
-    # Compose will NOT start PostgreSQL for it. Updating a deployment that
-    # was in EXISTING_STOPPED therefore used to attempt a migration against
-    # a stopped database and could never have worked.
+    # Compose will NOT start PostgreSQL for it.
     #
-    # Start-MepPostgres is reused rather than duplicated: it is already the
-    # single health-gated `up -d --wait postgres` step, so it converges and
-    # verifies health when PostgreSQL is running, and starts it when it is
-    # not. That makes one call correct for BOTH entry states. Redis is not
-    # involved and remains non-blocking.
+    # Re-asserted here after the stop: Stop-MepApplication targets only
+    # backend/frontend, so PostgreSQL should still be up, but the
+    # migration's precondition is verified rather than assumed. The step
+    # is idempotent and health-gated, so this is cheap on both paths.
     Start-MepPostgres
 
     $sourceSha = Get-CurrentSourceSha

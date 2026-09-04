@@ -7815,3 +7815,307 @@ Operations Engine) started, not merged
   repository's `lib/Operations.ps1` migration invocation (`--no-deps`) as
   the evidentiary basis for treating database availability as an explicit
   precondition.
+
+## 2026-09-04 — PR24D-L3 started: Local Backup/Restore Operations, Rehearsal & Operator Runbook (baseline 9928201 folded in)
+
+- **Baseline entering this work:**
+  `9928201334e52be7301f6e1f1095e8c356a5a80d` — the real squash SHA of
+  GitHub PR #136 (PR24D-L2). Folded in here rather than via a separate
+  baseline-adoption PR, per the standing convention.
+- **Status:** PR24D-L1 COMPLETE/MERGED (#135,
+  `73652b062fb2ad6fdab4f7bbc0b743ff5f548e86`); PR24D-L2 COMPLETE/MERGED
+  (#136, `9928201334e52be7301f6e1f1095e8c356a5a80d`); PR24D-L3 IN
+  PROGRESS until merged; PR24E/F/G NOT STARTED; no cloud provider
+  selected and nothing provisioned.
+- **PowerShell is orchestration only.** `backup.ps1`, `restore.ps1` and
+  the new `lib/Backup.ps1` contain no backup engine: no `pg_dump`, no
+  `pg_restore`, no manifest format, no checksum implementation, no
+  retention logic. Every one of those decisions stays in PR24C's
+  `backup_postgres.py` / `restore_postgres.py` / `prune_backups.py`,
+  invoked unchanged. A static test asserts the absence of a duplicate
+  implementation, because a second backup system is the failure mode this
+  slice most needed to avoid.
+- **Backup root:** `deployment/local-staging/backups/` on the host --
+  gitignored, deliberately OUTSIDE the PostgreSQL Docker volume, so
+  backups survive stop/start and the default uninstall and can be copied
+  away with an ordinary file copy. Not mounted into the long-running
+  services; the bind mount exists only on the one-off backup/restore
+  containers.
+- **Backup environment label:** backups are labelled `local-staging`, NOT
+  the container's `ENVIRONMENT=production` (which exists solely to keep
+  `validate_production_secrets()` active, per PR24D-L1). Labelling local
+  backups "production" would have been misleading provenance in the
+  manifest and the filename.
+- **Credential transport.** No credential-bearing URL is placed on any
+  command line. The backup runs inside the backend container, which
+  already carries `DATABASE_URL`, so PR24C's `--database-url` default
+  resolves in-container with nothing passed by us. The restore rehearsal
+  target travels as `$RESTORE_TARGET_DATABASE_URL` via
+  `docker compose run -e VAR` (name-only form, so the value is copied
+  from the process environment rather than placed in argv) and is
+  cleared immediately afterwards.
+- **One PR24C change was required, and it weakens nothing.**
+  `restore_postgres.py --target-database-url` was argparse-`required`,
+  with no environment fallback -- so any orchestrator had to put a
+  credential-bearing URL in argv. It now defaults to
+  `$RESTORE_TARGET_DATABASE_URL`, mirroring exactly what
+  `backup_postgres.py` already does for `--database-url`. The target
+  remains MANDATORY (an explicit check fails closed when neither is
+  supplied; there is still no default target), and every guard --
+  checksum, manifest-derived source identity, production-target,
+  same-source, empty-target, Alembic revision, row counts -- runs
+  unchanged. All 50 existing PR24C tests still pass, and a new test pins
+  that none of those guards disappeared.
+- **Restore is rehearsal-only and safe by default.** `restore.ps1`
+  restores into a fresh, timestamped, disposable database
+  (`mep_local_restore_rehearsal_<UTC>`) on the same server, verifies it
+  through PR24C, and drops it. There is NO live-overwrite mode and no
+  flag that creates one -- a deliberate scope decision, recorded rather
+  than silently assumed: a live-recovery path (stop app, back up current
+  state, restore over it, typed confirmation) is a separate,
+  Owner-approved change. Until then real recovery is an operator+Owner
+  procedure, not a one-word command.
+  - The same-source guard is honoured honestly rather than bypassed: the
+    rehearsal target differs from the live database by NAME on the same
+    host/port, so PR24C's host+port+dbname comparison sees a genuinely
+    different database. Cleanup is `DROP DATABASE` scoped to exactly the
+    database the rehearsal created -- never a volume, never
+    `compose down -v`, never the live database, and an explicit check
+    refuses to proceed if the generated name ever equalled the live one.
+- **Update is now gated on a verified backup, and the risk
+  acknowledgement was removed.** `-AcknowledgeUpdateRisk` existed only
+  because no backup safety net had shipped. An operator's acknowledgement
+  is not a substitute for a restorable backup, so the switch was deleted
+  rather than left as a bypass permitting a schema-changing update with
+  no backup. The contract is now **no backup, no update**.
+  - Ordering: build -> **backup** -> stop (only if it was running) ->
+    PostgreSQL health gate -> migrate -> start -> readiness -> metadata.
+    The backup precedes the stop deliberately, so a backup failure leaves
+    a healthy deployment untouched and still serving. PR24C's logical
+    backup is transactionally consistent (`pg_dump --format=custom`), so
+    the writers do not need quiescing first -- this follows repository
+    truth rather than an invented consistency policy.
+  - From EXISTING_STOPPED the backup still works: `Invoke-MepBackup`
+    converges PostgreSQL itself and starts ONLY PostgreSQL -- the backend
+    is never started merely to take a backup.
+- **Lock re-entrancy avoided by design.** `Invoke-MepBackup` never
+  acquires the mutation lock. Entry scripts own it: `backup.ps1` takes it
+  then calls the shared function, and `update.ps1` already holds it and
+  calls the same shared function. `update.ps1` deliberately does NOT
+  shell out to `backup.ps1`, which would attempt to re-acquire a mutex
+  whose re-entrancy has not been proven. Backup and restore join
+  install/update/start/stop/uninstall in the one shared namespace;
+  `status.ps1` stays read-only.
+- **Retention** is PR24C's Owner-approved 30 days, applied by
+  `prune_backups.py`. The wrapper deliberately does not pass
+  `--retention-days`, so the local deployment cannot drift to a different
+  policy.
+- **Operator runbook** created at
+  `docs/runbooks/PR24_LOCAL_STAGING_INSTALLATION_RUNBOOK.md` (the
+  previously deferred file). Thai-first for hospital operators with exact
+  commands preserved verbatim; covers prerequisites, first install,
+  daily operation, backup, restore rehearsal, update, uninstall, LAN and
+  firewall, Administrator bootstrap and the one-time password,
+  troubleshooting, data preservation, evidence classification, known
+  limitations and the cloud-migration boundary. Contains no real secret,
+  and states plainly that manual backup does not achieve RPO <= 1 hour.
+- **Evidence, explicitly classified.** POWERSHELL UNIT/MOCK: 70 behavior
+  tests pass, including a mock that writes a REAL archive + manifest so
+  the wrapper's own discovery and checksum verification execute against
+  real bytes. Mutation-proved: removing the mandatory pre-update backup
+  (3 failures), downgrading the checksum mismatch to a warning (1), and
+  bypassing the empty-target guard (1); files restored byte-identical.
+  STATIC: 58 assertions. PR24C: all 50 existing tests pass unchanged.
+  **DOCKER EXECUTED: NO** -- this sandbox has no Docker daemon, so **no
+  real backup and no real restore rehearsal were performed**, and
+  consequently **no evidence file was created**: fabricating a PASS
+  record would be worse than having none. **WINDOWS EXECUTED: NO.**
+- **Still PENDING and not claimed by this work:** real Windows/Docker
+  Desktop execution; a real local backup/restore rehearsal;
+  managed-Staging backup/restore rehearsal (which a local rehearsal would
+  not satisfy even if it had been executed); RPO <= 1 hour, which a
+  manual backup wrapper does not deliver; cloud provider selection.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the "Start PR24D-L3" task's own binding specification, and
+  this repository's `backend/scripts/backup_postgres.py`,
+  `restore_postgres.py`, `prune_backups.py` and `pg_backup_lib.py` as the
+  evidentiary basis for every reuse decision above.
+
+---
+
+## 2026-09-04 — PR24D-L3 Fix Round 1 (PR #137): restore rehearses the artifact the operator actually selected
+
+- **Context:** Independent review of PR #137 at head
+  `35517d577e5723950ec0279137c8f6e183dd2303` returned REQUEST CHANGES with
+  one P1 against `Invoke-MepRestoreRehearsal` in
+  `deployment/local-staging/lib/Backup.ps1`.
+- **The defect, confirmed in our own code.** `-Backup` accepted any host
+  path and resolved it with `Get-Item -LiteralPath`, but the container
+  invocation passed only the file's BASENAME:
+  `'--backup-file', "/mep-backups/$($archive.Name)"`. Only the backup root
+  is bind-mounted at `/mep-backups`. An archive supplied from anywhere
+  else therefore did not resolve to the selected file at all: if a
+  same-named archive happened to exist inside the backup root, PR24C
+  rehearsed THAT one and the wrapper reported PASS — a rehearsal result
+  attributed to an artifact that was never exercised. If no same-named
+  file existed, the run failed with a confusing "not found" from inside
+  the container. Both outcomes are wrong; the first is the dangerous one,
+  because it is silent and it produces a false assurance.
+- **Decision — bind the container path to the resolved artifact.** The
+  reviewer offered two acceptable remedies (restrict the input to the
+  backup root, or stage the artifact with its manifest under a
+  collision-safe path). We took the second, because refusing external
+  paths outright would remove a legitimate operator workflow: rehearsing
+  an archive copied back from another machine is exactly the case a
+  restore rehearsal exists to cover.
+  - `Test-MepPathIsDirectlyInside` decides containment by comparing the
+    archive's immediate parent with the backup root, both normalised
+    through `[System.IO.Path]::GetFullPath`, with the string comparison
+    chosen per platform. Immediate-parent equality, not prefix matching:
+    a path that merely *starts with* the root string is not thereby a
+    member of it.
+  - In-root archives are addressed directly as before — no needless copy.
+  - Any other archive is copied, together with its manifest, into
+    `<backup root>/.restore-staging-<GUID>/`, and the path handed to
+    `restore_postgres.py` names that copy. A GUID segment cannot collide
+    with a concurrent rehearsal or with an existing backup.
+  - The staging directory is removed in the existing `finally`, so it is
+    cleaned up on failure as well as success. The removal is scoped to
+    the per-run directory alone: never the backup root, never a volume.
+- **Fail closed when identity cannot be established.** An archive with no
+  `.manifest.json` beside it is now refused BEFORE any database work.
+  PR24C derives both the expected checksum and the source identity that
+  drives its same-source guard from that manifest, so an archive without
+  one cannot be verified at all. This is stated as a refusal rather than
+  left to surface as an incidental copy error.
+- **No PR24C change in this round.** The engine is untouched; this is
+  entirely an orchestration-layer fix, consistent with the standing
+  constraint that PowerShell is orchestration only. The reviewer
+  separately confirmed that L3's earlier `RESTORE_TARGET_DATABASE_URL`
+  environment fallback remains fail-closed and weakens no
+  checksum/production/same-source/empty-target guard.
+- **Regression tests, as required by the review.** POWERSHELL UNIT/MOCK
+  (74 pass): an external archive deliberately sharing a basename with an
+  internal one must not be addressed as the internal one and must be
+  staged under a path bound to that exact artifact; an in-root archive is
+  used in place without staging; an archive with no manifest fails closed
+  — asserted both for the external branch and for the in-root branch,
+  because only the latter isolates the precondition from an incidental
+  copy failure. STATIC (62 assertions): four new tests covering the
+  artifact-bound container path, the manifest precondition and its
+  ordering before any `CREATE DATABASE`, staging cleanup in `finally`,
+  and the containment helper's normalisation.
+- **Mutation-proved, files restored byte-identical afterwards.**
+  Addressing every archive by basename → 1 failure. Removing the manifest
+  precondition → 2 failures (and this is why the in-root case was added:
+  before it, that mutation SURVIVED, because the external branch's
+  `Copy-Item` failed for its own reasons and the test passed for the
+  wrong reason). Dropping the staging cleanup → 1 failure. Reverting the
+  container path in the static suite → 1 failure.
+- **Evidence classification unchanged.** **DOCKER EXECUTED: NO.**
+  **WINDOWS EXECUTED: NO.** No real backup and no real restore rehearsal
+  were performed, and no evidence file was created.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the PR #137 Fix Round 1 review at head `35517d57`, and this
+  repository's `backend/scripts/restore_postgres.py` and
+  `pg_backup_lib.py` for the manifest-derived identity and checksum
+  contract the fix relies on.
+
+---
+
+## 2026-09-04 — PR24D-L3 Fix Round 2 (PR #137): a backup is verified as the artifact it actually produced
+
+- **Context:** Independent review of PR #137 at head
+  `b3a0f28873d5876f61256a0ad5fd05dc0793c596` returned REQUEST CHANGES with
+  one P1 against `Invoke-MepBackup` in
+  `deployment/local-staging/lib/Backup.ps1`.
+- **The defect, confirmed in our own code.** The flow was: PR24C creates an
+  exact archive → the command exits 0 → the wrapper calls
+  `Get-MepLatestBackup` → the wrapper verifies, reports and returns
+  *whichever filename in the directory sorts newest*. The identity of the
+  artifact this invocation produced was thrown away at the moment of
+  success. A pre-existing archive with a later timestamp — a copy restored
+  from another machine, a file left by clock skew, a deliberately
+  future-dated name — would be checksum-verified and reported as though
+  this run had created it. This is the same class of defect as Fix Round
+  1's restore-side finding: **an operation that creates something, then
+  re-discovers it by scanning.**
+- **Decision — reuse PR24C's own reported path as the artifact identity.**
+  `backup_postgres.py` already prints `[backup] OK: <final_path>`, and
+  `final_path` is `<output-dir>/<filename>`. That line is authoritative and
+  costs no engine change, so **no PR24C modification was required or
+  made** — the fix is entirely orchestration, consistent with the standing
+  constraint. The alternative (adding structured JSON output to PR24C) was
+  considered and rejected as disproportionate: the existing line is exact,
+  stable, and already part of the script's contract.
+- **`Resolve-MepProducedBackup`** parses that line and fails closed on
+  every ambiguity, never falling back to a directory scan:
+  - no `[backup] OK:` line → the artifact cannot be identified;
+  - more than one distinct reported path → ambiguous;
+  - a path not directly inside the mounted `/mep-backups` → refused,
+    including nested subdirectories and `..` traversal. Path handling here
+    is deliberately literal string work rather than host path arithmetic:
+    the string was produced by Linux inside the container while the host
+    may be Windows;
+  - a filename that is not PR24C's own form
+    (`mep-postgres-<alphanumeric env>-<UTC>.dump`) → refused;
+  - a mapped host file that is not present → refused, because the bind
+    mount did not deliver what the container claims it wrote.
+  Only the basename is mapped onto the host, and only after the container
+  parent is confirmed to be exactly the mount root.
+- **The invariant now holds:** produced == verified == reported ==
+  returned, for every successful `Invoke-MepBackup`.
+- **`Get-MepLatestBackup` was NOT removed, and is not wrong.** It answers
+  "which existing backup is the newest?", which is exactly what
+  `restore.ps1` needs when the operator did not name an archive. What was
+  wrong was using it to answer a different question — "which archive did
+  the command I just ran create?" The two semantics are now separated
+  explicitly, in code and in the function's own documentation. Exactly one
+  call site remains, in `Invoke-MepRestoreRehearsal`'s default-selection
+  branch.
+- **The pre-update gate inherits the binding.** `Invoke-MepUpdate` now
+  captures the returned artifact and logs it by name, so the gate is
+  satisfied by the archive that update run produced, verified against its
+  own manifest and checksum. A pre-existing backup can never satisfy it.
+  Ordering is unchanged: build → exact verified backup → stop if needed →
+  PostgreSQL health → migrate → start/readiness → metadata.
+- **Same-class sweep.** Every L3/L2 orchestration path was checked for
+  "command creates artifact A, wrapper rescans the directory, wrapper
+  selects artifact B". After this fix the pattern appears nowhere:
+  retention (`prune_backups.py`) selects no artifact for us; restore was
+  fixed in Round 1; no evidence file is produced at all. The single
+  remaining directory scan is the default restore selection described
+  above, which is that pattern's legitimate use.
+- **Mock fidelity, corrected in the same round.** The test harness was
+  writing `mep-postgres-local-staging-<ts>.dump` with a GUID-suffixed
+  stamp. PR24C's `backup_filename` strips non-alphanumerics from the
+  environment, so the real name is `mep-postgres-localstaging-<ts>.dump` —
+  the mock had been emitting a filename the real generator never produces,
+  and it printed no `[backup] OK:` line at all. Both are fixed, and a
+  static test now pins the wrapper's accepted filename pattern against
+  what `pg_backup_lib.backup_filename` actually generates so the two
+  cannot drift apart silently.
+- **Tests.** POWERSHELL UNIT/MOCK (83 pass, +9): a future-dated
+  pre-existing archive cannot substitute for the one just created (the
+  critical regression — the test also asserts the decoy genuinely *would*
+  have won a "latest" contest, so it cannot pass vacuously); a
+  deliberately poisoned `Get-MepLatestBackup` cannot steer the result at
+  all; and fail-closed coverage for missing OK line, duplicate OK lines,
+  outside-mount path, nested path, traversing path, missing host file,
+  missing manifest, plus an update whose own backup cannot be identified
+  never reaching migration. STATIC (67 assertions, +5).
+- **Mutation-proved, files restored byte-identical.** Reverting the
+  binding to `Get-MepLatestBackup` → 8 behavior failures and 1 static
+  failure. Falling back to the directory scan when no OK line is present →
+  1. Dropping the outside-mount check → 1. Dropping the host-file check →
+  1. Loosening the filename pattern → 1 static. Removing the
+  duplicate-path check → 1 static.
+- **Evidence classification unchanged.** **DOCKER EXECUTED: NO.**
+  **WINDOWS EXECUTED: NO.** No real backup and no real restore rehearsal
+  were performed, and no evidence file was created.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the PR #137 Fix Round 2 review at head `b3a0f288`, and this
+  repository's `backend/scripts/backup_postgres.py` and
+  `pg_backup_lib.py` — specifically the `[backup] OK: {final_path}` print
+  and `backup_filename()` — as the evidentiary basis for the identity
+  protocol reused here.

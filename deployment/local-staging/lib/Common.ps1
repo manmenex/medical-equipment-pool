@@ -25,6 +25,28 @@ $Script:EnvExamplePath = Join-Path $Script:DeploymentRoot '.env.example'
 $Script:LogDirectory = Join-Path $Script:DeploymentRoot 'logs'
 $Script:MetadataFilePath = Join-Path $Script:DeploymentRoot '.install-metadata.json'
 
+# PR24D-L3: the single deterministic local backup root. Deliberately on
+# the HOST filesystem beside the deployment, never inside the PostgreSQL
+# Docker volume -- so backups survive `docker compose down`, survive the
+# default uninstall, and can be copied elsewhere by the operator with an
+# ordinary file copy. Gitignored; filenames carry no secret (PR24C's
+# backup_filename() is mep-postgres-<environment>-<UTC timestamp>.dump).
+$Script:BackupRoot = Join-Path $Script:DeploymentRoot 'backups'
+
+# The environment LABEL recorded in backup manifests and filenames. This
+# is the Staging/UAT class executed locally -- it is NOT a fourth
+# environment (OD-PR24-4), and it is deliberately NOT the container's
+# ENVIRONMENT=production setting, which exists only to keep
+# validate_production_secrets() active (PR24D-L1). Labelling local
+# backups "production" would be actively misleading provenance.
+$Script:BackupEnvironmentLabel = 'local-staging'
+
+# Restore rehearsal targets are created on the SAME PostgreSQL server but
+# always under a distinct, timestamped database name, so PR24C's
+# same-source guard (host+port+dbname) sees a genuinely different
+# database and passes honestly rather than being bypassed.
+$Script:RehearsalDatabasePrefix = 'mep_local_restore_rehearsal_'
+
 # Deterministic Compose project identity: every Compose call below passes
 # this explicitly with -p, so install/start/stop/status/update/uninstall
 # always operate on the same deployment regardless of invocation directory.
@@ -481,6 +503,22 @@ function Get-ConfiguredHttpPort {
         return [int]$env['LOCAL_STAGING_HTTP_PORT']
     }
     return 80
+}
+
+function Get-MepConfiguredValue {
+    <#
+    .SYNOPSIS
+    Reads one value from the generated .env. PR24D-L3 uses this for
+    POSTGRES_DB/USER/PASSWORD when constructing the disposable restore
+    rehearsal target. The value is NEVER printed or logged by this
+    function -- callers must keep secret values off the console too.
+    #>
+    param([Parameter(Mandatory)] [string]$Name)
+    $envMap = Read-EnvFile
+    if (-not $envMap.ContainsKey($Name) -or [string]::IsNullOrWhiteSpace($envMap[$Name])) {
+        throw "Required configuration value '$Name' is missing from deployment/local-staging/.env."
+    }
+    return $envMap[$Name]
 }
 
 function New-LocalStagingEnvFile {

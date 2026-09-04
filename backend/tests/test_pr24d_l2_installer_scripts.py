@@ -478,13 +478,25 @@ def test_start_script_never_migrates_or_builds():
 # ---------------------------------------------------------------------------
 
 
-def test_update_requires_acknowledgement_before_any_mutation():
+def test_update_risk_acknowledgement_bypass_was_removed_in_l3():
+    """PR24D-L3 (§20): -AcknowledgeUpdateRisk existed only because no
+    backup safety net had shipped. Now that a verified pre-update backup
+    is mandatory, the switch is removed rather than left as a bypass that
+    would permit a schema-changing update with no backup."""
     code = _strip_comments_and_docstrings(_read("update.ps1"))
-    ack_index = code.find("if (-not $AcknowledgeUpdateRisk)")
-    invoke_index = code.find("Invoke-MepUpdate")
-    assert ack_index != -1 and invoke_index != -1 and ack_index < invoke_index, (
-        "update.ps1 must refuse before invoking any update work when the risk acknowledgement is absent"
+    assert "AcknowledgeUpdateRisk" not in code, (
+        "the risk-acknowledgement bypass must not survive the mandatory backup gate"
     )
+    ops_body = _ps_function_body(
+        _strip_comments_and_docstrings(_lib("Operations.ps1")), "Invoke-MepUpdate"
+    )
+    backup_index = ops_body.find("Invoke-MepBackup")
+    assert backup_index != -1, "update must take a mandatory pre-update backup"
+    for later in ("Stop-MepApplication", "Invoke-MepMigration"):
+        later_index = ops_body.find(later)
+        assert later_index != -1 and backup_index < later_index, (
+            f"the pre-update backup must precede {later}"
+        )
 
 
 def test_stop_verification_checks_both_exit_code_and_running_state():
@@ -674,3 +686,300 @@ def test_local_staging_runtime_state_is_gitignored():
         "deployment/local-staging/.install-metadata.json",
     ):
         assert pattern in gitignore_text, f".gitignore must cover {pattern}"
+
+
+# ---------------------------------------------------------------------------
+# PR24D-L3: backup / restore wrappers are orchestration over PR24C only
+# ---------------------------------------------------------------------------
+
+
+def test_l3_backup_and_restore_entry_scripts_exist():
+    for name in ("backup.ps1", "restore.ps1"):
+        assert (REPO_ROOT / "deployment" / "local-staging" / name).is_file(), f"missing {name}"
+    assert (REPO_ROOT / "deployment" / "local-staging" / "lib" / "Backup.ps1").is_file()
+
+
+def test_l3_wrappers_contain_no_backup_engine_of_their_own():
+    """PowerShell is orchestration only. A second pg_dump/pg_restore/
+    manifest/checksum/retention implementation is the failure mode this
+    guards against."""
+    code = _strip_comments_and_docstrings(_lib("Backup.ps1"))
+    for forbidden in ("pg_dump", "pg_restore", "DEFAULT_RETENTION_DAYS"):
+        assert forbidden not in code, f"the wrapper must not reimplement {forbidden}"
+    for engine in ("scripts/backup_postgres.py", "scripts/restore_postgres.py", "scripts/prune_backups.py"):
+        assert engine in code, f"the wrapper must delegate to PR24C's {engine}"
+
+
+def test_l3_backup_and_restore_use_the_shared_mutation_lock():
+    for name in ("backup.ps1", "restore.ps1"):
+        code = _strip_comments_and_docstrings(_read(name))
+        assert "Enter-MepMutationLock" in code, f"{name} must take the shared deployment lock"
+        assert "Exit-MepMutationLock" in code and "finally" in code, f"{name} must release it in finally"
+        assert "MutationLockName" not in code, f"{name} must not define a backup-specific lock"
+    # PR24D-L3 §22: the shared function must never acquire the lock itself,
+    # or an update (which already holds it) would recursively acquire it.
+    lib_code = _strip_comments_and_docstrings(_lib("Backup.ps1"))
+    assert "Enter-MepMutationLock" not in lib_code, (
+        "Invoke-MepBackup must not acquire the lock; update.ps1 already holds it"
+    )
+    ops_code = _strip_comments_and_docstrings(_lib("Operations.ps1"))
+    assert "backup.ps1" not in ops_code, (
+        "update must call the shared function, not shell out to backup.ps1 and deadlock on the mutex"
+    )
+
+
+def test_l3_retention_is_pr24c_thirty_day_policy_not_a_local_override():
+    code = _strip_comments_and_docstrings(_lib("Backup.ps1"))
+    assert "prune_backups.py" in code
+    assert "--retention-days" not in code, (
+        "the local wrapper must not override the Owner-approved 30-day retention window"
+    )
+
+
+def test_l3_restore_preserves_every_pr24c_guard():
+    code = _strip_comments_and_docstrings(_lib("Backup.ps1"))
+    assert "--force-non-empty-target" not in code, "the empty-target guard must not be bypassed"
+    assert "--allow-production-restore" not in code
+    assert "'--target-environment', 'local-staging-rehearsal'" in code, (
+        "the rehearsal target must carry a non-production environment label"
+    )
+    # The same-source guard is manifest-derived; passing a source URL is
+    # optional and unnecessary here, and must not be used to weaken it.
+    assert "--source-database-url" not in code
+
+
+def test_l3_restore_target_can_never_be_the_live_database():
+    code = _strip_comments_and_docstrings(_lib("Backup.ps1"))
+    assert "RehearsalDatabasePrefix" in code
+    body = _ps_function_body(code, "Invoke-MepRestoreRehearsal")
+    assert "if ($rehearsalDb -eq $liveDb)" in body, (
+        "the rehearsal target must be explicitly checked against the live database name"
+    )
+    # Cleanup is scoped to exactly the disposable database.
+    assert "DROP DATABASE IF EXISTS $rehearsalDb" in body
+    assert "--volumes" not in body, "rehearsal cleanup must never remove a volume"
+    assert "volume rm" not in body
+
+
+def test_l3_no_credential_url_is_placed_on_a_command_line():
+    code = _strip_comments_and_docstrings(_lib("Backup.ps1"))
+    # The backup relies on the container's own DATABASE_URL; the restore
+    # target travels by environment variable NAME, never by value.
+    assert "--database-url" not in code, "the backup must not pass a credential URL in argv"
+    assert "'-e', 'RESTORE_TARGET_DATABASE_URL'" in code, (
+        "the restore target URL must be passed by environment name, so its value stays out of argv"
+    )
+    assert "--target-database-url" not in code, "the target URL must not appear in argv"
+
+
+def test_l3_backup_failures_are_never_downgraded_to_warnings():
+    stripped = _strip_comments_and_docstrings(_lib("Backup.ps1"))
+    body = _ps_function_body(stripped, "Invoke-MepBackup")
+    for required in ("checksum verification FAILED", "Database backup FAILED", "has no manifest beside it"):
+        assert required in body, f"missing fail-closed path: {required}"
+    # Fix Round 2 moved artifact identification into its own function, so
+    # the fail-closed set spans the pair rather than living in one body.
+    resolver = _ps_function_body(stripped, "Resolve-MepProducedBackup")
+    assert body.count("throw") + resolver.count("throw") >= 7, (
+        "integrity failures must throw, not warn"
+    )
+    assert "return" in resolver and resolver.count("throw") >= 4, (
+        "artifact identification must fail closed on every ambiguity"
+    )
+
+
+def test_l3_backup_root_is_gitignored_and_outside_the_postgres_volume():
+    gitignore = (REPO_ROOT / ".gitignore").read_text()
+    assert "deployment/local-staging/backups/" in gitignore, "local backups must never be committed"
+    common = _strip_comments_and_docstrings(_lib("Common.ps1"))
+    assert "$Script:BackupRoot = Join-Path $Script:DeploymentRoot 'backups'" in common, (
+        "the backup root must live on the host beside the deployment, not inside the PostgreSQL volume"
+    )
+    compose = (REPO_ROOT / "deployment" / "local-staging" / "compose.yml").read_text()
+    assert "backups" not in compose, "the backup root must not be mounted into the long-running services"
+
+
+def test_l3_backup_environment_label_is_not_production():
+    """The container runs ENVIRONMENT=production only to keep
+    validate_production_secrets() active. Labelling local backups
+    'production' would be misleading provenance."""
+    common = _strip_comments_and_docstrings(_lib("Common.ps1"))
+    assert "$Script:BackupEnvironmentLabel = 'local-staging'" in common
+
+
+def test_l3_restore_wrapper_has_no_live_overwrite_mode():
+    code = _strip_comments_and_docstrings(_read("restore.ps1"))
+    assert "RestoreLive" not in code, (
+        "PR24D-L3 is rehearsal-only; a live-recovery mode is a separate Owner-approved change"
+    )
+    assert "Invoke-MepRestoreRehearsal" in code
+
+
+def test_l3_restore_target_url_env_fallback_did_not_weaken_any_guard():
+    """PR24D-L3 changed restore_postgres.py's --target-database-url from
+    argparse-required to an environment fallback, so a credential-bearing
+    URL need not sit in argv. The target stays mandatory and every guard
+    still runs."""
+    src = (REPO_ROOT / "backend" / "scripts" / "restore_postgres.py").read_text()
+    assert 'os.environ.get("RESTORE_TARGET_DATABASE_URL")' in src
+    assert "if not args.target_database_url:" in src, "the target must still be mandatory"
+    for guard in (
+        "guard_restore_target",
+        "DatabaseIdentity.from_manifest",
+        "target_database_is_empty",
+        "force_non_empty_target",
+        "sha256_checksum",
+        "get_alembic_revision",
+        "get_representative_row_counts",
+    ):
+        assert guard in src, f"guard {guard} must survive unchanged"
+    # The docstring deliberately *mentions* this flag to say it does not
+    # exist, so assert on actual argparse definitions rather than prose.
+    assert 'add_argument("--allow-production-restore"' not in src
+    assert 'add_argument("--skip-prod-check"' not in src
+
+
+def test_l3_restore_addresses_the_exact_artifact_the_operator_selected():
+    """PR #137 Fix Round 1 (P1). Only the backup root is bind-mounted at
+    /mep-backups, so addressing the archive by BASENAME alone meant an
+    externally-supplied archive could silently resolve to a different,
+    same-named archive inside the backup root -- rehearsing an artifact
+    the operator never selected and reporting PASS for it."""
+    body = _ps_function_body(_lib("Backup.ps1"), "Invoke-MepRestoreRehearsal")
+    # The container path is now a variable bound to the resolved artifact,
+    # never the bare file name pasted into the mount root.
+    assert "'--backup-file', $containerBackupPath" in body
+    assert '"/mep-backups/$($archive.Name)"' in body, (
+        "the in-root case is still addressed directly"
+    )
+    assert "Test-MepPathIsDirectlyInside" in body, (
+        "the in-root case must be decided by containment, not assumed"
+    )
+    # External archives are copied into a collision-safe staging path
+    # inside the mount, together with the manifest restore depends on.
+    assert ".restore-staging-" in body
+    assert "[Guid]::NewGuid()" in body, "the staging path must be collision-safe"
+    assert '"/mep-backups/$stagingName/$($archive.Name)"' in body
+
+
+def test_l3_restore_refuses_an_archive_with_no_manifest():
+    body = _ps_function_body(_lib("Backup.ps1"), "Invoke-MepRestoreRehearsal")
+    assert '$manifestSource = "$($archive.FullName).manifest.json"' in body
+    assert "if (-not (Test-Path -LiteralPath $manifestSource))" in body, (
+        "a missing manifest must be a stated refusal, not an incidental copy error"
+    )
+    # The refusal must precede any rehearsal database work.
+    assert body.index("$manifestSource") < body.index("CREATE DATABASE")
+
+
+def test_l3_restore_staging_directory_is_always_cleaned_up():
+    body = _ps_function_body(_lib("Backup.ps1"), "Invoke-MepRestoreRehearsal")
+    finally_block = body[body.index("finally"):]
+    assert "Remove-Item -LiteralPath $stagingDirectory -Recurse -Force" in finally_block, (
+        "staging copies must be removed even when the rehearsal fails"
+    )
+    # Scoped to the per-run directory only -- never the backup root.
+    assert "Remove-Item -LiteralPath $backupRoot" not in body
+
+
+def test_l3_path_containment_helper_compares_the_immediate_parent():
+    body = _ps_function_body(_lib("Backup.ps1"), "Test-MepPathIsDirectlyInside")
+    assert "GetFullPath" in body, "both sides must be normalised before comparison"
+    assert "GetDirectoryName" in body, (
+        "containment is direct membership, not any-ancestor prefix matching"
+    )
+    assert "StringComparison" in body, (
+        "case sensitivity must be chosen per-platform, not left to the default"
+    )
+
+
+def test_l3_backup_binds_verification_to_the_artifact_this_run_produced():
+    """PR #137 Fix Round 2 (P1). The wrapper used to re-scan the backup
+    directory after PR24C succeeded and verify whichever filename sorted
+    newest, which loses the identity of the artifact the current
+    invocation created."""
+    # Comments stripped: the code deliberately EXPLAINS that it does not
+    # consult Get-MepLatestBackup, so prose would false-positive here.
+    body = _ps_function_body(_strip_comments_and_docstrings(_lib("Backup.ps1")), "Invoke-MepBackup")
+    assert "Resolve-MepProducedBackup" in body, (
+        "the artifact must come from PR24C's own reported path"
+    )
+    assert "Get-MepLatestBackup" not in body, (
+        "a just-completed backup must never be identified by directory rescan"
+    )
+
+
+def test_l3_produced_backup_resolver_fails_closed_on_every_ambiguity():
+    body = _ps_function_body(_strip_comments_and_docstrings(_lib("Backup.ps1")), "Resolve-MepProducedBackup")
+    # Identity comes from PR24C's own success line.
+    assert r"\[backup\]\s+OK:" in body
+    for guard in (
+        "$distinct.Count -eq 0",       # no reported artifact
+        "$distinct.Count -gt 1",       # ambiguous
+        "StartsWith($prefix",           # outside the mount
+        "Test-Path -LiteralPath $hostPath",  # mapped host file absent
+    ):
+        assert guard in body, f"missing fail-closed guard: {guard}"
+    # Nested and traversing paths are rejected by shape, not sanitised.
+    assert "$leaf -match '[\\\\/]'" in body
+    assert "'..'" in body
+    # It must never fall back to the directory scan.
+    assert "Get-MepLatestBackup" not in body
+
+
+def test_l3_produced_backup_filename_pattern_matches_pr24c_generator():
+    """The wrapper only accepts PR24C's own filename form. Pin that
+    pattern against what pg_backup_lib actually generates, so the two
+    cannot drift apart silently."""
+    import re
+    import sys
+
+    body = _ps_function_body(_strip_comments_and_docstrings(_lib("Backup.ps1")), "Resolve-MepProducedBackup")
+    match = re.search(r"\$leaf -notmatch '(\^mep-postgres-[^']+)'", body)
+    assert match, "the accepted filename pattern must be present and greppable"
+    pattern = match.group(1)
+
+    sys.path.insert(0, str(REPO_ROOT / "backend" / "scripts"))
+    try:
+        from pg_backup_lib import backup_filename, utc_now
+    finally:
+        sys.path.pop(0)
+
+    # The real generator's output must be accepted...
+    for environment in ("local-staging", "staging", "Local-Staging"):
+        produced = backup_filename(environment, utc_now())
+        assert re.match(pattern, produced), (
+            f"the wrapper would reject PR24C's own filename {produced!r}"
+        )
+    # ...and shapes PR24C never emits must not be.
+    for rejected in (
+        "mep-postgres-local-staging-20260101T000000Z.dump",  # unstripped env
+        "mep-postgres-localstaging-20260101T000000Z.dump.partial",
+        "mep-postgres-localstaging-2026.dump",
+        "evil.dump",
+        "mep-postgres-localstaging-20260101T000000Z.dump.manifest.json",
+    ):
+        assert not re.match(pattern, rejected), f"{rejected!r} must not be accepted"
+
+
+def test_l3_latest_backup_lookup_is_still_used_for_default_restore_selection():
+    """Get-MepLatestBackup is not wrong globally -- it answers 'which
+    existing backup is newest?', which is exactly what restore.ps1 needs
+    when the operator did not name one."""
+    restore_body = _ps_function_body(_strip_comments_and_docstrings(_lib("Backup.ps1")), "Invoke-MepRestoreRehearsal")
+    assert "Get-MepLatestBackup" in restore_body
+    assert "IsNullOrWhiteSpace($BackupFile)" in restore_body, (
+        "it must apply only when no archive was supplied"
+    )
+
+
+def test_l3_update_gate_is_satisfied_by_its_own_backup_artifact():
+    body = _ps_function_body(_strip_comments_and_docstrings(_lib("Operations.ps1")), "Invoke-MepUpdate")
+    assert "$preUpdateBackup = Invoke-MepBackup -Reason 'pre-update'" in body, (
+        "the update must capture the artifact its own backup produced"
+    )
+    assert "Get-MepLatestBackup" not in body, (
+        "an update must never accept a pre-existing backup as its gate"
+    )
+    # Still ordered before any migration.
+    assert body.index("Invoke-MepBackup") < body.index("Invoke-MepMigration")

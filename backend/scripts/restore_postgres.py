@@ -86,9 +86,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest", default=None, help="Defaults to <backup-file>.manifest.json")
     parser.add_argument(
         "--target-database-url",
-        required=True,
-        help="A disposable, non-production database to restore into. No default -- there is no normal "
-        "command path that restores over Production.",
+        default=os.environ.get("RESTORE_TARGET_DATABASE_URL"),
+        help="A disposable, non-production database to restore into. Defaults to "
+        "$RESTORE_TARGET_DATABASE_URL. There is still no default TARGET -- one of the flag or the "
+        "environment variable must be supplied, and there is no normal command path that restores "
+        "over Production. PR24D-L3: the environment fallback exists so an orchestrator (e.g. the "
+        "local Staging/UAT wrappers) can transport a credential-bearing URL without placing it on a "
+        "process command line, exactly as --database-url already does in backup_postgres.py. It "
+        "changes no guard: the checksum, manifest-derived source identity, production-target, "
+        "same-source and empty-target checks all run unchanged below.",
     )
     parser.add_argument(
         "--target-environment",
@@ -115,6 +121,18 @@ def _parse_args() -> argparse.Namespace:
 def main() -> int:
     args = _parse_args()
     start = time.monotonic()
+
+    # PR24D-L3: --target-database-url stopped being argparse-required so a
+    # credential-bearing URL can arrive by environment instead of on a
+    # command line. It is still MANDATORY -- there is no default target,
+    # and no code path restores anywhere unless one is supplied here.
+    if not args.target_database_url:
+        print(
+            "[restore] FAIL: --target-database-url not given and $RESTORE_TARGET_DATABASE_URL is not set. "
+            "Restore requires an explicit disposable, non-production target -- there is no default.",
+            file=sys.stderr,
+        )
+        return 1
 
     backup_path = Path(args.backup_file)
     if not backup_path.is_file():
