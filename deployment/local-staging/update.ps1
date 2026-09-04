@@ -13,14 +13,28 @@ on-disk source, and this script says so rather than pretending
 otherwise). Never runs `git pull`, never checks out an arbitrary ref,
 never pulls a `:latest` image tag.
 
+REQUIRES A COMPLETED INSTALLATION. update.ps1 is an update mechanism, not
+an installation-recovery mechanism: it refuses to run unless a previous
+install actually finished, including its mandatory Administrator
+bootstrap. Only EXISTING_HEALTHY and EXISTING_STOPPED may be updated;
+PARTIAL, AMBIGUOUS, and FRESH all fail closed.
+
+If a first install failed after the containers came up but before the
+Administrator was created, the recovery path is to run `.\install.ps1`
+AGAIN -- not this script. A second install preserves .env, the generated
+secrets, and the PostgreSQL data, converges the deployment, and completes
+the Administrator bootstrap; only then is the installation marked
+completed.
+
 Sequence (see Invoke-MepUpdate in lib/Operations.ps1, which owns it and
 is covered by tests/Invoke-InstallerTests.ps1): acquire the deployment
-mutation lock -> validate the existing installation -> inspect full state
-(`docker compose ps --all`) -> BUILD the intended images -> stop the old
-application AND verify it is actually stopped -> explicit migration ->
-start the new stack -> readiness -> record metadata. A failed build never
-stops the running application; a failed or unverified stop never allows a
-migration to run.
+mutation lock -> require a previously completed installation -> inspect
+full state -> BUILD the intended images -> stop the old application AND
+verify it is actually stopped -> explicit migration -> start the new
+stack -> readiness -> refresh metadata. A failed build never stops the
+running application; a failed or unverified stop never allows a migration
+to run; and update can never be the operation that marks an installation
+completed for the first time.
 
 PR24D-L3 has not been implemented yet, so no local backup/restore wrapper
 exists to protect against an update's migration going wrong. Until then,

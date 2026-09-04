@@ -272,14 +272,13 @@ function Test-PortOwnedByThisInstallation {
     failure as an unrelated process occupying it.
     #>
     param([Parameter(Mandatory)] [int]$Port)
-    $result = Invoke-DockerCompose -Arguments @('ps', '--all', '--format', 'json', 'frontend') -AllowNonZeroExit -Phase 'port-owner'
-    if ($result.ExitCode -ne 0 -or -not $result.Output) { return $false }
-    foreach ($line in $result.Output) {
-        if ($line -match [regex]::Escape(":$Port->") -or $line -match [regex]::Escape("0.0.0.0:$Port")) {
-            return $true
-        }
-    }
-    return $false
+    # Fix Round 2, P1-B: routed through the state inspector rather than
+    # `docker compose ps`, because this runs during prerequisite checks --
+    # i.e. before `.env` exists on a fresh install.
+    $states = Get-MepServiceStates
+    if ($null -eq $states -or -not $states.ContainsKey('frontend')) { return $false }
+    $ports = "$($states['frontend'].Ports)"
+    return ($ports -match [regex]::Escape(":$Port->"))
 }
 
 function Test-SufficientDiskSpace {
@@ -534,15 +533,63 @@ function Get-LikelyLanIPv4Addresses {
 # Service/state inspection (Fix Round 1, P2: always --all)
 # ---------------------------------------------------------------------------
 
+function Invoke-DockerStateInspection {
+    <#
+    .SYNOPSIS
+    Queries container state for this installation WITHOUT rendering the
+    Compose model, so it works before `.env` exists.
+
+    .DESCRIPTION
+    Fix Round 2, P1-B. State inspection must not depend on a resource the
+    installer has not created yet. Every `docker compose <cmd>` -- `ps`
+    included -- first parses and INTERPOLATES compose.yml, so on a fresh
+    checkout it fails two different ways:
+
+      docker compose ... --env-file ./.env ps --all
+        -> couldn't find env file: .../.env
+
+      docker compose -f compose.yml ps --all      (no --env-file)
+        -> error while interpolating services.postgres.environment...:
+           required variable POSTGRES_DB is missing a value
+
+    Either failure previously made a genuinely fresh machine classify as
+    AMBIGUOUS, so a first install could never proceed. Both were
+    reproduced against the real Docker Compose CLI (v5.1.1).
+
+    `docker ps` takes no compose file at all. Scoping it to the
+    deterministic Compose project label keeps the query narrow -- it can
+    only ever see containers Compose created for THIS project, never
+    unrelated containers on the machine.
+
+    Deliberately NOT solved by writing placeholder secrets just to let
+    interpolation succeed.
+    #>
+    $result = Invoke-MepCommand -FilePath 'docker' -Arguments @(
+        'ps', '--all',
+        '--filter', "label=com.docker.compose.project=$($Script:ComposeProjectName)",
+        '--format', 'json'
+    ) -AllowNonZeroExit -Phase 'state-inspection'
+    return $result
+}
+
 function Get-MepServiceStates {
     <#
     .SYNOPSIS
-    Returns a hashtable of service name -> parsed `docker compose ps`
-    entry, using --all so stopped/exited containers are visible. Plain
-    `docker compose ps` hides them, which previously let a fully stopped
-    installation be misclassified.
+    Returns a hashtable of service name -> container state entry for this
+    installation, including stopped/exited containers, and WITHOUT
+    requiring `.env` (see Invoke-DockerStateInspection).
+
+    .DESCRIPTION
+    Normalizes `docker ps --format json` into the shape the rest of the
+    installer consumes: `.Service`, `.State` ("running", "exited", ...)
+    and `.Health` ("healthy"/"unhealthy"/""). `docker ps` reports health
+    only inside its human Status string (e.g. "Up 2 minutes (healthy)"),
+    so it is parsed out of there.
+
+    Returns $null if the query itself failed -- callers treat that as
+    "could not determine", never as "nothing is running".
     #>
-    $result = Invoke-DockerCompose -Arguments @('ps', '--all', '--format', 'json') -AllowNonZeroExit -Phase 'ps'
+    $result = Invoke-DockerStateInspection
     if ($result.ExitCode -ne 0) { return $null }
     $map = @{}
     foreach ($line in @($result.Output)) {
@@ -553,15 +600,43 @@ function Get-MepServiceStates {
         catch {
             continue
         }
-        # Compose emits either one JSON object per line or a single JSON
-        # array depending on version; handle both.
-        foreach ($svc in @($entry)) {
-            if ($svc.PSObject.Properties.Name -contains 'Service') {
-                $map[$svc.Service] = $svc
+        # `docker ps` emits one JSON object per line; tolerate an array too.
+        foreach ($container in @($entry)) {
+            $service = Get-DockerLabelValue -Container $container -Label 'com.docker.compose.service'
+            if ([string]::IsNullOrWhiteSpace($service)) { continue }
+
+            $status = if ($container.PSObject.Properties.Name -contains 'Status') { "$($container.Status)" } else { '' }
+            $health = ''
+            if ($status -match '\((healthy|unhealthy|health: starting)\)') { $health = $Matches[1] }
+
+            $state = if ($container.PSObject.Properties.Name -contains 'State') { "$($container.State)" } else { '' }
+
+            $map[$service] = [pscustomobject]@{
+                Service = $service
+                State   = $state
+                Health  = $health
+                Status  = $status
+                Ports   = if ($container.PSObject.Properties.Name -contains 'Ports') { "$($container.Ports)" } else { '' }
             }
         }
     }
     return $map
+}
+
+function Get-DockerLabelValue {
+    <#
+    .SYNOPSIS
+    Extracts one label value from a `docker ps --format json` entry,
+    whose Labels field is a single comma-separated "k=v,k=v" string.
+    #>
+    param($Container, [Parameter(Mandatory)] [string]$Label)
+    if ($null -eq $Container -or -not ($Container.PSObject.Properties.Name -contains 'Labels')) { return '' }
+    foreach ($pair in ("$($Container.Labels)" -split ',')) {
+        $idx = $pair.IndexOf('=')
+        if ($idx -lt 1) { continue }
+        if ($pair.Substring(0, $idx).Trim() -eq $Label) { return $pair.Substring($idx + 1).Trim() }
+    }
+    return ''
 }
 
 function Test-MepServiceRunning {
@@ -589,12 +664,20 @@ function Get-InstallationState {
     EXISTING_STOPPED / PARTIAL / AMBIGUOUS by cross-checking .env,
     completed-install metadata, and the full (`--all`) container set --
     never from any single signal (Fix Round 1, P2/§17/§18).
+
+    Fix Round 2 (P1-B): the container set comes from
+    Invoke-DockerStateInspection, which does NOT need `.env`. Previously
+    this ran `docker compose ps`, which fails on a fresh checkout because
+    Compose cannot interpolate compose.yml without the env file the
+    installer has not created yet -- so every genuinely fresh machine
+    classified as AMBIGUOUS and could never be installed.
     #>
     $envExists = Test-EnvFileExists
     $states = Get-MepServiceStates
 
     if ($null -eq $states) {
-        # `docker compose ps` itself failed: nothing can be concluded safely.
+        # The container query itself failed (e.g. the Docker daemon is not
+        # reachable): nothing can be concluded safely.
         return 'AMBIGUOUS'
     }
 
@@ -662,11 +745,24 @@ function Set-InstallMetadata {
     Records a *successful* installation/update. Callers must only reach
     this after images built, migration succeeded, the application became
     ready, and (on a first install) Administrator bootstrap succeeded.
+
+    .PARAMETER RequireExistingCompletion
+    Fix Round 2 (P1-C/§15). Passed by update, which may refresh SourceSha
+    and LastUpdatedAtUtc but must never be the operation that transitions
+    InstallCompleted from absent/false to true -- that transition belongs
+    exclusively to a successful install that satisfied the Administrator
+    invariant. This is a structural backstop: update already refuses a
+    non-completed installation up front, and this makes the metadata
+    writer itself incapable of laundering one.
     #>
     param(
         [Parameter(Mandatory)] [string]$SourceSha,
-        [string]$SchemaVersion = '1'
+        [string]$SchemaVersion = '1',
+        [switch]$RequireExistingCompletion
     )
+    if ($RequireExistingCompletion -and -not (Test-MepInstallCompleted)) {
+        throw 'Refusing to record completion metadata: this installation was never completed. Run .\install.ps1 to finish Administrator bootstrap.'
+    }
     $existing = Get-InstallMetadata
     $installedAt = if ($existing -and ($existing.PSObject.Properties.Name -contains 'InstalledAtUtc') -and $existing.InstalledAtUtc) {
         $existing.InstalledAtUtc

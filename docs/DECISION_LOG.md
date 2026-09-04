@@ -7423,6 +7423,15 @@ Operations Engine) started, not merged
   image that was just built. No `:latest` semantics and no claim of
   immutable artifact promotion: this is local-source mode, and the
   recorded provenance is the git `rev-parse HEAD` of the working tree.
+  **[CORRECTED by the 2026-09-04 Fix Round 2 entry below — the
+  `--no-build` half of this sentence was WRONG and must not be read as
+  valid behavior. `docker compose run` has no such flag; the real CLI
+  rejects it with "unknown flag: --no-build", so the migration as shipped
+  in Fix Round 1 could not have run at all. The build-before-migrate
+  ordering and the fail-closed build described above are correct and
+  remain in force; the guarantee comes from that explicit build step, not
+  from any flag on `run`. Left in place rather than rewritten because
+  this log is append-only evidence of what was decided at the time.]**
 - **P1-B — a fresh installation could complete without a usable
   Administrator.** Bootstrap failure was previously non-fatal. It is now
   mandatory whenever the installation has never completed: blank or
@@ -7516,3 +7525,113 @@ Operations Engine) started, not merged
   `backend/scripts/deploy_migrate.py`, and `backend/app/core/redis.py`
   as the evidentiary basis for the bootstrap, migration, and
   Redis-non-blocking decisions above.
+
+## 2026-09-04 — GitHub PR #136 Fix Round 2 (independent review, REQUEST CHANGES): three P1 state-transition/CLI defects -- fixed, not merged
+
+- **Context:** PR #136 received a second independent review at exact head
+  `af2999e4bab135333967f827ff824fca1500d021` returning REQUEST CHANGES
+  with three P1 blockers. Their common axis, as the reviewer put it: a
+  state transition must prove its precondition every time. The legitimate
+  chain is FRESH -> install -> Administrator satisfied -> COMPLETED ->
+  update. The path PARTIAL -> update -> COMPLETED must not exist, and
+  installer state discovery must never depend on a resource the installer
+  itself has not created yet.
+- **P1-A — `docker compose run --no-build` is not a real flag.** Fix
+  Round 1 introduced it believing it pinned the just-built image. It does
+  not exist: the actual CLI answers `unknown flag: --no-build`, which was
+  reproduced here against Docker Compose v5.1.1. The migration as shipped
+  in Fix Round 1 therefore could not have run on any machine. Removed.
+  `--build` was deliberately NOT substituted -- it would add a second
+  implicit build during migration and weaken the explicit build-once
+  sequence. The correct statement of the guarantee, now used everywhere:
+  the installer explicitly builds backend/frontend before migration, and
+  `docker compose run` does not request a build, so it uses the service
+  image that explicit build produced. This is local-source mode and is
+  not immutable artifact identity.
+- **P1-B — fresh installation was structurally impossible.** State
+  inspection ran `docker compose ps`, and every Compose subcommand first
+  interpolates compose.yml. On a fresh checkout that fails two distinct
+  ways -- `couldn't find env file: .../.env` with `--env-file`, and
+  `required variable POSTGRES_DB is missing a value` without it -- both
+  reproduced against the real CLI. The failure classified the machine
+  AMBIGUOUS, so install aborted before it could generate the `.env` that
+  would have made Compose work: a genuine deadlock on any first install.
+  Fixed by inspecting container state through `docker ps --all --filter
+  label=com.docker.compose.project=mep-local-staging --format json`,
+  which reads no compose file and needs no env file, while the project
+  label keeps the query scoped to this installation and unable to see
+  unrelated containers. Deliberately NOT "fixed" by writing placeholder
+  secrets so interpolation would succeed. Conflicting signals are still
+  refused: no `.env` but project containers present remains AMBIGUOUS.
+- **P1-C — update could launder an incomplete installation.** update.ps1
+  accepted PARTIAL state and then wrote completion metadata, so an
+  install whose Administrator bootstrap had failed could be marked
+  completed by running update -- defeating the Fix Round 1 P1-B
+  invariant entirely. update is an UPDATE mechanism, not an installation
+  recovery mechanism. It now captures the completion precondition BEFORE
+  any mutation (`Test-MepInstallCompleted`) and additionally accepts only
+  EXISTING_HEALTHY or EXISTING_STOPPED; PARTIAL, AMBIGUOUS and FRESH all
+  fail closed with an operator message naming `install.ps1` as the
+  recovery path. As a structural backstop, update's metadata write passes
+  `-RequireExistingCompletion`, making the writer itself incapable of
+  performing the absent/false -> true transition; that transition belongs
+  exclusively to a successful install that satisfied the Administrator
+  invariant. The backend remains the source of truth for whether an
+  administrator exists -- no local "admin exists" metadata was added, and
+  no Administrator query was duplicated in PowerShell.
+- **Recovery path, now documented explicitly:** a first install that
+  failed after containers started but before the Administrator was
+  created is recovered by running `install.ps1` again, which preserves
+  `.env`, its secrets, and the PostgreSQL data, converges the deployment,
+  retries the bootstrap, and only then records completion.
+- **Test-quality correction (§19).** The Fix Round 1 suite encoded the
+  invalid behavior: one test asserted `--no-build` *must* be present. It
+  was deleted rather than preserved for being green -- tests are
+  subordinate to actual Docker Compose behavior. Its replacement asserts
+  that neither `--no-build` nor `--build` appears.
+- **Mock fidelity (§20).** The mock seam previously returned success for
+  any command, which is precisely how both defects survived a round of
+  review. It now reproduces the real CLI's preconditions: `--no-build` is
+  rejected as an unknown flag, and any `docker compose` call made while
+  `.env` is absent fails with the interpolation/env-file errors observed
+  from the real CLI. `.env` existence is dynamic, since a real install
+  creates it partway through. Under these rules the fresh-install tests
+  pass only because state inspection genuinely avoids Compose.
+- **New CLI-level evidence (§3/§21).** `deployment/local-staging/tests/
+  check-compose-cli-contract.sh` asks the real Docker CLI whether the
+  installer's migration flags exist, and runs in CI. It is DAEMON-FREE --
+  flag parsing and `--help` only, starting no container and building no
+  image -- so it is not evidence of a real migration or installation. It
+  was proved non-vacuous: reintroducing `--no-build` makes it fail.
+  Recorded CLI: Docker Compose v5.1.1 locally; CI records its own
+  `docker compose version`. No implementation detail is bound to a
+  specific Compose version; the target is generally supported v2 CLI
+  semantics.
+- **Evidence, explicitly classified.** POWERSHELL UNIT/MOCK: 33 behavior
+  tests pass, and all three fixes were mutation-proved (restoring
+  `--no-build` -> 9 failures; reverting state inspection to
+  `docker compose ps` -> 13 failures; removing the update completion
+  precondition -> 1 failure; every file restored byte-identical). Note
+  the third mutation initially killed nothing, because state
+  classification alone already caught it -- a test that pinned the
+  precondition independently was added rather than accepting the weaker
+  signal. STATIC: 41 assertions in
+  `backend/tests/test_pr24d_l2_installer_scripts.py`; all 10 `.ps1` files
+  parse under the real PowerShell 7.4.6 parser. CLI VERIFIED
+  (daemon-free): the Compose contract check above. DOCKER EXECUTED /
+  WINDOWS EXECUTED: **still not performed** -- no daemon in this sandbox,
+  and it is not Windows.
+- **Preserved unchanged:** every Fix Round 1 fix (named mutex across the
+  five mutating scripts with exception-safe release; stop exit-code check
+  plus verified-stopped backend; mandatory Administrator bootstrap;
+  build-before-migrate with fail-closed build; success metadata written
+  last; full stopped-state visibility) and every PR24D-L1 invariant
+  (Redis non-blocking, PostgreSQL blocking, fixed backend
+  `container_name`, one Uvicorn worker, no LAN exposure of
+  PostgreSQL/Redis, `COOKIE_SECURE` decoupling).
+- **Status:** Draft, not merged. PR24D-L3 NOT started; PR24E NOT started;
+  Setup.exe NOT implemented; no cloud resources provisioned.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** GitHub PR #136's own Fix Round 2 review text, and the
+  Docker Compose v5.1.1 CLI in this sandbox as the evidentiary basis for
+  every claim about `docker compose run` and `docker compose ps` above.

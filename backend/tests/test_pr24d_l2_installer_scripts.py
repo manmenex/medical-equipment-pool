@@ -257,17 +257,99 @@ def test_operations_module_builds_images_explicitly():
     assert "'build', 'backend', 'frontend'" in ops_code, "the build step must build both application images explicitly"
 
 
-def test_migration_runs_with_no_build_and_a_distinct_container_name():
+def test_migration_passes_no_unsupported_or_implicit_build_flag():
+    """Fix Round 2, P1-A. `docker compose run` has no `--no-build` flag --
+    the real CLI answers "unknown flag: --no-build", so a migration
+    passing it could never run. `--build` is equally forbidden: it would
+    add a second implicit build during migration and weaken the explicit
+    build-once sequence. The guarantee comes from the preceding explicit
+    `docker compose build`, not from a flag on `run`."""
     ops_code = _strip_comments_and_docstrings(_lib("Operations.ps1"))
+    assert "'--no-build'" not in ops_code, (
+        "docker compose run does not accept --no-build; the installer must never pass it"
+    )
+    assert "'--build'" not in ops_code, (
+        "migration must not request its own build; the explicit build step already ran"
+    )
     migrate_index = ops_code.find("deploy_migrate.py")
     assert migrate_index != -1
     window = ops_code[max(0, migrate_index - 500):migrate_index]
-    assert "'--no-build'" in window, (
-        "the migration one-off container must pass --no-build so it uses the image just built, never an ambiguous rebuild"
+    assert "'--no-deps'" in window, (
+        "the migration one-off container must not start service dependencies"
     )
     assert "mep-local-staging-migrate" in window, (
         "the migration container must not reuse the backend service's fixed container_name"
     )
+
+
+def test_state_inspection_does_not_require_the_generated_env_file():
+    """Fix Round 2, P1-B. Every `docker compose` subcommand interpolates
+    compose.yml, so `docker compose ps` fails on a fresh checkout -- which
+    made a genuinely fresh machine classify AMBIGUOUS and blocked first
+    install entirely. State inspection must therefore not go through
+    Compose at all."""
+    common_code = _strip_comments_and_docstrings(_lib("Common.ps1"))
+    body = _ps_function_body(common_code, "Invoke-DockerStateInspection")
+    assert "Invoke-DockerCompose" not in body, (
+        "state inspection must not run any docker compose command (it would need .env)"
+    )
+    assert "'ps', '--all'" in body, "state inspection must still see stopped containers"
+    assert "label=com.docker.compose.project=" in body, (
+        "state inspection must be scoped to the deterministic compose project label"
+    )
+    states_body = _ps_function_body(common_code, "Get-MepServiceStates")
+    assert "Invoke-DockerStateInspection" in states_body, (
+        "Get-MepServiceStates must route through the env-free state inspector"
+    )
+    assert "Invoke-DockerCompose" not in states_body
+
+
+def test_update_requires_a_previously_completed_installation():
+    """Fix Round 2, P1-C. The path PARTIAL -> update -> COMPLETED must not
+    exist: update is not an installation-recovery mechanism."""
+    ops_code = _strip_comments_and_docstrings(_lib("Operations.ps1"))
+    body = _ps_function_body(ops_code, "Invoke-MepUpdate")
+    completed_index = body.find("Test-MepInstallCompleted")
+    assert completed_index != -1, "update must check completion explicitly"
+    for later in ("Invoke-MepBuildImages", "Stop-MepApplication", "Invoke-MepMigration"):
+        later_index = body.find(later)
+        assert later_index != -1 and completed_index < later_index, (
+            f"the completion precondition must be captured before {later}"
+        )
+    assert "'EXISTING_HEALTHY', 'EXISTING_STOPPED'" in body, (
+        "update must accept only states representing a completed installation"
+    )
+
+
+def test_update_metadata_write_cannot_create_the_completion_transition():
+    """Fix Round 2, §15. Update may refresh SourceSha/LastUpdatedAtUtc but
+    must never be the operation that flips InstallCompleted to true."""
+    ops_body = _ps_function_body(
+        _strip_comments_and_docstrings(_lib("Operations.ps1")), "Invoke-MepUpdate"
+    )
+    assert "Set-InstallMetadata -SourceSha $sourceSha -RequireExistingCompletion" in ops_body, (
+        "update's metadata write must pass the completion guard"
+    )
+    common_body = _ps_function_body(
+        _strip_comments_and_docstrings(_lib("Common.ps1")), "Set-InstallMetadata"
+    )
+    assert "RequireExistingCompletion" in common_body and "Test-MepInstallCompleted" in common_body, (
+        "the metadata writer must enforce the guard, not merely accept the flag"
+    )
+
+
+def test_only_install_and_update_write_completion_metadata():
+    """Fix Round 2, §17. start/stop/status/uninstall must never mark an
+    installation completed."""
+    ops_code = _strip_comments_and_docstrings(_lib("Operations.ps1"))
+    for func in ("Invoke-MepStart", "Invoke-MepStop", "Invoke-MepUninstall"):
+        assert "Set-InstallMetadata" not in _ps_function_body(ops_code, func), (
+            f"{func} must never write completion metadata"
+        )
+    for name in ENTRY_SCRIPTS:
+        assert "Set-InstallMetadata" not in _strip_comments_and_docstrings(_read(name)), (
+            f"{name} must not write completion metadata directly; only the orchestration may"
+        )
 
 
 def test_install_and_update_build_before_migrating():

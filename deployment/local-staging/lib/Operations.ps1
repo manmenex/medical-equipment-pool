@@ -61,11 +61,22 @@ function Invoke-MepMigration {
     backend image.
 
     .DESCRIPTION
-    `--no-build` guarantees this one-off container uses the image produced
-    by Invoke-MepBuildImages immediately beforehand and never triggers an
-    implicit, ambiguous rebuild of its own. `--name` avoids colliding with
-    the `backend` service's fixed `container_name`, which PR24D-L1 relies
-    on for its single-backend structural guard.
+    The installer explicitly builds backend/frontend before migration
+    (Invoke-MepBuildImages). `docker compose run` does not request a build,
+    so it uses the service image already produced by that explicit build
+    step. This is local-source mode: it is NOT immutable artifact identity,
+    and is not described as such.
+
+    Fix Round 2 (P1-A): an earlier revision passed `--no-build` here. That
+    flag does not exist on `docker compose run` -- the real CLI rejects it
+    with "unknown flag: --no-build", so the migration could never have run.
+    `--build` is deliberately NOT used either: it would add a second,
+    implicit build during migration and weaken the explicit build-once
+    sequence.
+
+    `--name` avoids colliding with the `backend` service's fixed
+    `container_name`, which PR24D-L1 relies on for its single-backend
+    structural guard.
     #>
     param(
         [Parameter(Mandatory)] [string]$SourceSha,
@@ -73,7 +84,7 @@ function Invoke-MepMigration {
     )
     Write-Host 'Applying database migration...'
     $result = Invoke-DockerCompose -Arguments @(
-        'run', '--rm', '--no-build', '--no-deps', '--name', 'mep-local-staging-migrate', 'backend',
+        'run', '--rm', '--no-deps', '--name', 'mep-local-staging-migrate', 'backend',
         'python', 'scripts/deploy_migrate.py',
         '--target-environment', $TargetEnvironmentLabel,
         '--artifact-sha', $SourceSha
@@ -304,10 +315,29 @@ function Invoke-MepUpdate {
         throw (New-MepFailure 'No existing installation found. Run .\install.ps1 first; update.ps1 only operates on an existing installation.')
     }
 
+    # Fix Round 2 (P1-C/§11/§12): update is an UPDATE mechanism, not an
+    # installation-recovery mechanism. The completion precondition is
+    # captured BEFORE any mutation, so update can never be the operation
+    # that transitions InstallCompleted from absent/false to true and can
+    # never launder a PARTIAL installation -- one whose Administrator
+    # bootstrap never succeeded -- into a completed one.
+    if (-not (Test-MepInstallCompleted)) {
+        throw (New-MepFailure @'
+Installation has never completed successfully, so it cannot be updated.
+This usually means a previous install failed before the Administrator was
+created.
+ACTION: Run .\install.ps1 again. It preserves your .env, secrets, and
+PostgreSQL data, converges the deployment, and completes the Administrator
+bootstrap. update.ps1 is not an installation-recovery mechanism.
+'@)
+    }
+
     $state = Get-InstallationState
     Write-InstallLog -Phase 'update' -Message "Detected installation state: $state"
-    if ($state -eq 'AMBIGUOUS') {
-        throw (New-MepFailure 'Installation state could not be determined safely. Run .\status.ps1, resolve the conflict, then retry.')
+    # Only states that represent a genuinely completed installation may be
+    # updated. PARTIAL / AMBIGUOUS / FRESH all fail closed.
+    if ($state -notin @('EXISTING_HEALTHY', 'EXISTING_STOPPED')) {
+        throw (New-MepFailure "Installation state is '$state'; update requires a previously completed installation (EXISTING_HEALTHY or EXISTING_STOPPED).`nACTION: Run .\status.ps1 to inspect, then .\install.ps1 to converge the installation before updating.")
     }
 
     # Build first: a failed build must never leave the old application
@@ -323,7 +353,7 @@ function Invoke-MepUpdate {
 
     Start-MepApplication
 
-    Set-InstallMetadata -SourceSha $sourceSha
+    Set-InstallMetadata -SourceSha $sourceSha -RequireExistingCompletion
     Write-InstallLog -Phase 'update' -Message "update.ps1 completed successfully (source_sha=$sourceSha)."
     return $sourceSha
 }

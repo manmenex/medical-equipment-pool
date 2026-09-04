@@ -425,3 +425,16 @@ jobs:
       - name: Run PowerShell installer orchestration behavior tests
         shell: pwsh
         run: pwsh -NoProfile -File deployment/local-staging/tests/Invoke-InstallerTests.ps1
+
+      # PR24D-L2 Fix Round 2 (P1-A): Fix Round 1 shipped
+      # `docker compose run --no-build`, a flag that does not exist -- so
+      # the migration could never have run anywhere. Structural tests
+      # could not catch it because they only asserted the string the code
+      # produced. This asks the real Docker CLI instead. It is
+      # DAEMON-FREE: flag parsing and `--help` only, no container is
+      # started and no image is built, so it is not evidence of a real
+      # migration or installation.
+      - name: Validate Docker Compose CLI contract for the migration command
+        run: |
+          docker compose version
+          bash deployment/local-staging/tests/check-compose-cli-contract.sh

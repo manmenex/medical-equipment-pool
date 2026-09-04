@@ -13,17 +13,28 @@ existing PR24B `app.scripts.bootstrap_admin` CLI, invoked unchanged).
 .DESCRIPTION
 Sequence (see Invoke-MepInstall in lib/Operations.ps1, which owns it and
 is covered by tests/Invoke-InstallerTests.ps1): acquire the deployment
-mutation lock -> prerequisite checks -> full state inspection
-(`docker compose ps --all`) -> generate or preserve configuration ->
-validate Compose -> BUILD backend/frontend from current source -> start
-PostgreSQL and wait healthy -> explicit Alembic migration against the
-just-built image -> start the application and wait for /api/v1/ready ->
-mandatory Administrator bootstrap when the installation has never
-completed -> write success metadata -> print the LAN URL.
+mutation lock -> prerequisite checks -> full state inspection (container
+state, which deliberately does NOT require the .env this script has not
+created yet) -> generate or preserve configuration -> validate Compose ->
+BUILD backend/frontend from current source -> start PostgreSQL and wait
+healthy -> explicit Alembic migration against the just-built image ->
+start the application and wait for /api/v1/ready -> mandatory
+Administrator bootstrap when the installation has never completed ->
+write success metadata -> print the LAN URL.
 
 Fails closed at every step: a failed build, migration, readiness wait, or
 Administrator bootstrap stops the installation and leaves no
 "installation completed" metadata behind.
+
+THIS SCRIPT IS ALSO THE RECOVERY PATH. If a previous install failed after
+the containers started but before the Administrator was created, run
+`.\install.ps1` again -- NOT `.\update.ps1`, which refuses any
+installation that never completed. Re-running install preserves the
+existing .env, its generated secrets, and the PostgreSQL data; it
+converges the deployment and retries the Administrator bootstrap, and
+only marks the installation completed once that invariant is satisfied.
+If the backend reports that an administrator already exists, that counts
+as satisfied -- the backend, not this script, is the source of truth.
 
 .EXAMPLE
 .\install.ps1
