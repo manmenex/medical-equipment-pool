@@ -10,7 +10,7 @@ ordering
 
 ## Current baseline
 
-Current baseline: `73652b062fb2ad6fdab4f7bbc0b743ff5f548e86` on
+Current baseline: `9928201334e52be7301f6e1f1095e8c356a5a80d` on
 `claude/medical-equipment-pool-0c7fz0` — the real squash-merge SHA of
 GitHub PR #135, "PR24D-L1 — Local Docker Staging/UAT Foundation" (three
 independent-review fix rounds: Redis non-blocking-startup correction,
@@ -59,7 +59,7 @@ script-based installer engine is proven). **This is not a fourth
 environment** — OD-PR24-4's taxonomy (Development, Staging/UAT,
 Production) is unchanged. **PR24D-L1 (Local Docker Staging/UAT
 Foundation) is COMPLETE / MERGED** (GitHub PR #135, squash SHA
-`73652b062fb2ad6fdab4f7bbc0b743ff5f548e86`, current baseline above):
+`73652b062fb2ad6fdab4f7bbc0b743ff5f548e86`, historical -- see 'Current baseline' above):
 `deployment/local-staging/compose.yml` (PostgreSQL/Redis never
 LAN-exposed, exactly one backend replica/Uvicorn worker, no committed
 secrets/default credentials/demo data) plus a `COOKIE_SECURE` backend

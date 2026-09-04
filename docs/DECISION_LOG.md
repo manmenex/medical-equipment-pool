@@ -7815,3 +7815,128 @@ Operations Engine) started, not merged
   repository's `lib/Operations.ps1` migration invocation (`--no-deps`) as
   the evidentiary basis for treating database availability as an explicit
   precondition.
+
+## 2026-09-04 — PR24D-L3 started: Local Backup/Restore Operations, Rehearsal & Operator Runbook (baseline 9928201 folded in)
+
+- **Baseline entering this work:**
+  `9928201334e52be7301f6e1f1095e8c356a5a80d` — the real squash SHA of
+  GitHub PR #136 (PR24D-L2). Folded in here rather than via a separate
+  baseline-adoption PR, per the standing convention.
+- **Status:** PR24D-L1 COMPLETE/MERGED (#135,
+  `73652b062fb2ad6fdab4f7bbc0b743ff5f548e86`); PR24D-L2 COMPLETE/MERGED
+  (#136, `9928201334e52be7301f6e1f1095e8c356a5a80d`); PR24D-L3 IN
+  PROGRESS until merged; PR24E/F/G NOT STARTED; no cloud provider
+  selected and nothing provisioned.
+- **PowerShell is orchestration only.** `backup.ps1`, `restore.ps1` and
+  the new `lib/Backup.ps1` contain no backup engine: no `pg_dump`, no
+  `pg_restore`, no manifest format, no checksum implementation, no
+  retention logic. Every one of those decisions stays in PR24C's
+  `backup_postgres.py` / `restore_postgres.py` / `prune_backups.py`,
+  invoked unchanged. A static test asserts the absence of a duplicate
+  implementation, because a second backup system is the failure mode this
+  slice most needed to avoid.
+- **Backup root:** `deployment/local-staging/backups/` on the host --
+  gitignored, deliberately OUTSIDE the PostgreSQL Docker volume, so
+  backups survive stop/start and the default uninstall and can be copied
+  away with an ordinary file copy. Not mounted into the long-running
+  services; the bind mount exists only on the one-off backup/restore
+  containers.
+- **Backup environment label:** backups are labelled `local-staging`, NOT
+  the container's `ENVIRONMENT=production` (which exists solely to keep
+  `validate_production_secrets()` active, per PR24D-L1). Labelling local
+  backups "production" would have been misleading provenance in the
+  manifest and the filename.
+- **Credential transport.** No credential-bearing URL is placed on any
+  command line. The backup runs inside the backend container, which
+  already carries `DATABASE_URL`, so PR24C's `--database-url` default
+  resolves in-container with nothing passed by us. The restore rehearsal
+  target travels as `$RESTORE_TARGET_DATABASE_URL` via
+  `docker compose run -e VAR` (name-only form, so the value is copied
+  from the process environment rather than placed in argv) and is
+  cleared immediately afterwards.
+- **One PR24C change was required, and it weakens nothing.**
+  `restore_postgres.py --target-database-url` was argparse-`required`,
+  with no environment fallback -- so any orchestrator had to put a
+  credential-bearing URL in argv. It now defaults to
+  `$RESTORE_TARGET_DATABASE_URL`, mirroring exactly what
+  `backup_postgres.py` already does for `--database-url`. The target
+  remains MANDATORY (an explicit check fails closed when neither is
+  supplied; there is still no default target), and every guard --
+  checksum, manifest-derived source identity, production-target,
+  same-source, empty-target, Alembic revision, row counts -- runs
+  unchanged. All 50 existing PR24C tests still pass, and a new test pins
+  that none of those guards disappeared.
+- **Restore is rehearsal-only and safe by default.** `restore.ps1`
+  restores into a fresh, timestamped, disposable database
+  (`mep_local_restore_rehearsal_<UTC>`) on the same server, verifies it
+  through PR24C, and drops it. There is NO live-overwrite mode and no
+  flag that creates one -- a deliberate scope decision, recorded rather
+  than silently assumed: a live-recovery path (stop app, back up current
+  state, restore over it, typed confirmation) is a separate,
+  Owner-approved change. Until then real recovery is an operator+Owner
+  procedure, not a one-word command.
+  - The same-source guard is honoured honestly rather than bypassed: the
+    rehearsal target differs from the live database by NAME on the same
+    host/port, so PR24C's host+port+dbname comparison sees a genuinely
+    different database. Cleanup is `DROP DATABASE` scoped to exactly the
+    database the rehearsal created -- never a volume, never
+    `compose down -v`, never the live database, and an explicit check
+    refuses to proceed if the generated name ever equalled the live one.
+- **Update is now gated on a verified backup, and the risk
+  acknowledgement was removed.** `-AcknowledgeUpdateRisk` existed only
+  because no backup safety net had shipped. An operator's acknowledgement
+  is not a substitute for a restorable backup, so the switch was deleted
+  rather than left as a bypass permitting a schema-changing update with
+  no backup. The contract is now **no backup, no update**.
+  - Ordering: build -> **backup** -> stop (only if it was running) ->
+    PostgreSQL health gate -> migrate -> start -> readiness -> metadata.
+    The backup precedes the stop deliberately, so a backup failure leaves
+    a healthy deployment untouched and still serving. PR24C's logical
+    backup is transactionally consistent (`pg_dump --format=custom`), so
+    the writers do not need quiescing first -- this follows repository
+    truth rather than an invented consistency policy.
+  - From EXISTING_STOPPED the backup still works: `Invoke-MepBackup`
+    converges PostgreSQL itself and starts ONLY PostgreSQL -- the backend
+    is never started merely to take a backup.
+- **Lock re-entrancy avoided by design.** `Invoke-MepBackup` never
+  acquires the mutation lock. Entry scripts own it: `backup.ps1` takes it
+  then calls the shared function, and `update.ps1` already holds it and
+  calls the same shared function. `update.ps1` deliberately does NOT
+  shell out to `backup.ps1`, which would attempt to re-acquire a mutex
+  whose re-entrancy has not been proven. Backup and restore join
+  install/update/start/stop/uninstall in the one shared namespace;
+  `status.ps1` stays read-only.
+- **Retention** is PR24C's Owner-approved 30 days, applied by
+  `prune_backups.py`. The wrapper deliberately does not pass
+  `--retention-days`, so the local deployment cannot drift to a different
+  policy.
+- **Operator runbook** created at
+  `docs/runbooks/PR24_LOCAL_STAGING_INSTALLATION_RUNBOOK.md` (the
+  previously deferred file). Thai-first for hospital operators with exact
+  commands preserved verbatim; covers prerequisites, first install,
+  daily operation, backup, restore rehearsal, update, uninstall, LAN and
+  firewall, Administrator bootstrap and the one-time password,
+  troubleshooting, data preservation, evidence classification, known
+  limitations and the cloud-migration boundary. Contains no real secret,
+  and states plainly that manual backup does not achieve RPO <= 1 hour.
+- **Evidence, explicitly classified.** POWERSHELL UNIT/MOCK: 70 behavior
+  tests pass, including a mock that writes a REAL archive + manifest so
+  the wrapper's own discovery and checksum verification execute against
+  real bytes. Mutation-proved: removing the mandatory pre-update backup
+  (3 failures), downgrading the checksum mismatch to a warning (1), and
+  bypassing the empty-target guard (1); files restored byte-identical.
+  STATIC: 58 assertions. PR24C: all 50 existing tests pass unchanged.
+  **DOCKER EXECUTED: NO** -- this sandbox has no Docker daemon, so **no
+  real backup and no real restore rehearsal were performed**, and
+  consequently **no evidence file was created**: fabricating a PASS
+  record would be worse than having none. **WINDOWS EXECUTED: NO.**
+- **Still PENDING and not claimed by this work:** real Windows/Docker
+  Desktop execution; a real local backup/restore rehearsal;
+  managed-Staging backup/restore rehearsal (which a local rehearsal would
+  not satisfy even if it had been executed); RPO <= 1 hour, which a
+  manual backup wrapper does not deliver; cloud provider selection.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the "Start PR24D-L3" task's own binding specification, and
+  this repository's `backend/scripts/backup_postgres.py`,
+  `restore_postgres.py`, `prune_backups.py` and `pg_backup_lib.py` as the
+  evidentiary basis for every reuse decision above.

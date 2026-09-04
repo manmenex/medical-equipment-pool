@@ -478,13 +478,25 @@ def test_start_script_never_migrates_or_builds():
 # ---------------------------------------------------------------------------
 
 
-def test_update_requires_acknowledgement_before_any_mutation():
+def test_update_risk_acknowledgement_bypass_was_removed_in_l3():
+    """PR24D-L3 (§20): -AcknowledgeUpdateRisk existed only because no
+    backup safety net had shipped. Now that a verified pre-update backup
+    is mandatory, the switch is removed rather than left as a bypass that
+    would permit a schema-changing update with no backup."""
     code = _strip_comments_and_docstrings(_read("update.ps1"))
-    ack_index = code.find("if (-not $AcknowledgeUpdateRisk)")
-    invoke_index = code.find("Invoke-MepUpdate")
-    assert ack_index != -1 and invoke_index != -1 and ack_index < invoke_index, (
-        "update.ps1 must refuse before invoking any update work when the risk acknowledgement is absent"
+    assert "AcknowledgeUpdateRisk" not in code, (
+        "the risk-acknowledgement bypass must not survive the mandatory backup gate"
     )
+    ops_body = _ps_function_body(
+        _strip_comments_and_docstrings(_lib("Operations.ps1")), "Invoke-MepUpdate"
+    )
+    backup_index = ops_body.find("Invoke-MepBackup")
+    assert backup_index != -1, "update must take a mandatory pre-update backup"
+    for later in ("Stop-MepApplication", "Invoke-MepMigration"):
+        later_index = ops_body.find(later)
+        assert later_index != -1 and backup_index < later_index, (
+            f"the pre-update backup must precede {later}"
+        )
 
 
 def test_stop_verification_checks_both_exit_code_and_running_state():
@@ -674,3 +686,145 @@ def test_local_staging_runtime_state_is_gitignored():
         "deployment/local-staging/.install-metadata.json",
     ):
         assert pattern in gitignore_text, f".gitignore must cover {pattern}"
+
+
+# ---------------------------------------------------------------------------
+# PR24D-L3: backup / restore wrappers are orchestration over PR24C only
+# ---------------------------------------------------------------------------
+
+
+def test_l3_backup_and_restore_entry_scripts_exist():
+    for name in ("backup.ps1", "restore.ps1"):
+        assert (REPO_ROOT / "deployment" / "local-staging" / name).is_file(), f"missing {name}"
+    assert (REPO_ROOT / "deployment" / "local-staging" / "lib" / "Backup.ps1").is_file()
+
+
+def test_l3_wrappers_contain_no_backup_engine_of_their_own():
+    """PowerShell is orchestration only. A second pg_dump/pg_restore/
+    manifest/checksum/retention implementation is the failure mode this
+    guards against."""
+    code = _strip_comments_and_docstrings(_lib("Backup.ps1"))
+    for forbidden in ("pg_dump", "pg_restore", "DEFAULT_RETENTION_DAYS"):
+        assert forbidden not in code, f"the wrapper must not reimplement {forbidden}"
+    for engine in ("scripts/backup_postgres.py", "scripts/restore_postgres.py", "scripts/prune_backups.py"):
+        assert engine in code, f"the wrapper must delegate to PR24C's {engine}"
+
+
+def test_l3_backup_and_restore_use_the_shared_mutation_lock():
+    for name in ("backup.ps1", "restore.ps1"):
+        code = _strip_comments_and_docstrings(_read(name))
+        assert "Enter-MepMutationLock" in code, f"{name} must take the shared deployment lock"
+        assert "Exit-MepMutationLock" in code and "finally" in code, f"{name} must release it in finally"
+        assert "MutationLockName" not in code, f"{name} must not define a backup-specific lock"
+    # PR24D-L3 §22: the shared function must never acquire the lock itself,
+    # or an update (which already holds it) would recursively acquire it.
+    lib_code = _strip_comments_and_docstrings(_lib("Backup.ps1"))
+    assert "Enter-MepMutationLock" not in lib_code, (
+        "Invoke-MepBackup must not acquire the lock; update.ps1 already holds it"
+    )
+    ops_code = _strip_comments_and_docstrings(_lib("Operations.ps1"))
+    assert "backup.ps1" not in ops_code, (
+        "update must call the shared function, not shell out to backup.ps1 and deadlock on the mutex"
+    )
+
+
+def test_l3_retention_is_pr24c_thirty_day_policy_not_a_local_override():
+    code = _strip_comments_and_docstrings(_lib("Backup.ps1"))
+    assert "prune_backups.py" in code
+    assert "--retention-days" not in code, (
+        "the local wrapper must not override the Owner-approved 30-day retention window"
+    )
+
+
+def test_l3_restore_preserves_every_pr24c_guard():
+    code = _strip_comments_and_docstrings(_lib("Backup.ps1"))
+    assert "--force-non-empty-target" not in code, "the empty-target guard must not be bypassed"
+    assert "--allow-production-restore" not in code
+    assert "'--target-environment', 'local-staging-rehearsal'" in code, (
+        "the rehearsal target must carry a non-production environment label"
+    )
+    # The same-source guard is manifest-derived; passing a source URL is
+    # optional and unnecessary here, and must not be used to weaken it.
+    assert "--source-database-url" not in code
+
+
+def test_l3_restore_target_can_never_be_the_live_database():
+    code = _strip_comments_and_docstrings(_lib("Backup.ps1"))
+    assert "RehearsalDatabasePrefix" in code
+    body = _ps_function_body(code, "Invoke-MepRestoreRehearsal")
+    assert "if ($rehearsalDb -eq $liveDb)" in body, (
+        "the rehearsal target must be explicitly checked against the live database name"
+    )
+    # Cleanup is scoped to exactly the disposable database.
+    assert "DROP DATABASE IF EXISTS $rehearsalDb" in body
+    assert "--volumes" not in body, "rehearsal cleanup must never remove a volume"
+    assert "volume rm" not in body
+
+
+def test_l3_no_credential_url_is_placed_on_a_command_line():
+    code = _strip_comments_and_docstrings(_lib("Backup.ps1"))
+    # The backup relies on the container's own DATABASE_URL; the restore
+    # target travels by environment variable NAME, never by value.
+    assert "--database-url" not in code, "the backup must not pass a credential URL in argv"
+    assert "'-e', 'RESTORE_TARGET_DATABASE_URL'" in code, (
+        "the restore target URL must be passed by environment name, so its value stays out of argv"
+    )
+    assert "--target-database-url" not in code, "the target URL must not appear in argv"
+
+
+def test_l3_backup_failures_are_never_downgraded_to_warnings():
+    body = _ps_function_body(_strip_comments_and_docstrings(_lib("Backup.ps1")), "Invoke-MepBackup")
+    for required in ("checksum verification FAILED", "Database backup FAILED", "has no manifest beside it"):
+        assert required in body, f"missing fail-closed path: {required}"
+    assert body.count("throw") >= 4, "integrity failures must throw, not warn"
+
+
+def test_l3_backup_root_is_gitignored_and_outside_the_postgres_volume():
+    gitignore = (REPO_ROOT / ".gitignore").read_text()
+    assert "deployment/local-staging/backups/" in gitignore, "local backups must never be committed"
+    common = _strip_comments_and_docstrings(_lib("Common.ps1"))
+    assert "$Script:BackupRoot = Join-Path $Script:DeploymentRoot 'backups'" in common, (
+        "the backup root must live on the host beside the deployment, not inside the PostgreSQL volume"
+    )
+    compose = (REPO_ROOT / "deployment" / "local-staging" / "compose.yml").read_text()
+    assert "backups" not in compose, "the backup root must not be mounted into the long-running services"
+
+
+def test_l3_backup_environment_label_is_not_production():
+    """The container runs ENVIRONMENT=production only to keep
+    validate_production_secrets() active. Labelling local backups
+    'production' would be misleading provenance."""
+    common = _strip_comments_and_docstrings(_lib("Common.ps1"))
+    assert "$Script:BackupEnvironmentLabel = 'local-staging'" in common
+
+
+def test_l3_restore_wrapper_has_no_live_overwrite_mode():
+    code = _strip_comments_and_docstrings(_read("restore.ps1"))
+    assert "RestoreLive" not in code, (
+        "PR24D-L3 is rehearsal-only; a live-recovery mode is a separate Owner-approved change"
+    )
+    assert "Invoke-MepRestoreRehearsal" in code
+
+
+def test_l3_restore_target_url_env_fallback_did_not_weaken_any_guard():
+    """PR24D-L3 changed restore_postgres.py's --target-database-url from
+    argparse-required to an environment fallback, so a credential-bearing
+    URL need not sit in argv. The target stays mandatory and every guard
+    still runs."""
+    src = (REPO_ROOT / "backend" / "scripts" / "restore_postgres.py").read_text()
+    assert 'os.environ.get("RESTORE_TARGET_DATABASE_URL")' in src
+    assert "if not args.target_database_url:" in src, "the target must still be mandatory"
+    for guard in (
+        "guard_restore_target",
+        "DatabaseIdentity.from_manifest",
+        "target_database_is_empty",
+        "force_non_empty_target",
+        "sha256_checksum",
+        "get_alembic_revision",
+        "get_representative_row_counts",
+    ):
+        assert guard in src, f"guard {guard} must survive unchanged"
+    # The docstring deliberately *mentions* this flag to say it does not
+    # exist, so assert on actual argparse definitions rather than prose.
+    assert 'add_argument("--allow-production-restore"' not in src
+    assert 'add_argument("--skip-prod-check"' not in src

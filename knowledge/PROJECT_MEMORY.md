@@ -92,7 +92,7 @@ Sources: `docs/PROJECT_PLAYBOOK.md`, `docs/ARCHITECTURE_GUARDRAILS.md`,
 
 ## Current baseline and Roadmap
 
-Current baseline: `73652b062fb2ad6fdab4f7bbc0b743ff5f548e86` — the real
+Current baseline: `9928201334e52be7301f6e1f1095e8c356a5a80d` — the real
 squash-merge SHA of GitHub PR #135, "PR24D-L1 — Local Docker
 Staging/UAT Foundation" (three independent-review fix rounds: Redis
 non-blocking-startup correction, structural single-backend scale guard
@@ -121,7 +121,7 @@ an installer/deployment mechanism (Setup.exe deferred until a
 script-based installer engine is proven). **This is not a fourth
 environment** — OD-PR24-4's taxonomy is unchanged. **PR24D-L1 (Local
 Docker Staging/UAT Foundation) is COMPLETE / MERGED** (GitHub PR #135,
-squash SHA `73652b062fb2ad6fdab4f7bbc0b743ff5f548e86`, current baseline
+squash SHA `73652b062fb2ad6fdab4f7bbc0b743ff5f548e86`, historical
 above): `deployment/local-staging/compose.yml` (PostgreSQL/Redis never
 LAN-exposed, exactly one backend replica/Uvicorn worker, no committed
 secrets/default credentials/demo data) plus a `COOKIE_SECURE` backend

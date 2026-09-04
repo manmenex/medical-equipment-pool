@@ -40,6 +40,8 @@ credentials.enc
 # either. deployment/local-staging/.env itself is already covered by the
 # generic `.env`/`.env.*` patterns above.
 deployment/local-staging/logs/
+# PR24D-L3: local database backups. Real data must never be committed.
+deployment/local-staging/backups/
 deployment/local-staging/.install.lock
 deployment/local-staging/.install-metadata.json
 

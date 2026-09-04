@@ -64,41 +64,32 @@ unverified stop never allows a migration to run; an unhealthy PostgreSQL
 never allows a migration to run; and update can never be the operation
 that marks an installation completed for the first time.
 
-PR24D-L3 has not been implemented yet, so no local backup/restore wrapper
-exists to protect against an update's migration going wrong. Until then,
-this script REFUSES to run unless the operator passes
--AcknowledgeUpdateRisk, making that gap explicit rather than silently
-updating as if it were already production-safe.
+MANDATORY PRE-UPDATE BACKUP (PR24D-L3). A verified backup is taken before
+anything is stopped or migrated, using the same shared backup path as
+.\backup.ps1 (PR24C's engine). If the backup fails, the update stops
+there: nothing is stopped, no migration runs, and no metadata advances.
+The contract is simply NO BACKUP, NO UPDATE.
 
-.PARAMETER AcknowledgeUpdateRisk
-Required. Confirms the operator understands that no automated
-backup/restore safety net exists yet for this update (planned PR24D-L3).
+This replaced the L2 -AcknowledgeUpdateRisk switch, which existed only
+because no backup safety net had shipped yet. An operator's
+acknowledgement is not a substitute for a restorable backup, so the
+switch was removed rather than left as a bypass that would permit a
+schema-changing update with no backup.
 
 .EXAMPLE
-.\update.ps1 -AcknowledgeUpdateRisk
+.\update.ps1
 #>
 [CmdletBinding()]
-param(
-    [switch]$AcknowledgeUpdateRisk
-)
+param()
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib/Common.ps1')
 . (Join-Path $PSScriptRoot 'lib/Operations.ps1')
+. (Join-Path $PSScriptRoot 'lib/Backup.ps1')
 
 Write-Host ''
 Write-Host '=== Medical Equipment Pool -- Local Staging/UAT Update ===' -ForegroundColor Cyan
 Write-InstallLog -Phase 'update' -Message 'update.ps1 started.'
-
-if (-not $AcknowledgeUpdateRisk) {
-    Write-Host 'This update will rebuild the application and may apply a database migration.' -ForegroundColor Yellow
-    Write-Host 'PR24D-L3 (local backup/restore rehearsal) has not shipped yet, so there is no' -ForegroundColor Yellow
-    Write-Host 'automated safety net if a migration goes wrong. Refusing to proceed.' -ForegroundColor Yellow
-    Write-Host ''
-    Write-Host 'Rerun with -AcknowledgeUpdateRisk once you accept this, e.g.:' -ForegroundColor Yellow
-    Write-Host '  .\update.ps1 -AcknowledgeUpdateRisk' -ForegroundColor Yellow
-    exit 1
-}
 
 $lock = $null
 try {
