@@ -80,13 +80,17 @@ function New-MockContext {
         [hashtable[]]$ExitCodeRules = @(),
         [bool]$EnvFileExists = $false,
         [bool]$InstallCompleted = $false,
-        [bool]$RemovalSilentlyFails = $false
+        [bool]$RemovalSilentlyFails = $false,
+        [bool]$StopIsIneffective = $false
     )
     return [pscustomobject]@{
         ExitCodeRules        = $ExitCodeRules
         EnvFileExists        = $EnvFileExists
         InstallCompleted     = $InstallCompleted
         RemovalSilentlyFails = $RemovalSilentlyFails
+        # Simulates a `stop` that exits 0 while the container keeps
+        # running -- the exact case the stop VERIFICATION exists for.
+        StopIsIneffective    = $StopIsIneffective
     }
 }
 
@@ -152,6 +156,45 @@ function Invoke-WithMocks {
                     break
                 }
             }
+
+            # --- container state reflects the commands already issued ----
+            # Fix Round 4 fidelity: a static `ps` fixture would keep
+            # reporting the backend as running after a successful `stop`,
+            # so the post-stop verification could never pass and the
+            # healthy update path could not be tested at all. Track which
+            # services this run has stopped/started and rewrite the state
+            # query's output accordingly, the way a real daemon would.
+            if ($exitCode -eq 0 -and $Arguments -contains 'compose') {
+                if ($Arguments -contains 'stop' -and -not $ctx.StopIsIneffective) {
+                    foreach ($svc in @('postgres', 'redis', 'backend', 'frontend')) {
+                        if ($Arguments -contains $svc) { $script:StoppedServices += $svc }
+                    }
+                    # A bare `stop` with no service names stops everything.
+                    if (-not (@('postgres', 'redis', 'backend', 'frontend') | Where-Object { $Arguments -contains $_ })) {
+                        $script:StoppedServices += @('postgres', 'redis', 'backend', 'frontend')
+                    }
+                }
+                if ($Arguments -contains 'up') {
+                    foreach ($svc in @('postgres', 'redis', 'backend', 'frontend')) {
+                        if ($Arguments -contains $svc) {
+                            $script:StoppedServices = @($script:StoppedServices | Where-Object { $_ -ne $svc })
+                        }
+                    }
+                }
+            }
+            if ($Arguments -contains 'ps' -and @($script:StoppedServices).Count -gt 0) {
+                $output = @($output | ForEach-Object {
+                        $line = "$_"
+                        foreach ($svc in $script:StoppedServices) {
+                            if ($line -match "com\.docker\.compose\.service=$svc\b") {
+                                $line = $line -replace '"State":"running"', '"State":"exited"'
+                                $line = $line -replace '"Status":"Up [^"]*"', '"Status":"Exited (0) 1 second ago"'
+                            }
+                        }
+                        $line
+                    })
+            }
+
             if ($exitCode -ne 0 -and -not $AllowNonZeroExit) {
                 throw "$FilePath exited with code $exitCode during phase '$Phase'."
             }
@@ -159,6 +202,7 @@ function Invoke-WithMocks {
         }
 
         # --- filesystem/environment stubs -------------------------------
+        $script:StoppedServices = @()
         $script:EnvGenerated = $false
         function Write-InstallLog { param($Phase, $Message, $Level) }
         # Dynamic on purpose: a real install CREATES .env partway through,
@@ -375,7 +419,7 @@ Test-Case 'update: stop failure blocks migration and start' {
 Test-Case 'update: backend still running after stop blocks migration' {
     # `stop` returns 0 but ps still shows the backend running -- exit code
     # alone must not be trusted.
-    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -ExitCodeRules @(
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -StopIsIneffective $true -ExitCodeRules @(
         @{ Match = 'ps --all --filter'; ExitCode = 0; Output = @(
                 '{"Labels":"com.docker.compose.project=mep-local-staging,com.docker.compose.service=postgres","State":"running","Status":"Up 5 minutes (healthy)","Ports":""}',
                 '{"Labels":"com.docker.compose.project=mep-local-staging,com.docker.compose.service=redis","State":"running","Status":"Up 5 minutes (healthy)","Ports":""}',
@@ -697,6 +741,172 @@ Test-Case 'update: incomplete install is still rejected even with Redis healthy'
     }
     Assert-True $result.Threw 'a healthy Redis must not let an incomplete install be updated'
     Assert-True (-not ($result.Calls -match 'deploy_migrate\.py')) 'no migration may run'
+}
+
+# ===========================================================================
+# Fix Round 4: update must converge PostgreSQL to healthy before every
+# migration, and must not issue a misleading stop against an already
+# stopped deployment.
+# ===========================================================================
+
+function Get-UpdateCallOrder {
+    <#
+    .SYNOPSIS
+    Runs Invoke-MepUpdate against a scripted container state and returns
+    the ordered native-command argument list plus whether metadata was
+    written, so ordering can be asserted on real orchestration calls
+    rather than on source order.
+    #>
+    param(
+        [Parameter(Mandatory)] [string[]]$Containers,
+        [hashtable[]]$ExtraRules = @()
+    )
+    $rules = @(@{ Match = 'ps --all --filter'; ExitCode = 0; Output = $Containers }) + $ExtraRules
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -ExitCodeRules $rules
+    return Invoke-WithMocks -Context $ctx -Body {
+        $threw = $false
+        try { Invoke-MepUpdate | Out-Null } catch { $threw = $true }
+        return [pscustomobject]@{
+            Threw           = $threw
+            Calls           = @($script:RecordedCalls | ForEach-Object { $_.Args })
+            MetadataWritten = $script:MetadataWritten
+        }
+    }
+}
+
+function Get-CallIndex {
+    param([string[]]$Calls, [Parameter(Mandatory)] [string]$Pattern)
+    return [array]::FindIndex([string[]]$Calls, [Predicate[string]] { param($c) $c -match $Pattern })
+}
+
+$healthyContainers = @(
+    (New-ContainerJson -Service 'postgres'),
+    (New-ContainerJson -Service 'redis'),
+    (New-ContainerJson -Service 'backend'),
+    (New-ContainerJson -Service 'frontend')
+)
+$stoppedContainers = @(
+    (New-ContainerJson -Service 'postgres' -State 'exited'),
+    (New-ContainerJson -Service 'redis' -State 'exited'),
+    (New-ContainerJson -Service 'backend' -State 'exited'),
+    (New-ContainerJson -Service 'frontend' -State 'exited')
+)
+
+Test-Case '1. EXISTING_HEALTHY update: build -> stop -> postgres -> migrate -> start -> metadata' {
+    $r = Get-UpdateCallOrder -Containers $healthyContainers
+    Assert-True (-not $r.Threw) 'a healthy update must succeed'
+    $build = Get-CallIndex -Calls $r.Calls -Pattern 'build backend frontend'
+    $stop = Get-CallIndex -Calls $r.Calls -Pattern 'stop backend frontend'
+    $pg = Get-CallIndex -Calls $r.Calls -Pattern "up -d --wait .*postgres"
+    $migrate = Get-CallIndex -Calls $r.Calls -Pattern 'deploy_migrate\.py'
+    $start = Get-CallIndex -Calls $r.Calls -Pattern 'backend frontend' # start-app
+    Assert-True ($build -ge 0) 'build must run'
+    Assert-True ($stop -ge 0) 'a healthy update must stop the application writers'
+    Assert-True ($pg -ge 0) 'a healthy update must still converge PostgreSQL to healthy'
+    Assert-True ($migrate -ge 0) 'migration must run'
+    Assert-True ($build -lt $stop) 'build before stop'
+    Assert-True ($stop -lt $pg) 'stop before the PostgreSQL health gate'
+    Assert-True ($pg -lt $migrate) 'PostgreSQL must be healthy BEFORE migration'
+    Assert-True $r.MetadataWritten 'metadata is written on success'
+}
+
+Test-Case '2. EXISTING_STOPPED update: PostgreSQL is started BEFORE migration' {
+    # The reported defect: update accepted EXISTING_STOPPED but never
+    # started PostgreSQL, and the migration runs with --no-deps, so it
+    # could never reach the database.
+    $r = Get-UpdateCallOrder -Containers $stoppedContainers
+    Assert-True (-not $r.Threw) 'a stopped-deployment update must succeed'
+    $pg = Get-CallIndex -Calls $r.Calls -Pattern "up -d --wait .*postgres"
+    $migrate = Get-CallIndex -Calls $r.Calls -Pattern 'deploy_migrate\.py'
+    Assert-True ($pg -ge 0) 'PostgreSQL must be started for a stopped-deployment update'
+    Assert-True ($migrate -ge 0) 'migration must run'
+    Assert-True ($pg -lt $migrate) 'PostgreSQL must be healthy BEFORE migration'
+    Assert-True $r.MetadataWritten 'metadata is written on success'
+}
+
+Test-Case '2b. EXISTING_STOPPED update issues no misleading application stop' {
+    $r = Get-UpdateCallOrder -Containers $stoppedContainers
+    $stop = Get-CallIndex -Calls $r.Calls -Pattern 'stop backend frontend'
+    Assert-True ($stop -lt 0) 'an already-stopped application must not be told to stop again'
+}
+
+Test-Case '2c. EXISTING_STOPPED update ends with the application started (documented contract)' {
+    $r = Get-UpdateCallOrder -Containers $stoppedContainers
+    $migrate = Get-CallIndex -Calls $r.Calls -Pattern 'deploy_migrate\.py'
+    $startApp = Get-CallIndex -Calls $r.Calls -Pattern "up -d --wait .*backend frontend"
+    Assert-True ($startApp -ge 0) 'a successful update ends with the application running and ready'
+    Assert-True ($migrate -lt $startApp) 'the application starts after the migration'
+}
+
+Test-Case '3. EXISTING_STOPPED + PostgreSQL start failure -> no migration, no metadata' {
+    $r = Get-UpdateCallOrder -Containers $stoppedContainers -ExtraRules @(
+        @{ Match = 'up -d --wait --wait-timeout 120 postgres'; ExitCode = 1 }
+    )
+    Assert-True $r.Threw 'a failed PostgreSQL start must fail the update'
+    Assert-True ((Get-CallIndex -Calls $r.Calls -Pattern 'deploy_migrate\.py') -lt 0) 'no migration may run without a healthy database'
+    Assert-True (-not $r.MetadataWritten) 'no metadata may be written'
+}
+
+Test-Case '4. EXISTING_HEALTHY + stop failure -> no PostgreSQL gate, no migration' {
+    $r = Get-UpdateCallOrder -Containers $healthyContainers -ExtraRules @(
+        @{ Match = 'stop backend frontend'; ExitCode = 1 }
+    )
+    Assert-True $r.Threw 'a failed stop must fail the update'
+    Assert-True ((Get-CallIndex -Calls $r.Calls -Pattern 'deploy_migrate\.py') -lt 0) 'no migration after a failed stop'
+    Assert-True (-not $r.MetadataWritten) 'no metadata may be written'
+}
+
+Test-Case '5. EXISTING_HEALTHY + PostgreSQL health failure after stop -> no migration, no metadata' {
+    $r = Get-UpdateCallOrder -Containers $healthyContainers -ExtraRules @(
+        @{ Match = 'up -d --wait --wait-timeout 120 postgres'; ExitCode = 1 }
+    )
+    Assert-True $r.Threw 'a PostgreSQL health failure must fail the update'
+    Assert-True ((Get-CallIndex -Calls $r.Calls -Pattern 'deploy_migrate\.py') -lt 0) 'no migration without a healthy database'
+    Assert-True (-not $r.MetadataWritten) 'no metadata may be written'
+}
+
+Test-Case '6a. Redis absent does not affect the healthy update path' {
+    $r = Get-UpdateCallOrder -Containers @(
+        (New-ContainerJson -Service 'postgres'),
+        (New-ContainerJson -Service 'backend'),
+        (New-ContainerJson -Service 'frontend')
+    )
+    Assert-True (-not $r.Threw) 'Redis absence must not break a healthy update'
+    Assert-True ((Get-CallIndex -Calls $r.Calls -Pattern 'deploy_migrate\.py') -ge 0) 'migration still runs'
+    Assert-True $r.MetadataWritten 'update still completes'
+}
+
+Test-Case '6b. Redis absent does not affect the stopped update path' {
+    $r = Get-UpdateCallOrder -Containers @(
+        (New-ContainerJson -Service 'postgres' -State 'exited'),
+        (New-ContainerJson -Service 'backend' -State 'exited'),
+        (New-ContainerJson -Service 'frontend' -State 'exited')
+    )
+    Assert-True (-not $r.Threw) 'Redis absence must not break a stopped-deployment update'
+    $pg = Get-CallIndex -Calls $r.Calls -Pattern "up -d --wait .*postgres"
+    $migrate = Get-CallIndex -Calls $r.Calls -Pattern 'deploy_migrate\.py'
+    Assert-True ($pg -ge 0 -and $pg -lt $migrate) 'PostgreSQL still gates the migration'
+    Assert-True $r.MetadataWritten 'update still completes'
+}
+
+Test-Case 'update: no path can reach migration without the PostgreSQL health gate' {
+    # Asserted on real orchestration calls, for both entry states.
+    foreach ($containers in @($healthyContainers, $stoppedContainers)) {
+        $r = Get-UpdateCallOrder -Containers $containers
+        $pg = Get-CallIndex -Calls $r.Calls -Pattern "up -d --wait .*postgres"
+        $migrate = Get-CallIndex -Calls $r.Calls -Pattern 'deploy_migrate\.py'
+        Assert-True ($migrate -ge 0) 'migration runs'
+        Assert-True ($pg -ge 0 -and $pg -lt $migrate) 'the PostgreSQL health gate always precedes migration'
+    }
+}
+
+Test-Case 'update: PostgreSQL is never stopped during a healthy update' {
+    $r = Get-UpdateCallOrder -Containers $healthyContainers
+    foreach ($c in $r.Calls) {
+        if ($c -match '\bstop ') {
+            Assert-True ($c -notmatch 'postgres') "the update must not stop PostgreSQL (saw: $c)"
+        }
+    }
 }
 
 # ===========================================================================

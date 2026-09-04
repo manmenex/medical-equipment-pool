@@ -375,6 +375,55 @@ def test_update_requires_a_previously_completed_installation():
     )
 
 
+def test_every_migration_call_site_is_preceded_by_the_postgres_health_gate():
+    """Fix Round 4, P1/§16. The migration container runs with `--no-deps`,
+    so Compose will not start the database for it. Update accepted
+    EXISTING_STOPPED but never started PostgreSQL, making the advertised
+    stopped-update path non-functional. Behavior tests assert the real
+    call ordering; this is the structural backstop that no *new* migration
+    path can be added without the gate."""
+    ops_code = _strip_comments_and_docstrings(_lib("Operations.ps1"))
+    for func in ("Invoke-MepInstall", "Invoke-MepUpdate"):
+        body = _ps_function_body(ops_code, func)
+        pg_index = body.find("Start-MepPostgres")
+        migrate_index = body.find("Invoke-MepMigration")
+        assert migrate_index != -1, f"{func} must run the explicit migration"
+        assert pg_index != -1, f"{func} must converge PostgreSQL before migrating"
+        assert pg_index < migrate_index, (
+            f"{func} must make PostgreSQL healthy BEFORE the migration"
+        )
+
+
+def test_update_branches_on_a_single_initial_state_snapshot():
+    """Fix Round 4, §14/§6: the state is captured once, before any
+    mutation, and the application stop is issued only when it was actually
+    running."""
+    body = _ps_function_body(
+        _strip_comments_and_docstrings(_lib("Operations.ps1")), "Invoke-MepUpdate"
+    )
+    assert body.count("Get-InstallationState") == 1, (
+        "update must not re-read state after mutating the deployment"
+    )
+    assert "$initialState = Get-InstallationState" in body
+    assert "if ($initialState -eq 'EXISTING_HEALTHY') {" in body, (
+        "the application stop must be conditional on having been running"
+    )
+    stop_index = body.find("Stop-MepApplication")
+    pg_index = body.find("Start-MepPostgres")
+    assert stop_index != -1 and stop_index < pg_index, (
+        "the healthy path stops the application before the PostgreSQL gate"
+    )
+
+
+def test_update_never_stops_postgres():
+    """Only backend/frontend are stopped; the database the migration needs
+    is never taken down by an update."""
+    ops_code = _strip_comments_and_docstrings(_lib("Operations.ps1"))
+    stop_body = _ps_function_body(ops_code, "Stop-MepApplication")
+    assert "'stop', 'backend', 'frontend'" in stop_body
+    assert "postgres" not in stop_body, "the application stop must never target PostgreSQL"
+
+
 def test_update_metadata_write_cannot_create_the_completion_transition():
     """Fix Round 2, §15. Update may refresh SourceSha/LastUpdatedAtUtc but
     must never be the operation that flips InstallCompleted to true."""

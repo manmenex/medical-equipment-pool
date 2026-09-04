@@ -7719,3 +7719,99 @@ Operations Engine) started, not merged
   repository's `backend/app/core/redis.py` and `/api/v1/ready`
   implementation as the evidentiary basis for treating Redis as
   non-blocking.
+
+## 2026-09-04 — GitHub PR #136 Fix Round 4 (independent review, REQUEST CHANGES): update accepted EXISTING_STOPPED but migrated against a stopped database -- fixed, not merged
+
+- **Context:** the Fix Round 3 Redis required/optional separation was
+  confirmed correct at head
+  `ae0c604fc2545613852d82c96b30a7e78c4109fe`. One new P1 remained.
+- **The defect:** `Invoke-MepUpdate` accepts `EXISTING_STOPPED`, but the
+  update sequence assumed PostgreSQL was already running. The path was
+  build -> `Stop-MepApplication` -> `Invoke-MepMigration`, and the
+  migration container runs with `--no-deps` (deliberately, because it must
+  run before the application starts), so Compose does not start the
+  database for it. Updating a deployment that was stopped therefore ran a
+  migration against a stopped PostgreSQL and could not connect. The
+  advertised stopped-update path was non-functional on a real deployment.
+  A second, related wrongness: the same path issued
+  `docker compose stop backend frontend` against an already-stopped
+  application, so a "failed to stop" error could be raised against a
+  deployment that was intentionally down.
+- **What was NOT done, deliberately:** the fix is emphatically *not* to
+  restrict update to `EXISTING_HEALTHY`. `EXISTING_STOPPED` is a correct
+  state in the operational model; the bug was that orchestration forgot to
+  restore the PostgreSQL prerequisite before migrating. State
+  classification was not touched at all -- orchestration was fixed, not
+  the state model.
+- **Fix:**
+  - The initial state is captured **once**, before any mutation, and every
+    branching decision uses that snapshot. Re-reading state after the
+    build/stop would risk branching on a state this function had itself
+    just changed.
+  - `EXISTING_HEALTHY` -> build -> stop backend/frontend and verify they
+    are actually stopped -> converge PostgreSQL to healthy -> migrate ->
+    start -> ready -> metadata.
+  - `EXISTING_STOPPED` -> build -> **no stop is issued** (logged plainly
+    as "already stopped") -> **start PostgreSQL and wait for healthy** ->
+    migrate -> start -> ready -> metadata.
+  - Both paths call the SAME existing `Start-MepPostgres`
+    (`up -d --wait ... postgres`) rather than duplicating database-start
+    logic. One call is correct for both entry states: it converges and
+    verifies health when PostgreSQL is already running, and starts it when
+    it is not.
+  - PostgreSQL is never stopped by an update -- `Stop-MepApplication`
+    still targets only backend/frontend, so no unnecessary database
+    restart occurs during a healthy update.
+- **Post-update running-state contract, chosen and documented:** a
+  successful update always ends with the application RUNNING and READY,
+  whichever state it started from. Updating a stopped deployment therefore
+  leaves it started. This was chosen because `update.ps1` already ended
+  with start + readiness, and inventing a preserve-original-stopped-state
+  feature here would broaden scope; it is stated explicitly in
+  `update.ps1` so it is not surprising, and remains available as a
+  separate Owner-requested change.
+- **Redis:** untouched and still non-blocking. It is not required before
+  migration, and its absence or degradation does not affect either update
+  path (covered by regression tests for both).
+- **Evidence, explicitly classified.** POWERSHELL UNIT/MOCK: 57 behavior
+  tests pass, including the full Fix Round 4 matrix -- healthy-path
+  ordering (build -> stop -> verify -> PostgreSQL -> migrate -> start ->
+  metadata), stopped-path ordering (build -> no stop -> PostgreSQL ->
+  migrate -> start -> metadata), PostgreSQL-start failure on the stopped
+  path and PostgreSQL-health failure on the healthy path both blocking
+  migration and metadata, stop-failure regression, and Redis-degraded
+  regressions for both paths. Ordering is asserted on the recorded
+  orchestration calls, not on source order. Mutation-proved: removing
+  `Start-MepPostgres` from update reproduced the reported defect (6
+  failures); moving it after the migration (6 failures); always issuing
+  the stop (1 failure). The file was restored byte-identical.
+  - The mock harness was also corrected: it previously returned a static
+    container list, so it kept reporting the backend as running after a
+    successful `stop` and the healthy path could not be exercised at all.
+    Container state now reflects the stop/up commands already issued, and
+    a stop that reports success while the service stays up is simulated
+    explicitly rather than by accident -- that is the case the stop
+    verification exists for.
+  - STATIC: 46 assertions, including a structural backstop that every
+    migration call site in both install and update is preceded by the
+    PostgreSQL health gate, so no new migration path can be added without
+    it. DOCKER EXECUTED / WINDOWS EXECUTED: **still not performed** -- no
+    daemon in this sandbox and it is not Windows, so no real
+    stopped-deployment update was run.
+- **Preserved unchanged:** update eligibility (only completed
+  installations, only EXISTING_HEALTHY/EXISTING_STOPPED; PARTIAL, FRESH
+  and AMBIGUOUS still fail closed), the completion/Administrator
+  invariant and `-RequireExistingCompletion`, metadata written last, the
+  stop exit-code check plus verified-stopped backend, explicit build
+  before migration, absence of `--no-build`/`--build`, env-free
+  label-scoped state discovery, the Redis required/optional separation,
+  the named mutex across all five mutating scripts, fixed backend
+  `container_name`, one Uvicorn worker, no PostgreSQL/Redis LAN exposure,
+  and the `COOKIE_SECURE` contract.
+- **Status:** Draft, not merged. PR24D-L3 NOT started; PR24E NOT started;
+  no cloud resources provisioned.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** GitHub PR #136's own Fix Round 4 review text, and this
+  repository's `lib/Operations.ps1` migration invocation (`--no-deps`) as
+  the evidentiary basis for treating database availability as an explicit
+  precondition.

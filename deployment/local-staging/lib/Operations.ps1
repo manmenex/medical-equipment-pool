@@ -332,25 +332,60 @@ bootstrap. update.ps1 is not an installation-recovery mechanism.
 '@)
     }
 
-    $state = Get-InstallationState
-    Write-InstallLog -Phase 'update' -Message "Detected installation state: $state"
+    # Fix Round 4 (§14): the initial state is captured ONCE, before any
+    # mutation, and every branching decision below uses that snapshot.
+    # Re-reading it after the build/stop would risk branching on a state
+    # this function itself had just changed.
+    $initialState = Get-InstallationState
+    Write-InstallLog -Phase 'update' -Message "Detected installation state: $initialState"
     # Only states that represent a genuinely completed installation may be
     # updated. PARTIAL / AMBIGUOUS / FRESH all fail closed.
-    if ($state -notin @('EXISTING_HEALTHY', 'EXISTING_STOPPED')) {
-        throw (New-MepFailure "Installation state is '$state'; update requires a previously completed installation (EXISTING_HEALTHY or EXISTING_STOPPED).`nACTION: Run .\status.ps1 to inspect, then .\install.ps1 to converge the installation before updating.")
+    if ($initialState -notin @('EXISTING_HEALTHY', 'EXISTING_STOPPED')) {
+        throw (New-MepFailure "Installation state is '$initialState'; update requires a previously completed installation (EXISTING_HEALTHY or EXISTING_STOPPED).`nACTION: Run .\status.ps1 to inspect, then .\install.ps1 to converge the installation before updating.")
     }
 
     # Build first: a failed build must never leave the old application
     # stopped, so nothing is stopped until the new images exist.
     Invoke-MepBuildImages
 
-    # Then stop the old application and verify it is really down before
-    # migrating.
-    Stop-MepApplication
+    if ($initialState -eq 'EXISTING_HEALTHY') {
+        # Stop the application writers (and the scheduler with them) and
+        # verify they are really down before any schema change. Only
+        # backend/frontend are stopped -- PostgreSQL is deliberately left
+        # running, since the migration needs it.
+        Stop-MepApplication
+    }
+    else {
+        # EXISTING_STOPPED: the application is already down. Issuing a stop
+        # here would be ritual, and a "failed to stop" error against an
+        # intentionally stopped deployment would be actively misleading.
+        Write-InstallLog -Phase 'update' -Message 'Application was already stopped; skipping the application stop step.'
+        Write-Host 'Application is already stopped; skipping the stop step.'
+    }
+
+    # Fix Round 4 (P1): database availability is a HARD precondition of the
+    # migration, not an assumption. The migration container runs with
+    # --no-deps (deliberately -- it must run before the application), so
+    # Compose will NOT start PostgreSQL for it. Updating a deployment that
+    # was in EXISTING_STOPPED therefore used to attempt a migration against
+    # a stopped database and could never have worked.
+    #
+    # Start-MepPostgres is reused rather than duplicated: it is already the
+    # single health-gated `up -d --wait postgres` step, so it converges and
+    # verifies health when PostgreSQL is running, and starts it when it is
+    # not. That makes one call correct for BOTH entry states. Redis is not
+    # involved and remains non-blocking.
+    Start-MepPostgres
 
     $sourceSha = Get-CurrentSourceSha
     Invoke-MepMigration -SourceSha $sourceSha -TargetEnvironmentLabel 'local-staging-update'
 
+    # Documented post-update contract: a successful update always ends with
+    # the application RUNNING and READY, whichever state it started from.
+    # Entering from EXISTING_STOPPED therefore leaves the application
+    # started -- this is deliberate and documented in update.ps1, not a
+    # silent side effect. Preserving an original stopped state is NOT
+    # implemented here; that would be a separate Owner-requested feature.
     Start-MepApplication
 
     Set-InstallMetadata -SourceSha $sourceSha -RequireExistingCompletion
