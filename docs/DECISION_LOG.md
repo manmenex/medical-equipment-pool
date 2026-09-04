@@ -7940,3 +7940,83 @@ Operations Engine) started, not merged
   this repository's `backend/scripts/backup_postgres.py`,
   `restore_postgres.py`, `prune_backups.py` and `pg_backup_lib.py` as the
   evidentiary basis for every reuse decision above.
+
+---
+
+## 2026-09-04 — PR24D-L3 Fix Round 1 (PR #137): restore rehearses the artifact the operator actually selected
+
+- **Context:** Independent review of PR #137 at head
+  `35517d577e5723950ec0279137c8f6e183dd2303` returned REQUEST CHANGES with
+  one P1 against `Invoke-MepRestoreRehearsal` in
+  `deployment/local-staging/lib/Backup.ps1`.
+- **The defect, confirmed in our own code.** `-Backup` accepted any host
+  path and resolved it with `Get-Item -LiteralPath`, but the container
+  invocation passed only the file's BASENAME:
+  `'--backup-file', "/mep-backups/$($archive.Name)"`. Only the backup root
+  is bind-mounted at `/mep-backups`. An archive supplied from anywhere
+  else therefore did not resolve to the selected file at all: if a
+  same-named archive happened to exist inside the backup root, PR24C
+  rehearsed THAT one and the wrapper reported PASS — a rehearsal result
+  attributed to an artifact that was never exercised. If no same-named
+  file existed, the run failed with a confusing "not found" from inside
+  the container. Both outcomes are wrong; the first is the dangerous one,
+  because it is silent and it produces a false assurance.
+- **Decision — bind the container path to the resolved artifact.** The
+  reviewer offered two acceptable remedies (restrict the input to the
+  backup root, or stage the artifact with its manifest under a
+  collision-safe path). We took the second, because refusing external
+  paths outright would remove a legitimate operator workflow: rehearsing
+  an archive copied back from another machine is exactly the case a
+  restore rehearsal exists to cover.
+  - `Test-MepPathIsDirectlyInside` decides containment by comparing the
+    archive's immediate parent with the backup root, both normalised
+    through `[System.IO.Path]::GetFullPath`, with the string comparison
+    chosen per platform. Immediate-parent equality, not prefix matching:
+    a path that merely *starts with* the root string is not thereby a
+    member of it.
+  - In-root archives are addressed directly as before — no needless copy.
+  - Any other archive is copied, together with its manifest, into
+    `<backup root>/.restore-staging-<GUID>/`, and the path handed to
+    `restore_postgres.py` names that copy. A GUID segment cannot collide
+    with a concurrent rehearsal or with an existing backup.
+  - The staging directory is removed in the existing `finally`, so it is
+    cleaned up on failure as well as success. The removal is scoped to
+    the per-run directory alone: never the backup root, never a volume.
+- **Fail closed when identity cannot be established.** An archive with no
+  `.manifest.json` beside it is now refused BEFORE any database work.
+  PR24C derives both the expected checksum and the source identity that
+  drives its same-source guard from that manifest, so an archive without
+  one cannot be verified at all. This is stated as a refusal rather than
+  left to surface as an incidental copy error.
+- **No PR24C change in this round.** The engine is untouched; this is
+  entirely an orchestration-layer fix, consistent with the standing
+  constraint that PowerShell is orchestration only. The reviewer
+  separately confirmed that L3's earlier `RESTORE_TARGET_DATABASE_URL`
+  environment fallback remains fail-closed and weakens no
+  checksum/production/same-source/empty-target guard.
+- **Regression tests, as required by the review.** POWERSHELL UNIT/MOCK
+  (74 pass): an external archive deliberately sharing a basename with an
+  internal one must not be addressed as the internal one and must be
+  staged under a path bound to that exact artifact; an in-root archive is
+  used in place without staging; an archive with no manifest fails closed
+  — asserted both for the external branch and for the in-root branch,
+  because only the latter isolates the precondition from an incidental
+  copy failure. STATIC (62 assertions): four new tests covering the
+  artifact-bound container path, the manifest precondition and its
+  ordering before any `CREATE DATABASE`, staging cleanup in `finally`,
+  and the containment helper's normalisation.
+- **Mutation-proved, files restored byte-identical afterwards.**
+  Addressing every archive by basename → 1 failure. Removing the manifest
+  precondition → 2 failures (and this is why the in-root case was added:
+  before it, that mutation SURVIVED, because the external branch's
+  `Copy-Item` failed for its own reasons and the test passed for the
+  wrong reason). Dropping the staging cleanup → 1 failure. Reverting the
+  container path in the static suite → 1 failure.
+- **Evidence classification unchanged.** **DOCKER EXECUTED: NO.**
+  **WINDOWS EXECUTED: NO.** No real backup and no real restore rehearsal
+  were performed, and no evidence file was created.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the PR #137 Fix Round 1 review at head `35517d57`, and this
+  repository's `backend/scripts/restore_postgres.py` and
+  `pg_backup_lib.py` for the manifest-derived identity and checksum
+  contract the fix relies on.

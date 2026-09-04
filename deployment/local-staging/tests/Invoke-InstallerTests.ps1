@@ -83,7 +83,8 @@ function New-MockContext {
         [bool]$RemovalSilentlyFails = $false,
         [bool]$StopIsIneffective = $false,
         [bool]$BackupChecksumCorrupt = $false,
-        [string]$BackupRootOverride = ''
+        [string]$BackupRootOverride = '',
+        [string]$ExternalDir = ''
     )
     return [pscustomobject]@{
         ExitCodeRules        = $ExitCodeRules
@@ -97,6 +98,11 @@ function New-MockContext {
         # checksum the manifest records (a corrupted bind-mount transfer).
         BackupChecksumCorrupt = $BackupChecksumCorrupt
         BackupRootOverride    = $BackupRootOverride
+        # A directory OUTSIDE the backup root, owned by the calling test.
+        # The mock body runs in a child scope of the runner, not of the
+        # test case, so `$using:` is invalid here -- the path travels on
+        # the context object instead.
+        ExternalDir           = $ExternalDir
     }
 }
 
@@ -281,8 +287,14 @@ function Invoke-WithMocks {
             # CmdletBinding so -ErrorAction (a common parameter) binds
             # here exactly as it does on the real cmdlet.
             [CmdletBinding()]
-            param([Parameter(Position = 0)][string]$LiteralPath, [switch]$Force)
+            param([Parameter(Position = 0)][string]$LiteralPath, [switch]$Force, [switch]$Recurse)
             $script:RemovedPaths += $LiteralPath
+            # Rehearsal staging directories are real on disk, so delete
+            # them for real -- otherwise the suite leaks temp data and the
+            # cleanup assertion would be testing a lie.
+            if ($LiteralPath -and $LiteralPath -like '*restore-staging-*') {
+                Microsoft.PowerShell.Management\Remove-Item -LiteralPath $LiteralPath -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
         function Test-Path {
             [CmdletBinding()]
@@ -294,7 +306,8 @@ function Invoke-WithMocks {
             # Real files under the test backup root are genuinely on disk:
             # delegate rather than lying, so the backup wrapper's manifest
             # and checksum checks are exercised for real.
-            if ($target -and $target.StartsWith($script:TestBackupRoot)) {
+            if ($target -and ($target.StartsWith($script:TestBackupRoot) -or
+                    $target.StartsWith([System.IO.Path]::GetTempPath()))) {
                 return (Microsoft.PowerShell.Management\Test-Path -LiteralPath $target)
             }
             return $false
@@ -1057,6 +1070,111 @@ Test-Case 'L3 restore: rehearses into a disposable target, never the live databa
     Assert-True (-not ($calls -match 'CREATE DATABASE mep_local_staging_db')) 'the live database must never be the target'
     Assert-True (-not ($calls -match 'DROP DATABASE IF EXISTS mep_local_staging_db')) 'the live database must never be dropped'
     Assert-True (@($calls -match 'DROP DATABASE IF EXISTS mep_local_restore_rehearsal_').Count -gt 0) 'the disposable target must be cleaned up'
+}
+
+Test-Case 'L3 restore: an EXTERNAL archive sharing a basename with an internal one is not confused for it' {
+    # Fix Round 1 (P1). Only the backup root is mounted at /mep-backups, so
+    # passing just the file NAME meant an external archive could silently
+    # resolve to a DIFFERENT, same-named archive inside the backup root and
+    # report a rehearsal PASS for an artifact the operator never selected.
+    $externalDir = Join-Path ([System.IO.Path]::GetTempPath()) ("mep-ext-" + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $externalDir -Force | Out-Null
+    try {
+        $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -ExternalDir $externalDir
+        $result = Invoke-WithMocks -Context $ctx -Body {
+            # An internal backup exists first...
+            $internal = Invoke-MepBackup -Reason 'seed'
+            # ...and an EXTERNAL file deliberately shares its basename
+            # while holding different bytes.
+            $externalArchive = Join-Path $ctx.ExternalDir $internal.Name
+            Set-Content -LiteralPath $externalArchive -Value 'EXTERNAL-ARCHIVE-DIFFERENT-BYTES' -NoNewline
+            $externalHash = (Get-FileHash -LiteralPath $externalArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+            (@{ backup_filename = $internal.Name; created_at = [DateTime]::UtcNow.ToString('o')
+                    environment = 'local-staging'; alembic_revision = 'extrev'
+                    checksum_sha256 = $externalHash } | ConvertTo-Json) |
+                Set-Content -LiteralPath "$externalArchive.manifest.json"
+
+            $script:RecordedCalls = @()
+            Invoke-MepRestoreRehearsal -BackupFile $externalArchive | Out-Null
+            $restoreCall = @($script:RecordedCalls | ForEach-Object { $_.Args } | Where-Object { $_ -match 'restore_postgres\.py' })[0]
+            return [pscustomobject]@{
+                InternalName = $internal.Name
+                RestoreCall  = $restoreCall
+                Removed      = @($script:RemovedPaths)
+            }
+        }
+        $flag = '--backup-file /mep-backups/' + $result.InternalName
+        Assert-True ($result.RestoreCall -notlike "*$flag*") `
+            'an external archive must NOT be addressed as if it were the same-named archive inside the backup root'
+        Assert-True ($result.RestoreCall -like '*/mep-backups/.restore-staging-*') `
+            'an external archive must be staged under a collision-safe path bound to that exact artifact'
+        Assert-True (@($result.Removed | Where-Object { $_ -like '*restore-staging-*' }).Count -gt 0) `
+            'the staging directory must be cleaned up'
+    }
+    finally {
+        Remove-Item -LiteralPath $externalDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+Test-Case 'L3 restore: an archive already inside the backup root is used in place, without staging' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $internal = Invoke-MepBackup -Reason 'seed'
+        $script:RecordedCalls = @()
+        Invoke-MepRestoreRehearsal -BackupFile $internal.FullName | Out-Null
+        $restoreCall = @($script:RecordedCalls | ForEach-Object { $_.Args } | Where-Object { $_ -match 'restore_postgres\.py' })[0]
+        return [pscustomobject]@{ Name = $internal.Name; RestoreCall = $restoreCall }
+    }
+    Assert-True ($result.RestoreCall -like "*--backup-file /mep-backups/$($result.Name)*") `
+        'an archive already in the backup root is addressed directly'
+    Assert-True ($result.RestoreCall -notlike '*restore-staging*') 'no needless copy is made'
+}
+
+Test-Case 'L3 restore: an archive without a manifest fails closed before any database work' {
+    $externalDir = Join-Path ([System.IO.Path]::GetTempPath()) ("mep-ext-" + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $externalDir -Force | Out-Null
+    try {
+        $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -ExternalDir $externalDir
+        $result = Invoke-WithMocks -Context $ctx -Body {
+            $orphan = Join-Path $ctx.ExternalDir 'mep-postgres-local-staging-20260101T000000Z.dump'
+            Set-Content -LiteralPath $orphan -Value 'no-manifest' -NoNewline
+            $script:RecordedCalls = @()
+            $threw = $false
+            $message = ''
+            try { Invoke-MepRestoreRehearsal -BackupFile $orphan | Out-Null } catch { $threw = $true; $message = $_.Exception.Message }
+            return [pscustomobject]@{ Threw = $threw; Message = $message; Calls = @($script:RecordedCalls | ForEach-Object { $_.Args }) }
+        }
+        Assert-True $result.Threw 'an archive with no manifest cannot be verified and must fail'
+        # The message matters: without the explicit precondition the run
+        # would still fail, but as an incidental copy error rather than as
+        # a stated refusal -- so assert the refusal itself.
+        Assert-True ($result.Message -like '*no manifest*') 'the failure must state the missing manifest, not surface an incidental copy error'
+        Assert-True (-not ($result.Calls -match 'CREATE DATABASE')) 'no rehearsal database may be created first'
+        Assert-True (-not ($result.Calls -match 'restore_postgres\.py')) 'no restore may be attempted'
+    }
+    finally {
+        Remove-Item -LiteralPath $externalDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+Test-Case 'L3 restore: an archive INSIDE the backup root without a manifest also fails closed' {
+    # The in-root branch does no copying, so nothing incidental would stop
+    # it: only the explicit manifest precondition keeps an unverifiable
+    # artifact from reaching a real rehearsal.
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $orphan = Join-Path (Get-MepBackupRoot) 'mep-postgres-local-staging-20260101T000000Z.dump'
+        Set-Content -LiteralPath $orphan -Value 'no-manifest' -NoNewline
+        $script:RecordedCalls = @()
+        $threw = $false
+        $message = ''
+        try { Invoke-MepRestoreRehearsal -BackupFile $orphan | Out-Null } catch { $threw = $true; $message = $_.Exception.Message }
+        return [pscustomobject]@{ Threw = $threw; Message = $message; Calls = @($script:RecordedCalls | ForEach-Object { $_.Args }) }
+    }
+    Assert-True $result.Threw 'an in-root archive with no manifest must also fail'
+    Assert-True ($result.Message -like '*no manifest*') 'the failure must state the missing manifest'
+    Assert-True (-not ($result.Calls -match 'CREATE DATABASE')) 'no rehearsal database may be created'
+    Assert-True (-not ($result.Calls -match 'restore_postgres\.py')) 'no restore may be attempted'
 }
 
 Test-Case 'L3 restore: never bypasses a PR24C guard and never targets production' {

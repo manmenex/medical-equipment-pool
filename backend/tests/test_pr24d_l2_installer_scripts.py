@@ -828,3 +828,57 @@ def test_l3_restore_target_url_env_fallback_did_not_weaken_any_guard():
     # exist, so assert on actual argparse definitions rather than prose.
     assert 'add_argument("--allow-production-restore"' not in src
     assert 'add_argument("--skip-prod-check"' not in src
+
+
+def test_l3_restore_addresses_the_exact_artifact_the_operator_selected():
+    """PR #137 Fix Round 1 (P1). Only the backup root is bind-mounted at
+    /mep-backups, so addressing the archive by BASENAME alone meant an
+    externally-supplied archive could silently resolve to a different,
+    same-named archive inside the backup root -- rehearsing an artifact
+    the operator never selected and reporting PASS for it."""
+    body = _ps_function_body(_lib("Backup.ps1"), "Invoke-MepRestoreRehearsal")
+    # The container path is now a variable bound to the resolved artifact,
+    # never the bare file name pasted into the mount root.
+    assert "'--backup-file', $containerBackupPath" in body
+    assert '"/mep-backups/$($archive.Name)"' in body, (
+        "the in-root case is still addressed directly"
+    )
+    assert "Test-MepPathIsDirectlyInside" in body, (
+        "the in-root case must be decided by containment, not assumed"
+    )
+    # External archives are copied into a collision-safe staging path
+    # inside the mount, together with the manifest restore depends on.
+    assert ".restore-staging-" in body
+    assert "[Guid]::NewGuid()" in body, "the staging path must be collision-safe"
+    assert '"/mep-backups/$stagingName/$($archive.Name)"' in body
+
+
+def test_l3_restore_refuses_an_archive_with_no_manifest():
+    body = _ps_function_body(_lib("Backup.ps1"), "Invoke-MepRestoreRehearsal")
+    assert '$manifestSource = "$($archive.FullName).manifest.json"' in body
+    assert "if (-not (Test-Path -LiteralPath $manifestSource))" in body, (
+        "a missing manifest must be a stated refusal, not an incidental copy error"
+    )
+    # The refusal must precede any rehearsal database work.
+    assert body.index("$manifestSource") < body.index("CREATE DATABASE")
+
+
+def test_l3_restore_staging_directory_is_always_cleaned_up():
+    body = _ps_function_body(_lib("Backup.ps1"), "Invoke-MepRestoreRehearsal")
+    finally_block = body[body.index("finally"):]
+    assert "Remove-Item -LiteralPath $stagingDirectory -Recurse -Force" in finally_block, (
+        "staging copies must be removed even when the rehearsal fails"
+    )
+    # Scoped to the per-run directory only -- never the backup root.
+    assert "Remove-Item -LiteralPath $backupRoot" not in body
+
+
+def test_l3_path_containment_helper_compares_the_immediate_parent():
+    body = _ps_function_body(_lib("Backup.ps1"), "Test-MepPathIsDirectlyInside")
+    assert "GetFullPath" in body, "both sides must be normalised before comparison"
+    assert "GetDirectoryName" in body, (
+        "containment is direct membership, not any-ancestor prefix matching"
+    )
+    assert "StringComparison" in body, (
+        "case sensitivity must be chosen per-platform, not left to the default"
+    )

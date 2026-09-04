@@ -64,6 +64,24 @@ function Get-MepLatestBackup {
     return $candidates[0]
 }
 
+function Test-MepPathIsDirectlyInside {
+    <#
+    .SYNOPSIS
+    True when $Path is a file sitting DIRECTLY in $Directory. Compares
+    fully-resolved paths so a relative path, a trailing separator or a
+    different casing cannot make an outside file look like an inside one.
+    #>
+    param(
+        [Parameter(Mandatory)] [string]$Path,
+        [Parameter(Mandatory)] [string]$Directory
+    )
+    $parent = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($Path))
+    $target = [System.IO.Path]::GetFullPath($Directory).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+    $parent = "$parent".TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+    $comparison = if ($IsWindows -or $null -eq $IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    return [string]::Equals($parent, $target, $comparison)
+}
+
 function Invoke-MepBackup {
     <#
     .SYNOPSIS
@@ -236,6 +254,13 @@ function Invoke-MepRestoreRehearsal {
 
     .PARAMETER BackupFile
     Archive to rehearse. Defaults to the newest backup that has a manifest.
+    Any readable path is accepted, including one outside the backup root
+    (an archive copied back from another machine), but the artifact that
+    reaches PR24C is always the one named here: an external archive is
+    staged with its manifest under a collision-safe path inside the mount
+    rather than being addressed by name. An archive with no manifest
+    beside it is refused, because PR24C derives both the expected checksum
+    and the source identity of its same-source guard from that manifest.
 
     .PARAMETER KeepRehearsalDatabase
     Leaves the disposable database in place for investigation instead of
@@ -261,6 +286,43 @@ function Invoke-MepRestoreRehearsal {
             throw (New-MepFailure "Backup file not found: $BackupFile")
         }
         $archive = Get-Item -LiteralPath $BackupFile
+    }
+
+    # Fix Round 1 (P1): bind the container path to the EXACT artifact the
+    # operator selected.
+    #
+    # Only $Script:BackupRoot is mounted at /mep-backups, so passing just
+    # the file's NAME was wrong for any archive outside that directory: it
+    # would either not exist in the container, or -- far worse -- silently
+    # resolve to a DIFFERENT, same-named archive inside the backup root and
+    # report a rehearsal PASS for an artifact the operator never chose.
+    #
+    # An archive already inside the backup root is addressed directly. One
+    # from anywhere else (an external drive, a copy kept off-machine) is
+    # staged, together with its manifest, into a per-run directory whose
+    # GUID name cannot collide with an existing backup. The staged copy is
+    # removed in the finally block below.
+    $manifestSource = "$($archive.FullName).manifest.json"
+    if (-not (Test-Path -LiteralPath $manifestSource)) {
+        throw (New-MepFailure "Backup archive $($archive.Name) has no manifest beside it ($manifestSource). PR24C's restore derives source identity and the expected checksum from that manifest, so it cannot be verified without it.")
+    }
+
+    $stagingDirectory = $null
+    if (Test-MepPathIsDirectlyInside -Path $archive.FullName -Directory $backupRoot) {
+        $containerBackupPath = "/mep-backups/$($archive.Name)"
+    }
+    else {
+        $stagingName = ".restore-staging-$([Guid]::NewGuid().ToString('N'))"
+        $stagingDirectory = Join-Path $backupRoot $stagingName
+        New-Item -ItemType Directory -Path $stagingDirectory -Force | Out-Null
+        Copy-Item -LiteralPath $archive.FullName -Destination (Join-Path $stagingDirectory $archive.Name) -Force
+        Copy-Item -LiteralPath $manifestSource -Destination (Join-Path $stagingDirectory "$($archive.Name).manifest.json") -Force
+        # A subdirectory is invisible to Get-MepLatestBackup (non-recursive)
+        # and to PR24C's prune (files directly inside the root only), so
+        # staging cannot disturb the real backup set.
+        $containerBackupPath = "/mep-backups/$stagingName/$($archive.Name)"
+        Write-Host "  Staged external archive for rehearsal: $($archive.FullName)"
+        Write-InstallLog -Phase 'restore-rehearsal' -Message "External archive staged under $stagingName for rehearsal."
     }
 
     $rehearsalDb = New-MepRehearsalDatabaseName
@@ -300,7 +362,7 @@ function Invoke-MepRestoreRehearsal {
                 '-v', "${backupRoot}:/mep-backups",
                 'backend',
                 'python', 'scripts/restore_postgres.py',
-                '--backup-file', "/mep-backups/$($archive.Name)",
+                '--backup-file', $containerBackupPath,
                 '--target-environment', 'local-staging-rehearsal'
             ) -AllowNonZeroExit -Phase 'restore-rehearsal'
         }
@@ -325,6 +387,11 @@ function Invoke-MepRestoreRehearsal {
         return $result
     }
     finally {
+        if ($stagingDirectory -and (Test-Path -LiteralPath $stagingDirectory)) {
+            # Scoped to exactly the per-run staging directory this function
+            # created -- never the backup root itself, never a volume.
+            Remove-Item -LiteralPath $stagingDirectory -Recurse -Force -ErrorAction SilentlyContinue
+        }
         if ($created -and -not $KeepRehearsalDatabase) {
             # Scoped precisely to the database this function created. Never
             # a volume removal, never `down -v`, never the live database.
