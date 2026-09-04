@@ -307,9 +307,27 @@ function Invoke-MepInstall {
 function Invoke-MepUpdate {
     <#
     .SYNOPSIS
-    Conservative update sequence. Caller holds the mutation lock and is
-    responsible for having already enforced the -AcknowledgeUpdateRisk
-    gate (no automated backup safety net exists until PR24D-L3).
+    Conservative update sequence. The caller holds the mutation lock; this
+    function owns every safety gate itself.
+
+    .DESCRIPTION
+    Sequence, whichever state the deployment starts from:
+
+        build -> MANDATORY BACKUP (this run's own verified artifact)
+              -> stop (only if it was running)
+              -> PostgreSQL health gate -> migrate
+              -> start -> readiness -> metadata
+
+    The backup is not advisory. If it fails, or if the archive it produced
+    cannot be identified and verified against its own manifest and
+    checksum, nothing is stopped, no migration runs, and no metadata
+    advances. A pre-existing backup can never satisfy this gate.
+
+    PR24D-L3 replaced L2's -AcknowledgeUpdateRisk switch with that gate.
+    The switch existed only because no automated backup safety net had
+    shipped yet; an operator's acknowledgement is not a substitute for a
+    restorable backup, so the parameter was removed rather than kept as a
+    bypass. Callers must not reintroduce an acknowledgement gate.
     #>
     if (-not (Test-EnvFileExists)) {
         throw (New-MepFailure 'No existing installation found. Run .\install.ps1 first; update.ps1 only operates on an existing installation.')

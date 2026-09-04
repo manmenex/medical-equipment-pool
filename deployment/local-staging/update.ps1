@@ -29,21 +29,28 @@ completed.
 Sequence (see Invoke-MepUpdate in lib/Operations.ps1, which owns it and
 is covered by tests/Invoke-InstallerTests.ps1): acquire the deployment
 mutation lock -> require a previously completed installation -> capture
-the initial state ONCE -> BUILD the intended images -> stop the
-application (only when it was running) -> converge PostgreSQL to healthy
--> explicit migration -> start the new stack -> readiness -> refresh
-metadata.
+the initial state ONCE -> BUILD the intended images -> take a MANDATORY
+VERIFIED BACKUP -> stop the application (only when it was running) ->
+converge PostgreSQL to healthy -> explicit migration -> start the new
+stack -> readiness -> refresh metadata.
+
+The backup step is not optional and has no bypass; it is described in
+full under MANDATORY PRE-UPDATE BACKUP below. It runs BEFORE anything is
+stopped, so a backup failure leaves a healthy deployment untouched and
+still serving.
 
 Both accepted entry states are handled explicitly:
 
-  EXISTING_HEALTHY -> build -> stop backend/frontend and VERIFY they are
-    actually stopped -> ensure PostgreSQL healthy -> migrate -> start ->
-    ready -> metadata.
+  EXISTING_HEALTHY -> build -> BACKUP (verified) -> stop backend/frontend
+    and VERIFY they are actually stopped -> ensure PostgreSQL healthy ->
+    migrate -> start -> ready -> metadata.
 
-  EXISTING_STOPPED -> build -> no stop is issued (the application is
-    already down, and a "failed to stop" error against an intentionally
-    stopped deployment would be misleading) -> START PostgreSQL and wait
-    for it to be healthy -> migrate -> start -> ready -> metadata.
+  EXISTING_STOPPED -> build -> BACKUP (verified; the shared backup path
+    starts ONLY PostgreSQL to take it, never the backend) -> no stop is
+    issued (the application is already down, and a "failed to stop" error
+    against an intentionally stopped deployment would be misleading) ->
+    START PostgreSQL and wait for it to be healthy -> migrate -> start ->
+    ready -> metadata.
 
 PostgreSQL availability is a HARD precondition of the migration, not an
 assumption: the migration container runs with --no-deps, so Compose will
