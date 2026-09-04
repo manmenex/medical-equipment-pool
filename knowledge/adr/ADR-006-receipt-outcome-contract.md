@@ -1,0 +1,249 @@
+# ADR-006: Receipt Outcome Contract
+
+Status: Accepted
+
+## Context
+
+`docs/HOSPITAL_DOMAIN_MODEL.md`'s confirmed workflow has always described
+receipt as "one atomic digital operation ... a binary outcome: usable or
+defective," using the literal phrase "receipt outcome: usable" / "receipt
+outcome: defective." Before this decision, the actual request contract
+(`ReturnRequest.condition`, `backend/app/schemas/transaction.py`) did not
+express that binary domain: it accepted any of four free-form strings
+(`available`/`pm`/`calibration`/`repair`), reduced to two `EquipmentStatus`
+values only inside an internal dict lookup
+(`RETURN_CONDITION_TO_STATUS`, `backend/app/services/borrow_service.py`).
+The contract itself did not say "this is a binary business decision" —
+nothing at the type level prevented a future caller, typo, or new
+condition string from silently falling into the generic `InvalidInputError`
+branch instead of a clearly binary choice. `docs/design/
+PR8_IMPLEMENTATION_PLAN.md` (design-only, uncommitted) split Roadmap PR8
+into two slices along the same PR7a/PR7b precedent: PR8A (the database-level
+concurrency guard, GitHub PR #26, merged) and PR8B (this decision) — the
+API contract narrowing.
+
+A second problem existed alongside the vocabulary mismatch: the four raw
+strings are equipment-status-*shaped* names (`available`, `pm`,
+`calibration`, `repair` read like maintenance categories, not business
+outcomes), which invited a caller to reason about the request in terms of
+the equipment lifecycle it should never need to know about directly. The
+four confirmed equipment states (`AVAILABLE_AT_POOL`, `ISSUED_TO_WARD`,
+`UNAVAILABLE_DEFECTIVE`, `DECOMMISSIONED`) are an internal state machine
+owned exclusively by `app.crud.equipment.change_status_for_dispatch_receipt`
+(`docs/ARCHITECTURE_GUARDRAILS.md`: "Do not bypass the dispatch/receipt
+services to change equipment status") — a request contract that even
+resembled those state names risked a future implementation letting a
+client submit a lifecycle state directly, collapsing the separation between
+"what the operator observed" (a business outcome) and "what the system
+decided to do about it" (a lifecycle transition).
+
+## Decision
+
+1. **Single business term: `receipt_outcome`.** `ReturnRequest.condition`
+   (`backend/app/schemas/transaction.py`) is replaced entirely by
+   `receipt_outcome: ReceiptOutcome` — not renamed alongside a kept alias.
+   Confirmed, not merely assumed: `docs/ARCHITECTURE_DECISIONS.md`'s
+   "Browser-first application" decision states this system is a
+   browser-based web application only, with no native app shell planned;
+   `frontend/` (`frontend/src/services/borrow.ts`) is the receipt
+   endpoint's only client, and no external or third-party integration
+   against it is documented anywhere in the repository. That one client
+   was not updated by this decision itself (see "Not decided here"), so
+   **the backend and frontend had to be deployed together, not
+   independently** — deploying this backend contract ahead of a matching
+   frontend would have left the receipt flow non-functional
+   (`docs/TECH_DEBT.md` TD-006), and deploying an updated frontend ahead of
+   this backend would have submitted a shape the backend rejected. Both
+   halves have since merged and were deployed together (see "Not decided
+   here" update below and `docs/TECH_DEBT.md` TD-006, now `Closed`). No
+   compatibility layer was introduced despite this (see "Alternatives
+   considered" below): a breaking contract coordinated by a single
+   deployment step was preferred over a permanent dual-field/dual-name
+   compromise for a gap with one known, internal consumer and no
+   demonstrated external migration requirement.
+2. **Exactly two allowed values: `usable` and `defective`.**
+   `ReceiptOutcome` (`app/models/transaction.py`) is a `(str, enum.Enum)`
+   mirroring `TransactionStatus`/`DispatchType`/`RoutineRound`'s shape and
+   persisted-lowercase-`.value` convention. The values are the confirmed
+   domain vocabulary itself (`docs/HOSPITAL_DOMAIN_MODEL.md`'s "receipt
+   outcome: usable"/"receipt outcome: defective"), not invented. Pydantic
+   validates this at the request-schema layer — an unrecognized value is
+   now `422 VALIDATION_ERROR`, not the pre-PR8B `400 INVALID_INPUT` a
+   free-form string needed a runtime dict-lookup miss to detect.
+3. **The backend alone maps `receipt_outcome` to an `EquipmentStatus`.**
+   `RECEIPT_OUTCOME_TO_STATUS` (`backend/app/services/borrow_service.py`)
+   is the sole translation point: `usable -> AVAILABLE_AT_POOL`,
+   `defective -> UNAVAILABLE_DEFECTIVE`. This mapping is total over
+   `ReceiptOutcome`'s two members — there is no "unknown outcome" branch
+   left to guard, unlike the pre-PR8B four-value dict, which needed one.
+   **The frontend must never submit a lifecycle state directly** — it
+   submits only the business outcome the operator observed, and the
+   backend decides the resulting equipment state, exactly as
+   `app.crud.equipment.change_status_for_dispatch_receipt` already is the
+   only path permitted to write `Equipment.status` for a receipt.
+4. **No new database column or migration.** `BorrowTransaction.
+   condition_on_return` (`String(30)`, unconstrained) is unchanged —
+   Option A from `docs/design/PR8_IMPLEMENTATION_PLAN.md` Section 5
+   explicitly needs no schema change.
+5. **The response contract is exactly as binary as the request contract —
+   never mixed with legacy values.** `TransactionOut.receipt_outcome` is
+   `ReceiptOutcome | None` (a real, strictly-typed enum field — emitted in
+   the OpenAPI schema as an enum `$ref`, not an unconstrained string), not
+   `string | null`: it is `None` both for a transaction not yet received
+   and for one received **before** this contract existed, and is never a
+   pre-PR8B legacy string. A transaction's genuine pre-PR8B legacy value
+   (`available`/`pm`/`calibration`/`repair`) remains readable, unmodified,
+   through a separate, clearly-named, mutually-exclusive read-only field,
+   `TransactionOut.legacy_condition_on_return`. Both are plain passthrough
+   properties on `BorrowTransaction` over the one unchanged
+   `condition_on_return` column (`receipt_outcome` returns
+   `ReceiptOutcome(condition_on_return)` when the raw value parses as one
+   of the two current members, else `None`; `legacy_condition_on_return`
+   returns the raw value exactly when `receipt_outcome` is `None` and a
+   value exists at all) — the column is never remapped or fabricated,
+   mirroring how Roadmap PR7b preserved `borrower_name`/`due_at`/
+   `quantity`, and how `BorrowTransaction.legacy_status` preserves history
+   as a distinct field rather than blending it into `status`.
+6. **Cleaning remains impossible to express.** Roadmap PR6 / owner-confirmed
+   cleaning retirement already excluded `"cleaning"` from the pre-PR8B
+   four-value domain; the binary `usable`/`defective` domain has no room
+   for it either, by construction rather than by an explicit rejection
+   rule.
+
+## Alternatives considered
+
+- **Keep `condition`, narrow its accepted values.** Rejected: this would
+  have kept a field name that reads as an equipment-status-shaped
+  maintenance category, working against decision 3's separation between
+  business outcome and lifecycle state, for no benefit — no external
+  client depends on the name `condition` specifically.
+- **Accept both `condition` and `receipt_outcome` (a compatibility
+  alias/dual-field period).** Rejected per this task's explicit instruction
+  and this project's own precedent: Roadmap PR7b's Codex review established
+  that a removed/renamed request field should be a hard rejection
+  (`extra: "forbid"`), not a silently-tolerated legacy alias — a
+  compatibility layer is only justified by a demonstrated migration
+  requirement (e.g. a live external integration this project does not
+  have), and introducing one preemptively would keep the ambiguous
+  equipment-status-shaped vocabulary alive indefinitely instead of
+  resolving it.
+- **A new database column/migration for the outcome domain (Option B,
+  `docs/design/PR8_IMPLEMENTATION_PLAN.md` Section 5).** Rejected for the
+  same reason PR8A rejected it: no new column is needed to enforce a
+  two-value domain at the request-schema layer, and `condition_on_return`
+  already tolerates historical values without a migration.
+
+## Not decided here
+
+This decision narrows the request/response **contract**. It does not
+itself implement a distinguishable error message or code for a race-loss
+rejection versus a genuine repeat-request rejection. To avoid leaving
+Roadmap PR8's completion ambiguous, that remaining gap was named
+explicitly as its own slice, **Roadmap PR8 (PR8C slice)**, following the
+same PR7a/PR7b/PR8A/PR8B lettered-slice precedent: PR8A (concurrency
+guard, merged), PR8B (this contract, this ADR), PR8C (race-vs-repeat
+distinguishable error). That slice has since been implemented and merged
+— see "Update" below. Both causes shared `409 TRANSACTION_ALREADY_RETURNED`
+(`docs/api/receipt.md`, `docs/api/ERROR_CODES.md`) until PR8C merged.
+
+This decision itself did not touch the frontend
+(`frontend/src/services/borrow.ts`, `frontend/src/types/index.ts`,
+`frontend/src/pages/ReturnPage.tsx`), or any authentication/authorization
+behavior — both were explicitly out of scope for the task this ADR
+documents. A separate follow-up task implemented and merged the frontend
+change (see "Update" below), so this gap is now closed.
+
+**Update:** the follow-up frontend change is implemented and merged —
+GitHub PR #29, squash SHA `d3e027b5a4ee7d99b38dfd0d263dc460c74eb5c5` —
+adopting `receipt_outcome`/`ReceiptOutcome` end to end, a two-choice
+usable/defective selector replacing the four-option condition radio
+group, and Vitest tests. It does not implement any lifecycle-state
+mapping in the frontend (the backend remains the single source of truth,
+per Decision 3) and does not touch PR8C or authentication. This frontend
+change and the backend (GitHub PR #28, squash SHA
+`da4d76a640548e5a1d38ff3d7690695f950c85fe`) were deployed together, per
+Decision 1's coordinated-deployment requirement. `docs/TECH_DEBT.md`
+TD-006, which tracked this gap, is now `Closed`.
+
+**Update (PR8C):** the remaining gap named in "Not decided here" above is
+also implemented and merged — GitHub PR #31, squash SHA
+`f923f0aec8aa79fb4c33d2c1b0c05c08a057fe17`. A losing receipt request now
+receives one of two distinguishable, machine-readable codes instead of
+always reusing `TRANSACTION_ALREADY_RETURNED`: that code for a genuine
+sequential repeat, and a new `RECEIPT_RACE_LOST` for a request whose own
+read observed the transaction as OPEN but which then lost the
+conditional-close race. Both remain `409 Conflict`; only `code` (and
+`detail`) differ. `RECEIPT_RACE_LOST`'s wording deliberately attributes
+the outcome to another *request*, not another person — the backend has no
+basis to identify who sent the winning request. The frontend
+(`ReturnPage.tsx`) branches on the response's `code` field, never on
+free-text `detail`. This did not change this ADR's contract (Decisions
+1-6 above are unaffected): no lifecycle state, schema, migration, or
+`receipt_outcome` request-contract change. **Roadmap PR8 (PR8A, PR8B, and
+PR8C) is now fully complete.** See `docs/DECISION_LOG.md` ("Roadmap PR8
+(PR8C slice)") and `docs/ROADMAP.md`.
+
+This repository has no OpenAPI-to-TypeScript code generation pipeline
+(`frontend/` types are hand-authored, not generated) — there is no
+"generated TypeScript client" for this decision to verify against.
+`TD-006`'s resolution criteria instead requires the follow-up frontend
+PR's hand-authored `receipt_outcome` type to be a `"usable" | "defective"`
+union, not a plain `string`, matching this contract's OpenAPI enum
+(Decision 5).
+
+## Consequences
+
+- Any code path that builds or validates a receipt request is measured
+  against "exactly `usable` or `defective`, via `receipt_outcome`" — a
+  design that reintroduces a free-form `condition` string, or that lets a
+  caller submit an `EquipmentStatus` value directly, does not conform to
+  this ADR.
+- `RECEIPT_OUTCOME_TO_STATUS` is the only place a receipt outcome is
+  translated into an equipment status; `app.crud.equipment.
+  change_status_for_dispatch_receipt` remains the only path permitted to
+  write `Equipment.status` for a receipt (`docs/ARCHITECTURE_GUARDRAILS.md`).
+- `docs/api/receipt.md` and `docs/api/ERROR_CODES.md` are the frozen,
+  current documentation of this contract; `docs/design/
+  PR8_IMPLEMENTATION_PLAN.md` (uncommitted, design-only) remains a
+  historical planning artifact, not a live contract reference.
+- The repository's merge state and its deployment state are distinct here:
+  for the interval between the backend's merge and the follow-up
+  frontend change's merge (see "Not decided here" above), the *repository*
+  temporarily contained a backend revision and a frontend revision that
+  were contract-mismatched with each other — a known, deliberately
+  accepted condition, not an oversight. The coordinated-release
+  requirement (Decision 1) meant the two were never deployed
+  independently, so this repository-level mismatch never became a
+  *deployment*-level one: production was not exposed to it.
+- A client parsing `TransactionOut.receipt_outcome` can rely on it being
+  exactly `"usable"`, `"defective"`, or absent — never one of the four
+  pre-PR8B legacy strings. A client that also needs a pre-PR8B
+  transaction's original recorded value reads
+  `legacy_condition_on_return` instead; the two fields are never both set
+  for the same transaction.
+- Roadmap PR8's overall completion status is now unambiguous:
+  PR8A + PR8B + PR8C, all three required, all three merged, tracked
+  individually in `docs/ROADMAP.md` and `docs/DECISION_LOG.md`.
+
+## References
+
+- `docs/HOSPITAL_DOMAIN_MODEL.md` — confirmed workflow, "receipt outcome:
+  usable"/"receipt outcome: defective" vocabulary this decision adopts
+  verbatim as the contract's value domain.
+- `docs/ARCHITECTURE_DECISIONS.md` — "Browser-first application": the
+  evidence this decision's Decision 1 cites for "no external/native client
+  exists beyond `frontend/`."
+- `docs/design/PR8_IMPLEMENTATION_PLAN.md` — Section 5's Option A/B
+  comparison and the PR8A/PR8B split this ADR's Decision 4 and Context
+  build on.
+- `docs/DECISION_LOG.md` — "Roadmap PR8 (PR8A slice)" (the concurrency
+  guard this contract sits on top of) and "Roadmap PR8 (PR8B slice)" (this
+  decision's own governance entry, including its Codex review round).
+- `docs/ARCHITECTURE_GUARDRAILS.md` — "Do not bypass the dispatch/receipt
+  services to change equipment status" (decision 3's separation of
+  business outcome from lifecycle state exists to protect this guardrail).
+- `app/models/transaction.py`'s `TransactionStatus`/`DispatchType`/
+  `RoutineRound` — the persisted-lowercase-`.value` enum precedent
+  `ReceiptOutcome` mirrors.
+- `docs/api/receipt.md` — the frozen request/response contract this
+  decision produces.
