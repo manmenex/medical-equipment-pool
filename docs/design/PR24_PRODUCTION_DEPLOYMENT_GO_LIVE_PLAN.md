@@ -1980,7 +1980,8 @@ matching this repository's usual one-concern-per-PR precedent):
   no runbook yet.
 - **PR24D-L2 (planned):** the script-based installer engine
   (`install.ps1`/`start.ps1`/`stop.ps1`/`status.ps1`/`update.ps1`/
-  `uninstall.ps1` + a shared `lib/Common.ps1`) -- prerequisite checks,
+  `uninstall.ps1` + a shared `lib/Common.ps1` and `lib/Operations.ps1`)
+  -- prerequisite checks,
   secret generation, Administrator bootstrap via the existing
   `app.scripts.bootstrap_admin` CLI (§17), the explicit Alembic
   migration step (§20) via the existing pattern, install idempotency,

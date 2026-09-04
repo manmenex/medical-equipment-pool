@@ -7225,3 +7225,593 @@ status accuracy
 - **Source:** PR #135's incremental review (Fix Round 2, APPROVE WITH
   NON-BLOCKING COMMENTS) and `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md`
   §32 as the evidentiary basis for the corrected cross-reference.
+
+## 2026-08-31 — PR #135 Fix Round 3 (final exact-head review, APPROVE
+WITH ONE NON-BLOCKING DOCUMENTATION COMMENT): DECISION_LOG
+functional-fix-surface wording clarified
+
+- **Review scope:** PR #135, reviewed exact head
+  `918edbc7bb1963e4e71b1fe9471f80772789daf0`. Verdict: APPROVE WITH ONE
+  NON-BLOCKING DOCUMENTATION COMMENT — all previous functional and
+  architectural findings (Fix Rounds 1 and 2) confirmed resolved; only
+  one documentation/evidence wording issue remained.
+- **Finding:** this log's own Fix Round 2 entry (immediately above)
+  said the changed-file scope for that round "was exactly
+  `deployment/local-staging/compose.yml`," but that round's commit also
+  changed `docs/DECISION_LOG.md` itself (this file) to record the round.
+  Technically inaccurate as written -- conflated the functional fix
+  surface with this file's own governance/review-evidence append.
+- **Fix:** the Fix Round 2 entry's validation bullet was edited in
+  place (not superseded by a new entry, since the underlying fact
+  pattern was already fully and correctly described elsewhere in that
+  same entry) to read: "functional fix surface confirmed as exactly
+  `deployment/local-staging/compose.yml` -- this DECISION_LOG file was
+  also updated in the same commit, but append-only, to record this
+  round's governance/review evidence, not as part of the functional fix
+  surface itself."
+- **No runtime, architectural, test, or Compose behavior change** — the
+  only diff in this round was the one-sentence DECISION_LOG wording fix.
+- **Validation:** `git diff --check` clean; diff confirmed docs-only
+  (`docs/DECISION_LOG.md`); CI 6/6 green on new exact head
+  `85c0d0075a141ae50cba4a63f96b8cc39896de0f`.
+- **Status:** Draft, not merged at the time of this round; merged
+  shortly after (see the next entry).
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** PR #135's final exact-head review (Fix Round 3, APPROVE
+  WITH ONE NON-BLOCKING DOCUMENTATION COMMENT).
+
+## 2026-09-01 — GitHub PR #135 merged -- PR24D-L1 (Local Docker
+Staging/UAT Foundation); PR24D-L2 (Local Staging/UAT Installer &
+Operations Engine) started, not merged
+
+- **Merge recorded:** GitHub PR #135, "PR24D-L1 — Local Docker
+  Staging/UAT Foundation", squash-merged into
+  `claude/medical-equipment-pool-0c7fz0` on top of
+  `7e2bfb2001642ea9a9754310b85d1911b7b2be5c` (GitHub PR #134, PR24D —
+  Post-Merge Governance Close-out). Real squash-merge SHA:
+  `73652b062fb2ad6fdab4f7bbc0b743ff5f548e86`. Final reviewed
+  feature-branch head: `85c0d0075a141ae50cba4a63f96b8cc39896de0f` —
+  independent Final Merge Gate confirmed **zero reviews, zero comments,
+  zero review threads**, CI green 6/6 on that exact head (post Fix
+  Rounds 1-3), the reviewed head's tree verified byte-identical to the
+  merged squash commit's tree (`git diff 85c0d00... 73652b0... --stat`
+  produced no output), and the squash commit's sole parent confirmed as
+  `7e2bfb2001642ea9a9754310b85d1911b7b2be5c`. Per this repository's
+  standing process, no separate self-referential "baseline adoption" PR
+  was created — it became authoritative immediately upon merge,
+  recorded here by this PR (`feat/pr24d-l2-local-installer-engine`, the
+  next PR that legitimately touches these governance files).
+- **Fold-in swept across:** `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`,
+  `knowledge/CONTEXT.md`, `knowledge/PROJECT_MEMORY.md` — every "current
+  baseline"/"current authoritative baseline"/"live value" occurrence
+  previously pointing at `7e2bfb2...` (GitHub PR #134) reclassified as
+  historical, pointing to `73652b0...` (GitHub PR #135) as the sole
+  current value; two additional genuinely-stale pre-existing
+  `84144f0...`-as-current-baseline references found during this sweep
+  (one in `docs/ROADMAP_STATUS.md`'s "Current and planned sequence"
+  paragraph, one in `knowledge/PROJECT_MEMORY.md`'s "live value"
+  pointer) were also corrected; no historical entry erased.
+- **PR24D-L2 (Local Staging/UAT Installer & Operations Engine) started,
+  not merged**, from baseline `73652b062fb2ad6fdab4f7bbc0b743ff5f548e86`,
+  per the second of the three PR24D-L slices agreed for PR24D-L1
+  (PR24D-L3 — local backup/restore rehearsal + operator runbook + final
+  governance sync — remains planned, not started).
+- **Scope:** the script-based installer/operations engine —
+  `deployment/local-staging/install.ps1`/`start.ps1`/`stop.ps1`/
+  `status.ps1`/`update.ps1`/`uninstall.ps1` + shared
+  `deployment/local-staging/lib/Common.ps1` — plus `compose.yml`'s own
+  `restart: unless-stopped` addition (L1 did not set a restart policy;
+  the installer's "Windows boots -> Docker Desktop starts -> containers
+  recover" operational assumption requires one). Explicitly not
+  Setup.exe (deferred, per Owner direction, until this script engine is
+  proven); explicitly not `backup.ps1`/`restore.ps1` (PR24D-L3).
+- **Administrator bootstrap:** reuses `app.scripts.bootstrap_admin`
+  (PR24B) completely unchanged, invoked via `docker compose exec`
+  against the running `mep-local-staging-backend` container. That CLI
+  takes no `--password` argument at all -- it generates its own
+  one-time password internally and prints it to stdout once -- so
+  `install.ps1` never accepts, transports, stores, or logs a password;
+  the bootstrap subprocess's output streams directly to the console
+  (never captured into a PowerShell variable this script could later
+  write to its own log file). No architecture gap requiring a STOP was
+  found here (repository §3's own contingency).
+- **Migration:** reuses `backend/scripts/deploy_migrate.py` (PR24D)
+  completely unchanged, invoked via `docker compose run --rm --name
+  mep-local-staging-migrate --no-deps backend python
+  scripts/deploy_migrate.py --target-environment local-staging
+  --artifact-sha <git rev-parse HEAD>` -- the explicit `--name` avoids
+  colliding with the `backend` service's own fixed `container_name`
+  (`mep-local-staging-backend`) that PR24D-L1 relies on for its
+  structural scale guard. `start.ps1` never runs a migration; only
+  `install.ps1` and `update.ps1` do, and only before the application
+  starts, never as part of its boot.
+- **Readiness/health-wait design:** uses Compose v2's own `docker
+  compose up -d --wait --wait-timeout <N>` (health-gated dependency
+  wait) instead of a hand-rolled HTTP polling loop, called twice --
+  once naming only `postgres` (before migration), once naming only
+  `backend`/`frontend` (after) -- so `redis` is never named on either
+  `--wait` invocation and can therefore never block installation,
+  preserving PR24D-L1's Redis-non-blocking contract structurally, not
+  just by convention. Verified by a new regression test
+  (`test_compose_redis_never_a_wait_gated_dependency_in_scripts`).
+- **Secret generation:** `New-UrlSafeSecret` in `lib/Common.ps1` uses
+  `System.Security.Cryptography.RandomNumberGenerator` (never
+  `Get-Random`), base64url-encoded (alphabet-safe for direct
+  interpolation into compose.yml's `DATABASE_URL`), empirically
+  verified via real PowerShell 7.4.6 execution in this sandbox
+  (installed from the official Microsoft release tarball) to produce
+  distinct, correctly-charset-restricted values. `.env` generation
+  (`New-LocalStagingEnvFile`) refuses to run if `.env` already exists;
+  `install.ps1` only calls it inside the `Test-EnvFileExists`-guarded
+  fresh-install branch, never on reinstall/existing-state paths --
+  covered by new regression tests.
+- **Uninstall safety:** default path (`docker compose down`, no `-v`)
+  preserves all data; `-RemoveData` requires typing an exact
+  confirmation phrase (`DELETE LOCAL STAGING DATA`) before the guarded
+  `--volumes` removal call executes. Verified by a new regression test
+  asserting the `--volumes` call is textually gated behind the
+  `-RemoveData` parameter reference.
+- **Update safety foundation:** `update.ps1` rebuilds from the
+  currently checked-out repository source only (`docker compose build`,
+  no image `:latest` pull, no `git pull`/`git checkout` of any kind --
+  source acquisition is explicitly out of scope for this slice) and
+  refuses to proceed at all unless `-AcknowledgeUpdateRisk` is passed,
+  since PR24D-L3's backup/restore safety net does not exist yet --
+  documented in the script's own module docstring as a known,
+  deliberate limitation rather than a false claim of production-grade
+  update safety.
+- **Restart policy:** `restart: unless-stopped` added to all four
+  compose.yml services (postgres/redis/backend/frontend) -- L1 did not
+  set one; no Windows service, Task Scheduler job, or registry Run
+  entry created (repository §28's own preference for the Docker-native
+  mechanism, confirmed sufficient by inspection).
+- **Validation evidence, explicitly classified:** STATIC VERIFIED (all
+  7 `.ps1` files parsed cleanly with the real PowerShell 7.4.6 language
+  parser, installed and run directly in this sandbox -- not merely
+  claimed; `docker compose config` renders cleanly with `restart:
+  unless-stopped` present on all four services; 24 new
+  `backend/tests/test_pr24d_l2_installer_scripts.py` structural
+  assertions plus all 107 prior PR24D-L1 tests pass, 131 total). CI
+  VERIFIED: a new "PowerShell script validation" CI job (7th check,
+  using ubuntu-latest's preinstalled `pwsh`) parses the same 7 files
+  independently in CI. DOCKER EXECUTED / WINDOWS EXECUTED: **not
+  performed** -- this sandbox has no Docker daemon (consistent with
+  every prior PR24 round) and is not Windows; actual `docker compose
+  up`, a real clean install, reinstall, start/stop/status cycle, LAN
+  reachability, and the `--scale backend=2` structural-failure guard
+  remain unverified until run on real Windows/Docker Desktop hardware.
+  This is stated explicitly, not implied as done.
+- **Preserved unchanged, not re-litigated:** all PR24B/C/D/D-L1
+  invariants (fixed backend `container_name`, one Uvicorn worker,
+  PostgreSQL-blocking/Redis-non-blocking readiness, `COOKIE_SECURE`
+  decoupling, no PostgreSQL/Redis LAN exposure, no committed secrets);
+  OD-PR24-4 taxonomy (still exactly Development/Staging/UAT/
+  Production, no fourth environment introduced); OD-PR24-1
+  architecture-class-only; no lifecycle/business-rule change. **PR24E
+  remains NOT STARTED and is not being started by this PR** — a working
+  local installer is still preparatory operational infrastructure, not
+  managed-Staging evidence; whether to begin PR24D-L3 or reconsider the
+  local-vs-managed path further is an Owner/next-task decision this PR
+  does not make.
+- **Status:** Draft, not merged. PR24D-L2 in progress — this is the
+  second of three planned PR24D-L slices, not the start of PR24E, and
+  Setup.exe was explicitly not implemented in this PR.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the "PR24D-L2 — Local Staging/UAT Installer & Operations
+  Engine" task's own binding specification, GitHub PR #135's own merge
+  record and Final Merge Gate verification, and this repository's own
+  `backend/app/scripts/bootstrap_admin.py`/
+  `backend/scripts/deploy_migrate.py`/`backend/app/core/redis.py` as
+  the evidentiary basis for every reuse decision above.
+
+## 2026-09-03 — GitHub PR #136 Fix Round 1 (independent review, REQUEST CHANGES): four P1 installer-correctness defects + one P2 state-detection defect -- fixed, not merged
+
+- **Context:** PR #136 (PR24D-L2, Local Staging/UAT Installer &
+  Operations Engine) received an independent review returning REQUEST
+  CHANGES with four P1 blockers and one P2. The review's finding was
+  that the installer's *documented* guarantees were not *structurally*
+  enforced: several failure paths continued past a failed mutating step,
+  and the installation lock could not actually exclude a second process.
+- **P1-A — build was implicit, so migration could run against a stale
+  image.** `install.ps1`/`update.ps1` relied on `docker compose up`'s
+  implicit build behavior, so a cached image could satisfy the run and
+  the migration could execute code that was not the reviewed source.
+  Fixed by an explicit `docker compose build backend frontend`
+  (`Invoke-MepBuildImages`) that runs BEFORE migration in both install
+  and update and fails closed on a non-zero exit; the migration then
+  uses `docker compose run --rm --no-build ...`, so it can only use the
+  image that was just built. No `:latest` semantics and no claim of
+  immutable artifact promotion: this is local-source mode, and the
+  recorded provenance is the git `rev-parse HEAD` of the working tree.
+  **[CORRECTED by the 2026-09-04 Fix Round 2 entry below — the
+  `--no-build` half of this sentence was WRONG and must not be read as
+  valid behavior. `docker compose run` has no such flag; the real CLI
+  rejects it with "unknown flag: --no-build", so the migration as shipped
+  in Fix Round 1 could not have run at all. The build-before-migrate
+  ordering and the fail-closed build described above are correct and
+  remain in force; the guarantee comes from that explicit build step, not
+  from any flag on `run`. Left in place rather than rewritten because
+  this log is append-only evidence of what was decided at the time.]**
+- **P1-B — a fresh installation could complete without a usable
+  Administrator.** Bootstrap failure was previously non-fatal. It is now
+  mandatory whenever the installation has never completed: blank or
+  cancelled operator input, or any non-zero exit from
+  `app.scripts.bootstrap_admin`, is a hard install failure, and success
+  metadata is NOT written. The backend remains the source of truth for
+  whether an administrator exists -- the installer runs the existing
+  backend CLI and classifies its refusal message ("an administrator
+  already exists" is a satisfied precondition, not a failure); admin
+  existence is never inferred from local installer metadata alone. The
+  CLI's one-time generated password is printed to the console only and
+  never passed to `Write-InstallLog`, and no password ever appears on a
+  process command line.
+- **P1-C — update ignored a failed stop before migrating.** The stop
+  step's exit code is now checked, AND the backend is separately
+  verified to be not running via `Get-MepServiceStates` before the
+  migration runs -- an exit code alone is not accepted as proof. A
+  failed stop aborts the update before any schema change. Ordering was
+  also corrected so a failed build never leaves the previously working
+  application stopped: build first, stop second.
+- **P1-D — the installation lock was non-atomic.** The previous
+  `Test-Path`-then-`Set-Content` lock file was a TOCTOU race and left
+  stale locks behind after a crash. Replaced with a single named mutex
+  (`Enter-MepMutationLock`/`Exit-MepMutationLock`) in one shared
+  namespace covering install, update, uninstall, start, and stop;
+  release is exception-safe via `finally`, and the OS releases the mutex
+  automatically if the process dies. Contention fails immediately with a
+  clear operator message rather than waiting silently. `status.ps1`
+  remains read-only: it probes the lock to report BUSY but never holds
+  it.
+- **P2 — state detection hid stopped containers.** `docker compose ps`
+  was replaced by `docker compose ps --all` everywhere (plain `ps` omits
+  exited containers, so a fully stopped installation looked like it had
+  no containers at all). State classification now validates the expected
+  service set (postgres/redis/backend/frontend) and returns
+  FRESH/EXISTING_HEALTHY/EXISTING_STOPPED/PARTIAL/AMBIGUOUS; metadata
+  alone never implies healthy.
+- **Structural change that made the above testable:** all native command
+  execution was centralized behind a single seam, `Invoke-MepCommand`
+  (executable plus an argument array; never `Invoke-Expression`), and
+  the orchestration was extracted from the entry scripts into
+  `deployment/local-staging/lib/Operations.ps1`. The entry scripts are
+  now thin lock-holding wrappers. `$LASTEXITCODE` is handled in exactly
+  one place instead of being duplicated inconsistently per script.
+- **Same-class sweep (beyond the five reported findings):** one
+  additional defect of the P1-C class was found and fixed --
+  `-RemoveData` uninstall deleted `.env` and the install metadata with
+  `-ErrorAction SilentlyContinue` and then reported "Data removed" even
+  if the files survived, which would tell an operator their generated
+  secrets were gone while they were still on disk. Removal is now
+  verified and fails closed. Also swept and found clean: every
+  `-AllowNonZeroExit` call site inspects its exit code (the single
+  warning-only path, Redis, is deliberate and contract-backed); no
+  `2>$null` suppression; no `| Out-Null` discarding a native command
+  result; success metadata is written last in both install and update;
+  every mutating entry script acquires the lock and releases it in
+  `finally`.
+- **Test evidence, explicitly classified.** POWERSHELL UNIT/MOCK: 26
+  behavior tests in
+  `deployment/local-staging/tests/Invoke-InstallerTests.ps1` dot-source
+  the REAL `Common.ps1`/`Operations.ps1` and mock only the
+  `Invoke-MepCommand` seam, so they exercise the shipped orchestration
+  rather than duplicated pseudo-code; they were proved non-vacuous by
+  mutation testing (deleting the build-before-migrate step, the stop
+  exit-code check, and the uninstall removal verification each produced
+  the expected failures, and each file was then restored byte-identical).
+  These tests execute NO Docker command and are NOT an end-to-end
+  installation. STATIC VERIFIED: 37 assertions in
+  `backend/tests/test_pr24d_l2_installer_scripts.py`, plus all 8 `.ps1`
+  files parsed with the real PowerShell 7.4.6 language parser. CI
+  VERIFIED: the "PowerShell script validation" job now both parses every
+  script and runs the behavior tests. DOCKER EXECUTED / WINDOWS
+  EXECUTED: **not performed** -- this sandbox has no Docker daemon and
+  is not Windows, so a real build, install, update, LAN check, and the
+  mutex's behavior under real Windows contention remain unverified on
+  target hardware. Cross-process mutual exclusion WAS verified
+  empirically, but on Linux `pwsh` in this sandbox only.
+- **Preserved unchanged, not reopened:** every PR24D-L1 invariant (fixed
+  backend `container_name`, one Uvicorn worker, PostgreSQL-blocking and
+  Redis-non-blocking readiness, `COOKIE_SECURE` decoupling, no
+  PostgreSQL/Redis LAN exposure, no committed secrets) and every L2
+  security property (no default administrator credentials, no secret
+  logging, no password in argv, no `Invoke-Expression`, no automatic
+  firewall weakening, no `down -v` in the default uninstall path, no
+  `git pull`, no `:latest`).
+- **Status:** Draft, not merged. PR24D-L3 NOT started; PR24E NOT
+  started; Setup.exe NOT implemented; no cloud resources provisioned.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** GitHub PR #136's own Fix Round 1 review text, and this
+  repository's `backend/app/scripts/bootstrap_admin.py`,
+  `backend/scripts/deploy_migrate.py`, and `backend/app/core/redis.py`
+  as the evidentiary basis for the bootstrap, migration, and
+  Redis-non-blocking decisions above.
+
+## 2026-09-04 — GitHub PR #136 Fix Round 2 (independent review, REQUEST CHANGES): three P1 state-transition/CLI defects -- fixed, not merged
+
+- **Context:** PR #136 received a second independent review at exact head
+  `af2999e4bab135333967f827ff824fca1500d021` returning REQUEST CHANGES
+  with three P1 blockers. Their common axis, as the reviewer put it: a
+  state transition must prove its precondition every time. The legitimate
+  chain is FRESH -> install -> Administrator satisfied -> COMPLETED ->
+  update. The path PARTIAL -> update -> COMPLETED must not exist, and
+  installer state discovery must never depend on a resource the installer
+  itself has not created yet.
+- **P1-A — `docker compose run --no-build` is not a real flag.** Fix
+  Round 1 introduced it believing it pinned the just-built image. It does
+  not exist: the actual CLI answers `unknown flag: --no-build`, which was
+  reproduced here against Docker Compose v5.1.1. The migration as shipped
+  in Fix Round 1 therefore could not have run on any machine. Removed.
+  `--build` was deliberately NOT substituted -- it would add a second
+  implicit build during migration and weaken the explicit build-once
+  sequence. The correct statement of the guarantee, now used everywhere:
+  the installer explicitly builds backend/frontend before migration, and
+  `docker compose run` does not request a build, so it uses the service
+  image that explicit build produced. This is local-source mode and is
+  not immutable artifact identity.
+- **P1-B — fresh installation was structurally impossible.** State
+  inspection ran `docker compose ps`, and every Compose subcommand first
+  interpolates compose.yml. On a fresh checkout that fails two distinct
+  ways -- `couldn't find env file: .../.env` with `--env-file`, and
+  `required variable POSTGRES_DB is missing a value` without it -- both
+  reproduced against the real CLI. The failure classified the machine
+  AMBIGUOUS, so install aborted before it could generate the `.env` that
+  would have made Compose work: a genuine deadlock on any first install.
+  Fixed by inspecting container state through `docker ps --all --filter
+  label=com.docker.compose.project=mep-local-staging --format json`,
+  which reads no compose file and needs no env file, while the project
+  label keeps the query scoped to this installation and unable to see
+  unrelated containers. Deliberately NOT "fixed" by writing placeholder
+  secrets so interpolation would succeed. Conflicting signals are still
+  refused: no `.env` but project containers present remains AMBIGUOUS.
+- **P1-C — update could launder an incomplete installation.** update.ps1
+  accepted PARTIAL state and then wrote completion metadata, so an
+  install whose Administrator bootstrap had failed could be marked
+  completed by running update -- defeating the Fix Round 1 P1-B
+  invariant entirely. update is an UPDATE mechanism, not an installation
+  recovery mechanism. It now captures the completion precondition BEFORE
+  any mutation (`Test-MepInstallCompleted`) and additionally accepts only
+  EXISTING_HEALTHY or EXISTING_STOPPED; PARTIAL, AMBIGUOUS and FRESH all
+  fail closed with an operator message naming `install.ps1` as the
+  recovery path. As a structural backstop, update's metadata write passes
+  `-RequireExistingCompletion`, making the writer itself incapable of
+  performing the absent/false -> true transition; that transition belongs
+  exclusively to a successful install that satisfied the Administrator
+  invariant. The backend remains the source of truth for whether an
+  administrator exists -- no local "admin exists" metadata was added, and
+  no Administrator query was duplicated in PowerShell.
+- **Recovery path, now documented explicitly:** a first install that
+  failed after containers started but before the Administrator was
+  created is recovered by running `install.ps1` again, which preserves
+  `.env`, its secrets, and the PostgreSQL data, converges the deployment,
+  retries the bootstrap, and only then records completion.
+- **Test-quality correction (§19).** The Fix Round 1 suite encoded the
+  invalid behavior: one test asserted `--no-build` *must* be present. It
+  was deleted rather than preserved for being green -- tests are
+  subordinate to actual Docker Compose behavior. Its replacement asserts
+  that neither `--no-build` nor `--build` appears.
+- **Mock fidelity (§20).** The mock seam previously returned success for
+  any command, which is precisely how both defects survived a round of
+  review. It now reproduces the real CLI's preconditions: `--no-build` is
+  rejected as an unknown flag, and any `docker compose` call made while
+  `.env` is absent fails with the interpolation/env-file errors observed
+  from the real CLI. `.env` existence is dynamic, since a real install
+  creates it partway through. Under these rules the fresh-install tests
+  pass only because state inspection genuinely avoids Compose.
+- **New CLI-level evidence (§3/§21).** `deployment/local-staging/tests/
+  check-compose-cli-contract.sh` asks the real Docker CLI whether the
+  installer's migration flags exist, and runs in CI. It is DAEMON-FREE --
+  flag parsing and `--help` only, starting no container and building no
+  image -- so it is not evidence of a real migration or installation. It
+  was proved non-vacuous: reintroducing `--no-build` makes it fail.
+  Recorded CLI: Docker Compose v5.1.1 locally; CI records its own
+  `docker compose version`. No implementation detail is bound to a
+  specific Compose version; the target is generally supported v2 CLI
+  semantics.
+- **Evidence, explicitly classified.** POWERSHELL UNIT/MOCK: 33 behavior
+  tests pass, and all three fixes were mutation-proved (restoring
+  `--no-build` -> 9 failures; reverting state inspection to
+  `docker compose ps` -> 13 failures; removing the update completion
+  precondition -> 1 failure; every file restored byte-identical). Note
+  the third mutation initially killed nothing, because state
+  classification alone already caught it -- a test that pinned the
+  precondition independently was added rather than accepting the weaker
+  signal. STATIC: 41 assertions in
+  `backend/tests/test_pr24d_l2_installer_scripts.py`; all 10 `.ps1` files
+  parse under the real PowerShell 7.4.6 parser. CLI VERIFIED
+  (daemon-free): the Compose contract check above. DOCKER EXECUTED /
+  WINDOWS EXECUTED: **still not performed** -- no daemon in this sandbox,
+  and it is not Windows.
+- **Preserved unchanged:** every Fix Round 1 fix (named mutex across the
+  five mutating scripts with exception-safe release; stop exit-code check
+  plus verified-stopped backend; mandatory Administrator bootstrap;
+  build-before-migrate with fail-closed build; success metadata written
+  last; full stopped-state visibility) and every PR24D-L1 invariant
+  (Redis non-blocking, PostgreSQL blocking, fixed backend
+  `container_name`, one Uvicorn worker, no LAN exposure of
+  PostgreSQL/Redis, `COOKIE_SECURE` decoupling).
+- **Status:** Draft, not merged. PR24D-L3 NOT started; PR24E NOT started;
+  Setup.exe NOT implemented; no cloud resources provisioned.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** GitHub PR #136's own Fix Round 2 review text, and the
+  Docker Compose v5.1.1 CLI in this sandbox as the evidentiary basis for
+  every claim about `docker compose run` and `docker compose ps` above.
+
+## 2026-09-04 — GitHub PR #136 Fix Round 3 (independent review, REQUEST CHANGES): installer state model contradicted the Redis non-blocking contract -- fixed, not merged
+
+- **Context:** the three Fix Round 2 P1 findings were confirmed resolved at
+  head `e763919605cae92aad81ffa6683d8812f1d856c7`. One new P1 remained:
+  the installation state model still treated Redis as a required member
+  of the complete service set, contradicting the binding architecture
+  contract in which Redis is non-blocking/degraded.
+- **The defect:** `Get-InstallationState` compared the count of found
+  services against the count of a single undifferentiated
+  `ExpectedServices = @(postgres, redis, backend, frontend)` set. So a
+  deployment with completed metadata, PostgreSQL/backend/frontend healthy,
+  `/api/v1/ready` passing, and only Redis missing returned **PARTIAL** --
+  which then blocked install convergence and made `update.ps1` refuse the
+  deployment outright. A legitimate, contractually tolerated Redis outage
+  could lock an operator out of updating. A second instance of the same
+  confusion: "any service running" also counted Redis, so a leftover Redis
+  container turned an intentionally stopped application into PARTIAL
+  instead of EXISTING_STOPPED.
+- **Root cause, stated precisely:** "expected to exist normally" is not
+  the same as "required for operational health". One set was being used
+  for both questions.
+- **Fix -- explicit service model.** `RequiredServices =
+  @(postgres, backend, frontend)`; `OptionalServices = @(redis)`;
+  `KnownServices = RequiredServices + OptionalServices`. Each use site is
+  now classified by intent rather than sharing one list:
+  - **Discovery/safety scope** (FRESH vs AMBIGUOUS) uses `KnownServices`.
+    An orphan Redis container still proves a machine is not clean, so
+    `.env` absent + only a Redis container remains AMBIGUOUS.
+  - **Operational completeness** uses explicit `RequiredServices`
+    membership. The magic count comparison is gone.
+  - **"Any running"** (stopped-state recognition) uses `RequiredServices`
+    only, so an optional service can never dominate the primary
+    application state.
+  - **Destructive operations** are unchanged -- `docker compose down`
+    targets every project service by definition.
+  - **Status display** shows all four, with Redis rendered through a
+    separate optional-service formatter.
+- **No new lifecycle state was invented.** `EXISTING_DEGRADED` was
+  deliberately NOT added, since no architecture authority defines it.
+  Redis degradation is surfaced through existing status reporting
+  instead: `status.ps1` now prints `Redis: Degraded (not created)` /
+  `Degraded (stopped)` / `Degraded (unhealthy)` plus an explicit
+  `(non-blocking)` marker. Non-blocking must not mean invisible -- Redis
+  is operationally useful, just not a precondition for health.
+- **Deliberately unchanged:** `/api/v1/ready` semantics; `Start-MepRedis`
+  remains best-effort with a warning and no retry loop; Redis was NOT
+  added back to `depends_on`; backend/frontend Compose startup still does
+  not depend on Redis; and the readiness/health rules were not redesigned
+  (this round corrects service-presence classification only). The
+  completion/Administrator invariant is untouched and still outranks
+  Redis: `.env` present with `InstallCompleted` absent/false remains
+  PARTIAL no matter how healthy Redis is.
+- **Evidence, explicitly classified.** POWERSHELL UNIT/MOCK: 46 behavior
+  tests pass, including the full A-J state matrix the review specified
+  (Redis running/absent/stopped/unhealthy all -> EXISTING_HEALTHY;
+  backend or postgres absent -> PARTIAL; required-all-stopped with Redis
+  absent *or* still running -> EXISTING_STOPPED; orphan Redis without
+  `.env` -> AMBIGUOUS; incomplete metadata -> PARTIAL), plus an
+  update-with-Redis-absent regression and an invariant test asserting
+  `KnownServices == RequiredServices + OptionalServices` so a future edit
+  cannot silently drop a service. Mutation-proved: restoring the
+  full-set count check reproduced the reported defect (3 failures,
+  including the reviewer's exact scenario); counting Redis in "any
+  running" broke stopped-state recognition (1 failure); dropping Redis
+  from discovery scope broke orphan detection (1 failure); the file was
+  restored byte-identical. STATIC: 43 assertions. DOCKER EXECUTED /
+  WINDOWS EXECUTED: **still not performed.**
+- **Preserved unchanged:** every Fix Round 1 and Fix Round 2 fix
+  (explicit build before migration; no `--no-build`/`--build` on
+  migration; env-free label-scoped state inspection; update requires a
+  completed install and cannot create completion; mandatory fail-closed
+  Administrator bootstrap; atomic named mutex across all five mutating
+  scripts; stop exit-code plus verified-stopped backend; success metadata
+  written last) and every PR24D-L1 invariant (PostgreSQL blocking, Redis
+  non-blocking, fixed backend `container_name`, one Uvicorn worker, no
+  PostgreSQL/Redis LAN exposure, `COOKIE_SECURE` decoupling).
+- **Status:** Draft, not merged. PR24D-L3 NOT started; PR24E NOT started;
+  no cloud resources provisioned.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** GitHub PR #136's own Fix Round 3 review text, and this
+  repository's `backend/app/core/redis.py` and `/api/v1/ready`
+  implementation as the evidentiary basis for treating Redis as
+  non-blocking.
+
+## 2026-09-04 — GitHub PR #136 Fix Round 4 (independent review, REQUEST CHANGES): update accepted EXISTING_STOPPED but migrated against a stopped database -- fixed, not merged
+
+- **Context:** the Fix Round 3 Redis required/optional separation was
+  confirmed correct at head
+  `ae0c604fc2545613852d82c96b30a7e78c4109fe`. One new P1 remained.
+- **The defect:** `Invoke-MepUpdate` accepts `EXISTING_STOPPED`, but the
+  update sequence assumed PostgreSQL was already running. The path was
+  build -> `Stop-MepApplication` -> `Invoke-MepMigration`, and the
+  migration container runs with `--no-deps` (deliberately, because it must
+  run before the application starts), so Compose does not start the
+  database for it. Updating a deployment that was stopped therefore ran a
+  migration against a stopped PostgreSQL and could not connect. The
+  advertised stopped-update path was non-functional on a real deployment.
+  A second, related wrongness: the same path issued
+  `docker compose stop backend frontend` against an already-stopped
+  application, so a "failed to stop" error could be raised against a
+  deployment that was intentionally down.
+- **What was NOT done, deliberately:** the fix is emphatically *not* to
+  restrict update to `EXISTING_HEALTHY`. `EXISTING_STOPPED` is a correct
+  state in the operational model; the bug was that orchestration forgot to
+  restore the PostgreSQL prerequisite before migrating. State
+  classification was not touched at all -- orchestration was fixed, not
+  the state model.
+- **Fix:**
+  - The initial state is captured **once**, before any mutation, and every
+    branching decision uses that snapshot. Re-reading state after the
+    build/stop would risk branching on a state this function had itself
+    just changed.
+  - `EXISTING_HEALTHY` -> build -> stop backend/frontend and verify they
+    are actually stopped -> converge PostgreSQL to healthy -> migrate ->
+    start -> ready -> metadata.
+  - `EXISTING_STOPPED` -> build -> **no stop is issued** (logged plainly
+    as "already stopped") -> **start PostgreSQL and wait for healthy** ->
+    migrate -> start -> ready -> metadata.
+  - Both paths call the SAME existing `Start-MepPostgres`
+    (`up -d --wait ... postgres`) rather than duplicating database-start
+    logic. One call is correct for both entry states: it converges and
+    verifies health when PostgreSQL is already running, and starts it when
+    it is not.
+  - PostgreSQL is never stopped by an update -- `Stop-MepApplication`
+    still targets only backend/frontend, so no unnecessary database
+    restart occurs during a healthy update.
+- **Post-update running-state contract, chosen and documented:** a
+  successful update always ends with the application RUNNING and READY,
+  whichever state it started from. Updating a stopped deployment therefore
+  leaves it started. This was chosen because `update.ps1` already ended
+  with start + readiness, and inventing a preserve-original-stopped-state
+  feature here would broaden scope; it is stated explicitly in
+  `update.ps1` so it is not surprising, and remains available as a
+  separate Owner-requested change.
+- **Redis:** untouched and still non-blocking. It is not required before
+  migration, and its absence or degradation does not affect either update
+  path (covered by regression tests for both).
+- **Evidence, explicitly classified.** POWERSHELL UNIT/MOCK: 57 behavior
+  tests pass, including the full Fix Round 4 matrix -- healthy-path
+  ordering (build -> stop -> verify -> PostgreSQL -> migrate -> start ->
+  metadata), stopped-path ordering (build -> no stop -> PostgreSQL ->
+  migrate -> start -> metadata), PostgreSQL-start failure on the stopped
+  path and PostgreSQL-health failure on the healthy path both blocking
+  migration and metadata, stop-failure regression, and Redis-degraded
+  regressions for both paths. Ordering is asserted on the recorded
+  orchestration calls, not on source order. Mutation-proved: removing
+  `Start-MepPostgres` from update reproduced the reported defect (6
+  failures); moving it after the migration (6 failures); always issuing
+  the stop (1 failure). The file was restored byte-identical.
+  - The mock harness was also corrected: it previously returned a static
+    container list, so it kept reporting the backend as running after a
+    successful `stop` and the healthy path could not be exercised at all.
+    Container state now reflects the stop/up commands already issued, and
+    a stop that reports success while the service stays up is simulated
+    explicitly rather than by accident -- that is the case the stop
+    verification exists for.
+  - STATIC: 46 assertions, including a structural backstop that every
+    migration call site in both install and update is preceded by the
+    PostgreSQL health gate, so no new migration path can be added without
+    it. DOCKER EXECUTED / WINDOWS EXECUTED: **still not performed** -- no
+    daemon in this sandbox and it is not Windows, so no real
+    stopped-deployment update was run.
+- **Preserved unchanged:** update eligibility (only completed
+  installations, only EXISTING_HEALTHY/EXISTING_STOPPED; PARTIAL, FRESH
+  and AMBIGUOUS still fail closed), the completion/Administrator
+  invariant and `-RequireExistingCompletion`, metadata written last, the
+  stop exit-code check plus verified-stopped backend, explicit build
+  before migration, absence of `--no-build`/`--build`, env-free
+  label-scoped state discovery, the Redis required/optional separation,
+  the named mutex across all five mutating scripts, fixed backend
+  `container_name`, one Uvicorn worker, no PostgreSQL/Redis LAN exposure,
+  and the `COOKIE_SECURE` contract.
+- **Status:** Draft, not merged. PR24D-L3 NOT started; PR24E NOT started;
+  no cloud resources provisioned.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** GitHub PR #136's own Fix Round 4 review text, and this
+  repository's `lib/Operations.ps1` migration invocation (`--no-deps`) as
+  the evidentiary basis for treating database availability as an explicit
+  precondition.
