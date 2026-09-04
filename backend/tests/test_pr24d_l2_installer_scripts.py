@@ -228,14 +228,68 @@ def test_every_compose_ps_invocation_passes_all():
             )
 
 
-def test_state_classification_validates_the_expected_service_set():
+def test_state_classification_separates_required_from_optional_services():
+    """Fix Round 3, P1. "Expected to exist normally" is not the same as
+    "required for operational health". Redis is non-blocking by the
+    backend's own contract, so it must not be able to demote a healthy
+    deployment to PARTIAL — while still counting for fresh/orphan
+    discovery."""
     common_code = _strip_comments_and_docstrings(_lib("Common.ps1"))
-    assert "$Script:ExpectedServices" in common_code
-    for service in ("postgres", "redis", "backend", "frontend"):
-        assert f"'{service}'" in common_code, f"the expected-service set must include {service}"
+    assert "$Script:RequiredServices" in common_code
+    assert "$Script:OptionalServices" in common_code
+    assert "$Script:KnownServices" in common_code
+    assert "$Script:ExpectedServices" not in common_code, (
+        "the undifferentiated expected-service set must not survive; it conflated "
+        "presence with requiredness"
+    )
+
+    required = re.search(r"\$Script:RequiredServices\s*=\s*@\(([^)]*)\)", common_code)
+    optional = re.search(r"\$Script:OptionalServices\s*=\s*@\(([^)]*)\)", common_code)
+    assert required and optional
+    assert "redis" not in required.group(1), "redis must never be a required service"
+    assert "redis" in optional.group(1), "redis must be declared optional"
+    for service in ("postgres", "backend", "frontend"):
+        assert service in required.group(1), f"{service} must be required"
+
     assert "function Get-InstallationState" in common_code
     for state in ("FRESH", "EXISTING_HEALTHY", "EXISTING_STOPPED", "PARTIAL", "AMBIGUOUS"):
         assert state in common_code, f"state classification must be able to return {state}"
+    assert "EXISTING_DEGRADED" not in common_code, (
+        "no new lifecycle state may be invented for Redis degradation"
+    )
+
+
+def test_operational_completeness_is_required_membership_not_a_magic_count():
+    """The defect was a count comparison against the full service set,
+    which encoded policy as a magic number."""
+    body = _ps_function_body(
+        _strip_comments_and_docstrings(_lib("Common.ps1")), "Get-InstallationState"
+    )
+    assert "$Script:RequiredServices | Where-Object { -not $states.ContainsKey($_) }" in body, (
+        "completeness must be explicit required-service membership"
+    )
+    assert "-lt $Script:KnownServices.Count" not in body, "no magic complete-set count check"
+    # Discovery scope still spans every known service, so an orphan Redis
+    # keeps a machine from looking FRESH.
+    assert "$known = @($Script:KnownServices" in body, (
+        "fresh/orphan discovery must still consider every known service, Redis included"
+    )
+    # "Any running" is judged against required services only, so a leftover
+    # Redis cannot mask an intentionally stopped application.
+    assert "$anyRequiredRunning" in body
+    assert "$Script:RequiredServices | Where-Object { Test-MepServiceRunning" in body
+
+
+def test_redis_status_is_reported_as_degraded_but_never_gates_state():
+    """Non-blocking must not mean invisible."""
+    status_code = _strip_comments_and_docstrings(_read("status.ps1"))
+    assert "Format-OptionalServiceHealth" in status_code, (
+        "Redis must be rendered through the optional-service formatter"
+    )
+    assert "Degraded" in status_code, "Redis degradation must remain visible to the operator"
+    assert "non-blocking" in _read("status.ps1"), (
+        "status should say plainly that Redis is non-blocking"
+    )
 
 
 def test_completed_install_metadata_is_a_distinct_signal():

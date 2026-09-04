@@ -66,6 +66,23 @@ function Format-ServiceHealth {
     return $OtherWord
 }
 
+function Format-OptionalServiceHealth {
+    <#
+    .SYNOPSIS
+    Reports an optional (non-blocking) service. Fix Round 3: Redis no
+    longer affects the deployment's state, but its failure must still be
+    VISIBLE -- non-blocking is not the same as unimportant. Absent,
+    stopped, and unhealthy all read as "Degraded" here, because from an
+    operator's point of view all three mean the cache is not serving.
+    #>
+    param($Entry)
+    if (-not $Entry) { return 'Degraded (not created)' }
+    if ($Entry.State -ne 'running') { return 'Degraded (stopped)' }
+    if (-not $Entry.PSObject.Properties.Name.Contains('Health') -or -not $Entry.Health -or $Entry.Health -eq '') { return 'Running' }
+    if ($Entry.Health -eq 'healthy') { return 'Healthy' }
+    return 'Degraded (unhealthy)'
+}
+
 $services = Get-MepServiceStates
 if ($null -eq $services) {
     Write-Host 'Could not inspect container state (docker compose ps failed).' -ForegroundColor Red
@@ -78,7 +95,10 @@ $backend = if ($services.ContainsKey('backend')) { $services['backend'] } else {
 $frontend = if ($services.ContainsKey('frontend')) { $services['frontend'] } else { $null }
 
 Write-Host "PostgreSQL:  $(Format-ServiceHealth $pg)"
-Write-Host "Redis:       $(Format-ServiceHealth $redis)"
+# Redis is non-blocking by contract, so it never changes the deployment
+# State line below -- but its failure is still shown plainly here rather
+# than hidden behind "non-blocking".
+Write-Host "Redis:       $(Format-OptionalServiceHealth $redis) (non-blocking)"
 Write-Host "Backend:     $(if ($backend -and $backend.State -eq 'running') { 'Running' } elseif ($backend) { 'Stopped' } else { 'Not created' })"
 Write-Host "Frontend:    $(if ($frontend -and $frontend.State -eq 'running') { 'Running' } elseif ($frontend) { 'Stopped' } else { 'Not created' })"
 Write-Host "State:       $(Get-InstallationState)"

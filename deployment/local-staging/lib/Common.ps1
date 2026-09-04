@@ -30,10 +30,31 @@ $Script:MetadataFilePath = Join-Path $Script:DeploymentRoot '.install-metadata.j
 # always operate on the same deployment regardless of invocation directory.
 $Script:ComposeProjectName = 'mep-local-staging'
 
-# The complete set of services this deployment expects to exist. State
-# classification validates against this set rather than inferring health
-# from any single service (Fix Round 1, P2).
-$Script:ExpectedServices = @('postgres', 'redis', 'backend', 'frontend')
+# Service model (Fix Round 3, P1). "Expected to exist normally" is NOT the
+# same as "required for operational health", and conflating the two made
+# the classifier contradict the application's own architecture contract:
+# a deployment whose Redis had failed was reported PARTIAL, which then
+# blocked install convergence and update eligibility.
+#
+#   PostgreSQL  BLOCKING / REQUIRED   -- readiness fails without it
+#   Backend     REQUIRED
+#   Frontend    REQUIRED              -- this local deployment serves via it
+#   Redis       NON-BLOCKING / DEGRADED
+#
+# Redis is non-blocking by the backend's own design: every path in
+# backend/app/core/redis.py fails open (cache misses no-op;
+# is_refresh_token_valid returns true on a Redis error), and
+# GET /api/v1/ready reports Redis as "degraded" without ever failing on
+# it. Redis is still operationally useful -- it is not irrelevant, just
+# not a precondition for the deployment being considered healthy.
+$Script:RequiredServices = @('postgres', 'backend', 'frontend')
+$Script:OptionalServices = @('redis')
+
+# Every service Compose creates for this project. Used for DISCOVERY and
+# SAFETY scope -- deciding whether a machine is genuinely untouched -- not
+# for operational health. An orphan Redis container still proves a machine
+# is not clean, even though Redis never gates health.
+$Script:KnownServices = @($Script:RequiredServices + $Script:OptionalServices)
 
 # Single mutation-lock namespace shared by every state-changing script
 # (install/update/start/stop/uninstall). status.ps1 is read-only and does
@@ -681,7 +702,9 @@ function Get-InstallationState {
         return 'AMBIGUOUS'
     }
 
-    $known = @($Script:ExpectedServices | Where-Object { $states.ContainsKey($_) })
+    # DISCOVERY scope: every known service counts here, Redis included. An
+    # orphan Redis container still proves this machine is not clean.
+    $known = @($Script:KnownServices | Where-Object { $states.ContainsKey($_) })
 
     if (-not $envExists) {
         if ($known.Count -eq 0) { return 'FRESH' }
@@ -699,24 +722,38 @@ function Get-InstallationState {
 
     $backendRunning = Test-MepServiceRunning -ServiceStates $states -Service 'backend'
     $frontendRunning = Test-MepServiceRunning -ServiceStates $states -Service 'frontend'
-    $anyRunning = @($Script:ExpectedServices | Where-Object { Test-MepServiceRunning -ServiceStates $states -Service $_ }).Count -gt 0
+    # OPERATIONAL scope: "any running" is judged against REQUIRED services
+    # only, so a leftover Redis container cannot stop an intentionally
+    # stopped application from being recognised as EXISTING_STOPPED. An
+    # optional service must never dominate the primary application state.
+    $anyRequiredRunning = @(
+        $Script:RequiredServices | Where-Object { Test-MepServiceRunning -ServiceStates $states -Service $_ }
+    ).Count -gt 0
 
     if (-not (Test-MepInstallCompleted)) {
         # The installer never recorded a completed installation (e.g. it
         # failed at migration or Administrator bootstrap) -- converge it,
-        # never treat it as healthy.
+        # never treat it as healthy. Redis status cannot weaken this: the
+        # Administrator/completion invariant outranks it.
         return 'PARTIAL'
     }
 
-    if ($known.Count -lt $Script:ExpectedServices.Count) {
+    # Completeness is REQUIRED-service membership, not a count of the full
+    # service set. The previous count comparison encoded policy as a magic
+    # number and made a failed Redis look like an incomplete installation.
+    $missingRequired = @($Script:RequiredServices | Where-Object { -not $states.ContainsKey($_) })
+    if ($missingRequired.Count -gt 0) {
         return 'PARTIAL'
     }
 
     if ($backendRunning -and $frontendRunning) {
+        # Redis presence, state, and health are deliberately absent from
+        # this condition. A degraded Redis is surfaced by status.ps1, not
+        # by demoting the deployment's state.
         return 'EXISTING_HEALTHY'
     }
 
-    if (-not $anyRunning) {
+    if (-not $anyRequiredRunning) {
         return 'EXISTING_STOPPED'
     }
 

@@ -541,6 +541,165 @@ Test-Case 'install: a failed redis start does not fail the installation' {
 }
 
 # ===========================================================================
+# Fix Round 3: Redis is NON-BLOCKING. It must never demote the deployment
+# state, while remaining part of fresh/orphan discovery.
+# ===========================================================================
+
+function New-ContainerJson {
+    <#
+    .SYNOPSIS
+    Builds one `docker ps --format json` line for a service, so the Redis
+    matrix below reads as a state table rather than a wall of JSON.
+    #>
+    param(
+        [Parameter(Mandatory)] [string]$Service,
+        [ValidateSet('running', 'exited')] [string]$State = 'running',
+        [ValidateSet('healthy', 'unhealthy', 'none')] [string]$Health = 'healthy'
+    )
+    $status = if ($State -ne 'running') { 'Exited (0) 5 minutes ago' }
+    elseif ($Health -eq 'none') { 'Up 5 minutes' }
+    else { "Up 5 minutes ($Health)" }
+    return ('{"Labels":"com.docker.compose.project=mep-local-staging,' +
+        "com.docker.compose.service=$Service" + '","State":"' + $State +
+        '","Status":"' + $status + '","Ports":""}')
+}
+
+function Get-StateFor {
+    param([string[]]$Containers, [bool]$EnvFileExists = $true, [bool]$InstallCompleted = $true)
+    $ctx = New-MockContext -EnvFileExists $EnvFileExists -InstallCompleted $InstallCompleted -ExitCodeRules @(
+        @{ Match = 'ps --all --filter'; ExitCode = 0; Output = $Containers }
+    )
+    return Invoke-WithMocks -Context $ctx -Body { return Get-InstallationState }
+}
+
+$requiredRunning = @(
+    (New-ContainerJson -Service 'postgres'),
+    (New-ContainerJson -Service 'backend'),
+    (New-ContainerJson -Service 'frontend')
+)
+$requiredStopped = @(
+    (New-ContainerJson -Service 'postgres' -State 'exited'),
+    (New-ContainerJson -Service 'backend' -State 'exited'),
+    (New-ContainerJson -Service 'frontend' -State 'exited')
+)
+
+Test-Case 'A. completed + required running + Redis running -> EXISTING_HEALTHY' {
+    $state = Get-StateFor -Containers ($requiredRunning + @(New-ContainerJson -Service 'redis'))
+    Assert-Equal 'EXISTING_HEALTHY' $state 'the fully healthy case must be EXISTING_HEALTHY'
+}
+
+Test-Case 'B. completed + required running + Redis ABSENT -> EXISTING_HEALTHY' {
+    # The reported defect: Redis was counted as a required member of the
+    # complete service set, so its absence produced PARTIAL and blocked
+    # update eligibility after a legitimate Redis failure.
+    $state = Get-StateFor -Containers $requiredRunning
+    Assert-Equal 'EXISTING_HEALTHY' $state 'a missing Redis must not demote a healthy deployment to PARTIAL'
+}
+
+Test-Case 'C. completed + required running + Redis STOPPED -> EXISTING_HEALTHY' {
+    $state = Get-StateFor -Containers ($requiredRunning + @(New-ContainerJson -Service 'redis' -State 'exited'))
+    Assert-Equal 'EXISTING_HEALTHY' $state 'a stopped Redis is degraded, not a partial installation'
+}
+
+Test-Case 'D. completed + required running + Redis UNHEALTHY -> EXISTING_HEALTHY' {
+    $state = Get-StateFor -Containers ($requiredRunning + @(New-ContainerJson -Service 'redis' -Health 'unhealthy'))
+    Assert-Equal 'EXISTING_HEALTHY' $state 'an unhealthy Redis must not block update eligibility'
+}
+
+Test-Case 'E. completed + backend ABSENT -> PARTIAL' {
+    # Do not overcorrect: only Redis is optional.
+    $state = Get-StateFor -Containers @(
+        (New-ContainerJson -Service 'postgres'),
+        (New-ContainerJson -Service 'frontend'),
+        (New-ContainerJson -Service 'redis')
+    )
+    Assert-Equal 'PARTIAL' $state 'a missing backend is a genuinely incomplete deployment'
+}
+
+Test-Case 'F. completed + postgres ABSENT -> PARTIAL' {
+    $state = Get-StateFor -Containers @(
+        (New-ContainerJson -Service 'backend'),
+        (New-ContainerJson -Service 'frontend'),
+        (New-ContainerJson -Service 'redis')
+    )
+    Assert-Equal 'PARTIAL' $state 'PostgreSQL is blocking and required'
+}
+
+Test-Case 'G. completed + required all stopped + Redis absent -> EXISTING_STOPPED' {
+    $state = Get-StateFor -Containers $requiredStopped
+    Assert-Equal 'EXISTING_STOPPED' $state 'an intentionally stopped application is EXISTING_STOPPED'
+}
+
+Test-Case 'H. completed + required all stopped + Redis STILL RUNNING -> EXISTING_STOPPED' {
+    # An optional service must not dominate the primary application state:
+    # a leftover Redis container cannot turn a deliberately stopped
+    # application into PARTIAL.
+    $state = Get-StateFor -Containers ($requiredStopped + @(New-ContainerJson -Service 'redis'))
+    Assert-Equal 'EXISTING_STOPPED' $state 'a leftover Redis must not mask a stopped application'
+}
+
+Test-Case 'I. no .env + ONLY an orphan Redis container -> AMBIGUOUS' {
+    # Redis is optional for health but still counts for discovery: an
+    # orphan Redis proves this machine is not clean.
+    $state = Get-StateFor -Containers @(New-ContainerJson -Service 'redis') -EnvFileExists $false
+    Assert-Equal 'AMBIGUOUS' $state 'an orphan Redis without .env is a conflict, not FRESH'
+}
+
+Test-Case 'J. incomplete metadata + required running -> PARTIAL regardless of Redis' {
+    # The Administrator/completion invariant outranks Redis policy.
+    $state = Get-StateFor -Containers ($requiredRunning + @(New-ContainerJson -Service 'redis')) -InstallCompleted $false
+    Assert-Equal 'PARTIAL' $state 'Redis health must never weaken the completion invariant'
+}
+
+Test-Case 'service model: required + optional exactly partition the known set' {
+    $result = Invoke-WithMocks -Context (New-MockContext) -Body {
+        return [pscustomobject]@{
+            Required = @($Script:RequiredServices)
+            Optional = @($Script:OptionalServices)
+            Known    = @($Script:KnownServices)
+        }
+    }
+    Assert-True ($result.Optional -contains 'redis') 'redis must be classified optional'
+    foreach ($svc in @('postgres', 'backend', 'frontend')) {
+        Assert-True ($result.Required -contains $svc) "$svc must be classified required"
+        Assert-True (-not ($result.Optional -contains $svc)) "$svc must not be optional"
+    }
+    Assert-Equal (($result.Required + $result.Optional | Sort-Object) -join ',') `
+        (($result.Known | Sort-Object) -join ',') `
+        'KnownServices must be exactly RequiredServices + OptionalServices'
+}
+
+Test-Case 'update: a completed deployment with Redis absent passes the state gate' {
+    # The operational consequence of the fix: a legitimate Redis failure
+    # must not lock the operator out of updating.
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -ExitCodeRules @(
+        @{ Match = 'ps --all --filter'; ExitCode = 0; Output = @(
+                (New-ContainerJson -Service 'postgres' -State 'exited'),
+                (New-ContainerJson -Service 'backend' -State 'exited'),
+                (New-ContainerJson -Service 'frontend' -State 'exited')) }
+    )
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        Invoke-MepUpdate | Out-Null
+        return @($script:RecordedCalls | ForEach-Object { $_.Args })
+    }
+    Assert-True (@($result -match 'deploy_migrate\.py').Count -gt 0) 'update must proceed with Redis absent'
+}
+
+Test-Case 'update: incomplete install is still rejected even with Redis healthy' {
+    # Administrator invariant remains stronger than Redis status.
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $false -ExitCodeRules @(
+        @{ Match = 'ps --all --filter'; ExitCode = 0; Output = ($requiredRunning + @(New-ContainerJson -Service 'redis')) }
+    )
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $threw = $false
+        try { Invoke-MepUpdate | Out-Null } catch { $threw = $true }
+        return [pscustomobject]@{ Threw = $threw; Calls = @($script:RecordedCalls | ForEach-Object { $_.Args }) }
+    }
+    Assert-True $result.Threw 'a healthy Redis must not let an incomplete install be updated'
+    Assert-True (-not ($result.Calls -match 'deploy_migrate\.py')) 'no migration may run'
+}
+
+# ===========================================================================
 # Uninstall data preservation
 # ===========================================================================
 

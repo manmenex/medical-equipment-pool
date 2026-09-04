@@ -7635,3 +7635,87 @@ Operations Engine) started, not merged
 - **Source:** GitHub PR #136's own Fix Round 2 review text, and the
   Docker Compose v5.1.1 CLI in this sandbox as the evidentiary basis for
   every claim about `docker compose run` and `docker compose ps` above.
+
+## 2026-09-04 — GitHub PR #136 Fix Round 3 (independent review, REQUEST CHANGES): installer state model contradicted the Redis non-blocking contract -- fixed, not merged
+
+- **Context:** the three Fix Round 2 P1 findings were confirmed resolved at
+  head `e763919605cae92aad81ffa6683d8812f1d856c7`. One new P1 remained:
+  the installation state model still treated Redis as a required member
+  of the complete service set, contradicting the binding architecture
+  contract in which Redis is non-blocking/degraded.
+- **The defect:** `Get-InstallationState` compared the count of found
+  services against the count of a single undifferentiated
+  `ExpectedServices = @(postgres, redis, backend, frontend)` set. So a
+  deployment with completed metadata, PostgreSQL/backend/frontend healthy,
+  `/api/v1/ready` passing, and only Redis missing returned **PARTIAL** --
+  which then blocked install convergence and made `update.ps1` refuse the
+  deployment outright. A legitimate, contractually tolerated Redis outage
+  could lock an operator out of updating. A second instance of the same
+  confusion: "any service running" also counted Redis, so a leftover Redis
+  container turned an intentionally stopped application into PARTIAL
+  instead of EXISTING_STOPPED.
+- **Root cause, stated precisely:** "expected to exist normally" is not
+  the same as "required for operational health". One set was being used
+  for both questions.
+- **Fix -- explicit service model.** `RequiredServices =
+  @(postgres, backend, frontend)`; `OptionalServices = @(redis)`;
+  `KnownServices = RequiredServices + OptionalServices`. Each use site is
+  now classified by intent rather than sharing one list:
+  - **Discovery/safety scope** (FRESH vs AMBIGUOUS) uses `KnownServices`.
+    An orphan Redis container still proves a machine is not clean, so
+    `.env` absent + only a Redis container remains AMBIGUOUS.
+  - **Operational completeness** uses explicit `RequiredServices`
+    membership. The magic count comparison is gone.
+  - **"Any running"** (stopped-state recognition) uses `RequiredServices`
+    only, so an optional service can never dominate the primary
+    application state.
+  - **Destructive operations** are unchanged -- `docker compose down`
+    targets every project service by definition.
+  - **Status display** shows all four, with Redis rendered through a
+    separate optional-service formatter.
+- **No new lifecycle state was invented.** `EXISTING_DEGRADED` was
+  deliberately NOT added, since no architecture authority defines it.
+  Redis degradation is surfaced through existing status reporting
+  instead: `status.ps1` now prints `Redis: Degraded (not created)` /
+  `Degraded (stopped)` / `Degraded (unhealthy)` plus an explicit
+  `(non-blocking)` marker. Non-blocking must not mean invisible -- Redis
+  is operationally useful, just not a precondition for health.
+- **Deliberately unchanged:** `/api/v1/ready` semantics; `Start-MepRedis`
+  remains best-effort with a warning and no retry loop; Redis was NOT
+  added back to `depends_on`; backend/frontend Compose startup still does
+  not depend on Redis; and the readiness/health rules were not redesigned
+  (this round corrects service-presence classification only). The
+  completion/Administrator invariant is untouched and still outranks
+  Redis: `.env` present with `InstallCompleted` absent/false remains
+  PARTIAL no matter how healthy Redis is.
+- **Evidence, explicitly classified.** POWERSHELL UNIT/MOCK: 46 behavior
+  tests pass, including the full A-J state matrix the review specified
+  (Redis running/absent/stopped/unhealthy all -> EXISTING_HEALTHY;
+  backend or postgres absent -> PARTIAL; required-all-stopped with Redis
+  absent *or* still running -> EXISTING_STOPPED; orphan Redis without
+  `.env` -> AMBIGUOUS; incomplete metadata -> PARTIAL), plus an
+  update-with-Redis-absent regression and an invariant test asserting
+  `KnownServices == RequiredServices + OptionalServices` so a future edit
+  cannot silently drop a service. Mutation-proved: restoring the
+  full-set count check reproduced the reported defect (3 failures,
+  including the reviewer's exact scenario); counting Redis in "any
+  running" broke stopped-state recognition (1 failure); dropping Redis
+  from discovery scope broke orphan detection (1 failure); the file was
+  restored byte-identical. STATIC: 43 assertions. DOCKER EXECUTED /
+  WINDOWS EXECUTED: **still not performed.**
+- **Preserved unchanged:** every Fix Round 1 and Fix Round 2 fix
+  (explicit build before migration; no `--no-build`/`--build` on
+  migration; env-free label-scoped state inspection; update requires a
+  completed install and cannot create completion; mandatory fail-closed
+  Administrator bootstrap; atomic named mutex across all five mutating
+  scripts; stop exit-code plus verified-stopped backend; success metadata
+  written last) and every PR24D-L1 invariant (PostgreSQL blocking, Redis
+  non-blocking, fixed backend `container_name`, one Uvicorn worker, no
+  PostgreSQL/Redis LAN exposure, `COOKIE_SECURE` decoupling).
+- **Status:** Draft, not merged. PR24D-L3 NOT started; PR24E NOT started;
+  no cloud resources provisioned.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** GitHub PR #136's own Fix Round 3 review text, and this
+  repository's `backend/app/core/redis.py` and `/api/v1/ready`
+  implementation as the evidentiary basis for treating Redis as
+  non-blocking.
