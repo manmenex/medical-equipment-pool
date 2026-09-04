@@ -55,6 +55,19 @@ function Get-MepLatestBackup {
     $null. Selection is by PR24C's own filename timestamp, not by
     filesystem mtime, so a copied/restored file cannot masquerade as
     newer than it is.
+
+    .DESCRIPTION
+    This answers exactly one question: "which existing backup is the
+    newest?" That is the right question for restore.ps1's default when the
+    operator did not name an archive.
+
+    It is emphatically NOT the way to answer "which archive did the backup
+    command I just ran create?" -- see Resolve-MepProducedBackup, which
+    binds that to PR24C's own reported path. Fix Round 2 (P1) removed the
+    one place that conflated the two: a pre-existing archive whose
+    timestamp sorted later (a future-dated file, a copy restored from
+    elsewhere) would otherwise have been verified and reported as though
+    the current invocation had produced it.
     #>
     $root = Get-MepBackupRoot
     $candidates = @(Get-ChildItem -LiteralPath $root -Filter 'mep-postgres-*.dump' -File -ErrorAction SilentlyContinue |
@@ -62,6 +75,84 @@ function Get-MepLatestBackup {
             Sort-Object -Property Name -Descending)
     if ($candidates.Count -eq 0) { return $null }
     return $candidates[0]
+}
+
+function Resolve-MepProducedBackup {
+    <#
+    .SYNOPSIS
+    Returns the host FileInfo for the archive that THIS backup invocation
+    produced, identified from PR24C's own success output. Throws if the
+    output does not establish exactly one artifact inside the mount.
+
+    .DESCRIPTION
+    Fix Round 2 (P1). `backup_postgres.py` prints the exact path it wrote:
+
+        [backup] OK: /mep-backups/mep-postgres-localstaging-<UTC>.dump
+
+    That line is the artifact's identity, and it is the only thing that
+    ties a verification result to the run that produced it. Re-scanning
+    the directory for the "latest" file after the command succeeds throws
+    that identity away and can silently substitute a pre-existing archive.
+
+    Everything here fails closed. No output line, more than one distinct
+    path, a path that is not directly inside the mount, a filename that is
+    not PR24C's own form, or a mapped host file that is not there -- each
+    is an error, never a fallback to whatever else is lying in the
+    directory.
+
+    .PARAMETER Output
+    The captured stdout lines of the successful backup command.
+
+    .PARAMETER BackupRoot
+    The host directory bind-mounted at $ContainerMountPath.
+
+    .PARAMETER ContainerMountPath
+    The in-container mount point, without a trailing slash.
+    #>
+    param(
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [AllowNull()] $Output,
+        [Parameter(Mandatory)] [string]$BackupRoot,
+        [string]$ContainerMountPath = '/mep-backups'
+    )
+
+    $reported = @()
+    foreach ($line in @($Output)) {
+        $match = [regex]::Match("$line", '^\s*\[backup\]\s+OK:\s+(\S.*?)\s*$')
+        if ($match.Success) { $reported += $match.Groups[1].Value }
+    }
+    $distinct = @($reported | Select-Object -Unique)
+
+    if ($distinct.Count -eq 0) {
+        throw (New-MepFailure "Backup command exited 0 but printed no '[backup] OK: <path>' line, so the archive it created cannot be identified. Refusing to guess by scanning the backup directory.`nACTION: Check the backup output above; treat this run as FAILED.")
+    }
+    if ($distinct.Count -gt 1) {
+        throw (New-MepFailure "Backup command reported more than one created archive ($($distinct -join ', ')). Exactly one is expected, so the artifact for this run is ambiguous.`nACTION: Treat this run as FAILED and investigate the backup output above.")
+    }
+
+    # Container-side path handling is deliberately literal rather than
+    # host path arithmetic: this string was produced by Linux inside the
+    # container, and the host running this script may be Windows.
+    $containerPath = $distinct[0]
+    $prefix = "$ContainerMountPath/"
+    if (-not $containerPath.StartsWith($prefix, [StringComparison]::Ordinal)) {
+        throw (New-MepFailure "Backup reported an archive at '$containerPath', which is outside the mounted backup directory ($ContainerMountPath). Refusing to map a path this wrapper did not mount.")
+    }
+    $leaf = $containerPath.Substring($prefix.Length)
+    if ($leaf -match '[\\/]' -or $leaf -in @('', '.', '..')) {
+        throw (New-MepFailure "Backup reported an archive at '$containerPath', which is not a single file directly inside $ContainerMountPath. Refusing to follow a nested or traversing path.")
+    }
+    # PR24C's own filename form (pg_backup_lib.backup_filename): the
+    # environment is reduced to lowercase letters and digits, followed by
+    # a UTC timestamp. Anything else did not come from that generator.
+    if ($leaf -notmatch '^mep-postgres-[a-z0-9]+-\d{8}T\d{6}Z\.dump$') {
+        throw (New-MepFailure "Backup reported an archive named '$leaf', which is not PR24C's backup filename form. Refusing to accept it as this run's artifact.")
+    }
+
+    $hostPath = Join-Path $BackupRoot $leaf
+    if (-not (Test-Path -LiteralPath $hostPath)) {
+        throw (New-MepFailure "Backup reported creating '$containerPath', but the corresponding host file $hostPath is not present. The bind mount may not have delivered it.`nACTION: Treat this run as FAILED; do not rely on any other archive in the directory.")
+    }
+    return (Get-Item -LiteralPath $hostPath)
 }
 
 function Test-MepPathIsDirectlyInside {
@@ -138,13 +229,16 @@ function Invoke-MepBackup {
         throw (New-MepFailure "Database backup FAILED (exit code $($result.ExitCode)). Nothing downstream of this step has run.`nACTION: Resolve the error above and retry. Do not proceed with an update until a backup succeeds.")
     }
 
+    # Fix Round 2 (P1): the artifact verified, reported and returned below
+    # is the one PR24C says IT created on this run -- never "whichever
+    # file in this directory sorts newest". Get-MepLatestBackup is
+    # deliberately not consulted here; a pre-existing archive must not be
+    # able to stand in for the backup this invocation was asked to make.
+    $archive = Resolve-MepProducedBackup -Output $result.Output -BackupRoot $backupRoot
+
     # PR24C writes the manifest only after a successful dump, so a missing
-    # archive or manifest here means the evidence is incomplete -- treated
-    # as a hard failure, never as "probably fine".
-    $archive = Get-MepLatestBackup
-    if ($null -eq $archive) {
-        throw (New-MepFailure "Backup reported success but no backup archive with a manifest was found in $backupRoot. Refusing to treat this as a successful backup.")
-    }
+    # manifest here means the evidence is incomplete -- treated as a hard
+    # failure, never as "probably fine".
     $manifestPath = "$($archive.FullName).manifest.json"
     if (-not (Test-Path -LiteralPath $manifestPath)) {
         throw (New-MepFailure "Backup archive $($archive.Name) has no manifest beside it. Refusing to treat this as a successful backup.")

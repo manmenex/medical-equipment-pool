@@ -84,7 +84,11 @@ function New-MockContext {
         [bool]$StopIsIneffective = $false,
         [bool]$BackupChecksumCorrupt = $false,
         [string]$BackupRootOverride = '',
-        [string]$ExternalDir = ''
+        [string]$ExternalDir = '',
+        [ValidateSet('normal', 'no-ok', 'duplicate', 'outside', 'nested', 'traversal')]
+        [string]$BackupOutputMode = 'normal',
+        [bool]$BackupHostFileMissing = $false,
+        [bool]$BackupManifestMissing = $false
     )
     return [pscustomobject]@{
         ExitCodeRules        = $ExitCodeRules
@@ -103,6 +107,11 @@ function New-MockContext {
         # test case, so `$using:` is invalid here -- the path travels on
         # the context object instead.
         ExternalDir           = $ExternalDir
+        # Fix Round 2: shapes of PR24C success output that must all fail
+        # closed rather than resolve to some other archive.
+        BackupOutputMode      = $BackupOutputMode
+        BackupHostFileMissing = $BackupHostFileMissing
+        BackupManifestMissing = $BackupManifestMissing
     }
 }
 
@@ -198,20 +207,55 @@ function Invoke-WithMocks {
             # PR24D-L3: emulate PR24C's backup script producing a real
             # archive + manifest on the bind mount, so the wrapper's own
             # verification runs against real bytes.
+            #
+            # Fix Round 2 fidelity, two corrections that matter:
+            #  * the filename is PR24C's ACTUAL form. pg_backup_lib strips
+            #    non-alphanumerics from the environment, so 'local-staging'
+            #    becomes 'localstaging' -- the old mock wrote an unreal
+            #    'local-staging' name that the real generator never emits.
+            #  * the run PRINTS '[backup] OK: <container path>', which is
+            #    how the wrapper now identifies the artifact it produced.
+            #    Without this line the mock could not exercise the binding
+            #    at all.
             if ($exitCode -eq 0 -and ($joined -like '*backup_postgres.py*')) {
-                $stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ') + [Guid]::NewGuid().ToString('N').Substring(0, 4)
-                $archivePath = Join-Path $script:TestBackupRoot "mep-postgres-local-staging-$stamp.dump"
-                Set-Content -LiteralPath $archivePath -Value 'PGDMP-test-archive-bytes' -NoNewline
-                $realHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
-                $recorded = if ($ctx.BackupChecksumCorrupt) { ('0' * 64) } else { $realHash }
-                $manifest = @{
-                    backup_filename = (Split-Path -Leaf $archivePath)
-                    created_at      = [DateTime]::UtcNow.ToString('o')
-                    environment     = 'local-staging'
-                    alembic_revision = 'testrev'
-                    checksum_sha256 = $recorded
-                } | ConvertTo-Json
-                Set-Content -LiteralPath "$archivePath.manifest.json" -Value $manifest
+                # Distinct, monotonically increasing, and still a VALID
+                # PR24C timestamp -- a GUID suffix would not be.
+                $script:BackupSequence += 1
+                $stamp = [DateTime]::UtcNow.AddSeconds($script:BackupSequence).ToString('yyyyMMddTHHmmssZ')
+                $fileName = "mep-postgres-localstaging-$stamp.dump"
+                $archivePath = Join-Path $script:TestBackupRoot $fileName
+                if ($ctx.BackupHostFileMissing) {
+                    # PR24C claims success but the bind mount delivered
+                    # nothing to the host.
+                    $output = @("[backup] OK: /mep-backups/$fileName")
+                }
+                else {
+                    Set-Content -LiteralPath $archivePath -Value 'PGDMP-test-archive-bytes' -NoNewline
+                    $realHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+                    $recorded = if ($ctx.BackupChecksumCorrupt) { ('0' * 64) } else { $realHash }
+                    if (-not $ctx.BackupManifestMissing) {
+                        $manifest = @{
+                            backup_filename  = $fileName
+                            created_at       = [DateTime]::UtcNow.ToString('o')
+                            environment      = 'local-staging'
+                            alembic_revision = 'testrev'
+                            checksum_sha256  = $recorded
+                        } | ConvertTo-Json
+                        Set-Content -LiteralPath "$archivePath.manifest.json" -Value $manifest
+                    }
+                    $okLines = switch ($ctx.BackupOutputMode) {
+                        'no-ok' { , @('[backup] starting: target=postgres/mep environment=local-staging') }
+                        'duplicate' {
+                            , @("[backup] OK: /mep-backups/$fileName",
+                                "[backup] OK: /mep-backups/mep-postgres-localstaging-20990101T000000Z.dump")
+                        }
+                        'outside' { , @('[backup] OK: /var/lib/postgresql/mep-postgres-localstaging-20260101T000000Z.dump') }
+                        'nested' { , @("[backup] OK: /mep-backups/nested/$fileName") }
+                        'traversal' { , @('[backup] OK: /mep-backups/../mep-postgres-localstaging-20260101T000000Z.dump') }
+                        default { , @("[backup] OK: /mep-backups/$fileName") }
+                    }
+                    $output = @($okLines) + @("[backup]     size_bytes=24 checksum_sha256=$recorded")
+                }
             }
 
             if ($Arguments -contains 'ps' -and @($script:StoppedServices).Count -gt 0) {
@@ -255,6 +299,7 @@ function Invoke-WithMocks {
 
         $script:StoppedServices = @()
         $script:EnvGenerated = $false
+        $script:BackupSequence = 0
         function Write-InstallLog { param($Phase, $Message, $Level) }
         # Dynamic on purpose: a real install CREATES .env partway through,
         # after which Compose commands legitimately start working.
@@ -1055,6 +1100,155 @@ Test-Case 'L3 backup: a checksum mismatch fails closed and is never downgraded t
     }
     Assert-True $result.Threw 'a checksum mismatch must fail the backup'
     Assert-True ($result.Message -like '*checksum*') 'the failure must name the checksum verification'
+}
+
+# ===========================================================================
+# Fix Round 2 (P1): the artifact created, verified, reported and returned by
+# one backup invocation must be the SAME artifact.
+# ===========================================================================
+
+Test-Case 'L3 backup: a future-dated PRE-EXISTING archive cannot substitute for the one just created' {
+    # THE critical regression. The wrapper used to re-scan the directory
+    # and take whichever filename sorted newest, so an archive dated 2099
+    # -- a stale copy, a file restored from elsewhere, a clock skew --
+    # would be verified and reported as though this run had produced it.
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $root = Get-MepBackupRoot
+        $decoy = Join-Path $root 'mep-postgres-localstaging-20990101T000000Z.dump'
+        Set-Content -LiteralPath $decoy -Value 'DECOY-NOT-PRODUCED-BY-THIS-RUN' -NoNewline
+        $decoyHash = (Get-FileHash -LiteralPath $decoy -Algorithm SHA256).Hash.ToLowerInvariant()
+        (@{ backup_filename = (Split-Path -Leaf $decoy); created_at = '2099-01-01T00:00:00Z'
+                environment = 'local-staging'; alembic_revision = 'decoyrev'
+                checksum_sha256 = $decoyHash } | ConvertTo-Json) |
+            Set-Content -LiteralPath "$decoy.manifest.json"
+
+        $produced = Invoke-MepBackup -Reason 'test'
+        return [pscustomobject]@{
+            Returned = $produced.Name
+            # Proof the decoy really would have won a "latest" contest.
+            Latest   = (Get-MepLatestBackup).Name
+        }
+    }
+    Assert-True ($result.Latest -eq 'mep-postgres-localstaging-20990101T000000Z.dump') `
+        'the decoy must genuinely be the newest by filename, or this test proves nothing'
+    Assert-True ($result.Returned -ne 'mep-postgres-localstaging-20990101T000000Z.dump') `
+        'the pre-existing future-dated archive must NOT be returned as this run''s backup'
+    Assert-True ($result.Returned -like 'mep-postgres-localstaging-*.dump') `
+        'the returned artifact must be the archive this invocation produced'
+}
+
+Test-Case 'L3 backup: cannot be steered by Get-MepLatestBackup at all' {
+    # Poison the "newest existing backup" lookup outright. If the backup
+    # path still consults it after success, the returned artifact changes.
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $root = Get-MepBackupRoot
+        $wrong = Join-Path $root 'mep-postgres-localstaging-20200101T000000Z.dump'
+        Set-Content -LiteralPath $wrong -Value 'WRONG-ARTIFACT' -NoNewline
+        $wrongHash = (Get-FileHash -LiteralPath $wrong -Algorithm SHA256).Hash.ToLowerInvariant()
+        (@{ backup_filename = (Split-Path -Leaf $wrong); created_at = '2020-01-01T00:00:00Z'
+                environment = 'local-staging'; alembic_revision = 'wrongrev'
+                checksum_sha256 = $wrongHash } | ConvertTo-Json) |
+            Set-Content -LiteralPath "$wrong.manifest.json"
+        function Get-MepLatestBackup { return (Get-Item -LiteralPath $wrong) }
+
+        $produced = Invoke-MepBackup -Reason 'test'
+        return $produced.Name
+    }
+    Assert-True ($result -ne 'mep-postgres-localstaging-20200101T000000Z.dump') `
+        'Invoke-MepBackup must not derive its artifact from Get-MepLatestBackup'
+}
+
+Test-Case 'L3 backup: success output with no [backup] OK line fails closed' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -BackupOutputMode 'no-ok'
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $threw = $false; $message = ''
+        try { Invoke-MepBackup -Reason 'test' | Out-Null } catch { $threw = $true; $message = $_.Exception.Message }
+        return [pscustomobject]@{ Threw = $threw; Message = $message }
+    }
+    Assert-True $result.Threw 'an unidentifiable artifact must fail the backup'
+    Assert-True ($result.Message -like '*cannot be identified*') 'the failure must say the artifact could not be identified'
+    Assert-True ($result.Message -notlike '*checksum verification*') 'it must fail before pretending to verify something'
+}
+
+Test-Case 'L3 backup: two conflicting [backup] OK lines fail closed' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -BackupOutputMode 'duplicate'
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $threw = $false; $message = ''
+        try { Invoke-MepBackup -Reason 'test' | Out-Null } catch { $threw = $true; $message = $_.Exception.Message }
+        return [pscustomobject]@{ Threw = $threw; Message = $message }
+    }
+    Assert-True $result.Threw 'an ambiguous artifact must fail the backup'
+    Assert-True ($result.Message -like '*more than one*') 'the failure must name the ambiguity'
+}
+
+Test-Case 'L3 backup: a reported path outside the mounted root fails closed' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -BackupOutputMode 'outside'
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $threw = $false; $message = ''
+        try { Invoke-MepBackup -Reason 'test' | Out-Null } catch { $threw = $true; $message = $_.Exception.Message }
+        return [pscustomobject]@{ Threw = $threw; Message = $message }
+    }
+    Assert-True $result.Threw 'a path this wrapper did not mount must not be mapped onto the host'
+    Assert-True ($result.Message -like '*outside the mounted backup directory*') 'the failure must say why'
+}
+
+Test-Case 'L3 backup: a nested or traversing reported path fails closed' {
+    foreach ($mode in @('nested', 'traversal')) {
+        $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -BackupOutputMode $mode
+        $result = Invoke-WithMocks -Context $ctx -Body {
+            $threw = $false; $message = ''
+            try { Invoke-MepBackup -Reason 'test' | Out-Null } catch { $threw = $true; $message = $_.Exception.Message }
+            return [pscustomobject]@{ Threw = $threw; Message = $message }
+        }
+        Assert-True $result.Threw "a '$mode' path must fail closed"
+        Assert-True ($result.Message -like '*not a single file directly inside*') "the '$mode' failure must name the path shape"
+    }
+}
+
+Test-Case 'L3 backup: a reported artifact missing on the host fails closed' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -BackupHostFileMissing $true
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $threw = $false; $message = ''
+        try { Invoke-MepBackup -Reason 'test' | Out-Null } catch { $threw = $true; $message = $_.Exception.Message }
+        return [pscustomobject]@{ Threw = $threw; Message = $message }
+    }
+    Assert-True $result.Threw 'a bind mount that did not deliver the file must fail the backup'
+    Assert-True ($result.Message -like '*is not present*') 'the failure must name the missing host file'
+}
+
+Test-Case 'L3 backup: the produced artifact having no manifest fails closed' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -BackupManifestMissing $true
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $threw = $false; $message = ''
+        try { Invoke-MepBackup -Reason 'test' | Out-Null } catch { $threw = $true; $message = $_.Exception.Message }
+        return [pscustomobject]@{ Threw = $threw; Message = $message }
+    }
+    Assert-True $result.Threw 'a manifest-less archive must fail the backup'
+    Assert-True ($result.Message -like '*manifest*') 'the failure must name the missing manifest'
+}
+
+Test-Case 'L3 update gate: a pre-existing backup cannot satisfy the current update' {
+    # The gate must be satisfied by the archive THIS update produced.
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -BackupOutputMode 'no-ok'
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $root = Get-MepBackupRoot
+        $old = Join-Path $root 'mep-postgres-localstaging-20990101T000000Z.dump'
+        Set-Content -LiteralPath $old -Value 'PRE-EXISTING' -NoNewline
+        $oldHash = (Get-FileHash -LiteralPath $old -Algorithm SHA256).Hash.ToLowerInvariant()
+        (@{ backup_filename = (Split-Path -Leaf $old); created_at = '2099-01-01T00:00:00Z'
+                environment = 'local-staging'; alembic_revision = 'oldrev'
+                checksum_sha256 = $oldHash } | ConvertTo-Json) |
+            Set-Content -LiteralPath "$old.manifest.json"
+
+        $script:RecordedCalls = @()
+        $threw = $false
+        try { Invoke-MepUpdate | Out-Null } catch { $threw = $true }
+        return [pscustomobject]@{ Threw = $threw; Calls = @($script:RecordedCalls | ForEach-Object { $_.Args }) }
+    }
+    Assert-True $result.Threw 'an update whose own backup cannot be identified must stop'
+    Assert-True (-not ($result.Calls -match 'alembic upgrade head')) 'no migration may run without this run''s own verified backup'
 }
 
 Test-Case 'L3 restore: rehearses into a disposable target, never the live database' {

@@ -773,10 +773,19 @@ def test_l3_no_credential_url_is_placed_on_a_command_line():
 
 
 def test_l3_backup_failures_are_never_downgraded_to_warnings():
-    body = _ps_function_body(_strip_comments_and_docstrings(_lib("Backup.ps1")), "Invoke-MepBackup")
+    stripped = _strip_comments_and_docstrings(_lib("Backup.ps1"))
+    body = _ps_function_body(stripped, "Invoke-MepBackup")
     for required in ("checksum verification FAILED", "Database backup FAILED", "has no manifest beside it"):
         assert required in body, f"missing fail-closed path: {required}"
-    assert body.count("throw") >= 4, "integrity failures must throw, not warn"
+    # Fix Round 2 moved artifact identification into its own function, so
+    # the fail-closed set spans the pair rather than living in one body.
+    resolver = _ps_function_body(stripped, "Resolve-MepProducedBackup")
+    assert body.count("throw") + resolver.count("throw") >= 7, (
+        "integrity failures must throw, not warn"
+    )
+    assert "return" in resolver and resolver.count("throw") >= 4, (
+        "artifact identification must fail closed on every ambiguity"
+    )
 
 
 def test_l3_backup_root_is_gitignored_and_outside_the_postgres_volume():
@@ -882,3 +891,95 @@ def test_l3_path_containment_helper_compares_the_immediate_parent():
     assert "StringComparison" in body, (
         "case sensitivity must be chosen per-platform, not left to the default"
     )
+
+
+def test_l3_backup_binds_verification_to_the_artifact_this_run_produced():
+    """PR #137 Fix Round 2 (P1). The wrapper used to re-scan the backup
+    directory after PR24C succeeded and verify whichever filename sorted
+    newest, which loses the identity of the artifact the current
+    invocation created."""
+    # Comments stripped: the code deliberately EXPLAINS that it does not
+    # consult Get-MepLatestBackup, so prose would false-positive here.
+    body = _ps_function_body(_strip_comments_and_docstrings(_lib("Backup.ps1")), "Invoke-MepBackup")
+    assert "Resolve-MepProducedBackup" in body, (
+        "the artifact must come from PR24C's own reported path"
+    )
+    assert "Get-MepLatestBackup" not in body, (
+        "a just-completed backup must never be identified by directory rescan"
+    )
+
+
+def test_l3_produced_backup_resolver_fails_closed_on_every_ambiguity():
+    body = _ps_function_body(_strip_comments_and_docstrings(_lib("Backup.ps1")), "Resolve-MepProducedBackup")
+    # Identity comes from PR24C's own success line.
+    assert r"\[backup\]\s+OK:" in body
+    for guard in (
+        "$distinct.Count -eq 0",       # no reported artifact
+        "$distinct.Count -gt 1",       # ambiguous
+        "StartsWith($prefix",           # outside the mount
+        "Test-Path -LiteralPath $hostPath",  # mapped host file absent
+    ):
+        assert guard in body, f"missing fail-closed guard: {guard}"
+    # Nested and traversing paths are rejected by shape, not sanitised.
+    assert "$leaf -match '[\\\\/]'" in body
+    assert "'..'" in body
+    # It must never fall back to the directory scan.
+    assert "Get-MepLatestBackup" not in body
+
+
+def test_l3_produced_backup_filename_pattern_matches_pr24c_generator():
+    """The wrapper only accepts PR24C's own filename form. Pin that
+    pattern against what pg_backup_lib actually generates, so the two
+    cannot drift apart silently."""
+    import re
+    import sys
+
+    body = _ps_function_body(_strip_comments_and_docstrings(_lib("Backup.ps1")), "Resolve-MepProducedBackup")
+    match = re.search(r"\$leaf -notmatch '(\^mep-postgres-[^']+)'", body)
+    assert match, "the accepted filename pattern must be present and greppable"
+    pattern = match.group(1)
+
+    sys.path.insert(0, str(REPO_ROOT / "backend" / "scripts"))
+    try:
+        from pg_backup_lib import backup_filename, utc_now
+    finally:
+        sys.path.pop(0)
+
+    # The real generator's output must be accepted...
+    for environment in ("local-staging", "staging", "Local-Staging"):
+        produced = backup_filename(environment, utc_now())
+        assert re.match(pattern, produced), (
+            f"the wrapper would reject PR24C's own filename {produced!r}"
+        )
+    # ...and shapes PR24C never emits must not be.
+    for rejected in (
+        "mep-postgres-local-staging-20260101T000000Z.dump",  # unstripped env
+        "mep-postgres-localstaging-20260101T000000Z.dump.partial",
+        "mep-postgres-localstaging-2026.dump",
+        "evil.dump",
+        "mep-postgres-localstaging-20260101T000000Z.dump.manifest.json",
+    ):
+        assert not re.match(pattern, rejected), f"{rejected!r} must not be accepted"
+
+
+def test_l3_latest_backup_lookup_is_still_used_for_default_restore_selection():
+    """Get-MepLatestBackup is not wrong globally -- it answers 'which
+    existing backup is newest?', which is exactly what restore.ps1 needs
+    when the operator did not name one."""
+    restore_body = _ps_function_body(_strip_comments_and_docstrings(_lib("Backup.ps1")), "Invoke-MepRestoreRehearsal")
+    assert "Get-MepLatestBackup" in restore_body
+    assert "IsNullOrWhiteSpace($BackupFile)" in restore_body, (
+        "it must apply only when no archive was supplied"
+    )
+
+
+def test_l3_update_gate_is_satisfied_by_its_own_backup_artifact():
+    body = _ps_function_body(_strip_comments_and_docstrings(_lib("Operations.ps1")), "Invoke-MepUpdate")
+    assert "$preUpdateBackup = Invoke-MepBackup -Reason 'pre-update'" in body, (
+        "the update must capture the artifact its own backup produced"
+    )
+    assert "Get-MepLatestBackup" not in body, (
+        "an update must never accept a pre-existing backup as its gate"
+    )
+    # Still ordered before any migration.
+    assert body.index("Invoke-MepBackup") < body.index("Invoke-MepMigration")

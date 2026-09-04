@@ -8020,3 +8020,102 @@ Operations Engine) started, not merged
   repository's `backend/scripts/restore_postgres.py` and
   `pg_backup_lib.py` for the manifest-derived identity and checksum
   contract the fix relies on.
+
+---
+
+## 2026-09-04 — PR24D-L3 Fix Round 2 (PR #137): a backup is verified as the artifact it actually produced
+
+- **Context:** Independent review of PR #137 at head
+  `b3a0f28873d5876f61256a0ad5fd05dc0793c596` returned REQUEST CHANGES with
+  one P1 against `Invoke-MepBackup` in
+  `deployment/local-staging/lib/Backup.ps1`.
+- **The defect, confirmed in our own code.** The flow was: PR24C creates an
+  exact archive → the command exits 0 → the wrapper calls
+  `Get-MepLatestBackup` → the wrapper verifies, reports and returns
+  *whichever filename in the directory sorts newest*. The identity of the
+  artifact this invocation produced was thrown away at the moment of
+  success. A pre-existing archive with a later timestamp — a copy restored
+  from another machine, a file left by clock skew, a deliberately
+  future-dated name — would be checksum-verified and reported as though
+  this run had created it. This is the same class of defect as Fix Round
+  1's restore-side finding: **an operation that creates something, then
+  re-discovers it by scanning.**
+- **Decision — reuse PR24C's own reported path as the artifact identity.**
+  `backup_postgres.py` already prints `[backup] OK: <final_path>`, and
+  `final_path` is `<output-dir>/<filename>`. That line is authoritative and
+  costs no engine change, so **no PR24C modification was required or
+  made** — the fix is entirely orchestration, consistent with the standing
+  constraint. The alternative (adding structured JSON output to PR24C) was
+  considered and rejected as disproportionate: the existing line is exact,
+  stable, and already part of the script's contract.
+- **`Resolve-MepProducedBackup`** parses that line and fails closed on
+  every ambiguity, never falling back to a directory scan:
+  - no `[backup] OK:` line → the artifact cannot be identified;
+  - more than one distinct reported path → ambiguous;
+  - a path not directly inside the mounted `/mep-backups` → refused,
+    including nested subdirectories and `..` traversal. Path handling here
+    is deliberately literal string work rather than host path arithmetic:
+    the string was produced by Linux inside the container while the host
+    may be Windows;
+  - a filename that is not PR24C's own form
+    (`mep-postgres-<alphanumeric env>-<UTC>.dump`) → refused;
+  - a mapped host file that is not present → refused, because the bind
+    mount did not deliver what the container claims it wrote.
+  Only the basename is mapped onto the host, and only after the container
+  parent is confirmed to be exactly the mount root.
+- **The invariant now holds:** produced == verified == reported ==
+  returned, for every successful `Invoke-MepBackup`.
+- **`Get-MepLatestBackup` was NOT removed, and is not wrong.** It answers
+  "which existing backup is the newest?", which is exactly what
+  `restore.ps1` needs when the operator did not name an archive. What was
+  wrong was using it to answer a different question — "which archive did
+  the command I just ran create?" The two semantics are now separated
+  explicitly, in code and in the function's own documentation. Exactly one
+  call site remains, in `Invoke-MepRestoreRehearsal`'s default-selection
+  branch.
+- **The pre-update gate inherits the binding.** `Invoke-MepUpdate` now
+  captures the returned artifact and logs it by name, so the gate is
+  satisfied by the archive that update run produced, verified against its
+  own manifest and checksum. A pre-existing backup can never satisfy it.
+  Ordering is unchanged: build → exact verified backup → stop if needed →
+  PostgreSQL health → migrate → start/readiness → metadata.
+- **Same-class sweep.** Every L3/L2 orchestration path was checked for
+  "command creates artifact A, wrapper rescans the directory, wrapper
+  selects artifact B". After this fix the pattern appears nowhere:
+  retention (`prune_backups.py`) selects no artifact for us; restore was
+  fixed in Round 1; no evidence file is produced at all. The single
+  remaining directory scan is the default restore selection described
+  above, which is that pattern's legitimate use.
+- **Mock fidelity, corrected in the same round.** The test harness was
+  writing `mep-postgres-local-staging-<ts>.dump` with a GUID-suffixed
+  stamp. PR24C's `backup_filename` strips non-alphanumerics from the
+  environment, so the real name is `mep-postgres-localstaging-<ts>.dump` —
+  the mock had been emitting a filename the real generator never produces,
+  and it printed no `[backup] OK:` line at all. Both are fixed, and a
+  static test now pins the wrapper's accepted filename pattern against
+  what `pg_backup_lib.backup_filename` actually generates so the two
+  cannot drift apart silently.
+- **Tests.** POWERSHELL UNIT/MOCK (83 pass, +9): a future-dated
+  pre-existing archive cannot substitute for the one just created (the
+  critical regression — the test also asserts the decoy genuinely *would*
+  have won a "latest" contest, so it cannot pass vacuously); a
+  deliberately poisoned `Get-MepLatestBackup` cannot steer the result at
+  all; and fail-closed coverage for missing OK line, duplicate OK lines,
+  outside-mount path, nested path, traversing path, missing host file,
+  missing manifest, plus an update whose own backup cannot be identified
+  never reaching migration. STATIC (67 assertions, +5).
+- **Mutation-proved, files restored byte-identical.** Reverting the
+  binding to `Get-MepLatestBackup` → 8 behavior failures and 1 static
+  failure. Falling back to the directory scan when no OK line is present →
+  1. Dropping the outside-mount check → 1. Dropping the host-file check →
+  1. Loosening the filename pattern → 1 static. Removing the
+  duplicate-path check → 1 static.
+- **Evidence classification unchanged.** **DOCKER EXECUTED: NO.**
+  **WINDOWS EXECUTED: NO.** No real backup and no real restore rehearsal
+  were performed, and no evidence file was created.
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the PR #137 Fix Round 2 review at head `b3a0f288`, and this
+  repository's `backend/scripts/backup_postgres.py` and
+  `pg_backup_lib.py` — specifically the `[backup] OK: {final_path}` print
+  and `backup_filename()` — as the evidentiary basis for the identity
+  protocol reused here.

@@ -370,7 +370,15 @@ bootstrap. update.ps1 is not an installation-recovery mechanism.
     # update already holds, and re-acquiring the same named mutex is not a
     # re-entrancy we have proven. The lock stays at the entry-script
     # boundary; the shared function is what both paths reuse (§22).
-    Invoke-MepBackup -Reason 'pre-update' | Out-Null
+    #
+    # Fix Round 2 (P1): the gate is satisfied by the archive THIS call
+    # produced, verified against its own manifest and checksum -- not by
+    # whatever backup happens to be newest in the directory. A
+    # pre-existing archive can never satisfy the current update's gate,
+    # because Invoke-MepBackup identifies its artifact from PR24C's own
+    # reported path and throws if that cannot be established.
+    $preUpdateBackup = Invoke-MepBackup -Reason 'pre-update'
+    Write-InstallLog -Phase 'update' -Message "Pre-update backup gate satisfied by archive $($preUpdateBackup.Name) created by this update run."
 
     if ($initialState -eq 'EXISTING_HEALTHY') {
         # Stop the application writers (and the scheduler with them) and
