@@ -380,8 +380,17 @@ jobs:
       # --wait`, an unhealthy frontend aborted the install before the
       # Administrator bootstrap ever ran. A build-only job can never catch
       # that; only running the image and reading its health status can.
+      # --add-host is required, not incidental: frontend/nginx.conf proxies
+      # /api/ to `http://backend:8000`, and nginx resolves a literal upstream
+      # hostname at CONFIG-LOAD time. With no `backend` host reachable, nginx
+      # refuses to start at all ("[emerg] host not found in upstream") and
+      # the health check never runs even once -- which shows up as
+      # FailingStreak 0 with an empty Log, quite unlike a probe that runs and
+      # fails. This job tests the image's own HEALTHCHECK, so the upstream is
+      # stubbed to loopback deliberately; the proxy path itself is not under
+      # test here.
       - name: Start the image
-        run: docker run -d --name mep-frontend-smoke mep-frontend:ci
+        run: docker run -d --name mep-frontend-smoke --add-host backend:127.0.0.1 mep-frontend:ci
 
       - name: Wait for the container to report healthy
         run: |
