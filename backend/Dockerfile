@@ -30,8 +30,13 @@ USER appuser
 
 EXPOSE 8000
 
+# 127.0.0.1, not `localhost` -- same reasoning as frontend/Dockerfile.
+# This probe was never broken, because curl tries every address that
+# resolves and so falls back from ::1 to IPv4 on its own. That is curl
+# being forgiving, not the address being correct: swapping curl for wget
+# would have broken it silently. Naming the address removes the trap.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8000/api/v1/health || exit 1
+    CMD curl -f http://127.0.0.1:8000/api/v1/health || exit 1
 
 # PR24B (docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md §15/§15A):
 # exactly 1 worker. app.worker.scheduler starts an in-process

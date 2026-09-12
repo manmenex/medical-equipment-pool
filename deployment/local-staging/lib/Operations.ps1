@@ -123,7 +123,24 @@ function Start-MepApplication {
     # Redis is never named here and therefore can never block.
     $result = Invoke-DockerCompose -Arguments @('up', '-d', '--wait', '--wait-timeout', '180', 'backend', 'frontend') -AllowNonZeroExit -Phase 'start-app'
     if ($result.ExitCode -ne 0) {
-        throw (New-MepFailure 'The application did not become ready in time (GET /api/v1/ready). Run .\status.ps1 or `docker compose -p mep-local-staging logs backend` for diagnostics.')
+        # Name what actually failed. `--wait` fails when ANY named service's
+        # container health check fails -- which is not the same thing as the
+        # backend being unready. Real Windows execution at baseline e3250091
+        # hit exactly that: the backend's /api/v1/ready returned 200 on every
+        # single probe while the FRONTEND container was unhealthy, and the
+        # old message here sent the operator to read backend logs that showed
+        # nothing wrong. Point at the container health table instead.
+        throw (New-MepFailure @'
+One or more application containers did not report healthy in time.
+This is container HEALTH, which is not necessarily the backend's readiness:
+the backend can be answering /api/v1/ready perfectly while another service
+fails its own health check.
+ACTION: run `docker compose -p mep-local-staging ps --all` first and find
+which service is not healthy, then read that service's logs:
+`docker compose -p mep-local-staging logs <service>`.
+`docker inspect --format "{{json .State.Health}}" <container>` shows the
+failing probe's own output. .\status.ps1 gives a summary.
+'@)
     }
 }
 
