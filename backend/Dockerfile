@@ -10,6 +10,40 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 \
     && rm -rf /var/lib/apt/lists/*
 
+# PR24C's backup/restore engine shells out to the pg_dump and pg_restore
+# BINARIES (backend/scripts/backup_postgres.py:114,
+# restore_postgres.py:211), and docs/runbooks/PR24_BACKUP_RESTORE_RUNBOOK.md
+# section 2 states them as a prerequisite: "on PATH, matching (or compatible
+# with) the target PostgreSQL server's major version". PR24D-L3 runs that
+# engine INSIDE this image (deployment/local-staging/lib/Backup.ps1 invokes
+# `compose run --rm --no-deps backend python scripts/backup_postgres.py`),
+# so the prerequisite has to hold HERE -- and it did not. libpq-dev above is
+# the client library's HEADERS, for building psycopg; it ships no pg_dump.
+# The first real local-staging backup therefore died instantly with
+# FileNotFoundError: [Errno 2] No such file or directory: 'pg_dump', which
+# also made .\update.ps1 impossible, since its mandatory pre-update backup
+# gate can never be satisfied without this.
+#
+# postgresql-client-16 specifically, and from PGDG rather than Debian:
+# bookworm's own `postgresql-client` metapackage is 15, and pg_dump 15
+# REFUSES a version 16 server outright ("aborting because of server version
+# mismatch"). Every compose file here pins postgres:16-alpine, so plain
+# `postgresql-client` would have failed on the same machine for a second,
+# more confusing reason. backend/tests/test_pr24d_backup_client_tooling.py
+# asserts this major version equals the pinned server's, so bumping the
+# server without bumping the client fails CI instead of the next backup.
+#
+# The .asc key is consumed directly via signed-by (apt >= 2.4 reads
+# ASCII-armoured keys), so no gnupg is needed in the image.
+RUN install -d /usr/share/postgresql-common/pgdg \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+        -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+    && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo "$VERSION_CODENAME")-pgdg main" \
+        > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends postgresql-client-16 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 
 # Roadmap PR18D review 4838921407 round 2 (H3): requirements.txt stays a

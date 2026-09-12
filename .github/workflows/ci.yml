@@ -312,6 +312,73 @@ jobs:
 
           echo "Production image PDF smoke test passed: HTTP 200, application/pdf, valid %PDF- header, non-trivial body (${body_size} bytes)"
 
+      # PR24C's backup/restore engine shells out to the pg_dump and
+      # pg_restore BINARIES, and PR24D-L3 runs it INSIDE this image
+      # (deployment/local-staging/lib/Backup.ps1 invokes `compose run --rm
+      # --no-deps backend python scripts/backup_postgres.py`). Nothing
+      # verified the binaries were actually there: backend-postgres-tests
+      # does run a real pg_dump/pg_restore round-trip
+      # (tests/test_pr24c_postgres.py) and even refuses to let it skip
+      # (scripts/postgres_ci_gate.py assert-no-skips), but on the RUNNER's
+      # PATH, where GitHub's image already ships a PostgreSQL client. The
+      # scripts were covered; this image never was, and the first real
+      # local-staging backup died with FileNotFoundError: 'pg_dump' --
+      # taking .\update.ps1 with it, since its mandatory pre-update backup
+      # gate cannot be satisfied without a working backup.
+      #
+      # Major version, not mere presence: pg_dump REFUSES a server newer
+      # than itself ("aborting because of server version mismatch"), so a
+      # client that exists but is too old fails exactly where a missing one
+      # does -- at the operator's first backup. Every compose file pins
+      # postgres:16-alpine, as does this job's own service container.
+      - name: Verify the PostgreSQL client tooling exists in the image
+        run: |
+          docker exec mep-backend-smoke sh -c 'command -v pg_dump && command -v pg_restore' \
+            || { echo "PostgreSQL client binaries are missing from the backend image."; exit 1; }
+          for tool in pg_dump pg_restore; do
+            version=$(docker exec mep-backend-smoke "$tool" --version)
+            echo "$version"
+            echo "$version" | grep -qE '\(PostgreSQL\) 16\.' \
+              || { echo "$tool is not major version 16."; exit 1; }
+          done
+
+      # Deliberately placed after the migration and seed steps above, so
+      # this dumps a genuinely migrated schema holding real rows -- the
+      # alembic_version row backup_postgres.py reads before dumping is the
+      # real one this job produced, not a fixture. Written to /tmp inside
+      # the container: no bind mount, so the image runs exactly as it ships,
+      # as its own non-root user, with no host-uid workaround.
+      - name: Take a real backup with PR24C's engine, inside the image
+        run: |
+          docker exec mep-backend-smoke python scripts/backup_postgres.py \
+            --environment ci --output-dir /tmp/mep-backups | tee backup-output.txt
+
+      # The `[backup] OK: <path>` line is the contract
+      # Resolve-MepProducedBackup parses to bind the produced artifact's
+      # identity (PR #137); if PR24C stops printing it in this form, the
+      # PowerShell side fails closed at the operator's machine. Catch it
+      # here instead.
+      - name: Verify the reported artifact and its manifest
+        run: |
+          grep -qE '^\[backup\] OK: /tmp/mep-backups/mep-postgres-ci-[0-9]{8}T[0-9]{6}Z\.dump$' backup-output.txt \
+            || { echo "PR24C did not print its '[backup] OK: <path>' line in the expected form."; exit 1; }
+          docker exec mep-backend-smoke ls -l /tmp/mep-backups
+          docker exec mep-backend-smoke sh -c '
+            set -e
+            test "$(ls -1 /tmp/mep-backups/*.dump | wc -l)" = "1"
+            test "$(ls -1 /tmp/mep-backups/*.manifest.json | wc -l)" = "1"
+            ! ls /tmp/mep-backups/*.partial >/dev/null 2>&1
+            cat /tmp/mep-backups/*.manifest.json
+          ' | tee manifest.json
+          grep -q '"tool": "pg_dump"' manifest.json \
+            || { echo "manifest did not record pg_dump as the tool"; exit 1; }
+          grep -qE '"tool_version": "pg_dump \(PostgreSQL\) 16\.' manifest.json \
+            || { echo "manifest did not record a major-16 pg_dump"; exit 1; }
+          grep -qE '"alembic_revision": "[0-9]{4}_[0-9a-z_]+"' manifest.json \
+            || { echo "manifest did not record the migrated Alembic revision"; exit 1; }
+          grep -qE '"checksum_sha256": "[0-9a-f]{64}"' manifest.json \
+            || { echo "manifest did not record a SHA-256 checksum"; exit 1; }
+
       - name: Dump container logs on failure
         if: failure()
         run: docker logs mep-backend-smoke

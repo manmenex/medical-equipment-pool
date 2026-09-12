@@ -8306,3 +8306,117 @@ Operations Engine) started, not merged
   and browser responses at baseline `e3250091`, plus this repository's
   `frontend/Dockerfile`, `frontend/nginx.conf`, `backend/Dockerfile`,
   `deployment/local-staging/compose.yml` and `lib/Operations.ps1`.
+
+---
+
+## 2026-09-12 — PR24D: the backend image had no `pg_dump`, so no backup — and therefore no update — was possible
+
+- **Decision:** install `postgresql-client-16` in `backend/Dockerfile`, so
+  the image can actually run the backup/restore engine PR24D-L3 chose to run
+  inside it.
+
+- **How it was found.** The first real `.\backup.ps1` on the validation
+  machine, at baseline `e2cd4ebd800b303a23bad97b8f058bf16f6ed6d1`, failed
+  2.4 seconds in with
+  `FileNotFoundError: [Errno 2] No such file or directory: 'pg_dump'`.
+  Install, LAN access, stop/start and persistence had all passed on that
+  same baseline; this was the next step.
+
+- **Root cause.** `backend/Dockerfile` installed `libpq-dev` — the client
+  library's *headers*, needed to build psycopg. It ships no `pg_dump`
+  binary. `backend/scripts/backup_postgres.py` shells out to `pg_dump` and
+  `restore_postgres.py` to `pg_restore`, and
+  `deployment/local-staging/lib/Backup.ps1` runs both inside the `backend`
+  service (`compose run --rm --no-deps backend python scripts/...`).
+  `docs/runbooks/PR24_BACKUP_RESTORE_RUNBOOK.md` §2 already listed those
+  binaries "on PATH, matching (or compatible with) the target PostgreSQL
+  server's major version" as a **prerequisite** — PR24D-L3 simply never
+  verified that the prerequisite held in the container it picked.
+
+- **Blast radius: one root cause, three blocked operations.** `.\backup.ps1`
+  failed outright; `.\restore.ps1` would have failed identically, since
+  `pg_restore` ships in the same package; and `.\update.ps1` was
+  **impossible** — PR #137's mandatory pre-update backup gate has no bypass,
+  by design, so no working backup means no update at all.
+
+- **The guards all behaved correctly, and this failure proves it.** The
+  backup failed closed (`exit code 1`, *"Nothing downstream of this step has
+  run"*), was never downgraded to a warning, left no `.partial` file and no
+  manifest, did not touch the live database, and redacted the connection
+  string to `mep_local_staging_user@postgres:5432/mep_local_staging_db` with
+  no password. The operator-facing ACTION said plainly: do not proceed with
+  an update until a backup succeeds.
+
+- **Why CI never caught it — the same lesson a third time.**
+  `backend-postgres-tests` *does* run a real `pg_dump`/`pg_restore`
+  round-trip (`tests/test_pr24c_postgres.py`) and even refuses to let it skip
+  (`scripts/postgres_ci_gate.py assert-no-skips`). But it runs on the
+  **runner's** PATH, where GitHub's image already ships a PostgreSQL client.
+  The scripts were covered; the **image** never was. PR #138 was a branch no
+  test executed; PR #139 was a `HEALTHCHECK` CI never ran; this is a binary
+  dependency CI only ever satisfied somewhere else.
+
+- **Why `postgresql-client-16` and not `postgresql-client`.** Debian
+  bookworm's unversioned metapackage is 15, and `pg_dump` 15 refuses a
+  version 16 server outright ("aborting because of server version
+  mismatch"). Every compose file here pins `postgres:16-alpine`, so the
+  obvious one-word fix would have failed on the same machine for a second,
+  more confusing reason. The package comes from PGDG because Debian ships no
+  16 client for bookworm; the `.asc` key is used directly via `signed-by`,
+  so no `gnupg` enters the image.
+
+- **Why the production image, and not a separate backup image.** Owner
+  decision. `deployment/local-staging/compose.yml` states as an architectural
+  property that it "reuses the existing production application images
+  ... unchanged", and the runbook's provider-neutral fallback path is these
+  same scripts — so production needs `pg_dump` for the same reason local
+  staging does. A purpose-built image would have kept the production image
+  smaller at the cost of breaking that stated property and leaving production
+  without the fallback tooling.
+
+- **Same-class sweep.** Every other in-container invocation was checked.
+  `deploy_migrate.py` runs `python -m alembic` (a module, already proven
+  working twice on real hardware); `bootstrap_admin` likewise;
+  `prune_backups.py` is pure Python; and `Invoke-MepPsql` runs `psql` via
+  `exec -T postgres` — inside the PostgreSQL container, where it exists.
+  That last one was already right, which is why nothing else broke. Exactly
+  two call sites were affected, and one package fixes both.
+
+- **Tests.** The executed proof was added to the EXISTING
+  **Backend production Docker image (build + runtime smoke test)** job rather
+  than as a new one: that job already builds this image, runs it against a
+  real `postgres:16-alpine`, applies migrations and seeds data, so the new
+  steps back up a genuinely migrated schema holding real rows instead of a
+  fixture — and required CI checks stay at **8** rather than paying for a
+  second build of the same image. The steps assert both binaries are on PATH
+  inside the container and their major version, then run PR24C's engine there
+  and verify the `[backup] OK:` line `Resolve-MepProducedBackup` parses,
+  exactly one `.dump`, exactly one `.manifest.json`, no `.partial` left
+  behind, and the manifest's recorded revision, tool, tool version and
+  SHA-256. Writing to `/tmp` inside the container, with no bind mount, keeps
+  the image running exactly as it ships as its own non-root user. STATIC 9
+  new assertions in `backend/tests/test_pr24d_backup_client_tooling.py`,
+  including one that fails if the pinned server major version ever diverges
+  from the client's, and one that fails if the backup step is ever reordered
+  before the migration/seed steps it depends on.
+
+- **Mutation-proved, files restored byte-identical.** Removing the client
+  package, swapping it for the unversioned metapackage, downgrading it to 15,
+  moving its installation after `USER appuser`, deleting the CI job, and
+  removing the real-backup step each fail their test — six mutations, six
+  kills.
+
+- **Evidence.** **WINDOWS EXECUTED: YES** for the failure itself (real
+  console output at baseline `e2cd4eb`). The fix is **NOT YET EXECUTED on
+  Windows** — it is proven by CI only, and re-validation on the real machine
+  is required before §12/§13/§15 of the operational validation can be marked
+  PASS. Real local backup, LOCAL restore rehearsal and update all remain
+  **PENDING**. Managed-Staging rehearsal remains **PENDING**; RPO ≤ 1h is
+  **NOT PROVEN**; Production GO is **NOT AUTHORIZED**.
+
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the real Windows console output at baseline `e2cd4eb`, plus
+  this repository's `backend/Dockerfile`, `backend/scripts/backup_postgres.py`,
+  `backend/scripts/restore_postgres.py`,
+  `deployment/local-staging/lib/Backup.ps1`, `docs/runbooks/PR24_BACKUP_RESTORE_RUNBOOK.md`
+  and `.github/workflows/ci.yml`.
