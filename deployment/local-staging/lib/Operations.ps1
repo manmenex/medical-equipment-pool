@@ -245,7 +245,16 @@ function Invoke-MepInstall {
     }
 
     if (-not $SkipPrerequisites) {
-        $failures = Invoke-PrerequisiteChecks -FrontendPort (Get-ConfiguredHttpPort)
+        # @(...) is load-bearing, not decoration. PowerShell unrolls a
+        # function's return value: Invoke-PrerequisiteChecks returns @()
+        # when every check passes, and that empty array arrives here as
+        # $null. Under Set-StrictMode -Version Latest, $null.Count throws
+        # "The property 'Count' cannot be found on this object" -- so the
+        # installer crashed on precisely the machines where nothing was
+        # wrong. Real Windows execution at baseline e819d7bc found this;
+        # every behavior test had passed -SkipPrerequisites, so this line
+        # had never once been executed.
+        $failures = @(Invoke-PrerequisiteChecks -FrontendPort (Get-ConfiguredHttpPort))
         if ($failures.Count -gt 0) {
             foreach ($f in $failures) {
                 Write-Host "ERROR [$($f.Check)]: $($f.Error)" -ForegroundColor Red

@@ -122,7 +122,7 @@ Write-Host "Readiness:   $(if ($isReady) { 'Ready' } else { 'Not Ready' })"
 
 Write-Host ''
 if ($isReady) {
-    $lanCandidates = Get-LikelyLanIPv4Addresses
+    $lanCandidates = @(Get-LikelyLanIPv4Addresses)
     Write-Host 'Access:' -ForegroundColor Green
     if ($lanCandidates.Count -eq 0) {
         Write-Host "  http://localhost:$port"

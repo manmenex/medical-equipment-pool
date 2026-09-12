@@ -167,7 +167,13 @@ function Invoke-MepCommand {
         $output = @()
     }
     else {
-        $output = & $FilePath @Arguments 2>&1 | ForEach-Object { "$_" }
+        # @(...) is load-bearing. A command that prints exactly one line
+        # (git rev-parse HEAD always does) would otherwise unroll to a
+        # bare [string], and .Count on a string throws under
+        # Set-StrictMode -Version Latest. Guaranteeing an array here fixes
+        # the contract once for every caller instead of asking each one to
+        # remember -- Output is ALWAYS a collection.
+        $output = @(& $FilePath @Arguments 2>&1 | ForEach-Object { "$_" })
         $exitCode = $LASTEXITCODE
     }
 

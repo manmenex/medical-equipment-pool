@@ -58,7 +58,11 @@ Write-InstallLog -Phase 'install' -Message 'install.ps1 started.'
 # Interactive configuration for a genuinely fresh installation.
 $configCallback = {
     Write-Banner 'Generating local configuration'
-    $candidates = Get-LikelyLanIPv4Addresses
+    # @(...) required: the helper returns an array, but PowerShell
+    # unrolls it on return -- zero addresses arrive as $null and a
+    # single address as a bare [string], and .Count on either throws
+    # under StrictMode. One LAN address is the normal case.
+    $candidates = @(Get-LikelyLanIPv4Addresses)
     $suggested = if ($candidates.Count -ge 1) { $candidates[0] } else { $null }
     if ($candidates.Count -gt 1) {
         Write-Host 'Multiple LAN addresses were detected on this machine:' -ForegroundColor Yellow
@@ -94,7 +98,7 @@ try {
     Invoke-MepInstall -AdminCredentialCallback $adminCallback -ConfigCallback $configCallback | Out-Null
 
     $finalPort = Get-ConfiguredHttpPort
-    $lanCandidates = Get-LikelyLanIPv4Addresses
+    $lanCandidates = @(Get-LikelyLanIPv4Addresses)
 
     Write-Banner 'Install complete'
     Write-Host 'Access this deployment from any authorized device on the same LAN:' -ForegroundColor Green
