@@ -358,6 +358,73 @@ jobs:
       - name: TypeScript check and production build
         run: npm run build
 
+  frontend-healthcheck-smoke-test:
+    name: Frontend image healthcheck (build + container health)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build frontend image
+        run: docker build -t mep-frontend:ci ./frontend
+
+      # The `frontend` job above proves the SPA compiles; it does NOT run
+      # the image, so the container's own HEALTHCHECK was never executed
+      # anywhere in CI. Real Windows execution at baseline e3250091 found
+      # that healthcheck failing on EVERY probe (FailingStreak 15) while
+      # nginx served perfectly -- `wget http://localhost/` resolved to ::1,
+      # which nginx does not listen on, and BusyBox wget does not fall back
+      # to IPv4. Because `Start-MepApplication` uses `docker compose up
+      # --wait`, an unhealthy frontend aborted the install before the
+      # Administrator bootstrap ever ran. A build-only job can never catch
+      # that; only running the image and reading its health status can.
+      # --add-host is required, not incidental: frontend/nginx.conf proxies
+      # /api/ to `http://backend:8000`, and nginx resolves a literal upstream
+      # hostname at CONFIG-LOAD time. With no `backend` host reachable, nginx
+      # refuses to start at all ("[emerg] host not found in upstream") and
+      # the health check never runs even once -- which shows up as
+      # FailingStreak 0 with an empty Log, quite unlike a probe that runs and
+      # fails. This job tests the image's own HEALTHCHECK, so the upstream is
+      # stubbed to loopback deliberately; the proxy path itself is not under
+      # test here.
+      - name: Start the image
+        run: docker run -d --name mep-frontend-smoke --add-host backend:127.0.0.1 mep-frontend:ci
+
+      - name: Wait for the container to report healthy
+        run: |
+          for i in $(seq 1 60); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' mep-frontend-smoke)
+            if [ "$status" = "healthy" ]; then
+              echo "Container reported healthy after ${i}s"
+              exit 0
+            fi
+            if [ "$status" = "unhealthy" ]; then
+              echo "Container reported UNHEALTHY -- the image's own HEALTHCHECK cannot pass."
+              docker inspect --format '{{json .State.Health}}' mep-frontend-smoke
+              docker logs mep-frontend-smoke
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "Container never left '$status' -- treating as failure."
+          docker inspect --format '{{json .State.Health}}' mep-frontend-smoke
+          docker logs mep-frontend-smoke
+          exit 1
+
+      # Independent of the healthcheck: proves nginx really serves the built
+      # SPA, so a healthcheck that passes for the wrong reason still fails
+      # here.
+      - name: Verify nginx serves the built SPA
+        run: |
+          docker exec mep-frontend-smoke wget -qO- http://127.0.0.1/ | grep -qi "<!doctype html" \
+            || { echo "nginx did not serve index.html"; docker logs mep-frontend-smoke; exit 1; }
+
+      - name: Stop the container
+        if: always()
+        run: docker rm -f mep-frontend-smoke || true
+
   whitespace-check:
     name: git diff --check
     runs-on: ubuntu-latest

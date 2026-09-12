@@ -1040,3 +1040,79 @@ def test_prerequisite_branch_is_actually_exercised_by_behavior_tests():
     assert "-SkipPrerequisites" not in call[:400], (
         "the regression test must exercise the real prerequisite branch"
     )
+
+
+def test_no_container_healthcheck_probes_localhost():
+    """Real Windows execution at baseline e3250091: the frontend container's
+    HEALTHCHECK ran `wget -qO- http://localhost/` and failed on every single
+    probe (FailingStreak 15) while nginx was serving perfectly.
+
+    The container's /etc/hosts maps `localhost` to BOTH 127.0.0.1 and ::1.
+    frontend/nginx.conf declares only `listen 80` (IPv4), and nginx's
+    10-listen-on-ipv6-by-default.sh entrypoint deliberately skips adding
+    `listen [::]:80` whenever the config differs from the packaged default
+    -- which ours does. BusyBox wget resolved ::1 first and did not fall
+    back to IPv4, so the probe was refused forever.
+
+    Because Start-MepApplication uses `docker compose up --wait`, that one
+    unhealthy container aborted the whole install before the Administrator
+    bootstrap ran. Probe the address the server actually binds.
+    """
+    probes = {
+        "frontend/Dockerfile": (REPO_ROOT / "frontend" / "Dockerfile").read_text(),
+        "backend/Dockerfile": (REPO_ROOT / "backend" / "Dockerfile").read_text(),
+        "deployment/local-staging/compose.yml": COMPOSE_PATH.read_text(),
+    }
+    checked = 0
+    for name, text in probes.items():
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            is_probe = stripped.startswith("CMD ") or stripped.startswith("test: [")
+            # Only HTTP probes are in scope. `pg_isready` and `redis-cli
+            # ping` reach their server without naming an address at all, so
+            # there is nothing to get wrong there.
+            if not is_probe or "http://" not in stripped:
+                continue
+            assert "http://localhost" not in stripped, (
+                f"{name}: an HTTP health probe targets `localhost`, which may "
+                f"resolve to ::1 and be refused. Use 127.0.0.1: {stripped}"
+            )
+            assert "http://127.0.0.1" in stripped, (
+                f"{name}: an HTTP health probe must name the loopback address "
+                f"explicitly: {stripped}"
+            )
+            checked += 1
+    # Guards against the check silently covering nothing if the probe
+    # syntax ever changes shape.
+    assert checked >= 3, f"expected to inspect at least 3 HTTP health probes, saw {checked}"
+
+
+def test_frontend_image_healthcheck_is_executed_in_ci():
+    """A build-only frontend job cannot catch a broken HEALTHCHECK -- that is
+    exactly how this defect reached a real hospital PC. CI must actually run
+    the image and read its health status."""
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    assert "frontend-healthcheck-smoke-test:" in workflow, (
+        "CI must run the frontend image and assert its container health"
+    )
+    assert "docker build -t mep-frontend:ci ./frontend" in workflow
+    assert "{{.State.Health.Status}}" in workflow, (
+        "the job must read the container's real health status, not just that it started"
+    )
+
+
+def test_start_application_failure_names_container_health_not_readiness():
+    """The old message blamed `GET /api/v1/ready`, but on the real machine
+    the backend answered /api/v1/ready with 200 on every probe while the
+    FRONTEND was unhealthy -- so the message sent the operator to read
+    backend logs that showed nothing wrong."""
+    body = _ps_function_body(
+        _strip_comments_and_docstrings(_lib("Operations.ps1")), "Start-MepApplication"
+    )
+    assert "did not report healthy" in body, "the failure must name container health"
+    assert "ps --all" in body, "it must point the operator at the container health table"
+    assert "GET /api/v1/ready" not in body, (
+        "it must not claim the backend was unready when any service may be at fault"
+    )

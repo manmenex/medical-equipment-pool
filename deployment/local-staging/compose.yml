@@ -121,7 +121,10 @@ services:
       # `condition: service_healthy` below only starts routing LAN
       # traffic once the backend can actually reach its database, not
       # merely once the process is alive.
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/ready"]
+      # 127.0.0.1, not `localhost`: this override is the healthcheck that
+      # is actually in effect for this deployment, so leaving `localhost`
+      # here would leave the class open in the very place being validated.
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/api/v1/ready"]
       interval: 10s
       timeout: 5s
       retries: 10

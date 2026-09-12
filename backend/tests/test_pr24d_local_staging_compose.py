@@ -154,12 +154,30 @@ def test_no_hardcoded_secrets_or_ip_in_compose_file():
     text = COMPOSE_PATH.read_text()
     for literal in ("mep_password", "change-me", "changeme", "password123"):
         assert literal not in text.lower(), f"compose.yml must not contain the literal {literal!r}"
-    # No dotted-quad IPv4 literal anywhere (a hardcoded hospital IP)
+    # No dotted-quad IPv4 literal anywhere (a hardcoded hospital IP), with
+    # exactly one narrow exception: the loopback address inside a container
+    # health probe. Loopback is not a hospital address -- it is identical on
+    # every machine and is not routable -- and naming it is REQUIRED, not
+    # merely tolerated: `localhost` resolves to ::1 as well as 127.0.0.1,
+    # and these servers listen only on IPv4, so a `localhost` probe is
+    # refused forever (real Windows execution, baseline e3250091). See
+    # test_no_container_healthcheck_probes_localhost.
     import re
 
-    assert not re.search(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", text), (
-        "compose.yml must not contain a hardcoded IP address"
-    )
+    for line in text.splitlines():
+        # Comments are prose, not configuration -- Docker never reads them,
+        # and the comment explaining WHY the loopback address is required
+        # would otherwise trip this check.
+        if line.strip().startswith("#"):
+            continue
+        for found in re.findall(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", line):
+            assert found == "127.0.0.1", (
+                f"compose.yml must not contain a hardcoded IP address (found {found!r})"
+            )
+            assert "test:" in line, (
+                "the loopback address is permitted only inside a health probe, "
+                f"not here: {line.strip()}"
+            )
 
 
 def test_no_insecure_default_fallback_for_required_secrets():

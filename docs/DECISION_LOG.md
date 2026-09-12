@@ -8208,3 +8208,101 @@ Operations Engine) started, not merged
 - **Source:** the real Windows console output at baseline `e819d7bc`, and
   this repository's `lib/Common.ps1`, `lib/Operations.ps1`, `install.ps1`,
   `start.ps1` and `status.ps1`.
+
+---
+
+## 2026-09-12 — PR24D: an HTTP health probe on `localhost` can never pass (IPv6), blocking every install
+
+- **Context:** Second real Windows execution, at baseline
+  `e3250091665a37299a540584a11268ea5d925fd6`. The array-unrolling fixes from
+  PR #138 worked: prerequisites passed, configuration generated, images
+  built, and **the migration succeeded** (`alembic upgrade head: OK`,
+  `0022_cutover_go_no_go_decision`, `result=PASS`, and notably
+  `artifact_sha=e3250091665a...` — a real SHA, proving that fix's third
+  instance works on a real machine). The install then failed at
+  `Start-MepApplication`.
+
+- **The application was never broken.** Measured on the machine:
+  PostgreSQL, Redis and **backend** all `healthy`; the backend answered
+  `GET /api/v1/ready` with **200 on every single probe** for over four
+  minutes; `status.ps1` reported `Readiness: Ready`; and from a browser on
+  the LAN address, `http://<host>/login` rendered the full Thai SPA and
+  `http://<host>/api/v1/ready` returned
+  `{"status":"ready","database":"ok","redis":"ok"}` — proving the whole
+  chain browser → nginx → `/api/` proxy → backend → PostgreSQL + Redis.
+
+- **Root cause.** `frontend/Dockerfile`'s `HEALTHCHECK` ran
+  `wget -qO- http://localhost/`. The container's `/etc/hosts` maps
+  `localhost` to **both** `127.0.0.1` and `::1`. `frontend/nginx.conf`
+  declares only `listen 80` (IPv4), and nginx's own
+  `10-listen-on-ipv6-by-default.sh` entrypoint **deliberately skips** adding
+  `listen [::]:80` when the config differs from the packaged default —
+  which ours does, and the container log says so explicitly. BusyBox `wget`
+  resolved `::1` first and does **not** fall back to IPv4, so the probe was
+  refused every time. Measured `FailingStreak: 15`, with
+  `wget: can't connect to remote host: Connection refused`, while
+  `wget http://127.0.0.1/` returned the full `index.html` from the same
+  container.
+
+- **Why that stopped the install.** `Start-MepApplication` uses
+  `docker compose up -d --wait backend frontend`. `--wait` fails when **any**
+  named service's container health fails, so one unhealthy frontend aborted
+  the run **before** the Administrator bootstrap — which is why no
+  administrator account and no one-time password were ever created, and why
+  the state stayed PARTIAL. That ordering is correct fail-closed behaviour
+  and is not being changed.
+
+- **Decision — fix the probe, not the server.** The probe now targets
+  `127.0.0.1`, the address nginx actually binds. Adding `listen [::]:80` to
+  `nginx.conf` was rejected: changing what the server binds in order to
+  satisfy a probe is backwards, and it would add a listening socket to a
+  deployment that deliberately controls its network exposure — a decision
+  that deserves its own change, not a side effect of fixing a health check.
+
+- **Same-class sweep, and one deliberate extra.** Three HTTP probes exist.
+  `frontend/Dockerfile` was broken. `backend/Dockerfile` and
+  `compose.yml`'s backend override were **not** broken — `curl` tries every
+  resolved address and falls back to IPv4 on its own. That is curl being
+  forgiving, not the address being right: swapping curl for wget would break
+  them silently. Both were changed to `127.0.0.1` at the Owner's explicit
+  instruction. `compose.yml`'s override in particular is the probe actually
+  in effect for this deployment, so leaving it would have left the class
+  open in the very place under validation. `pg_isready` and `redis-cli ping`
+  name no address at all and are out of scope.
+
+- **Secondary defect fixed: the error message pointed at the wrong thing.**
+  `Start-MepApplication` reported *"The application did not become ready in
+  time (GET /api/v1/ready)"*, but `/api/v1/ready` was returning 200
+  throughout. It sent the operator to read backend logs that showed nothing
+  wrong. It now names container **health**, states plainly that this is not
+  the same as backend readiness, and tells the operator to run
+  `docker compose ps --all` first to find which service is unhealthy.
+
+- **Tests.** A new CI job, **Frontend image healthcheck (build + container
+  health)**, builds the frontend image, runs it, and asserts the container
+  reaches `healthy` — failing loudly with the probe's own output otherwise,
+  plus an independent check that nginx really serves the SPA. This is the
+  point: the existing `Frontend build` job compiles the SPA and never runs
+  the image, so the container's `HEALTHCHECK` had **never been executed
+  anywhere in CI**. That is the same lesson as PR #138 — a build-only or
+  mock-only suite cannot see past its own boundary. Required CI checks go
+  from **7 to 8**. STATIC 73 (+3): no HTTP probe may target `localhost`;
+  CI must execute the frontend image's health status; the failure message
+  must name container health.
+
+- **Mutation-proved, files restored byte-identical.** Reverting each of the
+  three probes to `localhost`, weakening the CI job to read `.State.Status`
+  instead of `.State.Health.Status`, and restoring the old error message
+  each fail their test — five mutations, five kills.
+
+- **Evidence.** **WINDOWS EXECUTED: YES** for install through migration and
+  application start; the SPA and the proxied readiness endpoint were opened
+  from a browser. **Real local backup: NOT EXECUTED. Real restore rehearsal:
+  NOT EXECUTED.** No evidence file created — the install did not complete.
+  LAN reachability from a second device: **NOT YET TESTED**.
+
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the real Windows console output, `docker inspect` health log
+  and browser responses at baseline `e3250091`, plus this repository's
+  `frontend/Dockerfile`, `frontend/nginx.conf`, `backend/Dockerfile`,
+  `deployment/local-staging/compose.yml` and `lib/Operations.ps1`.
