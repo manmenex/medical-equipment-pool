@@ -78,7 +78,13 @@ remains the provider-neutral fallback either way.
 ## 2. ก่อนเริ่ม (Prerequisites)
 
 - `pg_dump` / `pg_restore` on `PATH`, matching (or compatible with) the
-  target PostgreSQL server's major version.
+  target PostgreSQL server's major version. In the PR24D-L3 local
+  Staging/UAT mode this prerequisite applies to the **backend image**, not
+  to the operator's Windows host: `.\backup.ps1` and `.\restore.ps1` run
+  the engine inside that container. `backend/Dockerfile` installs
+  `postgresql-client-16` for exactly this reason, and CI's
+  `backend-backup-tooling-smoke-test` job takes a real backup inside the
+  built image to prove it.
 - A `DATABASE_URL` (or equivalent connection string) with backup privilege
   on the source database.
 - A **separate, disposable, non-production** PostgreSQL database to restore
