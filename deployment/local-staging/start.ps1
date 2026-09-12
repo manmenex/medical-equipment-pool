@@ -30,7 +30,7 @@ try {
     Invoke-MepStart
 
     $port = Get-ConfiguredHttpPort
-    $lanCandidates = Get-LikelyLanIPv4Addresses
+    $lanCandidates = @(Get-LikelyLanIPv4Addresses)
     Write-Host 'Application is ready.' -ForegroundColor Green
     if ($lanCandidates.Count -eq 0) {
         Write-Host "  http://localhost:$port"

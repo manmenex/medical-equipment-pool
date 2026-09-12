@@ -88,7 +88,8 @@ function New-MockContext {
         [ValidateSet('normal', 'no-ok', 'duplicate', 'outside', 'nested', 'traversal')]
         [string]$BackupOutputMode = 'normal',
         [bool]$BackupHostFileMissing = $false,
-        [bool]$BackupManifestMissing = $false
+        [bool]$BackupManifestMissing = $false,
+        [int]$PrerequisiteFailures = 0
     )
     return [pscustomobject]@{
         ExitCodeRules        = $ExitCodeRules
@@ -112,6 +113,9 @@ function New-MockContext {
         BackupOutputMode      = $BackupOutputMode
         BackupHostFileMissing = $BackupHostFileMissing
         BackupManifestMissing = $BackupManifestMissing
+        # How many prerequisite failures Invoke-PrerequisiteChecks should
+        # report. 0 is the case that used to crash the real installer.
+        PrerequisiteFailures  = $PrerequisiteFailures
     }
 }
 
@@ -306,7 +310,24 @@ function Invoke-WithMocks {
         function Test-EnvFileExists { return ($ctx.EnvFileExists -or $script:EnvGenerated) }
         function Get-ConfiguredHttpPort { return 80 }
         function Get-CurrentSourceSha { return 'testsha0000000000000000000000000000000000' }
-        function Invoke-PrerequisiteChecks { param($FrontendPort) return @() }
+        # Returns exactly as many failures as the context asks for, and
+        # -- critically -- returns them the way the REAL function does:
+        # `return $failures` on a plain array, so PowerShell's unrolling
+        # of 0 and 1 element arrays is reproduced rather than papered over.
+        # A stub that returned a pre-wrapped @() would have hidden the
+        # very defect real Windows execution found.
+        function Invoke-PrerequisiteChecks {
+            param($FrontendPort)
+            $failures = @()
+            for ($i = 1; $i -le [int]$ctx.PrerequisiteFailures; $i++) {
+                $failures += [pscustomobject]@{
+                    Check  = "check-$i"
+                    Error  = "simulated prerequisite failure $i"
+                    Action = "resolve simulated failure $i"
+                }
+            }
+            return $failures
+        }
         function Invoke-DockerComposeConfigOnly { return 0 }
         function New-LocalStagingEnvFile { param($AllowedOrigins, $HttpPort) $script:EnvGenerated = $true }
         function Test-MepInstallCompleted { return $ctx.InstallCompleted }
@@ -1561,6 +1582,126 @@ Test-Case 'install: a genuinely fresh machine reaches config generation and comp
     }
     Assert-True $result.EnvGenerated 'a fresh install must generate .env'
     Assert-True $result.MetadataWritten 'a fresh install that satisfies every invariant must record completion'
+}
+
+# ===========================================================================
+# Real Windows execution finding (baseline e819d7bc): the prerequisite gate.
+#
+# Every test above passes -SkipPrerequisites, so Invoke-MepInstall's
+# prerequisite branch had never been executed by any test -- and that branch
+# crashed on exactly the machines where nothing was wrong. These tests drive
+# it for real.
+# ===========================================================================
+
+Test-Case 'install: prerequisite gate survives ZERO failures (the case that crashed on real Windows)' {
+    # Invoke-PrerequisiteChecks returns @() when all checks pass, which
+    # PowerShell unrolls to $null on return. $null.Count then threw
+    # "The property 'Count' cannot be found on this object" under
+    # Set-StrictMode -Version Latest, aborting the install before any
+    # configuration was generated.
+    $ctx = New-MockContext -EnvFileExists $false -PrerequisiteFailures 0 -ExitCodeRules @(
+        @{ Match = 'ps --all --filter'; ExitCode = 0; Output = @() }
+    )
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $threw = $false
+        $message = ''
+        # NOTE: deliberately NOT -SkipPrerequisites.
+        try {
+            Invoke-MepInstall -AdminCredentialCallback { @{ EmployeeCode = 'A1'; Email = 'a@b.c'; FullName = 'A B' } } `
+                -ConfigCallback { @{ AllowedOrigins = 'http://192.0.2.1'; HttpPort = 80 } } | Out-Null
+        }
+        catch { $threw = $true; $message = $_.Exception.Message }
+        return [pscustomobject]@{
+            Threw           = $threw
+            Message         = $message
+            EnvGenerated    = $script:EnvGenerated
+            MetadataWritten = $script:MetadataWritten
+        }
+    }
+    Assert-True (-not $result.Threw) "an install with no prerequisite failures must not throw (got: $($result.Message))"
+    Assert-True ($result.Message -notlike "*'Count'*") 'the array-unrolling defect must not resurface'
+    Assert-True $result.EnvGenerated 'the install must proceed past the prerequisite gate to config generation'
+    Assert-True $result.MetadataWritten 'and must record completion'
+}
+
+Test-Case 'install: prerequisite gate reports a SINGLE failure instead of crashing' {
+    # One failure also unrolls -- to a bare object rather than a list. The
+    # operator must see the actionable ERROR/ACTION pair, not a property
+    # lookup error.
+    $ctx = New-MockContext -EnvFileExists $false -PrerequisiteFailures 1 -ExitCodeRules @(
+        @{ Match = 'ps --all --filter'; ExitCode = 0; Output = @() }
+    )
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $threw = $false
+        $message = ''
+        try {
+            Invoke-MepInstall -AdminCredentialCallback { @{ EmployeeCode = 'A1'; Email = 'a@b.c'; FullName = 'A B' } } `
+                -ConfigCallback { @{ AllowedOrigins = 'http://192.0.2.1'; HttpPort = 80 } } | Out-Null
+        }
+        catch { $threw = $true; $message = $_.Exception.Message }
+        return [pscustomobject]@{
+            Threw           = $threw
+            Message         = $message
+            EnvGenerated    = $script:EnvGenerated
+            MetadataWritten = $script:MetadataWritten
+        }
+    }
+    Assert-True $result.Threw 'a failed prerequisite must stop the install'
+    Assert-True ($result.Message -like '*prerequisites are not satisfied*') `
+        "the operator must get the actionable message, not a property error (got: $($result.Message))"
+    Assert-True ($result.Message -notlike "*'Count'*") 'the failure must not be an array-unrolling error'
+    Assert-True (-not $result.EnvGenerated) 'no configuration may be generated when a prerequisite failed'
+    Assert-True (-not $result.MetadataWritten) 'and no completion may be recorded'
+}
+
+Test-Case 'install: prerequisite gate reports MULTIPLE failures' {
+    $ctx = New-MockContext -EnvFileExists $false -PrerequisiteFailures 3 -ExitCodeRules @(
+        @{ Match = 'ps --all --filter'; ExitCode = 0; Output = @() }
+    )
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $threw = $false
+        $message = ''
+        try {
+            Invoke-MepInstall -AdminCredentialCallback { @{ EmployeeCode = 'A1'; Email = 'a@b.c'; FullName = 'A B' } } `
+                -ConfigCallback { @{ AllowedOrigins = 'http://192.0.2.1'; HttpPort = 80 } } | Out-Null
+        }
+        catch { $threw = $true; $message = $_.Exception.Message }
+        return [pscustomobject]@{ Threw = $threw; Message = $message; EnvGenerated = $script:EnvGenerated }
+    }
+    Assert-True $result.Threw 'multiple failed prerequisites must stop the install'
+    Assert-True ($result.Message -like '*prerequisites are not satisfied*') 'with the same actionable message'
+    Assert-True (-not $result.EnvGenerated) 'and no configuration may be generated'
+}
+
+Test-Case 'Invoke-MepCommand: single-line output is still a collection, not a bare string' {
+    # The second instance of the same class. A command printing exactly one
+    # line unrolled to [string], and .Count on a string throws under
+    # StrictMode. Get-CurrentSourceSha swallowed that in a catch and
+    # silently returned 'unknown-local-source' forever, so the real source
+    # SHA would never have been recorded in installation metadata.
+    #
+    # This drives the REAL Invoke-MepCommand against a REAL native command
+    # -- no mock -- because the contract under test is exactly what the
+    # mock would otherwise paper over. `git rev-parse HEAD` prints one line.
+    $probe = {
+        Set-StrictMode -Version Latest
+        . (Join-Path $script:DeploymentRootForTests 'lib/Common.ps1')
+        $result = Invoke-MepCommand -FilePath 'git' -Arguments @('rev-parse', 'HEAD') -AllowNonZeroExit -Phase 'test'
+        return [pscustomobject]@{
+            TypeName = $result.Output.GetType().Name
+            Count    = $result.Output.Count
+            ExitCode = $result.ExitCode
+        }
+    }
+    $threw = $false
+    $message = ''
+    $probeResult = $null
+    try { $probeResult = & $probe } catch { $threw = $true; $message = $_.Exception.Message }
+
+    Assert-True (-not $threw) "reading .Count on single-line output must not throw (got: $message)"
+    Assert-True ($probeResult.TypeName -eq 'Object[]') `
+        "Output must always be a collection, got [$($probeResult.TypeName)]"
+    Assert-True ($probeResult.Count -eq 1) "one printed line must be one element, got $($probeResult.Count)"
 }
 
 Test-Case 'update: refuses an installation that never completed' {

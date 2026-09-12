@@ -8119,3 +8119,92 @@ Operations Engine) started, not merged
   `pg_backup_lib.py` — specifically the `[backup] OK: {final_path}` print
   and `backup_filename()` — as the evidentiary basis for the identity
   protocol reused here.
+
+---
+
+## 2026-09-12 — PR24D Local Staging/UAT: array-unrolling defects found by real Windows execution
+
+- **Context:** The first real execution of `install.ps1` on Windows 11 +
+  Docker Desktop + PowerShell 7.6.6, at baseline
+  `e819d7bc469cc881603c603c235b1b6de304db22`, failed within one second:
+
+  ```
+  [install] Detected installation state: FRESH
+  [ERROR] [install] The property 'Count' cannot be found on this object.
+  ERROR: Installation did NOT complete. No "installation completed" state was recorded.
+  ```
+
+- **Root cause — one defect class, three instances.** PowerShell unrolls a
+  function's return value. An empty array reaches the caller as `$null`; a
+  one-element array reaches it as a bare scalar. Under
+  `Set-StrictMode -Version Latest`, `.Count` on either throws. Wrapping
+  inside the function does not help — `return @($x)` still unrolls. Only
+  wrapping at the CALL SITE works.
+
+  1. **`lib/Operations.ps1`** — `$failures = Invoke-PrerequisiteChecks ...`
+     then `$failures.Count`. `Invoke-PrerequisiteChecks` returns `@()` when
+     every check passes, so **the installer crashed on exactly the machines
+     where nothing was wrong.** The happy path had never worked.
+  2. **`install.ps1` / `start.ps1` / `status.ps1`** —
+     `$candidates = Get-LikelyLanIPv4Addresses` then `$candidates.Count`.
+     A host with **one** LAN address — the normal hospital PC — would have
+     crashed at the next step even after (1) was fixed. Found by the
+     same-class sweep, not by execution, because the test machine happened
+     to have more than one address.
+  3. **`lib/Common.ps1`** — `Invoke-MepCommand` captured native output
+     without `@()`, so a command printing exactly one line produced a
+     `[string]`. `Get-CurrentSourceSha` then threw on `.Output.Count`
+     inside a `try/catch` that swallowed it and returned
+     `'unknown-local-source'`. Not a crash — **silent evidence
+     corruption**: the real source SHA would never have been recorded in
+     installation metadata on any real machine. `git rev-parse HEAD`
+     always prints exactly one line.
+
+- **Why 83 behavior tests, 67 static assertions and CI 7/7 all missed it.**
+  This is the important part. **Every** behavior test passed
+  `-SkipPrerequisites`, so `Operations.ps1`'s prerequisite branch had never
+  been executed by any test — the harness even defined an
+  `Invoke-PrerequisiteChecks` stub that nothing ever called. And the mock
+  replaced `Get-CurrentSourceSha` wholesale, so the real one never ran. The
+  suite had stubbed out precisely the two functions that contained the
+  defects. A test suite that mocks a seam can only prove things about the
+  code on its own side of that seam.
+
+- **Decision — fix at the call sites, plus the seam.** Five call sites are
+  now `@(...)`-wrapped, and `Invoke-MepCommand` guarantees `Output` is
+  always a collection, which fixes instance (3) once for every present and
+  future caller rather than asking each to remember.
+
+- **Tests.** POWERSHELL UNIT/MOCK 87 (+4): the prerequisite gate is now
+  driven with **0, 1 and 3** failures and **without** `-SkipPrerequisites`
+  — the zero case is the one that crashed on real Windows. The harness stub
+  now returns `$failures` the way the real function does, reproducing the
+  unrolling rather than papering over it. A fourth test drives the **real**
+  `Invoke-MepCommand` against a **real** `git rev-parse HEAD` — no mock,
+  because the mock is exactly what hid the bug. STATIC 70 (+3), including
+  one asserting that a behavior test actually exercises the prerequisite
+  branch without the skip switch.
+
+- **Mutation-proved, files restored byte-identical.** Unwrapping the
+  prerequisite call site → the zero-failure test fails. Unwrapping
+  `Invoke-MepCommand` → the single-line test fails. Unwrapping a LAN call
+  site → the static test fails.
+
+- **Scope.** Deliberately narrow, per the validation instruction. Not
+  included: the separate `$IsWindows`-under-StrictMode incompatibility with
+  Windows PowerShell 5.1 in `lib/Backup.ps1`, and the absence of any
+  `#Requires -Version` declaration. Both are real and were found in the
+  same session, but they are a different defect class and belong in their
+  own PR.
+
+- **Evidence classification.** Real Windows execution of `install.ps1`
+  **was** performed and is what found defect (1); it failed, so **no
+  installation was completed**, nothing was mutated (`.env` absent, zero
+  containers, zero volumes), and **no evidence file was created**. Real
+  local backup and real restore rehearsal remain **NOT EXECUTED**;
+  managed-Staging rehearsal remains **PENDING**.
+
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the real Windows console output at baseline `e819d7bc`, and
+  this repository's `lib/Common.ps1`, `lib/Operations.ps1`, `install.ps1`,
+  `start.ps1` and `status.ps1`.

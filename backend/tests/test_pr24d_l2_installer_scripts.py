@@ -983,3 +983,60 @@ def test_l3_update_gate_is_satisfied_by_its_own_backup_artifact():
     )
     # Still ordered before any migration.
     assert body.index("Invoke-MepBackup") < body.index("Invoke-MepMigration")
+
+
+def test_function_returns_used_with_count_are_array_wrapped():
+    """Real Windows execution at baseline e819d7bc crashed the installer
+    with "The property 'Count' cannot be found on this object".
+
+    PowerShell unrolls a function's return value: an empty array arrives at
+    the caller as $null and a single-element array as a bare scalar. Under
+    `Set-StrictMode -Version Latest`, `.Count` on either throws. Wrapping
+    the CALL SITE in @(...) is the only reliable guard -- wrapping inside
+    the function does not survive the return.
+    """
+    call_sites = [
+        (_lib("Operations.ps1"), "@(Invoke-PrerequisiteChecks -FrontendPort (Get-ConfiguredHttpPort))"),
+        (_read("install.ps1"), "$candidates = @(Get-LikelyLanIPv4Addresses)"),
+        (_read("install.ps1"), "$lanCandidates = @(Get-LikelyLanIPv4Addresses)"),
+        (_read("start.ps1"), "$lanCandidates = @(Get-LikelyLanIPv4Addresses)"),
+        (_read("status.ps1"), "$lanCandidates = @(Get-LikelyLanIPv4Addresses)"),
+    ]
+    for source, expected in call_sites:
+        assert expected in source, f"unguarded call site, .Count would throw: {expected}"
+
+    # And the unguarded forms must be gone.
+    for name in ("install.ps1", "start.ps1", "status.ps1"):
+        code = _strip_comments_and_docstrings(_read(name))
+        assert not re.search(r"=\s*Get-LikelyLanIPv4Addresses\s*$", code, re.MULTILINE), (
+            f"{name} still assigns the helper's return without @(...)"
+        )
+    ops = _strip_comments_and_docstrings(_lib("Operations.ps1"))
+    assert not re.search(r"=\s*Invoke-PrerequisiteChecks\s", ops), (
+        "the prerequisite call site must stay @(...)-wrapped"
+    )
+
+
+def test_invoke_mep_command_always_returns_a_collection():
+    """A command printing exactly one line would otherwise unroll to a
+    [string], and `.Count` on a string throws under StrictMode. Guaranteeing
+    an array in the single seam fixes the contract for every caller."""
+    common = _strip_comments_and_docstrings(_lib("Common.ps1"))
+    assert '$output = @(& $FilePath @Arguments 2>&1 | ForEach-Object { "$_" })' in common, (
+        "Invoke-MepCommand must wrap its captured output in @(...)"
+    )
+
+
+def test_prerequisite_branch_is_actually_exercised_by_behavior_tests():
+    """The defect survived 83 behavior tests because every one of them
+    passed -SkipPrerequisites, so the prerequisite branch had never run.
+    Pin that at least one test now drives it without that switch."""
+    tests = (TESTS_ROOT / "Invoke-InstallerTests.ps1").read_text()
+    idx = tests.find("prerequisite gate survives ZERO failures")
+    assert idx != -1, "the zero-failure regression test must exist"
+    # Its Invoke-MepInstall call must NOT opt out of the prerequisite gate.
+    body = tests[idx:idx + 1800]
+    call = body[body.find("Invoke-MepInstall"):]
+    assert "-SkipPrerequisites" not in call[:400], (
+        "the regression test must exercise the real prerequisite branch"
+    )
