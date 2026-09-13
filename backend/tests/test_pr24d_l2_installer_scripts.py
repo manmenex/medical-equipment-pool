@@ -761,6 +761,35 @@ def test_l3_restore_target_can_never_be_the_live_database():
     assert "volume rm" not in body
 
 
+def test_l3_rehearsal_database_name_survives_postgres_identifier_folding():
+    """The real Windows rehearsal at baseline b03c146 created one database
+    and then looked for another. `CREATE DATABASE <name>` is an UNQUOTED
+    identifier, which PostgreSQL folds to lower case; the same name also
+    travels inside RESTORE_TARGET_DATABASE_URL, where libpq/asyncpg send it
+    verbatim. The old 'yyyyMMddTHHmmssZ' stamp carried an uppercase T and Z,
+    so the two spellings named different databases and the restore failed
+    with `database "..." does not exist` -- after the checksum had passed.
+    """
+    code = _strip_comments_and_docstrings(_lib("Backup.ps1"))
+    generator = _ps_function_body(code, "New-MepRehearsalDatabaseName")
+    assert "ToLowerInvariant()" in generator, (
+        "the generated rehearsal database name must be lower case, so the name "
+        "PostgreSQL folds an unquoted identifier to is the same string the "
+        "connection URL asks for"
+    )
+
+    body = _ps_function_body(code, "Invoke-MepRestoreRehearsal")
+    assert "-cnotmatch '^[a-z0-9_]+$'" in body, (
+        "the rehearsal must fail closed on any name that would not survive "
+        "identifier folding -- case-SENSITIVELY, since a case-insensitive test "
+        "would accept the very name that breaks"
+    )
+    # The guard has to run before anything is created, not after.
+    assert body.index("-cnotmatch '^[a-z0-9_]+$'") < body.index("CREATE DATABASE"), (
+        "the name must be validated before a database is created with it"
+    )
+
+
 def test_l3_no_credential_url_is_placed_on_a_command_line():
     code = _strip_comments_and_docstrings(_lib("Backup.ps1"))
     # The backup relies on the container's own DATABASE_URL; the restore

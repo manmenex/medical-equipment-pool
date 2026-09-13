@@ -298,8 +298,23 @@ function New-MepRehearsalDatabaseName {
     .SYNOPSIS
     A deterministic, timestamped, disposable database name that can never
     collide with the live local Staging/UAT database.
+
+    .DESCRIPTION
+    LOWERCASE, deliberately. PostgreSQL folds an UNQUOTED identifier to
+    lower case, and `Invoke-MepPsql` issues `CREATE DATABASE $name`
+    unquoted -- but the name also travels to PR24C inside
+    RESTORE_TARGET_DATABASE_URL, where libpq/asyncpg send the database
+    name verbatim with no folding at all. The previous
+    'yyyyMMddTHHmmssZ' stamp carried an uppercase T and Z, so
+    `CREATE DATABASE ..._20260913T000308Z` actually created
+    `..._20260913t000308z` while the restore then looked for the
+    mixed-case spelling and failed with `database "..." does not exist`
+    -- after the archive's checksum had already verified. The real
+    Windows rehearsal at baseline b03c146 failed exactly this way.
+    Keeping every character lower case makes the folded name and the
+    connection-string name the same string by construction.
     #>
-    return "$($Script:RehearsalDatabasePrefix)$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ'))"
+    return "$($Script:RehearsalDatabasePrefix)$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ'))".ToLowerInvariant()
 }
 
 function Invoke-MepPsql {
@@ -426,6 +441,17 @@ function Invoke-MepRestoreRehearsal {
     $liveDb = Get-MepConfiguredValue -Name 'POSTGRES_DB'
     if ($rehearsalDb -eq $liveDb) {
         throw (New-MepFailure 'Refusing to rehearse: the generated rehearsal database name equals the live database name.')
+    }
+    # The name is interpolated into an UNQUOTED SQL identifier below and
+    # also into a connection URL. PostgreSQL folds the former to lower
+    # case and leaves the latter alone, so anything but [a-z0-9_] makes
+    # those two names disagree -- which is precisely how the real Windows
+    # rehearsal at baseline b03c146 failed, after the checksum had already
+    # passed. Restricting the character set closes that class by
+    # construction, and incidentally leaves nothing that could alter the
+    # shape of the statement.
+    if ($rehearsalDb -cnotmatch '^[a-z0-9_]+$') {
+        throw (New-MepFailure "Refusing to rehearse: the generated rehearsal database name '$rehearsalDb' is not restricted to lowercase letters, digits and underscores. An unquoted SQL identifier is folded to lower case by PostgreSQL, but the connection string is not, so any other character would create one database and then look for a differently-named one.")
     }
 
     Write-Host ''
