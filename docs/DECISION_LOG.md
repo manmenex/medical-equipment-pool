@@ -8529,3 +8529,65 @@ Operations Engine) started, not merged
   this repository's `deployment/local-staging/lib/Backup.ps1`,
   `lib/Common.ps1`, `tests/Invoke-InstallerTests.ps1` and
   `backend/scripts/restore_postgres.py`.
+
+---
+
+## 2026-09-13 — PR24D local Staging/UAT: real Windows operational validation completed, and recorded
+
+- **Decision:** create
+  `docs/evidence/PR24D_LOCAL_STAGING_WINDOWS_VALIDATION.md` and fold the
+  current authoritative baseline into `docs/ROADMAP.md`.
+
+- **Why now.** The validation brief's §19 permits an evidence file **only if
+  the real validation reaches meaningful successful execution**. It now has:
+  install, Administrator bootstrap, host browser, LAN second device, network
+  isolation, stop/start/persistence, a real backup, a real LOCAL restore
+  rehearsal, an update whose mandatory pre-update backup gate was satisfied by
+  an artifact that update itself produced, and a Redis-degraded test with
+  recovery — all on Windows 11 with Docker Desktop, PowerShell 7.6.6, Docker
+  Engine 29.6.1 and Compose v5.3.0.
+
+- **What the evidence deliberately does NOT claim.** Managed-Staging rehearsal
+  remains **PENDING** — no managed environment exists and `cd-staging.yml` has
+  still never run. RPO ≤ 1h is **NOT PROVEN** — no scheduled backup cadence was
+  configured or observed. The measured restore time (1.1 s) is recorded
+  together with the fact that it came from an almost-empty database and is
+  therefore **not representative** of a populated hospital dataset. Production
+  GO is **NOT AUTHORIZED**. Load, concurrency and multi-user behaviour were
+  **NOT TESTED**. `.\uninstall.ps1 -RemoveData` was **never run** and no volume
+  was ever removed.
+
+- **Sanitisation.** No password, secret, connection string, token or hospital
+  data appears in the record. The database exercised held one Administrator
+  account and that operator's own audit rows; no patient data was involved.
+  Backup checksums and Alembic revisions are recorded because they are the
+  verifiable identity of the artifacts, and they disclose nothing sensitive.
+
+- **One artifact-identity fact worth keeping.** The pre-update backup and the
+  previous day's backup are byte-for-byte the same SIZE (150,842) yet carry
+  different SHA-256 values, because `pg_dump --format=custom` embeds its own
+  creation timestamp. That is what makes PR #137's gate independently
+  checkable from the console output alone: the recorded checksum is the new
+  archive's, so an older archive demonstrably did not stand in for it.
+
+- **Five findings, four merged fixes.** PRs #138–#141 each fixed a defect that
+  CI could not see, and the evidence file states the shared reason plainly:
+  in every case the thing that shipped had never been executed in the form it
+  ships — a branch every test skipped, a HEALTHCHECK no job ran, a binary
+  satisfied on the runner instead of in the image, and a name comparison whose
+  one decisive string lived in an environment variable no test inspected. The
+  fifth (running the scripts under Windows PowerShell 5.1, where a
+  `docker compose` progress line on stderr becomes a terminating error) is
+  recorded as **OPEN** and out of scope for this round per §18.
+
+- **Governance.** The Owner's §20 direction was: do not create a
+  governance-only PR for the stale ROADMAP baseline, but an evidence or fix PR
+  **may** update it. This is that PR. `docs/ROADMAP.md` now names
+  `692f718b6f35e8d4a2871aa4cfc52260833e2274` (PR #141) and records the full
+  `#135 → #141` chain, replacing a declaration that had been five merges
+  stale.
+
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the operator's real Windows console output across 2026-09-12 and
+  2026-09-13 at baselines `e819d7bc`, `e3250091`, `e2cd4eb`, `b03c146` and
+  `692f718`, plus this repository's merged history.

@@ -8,26 +8,45 @@
 ## Current baseline
 
 **The single current authoritative baseline is
-`9928201334e52be7301f6e1f1095e8c356a5a80d`** — the real squash-merge SHA
-of GitHub PR **#135**, "PR24D-L1 — Local Docker Staging/UAT Foundation"
-(three independent-review fix rounds: Redis non-blocking-startup
-correction, structural single-backend scale guard, and two stale-
-documentation-wording cleanups — see `docs/DECISION_LOG.md` for full
-before/after detail), squash-merged into
+`692f718b6f35e8d4a2871aa4cfc52260833e2274`** — the real squash-merge SHA
+of GitHub PR **#141**, "PR24D fix — the restore rehearsal created one
+database and looked for another", squash-merged into
 `claude/medical-equipment-pool-0c7fz0` on top of
-`7e2bfb2001642ea9a9754310b85d1911b7b2be5c` (GitHub PR #134, PR24D —
-Post-Merge Governance Close-out — now historical/superseded by this
-baseline). PR #135's final reviewed feature-branch head
-(`85c0d0075a141ae50cba4a63f96b8cc39896de0f`) carried **zero reviews**,
-zero comments, and zero review threads, CI green 6/6, and the reviewed
-head's tree was verified byte-identical to the merged squash commit's
-tree, sole parent `7e2bfb2001642ea9a9754310b85d1911b7b2be5c` confirmed.
+`b03c146c098f421cab37c05d80713b7897df9d5f` (GitHub PR #140). PR #141's
+reviewed head (`64dc61c607e312d988b694dc64422b4928ca192b`) carried zero
+reviews, zero comments, CI green 8/8, and its tree was verified
+byte-identical to the merged squash commit's tree, sole parent
+`b03c146c098f421cab37c05d80713b7897df9d5f` confirmed.
+
+**Baseline chain since PR24D-L1:** `73652b06` (#135, PR24D-L1) →
+`9928201334e52be7301f6e1f1095e8c356a5a80d` (#136, PR24D-L2 —
+Installer & Operations Engine) → `e819d7bc469cc881603c603c235b1b6de304db22`
+(#137, PR24D-L3 — Backup/Restore Operations & Rehearsal Runbook) →
+`e3250091665a37299a540584a11268ea5d925fd6` (#138) →
+`e2cd4ebd800b303a23bad97b8f058bf16f6ed6d1` (#139) →
+`b03c146c098f421cab37c05d80713b7897df9d5f` (#140) → **`692f718b`** (#141).
+PRs #138–#141 are four defect fixes found by **real Windows execution**,
+not by CI: array unrolling crashing `install.ps1`, an HTTP health probe
+resolving to IPv6 and aborting every install, a backend image with no
+`pg_dump` binary (which also made `update.ps1` impossible), and a
+rehearsal database created under one name and connected to under another.
+Each shipped with a regression test that executes the real artefact; see
+`docs/DECISION_LOG.md` and
+`docs/evidence/PR24D_LOCAL_STAGING_WINDOWS_VALIDATION.md`.
+
 Per this repository's standing process, **no separate self-referential
-"baseline adoption" PR is created for PR #135's squash SHA** — it became
-authoritative immediately upon merge, and its recording here is folded
-into this PR (PR24D-L2, the next PR that legitimately touches these
-governance files). **PR24D (CI/CD & Staging) code/tooling is merged and
-complete. Operational managed-Staging evidence remains pending:**
+"baseline adoption" PR is created** — a squash SHA becomes authoritative
+immediately upon merge, and its recording here is folded into the next PR
+that legitimately touches these governance files (here, the PR24D local
+Staging/UAT validation evidence record). **PR24D (CI/CD & Staging)
+code/tooling is merged and complete. Local Windows Staging/UAT operation
+is now evidenced end to end — install, Administrator bootstrap, LAN
+second device, stop/start/persistence, real backup, LOCAL restore
+rehearsal, update with a verified pre-update backup, and Redis-degraded
+behaviour (see
+`docs/evidence/PR24D_LOCAL_STAGING_WINDOWS_VALIDATION.md`). Operational
+managed-Staging evidence remains pending, and the local rehearsal does
+not substitute for it:**
 the manual `cd-staging.yml` workflow_dispatch has not yet been executed
 even once, no hosting provider has been selected, no real persistent
 managed-Staging environment exists, and the real PR24C backup/restore
