@@ -13,7 +13,10 @@ vi.mock("@/services/auth", () => ({
   changePassword: (...args: unknown[]) => changePassword(...args),
 }));
 
-const mockUser = vi.fn<[], UserProfile | null>();
+// Vitest 2 takes the whole function signature as one type argument; the
+// older `vi.fn<[Args], Return>()` form was removed and `tsc -b` rejects it
+// even though `tsc --noEmit` on the app tsconfig alone does not see it.
+const mockUser = vi.fn<() => UserProfile | null>();
 vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ user: mockUser(), isAuthenticated: true, isLoading: false }),
 }));
