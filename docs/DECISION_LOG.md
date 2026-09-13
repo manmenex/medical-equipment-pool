@@ -8420,3 +8420,111 @@ Operations Engine) started, not merged
   `backend/scripts/restore_postgres.py`,
   `deployment/local-staging/lib/Backup.ps1`, `docs/runbooks/PR24_BACKUP_RESTORE_RUNBOOK.md`
   and `.github/workflows/ci.yml`.
+
+---
+
+## 2026-09-13 — PR24D: the restore rehearsal created one database and then looked for another
+
+- **Decision:** generate the disposable rehearsal database name in lower
+  case, and refuse any name that would not survive PostgreSQL's identifier
+  folding.
+
+- **How it was found.** The first real `.\restore.ps1` on the validation
+  machine, at baseline `b03c146c098f421cab37c05d80713b7897df9d5f`, failed
+  after the archive's checksum had already verified:
+
+  ```
+  [restore] checksum OK
+  [restore] FAIL: could not connect to target ..._20260913T000308Z:
+            database "mep_local_restore_rehearsal_20260913T000308Z" does not exist
+  ```
+
+  The real backup taken minutes earlier (§12) had passed: 150,842 bytes,
+  checksum PASS, `pg_dump (PostgreSQL) 16.15`.
+
+- **Root cause.** `New-MepRehearsalDatabaseName` stamped the name with
+  `yyyyMMddTHHmmssZ` — an uppercase `T` and `Z`. `Invoke-MepPsql` issues
+  `CREATE DATABASE $rehearsalDb` as an **unquoted** identifier, and
+  PostgreSQL folds unquoted identifiers to lower case, so the database that
+  actually came into existence was `..._20260913t000308z`. The same name
+  also travels to PR24C inside `RESTORE_TARGET_DATABASE_URL`, where
+  libpq/asyncpg send the database name **verbatim, unfolded**. Two spellings,
+  two different databases.
+
+- **Why the CREATE looked successful.** It *was* successful.
+  `Invoke-MepPsql` is called without `-AllowNonZeroExit`, so a failure would
+  have thrown before the restore ran (`Common.ps1:180-184`); the restore did
+  run, so `CREATE DATABASE` exited 0. The `DROP DATABASE IF EXISTS` in the
+  `finally` block folded identically and therefore dropped the right
+  database — confirmed on the machine, where `\l | Select-String rehearsal`
+  found nothing afterwards. No orphan was left, and the live database was
+  never touched.
+
+- **Every guard behaved correctly.** The run announced `LOCAL REHEARSAL`
+  evidence class and "The live local Staging/UAT database is NOT modified",
+  verified the checksum before anything else, failed closed, cleaned up its
+  disposable target, and told the operator to treat the backup as unusable
+  until investigated. That last warning is stronger than the facts turned
+  out to warrant — the archive was fine — but it is the correct fail-closed
+  posture: an unproven backup must be treated as unproven.
+
+- **Why no test caught it.** The PowerShell behavior suite mocks Docker
+  entirely, so there is no PostgreSQL to fold anything; its assertions
+  matched only the *prefix* (`CREATE DATABASE mep_local_restore_rehearsal_`)
+  and passed happily while the name was broken. `test_pr24c_postgres.py`
+  does run a real round-trip, but against `mep_test_pr24c_restore_target` —
+  lower case, so folding is invisible there. And the restore target URL is
+  passed to Compose by environment-variable NAME, so its value never
+  appeared in the recorded argv the tests inspect: the one string that had
+  to match was the one string no test could see.
+
+- **Same-class sweep.** `Invoke-MepPsql` has exactly two call sites, the
+  CREATE and the DROP of this database; both share the root cause and both
+  are fixed by it. Everywhere else in the repository that builds a
+  `CREATE DATABASE` / `DROP DATABASE` statement already quotes the
+  identifier — `postgres_ci_gate.py:77-79`, `test_pr24c_postgres.py:58-59`,
+  `test_postgres_integration.py:735-736`. The PowerShell path was the only
+  unquoted one.
+
+- **Fix.** `.ToLowerInvariant()` on the generated name, so the folded form
+  and the connection-string form are the same string by construction; plus
+  a case-sensitive `-cnotmatch '^[a-z0-9_]+$'` guard that runs **before**
+  any database is created, so a future edit reintroducing an uppercase (or
+  any other unsafe) character fails closed with an explanatory message
+  instead of creating a database and then failing to find it. The character
+  restriction also leaves nothing that could alter the shape of the
+  statement. PR24C's guard ordering, `restore_postgres.py`, and the quoting
+  style of `Invoke-MepPsql` are all unchanged.
+
+- **Tests.** The behavior suite's recording seam now captures
+  `RESTORE_TARGET_DATABASE_URL` as it stood at each call, which is what
+  makes the decisive assertion possible at all: the name in
+  `CREATE DATABASE`, **lower-cased the way a real server would store it**,
+  must equal the name in the URL, compared case-sensitively. Comparing the
+  two raw strings would have found them equal even for the broken input,
+  since the mock folds nothing — so the test models the server's behavior
+  rather than the mock's. A second test injects an uppercase name and
+  asserts the rehearsal refuses it before creating anything. PowerShell
+  behavior 89 (+2). STATIC 76 (+2) in
+  `test_pr24d_l2_installer_scripts.py`, including one that fails if the
+  guard is ever moved after the CREATE.
+
+- **Mutation-proved, files restored byte-identical.** Reverting the
+  lower-casing, deleting the guard, weakening `-cnotmatch` to a
+  case-insensitive `-notmatch`, reproducing the exact pre-PR state, and
+  moving the guard after `CREATE DATABASE` each fail their test — seven
+  mutations, seven kills. The pre-PR-state mutation fails with the same
+  mismatch the real machine reported.
+
+- **Evidence.** **WINDOWS EXECUTED: YES** for the failure, at baseline
+  `b03c146`. The fix is **NOT YET EXECUTED on Windows**. §12 real local
+  backup is now **PASS** on real hardware; §13 LOCAL REHEARSAL remains
+  **PENDING** until this is re-run there. §15 update and §16 Redis degraded
+  remain **NOT EXECUTED**. Managed-Staging rehearsal remains **PENDING**;
+  RPO ≤ 1h is **NOT PROVEN**; Production GO is **NOT AUTHORIZED**.
+
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** the real Windows console output at baseline `b03c146`, plus
+  this repository's `deployment/local-staging/lib/Backup.ps1`,
+  `lib/Common.ps1`, `tests/Invoke-InstallerTests.ps1` and
+  `backend/scripts/restore_postgres.py`.

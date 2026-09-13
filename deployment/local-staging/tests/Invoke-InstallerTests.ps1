@@ -144,7 +144,19 @@ function Invoke-WithMocks {
                 [string]$Phase = 'command'
             )
             $joined = ($Arguments -join ' ')
-            $script:RecordedCalls += [pscustomobject]@{ FilePath = $FilePath; Args = $joined; Phase = $Phase }
+            # TargetUrl captures RESTORE_TARGET_DATABASE_URL as it stood at
+            # the moment of the call. The rehearsal passes that variable to
+            # Compose by NAME, so its VALUE never reaches $Arguments -- which
+            # is exactly why the tests could assert a `CREATE DATABASE` call
+            # was made and still miss that PR24C was then pointed at a
+            # DIFFERENTLY-NAMED database (PostgreSQL folds an unquoted
+            # identifier to lower case; a connection string is not folded).
+            $script:RecordedCalls += [pscustomobject]@{
+                FilePath  = $FilePath
+                Args      = $joined
+                Phase     = $Phase
+                TargetUrl = $env:RESTORE_TARGET_DATABASE_URL
+            }
 
             # --- real-CLI precondition fidelity (Fix Round 2, §20) ------
             # Without these, the mock would happily "succeed" at commands
@@ -1285,6 +1297,74 @@ Test-Case 'L3 restore: rehearses into a disposable target, never the live databa
     Assert-True (-not ($calls -match 'CREATE DATABASE mep_local_staging_db')) 'the live database must never be the target'
     Assert-True (-not ($calls -match 'DROP DATABASE IF EXISTS mep_local_staging_db')) 'the live database must never be dropped'
     Assert-True (@($calls -match 'DROP DATABASE IF EXISTS mep_local_restore_rehearsal_').Count -gt 0) 'the disposable target must be cleaned up'
+}
+
+Test-Case 'L3 restore: the database CREATEd and the database PR24C connects to are the same string' {
+    # The real Windows rehearsal at baseline b03c146 failed here, AFTER the
+    # archive's checksum had already verified:
+    #   [restore] FAIL: could not connect to target ..._20260913T000308Z:
+    #             database "..._20260913T000308Z" does not exist
+    # `CREATE DATABASE <name>` is an UNQUOTED identifier, which PostgreSQL
+    # folds to lower case; the same name also travels inside
+    # RESTORE_TARGET_DATABASE_URL, which is NOT folded. The old
+    # 'yyyyMMddTHHmmssZ' stamp carried an uppercase T and Z, so the two
+    # spellings named different databases. The pre-existing assertions all
+    # still passed, because every one of them matched only the PREFIX.
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
+    $recorded = Invoke-WithMocks -Context $ctx -Body {
+        Invoke-MepBackup -Reason 'seed' | Out-Null
+        $script:RecordedCalls = @()
+        Invoke-MepRestoreRehearsal | Out-Null
+        return @($script:RecordedCalls)
+    }
+
+    $createCall = @($recorded | Where-Object { $_.Args -match 'CREATE DATABASE ' })[0]
+    Assert-True ($null -ne $createCall) 'a CREATE DATABASE call must have been recorded'
+    # [a-z0-9_]+ rather than \S+: the statement is embedded inside psql's
+    # own -c "..." argument, so \S+ would swallow the closing quote.
+    $createdName = ([regex]::Match($createCall.Args, 'CREATE DATABASE ([A-Za-z0-9_]+)')).Groups[1].Value
+
+    $restoreCall = @($recorded | Where-Object { $_.Args -match 'restore_postgres\.py' })[0]
+    Assert-True ($null -ne $restoreCall) 'a restore_postgres.py call must have been recorded'
+    Assert-True (-not [string]::IsNullOrWhiteSpace($restoreCall.TargetUrl)) `
+        'the rehearsal must set RESTORE_TARGET_DATABASE_URL for the restore call'
+    $connectedName = ([regex]::Match($restoreCall.TargetUrl, '/([^/?]+)$')).Groups[1].Value
+
+    # The comparison models what the SERVER does, not what the mock sees.
+    # There is no PostgreSQL here to fold anything, so comparing the two
+    # raw strings would find them equal even for the broken input this test
+    # exists to catch. What a real server STORES for an unquoted identifier
+    # is its lower-cased form, and that stored name is what the connection
+    # string has to ask for -- unfolded, character for character.
+    $storedName = $createdName.ToLowerInvariant()
+    # -ceq: case-SENSITIVE. A case-insensitive comparison would pass on the
+    # very mismatch under test.
+    Assert-True ($storedName -ceq $connectedName) `
+        "PostgreSQL would store the CREATEd database as '$storedName', but PR24C is pointed at '$connectedName'"
+
+    $dropCall = @($recorded | Where-Object { $_.Args -match 'DROP DATABASE IF EXISTS ' })[0]
+    $droppedName = ([regex]::Match($dropCall.Args, 'DROP DATABASE IF EXISTS ([A-Za-z0-9_]+)')).Groups[1].Value
+    Assert-True ($droppedName -ceq $createdName) `
+        "the dropped database ('$droppedName') must be exactly the one created ('$createdName')"
+}
+
+Test-Case 'L3 restore: a rehearsal name that would not survive identifier folding is refused' {
+    # Structural backstop: if a future edit reintroduces an uppercase or
+    # otherwise unsafe character into the generated name, the rehearsal must
+    # fail closed BEFORE creating a database, rather than create one and
+    # then look for a differently-named one.
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        Invoke-MepBackup -Reason 'seed' | Out-Null
+        $script:RecordedCalls = @()
+        function New-MepRehearsalDatabaseName { return 'mep_local_restore_rehearsal_20260913T000308Z' }
+        $threw = $false
+        try { Invoke-MepRestoreRehearsal | Out-Null } catch { $threw = $true }
+        return [pscustomobject]@{ Threw = $threw; Calls = @($script:RecordedCalls | ForEach-Object { $_.Args }) }
+    }
+    Assert-True $result.Threw 'a rehearsal name with uppercase characters must be refused'
+    Assert-True (-not ($result.Calls -match 'CREATE DATABASE')) 'no database may be created once the name is rejected'
+    Assert-True (-not ($result.Calls -match 'restore_postgres\.py')) 'PR24C must never be invoked against a name that cannot match'
 }
 
 Test-Case 'L3 restore: an EXTERNAL archive sharing a basename with an internal one is not confused for it' {
