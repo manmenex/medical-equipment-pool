@@ -26,7 +26,7 @@ vi.mock("@/hooks/useAuth", async () => {
 });
 
 function makeUser(role: UserProfile["role"]): UserProfile {
-  return { id: "user-1", employee_code: "U001", full_name: "Test User", email: "u@test.dev", role, permissions: {} };
+  return { id: "user-1", employee_code: "U001", full_name: "Test User", email: "u@test.dev", role, permissions: {}, must_change_password: false };
 }
 
 function makeRun(overrides: Partial<CutoverReadinessRunListItem> = {}): CutoverReadinessRunListItem {

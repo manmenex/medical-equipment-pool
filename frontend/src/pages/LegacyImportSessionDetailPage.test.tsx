@@ -21,7 +21,7 @@ vi.mock("@/hooks/useAuth", async () => {
 });
 
 function makeUser(role: UserProfile["role"]): UserProfile {
-  return { id: "user-1", employee_code: "U001", full_name: "Test User", email: "u@test.dev", role, permissions: {} };
+  return { id: "user-1", employee_code: "U001", full_name: "Test User", email: "u@test.dev", role, permissions: {}, must_change_password: false };
 }
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";

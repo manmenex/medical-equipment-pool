@@ -17,12 +17,14 @@ design doc):
 
 The temporary password is generated securely and printed exactly once to
 stdout -- it is never logged, written to a file, or stored anywhere in
-plaintext. No forced first-login password rotation exists in this
-repository yet (no such flag on the `User` model); the operator must
-change it immediately after first login using the existing supported
-`PATCH /users/{id}` password-update capability (`UserUpdate.password`,
-`backend/app/schemas/master_data.py`) -- this script does not invent a
-new auth mechanism to enforce that.
+plaintext.
+
+Forced first-login rotation now exists and this script uses it: the created
+account carries `must_change_password=True`, and the only thing that clears
+it is `auth_service.change_password`, which first proves the caller knows
+the current password. (This paragraph replaces an earlier note saying no
+such flag existed -- it does now, and the operator is no longer relied upon
+to remember.)
 """
 import argparse
 import asyncio
@@ -31,15 +33,66 @@ import secrets
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from app.core.exceptions import DomainError
 from app.core.security import hash_password
 from app.crud import audit as audit_crud
 from app.db.session import AsyncSessionLocal
 from app.models.user import ROLE_ADMINISTRATOR, Role, User
+from app.services.password_policy import validate_password
 
-# secrets.token_urlsafe(n) yields roughly 4n/3 base64url characters; 24
-# bytes gives a 32-character temporary password with ample entropy for a
-# one-time, immediately-rotated credential.
-_TEMP_PASSWORD_BYTES = 24
+# Drawn from the same set the Owner restricted passwords to
+# (auth_service.ALLOWED_PASSWORD_DESCRIPTION): English letters and digits.
+#
+# This used to be `secrets.token_urlsafe`, whose base64url alphabet also
+# includes "-" and "_". That handed the operator a one-time password
+# containing characters the application then refuses in the replacement --
+# the very first credential anyone types, breaking the rule it is about to
+# teach them, on the phone keyboard the restriction exists to spare.
+#
+# 32 characters from a 62-character alphabet is ~190 bits, against ~192 from
+# the token_urlsafe(24) it replaces. Two bits, for a credential that is used
+# once and immediately rotated. `secrets.choice` is uniform and
+# cryptographically sound; a modulo over `secrets.randbelow` would not be.
+_TEMP_PASSWORD_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+_TEMP_PASSWORD_LENGTH = 32
+
+# Each draw satisfies the policy with probability ~0.996; 20 attempts fail
+# with probability ~1e-46. The bound exists so a future policy no random
+# string can satisfy raises rather than spins forever.
+_TEMP_PASSWORD_MAX_ATTEMPTS = 20
+
+
+def generate_temporary_password(*identifiers: str | None) -> str:
+    """A one-time password that satisfies the application's own rules.
+
+    Draw-and-verify against `validate_password` rather than hand-reasoning
+    about which rules a random string happens to satisfy. That reasoning was
+    wrong on the first attempt: 32 characters drawn uniformly from a
+    62-character alphabet contain no digit about 0.4% of the time, which the
+    "must contain a digit" rule refuses -- so roughly one bootstrap in 280
+    would have handed the operator a password the application would not let
+    them replace with a like-for-like one, and no amount of staring at the
+    generator would have surfaced it.
+
+    Verifying against the real validator means the generator cannot drift
+    from the policy again, whatever the policy becomes next.
+    """
+    for _ in range(_TEMP_PASSWORD_MAX_ATTEMPTS):
+        candidate = "".join(
+            secrets.choice(_TEMP_PASSWORD_ALPHABET) for _ in range(_TEMP_PASSWORD_LENGTH)
+        )
+        try:
+            validate_password(candidate, identifiers=identifiers)
+        except DomainError:
+            continue
+        return candidate
+    # Unreachable short of a broken RNG or a policy no random string can
+    # satisfy. Failing loudly beats returning a password the application
+    # will then refuse.
+    raise RuntimeError(
+        "Could not generate a temporary password satisfying the password policy after "
+        f"{_TEMP_PASSWORD_MAX_ATTEMPTS} attempts."
+    )
 
 
 class BootstrapRefused(RuntimeError):
@@ -79,7 +132,7 @@ async def bootstrap_admin(*, employee_code: str, email: str, full_name: str) -> 
     administrator already exists -- including one created by a
     concurrent invocation that won the `administrator` role-row lock
     first."""
-    temp_password = secrets.token_urlsafe(_TEMP_PASSWORD_BYTES)
+    temp_password = generate_temporary_password(employee_code, full_name, email)
 
     async with AsyncSessionLocal() as db:
         admin_role = await _lock_administrator_role(db)
@@ -97,6 +150,12 @@ async def bootstrap_admin(*, employee_code: str, email: str, full_name: str) -> 
             email=email,
             password_hash=hash_password(temp_password),
             role_id=admin_role.id,
+            # The one-time password below is printed to a console and,
+            # realistically, written down. It is a temporary credential by
+            # construction, so the account starts out required to replace
+            # it -- cleared only by auth_service.change_password, which
+            # first proves the caller knows it.
+            must_change_password=True,
         )
         db.add(user)
         try:

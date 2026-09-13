@@ -25,7 +25,7 @@ import type { Role, UserProfile } from "@/types";
 // the backend actually allows.
 
 function makeUser(role: Role): UserProfile {
-  return { id: "u1", employee_code: "U001", full_name: "Test User", email: "u@test.dev", role, permissions: {} };
+  return { id: "u1", employee_code: "U001", full_name: "Test User", email: "u@test.dev", role, permissions: {}, must_change_password: false };
 }
 
 const ADMIN = makeUser("administrator");

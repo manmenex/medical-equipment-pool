@@ -20,6 +20,11 @@ export interface UserProfile {
   email: string;
   role: Role;
   permissions: Record<string, unknown>;
+  // True while this account is still using a password somebody else set
+  // (the Administrator bootstrap's one-time password, or an Administrator
+  // reset). The app keeps the user on the change-password screen until the
+  // backend clears it.
+  must_change_password: boolean;
 }
 
 export interface Equipment {

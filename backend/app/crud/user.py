@@ -72,6 +72,11 @@ async def update(db: AsyncSession, user: User, *, data: dict, role_id: uuid.UUID
         user.is_active = data["is_active"]
     if data.get("password"):
         user.password_hash = hash_password(data["password"])
+        # An Administrator setting somebody else's password produces a
+        # TEMPORARY credential by definition: two people now know it. The
+        # owner must replace it before they can use the application, and
+        # auth_service.change_password is the only thing that clears this.
+        user.must_change_password = True
     if role_id is not None:
         user.role_id = role_id
     await db.flush()

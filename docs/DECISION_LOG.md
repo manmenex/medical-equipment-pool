@@ -8591,3 +8591,216 @@ Operations Engine) started, not merged
 - **Source:** the operator's real Windows console output across 2026-09-12 and
   2026-09-13 at baselines `e819d7bc`, `e3250091`, `e2cd4eb`, `b03c146` and
   `692f718`, plus this repository's merged history.
+
+---
+
+## 2026-09-13 — Self-service password change, and a first-login password that is actually temporary
+
+- **Decision:** add `POST /api/v1/auth/change-password`, a
+  `users.must_change_password` flag, and a frontend screen the flag forces
+  users onto.
+
+- **What the gap was.** No user could change their own password at all. The
+  only route was an Administrator calling `PATCH /users/{id}`, which asks for
+  no current password and enforces no rules. The Administrator bootstrap's
+  one-time password — printed to a console and, realistically, written down —
+  could therefore stay in use indefinitely, known to whoever saw the screen.
+  This was recorded as an open finding in
+  `docs/evidence/PR24D_LOCAL_STAGING_WINDOWS_VALIDATION.md` §5.
+
+- **The flag means one thing:** this account's current password was set by
+  somebody other than its owner. Two places set it — the bootstrap, and an
+  Administrator setting a password through `PATCH /users/{id}` — and exactly
+  one place clears it: `auth_service.change_password`, which first proves the
+  caller knows the current password. A temporary credential therefore cannot
+  stop being temporary by any other route, including a failed change attempt.
+
+- **Existing rows migrate to False, deliberately.** Every account that exists
+  when migration `0023` runs chose its own password under the previous rules.
+  Defaulting them to True would lock every current user out of the
+  application on deploy — an outage nobody asked for, experienced first by
+  the local Staging/UAT operator.
+
+- **Knowing the current password is required even though the caller already
+  holds a valid access token.** A token left behind on an unattended ward
+  workstation must not be enough to take an account over permanently.
+
+- **Allowed characters: `[A-Za-z0-9]` only — an Owner decision.** English
+  letters and digits; no symbols, no spaces, no Thai. Ward staff type these
+  on shared workstations and phone keyboards, and symbols are where the
+  support calls come from.
+
+  **This restricts the allowed set; it does not require a mix.** "abcdef" is
+  accepted. Requiring at least one of each kind is the composition rule NIST
+  SP 800-63B advises against, and the Owner asked for "only these
+  characters", not "must contain each of these". Tests assert both halves,
+  because a reader could reasonably assume the other reading.
+
+  **The cost, stated rather than buried.** Dropping symbols takes the
+  alphabet from 94 printable ASCII characters to 62. With the 6-character
+  minimum the search space is 62^6 (~5.7e10) — exhaustible offline by a
+  modern attacker holding the hash store, with bcrypt's work factor the only
+  thing standing in the way. The mitigation that costs the user nothing is
+  length, and the form says so rather than merely permitting it.
+
+  The other two rules are unchanged: the new password must differ from the
+  current one (otherwise "change your password" is satisfied by retyping it)
+  and must not be surrounded by whitespace. The whitespace rule is now
+  strictly redundant — a space is not in the allowed set — but is checked
+  first anyway, because "you have a space at the start" is actionable and
+  "invalid character" sends the user hunting for something invisible.
+
+- **Required: at least one digit, and at least one letter.** The digit is an
+  Owner decision. The letter is its necessary pair and was added without
+  being asked for: without it "123456" satisfies "contains a digit" while
+  being the most common password in the world, caught only by the blocklist
+  one rule deep instead of two. This is still not a full composition rule --
+  no uppercase requirement, no symbol requirement, any arrangement.
+
+- **Rules against trivially guessable passwords, designed rather than
+  specified.** The Owner asked for rules preventing repetitive passwords and
+  left the design open. Three were added, in
+  `backend/app/services/password_policy.py`:
+
+  | Rule | Refuses | Why this shape |
+  |---|---|---|
+  | At least 4 distinct characters | `111a11`, `a1a1a1` | The cheapest rule that removes them without touching anything a person would choose on purpose |
+  | No run of more than 3 in order | `x1234y`, `7wxyz8` | Three is deliberately allowed: `abc` and `123` sit inside plenty of reasonable passwords, and refusing them costs more in false rejections than it buys |
+  | Curated blocklist | `abc123`, `ward01`, `Passw0rd`, `1hospital` | Compared after normalising case, surrounding digits and letter/digit substitutions, against the **whole** password — never as a substring, so `ward7bed12` stays valid |
+  | Must not contain the account's own identifiers | `BME001x7`, `somchai42` | See below |
+
+  **The identifier rule is the one that matters here.** In a ward, the
+  realistic attacker is a colleague who can read the employee code off a
+  badge and knows the name — not someone holding the hash store. Employee
+  code, email local part, and every name fragment of 3+ characters are
+  refused as substrings, case-insensitively.
+
+  The blocklist is deliberately **not a dictionary**. A dictionary would
+  reject `harbour7` while an attacker has no particular reason to try it.
+  What is listed is what people actually pick, plus the words this specific
+  deployment puts on the screen the user is looking at while choosing
+  (`ward`, `nurse`, `equipment`, `bangkok`).
+
+  Each rule has its own error code — `PASSWORD_TOO_REPETITIVE`,
+  `PASSWORD_TOO_COMMON`, `PASSWORD_CONTAINS_IDENTIFIER` — so the form can
+  say which rule was broken in Thai instead of making the user guess.
+
+- **OUTSTANDING, and larger than everything above: there is no login
+  throttle and no account lockout.** Verified — no such code exists. Failed
+  logins are audited and nothing else happens, so an attempt costs an
+  attacker only bcrypt's ~250 ms. Against someone at a ward workstation
+  trying the fifty most likely passwords for a colleague, the blocklist and
+  the identifier rule are the *entire* defence, and a six-character minimum
+  gives them little room.
+
+  **A login throttle would be worth more than every rule in this entry
+  combined.** It is not built here because locking staff out of a clinical
+  system mid-shift is an operational decision with patient-safety
+  consequences — the threshold, the lockout duration, and whether it is
+  per-account or per-source-address are the Owner's to set, not something
+  to infer. Recorded as the next security item rather than assumed away.
+
+- **The bootstrap one-time password now uses the same alphabet.** It came
+  from `secrets.token_urlsafe`, whose base64url set includes `-` and `_` —
+  so the first credential anyone types contained characters the application
+  refuses in the replacement it immediately demands, on exactly the phone
+  keyboard this restriction exists to spare. `generate_temporary_password()`
+  now draws 32 characters from `[A-Za-z0-9]` via `secrets.choice`: ~190 bits
+  against the previous ~192, for a credential used once and rotated.
+  A test runs the real generator through the real validator so the two
+  cannot drift apart.
+
+- **Minimum length: 6 characters — an Owner decision, below the NIST
+  recommendation.** This slice first shipped with a 12-character minimum.
+  The Owner judged 12 too long for ward staff at the workstation and set it
+  to 6. NIST SP 800-63B recommends a minimum of 8 for user-chosen secrets,
+  so this is recorded as a knowing departure rather than dressed up as a
+  standards-based number. The risk accepted is offline guessing should the
+  password hash store ever leak, mitigated only by bcrypt's work factor
+  (12 rounds). Raising it later costs nothing structural:
+  `auth_service.MINIMUM_PASSWORD_LENGTH` is the single authority and the
+  frontend mirrors it. The Owner also asked for no maximum; see the next
+  entry for why one exists anyway.
+
+- **Maximum length: 72 bytes — not a policy choice, a limit of the hashing
+  algorithm.** `bcrypt.hashpw` *raises* `ValueError` above 72 bytes (verified
+  against the pinned bcrypt 5.0.0). Before this was found, a long passphrase
+  reached `app.core.security.hash_password` and surfaced as **HTTP 500**
+  rather than a message the user could act on. `validate_new_password` now
+  rejects it as `WEAK_PASSWORD` with an explanation.
+
+  **Counted in bytes, and that distinction matters here specifically.** This
+  application's UI is Thai, and a Thai character is 3 bytes in UTF-8 — so
+  **24 Thai characters already reach the limit**. A character-based check
+  would have let a perfectly ordinary Thai passphrase through to crash inside
+  bcrypt. Regression tests cover both sides of the boundary in ASCII and the
+  25-Thai-character case, on the backend and in the form.
+
+  Removing the cap entirely means pre-hashing (SHA-256 then bcrypt), which
+  changes the stored hash format and needs a migration path for existing
+  hashes. That is a design decision for a later slice, not a detail, and was
+  not taken here.
+
+  **Known, not fixed here:** `PATCH /users/{id}` sets a password without
+  calling `validate_new_password`, so an Administrator typing more than
+  72 bytes there still gets a 500. Adding validation to that endpoint would
+  also impose the 6-character minimum on Administrator-set passwords, which
+  is a policy change the Owner has not asked for — flagged for a decision
+  rather than changed unilaterally.
+
+- **`change-password` takes no user id.** It can never be pointed at somebody
+  else's account, whatever role the caller holds, and a test supplies a
+  `user_id` in the body to prove a stray field is ignored rather than
+  honoured. An Administrator resetting another user's password remains a
+  separate operation with its own audit trail — and now marks the result
+  temporary.
+
+- **Audited under its own action.** `AUDIT_ACTION_PASSWORD_CHANGE`, not a
+  generic update on the user entity: "somebody changed a password" is a
+  security event an auditor looks for by name, and burying it among ordinary
+  profile edits makes it findable only by whoever already knows to look. The
+  old and new passwords are never recorded, in any form.
+
+- **The commit is NOT best-effort.** Unlike `last_login_at`, a password change
+  that is not durably persisted must not be reported as successful — the user
+  would believe the new password works and discover otherwise at the next
+  login, possibly after discarding the old one.
+
+- **Deliberately NOT built: session revocation.** Changing a password does not
+  invalidate other devices' refresh tokens. `app/core/redis.py` can revoke a
+  token by `jti` but has no per-user token index, and inventing one is a
+  design decision rather than a detail — recorded here as a known limitation
+  instead of being half-built.
+
+- **The frontend guard is usability, not security.** `ProtectedRoute`
+  redirects a flagged user to the change screen and exempts that one path so
+  it cannot redirect to itself; it waits for a profile it has actually seen,
+  so a cold load does not bounce every user through the screen. The backend
+  re-checks everything regardless of what renders.
+
+- **Tests.** Backend `test_auth.py` 14 (+10): the new password logs in AND the
+  old one stops working; a wrong current password changes nothing; short,
+  whitespace-surrounded and reused passwords are refused with distinct codes;
+  an Administrator reset sets the flag and only a real change clears it; and a
+  failed change does not clear it. Frontend 467 (+10 in a new
+  `ChangePasswordPage.test.tsx`), covering the forced banner, both client-side
+  refusals without an API call, a successful submit, backend-error mapping,
+  and all four guard states. Fifteen existing frontend fixtures gained the new
+  required field rather than the type being loosened to optional — the
+  backend always sends it.
+
+- **One markup fix found by its own test.** The password hint initially sat
+  inside the `<label>`, which made it part of the input's accessible name: a
+  screen reader would have read the whole paragraph as the field's label on
+  every focus. The test could not find the field by its label, which is
+  exactly what a screen-reader user would have experienced.
+
+- **Evidence.** **NOT YET EXECUTED on Windows.** Proven by the backend API
+  tests and the frontend suite. The migration's PostgreSQL path is exercised
+  by CI's migration job; SQLite tests reach the column through the ORM.
+
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** `docs/evidence/PR24D_LOCAL_STAGING_WINDOWS_VALIDATION.md` §5,
+  plus this repository's `app/models/user.py`, `app/services/auth_service.py`,
+  `app/api/v1/auth.py`, `app/crud/user.py`, `app/scripts/bootstrap_admin.py`
+  and the frontend's `ProtectedRoute` / `ChangePasswordPage`.
