@@ -8505,9 +8505,10 @@ Operations Engine) started, not merged
   since the mock folds nothing — so the test models the server's behavior
   rather than the mock's. A second test injects an uppercase name and
   asserts the rehearsal refuses it before creating anything. PowerShell
-  behavior 89 (+2). STATIC 76 (+2) in
-  `test_pr24d_l2_installer_scripts.py`, including one that fails if the
-  guard is ever moved after the CREATE.
+  behavior 89 (+2). STATIC 74 (+1) in
+  `test_pr24d_l2_installer_scripts.py` -- one test function carrying four
+  assertions, including one that fails if the guard is ever moved after the
+  CREATE.
 
 - **Mutation-proved, files restored byte-identical.** Reverting the
   lower-casing, deleting the guard, weakening `-cnotmatch` to a
