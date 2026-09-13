@@ -8591,3 +8591,84 @@ Operations Engine) started, not merged
 - **Source:** the operator's real Windows console output across 2026-09-12 and
   2026-09-13 at baselines `e819d7bc`, `e3250091`, `e2cd4eb`, `b03c146` and
   `692f718`, plus this repository's merged history.
+
+---
+
+## 2026-09-13 — PR24D: an hourly backup schedule, and retention that survives one
+
+- **Decision:** register `.\backup.ps1` with Windows Task Scheduler on an
+  hourly cadence, and make PR24C's retention tiered so that cadence does not
+  fill the disk.
+
+- **Why.** `docs/evidence/PR24D_LOCAL_STAGING_WINDOWS_VALIDATION.md` records
+  **RPO ≤ 1h: NOT PROVEN** for a plain reason — nothing backed up on a
+  schedule. Both backups taken during the real Windows validation were
+  operator-initiated. An unattended hourly backup is the smallest change that
+  makes an RPO claim *possible*; it does not by itself make one true.
+
+- **Retention had to change with it.** A flat 30-day window keeps **720**
+  archives at an hourly cadence: harmless at the 150,842 bytes the validation
+  measured, roughly 36 GB once a real dataset reaches 50 MB. The new policy
+  keeps every archive for 48 hours, then the newest archive of each UTC day up
+  to 30 days — about **78** archives, while preserving hour-level granularity
+  across the two days recovery almost always reaches back into. The newest of
+  a day is kept rather than the oldest because that is the state a restore
+  from that day would want. `select_prune_candidates` is untouched and still
+  tested; `select_tiered_prune_candidates` is a new pure function beside it,
+  and `--retention-days` remains accepted as the daily tier so the runbook's
+  documented command keeps working.
+
+- **What was deliberately NOT built.** No second backup implementation, no
+  separate retention path, no way to bypass anything. `lib/Schedule.ps1`
+  calls neither Docker nor `pg_dump`; it registers the existing entry script,
+  and a scheduled run is indistinguishable from an operator typing
+  `.\backup.ps1` — same mutation lock, same verified artifact, same prune.
+
+- **Three operational choices worth recording.** The task runs **pwsh**, never
+  `powershell.exe`: under Windows PowerShell 5.1 a `docker compose` progress
+  line on stderr becomes a terminating error, which cost real operator time
+  once already and would do so hourly, unattended. It runs as the **interactive
+  logged-in user**, because Docker Desktop lives in that user's session and a
+  SYSTEM task could not reach the daemon at all — the cost, stated in the
+  runbook rather than discovered later, is that no backup runs while that user
+  is logged out. And `-MultipleInstances IgnoreNew` means a slow backup can
+  never have the next hour stack on top of it.
+
+- **A registered schedule that fails is worse than none,** because it looks
+  like coverage. `.\schedule-backup.ps1` with no arguments reports the last
+  run and whether it succeeded, and says so in as many words when it did not.
+
+- **Tests.** PowerShell behavior 98 (+9), asserting what the task is actually
+  asked to run rather than that Windows accepted the registration: pwsh not
+  powershell.exe, the real backup.ps1 at a path that exists, hidden and
+  non-interactive, IgnoreNew, an interactive principal, out-of-range intervals
+  refused before anything is registered, removal scoped to exactly this task,
+  and a failing schedule reported as FAILED. STATIC 79 (+5). PR24C retention
+  59 (+9) as pure-function cases. The behavior suite's `Test-Path` seam now
+  delegates for real `.ps1` files under the deployment root, so the "refuse to
+  schedule a script that does not exist" guard is exercised against the actual
+  file rather than a stub that always says missing.
+
+- **Mutation-proved, files restored byte-identical.** Seventeen mutations,
+  seventeen kills: launching powershell.exe, dropping the hidden window,
+  allowing parallel runs, a service-account principal, accepting any interval,
+  unregistering unconditionally, reporting a failing schedule as success,
+  dropping the RPO consequence from the message, never protecting the newest
+  archive, keeping the oldest of each day instead of the newest, pruning
+  inside the hourly window, no daily thinning, never deleting past the daily
+  window, dropping window validation, a resolver that accepts powershell.exe,
+  Schedule.ps1 shelling out to Docker itself, and prune reverting to the flat
+  window.
+
+- **Evidence.** **NOT YET EXECUTED on Windows.** CI cannot register a Windows
+  scheduled task, so the executed proof here is the behavior suite plus the
+  pure-function retention cases. RPO ≤ 1h remains **NOT PROVEN** until the
+  schedule is installed on the validation machine and observed succeeding over
+  time — registering it proves capability, not reliability. Managed-Staging
+  rehearsal remains **PENDING**; Production GO remains **NOT AUTHORIZED**.
+
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** `docs/evidence/PR24D_LOCAL_STAGING_WINDOWS_VALIDATION.md`, plus
+  this repository's `backend/scripts/pg_backup_lib.py`, `prune_backups.py`,
+  `deployment/local-staging/lib/Backup.ps1` and the new
+  `lib/Schedule.ps1` / `schedule-backup.ps1`.

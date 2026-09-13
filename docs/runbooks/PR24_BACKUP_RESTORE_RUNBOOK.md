@@ -217,6 +217,23 @@ each rehearsal or Production readiness review:
 A single successful restore rehearsal does **not**, by itself, prove RPO —
 RPO is a property of the *backup schedule's* reliability, not of one restore.
 
+**Local Staging/UAT (PR24D).** The schedule is registered with Windows Task
+Scheduler by `.\schedule-backup.ps1 -Install`, which runs the existing
+`.\backup.ps1` every hour. Running `.\schedule-backup.ps1` with no arguments
+reports whether a schedule exists, when it last ran, and whether that run
+**succeeded** — a registered task that fails every hour is not backup
+coverage, and is reported as a failure rather than as a green tick.
+
+Two limitations to record honestly alongside any RPO claim:
+
+- The task runs as the logged-in Windows user, because Docker Desktop lives
+  in that user's session; a task running as SYSTEM could not reach the Docker
+  daemon at all. **No backup runs while that user is logged out or the machine
+  is off.**
+- Registering the schedule does not by itself prove an RPO. The claim needs
+  the schedule *observed succeeding over time* — which is an operational
+  observation, not a code change.
+
 ---
 
 ## 7. หลักฐาน RTO (RTO evidence)
@@ -276,18 +293,38 @@ Production GO backup gate ผ่านแล้ว จนกว่าจะม�
 
 ## 9. Retention / การลบ backup เก่า
 
+Retention เป็นแบบ **tiered** เพราะ backup รายชั่วโมงกับหน้าต่าง 30 วันแบบเดิม
+จะเก็บไฟล์ไว้ 720 ไฟล์ — ไม่เป็นไรตอนฐานข้อมูลยังเล็ก แต่เมื่อข้อมูลจริงโตถึงระดับ
+50MB จะกินพื้นที่ราว 36GB
+
+| ช่วงอายุ | เก็บอะไร |
+|---|---|
+| ใหม่กว่า 48 ชั่วโมง | **เก็บทุกไฟล์** — นี่คือช่วงที่ทำให้ RPO ต่ำกว่า 1 ชั่วโมงเป็นจริง |
+| 48 ชั่วโมง – 30 วัน | เก็บไฟล์ **ล่าสุดของแต่ละวัน (UTC)** ที่เหลือลบ |
+| เก่ากว่า 30 วัน | ลบ |
+
+ผลคือประมาณ 78 ไฟล์แทน 720 โดยยังคงความละเอียดระดับชั่วโมงไว้สองวันล่าสุด
+ซึ่งเป็นช่วงที่การกู้คืนจริงเกือบทั้งหมดย้อนไปถึง
+
 ```bash
 cd backend
-python scripts/prune_backups.py --backup-dir /path/to/backup/storage --retention-days 30 --dry-run
+python scripts/prune_backups.py --backup-dir /path/to/backup/storage --dry-run
 # ตรวจสอบผลลัพธ์ก่อน แล้วจึงรันจริงโดยไม่ใส่ --dry-run
-python scripts/prune_backups.py --backup-dir /path/to/backup/storage --retention-days 30
+python scripts/prune_backups.py --backup-dir /path/to/backup/storage
+# ปรับหน้าต่างได้ถ้าจำเป็น
+python scripts/prune_backups.py --backup-dir /path/to/backup/storage \
+    --hourly-retention-hours 48 --daily-retention-days 30
 ```
 
 - ลบเฉพาะไฟล์ที่ตรงรูปแบบชื่อ `mep-postgres-<environment>-<timestamp>.dump`
   ภายใน `--backup-dir` เท่านั้น — ไม่ใช่ `rm -rf` ทั่วไป
-- **backup ล่าสุดจะไม่ถูกลบเด็ดขาด** แม้จะเก่าเกิน retention (เช่น ระบบตั้งเวลา
+- **backup ล่าสุดจะไม่ถูกลบเด็ดขาด** แม้จะเก่าเกินทุกหน้าต่าง (เช่น ระบบตั้งเวลา
   หยุดทำงานไปนาน) เพื่อไม่ให้เหลือ backup เป็นศูนย์
 - `.manifest.json` ของแต่ละ backup จะถูกลบไปพร้อมกัน
+- `--retention-days` เดิมยังใช้ได้ และตอนนี้หมายถึงชั้นรายวัน ซึ่งเป็นความหมาย
+  ที่มันตั้งใจไว้ตั้งแต่แรก
+- `.\backup.ps1` เรียก prune ให้ทุกครั้งอยู่แล้ว การตั้งเวลา backup จึงได้ retention
+  ไปด้วยโดยอัตโนมัติ
 
 ---
 
