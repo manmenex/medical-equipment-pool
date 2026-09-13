@@ -340,3 +340,10 @@ async def commit_best_effort(db: AsyncSession) -> None:
                 "authentication flow",
                 exc_info=True,
             )
+
+# A password change is deliberately its OWN action rather than a generic
+# AUDIT_ACTION_UPDATE on the user entity: "somebody changed a password" is a
+# security event an auditor looks for by name, and burying it among ordinary
+# profile edits makes it findable only by whoever already knows to look.
+# Never records the old or new password, in any form.
+AUDIT_ACTION_PASSWORD_CHANGE = "password_change"

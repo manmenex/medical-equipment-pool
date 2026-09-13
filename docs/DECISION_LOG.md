@@ -8591,3 +8591,102 @@ Operations Engine) started, not merged
 - **Source:** the operator's real Windows console output across 2026-09-12 and
   2026-09-13 at baselines `e819d7bc`, `e3250091`, `e2cd4eb`, `b03c146` and
   `692f718`, plus this repository's merged history.
+
+---
+
+## 2026-09-13 — Self-service password change, and a first-login password that is actually temporary
+
+- **Decision:** add `POST /api/v1/auth/change-password`, a
+  `users.must_change_password` flag, and a frontend screen the flag forces
+  users onto.
+
+- **What the gap was.** No user could change their own password at all. The
+  only route was an Administrator calling `PATCH /users/{id}`, which asks for
+  no current password and enforces no rules. The Administrator bootstrap's
+  one-time password — printed to a console and, realistically, written down —
+  could therefore stay in use indefinitely, known to whoever saw the screen.
+  This was recorded as an open finding in
+  `docs/evidence/PR24D_LOCAL_STAGING_WINDOWS_VALIDATION.md` §5.
+
+- **The flag means one thing:** this account's current password was set by
+  somebody other than its owner. Two places set it — the bootstrap, and an
+  Administrator setting a password through `PATCH /users/{id}` — and exactly
+  one place clears it: `auth_service.change_password`, which first proves the
+  caller knows the current password. A temporary credential therefore cannot
+  stop being temporary by any other route, including a failed change attempt.
+
+- **Existing rows migrate to False, deliberately.** Every account that exists
+  when migration `0023` runs chose its own password under the previous rules.
+  Defaulting them to True would lock every current user out of the
+  application on deploy — an outage nobody asked for, experienced first by
+  the local Staging/UAT operator.
+
+- **Knowing the current password is required even though the caller already
+  holds a valid access token.** A token left behind on an unattended ward
+  workstation must not be enough to take an account over permanently.
+
+- **Length, not composition.** Minimum 12 characters, no character-class
+  rules. A passphrase a ward nurse can actually remember is stronger in
+  practice than an eight-character `P@ssw0rd!` that ends up on a sticky note
+  beside the workstation; NIST SP 800-63B has recommended exactly this trade
+  for years. The only other rules are that the new password must differ from
+  the current one (otherwise "change your password" is satisfied by retyping
+  it) and must not be surrounded by whitespace (an account whose password
+  depends on an invisible character cannot be supported over the phone).
+
+- **`change-password` takes no user id.** It can never be pointed at somebody
+  else's account, whatever role the caller holds, and a test supplies a
+  `user_id` in the body to prove a stray field is ignored rather than
+  honoured. An Administrator resetting another user's password remains a
+  separate operation with its own audit trail — and now marks the result
+  temporary.
+
+- **Audited under its own action.** `AUDIT_ACTION_PASSWORD_CHANGE`, not a
+  generic update on the user entity: "somebody changed a password" is a
+  security event an auditor looks for by name, and burying it among ordinary
+  profile edits makes it findable only by whoever already knows to look. The
+  old and new passwords are never recorded, in any form.
+
+- **The commit is NOT best-effort.** Unlike `last_login_at`, a password change
+  that is not durably persisted must not be reported as successful — the user
+  would believe the new password works and discover otherwise at the next
+  login, possibly after discarding the old one.
+
+- **Deliberately NOT built: session revocation.** Changing a password does not
+  invalidate other devices' refresh tokens. `app/core/redis.py` can revoke a
+  token by `jti` but has no per-user token index, and inventing one is a
+  design decision rather than a detail — recorded here as a known limitation
+  instead of being half-built.
+
+- **The frontend guard is usability, not security.** `ProtectedRoute`
+  redirects a flagged user to the change screen and exempts that one path so
+  it cannot redirect to itself; it waits for a profile it has actually seen,
+  so a cold load does not bounce every user through the screen. The backend
+  re-checks everything regardless of what renders.
+
+- **Tests.** Backend `test_auth.py` 14 (+10): the new password logs in AND the
+  old one stops working; a wrong current password changes nothing; short,
+  whitespace-surrounded and reused passwords are refused with distinct codes;
+  an Administrator reset sets the flag and only a real change clears it; and a
+  failed change does not clear it. Frontend 467 (+10 in a new
+  `ChangePasswordPage.test.tsx`), covering the forced banner, both client-side
+  refusals without an API call, a successful submit, backend-error mapping,
+  and all four guard states. Fifteen existing frontend fixtures gained the new
+  required field rather than the type being loosened to optional — the
+  backend always sends it.
+
+- **One markup fix found by its own test.** The password hint initially sat
+  inside the `<label>`, which made it part of the input's accessible name: a
+  screen reader would have read the whole paragraph as the field's label on
+  every focus. The test could not find the field by its label, which is
+  exactly what a screen-reader user would have experienced.
+
+- **Evidence.** **NOT YET EXECUTED on Windows.** Proven by the backend API
+  tests and the frontend suite. The migration's PostgreSQL path is exercised
+  by CI's migration job; SQLite tests reach the column through the ORM.
+
+- **Mechanism:** Recorded per `docs/ENGINEERING_WORKFLOW.md` §6/§7/§14.
+- **Source:** `docs/evidence/PR24D_LOCAL_STAGING_WINDOWS_VALIDATION.md` §5,
+  plus this repository's `app/models/user.py`, `app/services/auth_service.py`,
+  `app/api/v1/auth.py`, `app/crud/user.py`, `app/scripts/bootstrap_admin.py`
+  and the frontend's `ProtectedRoute` / `ChangePasswordPage`.

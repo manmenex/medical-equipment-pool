@@ -101,7 +101,7 @@ let store: { equipment: Equipment; transactions: TransactionOut[] };
 let nextTransactionId: number;
 
 beforeEach(() => {
-  mockUser = { id: "user-1", employee_code: "U001", full_name: "Test User", email: "u@test.dev", role: "administrator", permissions: {} };
+  mockUser = { id: "user-1", employee_code: "U001", full_name: "Test User", email: "u@test.dev", role: "administrator", permissions: {}, must_change_password: false };
   store = { equipment: makeAvailableEquipment(), transactions: [] };
   nextTransactionId = 1;
 

@@ -97,6 +97,12 @@ async def bootstrap_admin(*, employee_code: str, email: str, full_name: str) -> 
             email=email,
             password_hash=hash_password(temp_password),
             role_id=admin_role.id,
+            # The one-time password below is printed to a console and,
+            # realistically, written down. It is a temporary credential by
+            # construction, so the account starts out required to replace
+            # it -- cleared only by auth_service.change_password, which
+            # first proves the caller knows it.
+            must_change_password=True,
         )
         db.add(user)
         try:

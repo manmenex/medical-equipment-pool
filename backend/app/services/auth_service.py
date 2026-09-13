@@ -8,6 +8,7 @@ from app.core.audit import (
     AUDIT_ACTION_LOGIN_FAILURE,
     AUDIT_ACTION_LOGIN_SUCCESS,
     AUDIT_ACTION_LOGOUT,
+    AUDIT_ACTION_PASSWORD_CHANGE,
     AUDIT_ACTION_TOKEN_REFRESH,
     AUDIT_ENTITY_AUTH,
     commit_best_effort,
@@ -16,7 +17,13 @@ from app.core.audit import (
 from app.core.config import settings
 from app.core.exceptions import DomainError
 from app.core.redis import is_refresh_token_valid, revoke_refresh_token, store_refresh_token
-from app.core.security import create_access_token, create_refresh_token, decode_token, verify_password
+from app.core.security import (
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    hash_password,
+    verify_password,
+)
 from app.crud import user as user_crud
 from app.models.user import Role, User
 
@@ -29,6 +36,100 @@ class InvalidCredentialsError(DomainError):
 class InvalidRefreshTokenError(DomainError):
     code = "INVALID_REFRESH_TOKEN"
     status_code = 401
+
+
+class WeakPasswordError(DomainError):
+    code = "WEAK_PASSWORD"
+    status_code = 400
+
+
+class SamePasswordError(DomainError):
+    code = "SAME_PASSWORD"
+    status_code = 400
+
+
+# Length, not composition. A 12-character passphrase a ward nurse can
+# actually remember is stronger in practice than an 8-character
+# "P@ssw0rd!" that gets written on a sticky note next to the workstation,
+# and NIST SP 800-63B has recommended exactly this trade for years. The
+# only other rule is that the new password must differ from the current
+# one, which stops "change" from meaning "retype".
+MINIMUM_PASSWORD_LENGTH = 12
+
+
+def validate_new_password(new_password: str) -> None:
+    """Raises WeakPasswordError if the password is unacceptable.
+
+    Separate from change_password so the rule has one home and can be
+    tested directly, rather than being re-expressed at every call site.
+    """
+    if new_password is None or len(new_password) < MINIMUM_PASSWORD_LENGTH:
+        raise WeakPasswordError(
+            f"New password must be at least {MINIMUM_PASSWORD_LENGTH} characters long."
+        )
+    if new_password.strip() != new_password:
+        # Leading/trailing whitespace is almost always an accident of
+        # copy-paste, and an account whose password depends on an invisible
+        # character is one nobody can support over the phone.
+        raise WeakPasswordError("New password must not start or end with whitespace.")
+
+
+async def change_password(
+    db: AsyncSession,
+    user: User,
+    *,
+    current_password: str,
+    new_password: str,
+    request: Request | None = None,
+) -> User:
+    """Replaces the caller's OWN password, having proved they know the
+    current one.
+
+    Knowing the current password is required even though the caller already
+    holds a valid access token: a token left behind on an unattended
+    workstation must not be enough to take an account over permanently.
+
+    On success `must_change_password` is cleared -- this is the only place
+    that clears it, so a bootstrap or Administrator-set password cannot
+    stop being temporary by any other route.
+    """
+    if not verify_password(current_password, user.password_hash):
+        await record_best_effort_audit_event(
+            db,
+            actor_user_id=user.id,
+            action=AUDIT_ACTION_LOGIN_FAILURE,
+            entity_type=AUDIT_ENTITY_AUTH,
+            entity_id=user.id,
+            request=request,
+        )
+        await commit_best_effort(db)
+        # Deliberately the same error the login path raises: "wrong current
+        # password" and "wrong password" are the same fact about the same
+        # secret, and inventing a second code would say more, not less.
+        raise InvalidCredentialsError("Current password is incorrect")
+
+    validate_new_password(new_password)
+
+    if verify_password(new_password, user.password_hash):
+        raise SamePasswordError("New password must be different from the current password.")
+
+    user.password_hash = hash_password(new_password)
+    user.must_change_password = False
+
+    await record_best_effort_audit_event(
+        db,
+        actor_user_id=user.id,
+        action=AUDIT_ACTION_PASSWORD_CHANGE,
+        entity_type=AUDIT_ENTITY_AUTH,
+        entity_id=user.id,
+        request=request,
+    )
+    # NOT best-effort: unlike last_login_at, a password change that is not
+    # durably persisted must not be reported as successful. The caller would
+    # believe their new password works and discover otherwise at the next
+    # login, possibly after discarding the old one.
+    await db.commit()
+    return user
 
 
 async def authenticate(

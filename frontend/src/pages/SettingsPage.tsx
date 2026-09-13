@@ -1,3 +1,5 @@
+import { Link } from "react-router-dom";
+
 import { roleLabel, useAuth } from "@/hooks/useAuth";
 import { applyTheme, useUiStore } from "@/store/uiStore";
 
@@ -19,6 +21,12 @@ export function SettingsPage() {
         <div className="mb-2 text-sm font-medium">บัญชีผู้ใช้</div>
         <div className="text-sm">{user?.full_name}</div>
         <div className="text-sm text-[var(--text-muted)]">{user ? roleLabel(user.role) : ""}</div>
+        <Link
+          to="/change-password"
+          className="mt-3 inline-block rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm"
+        >
+          เปลี่ยนรหัสผ่าน
+        </Link>
       </div>
 
       <div className="surface rounded-xl border p-4">
