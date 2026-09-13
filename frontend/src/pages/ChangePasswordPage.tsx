@@ -7,8 +7,19 @@ import { changePassword } from "@/services/auth";
 
 // Mirrors auth_service.MINIMUM_PASSWORD_LENGTH. The backend remains the
 // authority and re-checks everything; this only avoids a round trip to be
-// told something the form already knew.
-const MINIMUM_PASSWORD_LENGTH = 12;
+// told something the form already knew. If the two ever disagree the backend
+// wins and the user sees WEAK_PASSWORD, so the failure mode is a confusing
+// message rather than a weak password being accepted.
+const MINIMUM_PASSWORD_LENGTH = 6;
+
+// Mirrors auth_service.MAXIMUM_PASSWORD_BYTES. Not a policy cap: bcrypt
+// cannot hash more than 72 bytes. Counted in BYTES because this UI is Thai
+// and a Thai character is 3 bytes in UTF-8 -- 24 Thai characters already
+// reach the limit, so checking `.length` here would let the user submit
+// something the backend must then reject.
+const MAXIMUM_PASSWORD_BYTES = 72;
+
+const utf8Bytes = (value: string) => new TextEncoder().encode(value).length;
 
 export function ChangePasswordPage() {
   const { user } = useAuth();
@@ -38,6 +49,13 @@ export function ChangePasswordPage() {
       setError(`รหัสผ่านใหม่ต้องมีอย่างน้อย ${MINIMUM_PASSWORD_LENGTH} ตัวอักษร`);
       return;
     }
+    if (utf8Bytes(newPassword) > MAXIMUM_PASSWORD_BYTES) {
+      setError(
+        `รหัสผ่านใหม่ยาวเกินไป (สูงสุด ${MAXIMUM_PASSWORD_BYTES} ไบต์) ` +
+          `ภาษาไทยนับ 3 ไบต์ต่อ 1 ตัวอักษร จึงใช้ภาษาไทยได้ประมาณ 24 ตัวอักษร`,
+      );
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -54,7 +72,10 @@ export function ChangePasswordPage() {
       } else if (code === "SAME_PASSWORD") {
         setError("รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม");
       } else if (code === "WEAK_PASSWORD") {
-        setError(`รหัสผ่านใหม่ไม่ผ่านเกณฑ์ ต้องยาวอย่างน้อย ${MINIMUM_PASSWORD_LENGTH} ตัวอักษร และต้องไม่มีช่องว่างนำหน้าหรือต่อท้าย`);
+        setError(
+          `รหัสผ่านใหม่ไม่ผ่านเกณฑ์ ต้องยาวอย่างน้อย ${MINIMUM_PASSWORD_LENGTH} ตัวอักษร ` +
+            `ไม่เกิน ${MAXIMUM_PASSWORD_BYTES} ไบต์ และต้องไม่มีช่องว่างนำหน้าหรือต่อท้าย`,
+        );
       } else {
         setError("เปลี่ยนรหัสผ่านไม่สำเร็จ กรุณาลองใหม่");
       }
@@ -106,8 +127,9 @@ export function ChangePasswordPage() {
             />
           </label>
           <span className="text-xs text-[var(--text-muted)]">
-            อย่างน้อย {MINIMUM_PASSWORD_LENGTH} ตัวอักษร — ความยาวสำคัญกว่าการผสมอักขระพิเศษ
-            ประโยคสั้น ๆ ที่คุณจำได้ใช้ได้ดีกว่ารหัสสั้นที่ต้องจดไว้
+            อย่างน้อย {MINIMUM_PASSWORD_LENGTH} ตัวอักษร — ยิ่งยาวยิ่งปลอดภัย
+            และความยาวสำคัญกว่าการผสมอักขระพิเศษ ประโยคสั้น ๆ ที่คุณจำได้ใช้ได้ดีกว่ารหัสสั้นที่ต้องจดไว้
+            (สูงสุด {MAXIMUM_PASSWORD_BYTES} ไบต์ ≈ ภาษาไทย 24 ตัวอักษร)
           </span>
         </div>
 

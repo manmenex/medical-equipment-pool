@@ -8625,14 +8625,52 @@ Operations Engine) started, not merged
   holds a valid access token.** A token left behind on an unattended ward
   workstation must not be enough to take an account over permanently.
 
-- **Length, not composition.** Minimum 12 characters, no character-class
-  rules. A passphrase a ward nurse can actually remember is stronger in
-  practice than an eight-character `P@ssw0rd!` that ends up on a sticky note
-  beside the workstation; NIST SP 800-63B has recommended exactly this trade
-  for years. The only other rules are that the new password must differ from
-  the current one (otherwise "change your password" is satisfied by retyping
-  it) and must not be surrounded by whitespace (an account whose password
-  depends on an invisible character cannot be supported over the phone).
+- **Length, not composition.** No character-class rules. A passphrase a ward
+  nurse can actually remember is stronger in practice than an eight-character
+  `P@ssw0rd!` that ends up on a sticky note beside the workstation; NIST
+  SP 800-63B has recommended exactly this trade for years. The only other
+  rules are that the new password must differ from the current one (otherwise
+  "change your password" is satisfied by retyping it) and must not be
+  surrounded by whitespace (an account whose password depends on an invisible
+  character cannot be supported over the phone).
+
+- **Minimum length: 6 characters — an Owner decision, below the NIST
+  recommendation.** This slice first shipped with a 12-character minimum.
+  The Owner judged 12 too long for ward staff at the workstation and set it
+  to 6. NIST SP 800-63B recommends a minimum of 8 for user-chosen secrets,
+  so this is recorded as a knowing departure rather than dressed up as a
+  standards-based number. The risk accepted is offline guessing should the
+  password hash store ever leak, mitigated only by bcrypt's work factor
+  (12 rounds). Raising it later costs nothing structural:
+  `auth_service.MINIMUM_PASSWORD_LENGTH` is the single authority and the
+  frontend mirrors it. The Owner also asked for no maximum; see the next
+  entry for why one exists anyway.
+
+- **Maximum length: 72 bytes — not a policy choice, a limit of the hashing
+  algorithm.** `bcrypt.hashpw` *raises* `ValueError` above 72 bytes (verified
+  against the pinned bcrypt 5.0.0). Before this was found, a long passphrase
+  reached `app.core.security.hash_password` and surfaced as **HTTP 500**
+  rather than a message the user could act on. `validate_new_password` now
+  rejects it as `WEAK_PASSWORD` with an explanation.
+
+  **Counted in bytes, and that distinction matters here specifically.** This
+  application's UI is Thai, and a Thai character is 3 bytes in UTF-8 — so
+  **24 Thai characters already reach the limit**. A character-based check
+  would have let a perfectly ordinary Thai passphrase through to crash inside
+  bcrypt. Regression tests cover both sides of the boundary in ASCII and the
+  25-Thai-character case, on the backend and in the form.
+
+  Removing the cap entirely means pre-hashing (SHA-256 then bcrypt), which
+  changes the stored hash format and needs a migration path for existing
+  hashes. That is a design decision for a later slice, not a detail, and was
+  not taken here.
+
+  **Known, not fixed here:** `PATCH /users/{id}` sets a password without
+  calling `validate_new_password`, so an Administrator typing more than
+  72 bytes there still gets a 500. Adding validation to that endpoint would
+  also impose the 6-character minimum on Administrator-set passwords, which
+  is a policy change the Owner has not asked for — flagged for a decision
+  rather than changed unilaterally.
 
 - **`change-password` takes no user id.** It can never be pointed at somebody
   else's account, whatever role the caller holds, and a test supplies a

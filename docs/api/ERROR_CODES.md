@@ -59,7 +59,7 @@ A `422` validation error additionally includes an `errors` array:
 |---|---|---|
 | `INVALID_CREDENTIALS` | 401 | Login `identifier`/`password` do not match, or the matched user has no assigned role |
 | `INVALID_REFRESH_TOKEN` | 401 | Refresh cookie missing, malformed/expired, wrong token type, revoked, or the owning user is gone/inactive/roleless |
-| `WEAK_PASSWORD` | 400 | `POST /auth/change-password`: the new password is shorter than the minimum length, or starts/ends with whitespace |
+| `WEAK_PASSWORD` | 400 | `POST /auth/change-password`: the new password is shorter than the minimum length (6 characters), longer than bcrypt can hash (72 **bytes** — note Thai characters are 3 bytes each in UTF-8, so ~24 Thai characters), or starts/ends with whitespace |
 | `SAME_PASSWORD` | 400 | `POST /auth/change-password`: the new password is identical to the current one |
 
 ### Domain errors (`backend/app/core/exceptions.py`)

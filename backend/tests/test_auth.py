@@ -1,6 +1,7 @@
 import pytest
 
 from app.models.user import ROLE_ADMINISTRATOR
+from app.services.auth_service import MAXIMUM_PASSWORD_BYTES, MINIMUM_PASSWORD_LENGTH
 from tests.conftest import login
 
 pytestmark = pytest.mark.asyncio
@@ -53,6 +54,14 @@ async def test_me_returns_profile(client, seeded_users):
 
 NEW_PASSWORD = "Correct-Horse-Battery-9"
 
+# Long enough to slice any boundary case out of, and pure ASCII so that one
+# character is exactly one byte. The length tests slice this rather than
+# writing a literal of a counted length -- a hand-counted 72-character string
+# is one typo away from silently testing the wrong side of the boundary,
+# which is precisely what happened while writing these.
+_ASCII_FILLER = "Correct-Horse-Battery-Staple-Cupboard-Lantern-Kettle-Window-Harbour-Ferryboat-Anchor"
+assert len(_ASCII_FILLER) == len(_ASCII_FILLER.encode("utf-8"))
+
 
 async def test_change_password_requires_auth(client, seeded_users):
     resp = await client.post(
@@ -102,12 +111,122 @@ async def test_change_password_requires_the_current_password(client, seeded_user
     assert ok.status_code == 200
 
 
-async def test_change_password_rejects_a_short_password(client, seeded_users):
+async def test_change_password_rejects_a_password_one_character_below_the_minimum(
+    client, seeded_users
+):
+    """Bound to the constant, not to a hard-coded short string.
+
+    The minimum has already moved once (12 -> 6, an Owner decision). A test
+    written against a literal like "short" keeps passing when the minimum
+    drops below it, while quietly no longer testing the boundary at all.
+    """
+    too_short = "a1B2c3D4e5F6g7"[: MINIMUM_PASSWORD_LENGTH - 1]
+    assert len(too_short) == MINIMUM_PASSWORD_LENGTH - 1
+
     token = await login(client, ADMIN_EMPLOYEE_CODE)
     resp = await client.post(
         "/api/v1/auth/change-password",
         headers={"Authorization": f"Bearer {token}"},
-        json={"current_password": "Password@123", "new_password": "short"},
+        json={"current_password": "Password@123", "new_password": too_short},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "WEAK_PASSWORD"
+
+
+async def test_change_password_accepts_a_password_exactly_at_the_minimum(
+    client, seeded_users
+):
+    """The other half of the boundary: the minimum must be attainable.
+
+    Without this, an off-by-one that rejects exactly-minimum passwords would
+    pass every other test in this file while telling users the rule is one
+    character laxer than it is.
+    """
+    exactly_minimum = "a1B2c3D4e5F6g7"[:MINIMUM_PASSWORD_LENGTH]
+    assert len(exactly_minimum) == MINIMUM_PASSWORD_LENGTH
+
+    token = await login(client, ADMIN_EMPLOYEE_CODE)
+    resp = await client.post(
+        "/api/v1/auth/change-password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"current_password": "Password@123", "new_password": exactly_minimum},
+    )
+    assert resp.status_code == 200
+
+    # Behaviour, not status code: the accepted password actually logs in.
+    ok = await client.post(
+        "/api/v1/auth/login",
+        json={"identifier": ADMIN_EMPLOYEE_CODE, "password": exactly_minimum},
+    )
+    assert ok.status_code == 200
+
+
+async def test_a_long_passphrase_at_the_hashing_limit_is_accepted(client, seeded_users):
+    """No policy cap below bcrypt's own: 72 bytes must be usable in full."""
+    # Sliced from the constant rather than hand-counted: ASCII, so one
+    # character is one byte, and the test cannot drift off the boundary.
+    passphrase = _ASCII_FILLER[:MAXIMUM_PASSWORD_BYTES]
+    assert len(passphrase.encode("utf-8")) == MAXIMUM_PASSWORD_BYTES
+
+    token = await login(client, ADMIN_EMPLOYEE_CODE)
+    resp = await client.post(
+        "/api/v1/auth/change-password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"current_password": "Password@123", "new_password": passphrase},
+    )
+    assert resp.status_code == 200
+
+    ok = await client.post(
+        "/api/v1/auth/login",
+        json={"identifier": ADMIN_EMPLOYEE_CODE, "password": passphrase},
+    )
+    assert ok.status_code == 200
+
+
+async def test_a_password_over_the_hashing_limit_is_refused_not_crashed(
+    client, seeded_users
+):
+    """bcrypt raises above 72 bytes. Without the guard this is an HTTP 500.
+
+    The regression to prevent is not "long passwords are allowed" -- it is
+    "the server crashes instead of telling the user what is wrong".
+    """
+    passphrase = _ASCII_FILLER[: MAXIMUM_PASSWORD_BYTES + 1]
+    assert len(passphrase.encode("utf-8")) == MAXIMUM_PASSWORD_BYTES + 1
+
+    token = await login(client, ADMIN_EMPLOYEE_CODE)
+    resp = await client.post(
+        "/api/v1/auth/change-password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"current_password": "Password@123", "new_password": passphrase},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "WEAK_PASSWORD"
+
+    # And the account is untouched -- a refused change must change nothing.
+    ok = await client.post(
+        "/api/v1/auth/login",
+        json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "Password@123"},
+    )
+    assert ok.status_code == 200
+
+
+async def test_the_byte_limit_is_counted_in_bytes_not_characters(client, seeded_users):
+    """The limit that actually bites this application.
+
+    The UI is Thai and Thai characters are 3 bytes each in UTF-8, so 25 Thai
+    characters -- about a sentence -- is already 75 bytes. A character-based
+    check would let this through and crash inside bcrypt.
+    """
+    thai = "ก" * 25
+    assert len(thai) == 25
+    assert len(thai.encode("utf-8")) == 75
+
+    token = await login(client, ADMIN_EMPLOYEE_CODE)
+    resp = await client.post(
+        "/api/v1/auth/change-password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"current_password": "Password@123", "new_password": thai},
     )
     assert resp.status_code == 400
     assert resp.json()["code"] == "WEAK_PASSWORD"

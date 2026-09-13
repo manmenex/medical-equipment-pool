@@ -86,12 +86,50 @@ describe("ChangePasswordPage", () => {
     const user = userEvent.setup();
     renderPage();
     await user.type(screen.getByLabelText("รหัสผ่านปัจจุบัน"), "current-password-1");
-    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), "short");
-    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), "short");
+    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), "abc12");
+    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), "abc12");
     await user.click(screen.getByRole("button", { name: "เปลี่ยนรหัสผ่าน" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("อย่างน้อย 12");
+    expect(await screen.findByRole("alert")).toHaveTextContent("อย่างน้อย 6");
     expect(changePassword).not.toHaveBeenCalled();
+  });
+
+  it("counts the maximum in bytes, so a Thai passphrase is measured correctly", async () => {
+    // 25 Thai characters is 75 UTF-8 bytes -- over bcrypt's 72-byte limit
+    // even though it is far short of 72 *characters*. Checking `.length`
+    // here would send it to the backend, which must then refuse it.
+    const thai = "ก".repeat(25);
+    expect(thai.length).toBe(25);
+    expect(new TextEncoder().encode(thai).length).toBe(75);
+
+    const user = userEvent.setup();
+    renderPage();
+    await user.type(screen.getByLabelText("รหัสผ่านปัจจุบัน"), "current-password-1");
+    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), thai);
+    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), thai);
+    await user.click(screen.getByRole("button", { name: "เปลี่ยนรหัสผ่าน" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("72 ไบต์");
+    expect(changePassword).not.toHaveBeenCalled();
+  });
+
+  it("accepts a Thai passphrase that fits inside the byte limit", async () => {
+    // 24 Thai characters is exactly 72 bytes -- the limit must be reachable,
+    // not merely approached.
+    const thai = "ก".repeat(24);
+    expect(new TextEncoder().encode(thai).length).toBe(72);
+
+    const user = userEvent.setup();
+    changePassword.mockResolvedValue(undefined);
+    renderPage();
+    await user.type(screen.getByLabelText("รหัสผ่านปัจจุบัน"), "current-password-1");
+    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), thai);
+    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), thai);
+    await user.click(screen.getByRole("button", { name: "เปลี่ยนรหัสผ่าน" }));
+
+    await waitFor(() =>
+      expect(changePassword).toHaveBeenCalledWith("current-password-1", thai),
+    );
   });
 
   it("submits both passwords and leaves the page on success", async () => {

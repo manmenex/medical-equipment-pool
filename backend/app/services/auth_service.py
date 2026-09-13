@@ -48,13 +48,40 @@ class SamePasswordError(DomainError):
     status_code = 400
 
 
-# Length, not composition. A 12-character passphrase a ward nurse can
-# actually remember is stronger in practice than an 8-character
-# "P@ssw0rd!" that gets written on a sticky note next to the workstation,
-# and NIST SP 800-63B has recommended exactly this trade for years. The
-# only other rule is that the new password must differ from the current
+# Length, not composition: no character-class rules, because a passphrase a
+# ward nurse can actually remember beats an eight-character "P@ssw0rd!" that
+# ends up on a sticky note next to the workstation.
+#
+# **6 is an Owner decision, and it is below what NIST SP 800-63B recommends
+# (8 for user-chosen secrets).** This slice first shipped 12; the Owner judged
+# that too long for ward staff at the workstation and chose 6 (see
+# docs/DECISION_LOG.md). Recording the gap rather than dressing 6 up as a
+# standards-based number: the threat it accepts is offline guessing if the
+# hash store ever leaks, mitigated here only by bcrypt's work factor. Raising
+# it later costs nothing structural -- this constant is the single authority,
+# and the frontend mirrors it.
+#
+# The only other rule is that the new password must differ from the current
 # one, which stops "change" from meaning "retype".
-MINIMUM_PASSWORD_LENGTH = 12
+MINIMUM_PASSWORD_LENGTH = 6
+
+# NOT a policy choice -- a limit bcrypt imposes and we are obliged to report.
+# `bcrypt.hashpw` raises ValueError above 72 *bytes* (verified against
+# bcrypt 5.0.0, the pinned version), so without this check a long passphrase
+# reaches app.core.security.hash_password and surfaces as HTTP 500 instead of
+# a message the user can act on.
+#
+# Bytes, not characters, and that distinction is the whole point here: this
+# application's UI is Thai, and Thai characters are 3 bytes each in UTF-8.
+# **24 Thai characters already reach 72 bytes** -- so this is not a
+# theoretical ceiling reachable only by someone pasting an essay. It is
+# roughly a sentence.
+#
+# Removing the cap entirely means pre-hashing (SHA-256 then bcrypt), which
+# changes the stored hash format and needs a migration path for existing
+# hashes. That is a deliberate design decision, not a detail, and is not
+# taken here.
+MAXIMUM_PASSWORD_BYTES = 72
 
 
 def validate_new_password(new_password: str) -> None:
@@ -66,6 +93,12 @@ def validate_new_password(new_password: str) -> None:
     if new_password is None or len(new_password) < MINIMUM_PASSWORD_LENGTH:
         raise WeakPasswordError(
             f"New password must be at least {MINIMUM_PASSWORD_LENGTH} characters long."
+        )
+    if len(new_password.encode("utf-8")) > MAXIMUM_PASSWORD_BYTES:
+        raise WeakPasswordError(
+            f"New password must be at most {MAXIMUM_PASSWORD_BYTES} bytes when encoded "
+            "as UTF-8. This is a limit of the password hashing algorithm, not a policy "
+            "choice. Note that Thai characters use 3 bytes each."
         )
     if new_password.strip() != new_password:
         # Leading/trailing whitespace is almost always an accident of
