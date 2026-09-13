@@ -17,13 +17,22 @@ Administrator-set passwords get True from the application layer
 (app/scripts/bootstrap_admin.py and the users PATCH endpoint), not from here.
 
 **Fresh-install vs. historical-upgrade convergence**, following the
-discipline migrations 0015-0022 established. `app.models.user` already
-declares the column, so `0001_initial.py`'s `Base.metadata.create_all()`
-gives a brand-new install the column with the same type, nullability and
-default. This migration's raw SQL is what adds it to a database that
+discipline migrations 0015-0022 established. `app.models.user` declares the
+column with `server_default=text("false")`, so `0001_initial.py`'s
+`Base.metadata.create_all()` gives a brand-new install the column with the
+same type, nullability *and catalog default* as the `ADD COLUMN ... DEFAULT
+FALSE` below. This migration's raw SQL is what adds it to a database that
 historically applied 0001-0022 before this slice existed.
 `_verify_schema_convergence()` below asserts the two paths agree, and fails
 closed if they do not.
+
+That check earned its keep immediately. The column was first written with
+only SQLAlchemy's Python-side `default=False`, which emits no DDL default:
+the fresh-install path produced a column with `column_default IS NULL`,
+`ADD COLUMN IF NOT EXISTS` then found the column already present and did
+nothing, and the CI migration job aborted here rather than let the two
+installation paths drift apart unnoticed. The `server_default` on the model
+is the fix; this paragraph is why it must not be removed.
 
 Only ever runs raw SQL against PostgreSQL (see 0002/0004/0011-0022's
 identical dialect-gated pattern) -- SQLite tests create this column via
@@ -67,7 +76,9 @@ def _verify_schema_convergence() -> None:
             """
             SELECT data_type, is_nullable, column_default
             FROM information_schema.columns
-            WHERE table_name = 'users' AND column_name = 'must_change_password'
+            WHERE table_schema = 'public'
+              AND table_name = 'users'
+              AND column_name = 'must_change_password'
             """
         )
     ).fetchone()

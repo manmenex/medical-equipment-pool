@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, ForeignKey, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
@@ -90,7 +90,17 @@ class User(UUIDPKMixin, TimestampMixin, Base):
     # migrate to False -- their passwords were chosen under the old rules,
     # and forcing every user to reset on deploy would be a change nobody
     # asked for. See app/services/auth_service.change_password.
-    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    #
+    # `server_default` is not decoration: 0001_initial builds a fresh install
+    # with Base.metadata.create_all(), while migration 0023 adds this column
+    # to a historical database with `DEFAULT FALSE`. Without the server
+    # default here the two paths produce physically different columns -- one
+    # with a catalog default and one without -- and 0023's convergence check
+    # fails closed on exactly that. Mirrors equipment.version and the other
+    # defaulted columns across app/models.
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
     last_login_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     # Roadmap PR10 migration provenance (mirrors BorrowTransaction.
     # legacy_status's established pattern, Roadmap PR7): the exact legacy

@@ -233,3 +233,53 @@ async def test_failed_change_does_not_clear_the_forced_flag(client, seeded_users
 
     profile = await client.get("/api/v1/auth/me", headers=target_headers)
     assert profile.json()["must_change_password"] is True
+
+
+async def test_fresh_install_and_upgrade_agree_on_the_column_default():
+    """The two installation paths must produce the same physical column.
+
+    A brand-new database gets `users.must_change_password` from
+    `Base.metadata.create_all()` (migration 0001_initial); a database that
+    predates this slice gets it from 0023's `ADD COLUMN`. SQLAlchemy's
+    `default=` is Python-side only and emits no DDL, so a model without
+    `server_default=` yields a fresh-install column with no catalog default
+    while the upgrade path has `DEFAULT FALSE` -- and then
+    `ADD COLUMN IF NOT EXISTS` silently does nothing on the fresh install,
+    leaving the divergence in place. 0023's convergence check aborts the
+    migration on exactly that, which is how this was found; this test fails
+    in milliseconds instead of at `alembic upgrade head`.
+    """
+    from sqlalchemy.dialects import postgresql
+    from sqlalchemy.schema import CreateTable
+
+    from app.models.user import User
+
+    column = User.__table__.c.must_change_password
+    assert column.server_default is not None, (
+        "users.must_change_password has no server_default, so Base.metadata.create_all() "
+        "would build a fresh install without the catalog default that migration 0023 gives "
+        "an upgraded database."
+    )
+
+    fresh_install_ddl = str(CreateTable(User.__table__).compile(dialect=postgresql.dialect()))
+    emitted = next(
+        line.strip()
+        for line in fresh_install_ddl.splitlines()
+        if line.strip().startswith("must_change_password")
+    )
+    assert "DEFAULT false" in emitted, emitted
+    assert "NOT NULL" in emitted, emitted
+
+    # The other half of the pair: the upgrade path's own DDL. Read from the
+    # migration module rather than restated here, so the two cannot drift.
+    import importlib.util
+    from pathlib import Path
+
+    migration_path = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "0023_user_must_change_password.py"
+    spec = importlib.util.spec_from_file_location("_mep_migration_0023", migration_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    add_column = " ".join(module._ADD_COLUMN.split()).upper()
+    assert "DEFAULT FALSE" in add_column, module._ADD_COLUMN
+    assert "NOT NULL" in add_column, module._ADD_COLUMN
