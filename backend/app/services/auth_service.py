@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -48,10 +49,6 @@ class SamePasswordError(DomainError):
     status_code = 400
 
 
-# Length, not composition: no character-class rules, because a passphrase a
-# ward nurse can actually remember beats an eight-character "P@ssw0rd!" that
-# ends up on a sticky note next to the workstation.
-#
 # **6 is an Owner decision, and it is below what NIST SP 800-63B recommends
 # (8 for user-chosen secrets).** This slice first shipped 12; the Owner judged
 # that too long for ward staff at the workstation and chose 6 (see
@@ -60,22 +57,38 @@ class SamePasswordError(DomainError):
 # hash store ever leaks, mitigated here only by bcrypt's work factor. Raising
 # it later costs nothing structural -- this constant is the single authority,
 # and the frontend mirrors it.
-#
-# The only other rule is that the new password must differ from the current
-# one, which stops "change" from meaning "retype".
 MINIMUM_PASSWORD_LENGTH = 6
+
+# Owner decision: passwords may contain ONLY English letters and digits.
+# Ward staff type these on shared workstations, often on a phone keyboard,
+# and symbols are where the support calls come from.
+#
+# This is a restriction on the allowed *set*, NOT a requirement to use all
+# three kinds: "abcdef" is accepted. Requiring a mix is the composition rule
+# NIST SP 800-63B advises against, and the Owner asked for "only these
+# characters", not "must contain each of these".
+#
+# **The cost, stated plainly.** Dropping symbols takes the alphabet from 94
+# printable ASCII characters to 62. Combined with the 6-character minimum the
+# search space is 62^6 (~5.7e10), which a modern offline attacker with the
+# hash store would exhaust; bcrypt's work factor is what stands between that
+# number and a real compromise. The mitigation that costs the user nothing is
+# length, and the form says so.
+_ALLOWED_PASSWORD_PATTERN = re.compile(r"^[A-Za-z0-9]+$")
+ALLOWED_PASSWORD_DESCRIPTION = "English letters (a-z, A-Z) and digits (0-9) only"
 
 # NOT a policy choice -- a limit bcrypt imposes and we are obliged to report.
 # `bcrypt.hashpw` raises ValueError above 72 *bytes* (verified against
-# bcrypt 5.0.0, the pinned version), so without this check a long passphrase
+# bcrypt 5.0.0, the pinned version), so without this check a long password
 # reaches app.core.security.hash_password and surfaces as HTTP 500 instead of
 # a message the user can act on.
 #
-# Bytes, not characters, and that distinction is the whole point here: this
-# application's UI is Thai, and Thai characters are 3 bytes each in UTF-8.
-# **24 Thai characters already reach 72 bytes** -- so this is not a
-# theoretical ceiling reachable only by someone pasting an essay. It is
-# roughly a sentence.
+# Kept in BYTES rather than characters even though the character rule above
+# now makes the two identical (every allowed character is one ASCII byte).
+# The byte count is what bcrypt actually measures; if the allowed set is ever
+# widened -- to Thai, say, where one character is 3 bytes -- this check stays
+# correct without being revisited, and the earlier version of this slice
+# proved that path is easy to get wrong.
 #
 # Removing the cap entirely means pre-hashing (SHA-256 then bcrypt), which
 # changes the stored hash format and needs a migration path for existing
@@ -94,17 +107,23 @@ def validate_new_password(new_password: str) -> None:
         raise WeakPasswordError(
             f"New password must be at least {MINIMUM_PASSWORD_LENGTH} characters long."
         )
+    if new_password.strip() != new_password:
+        # Checked before the character rule purely so the message is the
+        # useful one. "You have a space at the start" is actionable;
+        # "invalid character" leaves the user hunting for something
+        # invisible.
+        raise WeakPasswordError("New password must not start or end with whitespace.")
+    if not _ALLOWED_PASSWORD_PATTERN.fullmatch(new_password):
+        raise WeakPasswordError(
+            f"New password must use {ALLOWED_PASSWORD_DESCRIPTION}. "
+            "Spaces, punctuation, symbols and non-English characters are not accepted."
+        )
     if len(new_password.encode("utf-8")) > MAXIMUM_PASSWORD_BYTES:
         raise WeakPasswordError(
             f"New password must be at most {MAXIMUM_PASSWORD_BYTES} bytes when encoded "
             "as UTF-8. This is a limit of the password hashing algorithm, not a policy "
-            "choice. Note that Thai characters use 3 bytes each."
+            "choice."
         )
-    if new_password.strip() != new_password:
-        # Leading/trailing whitespace is almost always an accident of
-        # copy-paste, and an account whose password depends on an invisible
-        # character is one nobody can support over the phone.
-        raise WeakPasswordError("New password must not start or end with whitespace.")
 
 
 async def change_password(

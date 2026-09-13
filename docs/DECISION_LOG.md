@@ -8625,14 +8625,40 @@ Operations Engine) started, not merged
   holds a valid access token.** A token left behind on an unattended ward
   workstation must not be enough to take an account over permanently.
 
-- **Length, not composition.** No character-class rules. A passphrase a ward
-  nurse can actually remember is stronger in practice than an eight-character
-  `P@ssw0rd!` that ends up on a sticky note beside the workstation; NIST
-  SP 800-63B has recommended exactly this trade for years. The only other
-  rules are that the new password must differ from the current one (otherwise
-  "change your password" is satisfied by retyping it) and must not be
-  surrounded by whitespace (an account whose password depends on an invisible
-  character cannot be supported over the phone).
+- **Allowed characters: `[A-Za-z0-9]` only — an Owner decision.** English
+  letters and digits; no symbols, no spaces, no Thai. Ward staff type these
+  on shared workstations and phone keyboards, and symbols are where the
+  support calls come from.
+
+  **This restricts the allowed set; it does not require a mix.** "abcdef" is
+  accepted. Requiring at least one of each kind is the composition rule NIST
+  SP 800-63B advises against, and the Owner asked for "only these
+  characters", not "must contain each of these". Tests assert both halves,
+  because a reader could reasonably assume the other reading.
+
+  **The cost, stated rather than buried.** Dropping symbols takes the
+  alphabet from 94 printable ASCII characters to 62. With the 6-character
+  minimum the search space is 62^6 (~5.7e10) — exhaustible offline by a
+  modern attacker holding the hash store, with bcrypt's work factor the only
+  thing standing in the way. The mitigation that costs the user nothing is
+  length, and the form says so rather than merely permitting it.
+
+  The other two rules are unchanged: the new password must differ from the
+  current one (otherwise "change your password" is satisfied by retyping it)
+  and must not be surrounded by whitespace. The whitespace rule is now
+  strictly redundant — a space is not in the allowed set — but is checked
+  first anyway, because "you have a space at the start" is actionable and
+  "invalid character" sends the user hunting for something invisible.
+
+- **The bootstrap one-time password now uses the same alphabet.** It came
+  from `secrets.token_urlsafe`, whose base64url set includes `-` and `_` —
+  so the first credential anyone types contained characters the application
+  refuses in the replacement it immediately demands, on exactly the phone
+  keyboard this restriction exists to spare. `generate_temporary_password()`
+  now draws 32 characters from `[A-Za-z0-9]` via `secrets.choice`: ~190 bits
+  against the previous ~192, for a credential used once and rotated.
+  A test runs the real generator through the real validator so the two
+  cannot drift apart.
 
 - **Minimum length: 6 characters — an Owner decision, below the NIST
   recommendation.** This slice first shipped with a 12-character minimum.

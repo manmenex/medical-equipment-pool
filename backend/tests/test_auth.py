@@ -52,14 +52,14 @@ async def test_me_returns_profile(client, seeded_users):
 # one-time password could therefore stay in use indefinitely.
 # ---------------------------------------------------------------------------
 
-NEW_PASSWORD = "Correct-Horse-Battery-9"
+NEW_PASSWORD = "CorrectHorseBattery9"
 
 # Long enough to slice any boundary case out of, and pure ASCII so that one
 # character is exactly one byte. The length tests slice this rather than
 # writing a literal of a counted length -- a hand-counted 72-character string
 # is one typo away from silently testing the wrong side of the boundary,
 # which is precisely what happened while writing these.
-_ASCII_FILLER = "Correct-Horse-Battery-Staple-Cupboard-Lantern-Kettle-Window-Harbour-Ferryboat-Anchor"
+_ASCII_FILLER = "CorrectHorseBatteryStapleCupboardLanternKettleWindowHarbourFerryboatAnchorBucket"
 assert len(_ASCII_FILLER) == len(_ASCII_FILLER.encode("utf-8"))
 
 
@@ -211,25 +211,76 @@ async def test_a_password_over_the_hashing_limit_is_refused_not_crashed(
     assert ok.status_code == 200
 
 
-async def test_the_byte_limit_is_counted_in_bytes_not_characters(client, seeded_users):
-    """The limit that actually bites this application.
+@pytest.mark.parametrize(
+    "rejected",
+    [
+        pytest.param("ก" * 10, id="thai"),
+        pytest.param("Passw0rd!", id="punctuation"),
+        pytest.param("Passw0rd@", id="at-sign"),
+        pytest.param("pass w0rd", id="internal-space"),
+        pytest.param("Passw0rd_", id="underscore"),
+        pytest.param("Pass-w0rd", id="hyphen"),
+        pytest.param("café12", id="accented-latin"),
+        pytest.param("Passw0rd​", id="zero-width-space"),
+    ],
+)
+async def test_only_english_letters_and_digits_are_accepted(client, seeded_users, rejected):
+    """Owner decision: the allowed set is [A-Za-z0-9] and nothing else.
 
-    The UI is Thai and Thai characters are 3 bytes each in UTF-8, so 25 Thai
-    characters -- about a sentence -- is already 75 bytes. A character-based
-    check would let this through and crash inside bcrypt.
+    Each case is long enough to pass the minimum, so the only reason it can
+    be refused is the character rule -- otherwise these would pass for the
+    wrong reason and keep passing if the rule were deleted.
     """
-    thai = "ก" * 25
-    assert len(thai) == 25
-    assert len(thai.encode("utf-8")) == 75
+    assert len(rejected) >= MINIMUM_PASSWORD_LENGTH
 
     token = await login(client, ADMIN_EMPLOYEE_CODE)
     resp = await client.post(
         "/api/v1/auth/change-password",
         headers={"Authorization": f"Bearer {token}"},
-        json={"current_password": "Password@123", "new_password": thai},
+        json={"current_password": "Password@123", "new_password": rejected},
     )
     assert resp.status_code == 400
     assert resp.json()["code"] == "WEAK_PASSWORD"
+
+    # Refused means nothing changed.
+    ok = await client.post(
+        "/api/v1/auth/login",
+        json={"identifier": ADMIN_EMPLOYEE_CODE, "password": "Password@123"},
+    )
+    assert ok.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "accepted",
+    [
+        pytest.param("abcdef", id="all-lowercase"),
+        pytest.param("ABCDEF", id="all-uppercase"),
+        pytest.param("123456", id="all-digits"),
+        pytest.param("Ward7Bed12", id="mixed"),
+    ],
+)
+async def test_the_character_rule_restricts_the_set_it_does_not_require_a_mix(
+    client, seeded_users, accepted
+):
+    """"Only these characters" is not "must contain each of these".
+
+    Requiring a mix is the composition rule NIST SP 800-63B advises against,
+    and the Owner asked for a restricted set, not a required mix. An
+    all-lowercase password of sufficient length is valid.
+    """
+    token = await login(client, ADMIN_EMPLOYEE_CODE)
+    resp = await client.post(
+        "/api/v1/auth/change-password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"current_password": "Password@123", "new_password": accepted},
+    )
+    assert resp.status_code == 200
+
+    ok = await client.post(
+        "/api/v1/auth/login",
+        json={"identifier": ADMIN_EMPLOYEE_CODE, "password": accepted},
+    )
+    assert ok.status_code == 200
 
 
 async def test_change_password_rejects_surrounding_whitespace(client, seeded_users):
@@ -246,12 +297,28 @@ async def test_change_password_rejects_surrounding_whitespace(client, seeded_use
 
 
 async def test_change_password_rejects_reusing_the_current_password(client, seeded_users):
-    """Otherwise "change your password" can be satisfied by retyping it."""
+    """Otherwise "change your password" can be satisfied by retyping it.
+
+    The seeded password is "Password@123", which the character rule now
+    refuses as a *new* password -- so retyping it would return WEAK_PASSWORD
+    and this test would pass without ever reaching the same-password check.
+    It therefore moves the account to a conforming password first, and then
+    tries to reuse that.
+    """
     token = await login(client, ADMIN_EMPLOYEE_CODE)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    first = await client.post(
+        "/api/v1/auth/change-password",
+        headers=headers,
+        json={"current_password": "Password@123", "new_password": NEW_PASSWORD},
+    )
+    assert first.status_code == 200
+
     resp = await client.post(
         "/api/v1/auth/change-password",
-        headers={"Authorization": f"Bearer {token}"},
-        json={"current_password": "Password@123", "new_password": "Password@123"},
+        headers=headers,
+        json={"current_password": NEW_PASSWORD, "new_password": NEW_PASSWORD},
     )
     assert resp.status_code == 400
     assert resp.json()["code"] == "SAME_PASSWORD"
@@ -300,12 +367,12 @@ async def test_administrator_set_password_is_temporary_and_clears_on_change(clie
     reset = await client.patch(
         f"/api/v1/users/{target['id']}",
         headers=headers,
-        json={"password": "Temporary-Reset-2026"},
+        json={"password": "TemporaryReset2026"},
     )
     assert reset.status_code == 200
 
     # That user logs in with the temporary password and is told to replace it.
-    target_token = await login(client, target["employee_code"], password="Temporary-Reset-2026")
+    target_token = await login(client, target["employee_code"], password="TemporaryReset2026")
     profile = await client.get(
         "/api/v1/auth/me", headers={"Authorization": f"Bearer {target_token}"}
     )
@@ -316,7 +383,7 @@ async def test_administrator_set_password_is_temporary_and_clears_on_change(clie
     changed = await client.post(
         "/api/v1/auth/change-password",
         headers={"Authorization": f"Bearer {target_token}"},
-        json={"current_password": "Temporary-Reset-2026", "new_password": NEW_PASSWORD},
+        json={"current_password": "TemporaryReset2026", "new_password": NEW_PASSWORD},
     )
     assert changed.status_code == 200
 
@@ -334,16 +401,16 @@ async def test_failed_change_does_not_clear_the_forced_flag(client, seeded_users
     listed = await client.get("/api/v1/users", headers=headers)
     target = next(u for u in listed.json() if u["employee_code"] != ADMIN_EMPLOYEE_CODE)
     await client.patch(
-        f"/api/v1/users/{target['id']}", headers=headers, json={"password": "Temporary-Reset-2026"}
+        f"/api/v1/users/{target['id']}", headers=headers, json={"password": "TemporaryReset2026"}
     )
 
-    target_token = await login(client, target["employee_code"], password="Temporary-Reset-2026")
+    target_token = await login(client, target["employee_code"], password="TemporaryReset2026")
     target_headers = {"Authorization": f"Bearer {target_token}"}
 
     for payload in (
         {"current_password": "wrong-current", "new_password": NEW_PASSWORD},
-        {"current_password": "Temporary-Reset-2026", "new_password": "tiny"},
-        {"current_password": "Temporary-Reset-2026", "new_password": "Temporary-Reset-2026"},
+        {"current_password": "TemporaryReset2026", "new_password": "tiny"},
+        {"current_password": "TemporaryReset2026", "new_password": "TemporaryReset2026"},
     ):
         resp = await client.post(
             "/api/v1/auth/change-password", headers=target_headers, json=payload

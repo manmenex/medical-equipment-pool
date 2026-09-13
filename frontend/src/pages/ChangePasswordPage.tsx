@@ -12,11 +12,15 @@ import { changePassword } from "@/services/auth";
 // message rather than a weak password being accepted.
 const MINIMUM_PASSWORD_LENGTH = 6;
 
+// Mirrors auth_service._ALLOWED_PASSWORD_PATTERN. Owner decision: English
+// letters and digits only. A restriction on the allowed set, NOT a
+// requirement to use all three kinds -- "abcdef" is valid.
+const ALLOWED_PASSWORD_PATTERN = /^[A-Za-z0-9]+$/;
+
 // Mirrors auth_service.MAXIMUM_PASSWORD_BYTES. Not a policy cap: bcrypt
-// cannot hash more than 72 bytes. Counted in BYTES because this UI is Thai
-// and a Thai character is 3 bytes in UTF-8 -- 24 Thai characters already
-// reach the limit, so checking `.length` here would let the user submit
-// something the backend must then reject.
+// cannot hash more than 72 bytes. Kept as a byte count because that is what
+// bcrypt measures -- with the character rule above the two are identical,
+// but this stays correct if the allowed set is ever widened.
 const MAXIMUM_PASSWORD_BYTES = 72;
 
 const utf8Bytes = (value: string) => new TextEncoder().encode(value).length;
@@ -49,11 +53,15 @@ export function ChangePasswordPage() {
       setError(`รหัสผ่านใหม่ต้องมีอย่างน้อย ${MINIMUM_PASSWORD_LENGTH} ตัวอักษร`);
       return;
     }
-    if (utf8Bytes(newPassword) > MAXIMUM_PASSWORD_BYTES) {
+    if (!ALLOWED_PASSWORD_PATTERN.test(newPassword)) {
       setError(
-        `รหัสผ่านใหม่ยาวเกินไป (สูงสุด ${MAXIMUM_PASSWORD_BYTES} ไบต์) ` +
-          `ภาษาไทยนับ 3 ไบต์ต่อ 1 ตัวอักษร จึงใช้ภาษาไทยได้ประมาณ 24 ตัวอักษร`,
+        "รหัสผ่านใหม่ใช้ได้เฉพาะตัวอักษรภาษาอังกฤษ (a-z, A-Z) และตัวเลข (0-9) เท่านั้น " +
+          "ห้ามเว้นวรรค อักขระพิเศษ หรือภาษาไทย",
       );
+      return;
+    }
+    if (utf8Bytes(newPassword) > MAXIMUM_PASSWORD_BYTES) {
+      setError(`รหัสผ่านใหม่ยาวเกินไป (สูงสุด ${MAXIMUM_PASSWORD_BYTES} ตัวอักษร)`);
       return;
     }
 
@@ -73,8 +81,8 @@ export function ChangePasswordPage() {
         setError("รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม");
       } else if (code === "WEAK_PASSWORD") {
         setError(
-          `รหัสผ่านใหม่ไม่ผ่านเกณฑ์ ต้องยาวอย่างน้อย ${MINIMUM_PASSWORD_LENGTH} ตัวอักษร ` +
-            `ไม่เกิน ${MAXIMUM_PASSWORD_BYTES} ไบต์ และต้องไม่มีช่องว่างนำหน้าหรือต่อท้าย`,
+          `รหัสผ่านใหม่ไม่ผ่านเกณฑ์ ต้องยาว ${MINIMUM_PASSWORD_LENGTH}-${MAXIMUM_PASSWORD_BYTES} ตัวอักษร ` +
+            "และใช้ได้เฉพาะตัวอักษรภาษาอังกฤษกับตัวเลขเท่านั้น",
         );
       } else {
         setError("เปลี่ยนรหัสผ่านไม่สำเร็จ กรุณาลองใหม่");
@@ -127,9 +135,9 @@ export function ChangePasswordPage() {
             />
           </label>
           <span className="text-xs text-[var(--text-muted)]">
-            อย่างน้อย {MINIMUM_PASSWORD_LENGTH} ตัวอักษร — ยิ่งยาวยิ่งปลอดภัย
-            และความยาวสำคัญกว่าการผสมอักขระพิเศษ ประโยคสั้น ๆ ที่คุณจำได้ใช้ได้ดีกว่ารหัสสั้นที่ต้องจดไว้
-            (สูงสุด {MAXIMUM_PASSWORD_BYTES} ไบต์ ≈ ภาษาไทย 24 ตัวอักษร)
+            ใช้ได้เฉพาะ a-z, A-Z และ 0-9 — อย่างน้อย {MINIMUM_PASSWORD_LENGTH} ตัวอักษร
+            สูงสุด {MAXIMUM_PASSWORD_BYTES} ตัวอักษร ไม่บังคับว่าต้องมีครบทั้งสามแบบ
+            แต่ยิ่งยาวยิ่งปลอดภัย เช่น คำที่คุณจำได้ต่อกันแล้วเติมตัวเลข
           </span>
         </div>
 

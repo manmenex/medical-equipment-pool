@@ -36,10 +36,32 @@ from app.crud import audit as audit_crud
 from app.db.session import AsyncSessionLocal
 from app.models.user import ROLE_ADMINISTRATOR, Role, User
 
-# secrets.token_urlsafe(n) yields roughly 4n/3 base64url characters; 24
-# bytes gives a 32-character temporary password with ample entropy for a
-# one-time, immediately-rotated credential.
-_TEMP_PASSWORD_BYTES = 24
+# Drawn from the same set the Owner restricted passwords to
+# (auth_service.ALLOWED_PASSWORD_DESCRIPTION): English letters and digits.
+#
+# This used to be `secrets.token_urlsafe`, whose base64url alphabet also
+# includes "-" and "_". That handed the operator a one-time password
+# containing characters the application then refuses in the replacement --
+# the very first credential anyone types, breaking the rule it is about to
+# teach them, on the phone keyboard the restriction exists to spare.
+#
+# 32 characters from a 62-character alphabet is ~190 bits, against ~192 from
+# the token_urlsafe(24) it replaces. Two bits, for a credential that is used
+# once and immediately rotated. `secrets.choice` is uniform and
+# cryptographically sound; a modulo over `secrets.randbelow` would not be.
+_TEMP_PASSWORD_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+_TEMP_PASSWORD_LENGTH = 32
+
+
+def generate_temporary_password() -> str:
+    """A one-time password that satisfies the application's own rules.
+
+    Named and exported so a test can assert that property directly against
+    the real generator, rather than re-deriving the alphabet.
+    """
+    return "".join(
+        secrets.choice(_TEMP_PASSWORD_ALPHABET) for _ in range(_TEMP_PASSWORD_LENGTH)
+    )
 
 
 class BootstrapRefused(RuntimeError):
@@ -79,7 +101,7 @@ async def bootstrap_admin(*, employee_code: str, email: str, full_name: str) -> 
     administrator already exists -- including one created by a
     concurrent invocation that won the `administrator` role-row lock
     first."""
-    temp_password = secrets.token_urlsafe(_TEMP_PASSWORD_BYTES)
+    temp_password = generate_temporary_password()
 
     async with AsyncSessionLocal() as db:
         admin_role = await _lock_administrator_role(db)

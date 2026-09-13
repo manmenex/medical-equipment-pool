@@ -74,8 +74,8 @@ describe("ChangePasswordPage", () => {
     const user = userEvent.setup();
     renderPage();
     await user.type(screen.getByLabelText("รหัสผ่านปัจจุบัน"), "current-password-1");
-    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), "Correct-Horse-Battery-9");
-    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), "Correct-Horse-Battery-8");
+    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), "CorrectHorseBattery9");
+    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), "CorrectHorseBattery8");
     await user.click(screen.getByRole("button", { name: "เปลี่ยนรหัสผ่าน" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("ไม่ตรงกัน");
@@ -94,41 +94,37 @@ describe("ChangePasswordPage", () => {
     expect(changePassword).not.toHaveBeenCalled();
   });
 
-  it("counts the maximum in bytes, so a Thai passphrase is measured correctly", async () => {
-    // 25 Thai characters is 75 UTF-8 bytes -- over bcrypt's 72-byte limit
-    // even though it is far short of 72 *characters*. Checking `.length`
-    // here would send it to the backend, which must then refuse it.
-    const thai = "ก".repeat(25);
-    expect(thai.length).toBe(25);
-    expect(new TextEncoder().encode(thai).length).toBe(75);
-
+  it.each([
+    ["thai", "ก".repeat(10)],
+    ["punctuation", "Passw0rd!"],
+    ["internal space", "pass w0rd"],
+    ["hyphen", "Pass-w0rd"],
+    ["accented latin", "café12"],
+  ])("refuses %s without calling the API", async (_label, rejected) => {
     const user = userEvent.setup();
     renderPage();
     await user.type(screen.getByLabelText("รหัสผ่านปัจจุบัน"), "current-password-1");
-    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), thai);
-    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), thai);
+    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), rejected);
+    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), rejected);
     await user.click(screen.getByRole("button", { name: "เปลี่ยนรหัสผ่าน" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("72 ไบต์");
+    expect(await screen.findByRole("alert")).toHaveTextContent("ภาษาอังกฤษ");
     expect(changePassword).not.toHaveBeenCalled();
   });
 
-  it("accepts a Thai passphrase that fits inside the byte limit", async () => {
-    // 24 Thai characters is exactly 72 bytes -- the limit must be reachable,
-    // not merely approached.
-    const thai = "ก".repeat(24);
-    expect(new TextEncoder().encode(thai).length).toBe(72);
-
+  it("does not require a mix of the three kinds", async () => {
+    // "Only these characters" is a restriction on the set, not a
+    // composition requirement -- all-lowercase must be accepted.
     const user = userEvent.setup();
     changePassword.mockResolvedValue(undefined);
     renderPage();
     await user.type(screen.getByLabelText("รหัสผ่านปัจจุบัน"), "current-password-1");
-    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), thai);
-    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), thai);
+    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), "abcdef");
+    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), "abcdef");
     await user.click(screen.getByRole("button", { name: "เปลี่ยนรหัสผ่าน" }));
 
     await waitFor(() =>
-      expect(changePassword).toHaveBeenCalledWith("current-password-1", thai),
+      expect(changePassword).toHaveBeenCalledWith("current-password-1", "abcdef"),
     );
   });
 
@@ -137,12 +133,12 @@ describe("ChangePasswordPage", () => {
     changePassword.mockResolvedValue(undefined);
     renderPage();
     await user.type(screen.getByLabelText("รหัสผ่านปัจจุบัน"), "current-password-1");
-    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), "Correct-Horse-Battery-9");
-    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), "Correct-Horse-Battery-9");
+    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), "CorrectHorseBattery9");
+    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), "CorrectHorseBattery9");
     await user.click(screen.getByRole("button", { name: "เปลี่ยนรหัสผ่าน" }));
 
     await waitFor(() =>
-      expect(changePassword).toHaveBeenCalledWith("current-password-1", "Correct-Horse-Battery-9"),
+      expect(changePassword).toHaveBeenCalledWith("current-password-1", "CorrectHorseBattery9"),
     );
     expect(await screen.findByText("dashboard")).toBeInTheDocument();
   });
@@ -152,8 +148,8 @@ describe("ChangePasswordPage", () => {
     changePassword.mockRejectedValue({ response: { data: { code: "INVALID_CREDENTIALS" } } });
     renderPage();
     await user.type(screen.getByLabelText("รหัสผ่านปัจจุบัน"), "wrong-current-pass");
-    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), "Correct-Horse-Battery-9");
-    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), "Correct-Horse-Battery-9");
+    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), "CorrectHorseBattery9");
+    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), "CorrectHorseBattery9");
     await user.click(screen.getByRole("button", { name: "เปลี่ยนรหัสผ่าน" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("รหัสผ่านปัจจุบันไม่ถูกต้อง");
