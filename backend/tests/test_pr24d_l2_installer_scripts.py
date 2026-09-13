@@ -1145,3 +1145,80 @@ def test_start_application_failure_names_container_health_not_readiness():
     assert "GET /api/v1/ready" not in body, (
         "it must not claim the backend was unready when any service may be at fault"
     )
+
+
+# ---------------------------------------------------------------------------
+# Scheduled backup (PR24D). docs/evidence/PR24D_LOCAL_STAGING_WINDOWS_VALIDATION.md
+# records "RPO <= 1 hour: NOT PROVEN" because nothing backed up on a schedule.
+# These are structural; the behaviour is covered by
+# deployment/local-staging/tests/Invoke-InstallerTests.ps1, which asserts what
+# the task is actually asked to run.
+# ---------------------------------------------------------------------------
+
+
+def test_schedule_entry_script_exists_and_requires_powershell_7():
+    """A new script gets the version declaration the older ones still lack.
+
+    Running these scripts under Windows PowerShell 5.1 turns docker compose's
+    ordinary stderr progress line into a terminating error. That is survivable
+    when an operator is watching; an unattended hourly task that fails every
+    hour for the same reason is not.
+    """
+    path = DEPLOYMENT_ROOT / "schedule-backup.ps1"
+    assert path.is_file(), "schedule-backup.ps1 is missing"
+    assert "#Requires -Version 7.0" in path.read_text()
+
+
+def test_schedule_only_ever_schedules_the_existing_backup_entry_script():
+    code = _strip_comments_and_docstrings(_lib("Schedule.ps1"))
+    assert "Join-Path $Script:DeploymentRoot 'backup.ps1'" in code, (
+        "the task must run the existing backup entry script, resolved from the "
+        "deployment root rather than hardcoded"
+    )
+    # No second backup or restore implementation hiding in here. Checked as
+    # CALLS, not as words: the operator-facing messages in this module
+    # legitimately talk about docker and about restore.
+    for forbidden_call in ("Invoke-MepCommand", "Invoke-DockerCompose", "Invoke-MepBackup", "Invoke-MepRestoreRehearsal"):
+        assert forbidden_call not in code, (
+            f"Schedule.ps1 must not call {forbidden_call}; it only registers backup.ps1, "
+            "which owns the lock, the engine and the retention"
+        )
+    assert "Unregister-ScheduledTask -TaskName $Script:BackupTaskName" in code, (
+        "removal must be scoped to exactly this module's own task"
+    )
+
+
+def test_schedule_never_launches_windows_powershell_51():
+    """Asserted at the resolver, not by grepping for the word.
+
+    `Get-MepPwshPath` is the only thing that decides what the task executes,
+    and its operator-facing error message legitimately names powershell.exe
+    to explain why it is refused.
+    """
+    code = _strip_comments_and_docstrings(_lib("Schedule.ps1"))
+    resolver = _ps_function_body(code, "Get-MepPwshPath")
+    assert "-in @('pwsh', 'pwsh.exe')" in resolver, (
+        "the resolver must accept only pwsh"
+    )
+    assert "Get-Command -Name 'pwsh'" in resolver, "the PATH lookup must ask for pwsh by name"
+
+    register = _ps_function_body(code, "Register-MepBackupSchedule")
+    assert "-Execute $pwshPath" in register, (
+        "the task's executable must come from the pwsh resolver, never a literal path"
+    )
+
+
+def test_retention_is_tiered_for_an_hourly_cadence():
+    """A flat 30-day window keeps 720 archives once a backup runs hourly."""
+    prune = (REPO_ROOT / "backend" / "scripts" / "prune_backups.py").read_text()
+    assert "select_tiered_prune_candidates" in prune
+    assert "--hourly-retention-hours" in prune
+    assert "--daily-retention-days" in prune
+    # The runbook's documented command must keep working.
+    assert '"--retention-days"' in prune
+
+
+def test_scheduled_run_prunes_as_well_as_backs_up():
+    """Otherwise an hourly schedule grows the directory forever."""
+    backup_lib = _strip_comments_and_docstrings(_lib("Backup.ps1"))
+    assert "prune_backups.py" in backup_lib
