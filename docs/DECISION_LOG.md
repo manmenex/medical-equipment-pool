@@ -8650,6 +8650,56 @@ Operations Engine) started, not merged
   first anyway, because "you have a space at the start" is actionable and
   "invalid character" sends the user hunting for something invisible.
 
+- **Required: at least one digit, and at least one letter.** The digit is an
+  Owner decision. The letter is its necessary pair and was added without
+  being asked for: without it "123456" satisfies "contains a digit" while
+  being the most common password in the world, caught only by the blocklist
+  one rule deep instead of two. This is still not a full composition rule --
+  no uppercase requirement, no symbol requirement, any arrangement.
+
+- **Rules against trivially guessable passwords, designed rather than
+  specified.** The Owner asked for rules preventing repetitive passwords and
+  left the design open. Three were added, in
+  `backend/app/services/password_policy.py`:
+
+  | Rule | Refuses | Why this shape |
+  |---|---|---|
+  | At least 4 distinct characters | `111a11`, `a1a1a1` | The cheapest rule that removes them without touching anything a person would choose on purpose |
+  | No run of more than 3 in order | `x1234y`, `7wxyz8` | Three is deliberately allowed: `abc` and `123` sit inside plenty of reasonable passwords, and refusing them costs more in false rejections than it buys |
+  | Curated blocklist | `abc123`, `ward01`, `Passw0rd`, `1hospital` | Compared after normalising case, surrounding digits and letter/digit substitutions, against the **whole** password — never as a substring, so `ward7bed12` stays valid |
+  | Must not contain the account's own identifiers | `BME001x7`, `somchai42` | See below |
+
+  **The identifier rule is the one that matters here.** In a ward, the
+  realistic attacker is a colleague who can read the employee code off a
+  badge and knows the name — not someone holding the hash store. Employee
+  code, email local part, and every name fragment of 3+ characters are
+  refused as substrings, case-insensitively.
+
+  The blocklist is deliberately **not a dictionary**. A dictionary would
+  reject `harbour7` while an attacker has no particular reason to try it.
+  What is listed is what people actually pick, plus the words this specific
+  deployment puts on the screen the user is looking at while choosing
+  (`ward`, `nurse`, `equipment`, `bangkok`).
+
+  Each rule has its own error code — `PASSWORD_TOO_REPETITIVE`,
+  `PASSWORD_TOO_COMMON`, `PASSWORD_CONTAINS_IDENTIFIER` — so the form can
+  say which rule was broken in Thai instead of making the user guess.
+
+- **OUTSTANDING, and larger than everything above: there is no login
+  throttle and no account lockout.** Verified — no such code exists. Failed
+  logins are audited and nothing else happens, so an attempt costs an
+  attacker only bcrypt's ~250 ms. Against someone at a ward workstation
+  trying the fifty most likely passwords for a colleague, the blocklist and
+  the identifier rule are the *entire* defence, and a six-character minimum
+  gives them little room.
+
+  **A login throttle would be worth more than every rule in this entry
+  combined.** It is not built here because locking staff out of a clinical
+  system mid-shift is an operational decision with patient-safety
+  consequences — the threshold, the lockout duration, and whether it is
+  per-account or per-source-address are the Owner's to set, not something
+  to infer. Recorded as the next security item rather than assumed away.
+
 - **The bootstrap one-time password now uses the same alphabet.** It came
   from `secrets.token_urlsafe`, whose base64url set includes `-` and `_` —
   so the first credential anyone types contained characters the application

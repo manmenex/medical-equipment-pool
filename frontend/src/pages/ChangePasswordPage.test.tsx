@@ -74,8 +74,8 @@ describe("ChangePasswordPage", () => {
     const user = userEvent.setup();
     renderPage();
     await user.type(screen.getByLabelText("รหัสผ่านปัจจุบัน"), "current-password-1");
-    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), "CorrectHorseBattery9");
-    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), "CorrectHorseBattery8");
+    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), "Harbour7Lantern9");
+    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), "Harbour7Lantern8");
     await user.click(screen.getByRole("button", { name: "เปลี่ยนรหัสผ่าน" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("ไม่ตรงกัน");
@@ -94,13 +94,19 @@ describe("ChangePasswordPage", () => {
     expect(changePassword).not.toHaveBeenCalled();
   });
 
+  // The form mirrors only the structural rules, for instant feedback. Each
+  // case asserts the message the user would actually read, not merely that
+  // something was refused -- a form that says the wrong reason is barely
+  // better than one that says nothing.
   it.each([
-    ["thai", "ก".repeat(10)],
-    ["punctuation", "Passw0rd!"],
-    ["internal space", "pass w0rd"],
-    ["hyphen", "Pass-w0rd"],
-    ["accented latin", "café12"],
-  ])("refuses %s without calling the API", async (_label, rejected) => {
+    ["thai", "ก".repeat(10), "ภาษาอังกฤษ"],
+    ["punctuation", "Harbour!7", "ภาษาอังกฤษ"],
+    ["internal space", "harbour 7", "ภาษาอังกฤษ"],
+    ["no digit", "harbourlantern", "ตัวเลข"],
+    ["no letter", "907142", "ตัวอักษรภาษาอังกฤษอย่างน้อย"],
+    ["too few distinct", "aa11aa", "ไม่ซ้ำกันอย่างน้อย"],
+    ["sequential run", "x1234y", "เรียงกันเกิน"],
+  ])("refuses %s without calling the API", async (_label, rejected, expected) => {
     const user = userEvent.setup();
     renderPage();
     await user.type(screen.getByLabelText("รหัสผ่านปัจจุบัน"), "current-password-1");
@@ -108,24 +114,44 @@ describe("ChangePasswordPage", () => {
     await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), rejected);
     await user.click(screen.getByRole("button", { name: "เปลี่ยนรหัสผ่าน" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("ภาษาอังกฤษ");
+    expect(await screen.findByRole("alert")).toHaveTextContent(expected);
     expect(changePassword).not.toHaveBeenCalled();
   });
 
-  it("does not require a mix of the three kinds", async () => {
+  it("does not require a mix of upper and lower case", async () => {
     // "Only these characters" is a restriction on the set, not a
-    // composition requirement -- all-lowercase must be accepted.
+    // composition requirement -- all-lowercase-plus-a-digit is accepted.
     const user = userEvent.setup();
     changePassword.mockResolvedValue(undefined);
     renderPage();
     await user.type(screen.getByLabelText("รหัสผ่านปัจจุบัน"), "current-password-1");
-    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), "abcdef");
-    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), "abcdef");
+    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), "harbour7");
+    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), "harbour7");
     await user.click(screen.getByRole("button", { name: "เปลี่ยนรหัสผ่าน" }));
 
     await waitFor(() =>
-      expect(changePassword).toHaveBeenCalledWith("current-password-1", "abcdef"),
+      expect(changePassword).toHaveBeenCalledWith("current-password-1", "harbour7"),
     );
+  });
+
+  // The blocklist and the identifier rule are server-side only, so the form
+  // must translate their codes rather than re-checking them. Without this
+  // the user would get the generic "try again" for a rule they can act on.
+  it.each([
+    ["PASSWORD_TOO_COMMON", "คนใช้กันบ่อย"],
+    ["PASSWORD_TOO_REPETITIVE", "ซ้ำหรือเรียงกัน"],
+    ["PASSWORD_CONTAINS_IDENTIFIER", "รหัสพนักงาน"],
+  ])("explains the server-side rule %s in Thai", async (code, expected) => {
+    const user = userEvent.setup();
+    changePassword.mockRejectedValue({ response: { data: { code } } });
+    renderPage();
+    await user.type(screen.getByLabelText("รหัสผ่านปัจจุบัน"), "current-password-1");
+    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), "Harbour7Lantern9");
+    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), "Harbour7Lantern9");
+    await user.click(screen.getByRole("button", { name: "เปลี่ยนรหัสผ่าน" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(expected);
+    expect(screen.queryByText("dashboard")).not.toBeInTheDocument();
   });
 
   it("submits both passwords and leaves the page on success", async () => {
@@ -133,12 +159,12 @@ describe("ChangePasswordPage", () => {
     changePassword.mockResolvedValue(undefined);
     renderPage();
     await user.type(screen.getByLabelText("รหัสผ่านปัจจุบัน"), "current-password-1");
-    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), "CorrectHorseBattery9");
-    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), "CorrectHorseBattery9");
+    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), "Harbour7Lantern9");
+    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), "Harbour7Lantern9");
     await user.click(screen.getByRole("button", { name: "เปลี่ยนรหัสผ่าน" }));
 
     await waitFor(() =>
-      expect(changePassword).toHaveBeenCalledWith("current-password-1", "CorrectHorseBattery9"),
+      expect(changePassword).toHaveBeenCalledWith("current-password-1", "Harbour7Lantern9"),
     );
     expect(await screen.findByText("dashboard")).toBeInTheDocument();
   });
@@ -148,8 +174,8 @@ describe("ChangePasswordPage", () => {
     changePassword.mockRejectedValue({ response: { data: { code: "INVALID_CREDENTIALS" } } });
     renderPage();
     await user.type(screen.getByLabelText("รหัสผ่านปัจจุบัน"), "wrong-current-pass");
-    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), "CorrectHorseBattery9");
-    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), "CorrectHorseBattery9");
+    await user.type(screen.getByLabelText("รหัสผ่านใหม่"), "Harbour7Lantern9");
+    await user.type(screen.getByLabelText("ยืนยันรหัสผ่านใหม่"), "Harbour7Lantern9");
     await user.click(screen.getByRole("button", { name: "เปลี่ยนรหัสผ่าน" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("รหัสผ่านปัจจุบันไม่ถูกต้อง");

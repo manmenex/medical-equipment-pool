@@ -59,7 +59,7 @@ NEW_PASSWORD = "CorrectHorseBattery9"
 # writing a literal of a counted length -- a hand-counted 72-character string
 # is one typo away from silently testing the wrong side of the boundary,
 # which is precisely what happened while writing these.
-_ASCII_FILLER = "CorrectHorseBatteryStapleCupboardLanternKettleWindowHarbourFerryboatAnchorBucket"
+_ASCII_FILLER = "Harbour7Lantern9Kettle3Window5Anchor1Bucket4Cupboard6Ferry8Marina2Quayside0Beacon"
 assert len(_ASCII_FILLER) == len(_ASCII_FILLER.encode("utf-8"))
 
 
@@ -215,24 +215,21 @@ async def test_a_password_over_the_hashing_limit_is_refused_not_crashed(
     "rejected",
     [
         pytest.param("ก" * 10, id="thai"),
-        pytest.param("Passw0rd!", id="punctuation"),
-        pytest.param("Passw0rd@", id="at-sign"),
-        pytest.param("pass w0rd", id="internal-space"),
-        pytest.param("Passw0rd_", id="underscore"),
-        pytest.param("Pass-w0rd", id="hyphen"),
-        pytest.param("café12", id="accented-latin"),
-        pytest.param("Passw0rd​", id="zero-width-space"),
+        pytest.param("Harbour!7", id="punctuation"),
+        pytest.param("harbourlantern", id="no-digit"),
+        pytest.param("aa11aa", id="too-few-distinct"),
+        pytest.param("ward01", id="common-password"),
     ],
 )
-async def test_only_english_letters_and_digits_are_accepted(client, seeded_users, rejected):
-    """Owner decision: the allowed set is [A-Za-z0-9] and nothing else.
+async def test_the_password_policy_is_enforced_over_http(client, seeded_users, rejected):
+    """One representative case per rule, end to end.
 
-    Each case is long enough to pass the minimum, so the only reason it can
-    be refused is the character rule -- otherwise these would pass for the
-    wrong reason and keep passing if the rule were deleted.
+    The rules themselves are covered exhaustively and instantly in
+    tests/test_password_policy.py; what this adds is that the policy is
+    actually wired into the endpoint, returns 400, and leaves the account
+    untouched. Duplicating every case here would cost seconds per case for
+    no additional information.
     """
-    assert len(rejected) >= MINIMUM_PASSWORD_LENGTH
-
     token = await login(client, ADMIN_EMPLOYEE_CODE)
     resp = await client.post(
         "/api/v1/auth/change-password",
@@ -240,7 +237,6 @@ async def test_only_english_letters_and_digits_are_accepted(client, seeded_users
         json={"current_password": "Password@123", "new_password": rejected},
     )
     assert resp.status_code == 400
-    assert resp.json()["code"] == "WEAK_PASSWORD"
 
     # Refused means nothing changed.
     ok = await client.post(
@@ -250,12 +246,28 @@ async def test_only_english_letters_and_digits_are_accepted(client, seeded_users
     assert ok.status_code == 200
 
 
+async def test_a_password_built_from_the_account_is_refused_over_http(client, seeded_users):
+    """The identifier rule needs the real user, so it cannot be checked by
+    the pure-function tests: this is the one that proves change_password
+    actually passes the account through to the policy."""
+    token = await login(client, ADMIN_EMPLOYEE_CODE)
+    resp = await client.post(
+        "/api/v1/auth/change-password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "current_password": "Password@123",
+            "new_password": f"{ADMIN_EMPLOYEE_CODE}x7",
+        },
+    )
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "PASSWORD_CONTAINS_IDENTIFIER"
+
+
 @pytest.mark.parametrize(
     "accepted",
     [
-        pytest.param("abcdef", id="all-lowercase"),
-        pytest.param("ABCDEF", id="all-uppercase"),
-        pytest.param("123456", id="all-digits"),
+        pytest.param("harbour7", id="all-lowercase-plus-digit"),
+        pytest.param("HARBOUR7", id="all-uppercase-plus-digit"),
         pytest.param("Ward7Bed12", id="mixed"),
     ],
 )

@@ -59,7 +59,10 @@ A `422` validation error additionally includes an `errors` array:
 |---|---|---|
 | `INVALID_CREDENTIALS` | 401 | Login `identifier`/`password` do not match, or the matched user has no assigned role |
 | `INVALID_REFRESH_TOKEN` | 401 | Refresh cookie missing, malformed/expired, wrong token type, revoked, or the owning user is gone/inactive/roleless |
-| `WEAK_PASSWORD` | 400 | `POST /auth/change-password`: the new password is shorter than 6 characters, longer than 72 (bcrypt's limit, measured in bytes), starts/ends with whitespace, or uses anything outside `[A-Za-z0-9]` — English letters and digits only. The character rule restricts the allowed set; it does **not** require a mix, so an all-lowercase password of sufficient length is accepted |
+| `WEAK_PASSWORD` | 400 | `POST /auth/change-password`: the new password fails a structural rule — shorter than 6 characters, longer than 72 (bcrypt's limit, measured in bytes), starts/ends with whitespace, uses anything outside `[A-Za-z0-9]`, or is missing a digit or a letter. The character rule restricts the allowed *set*; it does **not** require a mix, so `harbour7` is accepted |
+| `PASSWORD_TOO_REPETITIVE` | 400 | `POST /auth/change-password`: fewer than 4 distinct characters (`111a11`), or a run of more than 3 characters in order (`x1234y`, `7wxyz8`) |
+| `PASSWORD_TOO_COMMON` | 400 | `POST /auth/change-password`: on the curated list of passwords people actually choose, after normalising case, surrounding digits and common letter/digit substitutions — so `ward01`, `Passw0rd` and `1hospital` are all caught. Matched against the whole password, never as a substring: `ward7bed12` is accepted |
+| `PASSWORD_CONTAINS_IDENTIFIER` | 400 | `POST /auth/change-password`: contains the account's own employee code, a name fragment of 3+ characters, or the local part of its email. In a hospital this is the realistic attack — a colleague who can read the badge |
 | `SAME_PASSWORD` | 400 | `POST /auth/change-password`: the new password is identical to the current one |
 
 ### Domain errors (`backend/app/core/exceptions.py`)
