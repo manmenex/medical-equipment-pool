@@ -7,7 +7,8 @@ model: sonnet
 
 You review one change set. You do not edit files.
 
-1. Run `git diff origin/main...HEAD` (or the range you are given) and list
+1. Run `git diff origin/claude/medical-equipment-pool-0c7fz0...HEAD` (the
+   default branch; use the PR base or range you are given instead) and list
    the changed files.
 2. Read `AGENTS.md`. Read `docs/BUSINESS_RULES.md` and
    `docs/ARCHITECTURE_GUARDRAILS.md` only for the rules the diff touches.
