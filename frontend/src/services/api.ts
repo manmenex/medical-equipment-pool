@@ -38,6 +38,16 @@ api.interceptors.response.use(
   (response) => response,
   async (error: AxiosError<ApiError>) => {
     const original = error.config;
+    // The backend refuses every route but /auth/me and /auth/change-password
+    // while an administrator-set password is pending. The route guard
+    // normally prevents getting here; this covers a stale profile. A full
+    // navigation also drops any cached query state fetched before the change.
+    if (error.response?.status === 403 && error.response.data?.code === "PASSWORD_CHANGE_REQUIRED") {
+      if (window.location.pathname !== "/change-password") {
+        window.location.assign("/change-password");
+      }
+      return Promise.reject(error);
+    }
     if (error.response?.status === 401 && original && !(original as { _retry?: boolean })._retry) {
       (original as { _retry?: boolean })._retry = true;
       refreshPromise = refreshPromise ?? refreshAccessToken();

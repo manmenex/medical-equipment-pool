@@ -7,6 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import PasswordChangeRequiredError
 from app.core.security import decode_token
 from app.db.session import get_db
 from app.models.user import ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, ROLE_READ_ONLY, Role, User
@@ -18,7 +19,7 @@ bearer_scheme = HTTPBearer(auto_error=False)
 WWW_AUTHENTICATE_HEADERS = {"WWW-Authenticate": "Bearer"}
 
 
-async def get_current_user(
+async def get_current_user_allowing_password_change(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
@@ -55,7 +56,27 @@ async def get_current_user(
     return user
 
 
-async def get_current_role_name(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> str:
+async def get_current_user(user: User = Depends(get_current_user_allowing_password_change)) -> User:
+    """The authenticated user, refused while a forced password change is pending.
+
+    `users.must_change_password` (an Administrator-set temporary password) is
+    enforced here, for every route that uses this dependency -- i.e. all of
+    them except the few that use `get_current_user_allowing_password_change`
+    directly: GET /auth/me and POST /auth/change-password. (login, refresh
+    and logout take no access token.)
+    """
+    if user.must_change_password:
+        raise PasswordChangeRequiredError("Password change required before using the application")
+    return user
+
+
+# Builds on the password-change-tolerant variant so GET /auth/me works for a
+# flagged user. It authorizes nothing by itself: every route that uses it
+# alongside a role gate gets the forced-change check from that gate.
+async def get_current_role_name(
+    user: User = Depends(get_current_user_allowing_password_change),
+    db: AsyncSession = Depends(get_db),
+) -> str:
     result = await db.execute(select(Role).where(Role.id == user.role_id))
     role = result.scalar_one_or_none()
     return role.name if role else ""

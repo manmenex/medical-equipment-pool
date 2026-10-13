@@ -481,3 +481,43 @@ async def test_fresh_install_and_upgrade_agree_on_the_column_default():
     add_column = " ".join(module._ADD_COLUMN.split()).upper()
     assert "DEFAULT FALSE" in add_column, module._ADD_COLUMN
     assert "NOT NULL" in add_column, module._ADD_COLUMN
+
+
+async def _flagged_headers(client, password="TemporaryReset2026"):
+    token = await login(client, ADMIN_EMPLOYEE_CODE)
+    headers = {"Authorization": f"Bearer {token}"}
+    listed = await client.get("/api/v1/users", headers=headers)
+    target = next(u for u in listed.json() if u["employee_code"] != ADMIN_EMPLOYEE_CODE)
+    await client.patch(f"/api/v1/users/{target['id']}", headers=headers, json={"password": password})
+    target_token = await login(client, target["employee_code"], password=password)
+    return target, {"Authorization": f"Bearer {target_token}"}
+
+
+async def test_flagged_user_is_refused_everywhere_but_the_change_path(client, seeded_users):
+    _, headers = await _flagged_headers(client)
+
+    blocked = await client.get("/api/v1/equipment", headers=headers)
+    assert blocked.status_code == 403
+    assert blocked.json()["code"] == "PASSWORD_CHANGE_REQUIRED"
+
+    # The user can still learn they must change, and change it.
+    me = await client.get("/api/v1/auth/me", headers=headers)
+    assert me.status_code == 200
+    assert me.json()["must_change_password"] is True
+
+    changed = await client.post(
+        "/api/v1/auth/change-password",
+        headers=headers,
+        json={"current_password": "TemporaryReset2026", "new_password": NEW_PASSWORD},
+    )
+    assert changed.status_code == 200
+
+    # Same token, normal access now.
+    assert (await client.get("/api/v1/equipment", headers=headers)).status_code == 200
+
+
+async def test_unflagged_user_is_not_affected_by_the_enforcement(client, seeded_users):
+    token = await login(client, ADMIN_EMPLOYEE_CODE)
+    headers = {"Authorization": f"Bearer {token}"}
+    assert (await client.get("/api/v1/equipment", headers=headers)).status_code == 200
+    assert (await client.get("/api/v1/auth/me", headers=headers)).status_code == 200

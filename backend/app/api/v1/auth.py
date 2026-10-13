@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.deps import get_current_role_name, get_current_user
+from app.api.v1.deps import get_current_role_name, get_current_user_allowing_password_change
 from app.core.config import settings
 from app.db.session import get_db
 from app.schemas.auth import ChangePasswordRequest, LoginRequest, TokenResponse, UserProfile
@@ -51,7 +51,7 @@ async def logout(request: Request, response: Response, db: AsyncSession = Depend
 async def change_password(
     payload: ChangePasswordRequest,
     request: Request,
-    user=Depends(get_current_user),
+    user=Depends(get_current_user_allowing_password_change),
     db: AsyncSession = Depends(get_db),
 ):
     """Changes the CALLER'S OWN password.
@@ -75,7 +75,7 @@ async def change_password(
 @router.get("/me", response_model=UserProfile)
 async def me(
     request: Request,
-    user=Depends(get_current_user),
+    user=Depends(get_current_user_allowing_password_change),
     role_name: str = Depends(get_current_role_name),
 ):
     return UserProfile(

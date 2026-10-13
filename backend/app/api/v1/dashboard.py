@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import StreamingResponse
 
 from app.api.v1.deps import WWW_AUTHENTICATE_HEADERS, bearer_scheme, get_current_user
+from app.core.exceptions import PasswordChangeRequiredError
 from app.core.security import decode_token
 from app.db.session import AsyncSessionLocal, get_db
 from app.models.user import User
@@ -75,6 +76,8 @@ async def get_current_user_for_stream(
             detail="User not found or inactive",
             headers=WWW_AUTHENTICATE_HEADERS,
         )
+    if user.must_change_password:
+        raise PasswordChangeRequiredError("Password change required before using the application")
     return user
 
 

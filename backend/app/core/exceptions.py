@@ -7,6 +7,11 @@ class DomainError(Exception):
         super().__init__(message)
 
 
+class PasswordChangeRequiredError(DomainError):
+    code = "PASSWORD_CHANGE_REQUIRED"
+    status_code = 403
+
+
 class EquipmentNotFoundError(DomainError):
     code = "EQUIPMENT_NOT_FOUND"
     status_code = 404
