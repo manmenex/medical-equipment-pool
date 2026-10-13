@@ -37,9 +37,19 @@ env:
   NODE_VERSION: "22"
 
 jobs:
+  # Each backend suite runs as parallel shards (tests/conftest.py's
+  # PYTEST_SHARD), then one gate job carrying the suite's original check
+  # name proves the shards together ran every collected test exactly once
+  # (scripts/ci_shard_gate.py). Serial, the non-PostgreSQL suite took 24-29
+  # minutes and the PostgreSQL suite 14-18. To change a shard count, change
+  # both the matrix and the gate's total.
   backend-tests:
-    name: Backend tests (non-PostgreSQL)
+    name: Backend tests (non-PostgreSQL) shard ${{ matrix.shard }}/5
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4]
     defaults:
       run:
         working-directory: backend
@@ -73,11 +83,52 @@ jobs:
       # command (see docs/PROJECT_PLAYBOOK.md evidence conventions and every
       # Roadmap PR's own evidence table).
       - name: Run backend tests (non-PostgreSQL)
+        env:
+          PYTEST_SHARD: ${{ matrix.shard }}/5
+          PYTEST_SHARD_REPORT: shard-${{ matrix.shard }}.json
         run: python -m pytest -q -m "not postgres"
 
-  backend-postgres-tests:
-    name: Backend tests (PostgreSQL)
+      - name: Upload shard coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-nonpg-${{ matrix.shard }}
+          path: backend/shard-${{ matrix.shard }}.json
+
+  backend-tests-gate:
+    name: Backend tests (non-PostgreSQL)
+    needs: backend-tests
+    # always(): a skipped required check can read as passing, so this gate
+    # must run and fail itself when any shard failed or was cancelled.
+    if: always()
     runs-on: ubuntu-latest
+    steps:
+      - name: Require every shard to have passed
+        if: needs.backend-tests.result != 'success'
+        run: |
+          echo "A shard did not pass (${{ needs.backend-tests.result }})"
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download shard coverage reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: shard-nonpg-*
+          path: shard-reports
+
+      - name: Verify the shards covered every test exactly once
+        run: python backend/scripts/ci_shard_gate.py shard-reports 5
+
+  backend-postgres-tests:
+    name: Backend tests (PostgreSQL) shard ${{ matrix.shard }}/3
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
     defaults:
       run:
         working-directory: backend
@@ -137,6 +188,8 @@ jobs:
       - name: Run backend tests (PostgreSQL-marked)
         env:
           POSTGRES_TEST_DATABASE_URL: postgresql+asyncpg://mep_test:mep_test_password@localhost:5432/mep_test_db
+          PYTEST_SHARD: ${{ matrix.shard }}/3
+          PYTEST_SHARD_REPORT: shard-${{ matrix.shard }}.json
         run: python -m pytest -q -m postgres --junitxml=postgres-results.xml
 
       # Defense in depth alongside the preflight step above: fails CI if any
@@ -145,6 +198,40 @@ jobs:
       # intentional exclusion.
       - name: Verify zero postgres tests were skipped
         run: python scripts/postgres_ci_gate.py assert-no-skips postgres-results.xml
+
+      - name: Upload shard coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-pg-${{ matrix.shard }}
+          path: backend/shard-${{ matrix.shard }}.json
+
+  backend-postgres-tests-gate:
+    name: Backend tests (PostgreSQL)
+    needs: backend-postgres-tests
+    # always(): a skipped required check can read as passing, so this gate
+    # must run and fail itself when any shard failed or was cancelled.
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every shard to have passed
+        if: needs.backend-postgres-tests.result != 'success'
+        run: |
+          echo "A shard did not pass (${{ needs.backend-postgres-tests.result }})"
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download shard coverage reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: shard-pg-*
+          path: shard-reports
+
+      - name: Verify the shards covered every test exactly once
+        run: python backend/scripts/ci_shard_gate.py shard-reports 3
 
   migrations:
     name: Alembic migration upgrade validation
