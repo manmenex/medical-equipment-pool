@@ -7537,7 +7537,11 @@ async def test_migration_0013_fresh_database_all_foreign_keys_are_restrict():
                 # export_api_keys.created_by_user_id -> users,
                 # export_api_keys.revoked_by_user_id -> users (3).
                 # 80 + 3 = 83.
-                assert len(rows) == 83, f"expected exactly 83 foreign keys, found {len(rows)}: {rows}"
+                # + 4 added by migration 0027 (Roadmap PR25E slice B1):
+                # client_operations.user_id, .submitted_by_user_id,
+                # .resolved_by -> users, .transaction_id ->
+                # borrow_transactions (4). 83 + 4 = 87.
+                assert len(rows) == 87, f"expected exactly 87 foreign keys, found {len(rows)}: {rows}"
                 for conname, confdeltype in rows:
                     assert confdeltype == "r", f"{conname} has confdeltype={confdeltype!r}, expected 'r' (RESTRICT)"
         finally:
@@ -13073,6 +13077,121 @@ async def test_migration_0026_ward_department_phone_both_paths():
                 w = (await conn.execute(text("SELECT phone FROM wards WHERE code='W0026'"))).fetchall()
                 d = (await conn.execute(text("SELECT phone FROM departments WHERE code='D0026'"))).fetchall()
             assert w == [(None,)] and d == [(None,)], "existing rows survive with NULL phone, no backfill"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR25E slice B1: migration 0027_client_operations.py. Fresh install
+# (0001's create_all builds the table from the ORM model; CREATE TABLE IF NOT
+# EXISTS is a no-op) and historical upgrade (table absent after downgrade to
+# 0026), plus downgrade/re-upgrade and constraint enforcement.
+# ---------------------------------------------------------------------------
+
+
+async def _client_operations_state() -> dict:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            cols = (
+                await conn.execute(
+                    text(
+                        "SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns "
+                        "WHERE table_schema='public' AND table_name='client_operations' ORDER BY column_name"
+                    )
+                )
+            ).fetchall()
+            cons = (
+                await conn.execute(
+                    text(
+                        "SELECT conname, contype::text, confdeltype::text FROM pg_constraint "
+                        "WHERE conrelid = to_regclass('public.client_operations') ORDER BY conname"
+                    )
+                )
+            ).fetchall() if cols else []
+            idx = (
+                await conn.execute(
+                    text("SELECT indexname FROM pg_indexes WHERE tablename='client_operations' ORDER BY indexname")
+                )
+            ).fetchall()
+            return {"cols": [tuple(r) for r in cols], "cons": [tuple(r) for r in cons], "idx": [r[0] for r in idx]}
+    finally:
+        await engine.dispose()
+
+
+async def test_migration_0027_client_operations_both_paths():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+    try:
+        # Fresh-install path: create_all already built the table; upgrade must verify it.
+        _run_alembic("upgrade", "head")
+        fresh = await _client_operations_state()
+        assert len(fresh["cols"]) == 30
+        assert {c[0] for c in fresh["cons"] if c[1] == "f"} and sum(1 for c in fresh["cons"] if c[1] == "f") == 4
+        assert all(c[2] == "r" for c in fresh["cons"] if c[1] == "f")
+        assert "ix_client_operations_status_received_at" in fresh["idx"]
+
+        # Historical-upgrade path: absent after downgrade, then created by 0027 itself.
+        _run_alembic("downgrade", "0026_ward_department_phone")
+        assert (await _client_operations_state())["cols"] == []
+        _run_alembic("upgrade", "head")
+        upgraded = await _client_operations_state()
+        assert upgraded == fresh, "fresh-install and upgrade paths must produce an identical table"
+
+        # Re-run is a no-op and the CHECK / UNIQUE constraints are enforced.
+        _run_alembic("downgrade", "0026_ward_department_phone")
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                uid = (
+                    await conn.execute(text("SELECT id FROM users LIMIT 1"))
+                ).scalar()
+                if uid is None:
+                    uid = (await conn.execute(text("SELECT gen_random_uuid()"))).scalar()
+                    role = (await conn.execute(text("SELECT id FROM roles LIMIT 1"))).scalar()
+                    await conn.execute(
+                        text(
+                            "INSERT INTO users (id, employee_code, full_name, email, role_id, password_hash, is_active) "
+                            "VALUES (:i, 'B1USR', 'B1 User', 'b1@example.com', :r, 'x', true)"
+                        ),
+                        {"i": uid, "r": role},
+                    )
+            dev = str(uuid.uuid4())
+
+            async def insert(status="applied", op_type="dispatch", seq=1, op_id=None):
+                async with engine.begin() as conn:
+                    await conn.execute(
+                        text(
+                            "INSERT INTO client_operations (op_id, device_id, device_seq, user_id, op_type, "
+                            "payload_hash, status, payload) VALUES (:o, :d, :s, :u, :t, 'h', :st, '{}'::jsonb)"
+                        ),
+                        {"o": op_id or str(uuid.uuid4()), "d": dev, "s": seq, "u": uid, "t": op_type, "st": status},
+                    )
+
+            await insert()
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        text("SELECT stale_context, attempt_count, first_seen_at IS NOT NULL, received_at IS NOT NULL FROM client_operations")
+                    )
+                ).one()
+            assert tuple(row) == (False, 1, True, True)
+            from sqlalchemy.exc import IntegrityError
+
+            for kwargs in ({"seq": 1}, {"seq": 2, "status": "nope"}, {"seq": 3, "op_type": "other"}):
+                with pytest.raises(IntegrityError):
+                    await insert(**kwargs)
+            dup = str(uuid.uuid4())
+            await insert(seq=4, op_id=dup)
+            with pytest.raises(IntegrityError):
+                await insert(seq=5, op_id=dup)
+            for n, st in enumerate(("pending", "conflict", "rejected", "resolved")):
+                await insert(seq=10 + n, status=st)
         finally:
             await engine.dispose()
     finally:
