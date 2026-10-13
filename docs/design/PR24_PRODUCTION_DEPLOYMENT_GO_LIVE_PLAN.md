@@ -79,6 +79,15 @@ does not provision anything.
 
 ---
 
+
+> **Revision (Governance 2026-10-13).** OD-PR24-1 is changed by the Owner:
+> Production runs on an Owner-designated department host under Docker,
+> reachable through Cloudflare Tunnel + Access, not on a managed cloud
+> platform. RPO <= 1h is kept (hourly off-host backup to Google Drive);
+> RTO <= 4h relies on restore-from-Drive onto any Docker-capable PC. The
+> remaining work is Roadmap PR25A-E (`docs/ROADMAP.md`, "Stage 1"). Where
+> this document assumes a managed provider, the revision governs.
+
 ## 1. Repository Authority Check
 
 ### 1.1 Is Roadmap PR24 already formally defined?
