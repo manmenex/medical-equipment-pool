@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 
 from fastapi import Request
 from sqlalchemy.exc import IntegrityError
@@ -62,7 +63,11 @@ async def borrow(
     user_agent: str | None,
     actor_user_id: uuid.UUID | None = None,
     client_op: client_op_crud.ClientOpContext | None = None,
+    borrowed_at: datetime | None = None,
 ) -> BorrowTransaction:
+    # Roadmap PR25E slice B2b: ``borrowed_at`` is business time and is passed
+    # only by the sync layer after the section 11 guards; online callers omit
+    # it and keep the server clock.
     # Roadmap PR25E slice B2 (docs/design/PR25D_OFFLINE_OPERATION_PLAN.md
     # sections 6.3, 8.3): ``borrower_user_id`` is the *recorded operator*;
     # ``actor_user_id`` is who performed the write (audit actor and
@@ -117,6 +122,7 @@ async def borrow(
         tx = await transaction_crud.create(
             db,
             id=client_op.op_id if client_op is not None else None,
+            borrowed_at=borrowed_at,
             data={
                 "transaction_no": transaction_no,
                 "equipment_id": equipment.id,
@@ -189,6 +195,7 @@ async def return_equipment(
     user_agent: str | None,
     actor_user_id: uuid.UUID | None = None,
     client_op: client_op_crud.ClientOpContext | None = None,
+    returned_at: datetime | None = None,
 ) -> BorrowTransaction:
     # See borrow(): ``received_by_user_id`` is the recorded operator,
     # ``actor_user_id`` (default: the operator) the audit/status-history actor.
@@ -225,7 +232,8 @@ async def return_equipment(
     # -row count. Exactly one of N concurrent receipts for this transaction
     # gets won == True; the rest get won == False.
     won = await transaction_crud.close(
-        db, tx, received_by_user_id=received_by_user_id, receipt_outcome=receipt_outcome.value, notes=notes
+        db, tx, received_by_user_id=received_by_user_id,
+        receipt_outcome=receipt_outcome.value, notes=notes, returned_at=returned_at,
     )
     if not won:
         # Roadmap PR8A Case B -- lost a concurrent race. Another request
