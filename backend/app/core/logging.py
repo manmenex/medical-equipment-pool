@@ -25,7 +25,7 @@ _EXTRA_FIELDS = (
     "skipped",
     "attempted_rows",
     "update_existing",
-    # Roadmap PR18B (docs/design/PR18_PRINTING_EXPORT_PLAN.md §13): one safe,
+    # Roadmap PR18B (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §13): one safe,
     # structured operational output event per report export/print attempt --
     # aggregate outcome/row-count only, never row data, filenames containing
     # user input, or filter values (see app.services.report_export_service.
@@ -42,7 +42,7 @@ class JsonFormatter(logging.Formatter):
     """Structured JSON log formatter (Roadmap PR15A).
 
     Replaces the prior plain-text format, matching the structured-logging
-    design documented in docs/08-security.md. Only the fixed set of fields
+    design documented in docs/archive/legacy/08-security.md. Only the fixed set of fields
     below is ever emitted -- see _EXTRA_FIELDS' docstring.
     """
 

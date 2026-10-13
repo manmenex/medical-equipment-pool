@@ -4,7 +4,7 @@ Revision ID: 0017_equipment_version
 Revises: 0016_import_source_blobs
 Create Date: 2026-08-12
 
-Roadmap PR20B (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24,
+Roadmap PR20B (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24,
 architecture-approved). Introduces one new, purely additive column,
 `equipment.version` -- an `INTEGER NOT NULL DEFAULT 1` optimistic-
 concurrency counter, mirroring `ImportSession.version`'s existing pattern
@@ -108,7 +108,7 @@ def _verify_schema_convergence(bind) -> None:
     if kind == _INCOMPATIBLE_DEFINITION:
         raise RuntimeError(
             f"Migration 0017 aborted: {_TABLE}.{_COLUMN} exists but diverges from the PR20B design contract "
-            "(docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24).\n"
+            "(docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24).\n"
             f"    Expected (data_type, udt_name, char_max_length, is_nullable, column_default) = "
             f"{_EXPECTED_COLUMN!r}\n"
             f"    Actual                                                                        = {actual!r}"

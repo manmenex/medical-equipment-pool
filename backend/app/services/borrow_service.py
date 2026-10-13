@@ -267,7 +267,7 @@ async def correct_ward(
     actor_user_id: uuid.UUID,
     request: Request | None,
 ) -> BorrowTransaction:
-    """Roadmap PR9A (docs/audits/03-hospital-equipment-pool-workflow-audit.md
+    """Roadmap PR9A (docs/archive/audits/03-hospital-equipment-pool-workflow-audit.md
     §7 "Ward Recording Rules"): a narrow, audited correction of a
     transaction's recorded destination ward -- distinct from any general
     edit capability, and explicitly NOT ward-transfer tracking (this fixes

@@ -1,7 +1,7 @@
 import { PRINT_ORIENTATION, formatDateTimeInTimezone, formatPrintValue } from "@/utils/printFormat";
 import type { PrintDocumentOut } from "@/types";
 
-// Roadmap PR18C (docs/design/PR18_PRINTING_EXPORT_PLAN.md §9/§16): the
+// Roadmap PR18C (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §9/§16): the
 // print presentation for one PrintDocumentOut. Purely presentational --
 // renders exactly the metadata, applied-filter summary, column order, and
 // row order the backend returned, in the order given. It must never

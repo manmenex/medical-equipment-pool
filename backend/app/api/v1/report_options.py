@@ -16,7 +16,7 @@ async def list_report_operators(
     limit: int = Query(default=100, ge=1, le=200),
     cursor: str | None = None,
     db: AsyncSession = Depends(get_db),
-    # Roadmap PR17 Slice 2 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+    # Roadmap PR17 Slice 2 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md
     # §10.4/§14): deliberately VIEW_AND_REPORT_ROLES, not
     # ADMINISTRATOR_ONLY_ROLES (which gates the existing GET /users) --
     # Equipment Pool Staff and Read Only, both authorized to view the

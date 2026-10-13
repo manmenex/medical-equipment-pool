@@ -3,8 +3,8 @@
 **Status:** DESIGN MERGED (GitHub PR #112, folded into baseline
 `c924d8ba2c8c5d933ea36ea3d488e2550615df40`). All seven Owner Decisions
 (OD-PR22-1 through OD-PR22-7, §36) are **RESOLVED / OWNER APPROVED**.
-**PR22A-F implementation is complete and merged; PR22G (governance
-close-out) is in progress, not yet merged** — see `docs/ROADMAP.md`,
+**PR22A-F implementation and PR22G (governance close-out) are all
+complete and merged (GitHub PR #115-#121)** — see `docs/ROADMAP.md`,
 `docs/ROADMAP_STATUS.md`, and `docs/DECISION_LOG.md` for current
 status. No `backend/**`, `frontend/**`, `alembic/**`, or `tests/**`
 file was created or modified by this document or by the PR22 Owner
@@ -350,7 +350,7 @@ handle.
 
 ### 4.9 PR21 design's own PR22-deferred items (binding on this design)
 
-Quoted from `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+Quoted from `docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
 (§1, §11.2/§46 Owner Decision Closure Round 2), which this design treats
 as authoritative and does not reopen:
 
@@ -948,7 +948,7 @@ sign-off); results silently drift over time; cannot answer "what did the
 Administrator actually see when they signed off" months later, which is
 precisely the kind of evidence Roadmap PR23 (Cutover Readiness) and any
 future audit will need. **Rejected** for the same reason PR20D rejected
-a live-recomputed dry-run plan (`docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md`
+a live-recomputed dry-run plan (`docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md`
 established persisted, immutable plans over live queries) — this
 repository's own established precedent already answers this question.
 
@@ -1591,7 +1591,7 @@ Given the real ~51,000-row combined dataset (§4.8):
   implementation slice, validated against `EXPLAIN ANALYZE` on
   production-representative data volume before merge (matching this
   repository's own established evidence bar for PR14A/PR14B-class
-  performance work, `docs/audits/05-pr14a-transaction-boundary-audit.md`,
+  performance work, `docs/archive/audits/05-pr14a-transaction-boundary-audit.md`,
   `06-pr14b-pagination-index-evidence.md`).
 - **Bounded pagination** everywhere findings are listed (§25).
 - **Asynchronous job framework reuse, if needed**: whether the full

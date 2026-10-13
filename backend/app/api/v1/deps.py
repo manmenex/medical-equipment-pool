@@ -96,7 +96,7 @@ def require_roles(*allowed_roles: str) -> Callable:
     return checker
 
 
-# Roadmap PR10 (Role Model Consolidation, docs/audits/03-hospital-equipment
+# Roadmap PR10 (Role Model Consolidation, docs/archive/audits/03-hospital-equipment
 # -pool-workflow-audit.md §10 "Role and Permission Review"): centralized,
 # named capability groups mirroring the confirmed 3-role permission matrix.
 # Every endpoint's role gate references one of these groups -- never an
@@ -115,7 +115,7 @@ EQUIPMENT_POOL_OPERATION_ROLES = (ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF)
 # decommissioning, equipment master-data create/update, ward/department/
 # location/category master-data management, user and role management, and
 # audit-log reads. Equipment Pool Staff is explicitly denied every one of
-# these -- confirmed by docs/audits/03-hospital-equipment-pool-workflow-audit.md
+# these -- confirmed by docs/archive/audits/03-hospital-equipment-pool-workflow-audit.md
 # §10's matrix (reactivation "recommend Admin-only gate for MVP"; master
 # data "lean toward Admin-only for MVP"; user management "Administrator
 # only").

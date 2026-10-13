@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.import_session import ImportSourceBlob
 
-# Roadmap PR20A (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §6.2).
+# Roadmap PR20A (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §6.2).
 # `import_source_blobs` is 1:1 with `import_sources` -- every write here is
 # part of the same uncommitted transaction as the caller's own
 # `register_or_correct_source_pending` metadata write (§6.2 step 2(d));

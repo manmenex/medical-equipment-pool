@@ -4,7 +4,7 @@ Revision ID: 0018_dry_run_plans
 Revises: 0017_equipment_version
 Create Date: 2026-08-13
 
-Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.2,
+Roadmap PR20D (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.2,
 §24). Introduces two new, purely additive tables:
 `equipment_master_dry_run_plans` (one persisted plan header per
 successful Equipment Master dry-run attempt) and
@@ -345,7 +345,7 @@ def _verify_schema_convergence(bind) -> None:
         if unexpected_columns:
             problems.append(
                 f"{table}: unexpected column(s) not part of the PR20D design contract "
-                f"(docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.2): {sorted(unexpected_columns)}. "
+                f"(docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.2): {sorted(unexpected_columns)}. "
                 "An extra application column is never silently accepted merely because every expected "
                 "column also exists."
             )
@@ -427,7 +427,7 @@ def _verify_schema_convergence(bind) -> None:
     if problems:
         raise RuntimeError(
             "Migration 0018 aborted: the existing PostgreSQL catalog diverges from the PR20D design "
-            f"contract (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.2) in {len(problems)} way(s). "
+            f"contract (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.2) in {len(problems)} way(s). "
             "Refusing to silently continue with an incompatible historical schema:\n\n" + "\n\n".join(problems)
         )
 

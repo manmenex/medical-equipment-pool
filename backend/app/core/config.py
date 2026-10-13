@@ -125,7 +125,7 @@ class Settings(BaseSettings):
     PM_DUE_SOON_DAYS: int = 7
     CAL_DUE_SOON_DAYS: int = 7
 
-    # Roadmap PR19A2 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §9.1/
+    # Roadmap PR19A2 (docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §9.1/
     # §9.2): a validation-job lease's duration and the interval at which a
     # live worker renews it. Defaults match the design's own recommended 5x
     # safety margin (300s lease / 60s renewal) so a single missed renewal
@@ -133,7 +133,7 @@ class Settings(BaseSettings):
     IMPORT_JOB_LEASE_DURATION_SECONDS: int = 300
     IMPORT_JOB_HEARTBEAT_INTERVAL_SECONDS: int = 60
 
-    # Roadmap PR19A3 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §18,
+    # Roadmap PR19A3 (docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §18,
     # Owner Decision recorded in docs/DECISION_LOG.md): 180-day post-terminal
     # retention, deployment-configurable, no Version 1 Administrator UI to
     # change it. IMPORT_RETENTION_CLEANUP_CLAIM_TIMEOUT_SECONDS bounds how

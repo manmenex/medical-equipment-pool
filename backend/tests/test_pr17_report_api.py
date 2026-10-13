@@ -7,7 +7,7 @@ from tests.conftest import create_ward as _create_ward
 pytestmark = pytest.mark.asyncio
 
 # ---------------------------------------------------------------------------
-# Roadmap PR17 Slice 2 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md §8/§10/
+# Roadmap PR17 Slice 2 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md §8/§10/
 # §11/§14/§17): API contract tests for GET /reports/receive, GET
 # /reports/issue, GET /report-options/operators, and regression tests
 # proving TransactionOut/GET /transactions/GET /transactions/{id} are

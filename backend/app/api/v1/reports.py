@@ -29,7 +29,7 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 
 
 def _validate_business_date_range(business_date_from: date | None, business_date_to: date | None) -> None:
-    # Roadmap PR17 Slice 2 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+    # Roadmap PR17 Slice 2 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md
     # §10.1/§10.2): the exact same reversed-range check already used by
     # app/api/v1/transactions.py::list_transactions for business_date_from/
     # business_date_to -- reused verbatim, not reimplemented.
@@ -310,7 +310,7 @@ async def get_report_print_data(
     status: EquipmentStatus | None = None,
     department_id: str | None = None,
     db: AsyncSession = Depends(get_db),
-    # Roadmap PR18B (docs/design/PR18_PRINTING_EXPORT_PLAN.md §6.2/§12):
+    # Roadmap PR18B (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §6.2/§12):
     # identical report-view authorization to every existing report endpoint
     # above -- export/print introduces no new permission. `require_roles`
     # returns the authenticated `User`, captured here as `generated_by` for
@@ -386,7 +386,7 @@ async def get_report_pdf(
     status: EquipmentStatus | None = None,
     department_id: str | None = None,
     db: AsyncSession = Depends(get_db),
-    # Roadmap PR18D (docs/design/PR18_PRINTING_EXPORT_PLAN.md §10/§12): same
+    # Roadmap PR18D (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §10/§12): same
     # report-view authorization as print-data/every other report endpoint --
     # PDF export introduces no new permission.
     generated_by=Depends(require_roles(*VIEW_AND_REPORT_ROLES)),
@@ -489,7 +489,7 @@ async def get_report_xlsx(
     status: EquipmentStatus | None = None,
     department_id: str | None = None,
     db: AsyncSession = Depends(get_db),
-    # Roadmap PR18E (docs/design/PR18_PRINTING_EXPORT_PLAN.md §11/§12): same
+    # Roadmap PR18E (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §11/§12): same
     # report-view authorization as print-data/pdf/every other report
     # endpoint -- Excel export introduces no new permission.
     generated_by=Depends(require_roles(*VIEW_AND_REPORT_ROLES)),

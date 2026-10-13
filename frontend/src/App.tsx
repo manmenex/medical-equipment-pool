@@ -61,7 +61,7 @@ export function App() {
     <Suspense fallback={<PageFallback />}>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        {/* Roadmap PR18C (docs/design/PR18_PRINTING_EXPORT_PLAN.md §9/§22):
+        {/* Roadmap PR18C (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §9/§22):
             a bare print view, deliberately outside the AppShell-wrapping
             route below so no navigation/dashboard chrome renders in the
             printed output -- guarded by the same ProtectedRoute as every
@@ -95,7 +95,7 @@ export function App() {
           <Route path="/return" element={<ReturnPage />} />
           <Route path="/reports" element={<ReportsPage />} />
           {/* Roadmap PR17 Slice 3: new sub-routes under the existing
-              /reports route (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+              /reports route (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md
               §12) -- additional, separate report screens, not a
               replacement for /reports. */}
           <Route path="/reports/receive" element={<ReceiveReportPage />} />

@@ -4,7 +4,7 @@ Revision ID: 0019_legacy_history_foundation
 Revises: 0018_dry_run_plans
 Create Date: 2026-08-19
 
-Roadmap PR21A (docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md
+Roadmap PR21A (docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md
 §8.1, §14, §24.2, §36). Introduces six new, purely additive tables:
 `legacy_migration_authorities` (§24.2's `LegacyMigrationAuthority` --
 one immutable, checksum-bound governance record per Owner-approved
@@ -628,7 +628,7 @@ def _verify_schema_convergence(bind) -> None:
         if unexpected_columns:
             problems.append(
                 f"{table}: unexpected column(s) not part of the PR21A design contract "
-                f"(docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md §8.1/§14/§24.2/§36): "
+                f"(docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md §8.1/§14/§24.2/§36): "
                 f"{sorted(unexpected_columns)}. An extra application column is never silently accepted "
                 "merely because every expected column also exists."
             )
@@ -744,7 +744,7 @@ def _verify_schema_convergence(bind) -> None:
     if problems:
         raise RuntimeError(
             "Migration 0019 aborted: the existing PostgreSQL catalog diverges from the PR21A design "
-            f"contract (docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md §8.1/§14/§24.2/§36) "
+            f"contract (docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md §8.1/§14/§24.2/§36) "
             f"in {len(problems)} way(s). Refusing to silently continue with an incompatible historical "
             "schema:\n\n" + "\n\n".join(problems)
         )

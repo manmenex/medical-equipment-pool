@@ -25,7 +25,7 @@ export const CUTOVER_RUN_STATUS_COLORS: Record<CutoverRunStatus, string> = {
   failed: "bg-status-repair/15 text-status-repair",
 };
 
-// design §12 -- verify against docs/design/PR23_CUTOVER_READINESS_PLAN.md
+// design §12 -- verify against docs/archive/design/PR23_CUTOVER_READINESS_PLAN.md
 // before changing. Never expose only the bare letter to an operator.
 export const CUTOVER_GATE_LABELS: Record<CutoverGateCode, string> = {
   A: "ความพร้อมของระบบ/ฐานข้อมูล",

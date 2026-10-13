@@ -1,4 +1,4 @@
-"""Roadmap PR18D (docs/design/PR18_PRINTING_EXPORT_PLAN.md §10 "PDF
+"""Roadmap PR18D (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §10 "PDF
 Strategy"): the backend PDF renderer. Turns an already-built
 `app.schemas.report_export.ExportDocument` into PDF bytes using WeasyPrint
 (a server-controlled HTML/CSS-to-PDF renderer, per design §10.2's

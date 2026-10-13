@@ -31,7 +31,7 @@ LOCATIONS = [("Ward 5A", "ward"), ("Ward 5B", "ward"), ("ICU-1", "icu"), ("Centr
 
 async def seed_reference_data(db) -> dict:
     """Roadmap PR18D review round 3 (H2): idempotent for the confirmed
-    roles and the administrator account. `docs/06-deployment-guide.md`
+    roles and the administrator account. `docs/archive/legacy/06-deployment-guide.md`
     documents `alembic upgrade head` followed by this script as the
     deployment sequence -- but migration 0009 (`role_consolidation`)
     already creates the three confirmed roles (`administrator`,

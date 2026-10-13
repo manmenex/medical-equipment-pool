@@ -11,7 +11,7 @@ from app.core.exceptions import (
 )
 from app.models.import_session import EquipmentMasterDryRunPlan, EquipmentMasterDryRunPlanRow, ImportSession
 
-# Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.2,
+# Roadmap PR20D (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.2,
 # §14.3, §14.4a). Every write here composes onto PR19A's existing
 # transaction boundaries (§14.3: `persist_dry_run_plan` writes inside the
 # same TX1 as `fenced_phase_success`'s own write). Fix round 2

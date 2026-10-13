@@ -1,4 +1,4 @@
-"""Roadmap PR21-Foundation (docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md
+"""Roadmap PR21-Foundation (docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md
 §29-§38, §46). Covers: the internal `DryRunPlanProvider` registry (register/
 unregister/resolve, duplicate registration, no cross-dataset fallback), the
 Equipment Master provider's compatibility wrapping of the existing PR20D

@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.import_session import ImportJob, ImportRowError, ImportSession, ImportSource
 
-# Roadmap PR19A2 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §9,
+# Roadmap PR19A2 (docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §9,
 # §12). Every completion write here is a single, atomic conditional
 # UPDATE fenced on lease_owner + lease_generation (+ session.version for
 # the session-level statement) -- never a load-then-mutate-then-commit

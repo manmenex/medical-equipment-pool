@@ -1,5 +1,5 @@
 """Roadmap PR22C -- Deterministic Reconciliation Analysis Engine
-(docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md §9-§18, §22-§27,
+(docs/archive/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md §9-§18, §22-§27,
 §34, §36). See `engine.execute_reconciliation_run` for the single
 top-level entry point.
 

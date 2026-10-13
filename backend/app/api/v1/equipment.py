@@ -189,7 +189,7 @@ async def create_equipment(
     request: Request,
     db: AsyncSession = Depends(get_db),
     # Roadmap PR10: equipment master-data creation is Administrator-only
-    # (docs/audits/03-hospital-equipment-pool-workflow-audit.md §10's matrix
+    # (docs/archive/audits/03-hospital-equipment-pool-workflow-audit.md §10's matrix
     # leans Admin-only for MVP master data) -- narrowed from the pre-PR10
     # admin+biomedical_engineer gate, since biomedical_engineer has no
     # confirmed equivalent in the new 3-role model.

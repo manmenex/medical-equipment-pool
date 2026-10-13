@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import ImportSessionInvalidStateError, ImportSourceMismatchError
 from app.models.import_session import ImportJob, ImportRowError, ImportSession, ImportSource
 
-# Roadmap PR19A1 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §6, §7,
+# Roadmap PR19A1 (docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §6, §7,
 # §15.1, §15.2, §20). Every state-changing operation here is a single,
 # atomic conditional UPDATE -- never a load-then-mutate-then-commit
 # sequence (§7) -- and every source-registration write is a single,
@@ -278,7 +278,7 @@ async def register_or_correct_source_pending(
     filename: str | None,
     source_version: str | None,
 ) -> tuple[ImportSource, bool]:
-    """Roadmap PR20A (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    """Roadmap PR20A (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
     §6.2): an additive, non-committing variant of
     `register_or_correct_source` above, used inside the new upload
     endpoint's own transaction (§6.2 step 2(c)) so a single `db.commit()`

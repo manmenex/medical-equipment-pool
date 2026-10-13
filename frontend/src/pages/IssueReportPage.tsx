@@ -7,7 +7,7 @@ import { useAppliedReportFilters } from "@/hooks/useAppliedReportFilters";
 import { apiErrorMessage } from "@/services/api";
 import { getIssueReport } from "@/services/reports";
 
-// Roadmap PR17 Slice 3 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md §6.2/
+// Roadmap PR17 Slice 3 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md §6.2/
 // §7.2/§12): on-screen Issue Report -- what equipment left the pool, to
 // which ward, and when. Consumes GET /reports/issue only (never GET
 // /transactions). The backend includes both OPEN and CLOSED transactions

@@ -4,7 +4,7 @@ Revision ID: 0015_import_foundation
 Revises: 0014_index_naming_convergence
 Create Date: 2026-08-04
 
-Roadmap PR19A1 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §4, §4.5,
+Roadmap PR19A1 (docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §4, §4.5,
 §4.6, §8), architecture-approved via the merged Design PR #83. Introduces
 four new, purely additive tables: `import_sessions`, `import_sources`,
 `import_jobs`, `import_row_errors`. No existing table is modified. No
@@ -477,7 +477,7 @@ _EXPECTED_INDEXES = {
 _OPTIONAL_LATER_CONSTRAINTS = {
     "import_sources": {
         # `LegacyEquipmentEvent`'s own composite-FK "ownership" target
-        # (docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md
+        # (docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md
         # §8.1's provenance-integrity fix) -- proves an event's/ref's
         # `import_source_id` actually belongs to its `import_session_id`.
         "uq_import_sources_session_id": "UNIQUE (import_session_id, id)",
@@ -648,7 +648,7 @@ def _verify_schema_convergence(bind) -> None:
         if unexpected_columns:
             problems.append(
                 f"{table}: unexpected column(s) not part of the PR19A1 design contract "
-                f"(docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §4): {sorted(unexpected_columns)}. "
+                f"(docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §4): {sorted(unexpected_columns)}. "
                 "An extra application column is never silently accepted merely because every expected "
                 "column also exists."
             )
@@ -691,7 +691,7 @@ def _verify_schema_convergence(bind) -> None:
             elif kind == _INCOMPATIBLE_DEFINITION:
                 problems.append(
                     f"{table}.{column}: column exists but diverges from the design contract "
-                    "(docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §4).\n"
+                    "(docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §4).\n"
                     f"    Expected (data_type, udt_name, char_max_length, is_nullable, column_default) = "
                     f"{expected!r}\n"
                     f"    Actual                                                                        = "
@@ -809,7 +809,7 @@ def _verify_schema_convergence(bind) -> None:
     if problems:
         raise RuntimeError(
             "Migration 0015 aborted: the existing PostgreSQL catalog diverges from the PR19A1 design "
-            f"contract (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §4/§4.6) in {len(problems)} "
+            f"contract (docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §4/§4.6) in {len(problems)} "
             "way(s). Refusing to silently continue with an incompatible historical schema:\n\n"
             + "\n\n".join(problems)
         )

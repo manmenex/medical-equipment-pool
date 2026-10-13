@@ -1,4 +1,4 @@
-"""Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14,
+"""Roadmap PR20D (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14,
 §14.2-§14.9, §15.1). Covers: `plan_dry_run` row classification (CREATE/
 UPDATE/SKIP, OD-4 CREATE gate, summary invariants), `persist_dry_run_plan`
 persistence/immutability/supersession, the UPDATE-row concurrency-token

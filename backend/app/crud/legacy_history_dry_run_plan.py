@@ -12,7 +12,7 @@ from app.core.exceptions import (
 from app.models.import_session import ImportSession
 from app.models.legacy_history import LegacyHistoryDryRunPlan, LegacyHistoryDryRunPlanRow
 
-# Roadmap PR21A (docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md
+# Roadmap PR21A (docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md
 # §36). Mirrors `app.crud.import_dry_run_plan`'s proven shape (§14.2-§14.4a
 # of the Equipment Master design) function-for-function, applied to PR21's
 # own `LegacyHistoryDryRunPlan`/`Row` tables -- including PR94/PR100's own

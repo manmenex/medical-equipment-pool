@@ -118,7 +118,7 @@ implementation itself.**
 
 ### 1.2 What this means for this round
 
-Per repository precedent (`docs/design/PR23_CUTOVER_READINESS_PLAN.md`
+Per repository precedent (`docs/archive/design/PR23_CUTOVER_READINESS_PLAN.md`
 §27's own governing pattern) and the task's own explicit instruction:
 no PR24 implementation slice may begin until the architecture
 decisions this document raises are Owner-resolved. This document is
@@ -1547,7 +1547,7 @@ rules (OD-PR23-5), or any other PR23 business rule.** It only clarifies
 that the infrastructure the runbook's T0-T4 sequence *runs on top of*
 must already exist, be migrated, and be verified **ready** (§15A —
 the fail-closed readiness endpoint, not merely a liveness check)
-**before** T0 is even attempted — Gate A (`docs/design/PR23_CUTOVER_READINESS_PLAN.md`
+**before** T0 is even attempted — Gate A (`docs/archive/design/PR23_CUTOVER_READINESS_PLAN.md`
 §12) already requires exactly this ("required PRs merged... CI green
 on the exact deployed head, database migrations applied and verified...
 production configuration validated... backup/restore procedure
@@ -1624,7 +1624,7 @@ the Owner's approval of all six.**
   backups be retained?
   *Options:* cannot be enumerated from repository authority — a pure
   operational/risk-tolerance input, the same category §26 of
-  `docs/design/PR23_CUTOVER_READINESS_PLAN.md` used for OD-PR23-5's
+  `docs/archive/design/PR23_CUTOVER_READINESS_PLAN.md` used for OD-PR23-5's
   Pilot-duration question (not derivable from source code).
   *Recommendation:* none — genuinely an Owner input.
   *Consequence if unresolved:* §11's backup design has evidence
@@ -1744,7 +1744,7 @@ the Owner's approval of all six.**
 not by operational/risk-tolerance judgment, so they do not meet this
 repository's own "only decisions that materially affect architecture
 and cannot be derived from source" bar (the same bar
-`docs/design/PR23_CUTOVER_READINESS_PLAN.md` §26 applied).
+`docs/archive/design/PR23_CUTOVER_READINESS_PLAN.md` §26 applied).
 
 **Implementation authorization gate (fail-closed):** No PR24B or later
 implementation slice may begin until all six Owner Decisions above are
@@ -1779,7 +1779,7 @@ authoritative beyond the one-line placeholder confirmed in §1.**
 Because no PR24 implementation contract may begin before OD-PR24-1
 through OD-PR24-6 are resolved (mirroring PR23's own fail-closed
 "all Owner Decisions before any PR23B+ slice" gate,
-`docs/design/PR23_CUTOVER_READINESS_PLAN.md` §26), the smallest
+`docs/archive/design/PR23_CUTOVER_READINESS_PLAN.md` §26), the smallest
 maintainable next sequence this document proposes is:
 
 - **PR24 (this document)** — Production Deployment & Go-Live
@@ -1852,7 +1852,7 @@ only; PR24B is the first slice that touches real infrastructure, and
 only after OD-PR24-1 is resolved.
 
 **This is a proposal, subject to Owner approval — not a binding
-commitment**, exactly as `docs/design/PR23_CUTOVER_READINESS_PLAN.md`
+commitment**, exactly as `docs/archive/design/PR23_CUTOVER_READINESS_PLAN.md`
 §27 itself states about its own slice sequence. Repository needs
 discovered during PR24B may justify collapsing or further splitting
 these.

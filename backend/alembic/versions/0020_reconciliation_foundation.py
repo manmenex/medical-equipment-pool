@@ -10,7 +10,7 @@ foundation` (37 chars) does not fit. `0020_reconciliation_foundation`
 (30 chars) is used instead -- shortened only for that constraint, not a
 naming-convention change.
 
-Roadmap PR22B (docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md
+Roadmap PR22B (docs/archive/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md
 §9.J, §11, §13-15, §17.2, §18, §20-22, §25, §36 -- OD-PR22-1 through
 OD-PR22-7, all RESOLVED/OWNER APPROVED), refined by the PR22B
 implementation task's own binding field contract. Introduces six new,
@@ -633,7 +633,7 @@ def _verify_schema_convergence(bind) -> None:
         if unexpected_columns:
             problems.append(
                 f"{table}: unexpected column(s) not part of the PR22B design contract "
-                f"(docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md §9.J/§11/§13-15/§17.2/§36): "
+                f"(docs/archive/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md §9.J/§11/§13-15/§17.2/§36): "
                 f"{sorted(unexpected_columns)}. An extra application column is never silently accepted "
                 "merely because every expected column also exists."
             )
@@ -715,7 +715,7 @@ def _verify_schema_convergence(bind) -> None:
     if problems:
         raise RuntimeError(
             "Migration 0020 aborted: the existing PostgreSQL catalog diverges from the PR22B design "
-            f"contract (docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md §9.J/§11/§13-15/§17.2/§36) "
+            f"contract (docs/archive/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md §9.J/§11/§13-15/§17.2/§36) "
             f"in {len(problems)} way(s). Refusing to silently continue with an incompatible historical "
             "schema:\n\n" + "\n\n".join(problems)
         )

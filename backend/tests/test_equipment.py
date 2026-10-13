@@ -396,7 +396,7 @@ async def test_ordinary_request_still_succeeds_after_update_and_status_change(cl
 
 
 # ---------------------------------------------------------------------------
-# Roadmap PR5 (docs/kickoffs/PR5-equipment-master-bcm-search.md): Equipment
+# Roadmap PR5 (docs/archive/kickoffs/PR5-equipment-master-bcm-search.md): Equipment
 # Master identifiers (item_no, bcm_code), manual BCM-Code-only search, and
 # internal QR Item No resolution.
 # ---------------------------------------------------------------------------
@@ -1626,7 +1626,7 @@ async def test_decommission_requires_passing_through_unavailable_defective(clien
 
 
 # ---------------------------------------------------------------------------
-# Roadmap PR20B (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24):
+# Roadmap PR20B (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24):
 # Equipment.version optimistic-concurrency counter. One test per mutation
 # path in that section's exhaustive coverage table -- create, PATCH, every
 # change_status_for_* transition family (manual lifecycle here; dispatch/
@@ -1739,7 +1739,7 @@ async def test_equipment_create_schema_never_accepts_a_client_supplied_version(c
 
 
 # ---------------------------------------------------------------------------
-# Roadmap PR91-H1 (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24):
+# Roadmap PR91-H1 (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24):
 # clients could previously bump Equipment.version without mutating any
 # supported field -- {}  /  {"version": 999}  /  {"unknown": "x"} all
 # reached equipment_crud.update() with update_data={} (version was never a

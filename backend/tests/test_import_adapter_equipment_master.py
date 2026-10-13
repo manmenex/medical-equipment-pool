@@ -1,4 +1,4 @@
-"""Roadmap PR20C (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §7, §8,
+"""Roadmap PR20C (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §7, §8,
 §9 OD-1/OD-2/OD-3/OD-4). Covers the Equipment Master import adapter's own
 scope only: workbook/header contract, BCM/Item No. cell extraction and
 normalization, the OD-3 blank-identifier matrix and seven-case identity

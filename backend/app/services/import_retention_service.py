@@ -1,6 +1,6 @@
 """Retention cleanup orchestration for the legacy-import pipeline.
 
-Roadmap PR19A3 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §18).
+Roadmap PR19A3 (docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §18).
 Implements the approved Owner Decision (docs/DECISION_LOG.md): 180-day
 post-terminal retention, redact-in-place, deployment-configurable period,
 no Version 1 Administrator UI. The endpoint, a scheduler, or a manual

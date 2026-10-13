@@ -3,7 +3,7 @@ from datetime import date, datetime, timezone
 
 from app.schemas.report_export import ReportIdentity
 
-# Roadmap PR18B (docs/design/PR18_PRINTING_EXPORT_PLAN.md §15 "Filename
+# Roadmap PR18B (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §15 "Filename
 # Convention"): "{report-id}_{date-or-range}_{shift-or-all}_{generated-utc}"
 # -- deterministic, safe, and free of patient/unnecessary personal data. This
 # builds the filename *stem* only (no extension); the extension is supplied

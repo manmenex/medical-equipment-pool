@@ -1,4 +1,4 @@
-"""Roadmap PR19A2 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §9,
+"""Roadmap PR19A2 (docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §9,
 §10, §11, §12, §13). Covers: source freeze/admission, off-thread parsing,
 batch validation (no N+1), validation snapshot atomicity, warning
 semantics, lease/heartbeat, completion fencing, recovery, and the

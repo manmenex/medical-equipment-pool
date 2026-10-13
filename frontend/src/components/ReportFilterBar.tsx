@@ -11,7 +11,7 @@ const SHIFT_LABELS: Record<Shift, string> = {
   night: "กลางคืน",
 };
 
-// Roadmap PR17 Slice 3 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md §9/§12):
+// Roadmap PR17 Slice 3 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md §9/§12):
 // the approved filter set, shared verbatim by ReceiveReportPage and
 // IssueReportPage so the two screens never duplicate this UI or its
 // apply/clear behavior. URL search params are the single source of truth
