@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.audit import AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CONFIRMED, AUDIT_ACTION_IMPORT_DRY_RUN_PLAN_CREATED
-from app.core.security import hash_password
+from tests.conftest import cached_password_hash
 from app.crud import import_dry_run_plan as import_dry_run_plan_crud
 from app.crud import import_retention as import_retention_crud
 from app.models.audit import AuditLog
@@ -650,7 +650,7 @@ async def _second_admin_headers(client: AsyncClient, db_session, seeded_users) -
         employee_code="ADMINISTRATOR002",
         full_name="Second Test Administrator",
         email="administrator2@mep-hospital-test.dev",
-        password_hash=hash_password("Password@123"),
+        password_hash=cached_password_hash("Password@123"),
         role_id=seeded_users["administrator"].role_id,
     )
     db_session.add(second)

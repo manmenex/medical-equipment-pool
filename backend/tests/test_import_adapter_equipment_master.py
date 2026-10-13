@@ -1009,7 +1009,7 @@ async def seeded_users_via_engine(db_engine):
     needs its own session per query-count measurement (so it manages
     `db_engine` directly rather than depending on the shared `db_session`
     fixture)."""
-    from app.core.security import hash_password
+    from tests.conftest import cached_password_hash
     from app.models.user import ALL_ROLES, User, Role
 
     session_maker = async_sessionmaker(db_engine, expire_on_commit=False, class_=AsyncSession)
@@ -1025,7 +1025,7 @@ async def seeded_users_via_engine(db_engine):
                     employee_code=f"{role_name.upper()}001",
                     full_name=f"Test {role_name}",
                     email=f"{role_name}@mep-hospital-test.dev",
-                    password_hash=hash_password("Password@123"),
+                    password_hash=cached_password_hash("Password@123"),
                     role_id=roles[role_name].id,
                 )
             )

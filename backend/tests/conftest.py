@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import os
 
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
@@ -15,6 +16,19 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.user import ALL_ROLES, ROLE_ADMINISTRATOR, Role, User
+
+
+@functools.lru_cache(maxsize=None)
+def cached_password_hash(password: str) -> str:
+    """Hash a fixed fixture password once per test session.
+
+    bcrypt cost 12 costs ~0.3 s per call, and the user-seeding fixtures hash the
+    same constant password for every role on every test. Each user still gets a
+    real production-cost hash that verifies through the real verify path; only
+    the repeated computation is removed. Do not use for tests that assert on
+    hashing behavior (salt uniqueness, cost, rehash).
+    """
+    return hash_password(password)
 
 
 @pytest_asyncio.fixture
@@ -52,7 +66,7 @@ async def seeded_users(db_session):
             employee_code=f"{role_name.upper()}001",
             full_name=f"Test {role_name}",
             email=f"{role_name}@mep-hospital-test.dev",
-            password_hash=hash_password("Password@123"),
+            password_hash=cached_password_hash("Password@123"),
             role_id=roles[role_name].id,
         )
         db_session.add(user)

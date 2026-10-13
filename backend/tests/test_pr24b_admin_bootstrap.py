@@ -119,7 +119,7 @@ async def test_bootstrap_transaction_rolls_back_on_identifier_collision(roles_on
     # (app.scripts.bootstrap_admin.bootstrap_admin's own try/except around
     # db.flush()), distinct from the "administrator already exists" refusal
     # path above.
-    from app.core.security import hash_password
+    from tests.conftest import cached_password_hash
 
     async with session_maker() as seed_db:
         other_role = (
@@ -130,7 +130,7 @@ async def test_bootstrap_transaction_rolls_back_on_identifier_collision(roles_on
                 employee_code="ADMIN001",
                 full_name="Unrelated Existing User",
                 email="unrelated@hospital.local",
-                password_hash=hash_password("Password@123"),
+                password_hash=cached_password_hash("Password@123"),
                 role_id=other_role.id,
             )
         )

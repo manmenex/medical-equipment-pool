@@ -26,7 +26,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.core.security import hash_password
+from tests.conftest import cached_password_hash
 from app.db.base import Base
 from app.models.master_data import Ward
 from app.models.user import ROLE_ADMINISTRATOR, Role, User
@@ -114,7 +114,7 @@ async def _seed_representative_data(pg_session: AsyncSession) -> dict[str, int]:
         employee_code="ADMINISTRATOR001",
         full_name="PR24C Backup Test Admin",
         email="pr24c-backup-test@mep-hospital-test.dev",
-        password_hash=hash_password("Password@123"),
+        password_hash=cached_password_hash("Password@123"),
         role_id=role.id,
     )
     pg_session.add(user)
