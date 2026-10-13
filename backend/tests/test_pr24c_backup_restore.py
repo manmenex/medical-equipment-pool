@@ -28,6 +28,7 @@ from scripts.pg_backup_lib import (
     parse_database_url,
     same_database_target,
     select_prune_candidates,
+    select_tiered_prune_candidates,
     sha256_checksum,
 )
 
@@ -151,6 +152,119 @@ def test_select_prune_candidates_single_backup_never_deleted_even_if_old():
     now = _dt()
     only = Path("mep-postgres-production-20240101T000000Z.dump")
     assert select_prune_candidates([(only, now - timedelta(days=900))], now=now, retention_days=30) == []
+
+
+# ---------------------------------------------------------------------------
+# Tiered retention for an HOURLY schedule (PR24D scheduled backup).
+#
+# A flat 30-day window keeps 720 archives once a backup runs every hour:
+# harmless at the 150 KB of an almost-empty database, roughly 36 GB once a
+# real dataset reaches 50 MB.
+# ---------------------------------------------------------------------------
+
+
+def _hourly_series(now, *, hours: int):
+    """(path, created_at) for one archive per hour going back `hours`."""
+    series = []
+    for h in range(1, hours + 1):
+        created = now - timedelta(hours=h)
+        series.append((Path(backup_filename("production", created)), created))
+    return series
+
+
+def test_tiered_keeps_every_archive_inside_the_hourly_window():
+    now = _dt()
+    backups = _hourly_series(now, hours=47)
+    assert select_tiered_prune_candidates(backups, now=now) == []
+
+
+def test_tiered_keeps_one_archive_per_day_beyond_the_hourly_window():
+    now = _dt()
+    # 10 days of hourly archives: 240 archives in, far fewer out.
+    backups = _hourly_series(now, hours=24 * 10)
+    candidates = select_tiered_prune_candidates(backups, now=now)
+    survivors = [path for path, _ in backups if path not in candidates]
+
+    # Everything inside 48 h survives untouched...
+    inside = [path for path, created in backups if (now - created).total_seconds() <= 48 * 3600]
+    assert set(inside).issubset(set(survivors))
+
+    # ...and beyond it, at most one per UTC calendar day.
+    outside = [
+        (path, created) for path, created in backups
+        if (now - created).total_seconds() > 48 * 3600
+    ]
+    surviving_days = [
+        (created.year, created.month, created.day)
+        for path, created in outside if path in survivors
+    ]
+    assert len(surviving_days) == len(set(surviving_days)), "more than one archive kept for some day"
+
+    # The whole point: an order-of-magnitude fewer files.
+    assert len(survivors) < 80
+    assert len(backups) == 240
+
+
+def test_tiered_keeps_the_newest_archive_of_each_day_not_the_oldest():
+    """A restore from a given day wants that day's latest state."""
+    now = _dt(day=28, hour=12)
+    early = _dt(day=20, hour=1)
+    late = _dt(day=20, hour=23)
+    early_path = Path(backup_filename("production", early))
+    late_path = Path(backup_filename("production", late))
+    anchor = _dt(day=28, hour=11)
+    backups = [(early_path, early), (late_path, late), (Path(backup_filename("production", anchor)), anchor)]
+
+    candidates = select_tiered_prune_candidates(backups, now=now)
+    assert early_path in candidates
+    assert late_path not in candidates
+
+
+def test_tiered_deletes_everything_past_the_daily_window():
+    now = _dt()
+    ancient = Path("mep-postgres-production-20250101T000000Z.dump")
+    recent = Path("mep-postgres-production-20260828T110000Z.dump")
+    backups = [(ancient, now - timedelta(days=400)), (recent, now - timedelta(hours=1))]
+    assert select_tiered_prune_candidates(backups, now=now) == [ancient]
+
+
+def test_tiered_never_deletes_the_newest_archive():
+    # The schedule was paused for a year: every archive is past every
+    # tier, and the directory must still not be emptied.
+    now = _dt()
+    older = Path("mep-postgres-production-20250101T000000Z.dump")
+    newest = Path("mep-postgres-production-20250601T000000Z.dump")
+    backups = [(older, now - timedelta(days=400)), (newest, now - timedelta(days=200))]
+    candidates = select_tiered_prune_candidates(backups, now=now)
+    assert candidates == [older]
+    assert newest not in candidates
+
+
+def test_tiered_single_backup_never_deleted_even_if_ancient():
+    now = _dt()
+    only = Path("mep-postgres-production-20240101T000000Z.dump")
+    assert select_tiered_prune_candidates([(only, now - timedelta(days=900))], now=now) == []
+
+
+def test_tiered_empty_input():
+    assert select_tiered_prune_candidates([], now=_dt()) == []
+
+
+def test_tiered_rejects_non_positive_windows():
+    now = _dt()
+    one = [(Path("mep-postgres-production-20260101T000000Z.dump"), now)]
+    with pytest.raises(ValueError):
+        select_tiered_prune_candidates(one, now=now, hourly_retention_hours=0)
+    with pytest.raises(ValueError):
+        select_tiered_prune_candidates(one, now=now, daily_retention_days=0)
+
+
+def test_tiered_result_is_deterministically_ordered():
+    now = _dt()
+    backups = _hourly_series(now, hours=24 * 5)
+    first = select_tiered_prune_candidates(backups, now=now)
+    second = select_tiered_prune_candidates(list(reversed(backups)), now=now)
+    assert first == second == sorted(first, key=lambda p: p.name)
 
 
 # ---------------------------------------------------------------------------

@@ -32,6 +32,12 @@ BACKUP_FILENAME_RE = re.compile(r"^mep-postgres-(?P<environment>[a-z0-9]+)-(?P<t
 # OD-PR24-3: the repository's own approved backup retention target.
 DEFAULT_RETENTION_DAYS = 30
 
+# How far back an HOURLY schedule keeps every single archive. Beyond
+# this, one archive per UTC day is kept until DEFAULT_RETENTION_DAYS --
+# see select_tiered_prune_candidates for why a flat 30-day window does
+# not survive contact with an hourly cadence.
+DEFAULT_HOURLY_RETENTION_HOURS = 48
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -278,6 +284,74 @@ def select_prune_candidates(
         for path, created_at in backups
         if path != newest_path and is_eligible_for_pruning(created_at=created_at, now=now, retention_days=retention_days)
     ]
+
+
+def select_tiered_prune_candidates(
+    backups: list[tuple[Path, datetime]],
+    *,
+    now: datetime,
+    hourly_retention_hours: int = DEFAULT_HOURLY_RETENTION_HOURS,
+    daily_retention_days: int = DEFAULT_RETENTION_DAYS,
+) -> list[Path]:
+    """Retention for an HOURLY backup schedule, as a pure function.
+
+    A flat 30-day window was written for manual backups. Once a backup
+    runs every hour it keeps 720 archives: harmless at the 150 KB of an
+    almost-empty database, roughly 36 GB once a real dataset reaches
+    50 MB. Three tiers instead:
+
+      * younger than `hourly_retention_hours` -- keep EVERY archive.
+        This is the window that actually delivers a sub-hour RPO.
+      * older than that but within `daily_retention_days` -- keep the
+        NEWEST archive of each UTC calendar day, delete the rest. The
+        newest of a day is kept rather than the oldest because it is
+        the one a restore from that day would want.
+      * older than `daily_retention_days` -- delete.
+
+    That is roughly 78 archives instead of 720 for an hourly schedule,
+    while still leaving an hourly granularity for the most recent two
+    days, which is where recovery almost always reaches.
+
+    Safety invariant, unchanged from `select_prune_candidates`: the
+    single newest archive is NEVER eligible, whatever the tiers say. A
+    long gap since the last successful backup -- clock skew, an outage,
+    a paused schedule -- must never leave zero backups on disk.
+    """
+    if hourly_retention_hours <= 0:
+        raise ValueError("hourly_retention_hours must be a positive number of hours")
+    if daily_retention_days <= 0:
+        raise ValueError("daily_retention_days must be a positive number of days")
+    if not backups:
+        return []
+
+    newest_path, _ = max(backups, key=lambda item: item[1])
+    hourly_cutoff_seconds = hourly_retention_hours * 3600
+    daily_cutoff_seconds = daily_retention_days * 86400
+
+    # Newest-first within each UTC day, so the first one seen for a day
+    # is the keeper.
+    ordered = sorted(backups, key=lambda item: item[1], reverse=True)
+    kept_day_representative: set[tuple[int, int, int]] = set()
+    candidates: list[Path] = []
+
+    for path, created_at in ordered:
+        if path == newest_path:
+            continue
+        age_seconds = (now - created_at).total_seconds()
+        if age_seconds <= hourly_cutoff_seconds:
+            continue
+        if age_seconds > daily_cutoff_seconds:
+            candidates.append(path)
+            continue
+        day = (created_at.year, created_at.month, created_at.day)
+        if day in kept_day_representative:
+            candidates.append(path)
+        else:
+            kept_day_representative.add(day)
+
+    # Deterministic order, independent of the newest-first walk above --
+    # callers print this list and tests compare it.
+    return sorted(candidates, key=lambda p: p.name)
 
 
 def repo_root() -> Path:
