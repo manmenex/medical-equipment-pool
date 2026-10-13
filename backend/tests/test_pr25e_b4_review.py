@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import func, select, update
 
 from app.models.audit import AuditLog
+from app.services.sync_review_service import OP_TOO_OLD_CODE
 from app.models.client_operation import ClientOperation
 from app.models.equipment import Equipment, EquipmentStatus, EquipmentStatusHistory
 from app.models.export import ExportEvent
@@ -175,12 +176,14 @@ async def test_apply_now_success(client, ctx, db_session):
     new_id = uuid.UUID(out["new_op_id"])
     assert new_id != uuid.UUID(op2["op_id"]) and out["resolution"] == "applied_as"
     assert await _count(db_session, ExportEvent) == exports + 1
-    tx = (await db_session.execute(select(BorrowTransaction).where(BorrowTransaction.id == new_id))).scalar_one()
+    # The transaction keeps the ORIGINAL dispatch op_id; new_op_id is the ledger row.
+    assert out["transaction_id"] == op2["op_id"]
+    tx = (await db_session.execute(select(BorrowTransaction).where(BorrowTransaction.id == uuid.UUID(op2["op_id"])))).scalar_one()
     assert str(tx.borrower_user_id) == ctx["staff_id"]  # recorded operator = original
     eq = await db_session.get(Equipment, uuid.UUID(ctx["eq"]))
     await db_session.refresh(eq)
     assert eq.status == EquipmentStatus.ISSUED_TO_WARD
-    borrow_log = (await db_session.execute(select(AuditLog).where(AuditLog.action == "borrow", AuditLog.entity_id == new_id))).scalar_one()
+    borrow_log = (await db_session.execute(select(AuditLog).where(AuditLog.action == "borrow", AuditLog.entity_id == uuid.UUID(op2["op_id"])))).scalar_one()
     assert str(borrow_log.user_id) == ctx["admin_id"]
     assert borrow_log.after_data["original_user_id"] == ctx["staff_id"] and borrow_log.after_data["resolves_op_id"] == op2["op_id"]
     hist = (await db_session.execute(
@@ -192,8 +195,10 @@ async def test_apply_now_success(client, ctx, db_session):
     orig = (await db_session.execute(select(ClientOperation).where(ClientOperation.op_id == uuid.UUID(op2["op_id"])))).scalar_one()
     await db_session.refresh(orig)
     assert orig.status == "resolved" and orig.resolution == "applied_as" and orig.resolution_note == str(new_id)
+    assert orig.transaction_id == uuid.UUID(op2["op_id"])
     assert str(orig.resolved_by) == ctx["admin_id"] and orig.user_id == uuid.UUID(ctx["staff_id"])
     new_row = (await db_session.execute(select(ClientOperation).where(ClientOperation.op_id == new_id))).scalar_one()
+    assert new_row.transaction_id == uuid.UUID(op2["op_id"])
     assert new_row.status == "applied" and str(new_row.submitted_by_user_id) == ctx["admin_id"]
     # second apply cannot double-apply
     assert (await client.post(f"{C}/{op2['op_id']}/apply-now", headers=ctx["admin"])).status_code == 409
@@ -253,7 +258,7 @@ async def test_op_too_old_uses_stored_occurred_at(client, ctx, db_session):
     # relational guard: the latest receipt of this equipment is newer -> clamped up to it
     r = await client.post(f"{C}/{op2['op_id']}/apply-now", headers=ctx["admin"])
     assert r.status_code == 200, r.text
-    tx = await db_session.get(BorrowTransaction, uuid.UUID(r.json()["new_op_id"]))
+    tx = await db_session.get(BorrowTransaction, uuid.UUID(r.json()["transaction_id"]))
     last = (await db_session.execute(select(func.max(BorrowTransaction.returned_at)))).scalar_one()
     assert tx.borrowed_at.replace(tzinfo=timezone.utc) >= old and tx.borrowed_at.replace(tzinfo=timezone.utc) >= last.replace(tzinfo=timezone.utc)
 
@@ -271,5 +276,46 @@ async def test_op_too_old_unclamped_when_no_guard(client, ctx, db_session):
     assert d["occurred_at"] is not None and d["result_code"] == "OP_TOO_OLD"
     r = await client.post(f"{C}/{bad['op_id']}/apply-now", headers=ctx["admin"])
     assert r.status_code == 200, r.text
-    tx = await db_session.get(BorrowTransaction, uuid.UUID(r.json()["new_op_id"]))
+    tx = await db_session.get(BorrowTransaction, uuid.UUID(r.json()["transaction_id"]))
     assert abs(tx.borrowed_at.replace(tzinfo=timezone.utc) - old) < timedelta(seconds=1)
+
+
+async def test_apply_now_dispatch_then_offline_receipt_applies(client, ctx, db_session):
+    """B1: a receipt referencing the ORIGINAL dispatch op_id must resolve
+    after the conflicted dispatch is applied now."""
+    op1, op2 = await _conflict(client, ctx)
+    await _free_equipment(client, ctx, op1)
+    r = await client.post(f"{C}/{op2['op_id']}/apply-now", headers=ctx["admin"])
+    assert r.status_code == 200, r.text
+    rc = receipt_op(ctx["staff_id"], op2["op_id"], seq=10)
+    res = (await _send(client, ctx["staff"], rc))[0]
+    assert res["result"] == "applied", res
+    tx = await db_session.get(BorrowTransaction, uuid.UUID(op2["op_id"]))
+    await db_session.refresh(tx)
+    assert tx.returned_at is not None
+
+
+async def _too_old(client, ctx, seq, eq=None):
+    op = dispatch_op(ctx["staff_id"], eq or ctx["eq"], ctx["ward"], seq=seq)
+    op["occurred_at_local"] = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat().replace("+00:00", "Z")
+    res = (await _send(client, ctx["staff"], op))[0]
+    assert res["result"] == "conflict" and res["code"] == OP_TOO_OLD_CODE
+    return op
+
+
+async def test_real_op_too_old_listed_dismissed_and_applied(client, ctx, db_session):
+    a = await _too_old(client, ctx, 1)
+    body = (await client.get(C, headers=ctx["staff"])).json()
+    assert [i["op_id"] for i in body["items"]] == [a["op_id"]]
+    assert body["items"][0]["result_code"] == OP_TOO_OLD_CODE
+    r = await client.post(f"{C}/{a['op_id']}/dismiss", headers=ctx["staff"], json={"reason": "not_real"})
+    assert r.status_code == 200, r.text
+    assert (await client.get(C, headers=ctx["staff"])).json()["total"] == 0
+    # a second too-old op is applied now (equipment is still available)
+    b = await _too_old(client, ctx, 2)
+    r = await client.post(f"{C}/{b['op_id']}/apply-now", headers=ctx["staff"])
+    assert r.status_code == 200, r.text
+    assert r.json()["transaction_id"] == b["op_id"]
+    eq = await db_session.get(Equipment, uuid.UUID(ctx["eq"]))
+    await db_session.refresh(eq)
+    assert eq.status == EquipmentStatus.ISSUED_TO_WARD

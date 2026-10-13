@@ -83,6 +83,10 @@ class ClientOpContext:
     time_flag: str | None = None
     # Slice B4: set only for an Apply-now by a resolver.
     resolves: "ResolveLink | None" = None
+    # Apply-now of a conflicted dispatch: the transaction must keep the
+    # ORIGINAL op_id as its id (offline receipts reference it), while
+    # ``op_id`` stays the id of the new ledger row.
+    transaction_id_override: uuid.UUID | None = None
     # Set only when no business time is applied (too_old conflict): the
     # unclamped adjusted time stored in the ledger for the reviewer.
     occurred_at: datetime | None = None

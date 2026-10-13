@@ -65,8 +65,7 @@ from app.services import borrow_service, sync_service
 # the FORBIDDEN class concerns user permissions).
 ADMIN_ONLY_RESULT_CODES = ("FORBIDDEN",)
 
-# Defined by the parallel "too old" PR; referenced by string here only.
-OP_TOO_OLD_CODE = "OP_TOO_OLD"
+OP_TOO_OLD_CODE = sync_service.CODE_OP_TOO_OLD
 
 LIST_STATUSES = ("unresolved", "conflict", "pending", "resolved")
 MAX_LIMIT = 100
@@ -477,6 +476,9 @@ async def apply_now(
         occurred_at_local=now,
         clock_offset_ms=0,
         resolves=link,
+        # A conflicted dispatch never created a transaction, so its original
+        # op_id is free; offline receipts reference it as transaction_id.
+        transaction_id_override=op_id if op_type == OP_TYPE_DISPATCH else None,
     )
     try:
         if op_type == OP_TYPE_DISPATCH:
