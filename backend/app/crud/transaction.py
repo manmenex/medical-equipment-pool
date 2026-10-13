@@ -129,11 +129,26 @@ async def get_by_id(db: AsyncSession, transaction_id: uuid.UUID) -> BorrowTransa
     return result.scalar_one_or_none()
 
 
-async def create(db: AsyncSession, *, data: dict) -> BorrowTransaction:
+async def create(
+    db: AsyncSession,
+    *,
+    data: dict,
+    id: uuid.UUID | None = None,
+    borrowed_at: datetime | None = None,
+) -> BorrowTransaction:
     """Opens a new transaction. ``data`` is expected to omit ``status`` and
     rely on the model's ``TransactionStatus.OPEN`` column default -- the
     OPEN/CLOSED lifecycle has exactly one entry point (this function) and
-    exactly one exit point (``close``, below)."""
+    exactly one exit point (``close``, below).
+
+    Roadmap PR25E slice B1: ``id`` (explicit transaction UUID, e.g. an offline
+    ``op_id``) and ``borrowed_at`` (business time) are optional; omitted, the
+    model defaults apply and behaviour is unchanged."""
+    data = dict(data)
+    if id is not None:
+        data["id"] = id
+    if borrowed_at is not None:
+        data["borrowed_at"] = borrowed_at
     tx = BorrowTransaction(**data)
     db.add(tx)
     await db.flush()
@@ -148,6 +163,7 @@ async def close(
     received_by_user_id: uuid.UUID | None,
     receipt_outcome: str,
     notes: str | None,
+    returned_at: datetime | None = None,
 ) -> bool:
     """Conditionally closes an OPEN transaction and reports whether *this*
     call is the one that closed it. The only path that may set
@@ -198,7 +214,8 @@ async def close(
     """
     values: dict = {
         "status": TransactionStatus.CLOSED,
-        "returned_at": datetime.now(timezone.utc),
+        # PR25E B1: optional business time; default is the current instant.
+        "returned_at": returned_at if returned_at is not None else datetime.now(timezone.utc),
         "condition_on_return": receipt_outcome,
         "received_by_user_id": received_by_user_id,
     }
