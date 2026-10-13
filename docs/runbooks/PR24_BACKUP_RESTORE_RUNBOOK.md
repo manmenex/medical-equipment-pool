@@ -215,8 +215,8 @@ reports PASS.
 ## 6. หลักฐาน RPO (RPO evidence)
 
 RPO ≤ 1 hour means the backup mechanism must be capable of producing a
-recoverable backup at least hourly, (on the department host there is no provider-managed PITR alternative). Record, at the time of
-each rehearsal or Production readiness review:
+recoverable backup at least hourly (on the department host there is no provider-managed PITR
+alternative). Record, at the time of each rehearsal or Production readiness review:
 
 - Backup schedule/interval actually configured (e.g. "hourly, via a scheduled
   task invoking `backup_postgres.py`").
