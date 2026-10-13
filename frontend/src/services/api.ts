@@ -1,5 +1,6 @@
 import axios, { type AxiosError } from "axios";
 
+import { isUnreachableError, setMarkedOffline } from "@/services/connectivity";
 import { useAuthStore } from "@/store/authStore";
 import type { ApiError } from "@/types";
 
@@ -16,9 +17,28 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-let refreshPromise: Promise<string | null> | null = null;
+// PR25E S1: a refresh failure only ends the session when the server gives a
+// real authentication verdict. Network errors, timeouts and 5xx keep the
+// session (the operator may be offline), mark the app offline, and are retried
+// later with exponential backoff.
+const AUTH_FAILURE_STATUSES = new Set([401, 403, 423]);
+const BACKOFF_BASE_MS = 2_000;
+const BACKOFF_MAX_MS = 120_000;
 
-async function refreshAccessToken(): Promise<string | null> {
+let refreshPromise: Promise<RefreshOutcome> | null = null;
+let transientFailures = 0;
+let nextRefreshAllowedAt = 0;
+
+/** Test hook: reset backoff state. */
+export function resetRefreshState(): void {
+  refreshPromise = null;
+  transientFailures = 0;
+  nextRefreshAllowedAt = 0;
+}
+
+type RefreshOutcome = { kind: "token"; token: string } | { kind: "unreachable" } | { kind: "denied" };
+
+async function refreshAccessToken(): Promise<RefreshOutcome> {
   try {
     const resp = await axios.post<{ access_token: string }>(
       "/api/v1/auth/refresh",
@@ -27,17 +47,50 @@ async function refreshAccessToken(): Promise<string | null> {
     );
     const token = resp.data.access_token;
     useAuthStore.getState().setAccessToken(token);
-    return token;
-  } catch {
-    useAuthStore.getState().logout();
-    return null;
+    transientFailures = 0;
+    nextRefreshAllowedAt = 0;
+    setMarkedOffline(false);
+    return { kind: "token", token };
+  } catch (err) {
+    if (isUnreachableError(err)) {
+      transientFailures += 1;
+      const delay = Math.min(BACKOFF_BASE_MS * 2 ** (transientFailures - 1), BACKOFF_MAX_MS);
+      nextRefreshAllowedAt = Date.now() + delay;
+      setMarkedOffline(true);
+      return { kind: "unreachable" };
+    }
+    const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+    const code = axios.isAxiosError(err) ? (err.response?.data as ApiError | undefined)?.code : undefined;
+    // Forced password change: keep the session; the route redirect handles it.
+    if (status === 403 && code === "PASSWORD_CHANGE_REQUIRED") {
+      return { kind: "denied" };
+    }
+    // Only a real authentication verdict ends the session; any other
+    // unexpected client error is not proof the session is invalid.
+    if (status !== undefined && AUTH_FAILURE_STATUSES.has(status)) {
+      useAuthStore.getState().logout();
+    }
+    return { kind: "denied" };
   }
 }
 
+function singleFlightRefresh(): Promise<RefreshOutcome> {
+  // Offline backoff window: do not hammer the server; fail fast, keep session.
+  if (Date.now() < nextRefreshAllowedAt) return Promise.resolve({ kind: "unreachable" });
+  refreshPromise ??= refreshAccessToken().finally(() => {
+    refreshPromise = null;
+  });
+  return refreshPromise;
+}
+
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    setMarkedOffline(false);
+    return response;
+  },
   async (error: AxiosError<ApiError>) => {
     const original = error.config;
+    if (isUnreachableError(error)) setMarkedOffline(true);
     // The backend refuses every route but /auth/me and /auth/change-password
     // while an administrator-set password is pending. The route guard
     // normally prevents getting here; this covers a stale profile. A full
@@ -50,12 +103,10 @@ api.interceptors.response.use(
     }
     if (error.response?.status === 401 && original && !(original as { _retry?: boolean })._retry) {
       (original as { _retry?: boolean })._retry = true;
-      refreshPromise = refreshPromise ?? refreshAccessToken();
-      const token = await refreshPromise;
-      refreshPromise = null;
-      if (token) {
+      const outcome = await singleFlightRefresh();
+      if (outcome.kind === "token") {
         original.headers = original.headers ?? {};
-        original.headers.Authorization = `Bearer ${token}`;
+        original.headers.Authorization = `Bearer ${outcome.token}`;
         return api.request(original);
       }
     }

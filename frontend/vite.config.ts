@@ -27,6 +27,9 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // Never serve the SPA shell for API calls (a cached index.html answer
+        // would look like a successful API response).
+        navigateFallbackDenylist: [/^\/api\//],
         globPatterns: ["**/*.{js,css,html,svg,png,ico}"],
         runtimeCaching: [
           {
