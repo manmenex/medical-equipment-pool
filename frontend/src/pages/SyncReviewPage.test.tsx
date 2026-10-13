@@ -77,7 +77,7 @@ describe("SyncReviewPage", () => {
     renderPage();
     expect(await screen.findByText("BCM123")).toBeInTheDocument();
     expect(screen.getByText("OP_TOO_OLD")).toBeInTheDocument();
-    expect(screen.getByText(/เกิน 48 ชั่วโมง/)).toBeInTheDocument();
+    expect(screen.getByText(/เกิน 7 วัน/)).toBeInTheDocument();
     expect(screen.getByText("ICU")).toBeInTheDocument();
     expect(screen.getByText("สมชาย ใจดี")).toBeInTheDocument();
     expect(screen.getByText("dev-A")).toBeInTheDocument();
@@ -122,7 +122,28 @@ describe("SyncReviewPage", () => {
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "บันทึกทันที" }));
     fireEvent.click(screen.getByRole("button", { name: "ยืนยัน" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("เงื่อนไขของอุปกรณ์เปลี่ยนไปแล้ว");
+    expect(await screen.findByText(/เงื่อนไขของอุปกรณ์เปลี่ยนไปแล้ว/)).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(fetchSyncConflicts.mock.calls.length).toBeGreaterThan(1));
+  });
+
+  it("states which time apply-now will record", async () => {
+    fetchSyncConflicts.mockResolvedValue(
+      page([item(), item({ op_id: "op-2", result_code: "EQUIPMENT_NOT_AVAILABLE" })]),
+    );
+    renderPage();
+    const buttons = await screen.findAllByRole("button", { name: "บันทึกทันที" });
+    fireEvent.click(buttons[0]);
+    expect(screen.getByRole("dialog")).toHaveTextContent(new Date("2026-09-28T00:00:00Z").toLocaleString("th-TH"));
+    fireEvent.click(screen.getByRole("button", { name: "ยกเลิก" }));
+    fireEvent.click(buttons[1]);
+    expect(screen.getByRole("dialog")).toHaveTextContent("เวลาปัจจุบัน");
+  });
+
+  it("shows a truncation note when total exceeds shown items", async () => {
+    fetchSyncConflicts.mockResolvedValue({ total: 250, limit: 100, offset: 0, items: [item()] });
+    renderPage();
+    expect(await screen.findByText("แสดง 1 จาก 250 รายการ")).toBeInTheDocument();
   });
 
   it("denies read-only users without calling the API", () => {

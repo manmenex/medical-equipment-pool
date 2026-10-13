@@ -76,7 +76,8 @@ export function SyncReviewPage() {
         close();
         await refresh();
       } else if (code === "SYNC_APPLY_FAILED") {
-        setError("ไม่สามารถบันทึกรายการได้ เงื่อนไขของอุปกรณ์เปลี่ยนไปแล้ว รายการยังรอการตรวจสอบ");
+        setMessage("ไม่สามารถบันทึกรายการได้ เงื่อนไขของอุปกรณ์เปลี่ยนไปแล้ว รายการยังรอการตรวจสอบ");
+        close();
         await refresh();
       } else {
         setError(apiErrorMessage(e));
@@ -103,6 +104,11 @@ export function SyncReviewPage() {
         </p>
       )}
       {query.data && items.length === 0 && <p className="text-sm text-[var(--text-muted)]">ไม่มีรายการที่รอตรวจสอบ</p>}
+      {query.data && query.data.total > items.length && (
+        <p className="text-sm text-[var(--text-muted)]">
+          แสดง {items.length} จาก {query.data.total} รายการ
+        </p>
+      )}
       <ul className="space-y-3">
         {items.map((item) => {
           const adminOnly = item.admin_only && user?.role !== "administrator";
@@ -191,7 +197,13 @@ export function SyncReviewPage() {
                 </label>
               </>
             ) : (
-              <p>ระบบจะบันทึกรายการนี้เป็นรายการใหม่ตามข้อมูลที่ส่งมา ยืนยันหรือไม่</p>
+              <>
+                <p>ระบบจะบันทึกรายการนี้เป็นรายการใหม่ตามข้อมูลที่ส่งมา ยืนยันหรือไม่</p>
+                <p>
+                  เวลาที่จะบันทึก:{" "}
+                  {pending.item.result_code === "OP_TOO_OLD" ? fmt(pending.item.occurred_at) : "เวลาปัจจุบัน"}
+                </p>
+              </>
             )}
             {error && (
               <p role="alert" className="text-status-repair">
