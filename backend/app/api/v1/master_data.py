@@ -44,7 +44,7 @@ async def create_department(
     actor=Depends(require_roles(ROLE_ADMINISTRATOR)),
 ):
     async with translate_integrity_error(db, resource="department"):
-        obj = await md_crud.create_department(db, code=payload.code, name=payload.name)
+        obj = await md_crud.create_department(db, code=payload.code, name=payload.name, phone=payload.phone)
     await record_audit_event(
         db,
         actor_user_id=actor.id,
@@ -73,7 +73,9 @@ async def create_ward(
     department_id = parse_uuid(payload.department_id, "department_id")
     await ensure_referenced_row_exists(db, Department, department_id, field_name="department_id")
     async with translate_integrity_error(db, resource="ward"):
-        obj = await md_crud.create_ward(db, code=payload.code, name=payload.name, department_id=department_id)
+        obj = await md_crud.create_ward(
+            db, code=payload.code, name=payload.name, department_id=department_id, phone=payload.phone
+        )
     await record_audit_event(
         db,
         actor_user_id=actor.id,

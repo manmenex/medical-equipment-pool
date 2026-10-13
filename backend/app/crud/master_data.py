@@ -10,8 +10,8 @@ async def list_departments(db: AsyncSession) -> list[Department]:
     return list((await db.execute(select(Department).order_by(Department.name))).scalars().all())
 
 
-async def create_department(db: AsyncSession, *, code: str, name: str) -> Department:
-    obj = Department(code=code, name=name)
+async def create_department(db: AsyncSession, *, code: str, name: str, phone: str | None = None) -> Department:
+    obj = Department(code=code, name=name, phone=phone)
     db.add(obj)
     await db.flush()
     return obj
@@ -21,8 +21,10 @@ async def list_wards(db: AsyncSession) -> list[Ward]:
     return list((await db.execute(select(Ward).order_by(Ward.name))).scalars().all())
 
 
-async def create_ward(db: AsyncSession, *, code: str, name: str, department_id: uuid.UUID | None) -> Ward:
-    obj = Ward(code=code, name=name, department_id=department_id)
+async def create_ward(
+    db: AsyncSession, *, code: str, name: str, department_id: uuid.UUID | None, phone: str | None = None
+) -> Ward:
+    obj = Ward(code=code, name=name, department_id=department_id, phone=phone)
     db.add(obj)
     await db.flush()
     return obj
