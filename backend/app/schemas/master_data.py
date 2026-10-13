@@ -19,7 +19,7 @@ RoleName = Literal[ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, ROLE_READ_ONLY
 # "ext. 123" or "x123"). At most 20 characters (the borrow_transactions
 # .phone_number cap) and at least 3 digits. Blank input is stored as NULL.
 PHONE_MAX_LENGTH = 20
-_PHONE_RE = re.compile(r"^\+?\d[\d -]*(?: ?(?:ext\.?|x) ?\d{1,6})?$", re.IGNORECASE)
+_PHONE_RE = re.compile(r"^\+?[0-9][0-9 -]*(?: ?(?:ext\.?|x) ?[0-9]{1,6})?$", re.IGNORECASE | re.ASCII)
 
 
 def _validate_contact_phone(value: str | None) -> str | None:
@@ -30,7 +30,7 @@ def _validate_contact_phone(value: str | None) -> str | None:
         return None
     if len(value) > PHONE_MAX_LENGTH:
         raise ValueError(f"phone must be at most {PHONE_MAX_LENGTH} characters")
-    if not _PHONE_RE.fullmatch(value) or sum(c.isdigit() for c in value) < 3:
+    if not _PHONE_RE.fullmatch(value) or sum(c in "0123456789" for c in value) < 3:
         raise ValueError("phone may contain only digits, spaces, dashes, a leading '+' and an extension (ext/x)")
     return value
 

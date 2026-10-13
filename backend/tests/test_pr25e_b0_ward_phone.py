@@ -9,7 +9,7 @@ from app.models.user import ROLE_EQUIPMENT_POOL_STAFF, ROLE_READ_ONLY
 from tests.conftest import auth_headers
 
 VALID = ["02-123-4567", "+66 2 123 4567", "1234", "02 123 4567 ext 12", "02-123-4567 x123", "  081-234-5678  "]
-INVALID = ["abc", "12", "++66123", "02-123-4567 (home)", "1" * 21, "02-123-4567; DROP", "ext 123", "12-"]
+INVALID = ["abc", "12", "++66123", "02-123-4567 (home)", "1" * 21, "02-123-4567; DROP", "\u0661\u0662\u0663\u0664\u0665", "\uff11\uff12\uff13\uff14", "02-\u0661\u0662\u0663", "ext 123", "12-"]
 
 
 @pytest.mark.parametrize("path", ["/api/v1/wards", "/api/v1/departments"])
@@ -213,3 +213,13 @@ async def test_import_admin_only(client, seeded_users, role):
     h = await auth_headers(client, role)
     r = await client.post(IMPORT + "?dry_run=false", headers=h, json={"rows": [{"ward_name": "a", "phone": "1234"}]})
     assert r.status_code == 403
+
+
+@pytest.mark.parametrize("phone", ["\u0661\u0662\u0663\u0664\u0665", "\uff11\uff12\uff13\uff14"])
+async def test_non_ascii_digits_rejected_on_patch_and_import(client, seeded_users, phone):
+    h = await auth_headers(client)
+    ward = await _mk(client, h, "/api/v1/wards", "U1", name="Uni Ward")
+    assert (await client.patch(f"/api/v1/wards/{ward['id']}", headers=h, json={"phone": phone})).status_code == 422
+    r = await client.post(IMPORT + "?dry_run=false", headers=h, json={"rows": [{"ward_name": "Uni Ward", "phone": phone}]})
+    assert r.json()["results"][0]["outcome"] == "invalid_phone"
+    assert (await _wards(client, h)) == {"Uni Ward": None}
