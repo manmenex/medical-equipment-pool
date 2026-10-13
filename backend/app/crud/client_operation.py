@@ -43,6 +43,8 @@ class ClientOpContext:
     occurred_at_local: datetime | None = None
     clock_offset_ms: int | None = None
     pending: bool = False
+    # Slice B2b: set by the sync layer after the section 11 time guards.
+    time_flag: str | None = None
 
     def audit_fields(self) -> dict[str, str | int]:
         return {"op_id": str(self.op_id), "device_id": str(self.device_id), "device_seq": self.device_seq}
@@ -90,6 +92,7 @@ async def write_applied(
                 transaction_id=transaction_id,
                 occurred_at=occurred_at,
                 result_code=None,
+                time_flag=ctx.time_flag,
                 attempt_count=ClientOperation.attempt_count + 1,
             )
         )
@@ -111,6 +114,7 @@ async def write_applied(
             transaction_id=transaction_id,
             status=OP_STATUS_APPLIED,
             occurred_at=occurred_at,
+            time_flag=ctx.time_flag,
             occurred_at_local=ctx.occurred_at_local,
             clock_offset_ms=ctx.clock_offset_ms,
             payload=ctx.payload,

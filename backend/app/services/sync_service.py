@@ -14,7 +14,7 @@ ledger is re-read (a concurrent duplicate may have won), and only then is a
 import hashlib
 import json
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +29,7 @@ from app.core.exceptions import (
     TransactionNotFoundError,
 )
 from app.crud import client_operation as client_op_crud
+from app.crud import transaction as transaction_crud
 from app.models.client_operation import (
     OP_STATUS_APPLIED,
     OP_STATUS_CONFLICT,
@@ -48,6 +49,7 @@ from app.schemas.sync import (
     SyncOpResult,
 )
 from app.services import borrow_service
+from app.utils.parsing import parse_uuid
 
 @dataclass(frozen=True)
 class Actor:
@@ -67,6 +69,14 @@ CODE_DEPENDENCY_MISSING = "DEPENDENCY_MISSING"
 # Section 9.1 item 4: a receipt for an unknown transaction is retried for this
 # long, measured from the server's first sight of the op_id.
 DEPENDENCY_WINDOW = timedelta(hours=48)
+
+# Section 11 time guards.
+FUTURE_TOLERANCE = timedelta(minutes=2)
+MAX_BACKDATE = timedelta(days=7)
+FLAG_FUTURE = "clamped_future"
+FLAG_OLD = "clamped_old"
+FLAG_BEFORE_DISPATCH = "before_dispatch"
+FLAG_BEFORE_LAST_RECEIPT = "before_last_receipt"
 
 # Domain errors that mean "the request was understood but the current state
 # does not allow it" (section 6.3 step 4).
@@ -169,8 +179,54 @@ async def _stored_result(db: AsyncSession, op: SyncOperation, user: Actor, diges
     return _result(op, RESULT_RETRY_LATER, CODE_DEPENDENCY_MISSING)
 
 
+def _utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+async def compute_business_time(
+    db: AsyncSession, op: SyncOperation, received_at: datetime
+) -> tuple[datetime, str | None]:
+    """Section 11: the business time of an offline op and its ``time_flag``.
+
+    adjusted = occurred_at_local + clock_offset_ms (missing offset = 0), then
+    in order: later than received_at + 2 min -> received_at (clamped_future);
+    older than received_at - 7 days -> received_at (clamped_old); then the
+    lifecycle clamps -- a receipt earlier than its dispatch -> the dispatch
+    time (before_dispatch); a dispatch earlier than the equipment's latest
+    returned_at -> that returned_at (before_last_receipt). Bounds are strict
+    (exactly +2 min / exactly 7 days is not clamped). The relational clamp
+    wins the flag because it is the last adjustment applied. Never raises
+    for a time problem: flagged ops are applied normally."""
+    t = _utc(op.occurred_at_local) + timedelta(milliseconds=op.clock_offset_ms or 0)
+    flag: str | None = None
+    if t > received_at + FUTURE_TOLERANCE:
+        t, flag = received_at, FLAG_FUTURE
+    elif t < received_at - MAX_BACKDATE:
+        t, flag = received_at, FLAG_OLD
+
+    if op.op_type == OP_TYPE_DISPATCH:
+        try:
+            eq_id = parse_uuid(op.dispatch.equipment_id, "equipment_id")
+        except InvalidInputError:
+            return t, flag
+        last = await transaction_crud.latest_returned_at(db, eq_id)
+        if last is not None and _utc(last) > t:
+            t, flag = _utc(last), FLAG_BEFORE_LAST_RECEIPT
+    else:
+        dispatch = await transaction_crud.get_by_id(db, op.receipt.transaction_id)
+        if dispatch is not None and _utc(dispatch.borrowed_at) > t:
+            t, flag = _utc(dispatch.borrowed_at), FLAG_BEFORE_DISPATCH
+    return t, flag
+
+
 async def _execute(
-    db: AsyncSession, op: SyncOperation, user: Actor, ctx: client_op_crud.ClientOpContext, ip: str | None, ua: str | None
+    db: AsyncSession,
+    op: SyncOperation,
+    user: Actor,
+    ctx: client_op_crud.ClientOpContext,
+    ip: str | None,
+    ua: str | None,
+    business_time: datetime,
 ):
     if op.op_type == OP_TYPE_DISPATCH:
         d = op.dispatch
@@ -190,6 +246,7 @@ async def _execute(
             user_agent=ua,
             actor_user_id=user.id,
             client_op=ctx,
+            borrowed_at=business_time,
         )
     r = op.receipt
     return await borrow_service.return_equipment(
@@ -202,6 +259,7 @@ async def _execute(
         user_agent=ua,
         actor_user_id=user.id,
         client_op=ctx,
+        returned_at=business_time,
     )
 
 
@@ -231,8 +289,10 @@ async def process_operation(
 
     # Step 2: execute through the lifecycle service (ledger write inside it).
     ctx = _context(op, user, digest, pending=existing_pending)
+    business_time, time_flag = await compute_business_time(db, op, datetime.now(timezone.utc))
+    ctx = replace(ctx, time_flag=time_flag)
     try:
-        tx = await _execute(db, op, user, ctx, ip_address, user_agent)
+        tx = await _execute(db, op, user, ctx, ip_address, user_agent, business_time)
     except (client_op_crud.ClientOpAlreadyProcessedError, client_op_crud.ClientOpLedgerConflictError):
         # The service rolled back; someone else owns this op_id / device_seq.
         res = await _settle(db, op, user, digest)

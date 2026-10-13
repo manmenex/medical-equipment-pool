@@ -5,7 +5,7 @@
 **Update trigger:** The endpoint's envelope, result codes, or ledger behavior changes.
 **Maintainer:** Repository Owner
 
-> **Scope (Roadmap PR25E slice B2).** Dispatch and receipt only. Business-time adjustment/clamping (B2b), adoption of another user's operations (B2c), `verify`, `snapshot`, `status`, and the conflict review endpoints (B3/B4) are not part of this slice. The recorded business time is still the server time at apply.
+> **Scope (Roadmap PR25E slice B2).** Dispatch and receipt only. Adoption of another user's operations (B2c), `verify`, `snapshot`, `status`, and the conflict review endpoints (B3/B4) are not part of this slice. Business time (slice B2b): `occurred_at_local + clock_offset_ms` (missing offset = 0), clamped per design section 11 and stored as `borrowed_at`/`returned_at` and the ledger `occurred_at`; `time_flag` is one of `clamped_future` (later than server now + 2 min -> now), `clamped_old` (older than now - 7 days -> now), `before_dispatch` (receipt earlier than its dispatch -> dispatch time), `before_last_receipt` (dispatch earlier than the equipment's latest `returned_at` -> that time). Bounds are strict; flagged ops are still applied. Online `/borrow` and `/return` keep server time.
 
 ## `POST /api/v1/sync/operations`
 
@@ -20,7 +20,7 @@ Body: `{ "operations": [ ... ] }`, 1 to 25 operations, each at most 8 KB seriali
 | `device_seq` | Integer >= 0. Within a batch, operations are processed per device in ascending `device_seq`. |
 | `user_id` | The operator the client believes keyed the operation. Must equal the token user, otherwise `OP_USER_MISMATCH`. |
 | `op_type` | `dispatch` (requires `dispatch`) or `receipt` (requires `receipt`). |
-| `occurred_at_local`, `clock_offset_ms` | Stored for audit only in this slice. |
+| `occurred_at_local`, `clock_offset_ms` | Business time input (see scope note); the device clock never orders anything. |
 | `dispatch` | Exactly the `POST /borrow` body (`docs/api/dispatch.md`). |
 | `receipt` | The `POST /return` body (`docs/api/receipt.md`) plus `transaction_id`. |
 

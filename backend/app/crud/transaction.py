@@ -129,6 +129,15 @@ async def get_by_id(db: AsyncSession, transaction_id: uuid.UUID) -> BorrowTransa
     return result.scalar_one_or_none()
 
 
+async def latest_returned_at(db: AsyncSession, equipment_id: uuid.UUID) -> datetime | None:
+    """Latest recorded receipt time for the equipment (PR25E B2b guard)."""
+    return (
+        await db.execute(
+            select(func.max(BorrowTransaction.returned_at)).where(BorrowTransaction.equipment_id == equipment_id)
+        )
+    ).scalar_one_or_none()
+
+
 async def create(
     db: AsyncSession,
     *,
