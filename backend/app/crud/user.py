@@ -7,6 +7,7 @@ from app.core.exceptions import InvalidInputError
 from app.core.security import hash_password
 from app.models.transaction import BorrowTransaction
 from app.models.user import Role, User
+from app.services.password_policy import MAXIMUM_PASSWORD_BYTES
 from app.utils.pagination import decode_alpha_cursor, encode_alpha_cursor
 
 # Roadmap PR14A (Backend Audit 4.1): `data` only ever contains keys the
@@ -71,7 +72,36 @@ async def update(db: AsyncSession, user: User, *, data: dict, role_id: uuid.UUID
     if "is_active" in data:
         user.is_active = data["is_active"]
     if data.get("password"):
+        # Owner decision: an Administrator may set any password here, free
+        # of the self-service policy in app/services/password_policy.py --
+        # no minimum length, no character set, no blocklist. This path is a
+        # deliberate exception, not an oversight, and the credential it
+        # produces is temporary by construction (see must_change_password
+        # below), so the owner must replace it with a policy-conforming one
+        # before they can use the application.
+        #
+        # The ONE check that still applies is not policy: bcrypt.hashpw
+        # raises ValueError above 72 bytes, so without this an Administrator
+        # typing a long password gets an unhandled HTTP 500 instead of a
+        # message. Refusing it as INVALID_INPUT keeps the freedom the Owner
+        # asked for while not leaving a crash on the path.
+        if len(data["password"].encode("utf-8")) > MAXIMUM_PASSWORD_BYTES:
+            raise InvalidInputError(
+                f"Password must be at most {MAXIMUM_PASSWORD_BYTES} bytes when encoded "
+                "as UTF-8. This is a limit of the password hashing algorithm, not a "
+                "policy choice."
+            )
         user.password_hash = hash_password(data["password"])
+        # An Administrator setting somebody else's password produces a
+        # TEMPORARY credential by definition: two people now know it. The
+        # owner must replace it before they can use the application, and
+        # auth_service.change_password is the only thing that clears this.
+        user.must_change_password = True
+        # And it clears any lockout. The Administrator is already resetting
+        # the credential; leaving the account locked for another ten minutes
+        # would just produce a second support call for the same incident.
+        user.failed_login_attempts = 0
+        user.locked_until = None
     if role_id is not None:
         user.role_id = role_id
     await db.flush()

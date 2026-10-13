@@ -48,6 +48,7 @@ A `422` validation error additionally includes an `errors` array:
 | `405` | HTTP method not supported on this route | e.g. `DELETE /equipment` (only `GET`/`POST` exist at that path) |
 | `409` | Conflict with current state | Equipment not available for dispatch, transaction already returned, lost a concurrent receipt race, a ward-correction request matches the already-current ward (no-op) or lost a concurrent ward-correction race, duplicate unique key, disallowed status transition, unclassifiable integrity violation |
 | `422` | Request body/query failed schema validation | Missing required field, wrong type, an unrecognized enum value (e.g. `receipt_outcome` not one of `usable`/`defective`, Roadmap PR8B), a `model_validator` rule (e.g. `routine_round` required exactly when `dispatch_type == "routine_round"`), or an unrecognized field on a schema using `extra: "forbid"` (e.g. the retired `condition` on `ReturnRequest`) |
+| `423` | Account temporarily locked | 5 consecutive failed sign-in attempts (`ACCOUNT_LOCKED`) |
 | `500` | Unexpected server error | Any exception not otherwise handled |
 | `503` | Transient resource/timeout condition | Roadmap PR18D: `GET /reports/{report_id}/pdf` rendering did not complete within `app.services.report_pdf_service.RENDER_TIMEOUT_SECONDS`; Roadmap PR18E: `GET /reports/{report_id}/xlsx` generation (including time spent queued for renderer capacity) did not complete within `app.services.report_xlsx_service.RENDER_TIMEOUT_SECONDS` |
 
@@ -59,6 +60,12 @@ A `422` validation error additionally includes an `errors` array:
 |---|---|---|
 | `INVALID_CREDENTIALS` | 401 | Login `identifier`/`password` do not match, or the matched user has no assigned role |
 | `INVALID_REFRESH_TOKEN` | 401 | Refresh cookie missing, malformed/expired, wrong token type, revoked, or the owning user is gone/inactive/roleless |
+| `WEAK_PASSWORD` | 400 | `POST /auth/change-password`: the new password fails a structural rule — shorter than 6 characters, longer than 72 (bcrypt's limit, measured in bytes), starts/ends with whitespace, uses anything outside `[A-Za-z0-9]`, or is missing a digit or a letter. The character rule restricts the allowed *set*; it does **not** require a mix, so `harbour7` is accepted |
+| `PASSWORD_TOO_REPETITIVE` | 400 | `POST /auth/change-password`: fewer than 4 distinct characters (`111a11`), or a run of more than 3 characters in order (`x1234y`, `7wxyz8`) |
+| `PASSWORD_TOO_COMMON` | 400 | `POST /auth/change-password`: on the curated list of passwords people actually choose, after normalising case, surrounding digits and common letter/digit substitutions — so `ward01`, `Passw0rd` and `1hospital` are all caught. Matched against the whole password, never as a substring: `ward7bed12` is accepted |
+| `PASSWORD_CONTAINS_IDENTIFIER` | 400 | `POST /auth/change-password`: contains the account's own employee code, a name fragment of 3+ characters, or the local part of its email. In a hospital this is the realistic attack — a colleague who can read the badge |
+| `SAME_PASSWORD` | 400 | `POST /auth/change-password`: the new password is identical to the current one |
+| `ACCOUNT_LOCKED` | 423 | `POST /auth/login` and `POST /auth/change-password`: 5 consecutive failed attempts have locked this account for 10 minutes (`auth_service.MAXIMUM_FAILED_LOGIN_ATTEMPTS`, `LOCKOUT_DURATION`). **This code confirms the account exists**, which the login path otherwise refuses to do — an accepted trade, since employee codes are printed on badges and the alternative is a user whose correct password stops working with no explanation. The lock expires by elapsed time with nothing scheduled to clear it; an Administrator setting a new password also clears it |
 
 ### Domain errors (`backend/app/core/exceptions.py`)
 

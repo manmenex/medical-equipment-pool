@@ -49,6 +49,7 @@ const CutoverReadinessRunDetailPage = lazy(() =>
   import("@/pages/CutoverReadinessRunDetailPage").then((m) => ({ default: m.CutoverReadinessRunDetailPage }))
 );
 const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
+const ChangePasswordPage = lazy(() => import("@/pages/ChangePasswordPage").then((m) => ({ default: m.ChangePasswordPage })));
 const NotFoundPage = lazy(() => import("@/pages/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
 
 function PageFallback() {
@@ -82,6 +83,11 @@ export function App() {
           }
         >
           <Route path="/" element={<DashboardPage />} />
+          {/* Inside the shell and inside ProtectedRoute, but exempted from
+              ProtectedRoute's forced-change redirect -- see
+              CHANGE_PASSWORD_PATH there. A user who must change their
+              password can reach this and nothing else. */}
+          <Route path="/change-password" element={<ChangePasswordPage />} />
           <Route path="/equipment" element={<EquipmentListPage />} />
           <Route path="/equipment/:id" element={<EquipmentDetailPage />} />
           <Route path="/scan" element={<ScanPage />} />

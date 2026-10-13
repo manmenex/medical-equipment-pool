@@ -17,3 +17,13 @@ export async function fetchMe(): Promise<UserProfile> {
 export async function logout(): Promise<void> {
   await api.post("/auth/logout");
 }
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  // No user id: this endpoint only ever changes the caller's own password.
+  // An Administrator resetting somebody else's is a different operation
+  // (PATCH /users/{id}), with a different audit trail.
+  await api.post("/auth/change-password", {
+    current_password: currentPassword,
+    new_password: newPassword,
+  });
+}

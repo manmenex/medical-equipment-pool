@@ -148,3 +148,26 @@ async def test_bootstrap_transaction_rolls_back_on_identifier_collision(roles_on
         # administrator row survives the rolled-back transaction.
         assert len(users) == 1
         assert users[0].email == "unrelated@hospital.local"
+
+
+def test_the_one_time_password_satisfies_the_rules_it_is_about_to_teach():
+    """The bootstrap password is the first credential anyone types.
+
+    It used to come from `secrets.token_urlsafe`, whose base64url alphabet
+    includes "-" and "_" -- characters the Owner's rule refuses in the
+    replacement password. Handing the operator a credential that breaks the
+    rule the very next screen enforces is a contradiction the user pays for,
+    on the phone keyboard the restriction exists to spare.
+
+    Asserted against the real generator and the real validator, so neither
+    can drift from the other.
+    """
+    from app.services.auth_service import validate_new_password
+
+    for _ in range(200):
+        generated = bootstrap_admin.generate_temporary_password()
+        # Raises WeakPasswordError if the application would refuse it.
+        validate_new_password(generated)
+
+    # And it is not accidentally constant.
+    assert len({bootstrap_admin.generate_temporary_password() for _ in range(50)}) == 50

@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.deps import get_current_role_name, get_current_user
 from app.core.config import settings
 from app.db.session import get_db
-from app.schemas.auth import LoginRequest, TokenResponse, UserProfile
+from app.schemas.auth import ChangePasswordRequest, LoginRequest, TokenResponse, UserProfile
 from app.services import auth_service
 from app.services.auth_service import authenticate
 
@@ -47,6 +47,31 @@ async def logout(request: Request, response: Response, db: AsyncSession = Depend
     return {"detail": "logged out"}
 
 
+@router.post("/change-password")
+async def change_password(
+    payload: ChangePasswordRequest,
+    request: Request,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Changes the CALLER'S OWN password.
+
+    There is deliberately no `user_id` parameter: this endpoint can never
+    be pointed at somebody else's account, whatever role the caller holds.
+    An Administrator resetting another user's password is a different
+    operation with a different audit trail (PATCH /users/{id}), and one
+    that marks the result temporary.
+    """
+    await auth_service.change_password(
+        db,
+        user,
+        current_password=payload.current_password,
+        new_password=payload.new_password,
+        request=request,
+    )
+    return {"detail": "password changed"}
+
+
 @router.get("/me", response_model=UserProfile)
 async def me(
     request: Request,
@@ -60,4 +85,5 @@ async def me(
         email=user.email,
         role=role_name,
         permissions={},
+        must_change_password=user.must_change_password,
     )

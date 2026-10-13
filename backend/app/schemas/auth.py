@@ -6,6 +6,16 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class ChangePasswordRequest(BaseModel):
+    # Deliberately plain `str`, with the policy enforced in one place
+    # (auth_service.validate_new_password) rather than half here as a
+    # Field(min_length=...) and half there -- two half-expressions of a
+    # rule drift apart, and the error the operator sees should come from
+    # the same code the rule lives in.
+    current_password: str
+    new_password: str
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -22,5 +32,9 @@ class UserProfile(BaseModel):
     email: str
     role: str
     permissions: dict
+    # True while this account is still using a password somebody else set
+    # (the bootstrap one-time password, or an Administrator reset). The
+    # frontend keeps the user on the change-password screen until it clears.
+    must_change_password: bool = False
 
     model_config = {"from_attributes": True}
