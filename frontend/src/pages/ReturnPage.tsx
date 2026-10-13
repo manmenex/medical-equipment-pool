@@ -4,8 +4,10 @@ import { useSearchParams } from "react-router-dom";
 
 import { BcmSearchInput } from "@/components/BcmSearchInput";
 import { QRScanner } from "@/components/QRScanner";
+import { OfflineReceiptForm } from "@/components/OfflineReceiptForm";
 import { WardCorrectionAction } from "@/components/WardCorrectionAction";
 import { canCorrectTransactionWard, useAuth } from "@/hooks/useAuth";
+import { useOfflineMode } from "@/hooks/useOfflineMode";
 import { apiErrorCode, apiErrorMessage } from "@/services/api";
 import { createReturn, listActiveBorrows } from "@/services/borrow";
 import { resolveEquipmentByQr } from "@/services/equipment";
@@ -68,6 +70,7 @@ export function ReturnPage() {
   const presetEquipmentId = searchParams.get("equipment_id");
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const offline = useOfflineMode();
   const canCorrectWard = canCorrectTransactionWard(user);
 
   const [scanning, setScanning] = useState(!presetEquipmentId);
@@ -153,6 +156,10 @@ export function ReturnPage() {
       setSubmitting(false);
     }
   };
+
+  // PR25E S4: server unreachable -> offline receipt from the cached snapshot.
+  // Online, this branch is never taken and the page is unchanged.
+  if (offline && !transaction && !success) return <OfflineReceiptForm />;
 
   if (success) {
     return (

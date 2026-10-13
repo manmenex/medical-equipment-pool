@@ -31,17 +31,11 @@ export default defineConfig({
         // would look like a successful API response).
         navigateFallbackDenylist: [/^\/api\//],
         globPatterns: ["**/*.{js,css,html,svg,png,ico}"],
-        runtimeCaching: [
-          {
-            urlPattern: /\/api\/v1\/(equipment|dashboard)/,
-            handler: "NetworkFirst",
-            options: {
-              cacheName: "mep-api-cache",
-              networkTimeoutSeconds: 3,
-              expiration: { maxEntries: 500, maxAgeSeconds: 300 },
-            },
-          },
-        ],
+        // PR25E S4: no runtime caching of API responses. Offline reads come
+        // from the IndexedDB reference snapshot (src/offline/snapshot.ts); a
+        // generic NetworkFirst cache of /equipment and /dashboard answers
+        // would serve stale server data with no staleness signal and leave
+        // data behind on a shared device.
       },
     }),
   ],

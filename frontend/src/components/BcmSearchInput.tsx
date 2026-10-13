@@ -7,13 +7,15 @@ import type { BcmSuggestion } from "@/types";
 interface BcmSearchInputProps {
   onSelect: (suggestion: BcmSuggestion) => void;
   placeholder?: string;
+  /** PR25E S4: offline callers search the cached snapshot instead of the API. */
+  search?: (q: string) => Promise<BcmSuggestion[]>;
 }
 
 // Roadmap PR5 fallback workflow: type BCM Code -> show matching/similar BCM
 // Codes -> select one -> caller opens the matching equipment. The
 // suggestion list shows BCM Code only (per the confirmed identifier
 // rules) -- no device name, brand, model, serial number, or status.
-export function BcmSearchInput({ onSelect, placeholder = "กรอกรหัส BCM" }: BcmSearchInputProps) {
+export function BcmSearchInput({ onSelect, placeholder = "กรอกรหัส BCM", search = searchBcmSuggestions }: BcmSearchInputProps) {
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<BcmSuggestion[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -28,7 +30,7 @@ export function BcmSearchInput({ onSelect, placeholder = "กรอกรหั�
       setOpen(false);
       return;
     }
-    searchBcmSuggestions(debouncedQuery)
+    search(debouncedQuery)
       .then((results) => {
         // Ignore a stale response that resolved after a newer request.
         if (currentRequest !== requestId.current) return;
@@ -41,7 +43,7 @@ export function BcmSearchInput({ onSelect, placeholder = "กรอกรหั�
         setSuggestions([]);
         setOpen(false);
       });
-  }, [debouncedQuery]);
+  }, [debouncedQuery, search]);
 
   const selectSuggestion = (suggestion: BcmSuggestion) => {
     onSelect(suggestion);

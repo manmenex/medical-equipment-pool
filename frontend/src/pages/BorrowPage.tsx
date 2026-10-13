@@ -3,15 +3,24 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { BcmSearchInput } from "@/components/BcmSearchInput";
+import { OfflineStaleGate } from "@/components/OfflineStaleGate";
 import { QRScanner } from "@/components/QRScanner";
 import { StatusBadge } from "@/components/StatusBadge";
+import { useOfflineMode } from "@/hooks/useOfflineMode";
+import {
+  effectiveCachedEquipment,
+  enqueueOfflineDispatch,
+  LocalOpError,
+  searchCachedBcm,
+} from "@/offline/localOps";
+import { listRefs, OfflineStoreError } from "@/offline/offlineStore";
 import { apiErrorMessage } from "@/services/api";
 import { createBorrow } from "@/services/borrow";
 import { getEquipment, resolveEquipmentByQr } from "@/services/equipment";
 import { listDepartments, listWards } from "@/services/masterData";
 import { useUiStore } from "@/store/uiStore";
 import { resolveWardPhone } from "@/utils/wardPhone";
-import type { BcmSuggestion, DispatchType, Equipment, RoutineRound } from "@/types";
+import type { BcmSuggestion, Department, DispatchType, Equipment, RoutineRound, Ward } from "@/types";
 
 // Roadmap PR7b confirmed fixed four-round MVP schedule (docs/audits/
 // 04-consolidated-implementation-plan.md's confirmed-requirements table) --
@@ -27,6 +36,9 @@ export function BorrowPage() {
   const [equipment, setEquipment] = useState<Equipment | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  // PR25E S4: set after an offline save; never shown as "recorded" (design 14).
+  const [pendingSync, setPendingSync] = useState(false);
+  const offline = useOfflineMode();
   const [submitting, setSubmitting] = useState(false);
 
   const lastWard = useUiStore((s) => s.lastWard);
@@ -38,8 +50,23 @@ export function BorrowPage() {
   const [phone, setPhone] = useState("");
   const [notes, setNotes] = useState("");
 
-  const { data: wards } = useQuery({ queryKey: ["wards"], queryFn: listWards });
-  const { data: departments } = useQuery({ queryKey: ["departments"], queryFn: listDepartments });
+  const { data: onlineWards } = useQuery({ queryKey: ["wards"], queryFn: listWards });
+  const { data: onlineDepartments } = useQuery({ queryKey: ["departments"], queryFn: listDepartments });
+
+  // Offline: wards/departments (with phones) come from the IndexedDB snapshot.
+  const [cachedRefs, setCachedRefs] = useState<{ wards: Ward[]; departments: Department[] } | null>(null);
+  useEffect(() => {
+    if (!offline) return;
+    let live = true;
+    void Promise.all([listRefs("ref_wards"), listRefs("ref_departments")])
+      .then(([w, d]) => live && setCachedRefs({ wards: w as unknown as Ward[], departments: d as unknown as Department[] }))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [offline]);
+  const wards = offline && cachedRefs ? cachedRefs.wards : onlineWards;
+  const departments = offline && cachedRefs ? cachedRefs.departments : onlineDepartments;
 
   // Roadmap PR25E S0: prefill phone from the selected ward (department
   // fallback) until the operator types their own value.
@@ -73,22 +100,52 @@ export function BorrowPage() {
 
   // Roadmap PR5 fallback workflow: BCM Code search -> select a suggestion
   // -> Equipment Master lookup by id.
-  const handleBcmSelect = useCallback(async (suggestion: BcmSuggestion) => {
+  const handleBcmSelect = useCallback(
+    async (suggestion: BcmSuggestion) => {
     setError(null);
     try {
+      if (offline) {
+        const { equipment: cached } = await effectiveCachedEquipment(suggestion.id);
+        setEquipment(cached);
+        setScanning(false);
+        return;
+      }
       const eq = await getEquipment(suggestion.id);
       setEquipment(eq);
       setScanning(false);
     } catch (err) {
-      setError(apiErrorMessage(err, "ไม่พบเครื่องมือ"));
+      setError(err instanceof LocalOpError ? err.message : apiErrorMessage(err, "ไม่พบเครื่องมือ"));
     }
-  }, []);
+    },
+    [offline],
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!equipment || !wardId) return;
     setSubmitting(true);
     setError(null);
+    if (offline) {
+      try {
+        await enqueueOfflineDispatch({
+          equipment_id: equipment.id,
+          ward_id: wardId,
+          dispatch_type: dispatchType,
+          routine_round: dispatchType === "routine_round" ? (routineRound as RoutineRound) : undefined,
+          phone_number: phone || undefined,
+          notes: notes || undefined,
+        });
+        setLastWard(wardId || null);
+        setPendingSync(true);
+      } catch (err) {
+        setError(
+          err instanceof LocalOpError || err instanceof OfflineStoreError ? err.message : "บันทึกในเครื่องไม่สำเร็จ",
+        );
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
     try {
       const tx = await createBorrow({
         equipment_id: equipment.id,
@@ -106,6 +163,28 @@ export function BorrowPage() {
       setSubmitting(false);
     }
   };
+
+  if (pendingSync) {
+    return (
+      <div className="surface mx-auto mt-8 max-w-sm rounded-xl border p-6 text-center">
+        <div className="mb-2 text-4xl">🕓</div>
+        <h2 className="text-lg font-semibold">บันทึกในเครื่องแล้ว — ยังไม่ได้ส่งเข้าระบบ</h2>
+        <p className="mt-1 text-sm text-[var(--text-muted)]">ระบบจะส่งอัตโนมัติเมื่อเชื่อมต่อเซิร์ฟเวอร์ได้</p>
+        <button
+          onClick={() => {
+            setPendingSync(false);
+            phoneTouched.current = false;
+            setPhone(resolveWardPhone((wards ?? []).find((w) => w.id === wardId), departments));
+            setEquipment(null);
+            setScanning(true);
+          }}
+          className="mt-4 rounded-lg bg-status-borrowed px-4 py-2 text-sm font-medium text-white"
+        >
+          เบิกเครื่องถัดไป
+        </button>
+      </div>
+    );
+  }
 
   if (success) {
     return (
@@ -132,10 +211,19 @@ export function BorrowPage() {
   if (!equipment) {
     return (
       <div className="mx-auto flex max-w-sm flex-col gap-4">
+        {offline && <OfflineStaleGate />}
         <h1 className="text-lg font-semibold">เบิกเครื่องมือ</h1>
-        <QRScanner active={scanning} onScan={resolveEquipmentFromQr} />
-        <p className="text-center text-sm text-[var(--text-muted)]">หรือค้นหาด้วยรหัส BCM</p>
-        <BcmSearchInput onSelect={handleBcmSelect} />
+        {offline ? (
+          <p className="text-sm text-[var(--text-muted)]">
+            เซิร์ฟเวอร์ไม่พร้อมใช้งาน — ค้นหาด้วยรหัส BCM จากข้อมูลในเครื่อง (สแกน QR ใช้ได้เฉพาะตอนออนไลน์)
+          </p>
+        ) : (
+          <>
+            <QRScanner active={scanning} onScan={resolveEquipmentFromQr} />
+            <p className="text-center text-sm text-[var(--text-muted)]">หรือค้นหาด้วยรหัส BCM</p>
+          </>
+        )}
+        <BcmSearchInput onSelect={handleBcmSelect} search={offline ? searchCachedBcm : undefined} />
         {error && <p className="text-sm text-status-repair">{error}</p>}
       </div>
     );
@@ -143,9 +231,10 @@ export function BorrowPage() {
 
   return (
     <form onSubmit={handleSubmit} className="mx-auto flex max-w-sm flex-col gap-4">
+      {offline && <OfflineStaleGate />}
       <div className="surface rounded-xl border p-4">
         <div className="font-medium">{equipment.equipment_name}</div>
-        <div className="text-sm text-[var(--text-muted)]">{equipment.asset_number}</div>
+        <div className="text-sm text-[var(--text-muted)]">{equipment.asset_number || equipment.bcm_code}</div>
         <div className="mt-2">
           <StatusBadge status={equipment.status} />
         </div>
@@ -256,7 +345,7 @@ export function BorrowPage() {
             disabled={submitting || !wardId || (dispatchType === "routine_round" && !routineRound)}
             className="rounded-lg bg-status-borrowed py-2.5 font-medium text-white disabled:opacity-60"
           >
-            {submitting ? "กำลังบันทึก..." : "ยืนยันการเบิก"}
+            {submitting ? "กำลังบันทึก..." : offline ? "บันทึกการเบิก (ในเครื่อง)" : "ยืนยันการเบิก"}
           </button>
         </>
       )}

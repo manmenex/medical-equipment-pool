@@ -1,5 +1,6 @@
 import axios, { type AxiosError } from "axios";
 
+import { captureFromResponseHeaders } from "@/offline/serverTime";
 import { isUnreachableError, setMarkedOffline } from "@/services/connectivity";
 import { useAuthStore } from "@/store/authStore";
 import type { ApiError } from "@/types";
@@ -86,6 +87,8 @@ function singleFlightRefresh(): Promise<RefreshOutcome> {
 api.interceptors.response.use(
   (response) => {
     setMarkedOffline(false);
+    // PR25E S4: every successful response is a server-time reading (design 11).
+    captureFromResponseHeaders(response.headers);
     return response;
   },
   async (error: AxiosError<ApiError>) => {

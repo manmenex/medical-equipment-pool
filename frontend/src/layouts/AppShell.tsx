@@ -1,5 +1,7 @@
+import { useEffect } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
+import { OfflineStatusChip } from "@/components/OfflineStatusChip";
 import {
   canDispatchOrReceiveEquipment,
   canManageEquipmentMasterData,
@@ -9,6 +11,7 @@ import {
   roleLabel,
   useAuth,
 } from "@/hooks/useAuth";
+import { startOfflineServices } from "@/offline/lifecycle";
 import { logout as apiLogout } from "@/services/auth";
 import { useAuthStore } from "@/store/authStore";
 import { applyTheme, useUiStore } from "@/store/uiStore";
@@ -37,6 +40,9 @@ export function AppShell() {
   const theme = useUiStore((s) => s.theme);
   const setTheme = useUiStore((s) => s.setTheme);
   const logoutStore = useAuthStore((s) => s.logout);
+
+  // PR25E S4: sync worker + snapshot refresh run for the whole signed-in shell.
+  useEffect(() => startOfflineServices(), []);
 
   const navItems = canDispatchOrReceiveEquipment(user)
     ? [BASE_NAV_ITEMS[0], BASE_NAV_ITEMS[1], ...DISPATCH_NAV_ITEMS, BASE_NAV_ITEMS[2]]
@@ -172,6 +178,7 @@ export function AppShell() {
             {user ? `${user.full_name} · ${roleLabel(user.role)}` : ""}
           </div>
           <div className="flex items-center gap-3">
+            <OfflineStatusChip />
             <button
               onClick={toggleTheme}
               className="rounded-lg px-2 py-1 text-lg hover:bg-black/5 dark:hover:bg-white/5"

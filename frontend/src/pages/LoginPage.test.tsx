@@ -10,7 +10,9 @@ vi.mock("@/services/auth", () => ({
   login: (...args: unknown[]) => login(...args),
 }));
 
+const whenLogoutWipeDone = vi.fn(() => Promise.resolve());
 vi.mock("@/store/authStore", () => ({
+  whenLogoutWipeDone: () => whenLogoutWipeDone(),
   useAuthStore: (selector: (s: { setAccessToken: (t: string) => void }) => unknown) =>
     selector({ setAccessToken: () => undefined }),
 }));
@@ -78,5 +80,20 @@ describe("LoginPage lockout message", () => {
       expect(screen.getByText(/Invalid employee code/)).toBeInTheDocument(),
     );
     expect(screen.queryByText(/ถูกล็อกชั่วคราว/)).not.toBeInTheDocument();
+  });
+});
+
+describe("LoginPage waits for the logout wipe (PR25E S4)", () => {
+  it("does not call login until the pending wipe has finished", async () => {
+    login.mockReset();
+    let release!: () => void;
+    whenLogoutWipeDone.mockReturnValueOnce(new Promise<void>((r) => (release = r)));
+    login.mockResolvedValue({ access_token: "t", expires_in: 1 });
+    const user = userEvent.setup();
+    renderPage();
+    await submit(user);
+    expect(login).not.toHaveBeenCalled();
+    release();
+    await waitFor(() => expect(login).toHaveBeenCalledTimes(1));
   });
 });
