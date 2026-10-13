@@ -5,7 +5,7 @@
 **Update trigger:** The endpoint's envelope, result codes, or ledger behavior changes.
 **Maintainer:** Repository Owner
 
-> **Scope (Roadmap PR25E slice B2).** Dispatch and receipt only. Adoption of another user's operations (B2c) and the conflict review endpoints (B4) are not part of this slice; `verify`, `snapshot`, `status`, and `stats` are documented below (slice B3). Business time (slice B2b): `occurred_at_local + clock_offset_ms` (missing offset = 0), clamped per design section 11 and stored as `borrowed_at`/`returned_at` and the ledger `occurred_at`; `time_flag` is one of `clamped_future` (later than server now + 2 min -> now), `clamped_old` (older than now - 7 days -> now), `before_dispatch` (receipt earlier than its dispatch -> dispatch time), `before_last_receipt` (dispatch earlier than the equipment's latest `returned_at` -> that time). Bounds are strict; flagged ops are still applied. Online `/borrow` and `/return` keep server time.
+> **Scope (Roadmap PR25E slice B2).** Dispatch and receipt only. Adoption of another user's operations (B2c) are not part of this slice (the conflict review endpoints are slice B4, below); `verify`, `snapshot`, `status`, and `stats` are documented below (slice B3). Business time (slice B2b): `occurred_at_local + clock_offset_ms` (missing offset = 0), clamped per design section 11 and stored as `borrowed_at`/`returned_at` and the ledger `occurred_at`; `time_flag` is one of `clamped_future` (later than server now + 2 min -> now), `clamped_old` (older than now - 7 days -> now), `before_dispatch` (receipt earlier than its dispatch -> dispatch time), `before_last_receipt` (dispatch earlier than the equipment's latest `returned_at` -> that time). Bounds are strict; flagged ops are still applied. Online `/borrow` and `/return` keep server time.
 
 ## `POST /api/v1/sync/operations`
 
@@ -72,3 +72,27 @@ Cheap refresh: every response carries an `ETag` (hash of the page content, exclu
 ## `GET /api/v1/sync/stats` (slice B3)
 
 **Roles:** Administrator only. Query `from`, `to` (ISO datetimes; defaults: last 30 days; `from` must precede `to`; range at most 366 days; otherwise `400 INVALID_INPUT`). Operations are selected by `received_at`. Response: `volume` (`total_ops`, `by_status`, `recorded_offline` = received more than 120 s after `occurred_at`, `conflicts`, `conflicts_per_1000_ops`, `resolution_time_s` median and p90, `truncated` if more than 200,000 rows) and `clock_skew` (histograms of absolute `clock_offset_ms`, `offset_age_s` and receive lag, `time_flag_ops`, `time_flag_share`, `time_flag_counts`). Receive lag and `recorded_offline` are measured against the stored, clamped business time (`occurred_at`), so `clamped_old` rows show about 0 lag. Aggregates only: no `payload`, `op_id`, device, user, equipment or ward identifiers. The collision statistics and CSV export belong to slice B4b/D1.
+
+## Conflict review (slice B4)
+
+**Roles:** Administrator and Equipment Pool Staff; Read Only `403`, no token `401`. The `FORBIDDEN` result-code class (user permissions) is administrator-only: staff do not see those rows in the list, and detail/dismiss/apply-now return `403 SYNC_REVIEW_ADMIN_ONLY`. Listing and opening are not audited.
+
+### `GET /api/v1/sync/conflicts`
+
+Reviewable rows: `conflict`, plus `pending` rows whose 48 h dependency window has run out (`first_seen_at` older than 48 h). Query: `status` (`unresolved` default = both; `conflict`; `pending`; `resolved`; otherwise `400 INVALID_INPUT`), `result_code`, `op_type`, `operator_id`, `stale_context`, `device_id`, `received_from`, `received_to`, `limit` (1 to 100, default 50), `offset`. Order: `stale_context` first, then `received_at` ascending, then `op_id`. Response `{ total, limit, offset, items }`; each item: `op_id`, `op_type`, `status`, `result_code`, `admin_only`, `stale_context`, `time_flag`, `device_id`, `received_at`, `first_seen_at`, `occurred_at`, `attempt_count`, `operator` and `submitted_by` (`{id, full_name}`; the latter only when it differs), `equipment` (`id`, `bcm_code`, `equipment_name`, `status` only; never Item No or Asset Number), `ward_name`, `transaction_id`, `receipt_outcome`, `resolution`, `dismiss_reason`, `resolved_by`, `resolved_at`. The raw payload, payload hash and email addresses are never returned.
+
+### `GET /api/v1/sync/conflicts/{op_id}`
+
+The item plus `payload_summary` (dispatch: `dispatch_type`, `routine_round`, `notes`; receipt: `transaction_id`, `receipt_outcome`, `notes`), `resolution_note`, and an advisory `apply_now_possible` / `apply_now_blocker` (the lifecycle precondition evaluated now). Applied, rejected and not-yet-expired pending rows are `404`.
+
+### `POST /api/v1/sync/conflicts/{op_id}/dismiss`
+
+Body (strict): `{ "reason": "already_recorded" | "duplicate_physical_entry" | "not_real" | "handled_elsewhere", "note"?: string (max 500) }`; the reason is required (`422`). One conditional UPDATE (`conflict`/expired `pending` to `resolved`, `resolution=dismissed`, `resolution_note` = `reason` or `reason: note`) plus one `sync_conflict_resolved` audit entry (actor = resolver; `after_data` has original operator, device, original op id), atomically. No business change and no export event. Response `{ op_id, status, resolution, resolved_by, resolved_at }`.
+
+### `POST /api/v1/sync/conflicts/{op_id}/apply-now`
+
+No body. Re-runs the stored payload through `borrow_service.borrow` / `return_equipment` as a **new** operation: fresh `op_id` (also the transaction id for a dispatch), a synthetic `device_id` with `device_seq` 0, `actor_user_id` = resolver (audit actor, status-history actor, `submitted_by_user_id`), recorded operator = the original operator (`borrower_user_id` / `received_by_user_id`, `original_user_id` in audit). Business time is the resolution time, except for an `OP_TOO_OLD` item, where the stored (unclamped) `occurred_at` is used (the resolver confirms that time; a receipt still never precedes its dispatch and a dispatch never precedes the equipment's latest receipt). In the same transaction: new `applied` ledger row (`result_code=RESOLVER_APPLIED`), the original becomes `resolved` / `applied_as` (`resolution_note` = new op id, `transaction_id` = the new transaction), one `sync_conflict_resolved` audit entry, and exactly one export event. Response adds `new_op_id`, `transaction_id`.
+
+Failure modes: the precondition no longer holds (`409 SYNC_APPLY_FAILED`): nothing is applied, the item stays `conflict`, `result_code` is refreshed (never for the administrator-only class) and `resolution_note` records `apply_failed:<CODE>`. Already resolved/applied, or lost to a concurrent resolver (`409 SYNC_OP_NOT_RESOLVABLE`): of two simultaneous resolvers exactly one wins; the loser's business write is rolled back.
+
+Held dependents: holds are client-side (design 9.1 item 3); there is no server hold state. Once the original row is `resolved` the client sends its held follow-up ops, validated normally. Per-equipment timelines and Apply sequence are slice B4b. Limitation: an applied dispatch gets a new transaction id, so a later receipt that targets the original dispatch `op_id` still conflicts until re-keyed by the resolver.

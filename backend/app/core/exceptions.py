@@ -777,3 +777,30 @@ class ExportCursorAheadError(DomainError):
 
     code = "EXPORT_CURSOR_AHEAD"
     status_code = 409
+
+
+class SyncOpNotResolvableError(DomainError):
+    """Roadmap PR25E slice B4 -- the review item is not (or no longer) open
+    for resolution: it was already applied/resolved/rejected, is a ``pending``
+    op still inside its 48 h dependency window, or another resolver won the
+    race."""
+
+    code = "SYNC_OP_NOT_RESOLVABLE"
+    status_code = 409
+
+
+class SyncReviewAdminOnlyError(DomainError):
+    """Roadmap PR25E slice B4 -- the item belongs to the administrator-only
+    class (``FORBIDDEN``: user permissions, design section 9.6)."""
+
+    code = "SYNC_REVIEW_ADMIN_ONLY"
+    status_code = 403
+
+
+class SyncApplyFailedError(DomainError):
+    """Roadmap PR25E slice B4 -- Apply now was attempted through the normal
+    service and the lifecycle precondition no longer holds. Nothing was
+    applied; the item stays in review with the updated reason."""
+
+    code = "SYNC_APPLY_FAILED"
+    status_code = 409
