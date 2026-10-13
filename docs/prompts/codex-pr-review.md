@@ -1,5 +1,12 @@
 # Codex PR Review Prompt
 
+> **Now used by the Opus reviewer agent** (`docs/PROJECT_WORKFLOW.md`,
+> 2026-10-13). Read "Codex" below as "the reviewer agent". Where this
+> prompt forbids merging or says the workflow stops for the Owner,
+> `docs/PROJECT_WORKFLOW.md` now governs: the orchestrator merges an
+> approved, CI-green head SHA. The checklist and severity definitions
+> apply unchanged.
+
 Use this prompt when Codex is asked to act as an independent Pull Request
 reviewer for this repository. It is a reusable checklist, not a one-off
 task — the Pull Request number and URL will be supplied in the task

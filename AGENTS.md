@@ -88,10 +88,14 @@ design current work to contradict or block them. See
 
 # AI Roles and Workflow
 
-Claude implements. Codex independently reviews. ChatGPT governs
-architecture, roadmap, prompts, and review interpretation. The Repository
-Owner makes business and merge decisions. The full requirement-to-merge
-pipeline, non-negotiables (no automatic merge, no Claude<->Codex repair
-loop), and reusable role-specific prompts are defined in
-[`docs/PROJECT_WORKFLOW.md`](docs/PROJECT_WORKFLOW.md) and
-[`docs/prompts/`](docs/prompts/).
+A Claude orchestrator plans the work and splits it across implementer
+agents (Sonnet, at most 3), an Opus reviewer agent (1), and helper agents
+for read-only or mechanical tasks (Haiku, at most 5). A PR merges when CI
+is fully green on its exact head SHA and the reviewer approves that SHA;
+the orchestrator then merges it and reports to the Repository Owner, who
+sets direction and alone authorizes Production deployment. One problem
+gets at most 5 fix rounds before the approach must change, and 5 more
+before it is escalated to the Owner. Process changes ride in the PR they
+serve. Codex and ChatGPT are no longer part of this project. Full rules:
+[`docs/PROJECT_WORKFLOW.md`](docs/PROJECT_WORKFLOW.md), which supersedes
+older documents that still describe the previous pipeline.
