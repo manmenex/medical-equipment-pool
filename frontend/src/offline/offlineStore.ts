@@ -11,6 +11,8 @@ import { deleteDB, openDB, type DBSchema, type IDBPDatabase } from "idb";
 export const DB_NAME = "mep-offline";
 /** Bump together with a new entry in MIGRATIONS. */
 export const DB_VERSION = 1;
+/** meta key prefix for per-page snapshot ETag bookkeeping (S4). */
+export const SNAPSHOT_PAGE_PREFIX = "snapshot_page:";
 export const MAX_OUTBOX_OPS = 500;
 export const JOURNAL_RETENTION_MS = 48 * 60 * 60 * 1000;
 
@@ -35,6 +37,13 @@ export interface OutboxRecord {
   blocked_by: string | null;
   created_at: number;
   envelope: Record<string, unknown>;
+  /**
+   * PR25E S4 (design 9.8): local-only staleness marker. The sync envelope is
+   * strict (`extra="forbid"`), so this is NOT sent; the server derives its own
+   * `stale_context` once B2c lands. Optional: rows written before S4 lack it.
+   */
+  stale_context?: boolean;
+  snapshot_age_s?: number | null;
 }
 
 export interface JournalRecord {
@@ -218,6 +227,8 @@ export interface EnqueueInput {
   op_id?: string;
   /** Business body of the envelope (op_type, dispatch/receipt, times ...). */
   body: Record<string, unknown>;
+  /** Local-only annotations (never part of the envelope). */
+  local?: { stale_context?: boolean; snapshot_age_s?: number | null };
 }
 
 /**
@@ -263,6 +274,8 @@ export async function enqueueOperation(
         blocked_by: null,
         created_at: now,
         envelope: { ...input.body, op_id, device_id: deviceId, device_seq: seq },
+        ...(input.local?.stale_context !== undefined ? { stale_context: input.local.stale_context } : {}),
+        ...(input.local?.snapshot_age_s !== undefined ? { snapshot_age_s: input.local.snapshot_age_s } : {}),
       };
       await tx.objectStore("outbox").add(record);
       await tx.done;
@@ -413,6 +426,52 @@ export async function replaceRefs(
   });
 }
 
+/** Upsert rows by id without touching other rows (snapshot pages, design 6.5). */
+export async function upsertRefs(
+  store: RefStoreName,
+  rows: Array<{ id: string } & Record<string, unknown>>,
+): Promise<void> {
+  return guarded(async (db) => {
+    const tx = db.transaction(store, "readwrite");
+    tx.done.catch(() => undefined); // failures surface via the awaited operations
+    for (const row of rows) await tx.store.put(row);
+    await tx.done;
+  });
+}
+
+/** Delete every row whose id is not in `keep`. Returns the number removed. */
+export async function pruneRefsExcept(store: RefStoreName, keep: ReadonlySet<string>): Promise<number> {
+  return guarded(async (db) => {
+    const tx = db.transaction(store, "readwrite");
+    tx.done.catch(() => undefined); // failures surface via the awaited operations
+    let removed = 0;
+    let cursor = await tx.store.openCursor();
+    while (cursor) {
+      if (!keep.has(cursor.key as string)) {
+        await cursor.delete();
+        removed++;
+      }
+      cursor = await cursor.continue();
+    }
+    await tx.done;
+    return removed;
+  });
+}
+
+/**
+ * Envelopes of ops that are still unsent (pending/sending/held) for ALL users
+ * on this device, with no user attribution. Used only by the local
+ * double-entry guard, which must not reveal whose entry it is (design 8.1).
+ */
+export async function listActiveEnvelopes(): Promise<Array<Record<string, unknown>>> {
+  return guarded(async (db) => {
+    const rows = await db.getAll("outbox");
+    return rows
+      .filter((r) => r.state === "pending" || r.state === "sending" || r.state === "held")
+      .map((r) => r.envelope);
+  });
+}
+
 export async function listRefs(store: RefStoreName): Promise<Array<{ id: string } & Record<string, unknown>>> {
   return guarded((db) => db.getAll(store));
 }
@@ -431,7 +490,15 @@ export async function wipeOnLogout(): Promise<void> {
     const tx = db.transaction([...REF_STORES, "meta"], "readwrite");
     tx.done.catch(() => undefined); // failures surface via the awaited operations
     for (const name of REF_STORES) await tx.objectStore(name).clear();
-    await tx.objectStore("meta").delete("last_snapshot_at");
+    const meta = tx.objectStore("meta");
+    await meta.delete("last_snapshot_at");
+    // S4: per-page ETag bookkeeping must go with the rows, otherwise a later
+    // 304 would "confirm" pages whose rows were just wiped.
+    let cursor = await meta.openCursor();
+    while (cursor) {
+      if (String(cursor.key).startsWith(SNAPSHOT_PAGE_PREFIX)) await cursor.delete();
+      cursor = await cursor.continue();
+    }
     await tx.done;
   });
 }

@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 
 import { apiErrorCode, apiErrorMessage } from "@/services/api";
 import { login } from "@/services/auth";
-import { useAuthStore } from "@/store/authStore";
+import { useAuthStore, whenLogoutWipeDone } from "@/store/authStore";
 
 // Mirrors auth_service.MAXIMUM_FAILED_LOGIN_ATTEMPTS and LOCKOUT_DURATION.
 // The backend's own `detail` already says this, but in English -- and the
@@ -27,6 +27,8 @@ export function LoginPage() {
     setError(null);
     setLoading(true);
     try {
+      // PR25E S4: never let a previous logout's wipe run after this login.
+      await whenLogoutWipeDone();
       const { access_token } = await login(identifier, password);
       setAccessToken(access_token);
       navigate("/", { replace: true });
