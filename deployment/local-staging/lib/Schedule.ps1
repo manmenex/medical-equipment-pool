@@ -58,6 +58,23 @@ function Get-MepBackupScriptPath {
     return $path
 }
 
+# Minute-of-hour the hourly run starts at. NOT :00 or :30 -- the other tools
+# on this host (Nsmart Realtime, NsmartPMCAL, NsmartRepair) hit N Smart at
+# those marks, and a backup must not compete with them. :15 is the choice.
+$Script:BackupStartMinute = 15
+
+function Get-MepNextBackupStart {
+    <#
+    .SYNOPSIS
+    The first :15 past the hour that is at least 2 minutes away. Pure, so
+    the "never :00 or :30" rule is testable.
+    #>
+    param([datetime]$Now = (Get-Date))
+    $candidate = $Now.Date.AddHours($Now.Hour).AddMinutes($Script:BackupStartMinute)
+    while ($candidate -lt $Now.AddMinutes(2)) { $candidate = $candidate.AddHours(1) }
+    return $candidate
+}
+
 function Get-MepBackupSchedule {
     <#
     .SYNOPSIS
@@ -77,7 +94,11 @@ function Register-MepBackupSchedule {
     hour achievable at all; a larger value is a deliberate, stated
     weakening of that target.
     #>
-    param([int]$IntervalHours = 1)
+    param(
+        [int]$IntervalHours = 1,
+        [Parameter(Mandatory)] [securestring]$Password,
+        [string]$UserName = "$env:USERDOMAIN\$env:USERNAME"
+    )
 
     if ($IntervalHours -lt 1 -or $IntervalHours -gt 24) {
         throw (New-MepFailure "IntervalHours must be between 1 and 24; got $IntervalHours.")
@@ -92,8 +113,9 @@ function Register-MepBackupSchedule {
         -Argument "-NoProfile -NonInteractive -WindowStyle Hidden -File `"$backupScript`"" `
         -WorkingDirectory $Script:DeploymentRoot
 
-    # Repetition runs from the next whole interval, indefinitely.
-    $trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(5)) `
+    # Starts at the next :15 and repeats from there, indefinitely -- see
+    # $Script:BackupStartMinute for why not :00/:30.
+    $trigger = New-ScheduledTaskTrigger -Once -At (Get-MepNextBackupStart) `
         -RepetitionInterval (New-TimeSpan -Hours $IntervalHours)
 
     # IgnoreNew, not Parallel: a slow backup must never have the next hour's
@@ -110,17 +132,32 @@ function Register-MepBackupSchedule {
         -DontStopIfGoingOnBatteries `
         -ExecutionTimeLimit (New-TimeSpan -Hours 2)
 
-    # Interactive, as the current user: Docker Desktop runs inside the
-    # operator's own session, so a task running as SYSTEM could not reach
-    # the daemon at all. The cost is stated plainly in the runbook -- these
-    # backups only happen while that user is logged in.
-    $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
-        -LogonType Interactive -RunLevel Limited
-
-    Register-ScheduledTask -TaskName $Script:BackupTaskName `
-        -Action $action -Trigger $trigger -Settings $settings -Principal $principal `
-        -Description "Runs deployment/local-staging/backup.ps1 every $IntervalHours hour(s). Registered by schedule-backup.ps1." `
-        -Force | Out-Null
+    # PR25A: "run whether the user is logged on or not". Registering with the
+    # Windows account's PASSWORD (as the Owner's other tools on this host are
+    # registered) makes Task Scheduler start the task in a non-interactive
+    # session, so it fires at :15 even when nobody is signed in. The plain
+    # password exists only for this one call and is cleared in finally; it is
+    # never logged, echoed or stored by us (Windows keeps it in its own
+    # credential store).
+    #
+    # Why not S4U (no password): S4U tasks get a logon token without network
+    # credentials and without the user's cached secrets, and nothing in this
+    # repository can prove the Docker CLI still reaches Docker Desktop's pipe
+    # and the user's ~/.docker config under it. Password registration is the
+    # arrangement already in use on this host. Docker Desktop itself must be
+    # running (it starts when the account signs in at boot); see the runbook.
+    $plain = $null
+    try {
+        $plain = [System.Net.NetworkCredential]::new('', $Password).Password
+        Register-ScheduledTask -TaskName $Script:BackupTaskName `
+            -Action $action -Trigger $trigger -Settings $settings `
+            -User $UserName -Password $plain -RunLevel Limited `
+            -Description "Runs deployment/local-staging/backup.ps1 (local backup + Google Drive upload) every $IntervalHours hour(s). Registered by schedule-backup.ps1." `
+            -Force | Out-Null
+    }
+    finally {
+        $plain = $null
+    }
 
     Write-InstallLog -Phase 'schedule' -Message "Backup schedule registered (interval_hours=$IntervalHours, task='$Script:BackupTaskName')."
     return $IntervalHours
@@ -175,5 +212,6 @@ function Show-MepBackupScheduleStatus {
             Write-Host '  A registered schedule that fails is not backup coverage. Check logs/install-operations.log.' -ForegroundColor Yellow
         }
     }
+    Write-Host '  Off-host copy: run .\drive-backup.ps1 -Status (a Drive failure does not fail this task).'
     return $true
 }

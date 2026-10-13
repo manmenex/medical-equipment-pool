@@ -23,17 +23,31 @@ backup.ps1 already calls): every archive for 48 hours, then one per UTC day
 up to 30 days. That is roughly 78 archives, while keeping hour-level
 granularity across the two days most recoveries actually reach back into.
 
-LIMITATION, stated plainly rather than discovered later. The task runs as the
-CURRENT USER with an interactive logon, because Docker Desktop runs inside
-that user's session -- a task running as SYSTEM could not reach the Docker
-daemon at all. Backups therefore only happen while that user is logged in. On
-a dedicated always-on Staging/UAT PC that is usually fine; if the machine is
-logged out or shut down, no backup runs, and the schedule silently covers
-nothing. Check .\schedule-backup.ps1 (no arguments) periodically: it reports
-the last run and whether it succeeded.
+WHO IT RUNS AS (PR25A). The task is registered with the Windows account's
+PASSWORD, so it runs whether or not anyone is logged in (Task Scheduler
+starts it in a non-interactive session), the same way the Owner's other
+tools on this host are registered. You are prompted for the password at
+-Install; it is passed straight to Task Scheduler and never stored, logged
+or echoed. It still needs Docker Desktop's engine to be running: Docker
+Desktop starts when the account signs in at boot, so keep it signed in (or
+auto-logon) and set Docker Desktop to start with Windows. Windows
+credential changes (password rotation) require re-running -Install.
+S4U (no password) was not chosen because Docker access under it cannot be
+verified from the repository.
+
+WHEN. Runs at :15 past each hour -- deliberately not :00 or :30, which the
+other tools on this host use to reach N Smart.
+
+Each run is backup.ps1: local backup first, then the Google Drive upload
+(PR25A). A Drive failure never fails the backup; check
+.\drive-backup.ps1 -Status as well as this script's report.
 
 .PARAMETER Install
 Register (or replace) the recurring task.
+
+.PARAMETER UserName
+Windows account the task runs as. Default: the current user. You are asked
+for its password.
 
 .PARAMETER Remove
 Remove the task. Existing backups on disk are never touched.
@@ -57,7 +71,8 @@ Shows whether a schedule exists and whether it is succeeding.
 param(
     [switch]$Install,
     [switch]$Remove,
-    [int]$IntervalHours = 1
+    [int]$IntervalHours = 1,
+    [string]$UserName = "$env:USERDOMAIN\$env:USERNAME"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -84,11 +99,12 @@ try {
         if (-not (Test-EnvFileExists)) {
             throw 'No existing installation found. Run .\install.ps1 first; there is nothing to schedule backups for.'
         }
-        $hours = Register-MepBackupSchedule -IntervalHours $IntervalHours
+        $securePassword = Read-Host -Prompt "Windows password for $UserName (needed so the task runs when no one is logged in)" -AsSecureString
+        $hours = Register-MepBackupSchedule -IntervalHours $IntervalHours -Password $securePassword -UserName $UserName
         Write-Host ''
-        Write-Host "Backup schedule registered: every $hours hour(s)." -ForegroundColor Green
-        Write-Host '  Each run executes .\backup.ps1 -- same lock, same verification, same retention.'
-        Write-Host '  Runs only while this Windows user is logged in (Docker Desktop lives in that session).' -ForegroundColor Yellow
+        Write-Host "Backup schedule registered: every $hours hour(s), at :15 past the hour." -ForegroundColor Green
+        Write-Host '  Each run executes .\backup.ps1 -- same lock, same verification, same retention, then the Drive upload.'
+        Write-Host '  Runs whether or not anyone is logged in, as long as Docker Desktop is running.' -ForegroundColor Yellow
         Write-Host ''
         Show-MepBackupScheduleStatus | Out-Null
         exit 0

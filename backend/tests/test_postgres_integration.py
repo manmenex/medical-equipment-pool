@@ -7532,7 +7532,12 @@ async def test_migration_0013_fresh_database_all_foreign_keys_are_restrict():
                 # cutover_go_no_go_decisions.cutover_readiness_run_id ->
                 # cutover_readiness_runs, .recorded_by_user_id -> users (2).
                 # 78 + 2 = 80.
-                assert len(rows) == 80, f"expected exactly 80 foreign keys, found {len(rows)}: {rows}"
+                # + 3 added by migration 0025 (Roadmap PR25B):
+                # export_events.transaction_id -> borrow_transactions,
+                # export_api_keys.created_by_user_id -> users,
+                # export_api_keys.revoked_by_user_id -> users (3).
+                # 80 + 3 = 83.
+                assert len(rows) == 83, f"expected exactly 83 foreign keys, found {len(rows)}: {rows}"
                 for conname, confdeltype in rows:
                     assert confdeltype == "r", f"{conname} has confdeltype={confdeltype!r}, expected 'r' (RESTRICT)"
         finally:

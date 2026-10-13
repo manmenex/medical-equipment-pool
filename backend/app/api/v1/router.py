@@ -7,6 +7,8 @@ from app.api.v1 import (
     cutover_readiness,
     dashboard,
     equipment,
+    export,
+    export_keys,
     health,
     import_sessions,
     inventory_import,
@@ -34,6 +36,8 @@ api_router.include_router(users.router)
 api_router.include_router(master_data.router)
 api_router.include_router(audit.router)
 api_router.include_router(notifications.router)
+api_router.include_router(export.router)
+api_router.include_router(export_keys.router)
 api_router.include_router(inventory_import.router)
 api_router.include_router(import_sessions.router)
 api_router.include_router(legacy_migration_authorities.router)

@@ -11,6 +11,7 @@ from app.models import (  # noqa: E402,F401
     audit,
     cutover_readiness,
     equipment,
+    export,
     import_session,
     legacy_history,
     legacy_reconciliation,
