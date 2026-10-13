@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.core.reporting_time import Shift, business_date_and_shift
 from app.models.client_operation import ClientOperation
@@ -103,11 +103,12 @@ async def test_future_boundary_exactly_two_minutes_not_clamped(db_session):
     assert (t, flag) == (NOW, "clamped_future")
 
 
-async def test_old_boundary_exactly_seven_days_not_clamped(db_session):
+async def test_old_boundary_exactly_seven_days_not_flagged(db_session):
     edge = NOW - timedelta(days=7)
     assert await _compute(db_session, edge) == (edge, None)
-    t, flag = await _compute(db_session, edge - timedelta(milliseconds=1))
-    assert (t, flag) == (NOW, "clamped_old")
+    # Older than 7 days: time is NOT clamped; flagged too_old (Owner D9).
+    older = edge - timedelta(milliseconds=1)
+    assert await _compute(db_session, older) == (older, "too_old")
 
 
 # ---- end to end through the endpoint ----
@@ -123,13 +124,75 @@ async def test_future_clamped_end_to_end(client, ctx, db_session):
     assert before <= tx.borrowed_at <= datetime.now(timezone.utc)
 
 
-async def test_old_clamped_end_to_end(client, ctx, db_session):
-    op = _op(ctx, datetime.now(timezone.utc) - timedelta(days=8))
-    await _send(client, ctx["staff"], op)
-    tx = await _tx(db_session, op["op_id"])
+async def test_too_old_goes_to_review_no_business_change(client, ctx, db_session):
+    local = datetime.now(timezone.utc) - timedelta(days=8)
+    op = _op(ctx, local)
+    [res] = await _send(client, ctx["staff"], op)
+    assert res["result"] == "conflict" and res["code"] == "OP_TOO_OLD"
     row = await _ledger(db_session, op["op_id"])
-    assert row.time_flag == "clamped_old"
-    assert datetime.now(timezone.utc) - tx.borrowed_at < timedelta(minutes=1)
+    assert row.status == "conflict" and row.result_code == "OP_TOO_OLD"
+    assert row.time_flag == "too_old" and row.occurred_at == local and row.transaction_id is None
+    assert (await db_session.execute(select(BorrowTransaction))).first() is None
+    assert (await db_session.execute(select(ExportEvent))).first() is None
+    # Replay returns the stored conflict; still nothing applied.
+    [res] = await _send(client, ctx["staff"], op)
+    assert res["result"] == "conflict" and res["code"] == "OP_TOO_OLD"
+    assert (await db_session.execute(select(BorrowTransaction))).first() is None
+
+
+async def test_exactly_seven_days_old_still_applied(client, ctx, db_session):
+    # received_at is server time, so use a margin: 7d minus 1 min is applied.
+    local = datetime.now(timezone.utc) - timedelta(days=7) + timedelta(minutes=1)
+    op = _op(ctx, local)
+    [res] = await _send(client, ctx["staff"], op)
+    assert res["result"] == "applied"
+    row = await _ledger(db_session, op["op_id"])
+    assert row.time_flag is None and row.occurred_at == local
+
+
+async def test_retry_later_receipt_judged_against_first_receipt_time(client, ctx, db_session):
+    now = datetime.now(timezone.utc)
+    d = _op(ctx, now - timedelta(days=1))
+    r = receipt_op(ctx["staff_id"], d["op_id"])
+    r["clock_offset_ms"] = 0
+    r["occurred_at_local"] = iso(now - timedelta(hours=1))
+    [res] = await _send(client, ctx["staff"], r)
+    assert res["result"] == "retry_later"  # dispatch unknown yet
+    # The server first saw the receipt 2 h ago; the (adjusted) time is 7d 1h
+    # old now: older than now - 7d, but within 7d of the first receipt.
+    await db_session.execute(
+        update(ClientOperation)
+        .where(ClientOperation.op_id == uuid.UUID(r["op_id"]))
+        .values(first_seen_at=now - timedelta(hours=2))
+    )
+    await db_session.commit()
+    assert (await _send(client, ctx["staff"], d))[0]["result"] == "applied"
+    r["occurred_at_local"] = iso(now - timedelta(days=7, hours=1))
+    [res] = await _send(client, ctx["staff"], r)
+    assert res["result"] == "applied", res
+    row = await _ledger(db_session, r["op_id"])
+    assert row.time_flag == "before_dispatch"  # clamped to the dispatch, never too_old
+
+
+async def test_retry_later_receipt_too_old_vs_first_receipt_is_conflict(client, ctx, db_session):
+    now = datetime.now(timezone.utc)
+    d = _op(ctx, now - timedelta(days=1))
+    r = receipt_op(ctx["staff_id"], d["op_id"])
+    r["clock_offset_ms"] = 0
+    r["occurred_at_local"] = iso(now - timedelta(hours=1))
+    await _send(client, ctx["staff"], r)
+    await db_session.execute(
+        update(ClientOperation)
+        .where(ClientOperation.op_id == uuid.UUID(r["op_id"]))
+        .values(first_seen_at=now - timedelta(hours=2))
+    )
+    await db_session.commit()
+    assert (await _send(client, ctx["staff"], d))[0]["result"] == "applied"
+    r["occurred_at_local"] = iso(now - timedelta(days=7, hours=3))  # older than first_seen - 7d
+    [res] = await _send(client, ctx["staff"], r)
+    assert res["result"] == "conflict" and res["code"] == "OP_TOO_OLD"
+    row = await _ledger(db_session, r["op_id"])
+    assert row.status == "conflict" and row.time_flag == "too_old" and row.attempt_count == 2
 
 
 async def test_backdated_within_window_uses_business_time_and_pr16_shift(client, ctx, db_session):

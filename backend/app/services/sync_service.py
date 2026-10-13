@@ -74,7 +74,8 @@ DEPENDENCY_WINDOW = timedelta(hours=48)
 FUTURE_TOLERANCE = timedelta(minutes=2)
 MAX_BACKDATE = timedelta(days=7)
 FLAG_FUTURE = "clamped_future"
-FLAG_OLD = "clamped_old"
+FLAG_TOO_OLD = "too_old"
+CODE_OP_TOO_OLD = "OP_TOO_OLD"
 FLAG_BEFORE_DISPATCH = "before_dispatch"
 FLAG_BEFORE_LAST_RECEIPT = "before_last_receipt"
 
@@ -93,6 +94,7 @@ _MESSAGES = {
     CODE_USER_MISMATCH: "This operation cannot be submitted by the current user.",
     CODE_ID_REUSED: "This op_id was already used with different content.",
     CODE_DEVICE_SEQ_REUSED: "This device_seq was already used by a different operation.",
+    CODE_OP_TOO_OLD: "This operation is older than 7 days and needs review by an administrator or pool staff.",
     CODE_DEPENDENCY_MISSING: "The referenced transaction is not known yet; try again later.",
 }
 
@@ -190,8 +192,10 @@ async def compute_business_time(
 
     adjusted = occurred_at_local + clock_offset_ms (missing offset = 0), then
     in order: later than received_at + 2 min -> received_at (clamped_future);
-    older than received_at - 7 days -> received_at (clamped_old); then the
-    lifecycle clamps -- a receipt earlier than its dispatch -> the dispatch
+    older than received_at - 7 days -> kept UNCLAMPED with flag ``too_old``
+    (Owner decision D9: the caller records a ``conflict``/``OP_TOO_OLD`` for
+    human review and applies nothing; the relational clamps are skipped);
+    then the lifecycle clamps -- a receipt earlier than its dispatch -> the dispatch
     time (before_dispatch); a dispatch earlier than the equipment's latest
     returned_at -> that returned_at (before_last_receipt). Bounds are strict
     (exactly +2 min / exactly 7 days is not clamped). The relational clamp
@@ -202,7 +206,7 @@ async def compute_business_time(
     if t > received_at + FUTURE_TOLERANCE:
         t, flag = received_at, FLAG_FUTURE
     elif t < received_at - MAX_BACKDATE:
-        t, flag = received_at, FLAG_OLD
+        return t, FLAG_TOO_OLD
 
     if op.op_type == OP_TYPE_DISPATCH:
         try:
@@ -289,8 +293,21 @@ async def process_operation(
 
     # Step 2: execute through the lifecycle service (ledger write inside it).
     ctx = _context(op, user, digest, pending=existing_pending)
-    business_time, time_flag = await compute_business_time(db, op, datetime.now(timezone.utc))
+    # Bounds are judged against server receipt time (first sight of the op_id),
+    # not the moment of this attempt, so a retried op is judged consistently.
+    received_at = _utc(first_seen) if first_seen is not None else datetime.now(timezone.utc)
+    business_time, time_flag = await compute_business_time(db, op, received_at)
     ctx = replace(ctx, time_flag=time_flag)
+    if time_flag == FLAG_TOO_OLD:
+        # Owner decision D9: no business change, no export event; a human
+        # decides in the review list (B4 applies using the stored occurred_at).
+        ctx = replace(ctx, occurred_at=business_time)
+        await client_op_crud.record_outcome(
+            db, ctx, status=OP_STATUS_CONFLICT, result_code=CODE_OP_TOO_OLD, existing_pending=existing_pending
+        )
+        row = await client_op_crud.get(db, op.op_id)
+        res = _from_ledger_row(op, row, user, digest) if row is not None else None
+        return res or _result(op, RESULT_CONFLICT, CODE_OP_TOO_OLD, message=_MESSAGES[CODE_OP_TOO_OLD])
     try:
         tx = await _execute(db, op, user, ctx, ip_address, user_agent, business_time)
     except (client_op_crud.ClientOpAlreadyProcessedError, client_op_crud.ClientOpLedgerConflictError):
