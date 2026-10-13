@@ -26,7 +26,7 @@
 - ผู้ตัดสิน conflict คือ Equipment Pool staff และ Administrator
 - **เครื่องใช้ร่วมกัน (เปลี่ยนแบบ):** ผู้ใช้อื่นที่เป็น Pool staff/Administrator สามารถ **"รับช่วง" (adopt)** รายการค้างของคนที่ไม่กลับมาแล้วส่งต่อได้ ต้องกดยืนยันชัดเจน ต้องออนไลน์และล็อกอินสด และมี audit ทั้งผู้ทำเดิมและผู้รับช่วง ผู้ทำเดิมยังคงเป็นผู้บันทึกของรายการ
 - ขีดจำกัด 500 รายการ/เครื่อง, ย้อนเวลาไม่เกิน 7 วัน, journal 48 ชม., ใช้ screen lock ของเครื่อง: ตกลง
-- **รับคืนอ้างด้วย transaction_id เท่านั้น** และเพิ่มการป้องกัน 2 กรณี: (ก) สลับเครื่องในวอร์ด (รับคืนแล้วจ่ายซ้ำทันที) (ข) ออฟไลน์นานหลายเครื่องคีย์ไม่ตรงกัน: ระบบสร้าง **Timeline** ของเครื่องมือชิ้นนั้นตามเวลาที่ปรับนาฬิกาแล้ว ให้คนตรวจดู และมีปุ่ม "ใช้ทั้งลำดับ" ที่ผ่านการตรวจแล้วเท่านั้น ไม่ apply เองโดยลำพังใน v1 พร้อมแจ้งเตือนเมื่อข้อมูลในเครื่องเก่ากว่า **4 ชั่วโมง** (Owner ยืนยันแล้ว) และให้รายการเหล่านั้นถูกจัดลำดับความสำคัญในการตรวจ
+- **รับคืนอ้างด้วย transaction_id เท่านั้น** และเพิ่มการป้องกัน 2 กรณี: (ก) สลับเครื่องในวอร์ด (รับคืนแล้วจ่ายซ้ำทันที) (ข) ออฟไลน์นานหลายเครื่องคีย์ไม่ตรงกัน: ระบบสร้าง **Timeline** ของเครื่องมือชิ้นนั้นตามเวลาที่ปรับนาฬิกาแล้ว ให้คนตรวจดู และมีปุ่ม "ใช้ทั้งลำดับ" ที่ผ่านการตรวจแล้วเท่านั้น ไม่ apply เองโดยลำพังใน v1 (Owner ยืนยัน: **ยังไม่เปิด SYNC_AUTO_SEQUENCE** จะตัดสินใหม่หลัง pilot จากสถิติที่ระบบเก็บตั้งแต่วันแรก ได้แก่ จำนวน conflict ข้ามเครื่องต่อเครื่องมือ, กี่รายการที่ลำดับตามเวลาที่ปรับแล้วถูกต้องตาม lifecycle, กี่รายการที่คนตัดสินตามลำดับนั้น/ต่างจากนั้น, และการกระจายของนาฬิกาคลาดเคลื่อน) พร้อมแจ้งเตือนเมื่อข้อมูลในเครื่องเก่ากว่า **4 ชั่วโมง** (Owner ยืนยันแล้ว) และให้รายการเหล่านั้นถูกจัดลำดับความสำคัญในการตรวจ
 - **คำตอบของ Owner อนุญาตให้เริ่ม PR25E ตามแผน slice ได้ทันทีเมื่อเอกสารนี้ merge**
 
 ---
@@ -398,7 +398,7 @@ Receipt stays by `transaction_id` only (D7); the scenarios the Owner raised are 
 An automatic path would have to apply ops in corrected-time order without a human. Candidate safe conditions: all ops from one equipment pending together, the full sequence lifecycle-valid, no op `stale_context`, every device's offset measured within 15 minutes before keying, no overlapping uncertainty bands, at most 4 ops, and no unresolved conflict on X. Even then:
 - a valid sequence is not necessarily the true one: with the physical item in one place, two lifecycle-valid orders can exist (receive then dispatch versus dispatch then receive of a different cycle) and only clocks distinguish them, while clocks are exactly what cannot be trusted across devices (9.2);
 - the Owner's rule "never silently resolve" would be weakened to "silently resolve when conditions look safe", and the error would land in PR16 shift counts and operator attribution without anyone noticing.
-So v1 ships human-confirmed sequencing only (point 4). A server setting `SYNC_AUTO_SEQUENCE` is **specified but not implemented**: default off, implemented only if the pilot shows review volume is a real burden, and then only with the conditions above, an audit entry per auto-applied sequence (action `sync_auto_sequence`, listing every op id and the evidence), a visible "auto-applied" badge in the review list and on the operators' sync screens, and an Owner decision recorded first. This keeps the option without taking the risk now.
+So v1 ships human-confirmed sequencing only (point 4). **Owner decision D8 (2026-10-13): `SYNC_AUTO_SEQUENCE` is not enabled in v1 and will be re-decided after the pilot based on the statistics in section 16.1.** The setting is specified here only so the evidence can be judged against its exact conditions; no code for auto-applying a sequence is written in PR25E. If the Owner later enables it, it needs the conditions above, an audit entry per auto-applied sequence (action `sync_auto_sequence`, listing every op id and the evidence), a visible "auto-applied" badge in the review list and on operators' sync screens, and its own implementation PR.
 
 ### 9.8 Staleness warning (N = 4 hours)
 
@@ -554,6 +554,23 @@ Current: `registerType: "autoUpdate"` activates a new service worker and may rel
 - **Client diagnostics panel** (in the sync screen): device id, schema version, queue depth by state, oldest pending age, last successful sync, last error code, snapshot age. A "copy diagnostics" button copies counts and codes only (no payload bodies) for support.
 - **Alerts** are the Owner's existing means (no new alerting stack). The runbook gets a daily checklist line: "open Needs review and the sync status".
 
+### 16.1 Pilot statistics for the auto-sequencing decision (D8)
+
+Collected from the first day of use, aggregates only, no payload bodies, no patient data (none exists). Stored as columns on `client_operations` (written when the conflict is detected and when it is resolved) so no extra table is needed; exposed by an administrator-only `GET /sync/stats?from=&to=` that returns counts and histograms, plus a CSV export for the pilot review.
+
+| Statistic | Definition | Captured from |
+|---|---|---|
+| Cross-device conflicts per equipment | Number of conflict groups (all non-applied ops on one equipment within a 24 h window that involve at least two `device_id`s, or one device against a committed transaction from another), and a per-equipment distribution (how many equipment had 1, 2, 3+ groups) | `device_id`, `transaction_id`, equipment id at detection; new column `collision_group_id` |
+| Lifecycle-valid corrected-time order | Of those groups, how many had a dry-run in corrected-time order (section 9.7 point 4) that was lifecycle-valid at detection, split by: all ops fresh vs any `stale_context`, overlapping uncertainty bands vs separated | Dry-run result stored at detection: `order_valid_at_detection`, `proposed_sequence` (op ids in order), `bands_overlap`, `stale_context` |
+| Resolved in that same order vs differently | For groups with a valid proposal: resolved exactly as proposed (same ops applied in the same order, rest dismissed as proposed) vs resolved differently (different order, an op the proposal would apply was dismissed, or an op it would have kept was applied) vs resolved by dismissal only | Compared at resolution time; stored `resolution_matches_proposal` (`same` / `different` / `dismissed_only`) and resolver id |
+| Agreement rate | `same` / (`same` + `different`) among valid-proposal groups, overall and for the subset that meets the specified auto conditions (the number that matters for D8) | Derived |
+| Clock-skew distribution | Histogram of `clock_offset_ms` and of `offset_age_s` (age of the offset measurement at keying; new column), and of `received_at - occurred_at` lag, per device class if known; share of ops with `time_flag`; share of op pairs with overlapping uncertainty bands | Ledger columns `clock_offset_ms`, `offset_age_s`, `time_flag`, `occurred_at` |
+| Volume context | Total ops, ops recorded offline (lag over 2 min), conflicts per 1000 ops, resolution time (median, 90th percentile) | Ledger |
+
+Suggested reading, for the Owner to adjust: the decision is credible only with enough groups (the pilot report states the count; a few dozen groups or fewer is not evidence), and an auto path is worth considering only if the agreement rate among groups meeting the auto conditions is very high and the cases where it was `different` are understood. The Owner sets the thresholds; PR25E only guarantees the data exists.
+
+Implementation placement: the extra columns (`collision_group_id`, `order_valid_at_detection`, `proposed_sequence`, `bands_overlap`, `offset_age_s`, `resolution_matches_proposal`) are part of the B1 migration; detection and storage of the proposal are in B4b (it owns the dry-run); `GET /sync/stats` is in B3 for the volume and skew parts and extended in B4b for the collision parts.
+
 ---
 
 ## 17. Test strategy
@@ -573,6 +590,7 @@ Backend (pytest; PostgreSQL-marked tests for concurrency evidence, SQLite not cl
 11a. In-ward swap: A receives T1 then re-dispatches X (T2) offline; B's receipt of T1 arrives first and wins. A's receipt conflicts, A's dispatch is held; the timeline shows both; Dismiss as same-outcome duplicate releases A's dispatch, which applies as T2; a different-outcome case (usable vs defective) requires an explicit resolver choice and does not release the dispatch until resolved.
 11b. Long-offline cross-device: devices A and B both offline for more than N hours key receipts and dispatches on the same equipment from stale caches; replay in either arrival order produces no history rewrite, correct conflict rows, a timeline ordered by corrected time with `device_seq` overriding time within a device, "order uncertain" for overlapping bands, and a skewed device clock does not change which op wins (arrival and lifecycle decide).
 11c. Apply sequence: a lifecycle-valid sequence runs each op as its own transaction in corrected-time order, one ledger row and audit entries per op, stopping at the first failure (inject a failure on op 2 of 3: op 1 stays applied and audited, ops 2 and 3 stay in review with the reason); an invalid dry run offers no action; already-committed rows are never modified; audit actor is the resolver and `borrower_user_id`/`received_by_user_id` is the original operator for every applied op.
+11h. Pilot statistics: two devices conflicting on one equipment produce one `collision_group_id`; the stored proposal and `order_valid_at_detection` match the dry-run; resolving via Apply sequence records `same`, resolving in another order or dismissing a proposed op records `different`, dismissal only records `dismissed_only`; `GET /sync/stats` counts, agreement rate and skew histograms are correct on a seeded dataset and are administrator-only; no payload bodies appear in the output.
 11g. Pending ledger rows: receipt → `retry_later` (ledger `pending`, `first_seen_at` kept) → the dispatch replays → the receipt retried is applied **exactly once** (the `pending` row is updated to `applied`, never duplicated, never returned as `duplicate`); two concurrent retries of the same `pending` op → one applies, the other returns the stored `applied` result as `duplicate`; a `pending` op past 48 h from `first_seen_at` becomes `conflict: TRANSACTION_NOT_FOUND` (via the conditional UPDATE); a `pending` row is never returned as `duplicate`.
 11d. Staleness: `snapshot_age_s` above N sets `stale_context`; flagged ops sort first and are counted; ops are still applied normally when valid; the flag never blocks.
 11e. Adoption: adopt requires `adopt: true`, a pool role and a fresh login; original operator stays `borrower_user_id`/`received_by_user_id` while the audit rows' actor (`audit_logs.user_id`) and the equipment status-history `changed_by_user_id` are the adopter, and `original_user_id` is in `after_data`; the online (non-adopt) path is unchanged with actor = operator; `submitted_by_user_id`, `sync_adopt` audit and `adopted` markers are written atomically; a non-adopt token mismatch gets `OP_USER_MISMATCH`; a `read_only` user is denied; adopting an already-applied op returns `duplicate`.
@@ -606,6 +624,7 @@ The Owner answered the open questions of the earlier draft. This section is the 
 | D4 | Shared devices: **changed.** Another authenticated Equipment Pool staff or Administrator may adopt and send a stranded user's pending operations; explicit, confirmed, online, fresh login, original operator stays the recorded operator, adopter recorded as sender, fully audited. | 8.3, 6.2, 6.3 |
 | D5 | Limits agreed: 500 pending ops per device, 7-day maximum back-dating, 48-hour journal. | 10, 11, 15 |
 | D6 | OS screen lock is the only at-rest control on personal phones; no app-level PIN or encryption in v1. | 12.1 |
+| D8 | `SYNC_AUTO_SEQUENCE` is **not enabled in v1**. It will be re-decided after the pilot from collected statistics; PR25E collects them from day one. No auto-resolution of any kind ships. | 9.7, 16.1 |
 | D7 | Receipt by `transaction_id` only, agreed, with added protection for in-ward swaps and long-offline cross-device cases: per-equipment timeline, human-confirmed "Apply sequence", no automatic resolution in v1, 4-hour staleness warning and `stale_context` review priority. | 9.7, 9.8 |
 
 Items the Owner did not raise keep the draft defaults and are treated as accepted for implementation, revisitable at pilot:
@@ -617,7 +636,7 @@ Items the Owner did not raise keep the draft defaults and are treated as accepte
 | X3 | No dedicated "a restore happened" notice; `verify` detects within 15 minutes. | Optional runbook wording. |
 | X4 | Staleness threshold N = 4 hours: **confirmed by the Owner.** Remains a configurable constant. | 9.8 |
 
-**Still open for the Owner (does not block PR25E):** whether to enable `SYNC_AUTO_SEQUENCE` after the pilot (9.7). Nothing else is open.
+**Still open for the Owner:** nothing blocks PR25E. One decision is scheduled: whether to enable automatic sequencing, after the pilot (D8, section 16.1).
 
 ---
 
@@ -631,7 +650,7 @@ Items the Owner did not raise keep the draft defaults and are treated as accepte
 - No multi-device real-time sync or peer-to-peer sync between devices.
 - No Item No or Asset Number on devices (D1).
 - No background-sync-while-closed (not reliable on iOS); sync runs when the app is open.
-- No automatic conflict resolution of any kind in v1, including `SYNC_AUTO_SEQUENCE` (specified, not implemented).
+- No automatic conflict resolution of any kind in v1; `SYNC_AUTO_SEQUENCE` is not implemented and not enabled (D8), only its evidence is collected.
 - No other new master-data fields beyond the ward/department phone in section 3.4.
 - No standby server, no change to PR25A backup design or to the PR25B export API, no Cloudflare work (PR25C) beyond handling its login redirect.
 - No Shift Session or Standby Snapshot work (confirmed future work, not this PR); no change to PR16 derivation logic beyond feeding it the adjusted business time.
@@ -648,13 +667,13 @@ Each slice is one small, independently reviewable PR with its own tests. Order m
 |---|---|---|---|
 | **B0** | Ward and department `phone` columns (additive nullable migration), master-data schemas/API/tests; flags if update path is missing | none | Migration upgrade/downgrade; schema round-trip; role gates; existing master-data tests green |
 | **S0** | Admin master-data form fields for phone; dispatch form auto-fills `phone_number` from the selected ward (department fallback), editable; works online with no offline code | B0 | Vitest prefill/edit/overwrite cases; manual check; shippable on its own |
-| **B1** | `client_operations` migration and model; `crud.transaction.create/close` accept explicit `id` and business time; no endpoint yet | none | Migration upgrade/downgrade; existing tests green; explicit-id create works |
+| **B1** | `client_operations` migration and model (including the section 16.1 statistics columns); `crud.transaction.create/close` accept explicit `id` and business time; no endpoint yet | none | Migration upgrade/downgrade; existing tests green; explicit-id create works |
 | **B2** | `POST /sync/operations` for dispatch and receipt: envelope schema, ledger-in-service atomicity, idempotency including `pending` re-execution, conflict/rejected rows, error codes, role/user checks; audit enrichment; `actor_user_id` split in `borrow()`/`return_equipment()` (default = operator, no online behaviour change) | B1 | Test items 1 to 5, 7, 11g |
 | **B2b** | Business-time handling: clock-offset adjustment, future/old/before-dispatch/before-last-receipt clamps, `time_flag`, PR16 integration | B2 | Test item 8 |
 | **B2c** | Adoption support: `original_user_id`/`adopt` envelope fields, `submitted_by_user_id`/`adopted_at` columns, `sync_adopt` audit (using B2's `actor_user_id`), stale_context flag | B2 | Test items 11d, 11e |
-| **B3** | `POST /sync/verify`, `GET /sync/snapshot` (bounded cursor), `GET /sync/status` | B2 | Test items 6, 11 |
+| **B3** | `POST /sync/verify`, `GET /sync/snapshot` (bounded cursor), `GET /sync/status`, `GET /sync/stats` (volume and clock-skew statistics, section 16.1) | B2 | Test items 6, 11, 11h |
 | **B4** | Conflict list and resolve endpoints (dismiss, apply-now), audit on resolve, role gates; held-dependent release | B2 | Test item 9 |
-| **B4b** | Per-equipment timeline endpoint and dry-run "Apply sequence" | B4, B2b | Test items 11a to 11c |
+| **B4b** | Per-equipment timeline endpoint and dry-run "Apply sequence"; collision-group detection and proposal storage; `resolution_matches_proposal` at resolution; collision part of `GET /sync/stats` | B4, B2b | Test items 11a to 11c, 11h |
 | **S1** | Frontend: auth/offline hardening only — stop logging out on refresh network errors; unreachable detection helper; `navigateFallbackDenylist`; logout wipe including Cache Storage and React Query | none | Tests item 13 (no-logout-on-network-error), wipe tests; shell loads offline in a manual drill |
 | **S2** | Frontend: IndexedDB layer (`meta`, `outbox`, `journal`, refs), versioned upgrades, per-user isolation, `device_id`/`device_seq`, hard cap; no UI | none | Test items 12, 15 |
 | **S3** | Frontend: sync worker (ordering, hold logic, backoff, Web Lock, token refresh and re-auth, verify and journal replay, clock offset) against B2/B3 | B2, B3, S1, S2 | Test items 13, 14 |
