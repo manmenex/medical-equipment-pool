@@ -1,0 +1,152 @@
+# Technical Debt Register
+
+**Purpose:** Single home for evidenced deferred defects and structural risk
+**Authority:** Debt tracking only; not a Roadmap or feature backlog
+**Update trigger:** Debt discovered, severity/status changed, or closure verified
+**Maintainer:** Architecture Owner
+
+Roadmap work is not technical debt merely because it is unimplemented. Accepted
+limitations are labeled explicitly. A debt item closes only after its stated
+verification passes.
+
+## Register
+
+| ID | Title | Severity | Status | First identified | Related work | Owner role | Last reviewed |
+|---|---|---|---|---|---|---|---|
+| TD-001 | Equipment update/status response `MissingGreenlet` | High | Closed | PR #7 test-writing | `eager_defaults=True`, `app/models/equipment.py:110` | Backend Engineer | 2026-07-28 |
+| TD-002 | `0001_initial.py` uses current ORM metadata | High | Open | PR #7 migration review | `0001_initial.py`; Governance PR #8 | Database Engineer | 2026-07-17 |
+| TD-003 | No required PostgreSQL CI workflow | Medium | Open | PR #7 evidence review | PostgreSQL tests exist; `.github/workflows` absent | Repository Owner | 2026-07-17 |
+| TD-004 | Naive `datetime.utcnow()` usage | Low | Open | Governance Pack inventory | Multiple backend models/services | Backend Engineer | 2026-07-17 |
+| TD-005 | Temporary default/long-lived branch structure | Medium | Open | Repository cleanup assessment | Recall default; `claude/*` active base | Repository Owner | 2026-07-17 |
+| TD-006 | Frontend still submits the retired receipt `condition` field | High | Closed | Roadmap PR8B implementation | `frontend/src/services/borrow.ts`, `types/index.ts`, `pages/ReturnPage.tsx`; `docs/api/receipt.md` | Frontend Engineer | 2026-07-23 |
+
+## TD-001 — Equipment update/status response `MissingGreenlet` (Closed)
+
+- **Description:** Existing equipment update and status-change endpoints could
+  commit successfully and then return HTTP 500 when serialization touched an
+  expired `updated_at` value outside the async greenlet context.
+- **Operational impact:** Clients saw failure after a successful mutation and
+  could retry, causing confusion or duplicate user intent.
+- **Why deferred:** Discovered while testing audit behavior; unrelated to the
+  focused PR3 audit framework and explicitly left out of Draft PR #7.
+- **Resolution:** `Equipment.__mapper_args__ = {"eager_defaults": True}`
+  (`app/models/equipment.py:110`) makes `UPDATE` use `RETURNING updated_at`,
+  so the value is already loaded and no lazy refresh outside the async
+  context is ever attempted.
+- **Verification (closed):** API tests prove success response, committed row,
+  exactly one audit event, and safe retry behavior for update/status endpoints.
+
+## TD-002 — `0001_initial.py` uses current ORM metadata
+
+- **Description:** Migration `0001_initial.py` calls
+  `Base.metadata.create_all()`, so its result changes with current ORM models
+  instead of remaining a frozen historical schema.
+- **Operational impact:** Fresh-database and incremental upgrade paths differ;
+  later revisions need defensive idempotency and downgrade testing.
+- **Why deferred:** Rewriting migration history inside PR3 would broaden scope
+  and risk existing databases.
+- **Resolution trigger:** Dedicated migration-baseline strategy approved before
+  migration complexity materially increases.
+- **Verification to close:** Rehearse fresh install, pre-baseline upgrade,
+  downgrade, and data preservation on PostgreSQL; document the cutover and
+  retained compatibility path.
+
+## TD-003 — No required PostgreSQL CI workflow
+
+- **Description:** PostgreSQL-backed tests exist, but the repository currently
+  has no tracked GitHub Actions workflow requiring them on PRs.
+- **Operational impact:** PR descriptions may report local PostgreSQL evidence,
+  but the repository does not independently enforce it.
+- **Why deferred:** CI infrastructure is outside Roadmap PR3 and this Governance
+  Pack; local evidence is still useful when labeled accurately.
+- **Resolution trigger:** Repository Owner approves CI design and stable test
+  service setup.
+- **Verification to close:** Protected default branch requires a successful
+  PostgreSQL job that runs real migrations and relevant integration tests.
+
+## TD-004 — Naive `datetime.utcnow()` usage
+
+- **Description:** Models/services/scheduler use `datetime.utcnow()`, which
+  produces naive UTC values and is deprecated in modern Python guidance.
+- **Operational impact:** Future runtime warnings and timezone ambiguity during
+  comparison/serialization.
+- **Why deferred:** Mechanical replacement across many modules is unrelated to
+  current focused PRs and needs regression coverage.
+- **Resolution trigger:** Focused datetime/timezone hardening PR or runtime
+  upgrade that makes warnings blocking.
+- **Verification to close:** Timezone-aware UTC tests pass across auth,
+  transactions, audit, equipment deletion, and scheduler behavior.
+
+## TD-005 — Temporary default/long-lived branch structure
+
+- **Description:** GitHub default still names the legacy Recall application;
+  active Equipment Pool work uses a temporary `claude/*` base.
+- **Operational impact:** Confusing clone defaults, PR bases, branch protection,
+  and repository identity.
+- **Why deferred:** PR #7 remains open and default-branch mutation requires a
+  separate recoverable maintenance operation.
+- **Resolution trigger:** Governance Pack and active PRs complete; Repository
+  Owner executes `REPOSITORY_STRATEGY.md` transition plan.
+- **Verification to close:** `main` is protected/default, open PRs are correctly
+  based, archive tags exist, legacy branches pass retention checks, and rollback
+  is documented.
+
+## TD-006 — Frontend still submits the retired receipt `condition` field (Closed)
+
+- **Description:** Roadmap PR8B (`knowledge/adr/ADR-006-receipt-outcome-contract.md`)
+  replaced `ReturnRequest.condition` (a four-value free-form string) with
+  `receipt_outcome` (a typed `usable`/`defective` enum), with no
+  compatibility alias, in its backend slice (GitHub PR #28). Before
+  frontend PR #29 merged, `frontend/src/services/borrow.ts`,
+  `frontend/src/types/index.ts`, and `frontend/src/pages/ReturnPage.tsx`
+  still built and submitted the old `condition` shape — the frontend
+  change was explicitly out of scope for the task that implemented
+  PR8B's backend slice. For the interval between the two PRs, the
+  repository's merged history temporarily contained a backend revision
+  and a frontend revision that could not be deployed independently of
+  each other.
+- **Operational impact:** Had the backend slice been deployed ahead of
+  the frontend slice, every receipt submission from that frontend would
+  have failed with `422 VALIDATION_ERROR` (unrecognized field, missing
+  required `receipt_outcome`). The coordinated-release requirement below
+  ensured the two slices were deployed together, so production never
+  entered that incompatible state.
+- **Why deferred:** The implementing task was explicitly scoped to the
+  backend contract only ("Do not begin frontend or authentication work").
+- **Coordinated release required:** This endpoint's only known client is
+  this project's own frontend (`docs/ARCHITECTURE_DECISIONS.md`
+  "Browser-first application" — no native app, no documented external/
+  third-party integration); no compatibility layer was kept. The backend
+  and the resolving frontend PR must therefore be **deployed together**,
+  not independently — deploying one ahead of the other leaves the receipt
+  flow non-functional in one direction or the other.
+- **Resolution trigger:** A focused frontend PR adopting `receipt_outcome`
+  (`docs/api/receipt.md`), including `ReturnPage.tsx`'s two-choice
+  usable/defective selector. The hand-authored TypeScript type for
+  `receipt_outcome` must be a `"usable" | "defective"` union, not a plain
+  `string` — this repository has no OpenAPI-to-TypeScript code generation
+  pipeline, so there is no generated client to regenerate; the type is
+  maintained by hand and must be kept in sync with `ReceiptOutcome`
+  (`backend/app/models/transaction.py`) manually.
+- **Verification to close:** End-to-end receipt flow (dispatch, then
+  receipt via the frontend UI) succeeds against a backend running this
+  contract, for both `usable` and `defective` outcomes; the frontend's
+  `receipt_outcome` type is a `"usable" | "defective"` union.
+- **Resolved by:**
+  - Backend PR #28, squash SHA `da4d76a640548e5a1d38ff3d7690695f950c85fe`
+  - Frontend PR #29, squash SHA `d3e027b5a4ee7d99b38dfd0d263dc460c74eb5c5`
+- **Resolution:** The frontend now submits `receipt_outcome`
+  (`frontend/src/types/index.ts`'s `ReceiptOutcome`, a `"usable" | "defective"`
+  union, not a plain `string`) end to end
+  (`frontend/src/types/index.ts`, `services/borrow.ts`, `pages/ReturnPage.tsx`),
+  with Vitest component/unit tests. The backend and this frontend change were
+  deployed together per the coordinated-release requirement above, so the
+  frontend/backend compatibility gap this row tracked no longer exists. The
+  legacy request field `condition` is retired and no longer sent.
+  This closed only the frontend/backend contract gap tracked by this row —
+  it did not, by itself, imply Roadmap PR8's PR8C slice
+  (race-loss-vs-genuine-repeat distinguishable error) was complete; PR8C
+  was separately tracked. PR8C has since merged (GitHub PR #31, squash SHA
+  `f923f0aec8aa79fb4c33d2c1b0c05c08a057fe17`) — see `docs/DECISION_LOG.md`
+  ("Roadmap PR8 (PR8C slice)") and `docs/ROADMAP.md`. **Roadmap PR8 (PR8A,
+  PR8B, and PR8C) is now fully complete.**
