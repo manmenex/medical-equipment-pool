@@ -766,3 +766,14 @@ class CutoverDecisionNotFoundError(DomainError):
 
     code = "CUTOVER_DECISION_NOT_FOUND"
     status_code = 404
+
+
+class ExportCursorAheadError(DomainError):
+    """Roadmap PR25B: the export consumer presented a cursor beyond the
+    newest event this database holds. That can only mean the database was
+    restored from an older backup (or the cursor belongs to another
+    deployment); silently returning an empty page would make the consumer
+    miss every event recorded after the restore, so it is refused."""
+
+    code = "EXPORT_CURSOR_AHEAD"
+    status_code = 409
