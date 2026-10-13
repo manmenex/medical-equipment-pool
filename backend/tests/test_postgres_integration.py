@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.core.db_errors import translate_integrity_error
 from app.core.exceptions import DuplicateError, InvalidInputError
 from app.core.reporting_time import Shift, business_date_and_shift, business_date_and_shift_sql
-from app.core.security import hash_password
+from tests.conftest import cached_password_hash
 from app.crud import master_data as md_crud
 from app.db.base import Base
 from app.db.session import get_db
@@ -107,7 +107,7 @@ async def pg_seeded_users(pg_session):
             employee_code=f"{role_name.upper()}001",
             full_name=f"Test {role_name}",
             email=f"{role_name}@mep-hospital-test.dev",
-            password_hash=hash_password("Password@123"),
+            password_hash=cached_password_hash("Password@123"),
             role_id=roles[role_name].id,
         )
         pg_session.add(user)
@@ -4367,7 +4367,7 @@ async def _insert_legacy_user_row(conn, employee_code: str, role_id: str) -> str
             "employee_code": employee_code,
             "full_name": f"Test {employee_code}",
             "email": f"{employee_code.lower()}@mep-hospital-test.dev",
-            "password_hash": hash_password("Password@123"),
+            "password_hash": cached_password_hash("Password@123"),
             "role_id": role_id,
         },
     )
