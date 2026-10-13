@@ -8672,3 +8672,38 @@ Operations Engine) started, not merged
   this repository's `backend/scripts/pg_backup_lib.py`, `prune_backups.py`,
   `deployment/local-staging/lib/Backup.ps1` and the new
   `lib/Schedule.ps1` / `schedule-backup.ps1`.
+
+## 2026-10-13 — Agent-team pipeline replaces Codex/ChatGPT review; CI runs in parallel shards
+
+**Decision (Repository Owner).** Codex and ChatGPT are no longer part of
+this project. A Claude orchestrator splits work across Sonnet implementer
+agents (at most 3), one Opus reviewer agent, and Haiku helper agents (at
+most 5, read-only or mechanical work). A PR merges when CI is fully green
+on its exact head SHA and the reviewer approves that SHA; the orchestrator
+merges and reports to the Owner. Process changes ride in the PR they serve
+rather than a separate Governance PR. One problem gets at most 5 fix rounds
+before the approach must change, and 5 more before it is escalated.
+
+**Why.** The Owner had become the gateway for every step and wanted to set
+direction rather than gate each PR.
+
+**What was kept, and why.** CI stays a hard gate the reviewer cannot
+override, because implementer and reviewer come from the same model family
+and can share blind spots, while the test suite does not. Production
+deployment stays the Owner's decision; merging is not deploying. The domain
+guardrails are unchanged.
+
+**CI.** Serial backend suites took 24-29 minutes (non-PostgreSQL) and 14-18
+minutes (PostgreSQL) per push. They now run as 5 and 3 parallel shards
+(`PYTEST_SHARD` in `backend/tests/conftest.py`). The original check names
+are kept by gate jobs, which fail when any shard failed and verify that the
+shards together ran every collected test exactly once
+(`backend/scripts/ci_shard_gate.py`), so sharding cannot silently drop
+tests.
+
+**Measured cause of the slowness, not yet changed.** Most per-test time is
+fixture setup, not the tests: `seeded_users` bcrypt-hashes a password for
+every role on every test (about 1.2 s of setup per test in
+`tests/test_auth.py`). A test-only lower bcrypt cost would cut the suite
+sharply, but it changes how tests exercise password hashing and is left for
+its own PR.

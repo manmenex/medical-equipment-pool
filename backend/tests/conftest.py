@@ -114,3 +114,34 @@ async def on_demand_borrow_payload(client: AsyncClient, admin_headers: dict, equ
     ready-to-use on-demand borrow JSON payload."""
     ward_id = await create_ward(client, admin_headers, ward_code)
     return {"equipment_id": equipment_id, "ward_id": ward_id, "dispatch_type": "on_demand"}
+
+
+# CI sharding. `.github/workflows/ci.yml` runs each backend suite as several
+# parallel jobs; PYTEST_SHARD="<index>/<total>" (0-based) keeps every
+# total-th collected test, so the shards are disjoint and together cover the
+# whole selection. Item-level, not file-level: test_postgres_integration.py
+# alone holds most of the PostgreSQL suite, so whole-file shards could not
+# balance. PYTEST_SHARD_REPORT names a JSON file recording how many tests
+# this shard ran out of how many were collected; the CI gate job sums those
+# to prove no test fell between shards. Unset locally, nothing changes.
+# trylast: shard what `-m` left, not the whole collection.
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config, items):
+    shard = os.environ.get("PYTEST_SHARD")
+    if not shard:
+        return
+    index, total = (int(part) for part in shard.split("/"))
+    if not 0 <= index < total:
+        raise pytest.UsageError(f"PYTEST_SHARD={shard!r}: index must be in [0, {total})")
+    collected = len(items)
+    kept = [item for position, item in enumerate(items) if position % total == index]
+    dropped = [item for position, item in enumerate(items) if position % total != index]
+    if dropped:
+        config.hook.pytest_deselected(items=dropped)
+    items[:] = kept
+    report = os.environ.get("PYTEST_SHARD_REPORT")
+    if report:
+        import json
+
+        with open(report, "w", encoding="utf-8") as handle:
+            json.dump({"shard": shard, "collected": collected, "selected": len(kept)}, handle)
