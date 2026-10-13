@@ -26,6 +26,7 @@ from app.models.client_operation import (
 )
 
 AUDIT_ACTION_SYNC_CONFLICT_RESOLVED = "sync_conflict_resolved"
+AUDIT_ACTION_SYNC_ADOPT = "sync_adopt"
 AUDIT_ENTITY_CLIENT_OPERATION = "client_operation"
 RESOLUTION_DISMISSED = "dismissed"
 RESOLUTION_APPLIED_AS = "applied_as"
@@ -90,6 +91,9 @@ class ClientOpContext:
     # Set only when no business time is applied (too_old conflict): the
     # unclamped adjusted time stored in the ledger for the reviewer.
     occurred_at: datetime | None = None
+    # Slice B2c: set only for an adopted op (section 8.3) / a stale snapshot.
+    adopted_at: datetime | None = None
+    stale_context: bool = False
 
     def audit_fields(self) -> dict[str, str | int | bool]:
         fields: dict[str, str | int | bool] = {
@@ -102,6 +106,14 @@ class ClientOpContext:
                 {
                     "applied_by_resolver": True,
                     "resolves_op_id": str(self.resolves.original_op_id),
+                    "original_user_id": str(self.user_id),
+                    "submitted_by_user_id": str(self.submitted_by_user_id),
+                }
+            )
+        if self.adopted_at is not None:
+            fields.update(
+                {
+                    "adopted": True,
                     "original_user_id": str(self.user_id),
                     "submitted_by_user_id": str(self.submitted_by_user_id),
                 }
@@ -152,6 +164,9 @@ async def write_applied(
                 occurred_at=occurred_at,
                 result_code=None,
                 time_flag=ctx.time_flag,
+                submitted_by_user_id=ctx.submitted_by_user_id,
+                adopted_at=ctx.adopted_at,
+                stale_context=ctx.stale_context,
                 attempt_count=ClientOperation.attempt_count + 1,
             )
         )
@@ -159,6 +174,7 @@ async def write_applied(
         if not won:
             await db.rollback()
             raise ClientOpAlreadyProcessedError()
+        await _audit_adopt(db, ctx)
         return
 
     if ctx.resolves is not None:
@@ -178,6 +194,8 @@ async def write_applied(
             result_code=RESULT_CODE_RESOLVER_APPLIED if ctx.resolves is not None else None,
             occurred_at=occurred_at,
             time_flag=ctx.time_flag,
+            adopted_at=ctx.adopted_at,
+            stale_context=ctx.stale_context,
             occurred_at_local=ctx.occurred_at_local,
             clock_offset_ms=ctx.clock_offset_ms,
             payload=ctx.payload,
@@ -188,6 +206,30 @@ async def write_applied(
     except IntegrityError as exc:
         await db.rollback()
         raise ClientOpLedgerConflictError() from exc
+    await _audit_adopt(db, ctx)
+
+
+async def _audit_adopt(db: AsyncSession, ctx: ClientOpContext) -> None:
+    """Section 8.3: the ``sync_adopt`` audit entry, written in the same
+    transaction as the business write and the ledger row. Actor = adopter;
+    the original operator is data (``original_user_ids``)."""
+    if ctx.adopted_at is None:
+        return
+    await audit_crud.create(
+        db,
+        user_id=ctx.submitted_by_user_id,
+        action=AUDIT_ACTION_SYNC_ADOPT,
+        entity_type=AUDIT_ENTITY_CLIENT_OPERATION,
+        entity_id=ctx.op_id,
+        after_data={
+            "original_user_ids": [str(ctx.user_id)],
+            "submitted_by_user_id": str(ctx.submitted_by_user_id),
+            "device_id": str(ctx.device_id),
+            "op_ids": [str(ctx.op_id)],
+            "count": 1,
+            "adopted_at": ctx.adopted_at.isoformat(),
+        },
+    )
 
 
 async def _close_original(db: AsyncSession, ctx: ClientOpContext, transaction_id: uuid.UUID) -> None:
@@ -268,6 +310,9 @@ async def record_outcome(
                 result_code=result_code,
                 occurred_at=ctx.occurred_at,
                 time_flag=ctx.time_flag,
+                submitted_by_user_id=ctx.submitted_by_user_id,
+                adopted_at=ctx.adopted_at,
+                stale_context=ctx.stale_context,
                 attempt_count=ClientOperation.attempt_count + 1,
             )
         )
@@ -290,7 +335,8 @@ async def record_outcome(
                     payload=ctx.payload,
                     occurred_at=ctx.occurred_at,
                     time_flag=ctx.time_flag,
-                    stale_context=False,
+                    adopted_at=ctx.adopted_at,
+                    stale_context=ctx.stale_context,
                     attempt_count=1,
                 ),
             )

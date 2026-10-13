@@ -49,6 +49,12 @@ class SyncOperation(BaseModel):
     op_type: Literal["dispatch", "receipt"]
     occurred_at_local: datetime
     clock_offset_ms: int | None = Field(default=None, ge=-(2**40), le=2**40)
+    # Section 9.8: seconds since the device's last successful snapshot when the
+    # op was keyed; the SERVER decides ``stale_context`` from it.
+    snapshot_age_s: int | None = Field(default=None, ge=0, le=2**40)
+    # Section 8.3 (Owner decision D4): explicit adoption by another pool user.
+    adopt: bool = False
+    original_user_id: UUID | None = None
     dispatch: BorrowRequest | None = None
     receipt: SyncReceiptBody | None = None
 
@@ -75,6 +81,11 @@ class SyncOperation(BaseModel):
         else:
             if self.receipt is None or self.dispatch is not None:
                 raise ValueError("op_type 'receipt' requires 'receipt' and forbids 'dispatch'")
+        if self.adopt:
+            if self.original_user_id is None or self.original_user_id != self.user_id:
+                raise ValueError("adopt requires original_user_id equal to user_id")
+        elif self.original_user_id is not None:
+            raise ValueError("original_user_id is only allowed with adopt")
         size = len(json.dumps(self.model_dump(mode="json"), separators=(",", ":")).encode("utf-8"))
         if size > MAX_OP_BYTES:
             raise ValueError(f"operation exceeds {MAX_OP_BYTES} bytes")

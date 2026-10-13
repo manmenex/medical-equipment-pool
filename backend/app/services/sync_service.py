@@ -30,6 +30,7 @@ from app.core.exceptions import (
 )
 from app.crud import client_operation as client_op_crud
 from app.crud import transaction as transaction_crud
+from app.models.user import ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, Role, User
 from app.models.client_operation import (
     OP_STATUS_APPLIED,
     OP_STATUS_CONFLICT,
@@ -57,10 +58,16 @@ class Actor:
     session back, which expires ORM instances; an id survives that."""
 
     id: uuid.UUID
+    # Section 8.3: set only while validating an adopted op; the original
+    # operator whose stranded op this token user is sending.
+    adopted_for: uuid.UUID | None = None
 
 
 CODE_APPLIED = "APPLIED"
 CODE_DUPLICATE = "DUPLICATE"
+# Section 9.8: the server decides staleness; the client only reports the age.
+STALE_CONTEXT_THRESHOLD_S = 4 * 3600
+
 CODE_USER_MISMATCH = "OP_USER_MISMATCH"
 CODE_ID_REUSED = "OP_ID_REUSED"
 CODE_DEVICE_SEQ_REUSED = "DEVICE_SEQ_REUSED"
@@ -123,7 +130,8 @@ def _mismatch(op: SyncOperation) -> SyncOpResult:
 def _from_ledger_row(op: SyncOperation, row: ClientOperation, user: Actor, digest: str) -> SyncOpResult | None:
     """Section 6.3 step 1 for an existing row. ``None`` means "execute it":
     a ``pending`` row is never a terminal answer."""
-    if user.id not in (row.user_id, row.submitted_by_user_id):
+    adopting = user.adopted_for is not None and user.adopted_for == row.user_id
+    if user.id not in (row.user_id, row.submitted_by_user_id) and not adopting:
         return _mismatch(op)
     if row.payload_hash != digest:
         return _result(op, RESULT_REJECTED, CODE_ID_REUSED)
@@ -154,12 +162,16 @@ async def _settle(db: AsyncSession, op: SyncOperation, user: Actor, digest: str)
 
 
 def _context(op: SyncOperation, user: Actor, digest: str, *, pending: bool) -> client_op_crud.ClientOpContext:
+    adopted = user.adopted_for is not None
     return client_op_crud.ClientOpContext(
         op_id=op.op_id,
         device_id=op.device_id,
         device_seq=op.device_seq,
-        user_id=user.id,
+        # Recorded operator = original user; submitter/audit actor = token user.
+        user_id=user.adopted_for if adopted else user.id,
         submitted_by_user_id=user.id,
+        adopted_at=datetime.now(timezone.utc) if adopted else None,
+        stale_context=op.snapshot_age_s is not None and op.snapshot_age_s > STALE_CONTEXT_THRESHOLD_S,
         op_type=op.op_type,
         payload_hash=digest,
         payload=op.business_payload(),
@@ -237,7 +249,7 @@ async def _execute(
         return await borrow_service.borrow(
             db,
             equipment_id=d.equipment_id,
-            borrower_user_id=user.id,
+            borrower_user_id=ctx.user_id,
             ward_id=d.ward_id,
             dispatch_type=d.dispatch_type,
             routine_round=d.routine_round,
@@ -258,7 +270,7 @@ async def _execute(
         transaction_id=r.transaction_id,
         receipt_outcome=r.receipt_outcome,
         notes=r.notes,
-        received_by_user_id=user.id,
+        received_by_user_id=ctx.user_id,
         ip_address=ip,
         user_agent=ua,
         actor_user_id=user.id,
@@ -274,8 +286,22 @@ async def process_operation(
     digest = payload_hash(op.business_payload())
 
     # Step 1: user check FIRST, before anything else is revealed.
+    if op.adopt:
+        # Section 8.3 / D4: only the explicit, validated adoption path lets a
+        # token user differ from the envelope user. The caller already holds
+        # a pool role (route guard); the original must exist and hold one.
+        original = await db.get(User, op.original_user_id)
+        role = await db.get(Role, original.role_id) if original is not None else None
+        if (
+            original is None
+            or original.id == user.id
+            or role is None
+            or role.name not in (ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF)
+        ):
+            return _mismatch(op)
+        user = replace(user, adopted_for=original.id)
     row = await client_op_crud.get(db, op.op_id)
-    if row is None and op.user_id != user.id:
+    if row is None and op.user_id != (user.adopted_for or user.id):
         return _mismatch(op)
     existing_pending = False
     first_seen: datetime | None = None
@@ -283,7 +309,7 @@ async def process_operation(
         res = _from_ledger_row(op, row, user, digest)
         if res is not None:
             return res
-        if op.user_id != user.id:
+        if op.user_id != (user.adopted_for or user.id):
             return _mismatch(op)
         existing_pending = True
         first_seen = row.first_seen_at
