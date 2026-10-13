@@ -19,6 +19,7 @@ from app.core.exceptions import (
 from app.core.redis import cache_delete_prefix
 from app.core.references import ensure_referenced_row_exists
 from app.crud import audit as audit_crud
+from app.crud import client_operation as client_op_crud
 from app.crud import equipment as equipment_crud
 from app.crud import transaction as transaction_crud
 from app.models.equipment import EquipmentStatus
@@ -59,7 +60,18 @@ async def borrow(
     notes: str | None,
     ip_address: str | None,
     user_agent: str | None,
+    actor_user_id: uuid.UUID | None = None,
+    client_op: client_op_crud.ClientOpContext | None = None,
 ) -> BorrowTransaction:
+    # Roadmap PR25E slice B2 (docs/design/PR25D_OFFLINE_OPERATION_PLAN.md
+    # sections 6.3, 8.3): ``borrower_user_id`` is the *recorded operator*;
+    # ``actor_user_id`` is who performed the write (audit actor and
+    # equipment status-history ``changed_by_user_id``) and defaults to the
+    # operator, so every online call is unchanged. ``client_op`` is passed
+    # only by the sync layer: the dispatch then uses ``client_op.op_id`` as
+    # the transaction id and the ledger row is written (flush only) before
+    # the export event and the single commit below.
+    actor_user_id = actor_user_id if actor_user_id is not None else borrower_user_id
     # Equipment selection is always by internal UUID (See ADR-002): a QR
     # scan resolves to one via POST /equipment/resolve-qr first (exact
     # Item No match, See ADR-004), and manual selection resolves one via a
@@ -104,6 +116,7 @@ async def borrow(
     try:
         tx = await transaction_crud.create(
             db,
+            id=client_op.op_id if client_op is not None else None,
             data={
                 "transaction_no": transaction_no,
                 "equipment_id": equipment.id,
@@ -134,18 +147,25 @@ async def borrow(
         raise InvalidInputError("This dispatch references data that is no longer valid.") from exc
 
     await equipment_crud.change_status_for_dispatch_receipt(
-        db, equipment, new_status=EquipmentStatus.ISSUED_TO_WARD, changed_by_user_id=borrower_user_id, reason="Dispatched"
+        db, equipment, new_status=EquipmentStatus.ISSUED_TO_WARD, changed_by_user_id=actor_user_id, reason="Dispatched"
     )
+    audit_after = {"transaction_no": tx.transaction_no, "equipment_id": str(equipment.id)}
+    if client_op is not None:
+        audit_after.update(client_op.audit_fields())
     await audit_crud.create(
         db,
-        user_id=borrower_user_id,
+        user_id=actor_user_id,
         action="borrow",
         entity_type="borrow_transaction",
         entity_id=tx.id,
-        after_data={"transaction_no": tx.transaction_no, "equipment_id": str(equipment.id)},
+        after_data=audit_after,
         ip_address=ip_address,
         user_agent=user_agent,
     )
+    if client_op is not None:
+        # Section 6.3 step 2: ledger row after the business writes and audit,
+        # BEFORE record_event (which must stay the last write).
+        await client_op_crud.write_applied(db, client_op, transaction_id=tx.id, occurred_at=tx.borrowed_at)
     # Roadmap PR25B: must stay the LAST write before commit -- it takes the
     # export counter's row lock, which is what makes the export cursor
     # follow commit order (see app.services.export_service).
@@ -167,7 +187,12 @@ async def return_equipment(
     received_by_user_id: uuid.UUID | None,
     ip_address: str | None,
     user_agent: str | None,
+    actor_user_id: uuid.UUID | None = None,
+    client_op: client_op_crud.ClientOpContext | None = None,
 ) -> BorrowTransaction:
+    # See borrow(): ``received_by_user_id`` is the recorded operator,
+    # ``actor_user_id`` (default: the operator) the audit/status-history actor.
+    actor_user_id = actor_user_id if actor_user_id is not None else received_by_user_id
     tx = await transaction_crud.get_by_id(db, transaction_id)
     if tx is None:
         raise TransactionNotFoundError("Transaction not found")
@@ -246,19 +271,25 @@ async def return_equipment(
         db,
         equipment,
         new_status=new_status,
-        changed_by_user_id=received_by_user_id,
+        changed_by_user_id=actor_user_id,
         reason=f"Returned as {receipt_outcome.value}",
     )
+    audit_after = {"receipt_outcome": receipt_outcome.value}
+    if client_op is not None:
+        audit_after.update(client_op.audit_fields())
     await audit_crud.create(
         db,
-        user_id=received_by_user_id,
+        user_id=actor_user_id,
         action="return",
         entity_type="borrow_transaction",
         entity_id=tx.id,
-        after_data={"receipt_outcome": receipt_outcome.value},
+        after_data=audit_after,
         ip_address=ip_address,
         user_agent=user_agent,
     )
+    if client_op is not None:
+        # Before record_event, which stays the last write (section 6.3).
+        await client_op_crud.write_applied(db, client_op, transaction_id=tx.id, occurred_at=tx.returned_at)
     # Roadmap PR25B: last write before commit (see borrow() above).
     await export_service.record_event(
         db, transaction_id=tx.id, event_type=EVENT_TYPE_RECEIPT, event_at=tx.returned_at

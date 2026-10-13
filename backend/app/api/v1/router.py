@@ -19,6 +19,7 @@ from app.api.v1 import (
     notifications,
     report_options,
     reports,
+    sync,
     transactions,
     users,
 )
@@ -45,3 +46,4 @@ api_router.include_router(legacy_history_import.router)
 api_router.include_router(legacy_reconciliation.runs_router)
 api_router.include_router(legacy_reconciliation.findings_router)
 api_router.include_router(cutover_readiness.router)
+api_router.include_router(sync.router)
