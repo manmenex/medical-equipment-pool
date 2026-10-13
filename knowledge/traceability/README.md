@@ -39,15 +39,6 @@ business-rule document is the one place that explanation lives.
 
 ## Current status note
 
-The identifier and QR architecture in this Knowledge Layer (ADR-002,
-ADR-003, ADR-004) was established after an implementation attempt for
-Roadmap PR5 had already been opened as a pull request. That
-implementation has since been rebased onto the merged Knowledge Layer
-and reconciled against it: canonicalization now matches
-`../architecture/identifiers.md`, the response boundary now matches
-`../architecture/api-information-boundaries.md` (Item No no longer
-appears in an operator-facing response), and the retired legacy
-self-generated QR scheme's runtime paths have been removed per ADR-004.
-The reconciled implementation is pending its own independent review —
-this note records that the reconciliation has happened, not that the
-review has.
+The identifier and QR architecture (ADR-002, ADR-003, ADR-004) is implemented
+and merged (Roadmap PR5 and later). This directory holds implementation
+inventory only; for current project status see `docs/ROADMAP.md`.
