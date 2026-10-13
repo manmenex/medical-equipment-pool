@@ -2,7 +2,16 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 pydantic>=2.8.0
 pydantic-settings>=2.4.0
-sqlalchemy>=2.0.32
+# The [asyncio] extra, not bare sqlalchemy: this application only ever talks
+# to the database through sqlalchemy.ext.asyncio, which needs `greenlet`.
+# SQLAlchemy 2.0 happened to install greenlet anyway; 2.1 stopped, so
+# `sqlalchemy>=2.0.32` resolved to 2.1 and every entry point that imports
+# sqlalchemy.ext.asyncio -- the app, alembic, the whole test suite -- died at
+# import with "The SQLAlchemy asyncio module requires that the Python
+# 'greenlet' library is installed". The extra states the dependency this
+# application actually has instead of relying on another package's transitive
+# one, so a future release moving it again changes nothing here.
+sqlalchemy[asyncio]>=2.0.32
 asyncpg>=0.29.0
 alembic>=1.13.2
 redis>=5.0.8
