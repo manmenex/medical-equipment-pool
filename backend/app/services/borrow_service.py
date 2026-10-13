@@ -121,7 +121,11 @@ async def borrow(
     try:
         tx = await transaction_crud.create(
             db,
-            id=client_op.op_id if client_op is not None else None,
+            id=(
+                (client_op.transaction_id_override or client_op.op_id)
+                if client_op is not None
+                else None
+            ),
             borrowed_at=borrowed_at,
             data={
                 "transaction_no": transaction_no,
