@@ -92,7 +92,13 @@ class FakeDrive:
                 200,
                 json={
                     "files": [
-                        {"id": i, "name": f["name"], "size": str(len(f["content"]))} for i, f in self.files.items()
+                        {
+                            "id": i,
+                            "name": f["name"],
+                            "size": str(len(f["content"])),
+                            "md5Checksum": f.get("md5", hashlib.md5(f["content"]).hexdigest()),
+                        }
+                        for i, f in self.files.items()
                     ]
                 },
             )
@@ -216,6 +222,119 @@ def test_concurrent_run_is_refused(client, tmp_path):
     (tmp_path / lib.LOCK_FILENAME).write_text("123")
     with pytest.raises(lib.DriveBusy):
         run_upload(client, tmp_path)
+
+
+def test_busy_cli_exits_distinct_nonzero_and_says_skipped(tmp_path, capsys, monkeypatch):
+    (tmp_path / lib.LOCK_FILENAME).write_text(f"{os.getpid()} {lib.socket.gethostname()}")
+
+    def boom(args):
+        raise lib.DriveBusy("another upload running")
+
+    monkeypatch.setitem(drive_backup.COMMANDS, "upload", boom)
+    code = drive_backup.main(["--backup-dir", str(tmp_path), "upload"])
+    assert code == drive_backup.EXIT_BUSY and code not in (0, 3)
+    assert "skipped: another upload running" in capsys.readouterr().out
+
+
+def test_lock_with_dead_owner_is_reclaimed_and_reported(drive, client, tmp_path, monkeypatch):
+    make_backup(tmp_path, NOW)
+    (tmp_path / lib.LOCK_FILENAME).write_text(f"999999 {lib.socket.gethostname()}")
+    monkeypatch.setattr(lib, "_pid_alive", lambda pid: False)
+    report = run_upload(client, tmp_path)
+    assert report.ok and len(report.uploaded) == 1
+    assert any("reclaimed stale upload lock" in n for n in report.notes)
+    assert not (tmp_path / lib.LOCK_FILENAME).exists()
+
+
+def test_lock_with_live_owner_is_not_reclaimed(client, tmp_path, monkeypatch):
+    make_backup(tmp_path, NOW)
+    (tmp_path / lib.LOCK_FILENAME).write_text(f"{os.getpid()} {lib.socket.gethostname()}")
+    with pytest.raises(lib.DriveBusy):
+        run_upload(client, tmp_path)
+
+
+def test_lock_older_than_threshold_is_reclaimed(client, tmp_path):
+    make_backup(tmp_path, NOW)
+    lock = tmp_path / lib.LOCK_FILENAME
+    lock.write_text("123 some-other-host")
+    old = lock.stat().st_mtime - lib.STALE_LOCK_SECONDS - 60
+    os.utime(lock, (old, old))
+    report = run_upload(client, tmp_path)
+    assert report.ok and any("older than" in n for n in report.notes)
+
+
+def test_same_size_but_different_md5_on_drive_is_reuploaded(drive, client, tmp_path):
+    dump = make_backup(tmp_path, NOW)
+    manifest = dump.with_name(dump.name + ".manifest.json")
+    bad = drive.seed(dump.name, b"X" * dump.stat().st_size)  # same size, different bytes
+    drive.seed(manifest.name, manifest.read_bytes())
+    report = run_upload(client, tmp_path)
+    assert report.ok and report.uploaded == [dump.name]
+    assert bad not in drive.files
+    assert [f["content"] for f in drive.files.values() if f["name"] == dump.name] == [dump.read_bytes()]
+
+
+def test_orphan_dump_does_not_count_as_a_days_copy(drive, client, tmp_path):
+    # Same old UTC day: complete older pair + orphan newer dump (no manifest).
+    day = NOW - timedelta(days=10)
+    complete = _name(day.replace(hour=1))
+    orphan = _name(day.replace(hour=20))
+    drive.seed(complete, b"x")
+    drive.seed(complete + ".manifest.json", b"{}")
+    drive.seed(orphan, b"x")
+    make_backup(tmp_path, NOW - timedelta(minutes=5))
+    run_upload(client, tmp_path)
+    assert complete in drive.names()  # the complete pair is the day's copy and is kept
+    assert orphan in drive.names()  # orphans are neither counted nor deleted here
+
+
+def test_newest_complete_pair_is_never_deleted_when_newer_orphan_exists(drive, client, tmp_path):
+    old = NOW - timedelta(days=90)
+    drive.seed(_name(old), b"x")
+    drive.seed(_name(old) + ".manifest.json", b"{}")
+    drive.seed(_name(NOW - timedelta(days=1)), b"x")  # newer orphan dump
+    report = run_upload(client, tmp_path)
+    assert report.pruned == [] and _name(old) in drive.names()
+
+
+class _FakeKernel32:
+    def __init__(self, handle):
+        self.handle, self.closed = handle, []
+        self.OpenProcess = lambda access, inherit, pid: self.handle
+        self.CloseHandle = lambda h: self.closed.append(h)
+
+
+@pytest.mark.parametrize(("error", "alive"), [(5, True), (87, False), (31, True)])
+def test_windows_open_process_failure_only_87_means_dead(error, alive):
+    k = _FakeKernel32(0)
+    assert lib._pid_alive_windows(4242, kernel32=k, get_last_error=lambda: error) is alive
+    assert k.closed == []
+
+
+def test_windows_open_process_success_is_alive_and_closes_handle():
+    k = _FakeKernel32(0x1234)
+    assert lib._pid_alive_windows(4242, kernel32=k, get_last_error=lambda: 0) is True
+    assert k.closed == [0x1234]
+
+
+def test_stale_takeover_race_never_steals_a_rivals_fresh_lock(client, tmp_path, monkeypatch):
+    make_backup(tmp_path, NOW)
+    lock = tmp_path / lib.LOCK_FILENAME
+    lock.write_text(f"999999 {lib.socket.gethostname()}")
+    monkeypatch.setattr(lib, "_pid_alive", lambda pid: False)
+    real_replace, fired = os.replace, []
+
+    def racing_replace(src, dst):
+        if not fired:  # a rival reclaims the stale lock and installs its own, just before we rename
+            fired.append(1)
+            real_replace(src, str(src) + ".rival")
+            Path(src).write_text(f"{os.getpid()} rival-host")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(lib.os, "replace", racing_replace)
+    with pytest.raises(lib.DriveBusy):
+        run_upload(client, tmp_path)
+    assert lock.read_text() == f"{os.getpid()} rival-host"  # the rival's lock was restored intact
 
 
 # --- retention on Drive -----------------------------------------------------

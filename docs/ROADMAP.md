@@ -7,8 +7,8 @@
 
 ## Current baseline
 
-**Current baseline: `80f61d6`** — GitHub PR **#150** ("Governance: local
-Production on the department host; Stage 1 roadmap"), squash-merged into
+**Current baseline: `0bca016`** — GitHub PR **#154** ("PR25D: offline
+operation design"), squash-merged into
 `claude/medical-equipment-pool-0c7fz0`. A squash SHA becomes authoritative on
 merge; no separate "baseline adoption" PR is created.
 
@@ -18,8 +18,9 @@ Windows execution) → #142 (Windows Staging/UAT evidence record) → #143 (hour
 backup schedule, tiered retention) → #144 (password change, forced first login,
 lockout) → #145 (parallel CI shards, agent-team pipeline) → #146 (test hash
 speedup) → #147 (workflow docs, shard node ids) → #148 (backend-enforced forced
-password change) → #149 (tests for those gates) → **#150** (local Production
-decision, Stage 1 PR25A–E).
+password change) → #149 (tests for those gates) → #150 (local Production
+decision, Stage 1 PR25A–E) → #151/#152/#153 (docs consolidation) → #155 (PR25A)
+→ #156 (PR25B) → **#154** (PR25D design).
 
 **Where things stand:** Roadmap PR1–PR23 are complete. PR24 (deployment) is in
 progress: code/tooling and local Windows Staging/UAT operation are evidenced
@@ -139,6 +140,12 @@ history live in the Completed table below and in `docs/DECISION_LOG.md`.
 | — (security) | Backend enforcement of the forced first-login password change | #148 | `a1557fe` |
 | — (test) | Test coverage for the forced password change gates | #149 | `00677bc` |
 | — (governance) | Local Production on the department host; Stage 1 roadmap (PR25A–E) | #150 | `80f61d6` |
+| — (docs) | One status source, refreshed knowledge snapshot, management overview | #151 | `30089d8` |
+| — (docs) | Historical docs archived, redundant workflow stubs deleted | #152 | `817903c` |
+| — (docs) | Current workflow everywhere; runbooks reflect the department host | #153 | `5c2cc8c` |
+| PR25D | Offline operation design; Owner decisions D1–D8 recorded | #154 | `0bca016` |
+| PR25A | Off-host backup to Google Drive | #155 | `2ff8a4f` |
+| PR25B | Read-only export API for external consumers (Nsmart Realtime) | #156 | `832ebb1` |
 
 Full rationale and review-fix history for PR5 through PR21E: `docs/DECISION_LOG.md`. PR22-PR25, PR30/PR32, PR35, PR37, PR47, PR49, PR53, PR62, PR64, PR72, PR74, PR76, PR79, PR87, PR88, and PR92 (GitHub PR numbers) are process/documentation-only additions with no code, business-rule, or schema change. PR8A/PR8B/PR8C/PR9A/PR9B/PR10/PR11/PR12/PR13/PR14A/PR14B/PR15A/PR15B/PR16 Slices 1-4/PR17 Slices 1-4/PR18B/PR18C/PR18D/PR18E/PR19A1/PR19A2/PR19A3/PR19B/PR20A/PR20B/PR20C/PR20D/PR20E/PR20F/PR21A/PR21B/PR21C/PR21D1/PR21D2/PR21E0/PR21E (GitHub PR #26, #28, #29, #31, #33, #34, #36, #38, #43, #45, #46, #48, #50, #54, #58, #59, #60, #61, #65, #66, #67, #68, #73, #75, #77, #78, #84, #85, #86, #80, #90, #91, #93, #94, #95, #96, #103, #104, #105, #107, #108, #109, #110) are production code changes. PR18A (GitHub PR #71), PR19A design (GitHub PR #83), PR20 design (GitHub PR #89), and PR21 design (GitHub PR #98, plus its Source Evidence Update GitHub PR #99) are approved design/documentation changes, not runtime implementation. PR10, PR11, PR12, PR13, PR14A, PR14B, PR15A, PR15B, PR16 Slices 1-4, PR17 Slices 1-4, PR18A, PR18B, PR18C, PR18D, PR18E, PR19A (design + A1/A2/A3), PR19B, PR20 (design + A/B/C/D/E/F), PR21 (design + Foundation/ODR1/ODR2/A/B/C/ODR3/D1/D2/E0/E), and both PR9 entries now have a `docs/DECISION_LOG.md` entry (see the PR9, PR10, PR11, PR12, PR13, PR14, PR15, PR16, PR17, PR18A, PR18B, PR18C, PR18D, PR18E, PR19, PR20, and PR21 notes below); PR21A/B/C's own detailed review chronology lives in their own GitHub PR descriptions (#103/#104/#105) rather than being duplicated into `docs/DECISION_LOG.md`, per that file's own PR21 entries.
 
@@ -441,11 +448,11 @@ the department host"). These items finish Roadmap PR24 on that host.
 
 | Roadmap item | Planned scope | Status |
 |---|---|---|
-| PR25A | Off-host backup: upload every hourly backup to the department's Google Drive (OAuth consent of the department account; a service account has no Drive quota on a consumer account), same tiered retention on Drive; scheduled task runs without a logged-in user; restore-from-Drive onto any Docker-capable PC | Not started |
-| PR25B | Read-only export API for external consumers (Nsmart Realtime): dispatches and receipts since a cursor, stable UUID identifiers, no patient data. This system does not integrate with N Smart; the consumer does | Not started |
-| PR25C | External access: Cloudflare Tunnel + Cloudflare Access (allow-listed accounts) in front of the existing login; host hardening checklist (no sleep, scheduled Windows Update window, UPS) | Not started |
-| PR25D | Offline operation design document: PWA offline queue for dispatch/receipt on personal phones, department tablets and PCs; client-generated UUIDs as idempotency keys; replay in client order through the normal lifecycle rules; conflicts go to a human review list, never auto-resolved; 48-hour client journal replayed after a server restore to recover the up-to-1-hour backup gap; per-user queues on shared devices | Not started |
-| PR25E | Offline operation implementation, in slices defined by PR25D | Not started (after PR25D is Owner-approved) |
+| PR25A | Off-host backup: upload every hourly backup to the department's Google Drive (OAuth consent of the department account; a service account has no Drive quota on a consumer account), same tiered retention on Drive; scheduled task runs without a logged-in user; restore-from-Drive onto any Docker-capable PC | Done (#155) |
+| PR25B | Read-only export API for external consumers (Nsmart Realtime): dispatches and receipts since a cursor, stable UUID identifiers, no patient data. This system does not integrate with N Smart; the consumer does | Done (#156) |
+| PR25C | External access: Cloudflare Tunnel + Cloudflare Access (allow-listed accounts) in front of the existing login; host hardening checklist (no sleep, scheduled Windows Update window, UPS) | Not started (awaiting Owner Cloudflare account/domain) |
+| PR25D | Offline operation design document: PWA offline queue for dispatch/receipt on personal phones, department tablets and PCs; client-generated UUIDs as idempotency keys; replay in client order through the normal lifecycle rules; conflicts go to a human review list, never auto-resolved; 48-hour client journal replayed after a server restore to recover the up-to-1-hour backup gap; per-user queues on shared devices | Done (#154); Owner decisions D1–D8 recorded in `docs/design/PR25D_OFFLINE_OPERATION_PLAN.md` §18 |
+| PR25E | Offline operation implementation, in slices defined by PR25D | In progress (slices per design §20) |
 
 Then PR24E (UAT), PR24F (Pilot) and PR24G (Go-Live) run on this host.
 

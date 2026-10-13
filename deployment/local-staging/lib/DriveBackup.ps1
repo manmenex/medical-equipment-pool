@@ -121,6 +121,11 @@ function Invoke-MepDriveUpload {
         }
         $result = Invoke-MepDriveTool -Subcommand @('upload') -Phase 'drive-upload'
         foreach ($line in @($result.Output)) { Write-Host $line }
+        if ($result.ExitCode -eq 4) {
+            Write-Host 'Drive upload skipped: another upload running. The local backup is safe; the next run uploads it.' -ForegroundColor Yellow
+            Write-InstallLog -Phase 'drive-upload' -Level 'WARN' -Message 'Drive upload skipped: another upload running; queued for the next run.'
+            return $false
+        }
         if ($result.ExitCode -ne 0) {
             Write-Host 'WARNING: Drive upload did not complete. The local backup is safe; the upload is queued and retries on the next run.' -ForegroundColor Yellow
             Write-InstallLog -Phase 'drive-upload' -Level 'WARN' -Message "Drive upload incomplete (exit code $($result.ExitCode)); queued for the next run. Run .\drive-backup.ps1 -Status."
