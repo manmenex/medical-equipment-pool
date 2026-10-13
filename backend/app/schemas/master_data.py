@@ -1,7 +1,7 @@
 import re
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel
+from pydantic import AfterValidator, BaseModel, Field
 
 from app.models.user import ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, ROLE_READ_ONLY
 from app.schemas.common import UUIDStr
@@ -68,6 +68,47 @@ class WardCreate(BaseModel):
     name: str
     department_id: str | None = None
     phone: ContactPhone = None
+
+
+class PhoneUpdate(BaseModel):
+    """PATCH body for a ward/department: `phone` only. Any other field is a
+    422; null or blank clears the phone."""
+
+    phone: ContactPhone = None
+
+    model_config = {"extra": "forbid"}
+
+
+WARD_PHONE_IMPORT_MAX_ROWS = 500
+
+
+class WardPhoneImportRow(BaseModel):
+    ward_name: str
+    phone: str | None = None
+
+
+class WardPhoneImportRequest(BaseModel):
+    rows: list[WardPhoneImportRow] = Field(min_length=1, max_length=WARD_PHONE_IMPORT_MAX_ROWS)
+
+    model_config = {"extra": "forbid"}
+
+
+class WardPhoneImportRowResult(BaseModel):
+    row: int
+    ward_name: str
+    phone: str | None
+    outcome: str
+    ward_id: str | None = None
+    current_phone: str | None = None
+    detail: str | None = None
+
+
+class WardPhoneImportResponse(BaseModel):
+    dry_run: bool
+    overwrite: bool
+    applied: bool
+    counts: dict[str, int]
+    results: list[WardPhoneImportRowResult]
 
 
 class LocationOut(BaseModel):
