@@ -2,6 +2,7 @@
 
 **Purpose:** Design (no code) for letting Equipment Pool staff keep dispatching and receiving equipment while the department server is unreachable, and for syncing safely afterwards.
 **Status:** Draft for Owner approval. PR25E (implementation) does not start until the Owner approves this document and answers the open questions in section 18.
+**Approval:** merging this design PR does **not** approve PR25E and does **not** answer section 18. Approval is a separate, recorded Owner decision (Decision Log entry), made after the Owner answers the open questions.
 **Scope of this PR:** this file only. It does not edit `ROADMAP.md`, `DECISION_LOG.md`, ADRs, or any code.
 **Governing sources:** `AGENTS.md`; `docs/BUSINESS_RULES.md`; `docs/ARCHITECTURE_GUARDRAILS.md`; `knowledge/adr/ADR-002` to `ADR-006`; `docs/DECISION_LOG.md` (2026-10-13, "Local Production on the department host"); `docs/ROADMAP.md` ("Stage 1", PR25A to PR25E).
 
@@ -186,11 +187,12 @@ One additive Alembic revision (next after `0024_login_lockout`; additive-first, 
 | `op_type` | `dispatch` / `receipt` | |
 | `payload_hash` | text | SHA-256 of canonical JSON of the business payload; detects `op_id` reuse with different content |
 | `transaction_id` | FK `borrow_transactions.id`, nullable | set when applied; for receipt, the target |
-| `status` | `applied` / `conflict` / `rejected` / `resolved` | `resolved` = a human closed a conflict |
+| `status` | `pending` (retry_later only) / `applied` / `conflict` / `rejected` / `resolved` | `resolved` = a human closed a conflict |
 | `result_code` | text | e.g. `EQUIPMENT_NOT_AVAILABLE`, `TRANSACTION_ALREADY_RETURNED`, `RECEIPT_RACE_LOST`, `INVALID_INPUT`, `FORBIDDEN` |
 | `occurred_at` | timestamptz | adjusted business time actually used (section 11) |
 | `occurred_at_local`, `clock_offset_ms` | | as sent, for audit |
-| `time_flag` | text null | `clamped_future`, `clamped_old`, `before_dispatch` |
+| `first_seen_at` | timestamptz | server time the op was first received; also stored for `retry_later` (ledger row status `pending`) so the 48 h cutoff is server-measured |
+| `time_flag` | text null | `clamped_future`, `clamped_old`, `before_dispatch`, `before_last_receipt` |
 | `received_at` | timestamptz default now | server clock |
 | `attempt_count` | int | |
 | `payload` | JSONB | stored only for non-applied ops (needed for review); applied ops keep it too for 48 h-gap forensics. No patient data exists in the payload by construction |
@@ -202,14 +204,14 @@ No new equipment state, no new transaction state: `BorrowTransaction.status` sta
 
 For each op the sync service:
 
-1. Looks up `op_id`.
-   - Found `applied`/`resolved` with the same `payload_hash` and same `user_id` → return `duplicate` with the original `transaction_id` (HTTP-level success; client marks it acked).
-   - Found with different `payload_hash` → `rejected`, `OP_ID_REUSED` (client bug; never silently accepted).
+1. Checks the token user, then looks up `op_id`. Order matters:
+   - Found, and its `user_id` differs from the token user → `rejected`, `OP_USER_MISMATCH`, **without** revealing the stored result or `transaction_id` (this check precedes every other check so another user replaying an `op_id` learns nothing).
+   - Found `applied`/`resolved` with the same `payload_hash` → return `duplicate` with the original `transaction_id` (client marks it acked).
+   - Found with a different `payload_hash` → `rejected`, `OP_ID_REUSED` (client bug; never silently accepted).
    - Found `conflict`/`rejected` → return the stored result without re-running (re-send is a no-op until a human acts).
-   - Different `user_id` than the token → `rejected`, `OP_USER_MISMATCH`.
-2. Not found → call `borrow_service.borrow(...)` or `return_equipment(...)` with a new optional `client_op` argument. Inside the service, **before its existing `db.commit()`**, the ledger row (`status=applied`) is inserted with `flush`, in the same session. Business write and ledger row therefore commit or roll back together, which is the same atomic-audit pattern the guardrails require. No new commit boundary is introduced.
-3. For dispatch, the transaction is created with `id = op_id`. A concurrent duplicate insert of `op_id` loses on the PK, the session rolls back, and the loser re-reads the ledger and returns `duplicate`.
-4. On a domain error (`EquipmentNotAvailableError`, `TransactionAlreadyReturnedError`, `ReceiptRaceLostError`, `InvalidInputError`, `EquipmentNotFoundError`, `TransactionNotFoundError`), the service has already rolled back its own work; the sync layer then writes the ledger row with `status=conflict` or `rejected` in a **separate small transaction**. That write has no lifecycle effect and cannot be confused with a lifecycle change.
+2. Not found → call `borrow_service.borrow(...)` or `return_equipment(...)` with a new optional `client_op` argument. Inside the service, **before its existing `db.commit()`**, the ledger row (`status=applied`) is inserted with `flush`, in the same session. Business write and ledger row commit or roll back together (the atomic-audit pattern the guardrails require). No new commit boundary is introduced.
+3. For dispatch, the transaction is created with `id = op_id`. Two concurrent sends of the same op can collide on the transaction PK, on the ledger PK, or on `idx_tx_one_active_borrow`. `borrow()` currently converts **every** `IntegrityError` at flush into `EQUIPMENT_NOT_AVAILABLE` or `INVALID_INPUT` (the `except IntegrityError` block in `borrow_service.py`), so a duplicate-send collision looks like a domain conflict. It must not be trusted as one until step 4 has checked the ledger.
+4. On **any** domain error (`EquipmentNotAvailableError`, `TransactionAlreadyReturnedError`, `ReceiptRaceLostError`, `InvalidInputError`, `EquipmentNotFoundError`, `TransactionNotFoundError`) the sync layer does not assume the service rolled back (errors raised before the flush, such as equipment not found or not available, never reach the service's own `rollback()`). It: (a) explicitly `rollback()`s the session; (b) re-reads the ledger by `op_id`; if a row exists (the winner's `applied` row) it returns `duplicate` per step 1's rules; (c) otherwise inserts the `conflict`/`rejected` row with `INSERT ... ON CONFLICT DO NOTHING` in a **separate small transaction** and re-reads by `op_id`, returning whatever row is stored (so a racing winner always beats a loser's conflict row). That write has no lifecycle effect.
 
 A receipt whose target transaction is already `CLOSED` **by this same `op_id`** is a `duplicate` (step 1 catches it). If it is `CLOSED` by a different receipt, it is a genuine conflict (section 9.3), which is the existing `TRANSACTION_ALREADY_RETURNED` / `RECEIPT_RACE_LOST` distinction.
 
@@ -290,7 +292,7 @@ Every `outbox` and `journal` row carries `user_id`. The UI and the sync worker o
 1. **Within one device: strictly by `device_seq`.** That order is the true causal order of what one operator did on one device.
 2. **Across devices: no global order.** Each device sends its own queue when it can; the server applies whatever arrives, each op validated against the state at that moment.
 3. **Dependencies on the same equipment.** If an op ends in `conflict`/`rejected`, later ops in the same queue that touch the same `equipment_id` (or target the same `transaction_id`) become `held` with `blocked_by = <op_id>`; the client does not send them. Unrelated ops continue. The server does not depend on this hold (its own lifecycle checks would also reject an inconsistent follow-up); the hold is to avoid compounding noise and to make the review list read as a story.
-4. **Receipt before dispatch (cross-device or post-restore).** A receipt whose `transaction_id` is unknown to the server, and whose `occurred_at` is within the last 48 h, returns `retry_later: DEPENDENCY_MISSING` (no ledger conflict row). The client retries it on later rounds, because the dispatch may be on another device that has not synced yet or is about to be replayed after a restore. After 48 h it becomes `conflict: TRANSACTION_NOT_FOUND`.
+4. **Receipt before dispatch (post-restore only).** Device B only holds a receipt for a transaction id it learned from the server snapshot or created itself; it never sees device A's unsynced offline dispatch UUID. So an unknown `transaction_id` arises in practice only after a restore, when the dispatch was lost with the backup and will be replayed from a journal. A receipt with an unknown `transaction_id`, whose `first_seen_at` (server time of the first receipt of that `op_id`, never client time) is within the last 48 h, returns `retry_later: DEPENDENCY_MISSING` (no ledger conflict row). The client retries it on later rounds, because the dispatch is about to be replayed from a journal. After 48 h it becomes `conflict: TRANSACTION_NOT_FOUND`.
 
 ### 9.2 Why not wall-clock across devices
 
@@ -369,6 +371,7 @@ Backups are hourly. If the server PC dies, the restored database misses up to ab
   - If later than `received_at + 2 min` → clamp to `received_at`, `time_flag=clamped_future`.
   - If older than `received_at - 7 days` → clamp to `received_at`, `time_flag=clamped_old`.
   - A receipt earlier than its dispatch `borrowed_at` → clamp to the dispatch time, `time_flag=before_dispatch`.
+  - A dispatch earlier than the same equipment's latest `returned_at` → clamp to that `returned_at`, `time_flag=before_last_receipt`. Without this, a backdated dispatch (up to 7 days) overlaps the previous usage interval and distorts PR16 `business_date`/`shift` counts.
 - Flagged ops are applied normally (the operator did act) but appear in a "time adjusted" filter on the review list and in the admin status page. They never block.
 - The device clock is never used to *order* anything (9.2). A device whose clock was wrong and never contacted the server since being fixed produces a bad offset; the guards above bound the damage to the flagged window.
 - Display: the pending badge shows the local entry time; the confirmed record later shows the adjusted time.
@@ -467,7 +470,7 @@ Current: `registerType: "autoUpdate"` activates a new service worker and may rel
 | 21 | Operator edits an already queued item | Divergence | Queued items are immutable; "discard" and re-enter instead |
 | 22 | Replay of a very old op (> 7 days) | Time anomaly | Applied with `clamped_old`; flagged |
 | 23 | Server host down and also the Drive backup stale | Beyond recovery of this feature | Out of scope; PR25A monitoring |
-| 24 | Two users on one shared device dispatch the same equipment offline | Possible duplicate pending entry | The local double-entry guard is per device, not per user, so a shared tablet cannot hold two pending dispatches of the same item; the server would reject the second anyway |
+| 24 | Two users on one shared device dispatch the same equipment offline | Possible duplicate pending entry | The local double-entry guard is per device, not per user: it blocks with a generic "this item already has a pending entry on this device" message and shows nothing of the other user's rows (8.1 holds); the server would reject the second anyway |
 
 ---
 
@@ -485,14 +488,14 @@ Current: `registerType: "autoUpdate"` activates a new service worker and may rel
 
 Backend (pytest; PostgreSQL-marked tests for concurrency evidence, SQLite not claimed as PostgreSQL evidence):
 
-1. Idempotent dispatch: same `op_id` twice sequentially and concurrently (two sessions) → one transaction, one audit row, `duplicate` on the second; ledger row atomic with the business write (kill the commit and assert neither exists).
+1. Idempotent dispatch: same `op_id` twice sequentially and concurrently (two sessions) → one transaction, one audit row, and the concurrent loser gets `duplicate`, **never** `EQUIPMENT_NOT_AVAILABLE`/`INVALID_INPUT` and never a conflict row (cover PK clash, `idx_tx_one_active_borrow` clash, and errors raised before flush); another user replaying the `op_id` gets `OP_USER_MISMATCH` with no `transaction_id` leaked; ledger row atomic with the business write (kill the commit and assert neither exists).
 2. Idempotent receipt: same `op_id` → `duplicate`; different `op_id` on a closed transaction → `TRANSACTION_ALREADY_RETURNED` conflict row; concurrent receipts → exactly one wins, loser `RECEIPT_RACE_LOST`.
 3. `op_id` reuse with different payload → `OP_ID_REUSED`; token user ≠ envelope user → `OP_USER_MISMATCH`; role removed → `FORBIDDEN`.
 4. Dispatch conflict matrix (section 9.4): each cause produces the right code, no equipment or transaction mutation, and a ledger row with the payload.
 5. The sync endpoint cannot change equipment status or transaction status in any way other than through the services (assert the envelope schema rejects extras; assert `RECEIPT_OUTCOME_TO_STATUS` is the only mapping used).
 6. `verify`: unknown/known id sets; bounded size; restore simulation (apply ops, delete ledger and business rows to model a backup, replay journal → state rebuilt, duplicates dedupe).
 7. Dependency handling: receipt before dispatch → `retry_later`; after 48 h → conflict.
-8. Business-time guards: future, old, before-dispatch clamps; PR16 `business_date`/`shift` computed from adjusted time.
+8. Business-time guards: future, old, before-dispatch clamps, and a backdated dispatch predating the equipment's latest `returned_at` is clamped (`before_last_receipt`) so usage intervals never overlap; PR16 `business_date`/`shift` computed from adjusted time.
 9. Resolution: dismiss, apply-now preconditions, audit entry atomic with ledger update, role gates, `read_only` denied.
 10. Migration: additive upgrade/downgrade tests for `client_operations`; existing `POST /borrow` and `/return` tests unchanged and still green.
 11. Snapshot: pagination determinism, bounded sizes, no Item No/Asset Number/user fields (contract test).
@@ -528,7 +531,7 @@ End-to-end / manual evidence (reported honestly as such, not as CI):
 | Q8 | Journal window 48 h: confirm, or lengthen (for example 72 h) to cover weekends? | 48 h as decided | Recovery coverage vs stored data |
 | Q9 | Personal phones: is requiring an OS screen lock (and optionally a "remove data" button procedure when a phone is replaced) acceptable as the only at-rest control? App-level PIN/encryption is a non-goal in v1. | Yes | Hospital IT policy |
 | Q10 | After a restore, should a runbook step mark that "restore happened" and show operators a notice ("some entries are being re-sent")? | Optional; verify already detects within 15 min | Operator reassurance |
-| Q11 | Is "offline receipt for a transaction not in this device's cache" (dispatched elsewhere) acceptable as "record on paper and key later"? Alternative is receipt-by-equipment (server finds the open transaction), which risks closing the wrong dispatch (re-dispatched meanwhile). | Receipt by `transaction_id` only | Safety versus convenience |
+| Q11 | An offline receipt is only possible for a transaction in this device's cache or dispatched on this device; an item dispatched on another device while this one is offline cannot be received offline. Acceptable as "record on paper and key later"? Alternative is receipt-by-equipment (server finds the open transaction), which risks closing the wrong dispatch (re-dispatched meanwhile). | Receipt by `transaction_id` only | Safety versus convenience |
 
 ---
 
@@ -556,13 +559,14 @@ Each slice is one small, independently reviewable PR with its own tests. Order m
 | Slice | Content | Depends on | Proves (acceptance tests) |
 |---|---|---|---|
 | **B1** | `client_operations` migration and model; `crud.transaction.create/close` accept explicit `id` and business time; no endpoint yet | none | Migration upgrade/downgrade; existing tests green; explicit-id create works |
-| **B2** | `POST /sync/operations` for dispatch and receipt: envelope schema, ledger-in-service atomicity, idempotency, conflict/rejected rows, error codes, role/user checks, time guards; audit enrichment | B1 | Test items 1 to 5, 7, 8 |
+| **B2** | `POST /sync/operations` for dispatch and receipt: envelope schema, ledger-in-service atomicity, idempotency, conflict/rejected rows, error codes, role/user checks; audit enrichment | B1 | Test items 1 to 5, 7 |
+| **B2b** | Business-time handling: clock-offset adjustment, future/old/before-dispatch/before-last-receipt clamps, `time_flag`, PR16 integration | B2 | Test item 8 |
 | **B3** | `POST /sync/verify`, `GET /sync/snapshot` (bounded cursor), `GET /sync/status` | B2 | Test items 6, 11 |
 | **B4** | Conflict list and resolve endpoints (dismiss, apply-now), audit on resolve, role gates | B2 | Test item 9 |
-| **S1** | Frontend: auth/offline hardening only — stop logging out on refresh network errors; unreachable detection helper; replace `mep-api-cache` rule; `navigateFallbackDenylist`; logout wipe including Cache Storage and React Query | none | Tests item 13 (no-logout-on-network-error), wipe tests; shell loads offline in a manual drill |
+| **S1** | Frontend: auth/offline hardening only — stop logging out on refresh network errors; unreachable detection helper; `navigateFallbackDenylist`; logout wipe including Cache Storage and React Query | none | Tests item 13 (no-logout-on-network-error), wipe tests; shell loads offline in a manual drill |
 | **S2** | Frontend: IndexedDB layer (`meta`, `outbox`, `journal`, refs), versioned upgrades, per-user isolation, `device_id`/`device_seq`, hard cap; no UI | none | Test items 12, 15 |
 | **S3** | Frontend: sync worker (ordering, hold logic, backoff, Web Lock, token refresh and re-auth, verify and journal replay, clock offset) against B2/B3 | B2, B3, S1, S2 | Test items 13, 14 |
-| **S4** | Frontend: dispatch and receipt forms moved onto the outbox path (online and offline), reference snapshot cache, BCM offline search, local double-entry guard, pending badge, connection chip, stale labels, sync screen | S3 | Test item 16; manual two-profile drill |
+| **S4** | Frontend: dispatch and receipt forms moved onto the outbox path (online and offline); the `mep-api-cache` runtime rule is removed in this same PR that introduces the IndexedDB snapshot, so there is no window without a reference cache; reference snapshot cache, BCM offline search, local double-entry guard, pending badge, connection chip, stale labels, sync screen | S3 | Test item 16; manual two-profile drill |
 | **S5** | Frontend: Needs review page and header badge, conflict notices, discard-own-item | B4, S4 | Test item 16; role visibility |
 | **S6** | PWA update strategy: `registerType: "prompt"`, update notice, `CLIENT_TOO_OLD` handling, install prompt, `storage.persist()` | S4 | Update-during-pending-ops test |
 | **D1** | Docs and runbook updates: restore runbook additions (Needs review, master-data re-entry), operator quick guide (Thai), `docs/api/` pages for sync endpoints, `ROADMAP`/`DECISION_LOG`/knowledge updates as the workflow requires | all | Docs review |
