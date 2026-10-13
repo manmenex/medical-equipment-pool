@@ -5,10 +5,13 @@ implementation, review, merge, baseline management, and governance
 synchronization.
 
 **Authority:** This document is subordinate to
-[`PROJECT_PLAYBOOK.md`](PROJECT_PLAYBOOK.md). The Playbook governs roles,
-governance hierarchy, and change control; topic-owning documents govern their
-assigned subjects. If this document conflicts with either, the Playbook or the
-applicable topic-owning document controls.
+[`PROJECT_WORKFLOW.md`](PROJECT_WORKFLOW.md), which owns the pipeline, the
+agent roles, and the merge rules (Owner decision, 2026-10-13), and to
+[`PROJECT_PLAYBOOK.md`](PROJECT_PLAYBOOK.md), which governs the governance
+hierarchy and change control. Topic-owning documents govern their assigned
+subjects. If this document conflicts with any of them, they control. This
+document adds engineering detail only: design PRs, baseline SHAs, slicing,
+compatibility, and governance synchronization.
 
 **Update trigger:** A change to the engineering delivery, review, merge,
 baseline, or governance-synchronization process.
@@ -18,9 +21,9 @@ approval.
 
 ## 1. Purpose
 
-This document defines the standard engineering, review, merge, and governance
-workflow for the Medical Equipment Pool project. It operationalizes the
-governance hierarchy and roles defined by `PROJECT_PLAYBOOK.md`.
+This document defines engineering detail for design, baselines, slicing, and
+governance synchronization for the Medical Equipment Pool project. Who does
+what, and who merges, is defined in `PROJECT_WORKFLOW.md`.
 
 The Medical Equipment Pool is production software. It is not a prototype.
 Engineering work MUST preserve business correctness, safety, reviewability,
@@ -44,16 +47,10 @@ and Roadmap change authorize it.
 
 ## 3. Roles and Responsibilities
 
-The responsibilities below are normative execution rules that operationalize
-the roles defined by `PROJECT_PLAYBOOK.md`; they do not replace or redefine
-that authority. Tool names are current operating assignments only and may
-change.
-
-The current working model is:
-
-- ChatGPT: architecture and planning;
-- Claude: implementation;
-- Codex: independent review.
+Agent roles (orchestrator, implementer, reviewer, helper) and the Repository
+Owner's authority are defined in [`PROJECT_WORKFLOW.md`](PROJECT_WORKFLOW.md);
+they are not repeated here. The responsibilities below describe the kinds of
+work done within that team.
 
 ### Architecture and Design
 
@@ -83,9 +80,9 @@ Implementation MUST start from a merged and reviewed baseline. It MUST NOT
 change lifecycle states, QR identity rules, API contracts, or business
 semantics unless the approved design explicitly allows that change.
 
-### Independent Review
+### Review
 
-Independent review is responsible for:
+The reviewer agent is responsible for:
 
 - correctness;
 - architecture consistency;
@@ -96,19 +93,16 @@ Independent review is responsible for:
 - exact-head verification.
 
 Reviewers MUST review the actual diff and the relevant surrounding code or
-documents. A self-review does not satisfy the independent-review requirement.
+documents. A self-review does not satisfy the review requirement. Review
+mechanics: [`prompts/codex-pr-review.md`](prompts/codex-pr-review.md) (the
+reviewer-agent prompt).
 
 ### Repository Owner
 
-The Repository Owner is responsible for:
-
-- Owner Decisions;
-- merge approval;
-- Roadmap priority;
-- resolving business-policy ambiguity.
-
-The Repository Owner may approve exceptions, but exceptions MUST be explicit
-and documented.
+The Repository Owner is responsible for Owner Decisions, Roadmap priority,
+resolving business-policy ambiguity, and authorizing Production deployment.
+Merging is done by the orchestrator under `PROJECT_WORKFLOW.md`. The Owner may
+approve exceptions, but exceptions MUST be explicit and documented.
 
 ## 4. Standard Delivery Lifecycle
 
@@ -130,15 +124,15 @@ Canonical delivery sequence:
 1. Roadmap item selected.
 2. Repository baseline confirmed.
 3. Design PR created when required.
-4. Independent architecture review completed.
+4. Architecture review of the design completed by the reviewer agent.
 5. Owner Decisions resolved or explicitly left open.
 6. Design merged.
 7. Implementation divided into independently reviewable slices.
 8. CI passes on the implementation-slice head.
 9. Slice is marked Ready for review.
-10. Each slice receives independent review of that exact CI-green head.
-11. Repository Owner approves the reviewed head and the slice is merged using
-    the approved merge method.
+10. Each slice receives reviewer-agent review of that exact CI-green head.
+11. On approval, the orchestrator merges the reviewed head using the approved
+    merge method (`PROJECT_WORKFLOW.md`) and reports to the Owner.
 12. The exact commit placed on the base branch becomes the next implementation
     baseline.
 13. After all approved implementation slices are merged, a final governance
@@ -149,16 +143,16 @@ flowchart TD
     A["Roadmap item selected"] --> B["Merged baseline confirmed"]
     B --> C{"Design PR required?"}
     C -- "Yes" --> D["Design PR"]
-    D --> E["Independent architecture review"]
+    D --> E["Reviewer-agent architecture review"]
     E --> F["Owner Decisions resolved or explicitly left open"]
     F --> G["Design squash merge"]
     C -- "No" --> H["Implementation slice"]
     G --> H
     H --> I["CI green on exact head"]
     I --> J["Ready for review"]
-    J --> K["Independent review of exact CI-green head"]
-    K --> L["Repository Owner approval"]
-    L --> M["Approved slice merge"]
+    J --> K["Reviewer-agent review of exact CI-green head"]
+    K --> L["Reviewer approval"]
+    L --> M["Orchestrator merge, report to Owner"]
     M --> N{"All approved implementation slices merged?"}
     N -- "No" --> H
     N -- "Yes: implementation complete" --> O["Final governance synchronization PR"]
@@ -295,7 +289,7 @@ The PR description MUST match the actual file count and scope.
 Metadata-only PR description corrections do not require a commit or re-review
 unless they reveal a substantive scope change.
 
-## 10. Independent Review Policy
+## 10. Review Policy
 
 Reviews MUST distinguish:
 
@@ -310,7 +304,7 @@ Allowed substantive decisions are:
 
 If GitHub prevents `APPROVE` or `REQUEST_CHANGES` because the reviewer owns the
 PR, the reviewer MAY submit `COMMENT` while stating the substantive decision
-explicitly.
+explicitly (see `prompts/codex-pr-review.md`).
 
 Review priorities are:
 
@@ -355,9 +349,9 @@ the review is incremental.
 
 The default merge method is squash merge.
 
-Before merge, verify:
+The orchestrator merges; before merge, verify:
 
-- substantive review approval;
+- substantive reviewer approval;
 - exact-head CI green;
 - mergeable state clean;
 - required conversations resolved;
@@ -509,22 +503,16 @@ A work item is ready for implementation when:
 
 ## 21. Definition of Done
 
-A Roadmap item is done only when:
-
-- all approved implementation slices are merged;
-- tests pass;
-- CI passes on each merged slice's reviewed head;
-- required Owner Decisions are recorded;
-- no known merge blockers remain;
-- documentation matches implementation;
-- governance synchronization is merged;
-- the exact base-branch commit resulting from the final governance merge
-  becomes the new baseline; under the default squash-merge method, this is the
-  squash SHA.
+Per-PR completion criteria are in [`DEFINITION_OF_DONE.md`](DEFINITION_OF_DONE.md).
+A Roadmap item is additionally done only when all approved implementation
+slices are merged, governance synchronization (section 14) is merged, and the
+exact base-branch commit from that merge becomes the new baseline (the squash
+SHA under the default merge method).
 
 ## 22. Exception Policy
 
-Exceptions require explicit documentation and Owner approval.
+Exceptions require explicit documentation and Owner approval. (Process
+changes themselves ride in the PR they serve; see `PROJECT_WORKFLOW.md`.)
 
 An exception MUST state:
 

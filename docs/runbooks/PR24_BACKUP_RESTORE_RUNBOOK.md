@@ -1,6 +1,19 @@
 # Backup / Restore Runbook — Medical Equipment Pool (Roadmap PR24C)
 ## คู่มือปฏิบัติการสำรองข้อมูลและกู้คืนข้อมูล — ระบบบริหารจัดการเครื่องมือแพทย์ส่วนกลาง
 
+> **Note (Owner decision, 2026-10-13): Production runs on the department host.**
+> Production is a department PC (Windows 11 Pro, Docker), not a managed cloud
+> platform; see the "Local Production on the department host" entry in
+> `docs/DECISION_LOG.md` and Roadmap PR25A-E. This revises OD-PR24-1.
+>
+> What this changes in this runbook: there is no managed PostgreSQL and no
+> provider PITR; `pg_dump` backups (this tooling) are the only backup
+> mechanism, taken hourly to keep RPO <= 1h. Each hourly backup is to be
+> copied off the host to the department's Google Drive, with restore-from-Drive
+> onto any Docker-capable PC as the recovery path: that upload is **planned
+> (PR25A) and not built yet**, and this runbook documents no procedure for it.
+> Until PR25A lands, backups exist only where the operator puts them.
+
 **Status:** Operational execution document for the PostgreSQL backup/restore
 capability built in PR24C. Defines the exact commands, safety guards, and
 evidence template operators use for the real backup/restore rehearsal
@@ -69,9 +82,9 @@ consistent via PostgreSQL's own snapshot semantics — no raw file copy, no
 **Provider compatibility (OD-PR24-1):** the tooling assumes only an ordinary
 application/operator PostgreSQL credential with backup/restore privilege —
 never root shell access, filesystem-level access, or PostgreSQL superuser.
-Once a managed PostgreSQL provider is selected, its own managed backup/PITR
-capability may become the preferred RPO mechanism (§6 below) — this tooling
-remains the provider-neutral fallback either way.
+The earlier idea that a managed provider's backup/PITR might replace this
+tooling no longer applies (department host, 2026-10-13): this tooling is the
+backup mechanism.
 
 ---
 
@@ -123,8 +136,8 @@ any previous successful backups untouched.
 `.gitignore` at the repository root.
 
 **Encryption at rest:** required for any location backups are actually
-stored. Provider-managed storage encryption satisfies this once a provider
-is selected (OD-PR24-1); for interim manual/local rehearsal artifacts, use
+stored. On the department host, use the host's disk encryption (and Google Drive's
+storage encryption once PR25A exists); for interim manual/local rehearsal artifacts, use
 your platform's own disk/volume encryption — this tooling does not implement
 custom encryption, and none should be invented here.
 
@@ -202,13 +215,11 @@ reports PASS.
 ## 6. หลักฐาน RPO (RPO evidence)
 
 RPO ≤ 1 hour means the backup mechanism must be capable of producing a
-recoverable backup at least hourly, or an equivalent provider-managed
-continuous/PITR capability meeting the same target. Record, at the time of
+recoverable backup at least hourly, (on the department host there is no provider-managed PITR alternative). Record, at the time of
 each rehearsal or Production readiness review:
 
-- Backup schedule/interval actually configured (e.g. "hourly, via cron
-  invoking `backup_postgres.py`" or "provider-managed PITR, N-minute
-  granularity").
+- Backup schedule/interval actually configured (e.g. "hourly, via a scheduled
+  task invoking `backup_postgres.py`").
 - Timestamp of the most recent successful backup.
 - Alerting/failure behavior if a scheduled backup does not complete
   successfully (a silent backup failure defeats the entire design — see

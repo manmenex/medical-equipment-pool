@@ -45,11 +45,12 @@ GitHub PR number does not replace it.
 ## Draft PR and merge policy
 
 1. Open all normal changes as Draft PRs.
-2. The author may self-review, but independent review is still required. The
-   independent reviewer submits and verifies the GitHub review directly under
+2. The author may self-review, but review by the reviewer agent is still
+   required. It submits and verifies the GitHub review directly under
    [`prompts/codex-pr-review.md`](prompts/codex-pr-review.md).
 3. Mark ready only after applicable Definition of Done evidence and review fixes exist.
-4. Repository Owner chooses and performs the merge.
+4. The orchestrator merges once CI is green and the reviewer has approved the
+   exact head SHA ([`PROJECT_WORKFLOW.md`](PROJECT_WORKFLOW.md)).
 
 **Default merge method:** squash a focused PR into one coherent commit. Use a
 merge commit when preserving a meaningful multi-commit topology, governance

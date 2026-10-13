@@ -1,6 +1,20 @@
 # Staging Deployment Runbook — Medical Equipment Pool (Roadmap PR24D)
 ## คู่มือปฏิบัติการนำระบบขึ้น Staging — ระบบบริหารจัดการเครื่องมือแพทย์ส่วนกลาง
 
+> **Note (Owner decision, 2026-10-13): Production runs on the department host.**
+> Production is a department PC (Windows 11 Pro, Docker), not a managed cloud
+> platform; see the "Local Production on the department host" entry in
+> `docs/DECISION_LOG.md` and Roadmap PR25A-E. This revises OD-PR24-1.
+>
+> What this changes in this runbook: the "managed provider selection" in
+> section 2 and the "Managed Application Platform + Managed PostgreSQL" class
+> are superseded; there is no vendor to select. The immutable-artifact model,
+> the migrate/deploy/verify sequence, and the evidence template still apply;
+> apply them to the department host's Docker deployment. The local staging
+> installation is covered by `PR24_LOCAL_STAGING_INSTALLATION_RUNBOOK.md`.
+> Cloudflare Tunnel + Access (PR25C) and Google Drive backup upload (PR25A) are
+> planned, not built; this runbook does not describe procedures for them.
+
 **Status:** Operational execution document for the CI/CD and Staging
 deployment capability built in PR24D. Defines the exact build/scan/migrate/
 deploy/verify sequence, the immutable-artifact model, and the evidence
@@ -32,9 +46,9 @@ introduced here).
 - PR24D สร้าง *กลไก* (mechanism) สำหรับ build/scan/migrate/deploy/verify และ
   พิสูจน์ว่ากลไกทำงานถูกต้อง ผ่านการรันจริงบน ephemeral CI-provisioned
   PostgreSQL + container บน GitHub Actions runner เท่านั้น
-- **ยังไม่มีการเลือก hosting provider จริง** (OD-PR24-1 อนุมัติเฉพาะ
-  "สถาปัตยกรรมประเภท" — Managed Application Platform + Managed PostgreSQL —
-  ไม่ใช่ผู้ให้บริการรายใดรายหนึ่ง) และ **ยังไม่มีการสร้าง external/paid resource
+- **ไม่มีการเลือก hosting provider อีกต่อไป** (OD-PR24-1 เดิมอนุมัติ
+  "Managed Application Platform + Managed PostgreSQL" แต่ถูกแก้ไขโดยการตัดสินใจ
+  ของ Owner เมื่อ 2026-10-13 ให้ใช้เครื่อง PC ของแผนก) และ **ยังไม่มีการสร้าง external/paid resource
   ใดๆ** โดย PR24D
 - **"CD mechanism proof" ≠ "real Staging environment exists."** ห้ามอ้างว่า
   Staging deployment เกิดขึ้นจริง หรือ real PR24C backup/restore rehearsal
@@ -55,14 +69,17 @@ sign-off (PR24E), Pilot execution (PR24F), Production Go-Live governance
 (PR24G), or the AppSheet cutover procedure (`docs/runbooks/
 PR23_CUTOVER_RUNBOOK.md`).
 
-**Provider status:** not yet selected. §2 below records the candidates and
-trade-offs already documented in the design plan's §6, for the Owner's
-reference when this decision is made. Nothing in this runbook or in PR24D's
-implementation assumes a specific provider.
+**Provider status:** no managed provider will be selected; Production is the
+department host (see the note at the top). §2 below is retained as history of
+the original managed-platform evaluation only. Nothing in this runbook or in
+PR24D's implementation assumes a specific provider.
 
 ---
 
-## 2. Provider selection (OD-PR24-1 architecture class approved; vendor not selected)
+## 2. Provider selection (historical: superseded by the department-host decision, 2026-10-13)
+
+> Retained for history. No vendor will be selected and no paid resource
+> created under this section. Managed PostgreSQL PITR is not part of the plan.
 
 Per `docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md` §28,
 OD-PR24-1 approves the architecture **class** — Managed Application

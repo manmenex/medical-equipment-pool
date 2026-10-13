@@ -7,13 +7,21 @@ Roadmap section remains authoritative.
 
 ## System context
 
+> **Note (Owner decision, 2026-10-13):** Production runs on a department PC
+> (Windows 11 Pro, Docker), not a managed cloud platform; see
+> `docs/DECISION_LOG.md` ("Local Production on the department host") and
+> Roadmap PR25A-E. The diagram below shows the application components, not a
+> hosting provider. Google Drive backup upload (PR25A), Cloudflare Tunnel +
+> Access (PR25C), and offline client operation (PR25D/E) are planned and not
+> drawn because they are not built.
+
 ```mermaid
 flowchart LR
     Requestors["Hospital wards/departments\nexternal requestors\nnot application users"]
     Staff["Equipment Pool / BME operators"]
     Browser["Browser / PWA client"]
 
-    subgraph Managed["Approved managed deployment boundary"]
+    subgraph Host["Department host (Docker)"]
         API["FastAPI backend"]
         PG[("PostgreSQL\nsystem of record")]
         Redis[("Redis\ncache / refresh-token support")]
@@ -26,9 +34,9 @@ flowchart LR
     API --> Redis
 ```
 
-The application does not assume direct access to hospital-managed servers.
-Deployment-provider detail remains unselected. See “Managed deployment
-preferred” in `ARCHITECTURE_DECISIONS.md`.
+The application does not assume direct access to hospital-managed servers; it
+runs on the department host. The older “Managed deployment preferred” text in
+`ARCHITECTURE_DECISIONS.md` is superseded by the Owner decision above.
 
 ## Audit and transaction flow
 
