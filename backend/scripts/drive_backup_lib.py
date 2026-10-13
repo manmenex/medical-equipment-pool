@@ -32,8 +32,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
+import socket
 import tempfile
 import time
 from collections.abc import Callable, Iterator
@@ -53,6 +55,8 @@ from scripts.pg_backup_lib import (
     sha256_checksum,
     utc_now,
 )
+
+logger = logging.getLogger(__name__)
 
 SCOPE = "https://www.googleapis.com/auth/drive.file"
 DEVICE_CODE_URL = "https://oauth2.googleapis.com/device/code"
@@ -535,26 +539,64 @@ class UploadState:
             raise
 
 
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":  # os.kill(pid, 0) would TERMINATE the process on Windows
+        import ctypes
+
+        handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _lock_owner_dead(path: Path) -> bool:
+    """True only when the lock file names this host and a PID that no longer exists."""
+    try:
+        parts = path.read_text(encoding="utf-8").split()
+        pid, host = int(parts[0]), parts[1]
+    except (OSError, ValueError, IndexError):
+        return False  # unknown format: fall back to the age check
+    return host == socket.gethostname() and not _pid_alive(pid)
+
+
 class _Lock:
     def __init__(self, path: Path) -> None:
         self._path = path
+        self.reclaimed: str | None = None
 
     def __enter__(self) -> _Lock:
         for _ in range(2):
             try:
                 fd = os.open(self._path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             except FileExistsError:
+                reason = None
                 try:
                     if time.time() - self._path.stat().st_mtime > STALE_LOCK_SECONDS:
-                        self._path.unlink(missing_ok=True)
-                        continue
+                        reason = f"older than {STALE_LOCK_SECONDS // 3600}h"
+                    elif _lock_owner_dead(self._path):
+                        reason = "its owning process no longer exists"
                 except OSError:
                     pass
-                raise DriveBusy("another Drive upload is already running") from None
+                if reason is not None:
+                    self._path.unlink(missing_ok=True)
+                    self.reclaimed = f"reclaimed stale upload lock ({reason})"
+                    logger.warning(self.reclaimed)
+                    continue
+                raise DriveBusy("another upload running") from None
             with os.fdopen(fd, "w") as fh:
-                fh.write(str(os.getpid()))
+                fh.write(f"{os.getpid()} {socket.gethostname()}")
             return self
-        raise DriveBusy("another Drive upload is already running")
+        raise DriveBusy("another upload running")
 
     def __exit__(self, *exc: object) -> None:
         self._path.unlink(missing_ok=True)
@@ -573,6 +615,7 @@ class UploadReport:
     failed: list[tuple[str, str]] = field(default_factory=list)
     pruned: list[str] = field(default_factory=list)
     prune_error: str | None = None
+    notes: list[str] = field(default_factory=list)
     fatal: str | None = None
 
     @property
@@ -585,16 +628,25 @@ def _iso(dt: datetime) -> str:
 
 
 def _drive_dump_times(names: Any) -> list[tuple[Path, datetime]]:
+    """Complete Drive backups only (dump AND manifest listed).
+
+    An orphan dump or manifest must not count as a day's copy, or retention
+    could keep it while pruning the complete backup of the same day.
+    """
+    present = set(names)
     out = []
-    for name in names:
+    for name in present:
         parsed = parse_backup_filename(name)
-        if parsed is not None:
+        if parsed is not None and manifest_filename_for(name) in present:
             out.append((Path(name), parsed[1]))
     return out
 
 
 def _file_matches(entry: dict[str, Any] | None, path: Path) -> bool:
-    return entry is not None and int(entry.get("size", -1)) == path.stat().st_size
+    if entry is None or int(entry.get("size", -1)) != path.stat().st_size:
+        return False
+    drive_md5 = entry.get("md5Checksum")
+    return not drive_md5 or str(drive_md5).lower() == _md5(path)
 
 
 def upload_pending(
@@ -614,7 +666,9 @@ def upload_pending(
     """
     now = now or utc_now()
     report = UploadReport()
-    with _Lock(backup_dir / LOCK_FILENAME):
+    with _Lock(backup_dir / LOCK_FILENAME) as lock:
+        if lock.reclaimed:
+            report.notes.append(lock.reclaimed)
         state = UploadState.load(state_path)
         state.last_attempt_at = _iso(now)
         try:
@@ -653,7 +707,9 @@ def _run_upload(
     would_prune = {
         p.name
         for p in select_tiered_prune_candidates(
-            _drive_dump_times({*listing, *(b.name for b in local)}),
+            _drive_dump_times(
+                {*listing, *(b.name for b in local), *(b.manifest.name for b in local)}
+            ),
             now=now,
             hourly_retention_hours=hourly,
             daily_retention_days=daily,

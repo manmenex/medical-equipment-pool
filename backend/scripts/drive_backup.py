@@ -119,6 +119,8 @@ def cmd_upload(args: argparse.Namespace) -> int:
     report = upload_pending(
         client, folder_id=config.folder_id, backup_dir=backup_dir, state_path=backup_dir / STATE_FILENAME
     )
+    for note in report.notes:
+        print(f"[drive] WARNING: {note}")
     for name in report.uploaded:
         print(f"[drive] uploaded: {name}")
     for name in report.already_present:
@@ -178,6 +180,10 @@ def cmd_download(args: argparse.Namespace) -> int:
     return 0
 
 
+# Another upload run holds the lock: nothing was uploaded. Distinct from
+# success (0) and failure (3) so wrappers never log a false "upload OK".
+EXIT_BUSY = 4
+
 COMMANDS = {"setup": cmd_setup, "upload": cmd_upload, "status": cmd_status, "list": cmd_list, "download": cmd_download}
 
 
@@ -187,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
         return COMMANDS[args.command](args)
     except DriveBusy as exc:
         print(f"[drive] skipped: {exc}")
-        return 0
+        return EXIT_BUSY
     except DriveError as exc:
         print(f"[drive] FAIL: {scrub(str(exc))}", file=sys.stderr)
         return 3 if args.command == "upload" else 1

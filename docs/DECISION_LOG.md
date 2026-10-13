@@ -9014,3 +9014,25 @@ Here every operation carries a client-generated UUID that doubles as its
 idempotency key, so offline clients cannot collide. A replayed duplicate
 is a no-op, and a lifecycle conflict goes to human review rather than
 being resolved by timestamp (client clocks differ).
+
+## 2026-10-13 — Stage 1 decisions: PR25A, PR25B, PR25D
+
+**PR25B (export API, #156).** The outbox `seq` is assigned in commit order,
+so consumers page strictly by cursor. Consumers authenticate with an
+`X-API-Key` machine credential, an approved exception to JWT-only. Payloads
+use an allow-list. The Owner confirmed BCM Code suffices, so no Item No or
+Asset Number is exported. Ward corrections emit no event (known limitation).
+
+**PR25A (Drive backup, #155).** OAuth device flow with the `drive.file`
+scope only. The scheduled task is registered with a password and runs at :15.
+Restore-from-Drive goes only into a verification database; live promotion is
+manual and Owner-supervised.
+
+**PR25D (offline design, #154).** Owner decisions D1–D8: offline
+identification is BCM search only, QR stays online (D1); ward/department
+phone auto-fill (D2); Pool staff and Administrator resolve conflicts (D3);
+another staff member may adopt a stranded user's pending ops (D4); limits of
+500 ops, 7-day back-dating and a 48-hour journal (D5); OS screen lock is the
+only at-rest control (D6); receipt by `transaction_id` with human-confirmed
+sequencing (D7); no auto-sequencing in v1, re-decided after the pilot (D8).
+Details: `docs/design/PR25D_OFFLINE_OPERATION_PLAN.md` section 18.

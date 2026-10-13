@@ -2197,6 +2197,20 @@ Test-Case 'drive upload: a failed upload NEVER throws and leaves the local archi
     Assert-True (@($result.Logged -match 'queued').Count -gt 0) 'the log must say the upload is queued for retry'
 }
 
+Test-Case 'drive upload: busy (exit 4) is logged as skipped, never as "Drive upload OK"' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $true `
+        -ExitCodeRules @(@{ Match = ' upload'; ExitCode = 4; Output = @('[drive] skipped: another upload running') })
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $script:Logged = @()
+        function Write-InstallLog { param($Phase, $Message, $Level) $script:Logged += "$Level|$Phase|$Message" }
+        $ok = Invoke-MepDriveUpload
+        return [pscustomobject]@{ Ok = $ok; Logged = @($script:Logged) }
+    }
+    Assert-True ($result.Ok -eq $false) 'a skipped upload is not up to date'
+    Assert-True (@($result.Logged -match 'skipped: another upload running').Count -gt 0) 'the skip must be logged'
+    Assert-True (@($result.Logged -match 'Drive upload OK').Count -eq 0) 'must never claim OK when nothing uploaded'
+}
+
 Test-Case 'drive upload: an exception inside the tool wrapper is contained, not propagated' {
     $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $true
     $result = Invoke-WithMocks -Context $ctx -Body {
