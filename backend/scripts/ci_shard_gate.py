@@ -9,6 +9,7 @@ to exactly that number.
 
 Usage: python scripts/ci_shard_gate.py <directory-of-shard-reports> <total>
 """
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -27,6 +28,16 @@ def check(report_dir: Path, total: int) -> list[str]:
         problems.append(f"shards collected different test counts: {sorted(collected)}")
     elif sum(r["selected"] for r in reports) != collected.pop():
         problems.append("shard selections do not add up to the collected count")
+    hashes = {r.get("collected_hash") for r in reports}
+    if len(hashes) != 1 or None in hashes:
+        problems.append("shards did not all collect the identical set of tests")
+    ids = [i for r in reports for i in r.get("nodeids", [])]
+    if len(ids) != len(set(ids)):
+        problems.append("shards overlap: some tests were selected by more than one shard")
+    elif len(hashes) == 1 and None not in hashes:
+        union_hash = hashlib.sha256("\n".join(sorted(ids)).encode()).hexdigest()
+        if union_hash != next(iter(hashes)):
+            problems.append("union of shard selections differs from the collected set (a test ran in no shard)")
     return problems
 
 

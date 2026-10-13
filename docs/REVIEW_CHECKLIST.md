@@ -5,6 +5,8 @@
 **Update trigger:** A shared review criterion changes, or a review-role's focus changes
 **Maintainer:** Documentation/Governance Engineer
 
+> **Notice (Owner decision 2026-10-13):** `docs/PROJECT_WORKFLOW.md` supersedes the Codex/ChatGPT review roles named below; reviews are now done by the Opus reviewer agent. The criteria in this checklist still apply. Reviewers still do not merge or apply fixes directly; the orchestrator merges.
+
 ## Shared checklist (both reviewers)
 
 - [ ] Exact base SHA and head SHA recorded; head SHA matches the PR's actual current head at review time.

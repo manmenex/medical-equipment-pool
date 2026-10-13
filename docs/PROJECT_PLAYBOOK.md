@@ -5,6 +5,8 @@
 **Update trigger:** Governance baseline, workflow, authority, or role-policy change
 **Maintainer:** Documentation/Governance Engineer with Repository Owner approval
 
+> **Notice (Owner decision 2026-10-13):** [`PROJECT_WORKFLOW.md`](PROJECT_WORKFLOW.md) supersedes this Playbook's role, pipeline, review, and merge sections. Where they describe the Claude -> Codex -> ChatGPT -> Owner pipeline, or say the Owner makes every merge decision, follow `PROJECT_WORKFLOW.md` instead (the orchestrator merges once CI is green and the reviewer approves the head SHA; the Owner alone authorizes Production deployment).
+
 ## Project purpose and boundary
 
 The Medical Equipment Pool is a browser/PWA system used by Equipment Pool
@@ -87,7 +89,7 @@ review. The same agent/session must not be the final independent reviewer of
 its own implementation. Review-only tasks never modify files; their sole
 permitted GitHub write is one direct Pull Request review submission under
 [`prompts/codex-pr-review.md`](prompts/codex-pr-review.md). Fixes require
-explicit authorization. The Repository Owner makes the final merge decision.
+explicit authorization. Merge authority is defined in `PROJECT_WORKFLOW.md` (see notice at top).
 
 ## Standard workflow
 
