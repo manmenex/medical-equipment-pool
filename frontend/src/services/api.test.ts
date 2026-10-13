@@ -19,4 +19,18 @@ describe("api PASSWORD_CHANGE_REQUIRED handling", () => {
     await expect(api.get("/equipment", { adapter })).rejects.toBeTruthy();
     expect(assign).toHaveBeenCalledWith("/change-password");
   });
+
+  it("does not navigate when already on the change-password page", async () => {
+    const assign = vi.fn();
+    vi.stubGlobal("location", { pathname: "/change-password", assign });
+    const adapter: AxiosAdapter = (config) =>
+      Promise.reject({
+        isAxiosError: true,
+        config,
+        response: { status: 403, data: { code: "PASSWORD_CHANGE_REQUIRED" }, config },
+      });
+
+    await expect(api.get("/equipment", { adapter })).rejects.toBeTruthy();
+    expect(assign).not.toHaveBeenCalled();
+  });
 });
