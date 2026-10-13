@@ -1,14 +1,16 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { canImportInventory, useAuth } from "@/hooks/useAuth";
+import { PhoneEditRow } from "@/components/PhoneEditRow";
+import { WardPhoneImportPanel } from "@/components/WardPhoneImportPanel";
+import { canImportInventory, canManageWardPhones, useAuth } from "@/hooks/useAuth";
 import { apiErrorMessage } from "@/services/api";
 import { createEquipment } from "@/services/equipment";
 import { commitImport, previewImport } from "@/services/import";
-import { listCategories, listDepartments, listLocations, listWards } from "@/services/masterData";
+import { listCategories, listDepartments, listLocations, listWards, updateDepartmentPhone, updateWardPhone } from "@/services/masterData";
 import type { ImportCommitResponse, ImportPreviewResponse, ImportRowResult, ImportRowStatus } from "@/types";
 
-type Tab = "equipment" | "departments" | "wards" | "locations" | "categories" | "import";
+type Tab = "equipment" | "departments" | "wards" | "locations" | "categories" | "import" | "wardPhones";
 
 const BASE_TABS: { key: Tab; label: string }[] = [
   { key: "equipment", label: "เพิ่มเครื่องมือ" },
@@ -24,10 +26,16 @@ const BASE_TABS: { key: Tab; label: string }[] = [
 // (see hooks/useAuth.ts's canImportInventory).
 const IMPORT_TAB: { key: Tab; label: string } = { key: "import", label: "นำเข้าคลังเครื่องมือ" };
 
+const WARD_PHONES_TAB: { key: Tab; label: string } = { key: "wardPhones", label: "นำเข้าเบอร์โทรหอผู้ป่วย" };
+
 export function AdminPage() {
   const [tab, setTab] = useState<Tab>("equipment");
   const { user } = useAuth();
-  const tabs = canImportInventory(user) ? [...BASE_TABS, IMPORT_TAB] : BASE_TABS;
+  const tabs = [
+    ...BASE_TABS,
+    ...(canImportInventory(user) ? [IMPORT_TAB] : []),
+    ...(canManageWardPhones(user) ? [WARD_PHONES_TAB] : []),
+  ];
 
   return (
     <div className="flex flex-col gap-4">
@@ -52,6 +60,7 @@ export function AdminPage() {
       {tab === "locations" && <LocationsList />}
       {tab === "categories" && <CategoriesList />}
       {tab === "import" && <InventoryImportPanel />}
+      {tab === "wardPhones" && canManageWardPhones(user) && <WardPhoneImportPanel />}
     </div>
   );
 }
@@ -134,26 +143,44 @@ function EquipmentForm() {
 }
 
 function DepartmentsList() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
   const { data } = useQuery({ queryKey: ["departments"], queryFn: listDepartments });
   return (
     <ul className="surface divide-y rounded-xl border">
       {(data ?? []).map((d) => (
-        <li key={d.id} className="px-4 py-2 text-sm">
-          <span className="font-medium">{d.code}</span> — {d.name}
-        </li>
+        <PhoneEditRow
+          key={d.id}
+          label={`${d.code} — ${d.name}`}
+          phone={d.phone}
+          canEdit={canManageWardPhones(user)}
+          onSave={async (phone) => {
+            await updateDepartmentPhone(d.id, phone);
+            await queryClient.invalidateQueries({ queryKey: ["departments"] });
+          }}
+        />
       ))}
     </ul>
   );
 }
 
 function WardsList() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
   const { data } = useQuery({ queryKey: ["wards"], queryFn: listWards });
   return (
     <ul className="surface divide-y rounded-xl border">
       {(data ?? []).map((w) => (
-        <li key={w.id} className="px-4 py-2 text-sm">
-          <span className="font-medium">{w.code}</span> — {w.name}
-        </li>
+        <PhoneEditRow
+          key={w.id}
+          label={`${w.code} — ${w.name}`}
+          phone={w.phone}
+          canEdit={canManageWardPhones(user)}
+          onSave={async (phone) => {
+            await updateWardPhone(w.id, phone);
+            await queryClient.invalidateQueries({ queryKey: ["wards"] });
+          }}
+        />
       ))}
     </ul>
   );

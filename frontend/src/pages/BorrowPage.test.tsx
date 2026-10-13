@@ -60,6 +60,7 @@ const getEquipment = vi.fn();
 const resolveEquipmentByQr = vi.fn();
 const createBorrow = vi.fn();
 const listWards = vi.fn();
+const listDepartments = vi.fn();
 
 // Same rationale as ReturnPage.test.tsx: the QR scanner and BCM search
 // inputs are unrelated dependencies (camera access, debounced network
@@ -75,12 +76,14 @@ vi.mock("@/services/borrow", () => ({
 }));
 vi.mock("@/services/masterData", () => ({
   listWards: (...args: unknown[]) => listWards(...args),
+  listDepartments: (...args: unknown[]) => listDepartments(...args),
 }));
 vi.mock("@/components/QRScanner", () => ({ QRScanner: () => null }));
 vi.mock("@/components/BcmSearchInput", () => ({ BcmSearchInput: () => null }));
 
 beforeEach(() => {
   listWards.mockResolvedValue(wards);
+  listDepartments.mockResolvedValue([]);
   getEquipment.mockResolvedValue(equipment);
   createBorrow.mockResolvedValue(transaction);
   // Roadmap PR7b: BorrowPage seeds its ward select from the persisted
@@ -260,3 +263,50 @@ describe("BorrowPage equipment-loading states (Roadmap PR11 review: loading + er
 // this frontend-terminology PR's scope (no RBAC logic is introduced or
 // modified here). Adding a role-gating test to this file would duplicate
 // coverage that belongs to, and already exists for, that layer instead.
+
+describe("BorrowPage phone prefill (Roadmap PR25E S0)", () => {
+  const phoneWards: Ward[] = [
+    { id: "ward-1", code: "W1", name: "Ward A", department_id: "dep-1", phone: "1111" },
+    { id: "ward-2", code: "W2", name: "Ward B", department_id: "dep-1", phone: null },
+    { id: "ward-3", code: "W3", name: "Ward C", department_id: null, phone: null },
+  ];
+  beforeEach(() => {
+    listWards.mockResolvedValue(phoneWards);
+    listDepartments.mockResolvedValue([{ id: "dep-1", code: "D1", name: "Dep", phone: "9999" }]);
+  });
+
+  it("prefills from the ward, then falls back to the department phone, and stays editable", async () => {
+    const user = userEvent.setup();
+    renderBorrowPage();
+    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
+    const ward = screen.getByLabelText(/หอผู้ป่วยที่รับเครื่อง/);
+    const phone = screen.getByLabelText("เบอร์โทร") as HTMLInputElement;
+
+    await user.selectOptions(ward, "ward-1");
+    await waitFor(() => expect(phone.value).toBe("1111"));
+    await user.selectOptions(ward, "ward-2");
+    await waitFor(() => expect(phone.value).toBe("9999"));
+    await user.selectOptions(ward, "ward-3");
+    await waitFor(() => expect(phone.value).toBe(""));
+
+    await user.selectOptions(ward, "ward-1");
+    await waitFor(() => expect(phone.value).toBe("1111"));
+    await user.clear(phone);
+    await user.type(phone, "5555");
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก" }));
+    await waitFor(() => expect(createBorrow).toHaveBeenCalledWith(expect.objectContaining({ phone_number: "5555" })));
+  });
+
+  it("does not overwrite a value the operator already typed when the ward changes", async () => {
+    const user = userEvent.setup();
+    renderBorrowPage();
+    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
+    const ward = screen.getByLabelText(/หอผู้ป่วยที่รับเครื่อง/);
+    const phone = screen.getByLabelText("เบอร์โทร") as HTMLInputElement;
+
+    await user.type(phone, "7777");
+    await user.selectOptions(ward, "ward-1");
+    await user.selectOptions(ward, "ward-2");
+    expect(phone.value).toBe("7777");
+  });
+});

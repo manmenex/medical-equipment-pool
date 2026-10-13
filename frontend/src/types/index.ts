@@ -196,6 +196,7 @@ export interface Department {
   id: string;
   code: string;
   name: string;
+  phone?: string | null;
 }
 
 export interface Ward {
@@ -203,6 +204,36 @@ export interface Ward {
   code: string;
   name: string;
   department_id: string | null;
+  phone?: string | null;
+}
+
+// Roadmap PR25E slice B0/S0: bulk ward phone import (docs/api/master-data.md).
+export type WardPhoneImportStatus =
+  | "will_set"
+  | "will_overwrite"
+  | "skipped_existing"
+  | "unchanged"
+  | "unknown_ward"
+  | "invalid_phone"
+  | "duplicate_ward_name"
+  | "ambiguous_ward";
+
+export interface WardPhoneImportRow {
+  ward_name: string;
+  phone: string;
+}
+
+export interface WardPhoneImportRowResult {
+  ward_name?: string | null;
+  phone?: string | null;
+  status: WardPhoneImportStatus;
+  [key: string]: unknown;
+}
+
+export interface WardPhoneImportResponse {
+  applied: boolean;
+  counts: Partial<Record<WardPhoneImportStatus, number>>;
+  results: WardPhoneImportRowResult[];
 }
 
 export interface Location {

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { BcmSearchInput } from "@/components/BcmSearchInput";
@@ -8,8 +8,9 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { apiErrorMessage } from "@/services/api";
 import { createBorrow } from "@/services/borrow";
 import { getEquipment, resolveEquipmentByQr } from "@/services/equipment";
-import { listWards } from "@/services/masterData";
+import { listDepartments, listWards } from "@/services/masterData";
 import { useUiStore } from "@/store/uiStore";
+import { resolveWardPhone } from "@/utils/wardPhone";
 import type { BcmSuggestion, DispatchType, Equipment, RoutineRound } from "@/types";
 
 // Roadmap PR7b confirmed fixed four-round MVP schedule (docs/audits/
@@ -38,6 +39,16 @@ export function BorrowPage() {
   const [notes, setNotes] = useState("");
 
   const { data: wards } = useQuery({ queryKey: ["wards"], queryFn: listWards });
+  const { data: departments } = useQuery({ queryKey: ["departments"], queryFn: listDepartments });
+
+  // Roadmap PR25E S0: prefill phone from the selected ward (department
+  // fallback) until the operator types their own value.
+  const phoneTouched = useRef(false);
+  useEffect(() => {
+    if (phoneTouched.current || !wardId) return;
+    const ward = (wards ?? []).find((w) => w.id === wardId);
+    setPhone(resolveWardPhone(ward, departments));
+  }, [wardId, wards, departments]);
 
   useEffect(() => {
     if (presetEquipmentId) {
@@ -105,6 +116,8 @@ export function BorrowPage() {
         <button
           onClick={() => {
             setSuccess(null);
+            phoneTouched.current = false;
+            setPhone(resolveWardPhone((wards ?? []).find((w) => w.id === wardId), departments));
             setEquipment(null);
             setScanning(true);
           }}
@@ -216,7 +229,10 @@ export function BorrowPage() {
             <input
               id="borrow-phone"
               value={phone}
-              onChange={(e) => setPhone(e.target.value)}
+              onChange={(e) => {
+                phoneTouched.current = true;
+                setPhone(e.target.value);
+              }}
               className="w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
             />
           </div>
