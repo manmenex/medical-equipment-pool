@@ -30,6 +30,9 @@ compactly below and points to the document that owns the full rule,
 rationale, and update history for each. Task-specific instructions may
 narrow work but cannot silently override a guardrail, business rule, or
 Roadmap boundary; a real conflict requires an explicit Governance PR.
+A separate Governance PR is required to change domain guardrails, business
+rules, or Roadmap boundaries; process and workflow changes ride in the PR they
+serve.
 
 | Topic | Full detail |
 |---|---|

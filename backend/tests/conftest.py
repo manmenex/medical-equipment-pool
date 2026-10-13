@@ -148,6 +148,7 @@ def pytest_collection_modifyitems(config, items):
     if not 0 <= index < total:
         raise pytest.UsageError(f"PYTEST_SHARD={shard!r}: index must be in [0, {total})")
     collected = len(items)
+    collected_ids = sorted(item.nodeid for item in items)
     kept = [item for position, item in enumerate(items) if position % total == index]
     dropped = [item for position, item in enumerate(items) if position % total != index]
     if dropped:
@@ -155,7 +156,21 @@ def pytest_collection_modifyitems(config, items):
     items[:] = kept
     report = os.environ.get("PYTEST_SHARD_REPORT")
     if report:
+        import hashlib
         import json
 
+        # collected_hash: sha256 of the sorted, newline-joined collected nodeids,
+        # so the gate can prove every shard saw the same set and that the union
+        # of the shards' `nodeids` is exactly that set.
+        collected_hash = hashlib.sha256("\n".join(collected_ids).encode()).hexdigest()
         with open(report, "w", encoding="utf-8") as handle:
-            json.dump({"shard": shard, "collected": collected, "selected": len(kept)}, handle)
+            json.dump(
+                {
+                    "shard": shard,
+                    "collected": collected,
+                    "selected": len(kept),
+                    "collected_hash": collected_hash,
+                    "nodeids": [item.nodeid for item in kept],
+                },
+                handle,
+            )
