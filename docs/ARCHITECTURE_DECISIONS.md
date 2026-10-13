@@ -220,6 +220,12 @@ model itself.
 
 ## Managed deployment preferred
 
+> **Superseded for Production hosting (Governance 2026-10-13).** The Owner
+> chose an Owner-designated department host running Docker, reachable
+> through Cloudflare Tunnel + Access, instead of a managed cloud platform.
+> Portability to a managed platform remains a requirement. See
+> `docs/DECISION_LOG.md`.
+
 **Decision:** Production deployment must not assume direct access to
 hospital-managed servers.
 

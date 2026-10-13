@@ -902,6 +902,31 @@ migration scope is divided as follows:
 
 The migration must not redesign or replace the hospital QR system.
 
+## Stage 1: local Production and resilience (approved 2026-10-13)
+
+The Owner replaced the managed-cloud Production target with an
+Owner-designated department host (Windows 11 Pro, Docker). Rationale and
+risk acceptance: `docs/DECISION_LOG.md` (2026-10-13, "Local Production on
+the department host"). These items finish Roadmap PR24 on that host.
+
+| Roadmap item | Planned scope | Status |
+|---|---|---|
+| PR25A | Off-host backup: upload every hourly backup to the department's Google Drive (OAuth consent of the department account; a service account has no Drive quota on a consumer account), same tiered retention on Drive; scheduled task runs without a logged-in user; restore-from-Drive onto any Docker-capable PC | Not started |
+| PR25B | Read-only export API for external consumers (Nsmart Realtime): dispatches and receipts since a cursor, stable UUID identifiers, no patient data. This system does not integrate with N Smart; the consumer does | Not started |
+| PR25C | External access: Cloudflare Tunnel + Cloudflare Access (allow-listed accounts) in front of the existing login; host hardening checklist (no sleep, scheduled Windows Update window, UPS) | Not started |
+| PR25D | Offline operation design document: PWA offline queue for dispatch/receipt on personal phones, department tablets and PCs; client-generated UUIDs as idempotency keys; replay in client order through the normal lifecycle rules; conflicts go to a human review list, never auto-resolved; 48-hour client journal replayed after a server restore to recover the up-to-1-hour backup gap; per-user queues on shared devices | Not started |
+| PR25E | Offline operation implementation, in slices defined by PR25D | Not started (after PR25D is Owner-approved) |
+
+Then PR24E (UAT), PR24F (Pilot) and PR24G (Go-Live) run on this host.
+
+**Stage 2 (confirmed direction, not scheduled):** bring the PM/CAL and
+Repair dashboards into this application **reading from N Smart only**.
+N Smart remains the system of record. Requires its own Governance PR that
+narrows "No MEMS integration" to "read from MEMS, never write".
+
+**Stage 3 (out of scope):** this system replacing N Smart as the hospital's
+system of record. Excluded by the Owner, 2026-10-13.
+
 ## Prior planned note (superseded where inconsistent)
 
 The PR15A-era text below is retained for provenance. Its statement that the
@@ -925,7 +950,7 @@ Per `docs/audits/04-consolidated-implementation-plan.md` Part D:
   not separate Day/Night tables or a new equipment lifecycle state. Any future
   session workflow would require its own approval and must not contradict PR16.
 - **Standby Snapshots** — Day/Night department-level equipment-count reports.
-- **Managed deployment** — production must not assume direct access to hospital-managed servers.
+- **Managed deployment** — superseded for Production hosting by Governance 2026-10-13 (department host); the system must stay managed-platform portable.
 - **Create-from-import** — Roadmap PR12 (Inventory Import, GitHub PR #43) shipped update-only; creating new equipment from an imported spreadsheet row was deferred, not permanently prohibited, pending a dedicated design for real hospital Asset Number assignment (hospital-assigned values, a nullable-provisional-record model, or another authoritative approach) and, if the identifier model itself needs to change, a governing ADR update. See `docs/ROADMAP.md`'s PR12 note and `docs/DECISION_LOG.md` ("Roadmap PR12").
 
 Detail and rationale: `AGENTS.md` ("Confirmed Future Workflow Direction"), `docs/ARCHITECTURE_DECISIONS.md`.

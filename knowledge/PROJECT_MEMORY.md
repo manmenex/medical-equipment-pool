@@ -41,6 +41,8 @@ React/TypeScript PWA frontend, FastAPI backend, PostgreSQL system of record,
 async SQLAlchemy, and Alembic migrations. Audit records use the canonical audit
 writer and validated request/correlation context. Production behavior must not
 depend on SQLite test behavior or direct access to hospital-managed servers.
+Production runs on an Owner-designated department host under Docker,
+reachable through Cloudflare Tunnel + Access (Governance 2026-10-13).
 
 PR18B adds one canonical, output-neutral `ExportDocument` model for all three
 PR17 report families. Stable report identities, export metadata, deterministic

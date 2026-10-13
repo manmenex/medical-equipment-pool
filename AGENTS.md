@@ -53,15 +53,20 @@ serve.
 - Dispatch/receipt services own the transaction lifecycle; do not bypass them via manual status maintenance.
 - Only the first receiving ward is recorded — no ward-to-ward transfer tracking.
 - No patient tracking, no MEMS integration, no PM/calibration/recall workflow.
+  "No MEMS integration" means this system never writes to, calls, or depends
+  on a MEMS (N Smart). An external tool may read this system's read-only
+  export API; that tool, not this system, owns any MEMS integration
+  (Governance 2026-10-13, `docs/DECISION_LOG.md`).
 
 Do not introduce any of the above unless a task explicitly asks for it and cites the approving Governance PR/ADR.
 
 # Confirmed Future Workflow Direction
 
 Reporting metadata (`business_date` and `shift`) is planned for Roadmap PR16;
-Day and Night are values in one model, not separate tables. Standby Snapshots,
-any richer Shift Session workflow, and the managed-deployment constraint remain
-separate future work. Do not build them ahead of their planned PR; do not
+Day and Night are values in one model, not separate tables. Standby Snapshots
+and any richer Shift Session workflow remain separate future work. Production
+runs on an Owner-designated department host (Governance 2026-10-13), and the
+system must stay portable to a managed platform. Do not build them ahead of their planned PR; do not
 design current work to contradict or block them. See
 [`docs/ROADMAP.md`](docs/ROADMAP.md) ("Confirmed future work") and
 [`docs/ARCHITECTURE_DECISIONS.md`](docs/ARCHITECTURE_DECISIONS.md) for rationale.

@@ -8977,3 +8977,40 @@ route with 403 `PASSWORD_CHANGE_REQUIRED` until the password is changed; only
 `GET /auth/me` and `POST /auth/change-password` are exempt (a separate
 dependency, not path matching). Why: reviewer finding on PR #144; the Owner
 chose enforcement. Administrators with the flag are covered too, intentionally.
+
+## 2026-10-13 — Local Production on the department host; staged scope
+
+**Decisions (Repository Owner).**
+1. **Hosting.** Production runs on a department PC (Windows 11 Pro, Docker)
+   instead of a managed cloud platform. This revises OD-PR24-1.
+2. **Backups.** Every hourly backup is copied off the host to the
+   department's Google Drive. RPO <= 1h is kept.
+3. **Outages.** No standby machine exists. Recovery is restore-from-Drive
+   onto any Docker-capable PC, plus offline operation in the client
+   (PR25D/E).
+4. **N Smart.** N Smart is the hospital's MEMS and system of record. This
+   system exposes a read-only export API; Nsmart Realtime reads it and keys
+   into N Smart itself. HN stays out of this system and continues to be
+   entered in N Smart.
+5. **Access.** External access goes through Cloudflare Tunnel + Access in
+   front of the existing login.
+6. **Scope.** Stage 1 (above) first; Stage 2 (PM/CAL and Repair dashboards,
+   read-only from N Smart) may follow under its own Governance PR; Stage 3
+   (replacing N Smart) is out of scope.
+
+**Risk acceptance (Owner).** The host is on a Wi-Fi network outside the
+hospital network policy. The Owner judged this acceptable because the
+system stores equipment data only (identified by ID codes) and no patient
+data. The host is shared with Nsmart Realtime, NsmartPMCAL and
+NsmartRepair.
+
+**Why "No MEMS integration" still holds.** The guardrail now reads: this
+system never writes to, calls, or depends on a MEMS. Publishing a read-only
+API that an external tool consumes is not integration by this system.
+
+**Why offline uses UUIDs.** The AppSheet process produced duplicate keys
+because an unsynced client derived the next key from stale local data.
+Here every operation carries a client-generated UUID that doubles as its
+idempotency key, so offline clients cannot collide. A replayed duplicate
+is a no-op, and a lifecycle conflict goes to human review rather than
+being resolved by timestamp (client clocks differ).

@@ -52,7 +52,12 @@
 - Do not add unbounded collection reads, client-controlled stored values, or
   nondeterministic pagination.
 - Do not invent server, network, SSH, database, or deployment access to
-  hospital-managed infrastructure. Production must remain managed-platform portable.
+  hospital-managed infrastructure. Production runs on the Owner-designated
+  department host under Docker (Governance 2026-10-13) and must remain
+  managed-platform portable: no dependency on that host beyond what Docker
+  Compose and the documented operations scripts provide.
+- Do not write to, call, or depend on a MEMS (N Smart). External tools may
+  consume read-only export APIs; MEMS integration stays outside this system.
 - Do not include unrelated refactoring in a focused feature, fix, migration, or security PR.
 
 ## Security and privacy
