@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { apiErrorMessage } from "@/services/api";
 import { importWardPhones } from "@/services/masterData";
@@ -21,7 +21,10 @@ export const WARD_PHONE_STATUS_LABELS: Record<WardPhoneImportStatus, string> = {
 // shown only to admins by the caller; the backend enforces it).
 export function WardPhoneImportPanel() {
   const [text, setText] = useState("");
-  const [rows, setRows] = useState<WardPhoneImportRow[] | null>(null);
+  // The exact {rows, overwrite} pair that produced the shown preview; apply
+  // sends this pair, never the current form state.
+  const [previewed, setPreviewed] = useState<{ rows: WardPhoneImportRow[]; overwrite: boolean } | null>(null);
+  const requestId = useRef(0);
   const [overwrite, setOverwrite] = useState(false);
   const [result, setResult] = useState<WardPhoneImportResponse | null>(null);
   const [applied, setApplied] = useState(false);
@@ -30,6 +33,9 @@ export function WardPhoneImportPanel() {
   const queryClient = useQueryClient();
 
   const invalidate = () => {
+    requestId.current += 1;
+    setLoading(false);
+    setPreviewed(null);
     setResult(null);
     setApplied(false);
   };
@@ -43,31 +49,33 @@ export function WardPhoneImportPanel() {
 
   const run = async (dryRun: boolean) => {
     setError(null);
-    let toSend = rows;
+    let payload = previewed;
     if (dryRun) {
       const parsed = parseWardPhoneCsv(text);
       if (parsed.error) {
         setError(parsed.error);
-        setRows(null);
         invalidate();
         return;
       }
-      toSend = parsed.rows;
-      setRows(parsed.rows);
+      payload = { rows: parsed.rows, overwrite };
     }
-    if (!toSend) return;
+    if (!payload) return;
+    const id = ++requestId.current;
     setLoading(true);
     try {
-      const res = await importWardPhones(toSend, { dryRun, overwrite });
+      const res = await importWardPhones(payload.rows, { dryRun, overwrite: payload.overwrite });
+      if (id !== requestId.current) return; // invalidated while in flight
       setResult(res);
-      if (!dryRun) {
+      if (dryRun) setPreviewed(payload);
+      else {
         setApplied(true);
         queryClient.invalidateQueries({ queryKey: ["wards"] });
       }
     } catch (err) {
+      if (id !== requestId.current) return;
       setError(apiErrorMessage(err, "นำเข้าเบอร์โทรไม่สำเร็จ"));
     } finally {
-      setLoading(false);
+      if (id === requestId.current) setLoading(false);
     }
   };
 
@@ -84,10 +92,12 @@ export function WardPhoneImportPanel() {
         type="file"
         accept=".csv,text/csv"
         aria-label="อัปโหลดไฟล์ CSV"
+        disabled={loading}
         onChange={(e) => void handleFile(e.target.files?.[0])}
       />
       <textarea
         aria-label="ข้อมูล CSV"
+        disabled={loading}
         rows={6}
         value={text}
         onChange={(e) => {
@@ -100,6 +110,7 @@ export function WardPhoneImportPanel() {
         <input
           type="checkbox"
           checked={overwrite}
+          disabled={loading}
           onChange={(e) => {
             setOverwrite(e.target.checked);
             invalidate();
@@ -139,7 +150,7 @@ export function WardPhoneImportPanel() {
               ))}
             </tbody>
           </table>
-          {!applied && (
+          {!applied && previewed && (
             <button
               type="button"
               disabled={loading || changeCount === 0}

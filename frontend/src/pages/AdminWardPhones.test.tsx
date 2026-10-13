@@ -40,7 +40,7 @@ function renderAdmin() {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
 });
 
 describe("Admin ward/department phone UI (Roadmap PR25E S0)", () => {
@@ -97,5 +97,72 @@ describe("Admin ward/department phone UI (Roadmap PR25E S0)", () => {
     await waitFor(() => expect(importWardPhones).toHaveBeenCalledTimes(2));
     expect(importWardPhones.mock.calls[1][1]).toEqual({ dryRun: false, overwrite: true });
     expect(await screen.findByText("นำเข้าเบอร์โทรสำเร็จ")).toBeInTheDocument();
+  });
+
+  const okRes = (applied: boolean) => ({
+    applied,
+    counts: { will_set: 1 },
+    results: [{ ward_name: "Ward A", phone: "1", status: "skipped_existing" }],
+  });
+
+  async function openImport(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole("button", { name: "นำเข้าเบอร์โทรหอผู้ป่วย" }));
+    await user.click(screen.getByLabelText("ข้อมูล CSV"));
+    await user.paste("ward_name,phone\nWard A,1");
+  }
+
+  it("hides confirm after editing text or toggling overwrite following a preview", async () => {
+    mockUser = makeUser("administrator");
+    importWardPhones.mockResolvedValue(okRes(false));
+    const user = userEvent.setup();
+    renderAdmin();
+    await openImport(user);
+    await user.click(screen.getByRole("button", { name: /Dry-run/ }));
+    expect(await screen.findByRole("button", { name: /ยืนยันนำเข้า/ })).toBeInTheDocument();
+    await user.click(screen.getByLabelText("เขียนทับเบอร์โทรที่มีอยู่แล้ว"));
+    expect(screen.queryByRole("button", { name: /ยืนยันนำเข้า/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Dry-run/ }));
+    expect(await screen.findByRole("button", { name: /ยืนยันนำเข้า/ })).toBeInTheDocument();
+    await user.type(screen.getByLabelText("ข้อมูล CSV"), "x");
+    expect(screen.queryByRole("button", { name: /ยืนยันนำเข้า/ })).not.toBeInTheDocument();
+  });
+
+  it("disables inputs while a dry-run is pending and applies exactly the previewed pair", async () => {
+    mockUser = makeUser("administrator");
+    let resolve!: (v: unknown) => void;
+    importWardPhones
+      .mockImplementationOnce(() => new Promise((r) => (resolve = r)))
+      .mockResolvedValueOnce(okRes(true));
+    const user = userEvent.setup();
+    renderAdmin();
+    await openImport(user);
+    await user.click(screen.getByRole("button", { name: /Dry-run/ }));
+    expect(screen.getByLabelText("เขียนทับเบอร์โทรที่มีอยู่แล้ว")).toBeDisabled();
+    expect(screen.getByLabelText("ข้อมูล CSV")).toBeDisabled();
+    expect(screen.getByLabelText("อัปโหลดไฟล์ CSV")).toBeDisabled();
+    resolve(okRes(false));
+    await user.click(await screen.findByRole("button", { name: /ยืนยันนำเข้า/ }));
+    await waitFor(() => expect(importWardPhones).toHaveBeenCalledTimes(2));
+    expect(importWardPhones.mock.calls[1]).toEqual([[{ ward_name: "Ward A", phone: "1" }], { dryRun: false, overwrite: false }]);
+  });
+
+  it("ignores a stale dry-run response that lands after the inputs changed", async () => {
+    mockUser = makeUser("administrator");
+    let resolve!: (v: unknown) => void;
+    importWardPhones.mockImplementationOnce(() => new Promise((r) => (resolve = r)));
+    const user = userEvent.setup();
+    renderAdmin();
+    await openImport(user);
+    await user.click(screen.getByRole("button", { name: /Dry-run/ }));
+    // Force a change event despite the disabled checkbox (e.g. a race).
+    const box = screen.getByLabelText("เขียนทับเบอร์โทรที่มีอยู่แล้ว") as HTMLInputElement;
+    box.disabled = false;
+    await user.click(box);
+    resolve(okRes(false));
+    await waitFor(() => expect(importWardPhones).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText("ข้าม (มีเบอร์อยู่แล้ว)")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /ยืนยันนำเข้า/ })).not.toBeInTheDocument();
   });
 });

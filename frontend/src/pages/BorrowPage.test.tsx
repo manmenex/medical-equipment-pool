@@ -79,7 +79,13 @@ vi.mock("@/services/masterData", () => ({
   listDepartments: (...args: unknown[]) => listDepartments(...args),
 }));
 vi.mock("@/components/QRScanner", () => ({ QRScanner: () => null }));
-vi.mock("@/components/BcmSearchInput", () => ({ BcmSearchInput: () => null }));
+vi.mock("@/components/BcmSearchInput", () => ({
+  BcmSearchInput: ({ onSelect }: { onSelect: (s: { id: string }) => void }) => (
+    <button type="button" onClick={() => onSelect({ id: "eq-1" })}>
+      pick-bcm
+    </button>
+  ),
+}));
 
 beforeEach(() => {
   listWards.mockResolvedValue(wards);
@@ -308,5 +314,30 @@ describe("BorrowPage phone prefill (Roadmap PR25E S0)", () => {
     await user.selectOptions(ward, "ward-1");
     await user.selectOptions(ward, "ward-2");
     expect(phone.value).toBe("7777");
+  });
+
+  it("does not prefill for a ward with no phone and no department", async () => {
+    const user = userEvent.setup();
+    renderBorrowPage();
+    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
+    await user.selectOptions(screen.getByLabelText(/หอผู้ป่วยที่รับเครื่อง/), "ward-3");
+    expect((screen.getByLabelText("เบอร์โทร") as HTMLInputElement).value).toBe("");
+  });
+
+  it("prefills again after resetting for the next dispatch", async () => {
+    const user = userEvent.setup();
+    renderBorrowPage();
+    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
+    await user.selectOptions(screen.getByLabelText(/หอผู้ป่วยที่รับเครื่อง/), "ward-1");
+    const phone = screen.getByLabelText("เบอร์โทร") as HTMLInputElement;
+    await waitFor(() => expect(phone.value).toBe("1111"));
+    await user.clear(phone);
+    await user.type(phone, "5");
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก" }));
+    await user.click(await screen.findByRole("button", { name: "เบิกเครื่องถัดไป" }));
+    await user.click(await screen.findByRole("button", { name: "pick-bcm" }));
+    await waitFor(() =>
+      expect((screen.getByLabelText("เบอร์โทร") as HTMLInputElement).value).toBe("1111"),
+    );
   });
 });
