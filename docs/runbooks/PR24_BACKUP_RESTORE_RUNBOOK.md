@@ -8,11 +8,12 @@
 >
 > What this changes in this runbook: there is no managed PostgreSQL and no
 > provider PITR; `pg_dump` backups (this tooling) are the only backup
-> mechanism, taken hourly to keep RPO <= 1h. Each hourly backup is to be
-> copied off the host to the department's Google Drive, with restore-from-Drive
-> onto any Docker-capable PC as the recovery path: that upload is **planned
-> (PR25A) and not built yet**, and this runbook documents no procedure for it.
-> Until PR25A lands, backups exist only where the operator puts them.
+> mechanism, taken hourly to keep RPO <= 1h. Each hourly backup is also copied
+> off the host to the department's Google Drive, with restore-from-Drive onto
+> any Docker-capable PC as the recovery path. **That upload is built (Roadmap
+> PR25A) and documented in section 12.** It has been verified against mocked
+> Google endpoints only; the first real consent, upload and restore-anywhere
+> drill on the department host are still to be performed and recorded.
 
 **Status:** Operational execution document for the PostgreSQL backup/restore
 capability built in PR24C. Defines the exact commands, safety guards, and
@@ -137,7 +138,7 @@ any previous successful backups untouched.
 
 **Encryption at rest:** required for any location backups are actually
 stored. On the department host, use the host's disk encryption (and Google Drive's
-storage encryption once PR25A exists); for interim manual/local rehearsal artifacts, use
+storage encryption for the off-host copy, section 12); for interim manual/local rehearsal artifacts, use
 your platform's own disk/volume encryption — this tooling does not implement
 custom encryption, and none should be invented here.
 
@@ -237,10 +238,14 @@ coverage, and is reported as a failure rather than as a green tick.
 
 Two limitations to record honestly alongside any RPO claim:
 
-- The task runs as the logged-in Windows user, because Docker Desktop lives
-  in that user's session; a task running as SYSTEM could not reach the Docker
-  daemon at all. **No backup runs while that user is logged out or the machine
-  is off.**
+- (PR25A) The task is registered with the Windows account's password and runs
+  whether or not anyone is logged in, at :15 past each hour. It still needs
+  Docker Desktop's engine running, which starts when that account signs in at
+  boot: **no backup runs while the machine is off or Docker Desktop is not
+  running.** See section 12.4.
+- The off-host copy can lag the local one (Drive or the network is down). The
+  RPO claim for a total loss of the host is the age of the newest *uploaded*
+  backup, shown by `.\drive-backup.ps1 -Status`, not of the newest local one.
 - Registering the schedule does not by itself prove an RPO. The claim needs
   the schedule *observed succeeding over time* — which is an operational
   observation, not a code change.
@@ -365,6 +370,164 @@ python scripts/prune_backups.py --backup-dir /path/to/backup/storage \
 - Row-count verification reports counts only, never full row contents.
 - Backup artifacts are never committed to Git (`/backups/` is
   `.gitignore`d at the repository root).
+
+
+---
+
+## 12. สำรองข้อมูลนอกเครื่องไป Google Drive (Off-host backup to Google Drive — PR25A)
+
+### 12.1 What it does
+
+Every `.\backup.ps1` run (the hourly task, or a manual run) first makes the
+local verified backup exactly as before, **then** uploads the new archive and
+its manifest to a folder (`MEP Database Backups`) in the department's Google
+Drive.
+
+- **A Drive failure never fails the backup and never deletes anything local.**
+  The upload is recorded as pending and retried automatically by the next run
+  (the pending queue is derived from what is on disk, so it cannot drift).
+  Check `.\drive-backup.ps1 -Status`.
+- **Same retention on Drive as local**, using the same selection function
+  (`select_tiered_prune_candidates`): all backups for 48 hours, then the newest
+  of each UTC day to 30 days; the newest backup is never deleted (section 9).
+- The upload runs after the deployment lock is released, so a slow link cannot
+  block an update.
+- Scope requested: **`drive.file` only** — the tool can see only the files and
+  folder it created itself, never the rest of the Drive.
+
+### 12.2 One-time Google Cloud setup (department Gmail account)
+
+A service account has no Drive quota on a consumer account, so the tool acts as
+the account itself using OAuth consent, given once.
+
+1. Sign in to <https://console.cloud.google.com/> as the department account and
+   create a project (e.g. `mep-backup`). Enable the **Google Drive API**.
+2. **Google Auth Platform / OAuth consent screen:** user type *External*, add
+   the department account as a test user, scope `.../auth/drive.file`.
+3. **Publish the app: set the publishing status to *In production*.** While in
+   *Testing*, Google expires refresh tokens after **7 days**, which would break
+   the backup every week. `drive.file` is a non-sensitive scope, so no Google
+   verification is required; the consent screen will say the app is unverified
+   (Advanced → continue) — expected for an internal tool.
+4. **Clients → Create client → type "TVs and Limited Input devices".** Keep the
+   *client ID* and *client secret* in the Owner's password manager: they are
+   needed again on any recovery PC. (They are not enough to read the backups;
+   consent as the department account is also required.)
+5. Turn on 2-Step Verification for the department account, and do not share its
+   password beyond the Owner.
+
+### 12.3 One-time setup on the host
+
+```powershell
+cd deployment\local-staging
+.\drive-backup.ps1 -Setup        # asks for client ID/secret, then prints a URL + code
+```
+
+Open the printed URL on any device, sign in as the department account, enter
+the code and approve. The refresh token is saved to
+`deployment\local-staging\secrets\drive-oauth.json` (gitignored; the directory
+is restricted to the current user, SYSTEM and Administrators; the token is
+never printed, logged, or put on a command line). Then:
+
+```powershell
+.\drive-backup.ps1 -Upload       # send the existing backups now
+.\drive-backup.ps1 -Status       # confirm
+.\drive-backup.ps1 -List         # what is on Drive
+```
+
+### 12.4 Scheduled task: hourly, no logged-in user
+
+```powershell
+.\schedule-backup.ps1 -Install   # prompts for the Windows account password
+.\schedule-backup.ps1            # reports registration and last result
+```
+
+- Registered **with the account password**, as the Owner's other tools on this
+  host are, so Task Scheduler runs it in a non-interactive session whether or
+  not anyone is signed in. The password is handed straight to Task Scheduler;
+  this repository never stores, logs or echoes it. Re-run `-Install` after a
+  password change.
+- Starts at **:15** past each hour (never :00 or :30, when the other tools on
+  this host reach N Smart).
+- S4U (no password) was *not* chosen: it gives a token without network
+  credentials or cached secrets and cannot be shown from the repository to
+  reach Docker Desktop's pipe and the user's Docker configuration.
+- Still required: Docker Desktop running (set it to start with Windows and keep
+  the account signed in / auto-logon), the PC awake (no sleep — PR25C
+  checklist) and the account allowed to *log on as a batch job* (the default
+  for local administrators).
+
+### 12.5 Reading `-Status`
+
+```
+Drive backup:      CONFIGURED
+Last local backup: mep-postgres-localstaging-...Z.dump (12 min ago)
+Last upload:       mep-postgres-localstaging-...Z.dump (run finished ...)
+Pending uploads:   0
+STATUS: OK - Drive is up to date
+```
+
+Exit code 1 (and `STATUS: ATTENTION`) means pending uploads or a recorded
+error. Common causes: network down (self-heals), `Re-run the setup command`
+(token revoked/expired — repeat 12.3), Drive folder deleted (repeat 12.3).
+A scheduled task that shows *success* can still have a stale Drive copy, so
+check both `.\schedule-backup.ps1` and `.\drive-backup.ps1 -Status`.
+
+### 12.6 Restore anywhere (fresh Docker-capable PC)
+
+You need: the PC with Docker Desktop and PowerShell 7, this repository, the
+OAuth client ID/secret (12.2 step 4), and the department Google account.
+
+```powershell
+cd deployment\local-staging
+.\install.ps1                              # empty deployment on the new PC
+.\drive-backup.ps1 -Setup                  # same client ID/secret; consent again
+.\restore-from-drive.ps1 -ListOnly         # what is available
+.\restore-from-drive.ps1 -KeepRehearsalDatabase            # latest
+.\restore-from-drive.ps1 -Name mep-postgres-localstaging-<UTC>.dump -KeepRehearsalDatabase
+```
+
+`-Setup` on a new PC re-uses the existing Drive folder (found by name) — it
+does not create a second one. The download is verified against its manifest
+(SHA-256 and size) before it is accepted, then handed to the **existing**
+restore path (`restore.ps1` → `restore_postgres.py`): checksum → identity →
+production guard → same-source guard → empty-target guard → `pg_restore` →
+Alembic check → row counts. No guard is bypassed. Like `restore.ps1`, it
+restores into a *disposable verification database* and `-KeepRehearsalDatabase`
+leaves it in place; it never overwrites the live database.
+
+**Promoting the verified copy to live** (manual, Owner supervised; no
+one-word command exists by design, see `restore.ps1`). Not exercised by any
+automated test — rehearse it during UAT (PR24E) and time it for the RTO record
+(section 7):
+
+1. Note the kept database name printed by the restore
+   (`mep_local_restore_rehearsal_<ts>`) and the live name (`POSTGRES_DB` in
+   `.env`, default as installed).
+2. `.\stop.ps1`, then start only PostgreSQL:
+   `docker compose -p mep-local-staging -f compose.yml --env-file .env up -d --wait postgres`
+3. Swap names (the application is stopped, so there are no live connections):
+   `ALTER DATABASE <live> RENAME TO <live>_empty_before_restore;` then
+   `ALTER DATABASE mep_local_restore_rehearsal_<ts> RENAME TO <live>;` using
+   `docker compose ... exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d postgres -c "..."'`.
+4. `.\start.ps1`, then `.\status.ps1` until Ready. If the installed
+   application is newer than the backup's Alembic revision, run `.\update.ps1`
+   (its pre-update backup gate and migration apply as usual).
+5. Re-run `.\schedule-backup.ps1 -Install` on the new PC. Drop the
+   `<live>_empty_before_restore` database once the Owner confirms.
+
+Data written after the newest *uploaded* backup is lost (RPO). PR25D's client
+journal is the planned mitigation for that gap.
+
+### 12.7 What is and is not proven (as of PR25A)
+
+| Claim | Evidence |
+|---|---|
+| Upload, queue/retry, idempotency, Drive retention, token never in logs/errors/state | `backend/tests/test_pr25a_drive_backup.py` (mocked HTTP) |
+| Orchestration: mounts, no secret on a command line, Drive failure never fails a backup, restore binds to the downloaded file | `deployment/local-staging/tests/Invoke-InstallerTests.ps1` |
+| Real Google consent (device flow), real upload, real Drive quota | **Not proven** — first run on the host |
+| Scheduled task runs with no one logged in and reaches Docker | **Not proven** — verify on the host after `-Install` |
+| Restore-anywhere on a fresh PC, and the promotion steps in 12.6 | **Not proven** — rehearse in UAT |
 
 ---
 
