@@ -89,9 +89,13 @@ function New-MockContext {
         [string]$BackupOutputMode = 'normal',
         [bool]$BackupHostFileMissing = $false,
         [bool]$BackupManifestMissing = $false,
-        [int]$PrerequisiteFailures = 0
+        [int]$PrerequisiteFailures = 0,
+        [bool]$ScheduleRegistered = $false,
+        [int]$ScheduleLastResult = 0
     )
     return [pscustomobject]@{
+        ScheduleRegistered   = $ScheduleRegistered
+        ScheduleLastResult   = $ScheduleLastResult
         ExitCodeRules        = $ExitCodeRules
         EnvFileExists        = $EnvFileExists
         InstallCompleted     = $InstallCompleted
@@ -132,6 +136,80 @@ function Invoke-WithMocks {
         . (Join-Path $deploymentRoot 'lib/Common.ps1')
         . (Join-Path $deploymentRoot 'lib/Operations.ps1')
         . (Join-Path $deploymentRoot 'lib/Backup.ps1')
+        . (Join-Path $deploymentRoot 'lib/Schedule.ps1')
+
+        # --- Windows Task Scheduler seam --------------------------------
+        # The ScheduledTasks cmdlets exist only on Windows, so they are
+        # stubbed here and their arguments recorded. What matters is not
+        # that Windows accepted the call -- it is WHAT we asked Windows to
+        # run: pwsh (never powershell.exe), the real backup.ps1, hidden and
+        # non-interactive, and one instance at a time.
+        $script:ScheduledTaskState = [pscustomobject]@{
+            Registered  = $ctx.ScheduleRegistered
+            LastAction  = $null
+            LastTrigger = $null
+            LastSettings = $null
+            LastPrincipal = $null
+            LastDescription = $null
+            Unregistered = $false
+        }
+        function New-ScheduledTaskAction {
+            param([string]$Execute, [string]$Argument, [string]$WorkingDirectory)
+            $script:ScheduledTaskState.LastAction = [pscustomobject]@{
+                Execute = $Execute; Argument = $Argument; WorkingDirectory = $WorkingDirectory
+            }
+            return $script:ScheduledTaskState.LastAction
+        }
+        function New-ScheduledTaskTrigger {
+            param([switch]$Once, $At, $RepetitionInterval)
+            $script:ScheduledTaskState.LastTrigger = [pscustomobject]@{
+                Once = [bool]$Once; At = $At; RepetitionInterval = $RepetitionInterval
+            }
+            return $script:ScheduledTaskState.LastTrigger
+        }
+        function New-ScheduledTaskSettingsSet {
+            param(
+                [string]$MultipleInstances, [switch]$StartWhenAvailable,
+                [switch]$AllowStartIfOnBatteries, [switch]$DontStopIfGoingOnBatteries,
+                $ExecutionTimeLimit
+            )
+            $script:ScheduledTaskState.LastSettings = [pscustomobject]@{
+                MultipleInstances = $MultipleInstances
+                StartWhenAvailable = [bool]$StartWhenAvailable
+                ExecutionTimeLimit = $ExecutionTimeLimit
+            }
+            return $script:ScheduledTaskState.LastSettings
+        }
+        function New-ScheduledTaskPrincipal {
+            param([string]$UserId, [string]$LogonType, [string]$RunLevel)
+            $script:ScheduledTaskState.LastPrincipal = [pscustomobject]@{
+                UserId = $UserId; LogonType = $LogonType; RunLevel = $RunLevel
+            }
+            return $script:ScheduledTaskState.LastPrincipal
+        }
+        function Register-ScheduledTask {
+            param([string]$TaskName, $Action, $Trigger, $Settings, $Principal, [string]$Description, [switch]$Force)
+            $script:ScheduledTaskState.Registered = $true
+            $script:ScheduledTaskState.LastDescription = $Description
+            return [pscustomobject]@{ TaskName = $TaskName; State = 'Ready' }
+        }
+        function Unregister-ScheduledTask {
+            param([string]$TaskName, [switch]$Confirm)
+            $script:ScheduledTaskState.Unregistered = $true
+            $script:ScheduledTaskState.Registered = $false
+        }
+        function Get-ScheduledTask {
+            param([string]$TaskName, [string]$ErrorAction)
+            if (-not $script:ScheduledTaskState.Registered) { return $null }
+            return [pscustomobject]@{ TaskName = $TaskName; State = 'Ready' }
+        }
+        function Get-ScheduledTaskInfo {
+            param([string]$TaskName, [string]$ErrorAction)
+            return [pscustomobject]@{
+                LastRunTime = (Get-Date); NextRunTime = (Get-Date).AddHours(1)
+                LastTaskResult = $ctx.ScheduleLastResult
+            }
+        }
 
         # --- recording command seam -------------------------------------
         $script:RecordedCalls = @()
@@ -386,6 +464,14 @@ function Invoke-WithMocks {
             # and checksum checks are exercised for real.
             if ($target -and ($target.StartsWith($script:TestBackupRoot) -or
                     $target.StartsWith([System.IO.Path]::GetTempPath()))) {
+                return (Microsoft.PowerShell.Management\Test-Path -LiteralPath $target)
+            }
+            # A .ps1 under the deployment root is a real repository file the
+            # mock has no business faking. Schedule.ps1 refuses to register a
+            # task pointing at a backup.ps1 that does not exist, and that
+            # check is worth exercising against the actual file rather than
+            # against a stub that always says "missing".
+            if ($target -and $target.EndsWith('.ps1') -and $target.StartsWith($deploymentRoot)) {
                 return (Microsoft.PowerShell.Management\Test-Path -LiteralPath $target)
             }
             return $false
@@ -1891,6 +1977,123 @@ Test-Case 'start: never runs a migration' {
     }
     Assert-True (-not ($calls -match 'deploy_migrate\.py')) 'start must never run a migration'
     Assert-True (-not ($calls -match 'build backend frontend')) 'start must not rebuild images'
+}
+
+# ===========================================================================
+# Scheduled backup (PR24D). What matters is not that Windows accepted the
+# registration -- it is WHAT we asked Windows to run every hour.
+# ===========================================================================
+
+Test-Case 'schedule: registers pwsh running the real backup.ps1, hidden and non-interactive' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
+    $state = Invoke-WithMocks -Context $ctx -Body {
+        Register-MepBackupSchedule -IntervalHours 1 | Out-Null
+        return $script:ScheduledTaskState
+    }
+    Assert-True $state.Registered 'the task must actually be registered'
+
+    $exe = Split-Path -Leaf $state.LastAction.Execute
+    # powershell.exe is 5.1, where $ErrorActionPreference = 'Stop' turns
+    # docker compose's ordinary stderr progress into a terminating error.
+    # An unattended hourly task launched with it would fail every hour.
+    Assert-True ($exe -in @('pwsh', 'pwsh.exe')) "the task must run pwsh, not '$exe'"
+
+    $arg = $state.LastAction.Argument
+    Assert-True ($arg -match '-NoProfile') 'the task must not load an operator profile'
+    Assert-True ($arg -match '-NonInteractive') 'an unattended task must never be able to block on a prompt'
+    Assert-True ($arg -match '-WindowStyle Hidden') 'the task must not flash a console every hour'
+    Assert-True ($arg -match 'backup\.ps1') 'the task must run the existing backup.ps1'
+    Assert-True (-not ($arg -match 'uninstall|RemoveData|restore')) 'the task must only ever back up'
+}
+
+Test-Case 'schedule: the registered script path really exists on disk' {
+    # A schedule pointing at a path that does not exist looks like coverage
+    # and provides none.
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
+    $arg = Invoke-WithMocks -Context $ctx -Body {
+        Register-MepBackupSchedule -IntervalHours 1 | Out-Null
+        return $script:ScheduledTaskState.LastAction.Argument
+    }
+    $path = ([regex]::Match($arg, '-File "([^"]+)"')).Groups[1].Value
+    Assert-True (Test-Path -LiteralPath $path) "the scheduled script must exist: '$path'"
+    Assert-True ((Split-Path -Leaf $path) -eq 'backup.ps1') 'the scheduled script must be backup.ps1'
+}
+
+Test-Case 'schedule: a slow backup can never have the next hour stack on top of it' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
+    $state = Invoke-WithMocks -Context $ctx -Body {
+        Register-MepBackupSchedule -IntervalHours 1 | Out-Null
+        return $script:ScheduledTaskState
+    }
+    Assert-True ($state.LastSettings.MultipleInstances -eq 'IgnoreNew') `
+        'overlapping runs must be ignored, not run in parallel'
+    Assert-True ($state.LastSettings.StartWhenAvailable) 'a missed run must be caught up'
+    Assert-True ($null -ne $state.LastSettings.ExecutionTimeLimit) 'a wedged run must be reaped'
+}
+
+Test-Case 'schedule: runs as the interactive user, because Docker Desktop lives in that session' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
+    $principal = Invoke-WithMocks -Context $ctx -Body {
+        Register-MepBackupSchedule -IntervalHours 1 | Out-Null
+        return $script:ScheduledTaskState.LastPrincipal
+    }
+    Assert-True ($principal.LogonType -eq 'Interactive') `
+        'a SYSTEM task could not reach the per-user Docker daemon at all'
+    Assert-True ($principal.RunLevel -eq 'Limited') 'the backup needs no elevation'
+}
+
+Test-Case 'schedule: refuses an interval outside 1-24 hours' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $threw = 0
+        foreach ($h in @(0, -1, 25)) {
+            try { Register-MepBackupSchedule -IntervalHours $h | Out-Null } catch { $threw++ }
+        }
+        return [pscustomobject]@{ Threw = $threw; Registered = $script:ScheduledTaskState.Registered }
+    }
+    Assert-True ($result.Threw -eq 3) 'every out-of-range interval must be refused'
+    Assert-True (-not $result.Registered) 'nothing may be registered once the interval is refused'
+}
+
+Test-Case 'schedule: removing when nothing is registered is a no-op, not an error' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -ScheduleRegistered $false
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $removed = Unregister-MepBackupSchedule
+        return [pscustomobject]@{ Removed = $removed; Unregistered = $script:ScheduledTaskState.Unregistered }
+    }
+    Assert-True (-not $result.Removed) 'nothing was registered, so nothing was removed'
+    Assert-True (-not $result.Unregistered) 'Unregister-ScheduledTask must not be called for a task that does not exist'
+}
+
+Test-Case 'schedule: removing an existing task removes exactly that task' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -ScheduleRegistered $true
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $removed = Unregister-MepBackupSchedule
+        return [pscustomobject]@{ Removed = $removed; Registered = $script:ScheduledTaskState.Registered }
+    }
+    Assert-True $result.Removed 'the task must be reported removed'
+    Assert-True (-not $result.Registered) 'the task must no longer be registered'
+}
+
+Test-Case 'schedule: a task that keeps failing is reported as a failure, not as coverage' {
+    # The dangerous state is not "no schedule" -- it is a schedule that is
+    # registered and failing every hour, which looks like protection.
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true `
+        -ScheduleRegistered $true -ScheduleLastResult 1
+    $output = Invoke-WithMocks -Context $ctx -Body {
+        return (Show-MepBackupScheduleStatus 6>&1 | Out-String)
+    }
+    Assert-True ($output -match 'FAILED') 'a non-zero last result must be reported as FAILED'
+    Assert-True ($output -match 'not backup coverage') 'the operator must be told what a failing schedule means'
+}
+
+Test-Case 'schedule: no schedule is reported plainly, with the RPO consequence stated' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -ScheduleRegistered $false
+    $output = Invoke-WithMocks -Context $ctx -Body {
+        return (Show-MepBackupScheduleStatus 6>&1 | Out-String)
+    }
+    Assert-True ($output -match 'NOT REGISTERED') 'an unscheduled deployment must say so'
+    Assert-True ($output -match 'RPO') 'the operator must be told the consequence, not just the state'
 }
 
 # ===========================================================================
