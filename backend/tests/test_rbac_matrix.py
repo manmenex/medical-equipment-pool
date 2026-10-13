@@ -221,6 +221,35 @@ async def test_create_ward_rbac(client, seeded_users, role, granted):
 
 
 @pytest.mark.parametrize("role, granted", ADMINISTRATOR_ONLY_MATRIX)
+async def test_patch_ward_phone_rbac(client, seeded_users, role, granted):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    ward = (await client.post("/api/v1/wards", headers=admin, json={"code": "RBAC-PW", "name": "RBAC PW"})).json()
+    headers = await _auth_headers(client, role)
+    resp = await client.patch(f"/api/v1/wards/{ward['id']}", headers=headers, json={"phone": "1234"})
+    assert resp.status_code == (200 if granted else 403), resp.text
+
+
+@pytest.mark.parametrize("role, granted", ADMINISTRATOR_ONLY_MATRIX)
+async def test_patch_department_phone_rbac(client, seeded_users, role, granted):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    dept = (await client.post("/api/v1/departments", headers=admin, json={"code": "RBAC-PD", "name": "RBAC PD"})).json()
+    headers = await _auth_headers(client, role)
+    resp = await client.patch(f"/api/v1/departments/{dept['id']}", headers=headers, json={"phone": "1234"})
+    assert resp.status_code == (200 if granted else 403), resp.text
+
+
+@pytest.mark.parametrize("role, granted", ADMINISTRATOR_ONLY_MATRIX)
+async def test_import_ward_phones_rbac(client, seeded_users, role, granted):
+    headers = await _auth_headers(client, role)
+    resp = await client.post(
+        "/api/v1/wards/phones/import?dry_run=false",
+        headers=headers,
+        json={"rows": [{"ward_name": "No Such Ward", "phone": "1234"}]},
+    )
+    assert resp.status_code == (200 if granted else 403), resp.text
+
+
+@pytest.mark.parametrize("role, granted", ADMINISTRATOR_ONLY_MATRIX)
 async def test_create_location_rbac(client, seeded_users, role, granted):
     headers = await _auth_headers(client, role)
     resp = await client.post("/api/v1/locations", headers=headers, json={"name": f"RBAC Location {role}"})

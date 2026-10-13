@@ -109,3 +109,4 @@ No query parameters are accepted.
 - `docs/api/receipt.md` — the corresponding return/receipt endpoint that closes a dispatch
 - `docs/api/transactions.md` — general transaction listing/lookup (includes both open and closed transactions)
 - `docs/api/equipment.md` — how `equipment_id` is resolved before a dispatch is created
+- `docs/api/master-data.md` — ward/department master data, including the optional contact `phone` the dispatch form can prefill `phone_number` from

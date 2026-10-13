@@ -4,17 +4,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.deps import get_current_user, require_roles
 from app.core.audit import (
     AUDIT_ACTION_CREATE,
+    AUDIT_ACTION_IMPORT,
+    AUDIT_ACTION_UPDATE,
     AUDIT_ENTITY_CATEGORY,
     AUDIT_ENTITY_DEPARTMENT,
     AUDIT_ENTITY_LOCATION,
     AUDIT_ENTITY_WARD,
     record_audit_event,
 )
+from app.core.exceptions import ResourceNotFoundError
 from app.core.db_errors import translate_integrity_error
 from app.core.references import ensure_referenced_row_exists
 from app.crud import master_data as md_crud
 from app.db.session import get_db
-from app.models.master_data import Department
+from app.models.master_data import Department, Ward
+from sqlalchemy import select
 from app.models.user import ROLE_ADMINISTRATOR
 from app.schemas.master_data import (
     CategoryCreate,
@@ -23,6 +27,11 @@ from app.schemas.master_data import (
     DepartmentOut,
     LocationCreate,
     LocationOut,
+    PhoneUpdate,
+    WardPhoneImportRequest,
+    WardPhoneImportResponse,
+    WardPhoneImportRowResult,
+    _validate_contact_phone,
     WardCreate,
     WardOut,
 )
@@ -44,7 +53,7 @@ async def create_department(
     actor=Depends(require_roles(ROLE_ADMINISTRATOR)),
 ):
     async with translate_integrity_error(db, resource="department"):
-        obj = await md_crud.create_department(db, code=payload.code, name=payload.name)
+        obj = await md_crud.create_department(db, code=payload.code, name=payload.name, phone=payload.phone)
     await record_audit_event(
         db,
         actor_user_id=actor.id,
@@ -73,7 +82,9 @@ async def create_ward(
     department_id = parse_uuid(payload.department_id, "department_id")
     await ensure_referenced_row_exists(db, Department, department_id, field_name="department_id")
     async with translate_integrity_error(db, resource="ward"):
-        obj = await md_crud.create_ward(db, code=payload.code, name=payload.name, department_id=department_id)
+        obj = await md_crud.create_ward(
+            db, code=payload.code, name=payload.name, department_id=department_id, phone=payload.phone
+        )
     await record_audit_event(
         db,
         actor_user_id=actor.id,
@@ -85,6 +96,132 @@ async def create_ward(
     )
     await db.commit()
     return obj
+
+
+async def _patch_phone(model, entity_type: str, resource: str, entity_id: str, payload, request, db, actor):
+    obj = await db.get(model, parse_uuid(entity_id, "id"))
+    if obj is None:
+        raise ResourceNotFoundError(f"{resource} not found")
+    before = {"phone": obj.phone}
+    obj.phone = payload.phone
+    await db.flush()
+    await record_audit_event(
+        db,
+        actor_user_id=actor.id,
+        action=AUDIT_ACTION_UPDATE,
+        entity_type=entity_type,
+        entity_id=obj.id,
+        before=before,
+        after={"phone": obj.phone},
+        request=request,
+    )
+    await db.commit()
+    return obj
+
+
+@router.patch("/departments/{department_id}", response_model=DepartmentOut)
+async def update_department_phone(
+    department_id: str,
+    payload: PhoneUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    actor=Depends(require_roles(ROLE_ADMINISTRATOR)),
+):
+    return await _patch_phone(Department, AUDIT_ENTITY_DEPARTMENT, "Department", department_id, payload, request, db, actor)
+
+
+@router.patch("/wards/{ward_id}", response_model=WardOut)
+async def update_ward_phone(
+    ward_id: str,
+    payload: PhoneUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    actor=Depends(require_roles(ROLE_ADMINISTRATOR)),
+):
+    return await _patch_phone(Ward, AUDIT_ENTITY_WARD, "Ward", ward_id, payload, request, db, actor)
+
+
+@router.post("/wards/phones/import", response_model=WardPhoneImportResponse)
+async def import_ward_phones(
+    payload: WardPhoneImportRequest,
+    request: Request,
+    dry_run: bool = True,
+    overwrite: bool = False,
+    db: AsyncSession = Depends(get_db),
+    actor=Depends(require_roles(ROLE_ADMINISTRATOR)),
+):
+    """One-time bulk set of ward phones, matched by exact trimmed ward name.
+
+    dry_run=true (default) reports per-row outcomes and writes nothing.
+    dry_run=false applies every valid row in one transaction with ONE batch
+    audit entry (PR12 convention). A non-empty phone is only replaced when
+    overwrite=true.
+    """
+    wards_by_name: dict[str, list[Ward]] = {}
+    for w in (await db.execute(select(Ward))).scalars().all():
+        wards_by_name.setdefault(w.name.strip(), []).append(w)
+    names = [r.ward_name.strip() for r in payload.rows]
+    seen = {n: names.count(n) for n in names}
+
+    results: list[WardPhoneImportRowResult] = []
+    changes: list[tuple[Ward, str | None, str]] = []
+    for i, (row, name) in enumerate(zip(payload.rows, names), start=1):
+        def res(outcome, ward=None, phone=row.phone, detail=None):
+            return WardPhoneImportRowResult(
+                row=i, ward_name=name, phone=phone, outcome=outcome,
+                ward_id=str(ward.id) if ward else None,
+                current_phone=ward.phone if ward else None, detail=detail,
+            )
+
+        if seen[name] > 1:
+            results.append(res("duplicate_ward_name"))
+            continue
+        try:
+            phone = _validate_contact_phone(row.phone)
+            if phone is None:
+                raise ValueError("phone is blank")
+        except ValueError as exc:
+            results.append(res("invalid_phone", detail=str(exc)))
+            continue
+        matches = wards_by_name.get(name, [])
+        if not matches:
+            results.append(res("unknown_ward", phone=phone))
+        elif len(matches) > 1:
+            results.append(res("ambiguous_ward", phone=phone, detail="more than one ward has this exact name"))
+        else:
+            ward = matches[0]
+            if ward.phone == phone:
+                results.append(res("unchanged", ward, phone))
+            elif ward.phone and not overwrite:
+                results.append(res("skipped_existing", ward, phone, "ward already has a phone; pass overwrite=true"))
+            else:
+                results.append(res("will_overwrite" if ward.phone else "will_set", ward, phone))
+                changes.append((ward, ward.phone, phone))
+
+    applied = False
+    if not dry_run and changes:
+        for ward, _, phone in changes:
+            ward.phone = phone
+        await db.flush()
+        await record_audit_event(
+            db,
+            actor_user_id=actor.id,
+            action=AUDIT_ACTION_IMPORT,
+            entity_type=AUDIT_ENTITY_WARD,
+            entity_id=None,
+            after={
+                "kind": "ward_phone_import",
+                "overwrite": overwrite,
+                "changed": [{"ward_id": str(w.id), "before": b, "after": a} for w, b, a in changes],
+            },
+            request=request,
+        )
+        await db.commit()
+        applied = True
+    counts: dict[str, int] = {}
+    for r in results:
+        counts[r.outcome] = counts.get(r.outcome, 0) + 1
+    return WardPhoneImportResponse(dry_run=dry_run, overwrite=overwrite, applied=applied, counts=counts, results=results)
 
 
 @router.get("/locations", response_model=list[LocationOut])

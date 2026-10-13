@@ -710,7 +710,7 @@ async def test_create_department_creates_audit_row(client, seeded_users, db_sess
     rows = await _rows(db_session, action="create", entity_type="department")
     assert len(rows) == 1
     assert str(rows[0].entity_id) == dept_id
-    assert rows[0].after_data == {"code": "SURG", "name": "Surgery"}
+    assert rows[0].after_data == {"code": "SURG", "name": "Surgery", "phone": None}
 
 
 async def test_create_ward_location_category_create_audit_rows(client, seeded_users, db_session):

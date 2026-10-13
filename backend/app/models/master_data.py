@@ -18,6 +18,11 @@ class Department(UUIDPKMixin, Base):
 
     code: Mapped[str] = mapped_column(String(20), nullable=False)
     name: Mapped[str] = mapped_column(String(150), nullable=False)
+    # Roadmap PR25E slice B0 (docs/design/PR25D_OFFLINE_OPERATION_PLAN.md 3.4):
+    # optional contact phone of the department; fallback source for the
+    # dispatch form's phone_number. Same 20-char cap as
+    # borrow_transactions.phone_number. Not a personal number.
+    phone: Mapped[str | None] = mapped_column(String(20))
 
     wards: Mapped[list["Ward"]] = relationship(back_populates="department")
 
@@ -31,6 +36,9 @@ class Ward(UUIDPKMixin, Base):
     department_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("departments.id", ondelete="RESTRICT")
     )
+    # Roadmap PR25E slice B0: optional ward contact phone (primary source for
+    # the dispatch form's phone_number prefill). Nullable, no default.
+    phone: Mapped[str | None] = mapped_column(String(20))
 
     department: Mapped["Department | None"] = relationship(back_populates="wards")
 

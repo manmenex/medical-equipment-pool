@@ -13015,3 +13015,65 @@ async def test_pr21e0_concurrent_authority_approval_exactly_one_winner(pg_engine
             f"trial {trial}: expected both sides' post-approval writes to have committed cleanly "
             f"(no PendingRollbackError, session usable after SAVEPOINT handling), found {len(wards)}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Roadmap PR25E slice B0: migration 0026_ward_department_phone.py. Both
+# convergence paths: fresh install (0001's create_all already has the column,
+# ADD COLUMN IF NOT EXISTS is a no-op) and historical upgrade (column absent
+# after downgrade to 0025, ADD COLUMN creates it). No pinned table/column
+# counts exist for this change; the only schema delta is two nullable columns.
+# ---------------------------------------------------------------------------
+
+
+async def _phone_column_info() -> dict:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT table_name, data_type, character_maximum_length, is_nullable, column_default "
+                        "FROM information_schema.columns WHERE table_schema='public' "
+                        "AND column_name='phone' AND table_name IN ('wards','departments')"
+                    )
+                )
+            ).fetchall()
+            return {r[0]: tuple(r[1:]) for r in rows}
+    finally:
+        await engine.dispose()
+
+
+async def test_migration_0026_ward_department_phone_both_paths():
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+    expected = ("character varying", 20, "YES", None)
+    try:
+        # Fresh-install path.
+        _run_alembic("upgrade", "head")
+        assert await _phone_column_info() == {"wards": expected, "departments": expected}
+
+        # Historical-upgrade path: seed rows on the pre-0026 schema, then add.
+        _run_alembic("downgrade", "0025_export_events")
+        assert await _phone_column_info() == {}
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("INSERT INTO wards (id, code, name) VALUES (gen_random_uuid(), 'W0026', 'Ward')"))
+                await conn.execute(text("INSERT INTO departments (id, code, name) VALUES (gen_random_uuid(), 'D0026', 'Dept')"))
+        finally:
+            await engine.dispose()
+        _run_alembic("upgrade", "head")
+        assert await _phone_column_info() == {"wards": expected, "departments": expected}
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                w = (await conn.execute(text("SELECT phone FROM wards WHERE code='W0026'"))).fetchall()
+                d = (await conn.execute(text("SELECT phone FROM departments WHERE code='D0026'"))).fetchall()
+            assert w == [(None,)] and d == [(None,)], "existing rows survive with NULL phone, no backfill"
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()
