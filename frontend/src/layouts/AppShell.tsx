@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
 import { OfflineStatusChip } from "@/components/OfflineStatusChip";
@@ -8,10 +9,12 @@ import {
   canManageLegacyImport,
   canReviewCutoverReadiness,
   canReviewReconciliation,
+  canReviewSyncConflicts,
   roleLabel,
   useAuth,
 } from "@/hooks/useAuth";
 import { startOfflineServices } from "@/offline/lifecycle";
+import { fetchSyncConflicts } from "@/services/syncReview";
 import { logout as apiLogout } from "@/services/auth";
 import { useAuthStore } from "@/store/authStore";
 import { applyTheme, useUiStore } from "@/store/uiStore";
@@ -43,6 +46,16 @@ export function AppShell() {
 
   // PR25E S4: sync worker + snapshot refresh run for the whole signed-in shell.
   useEffect(() => startOfflineServices(), []);
+
+  // PR25E S5: pending-review count badge, role-gated (no request for Read Only).
+  const reviewAllowed = canReviewSyncConflicts(user);
+  const reviewCount = useQuery({
+    queryKey: ["sync-conflicts-count"],
+    queryFn: () => fetchSyncConflicts({ limit: 1 }),
+    enabled: reviewAllowed,
+    refetchInterval: 60_000,
+    retry: false,
+  }).data?.total;
 
   const navItems = canDispatchOrReceiveEquipment(user)
     ? [BASE_NAV_ITEMS[0], BASE_NAV_ITEMS[1], ...DISPATCH_NAV_ITEMS, BASE_NAV_ITEMS[2]]
@@ -168,6 +181,29 @@ export function AppShell() {
               ความพร้อมก่อนเปลี่ยนระบบ
             </NavLink>
           )}
+          {reviewAllowed && (
+            <NavLink
+              to="/sync-review"
+              className={({ isActive }) =>
+                `rounded-lg px-3 py-2 text-sm font-medium transition ${
+                  isActive
+                    ? "bg-status-borrowed/15 text-status-borrowed"
+                    : "text-[var(--text-muted)] hover:bg-black/5 dark:hover:bg-white/5"
+                }`
+              }
+            >
+              <span className="mr-2">📨</span>
+              ตรวจสอบรายการออฟไลน์
+              {reviewCount ? (
+                <span
+                  aria-label={`รอตรวจสอบ ${reviewCount} รายการ`}
+                  className="ml-2 rounded-full bg-status-repair px-2 py-0.5 text-xs text-white"
+                >
+                  {reviewCount}
+                </span>
+              ) : null}
+            </NavLink>
+          )}
         </nav>
       </aside>
 
@@ -191,6 +227,11 @@ export function AppShell() {
                 actual mobile access point for reconciliation review --
                 deliberately not added to the mobile bottom nav (see the
                 sidebar entry's own note above). */}
+            {reviewAllowed && (
+              <NavLink to="/sync-review" className="text-sm text-[var(--text-muted)] hover:underline md:hidden">
+                ตรวจสอบรายการออฟไลน์{reviewCount ? ` (${reviewCount})` : ""}
+              </NavLink>
+            )}
             {canReviewReconciliation(user) && (
               <NavLink to="/reconciliation" className="text-sm text-[var(--text-muted)] hover:underline md:hidden">
                 ตรวจสอบข้อมูลย้อนหลัง

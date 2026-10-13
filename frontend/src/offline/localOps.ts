@@ -312,3 +312,10 @@ export async function countMyUnsent(): Promise<number> {
     (r) => r.state === "pending" || r.state === "sending" || r.state === "held",
   ).length;
 }
+
+/** Count of the current user's local ops the server flagged as conflict (waiting for staff review). */
+export async function countMyConflicts(): Promise<number> {
+  const { user, accessToken } = useAuthStore.getState();
+  if (!user || !accessToken) return 0;
+  return (await listOutbox(String(user.id))).filter((r) => r.state === "conflict").length;
+}

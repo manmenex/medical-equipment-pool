@@ -161,3 +161,9 @@ export function canRecordCutoverDecision(user: RoleLike): boolean {
 export function canManageWardPhones(user: RoleLike): boolean {
   return hasRole(user, "administrator");
 }
+
+// PR25E S5 (D3): offline-sync conflict review. Mirrors backend B4 roles
+// (Administrator and Equipment Pool Staff; Read Only gets 403). Usability only.
+export function canReviewSyncConflicts(user: RoleLike): boolean {
+  return hasRole(user, "administrator", "equipment_pool_staff");
+}
