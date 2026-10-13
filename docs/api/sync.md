@@ -5,7 +5,7 @@
 **Update trigger:** The endpoint's envelope, result codes, or ledger behavior changes.
 **Maintainer:** Repository Owner
 
-> **Scope (Roadmap PR25E slice B2).** Dispatch and receipt only. Business-time adjustment/clamping (B2b), adoption of another user's operations (B2c), `verify`, `snapshot`, `status`, and the conflict review endpoints (B3/B4) are not part of this slice. The recorded business time is still the server time at apply.
+> **Scope (Roadmap PR25E slice B2).** Dispatch and receipt only. Business-time adjustment/clamping (B2b), adoption of another user's operations (B2c), and the conflict review endpoints (B4) are not part of this slice; `verify`, `snapshot`, `status`, and `stats` are documented below (slice B3). The recorded business time is still the server time at apply.
 
 ## `POST /api/v1/sync/operations`
 
@@ -42,3 +42,31 @@ Semantics worth knowing:
 * The audit actor is the token user; `borrower_user_id` / `received_by_user_id` is the operation's user (identical in this slice). Audit `after_data` additionally carries `op_id`, `device_id`, `device_seq`.
 * Every applied operation produces exactly one `export_events` row, written last in the same transaction (`docs/api/export.md`). `duplicate`, `conflict`, `rejected`, and `retry_later` produce none.
 * `POST /borrow` and `POST /return/{id}` are unchanged.
+
+## `POST /api/v1/sync/verify` (slice B3)
+
+**Roles:** Administrator, Equipment Pool Staff. Body (strict): `{ "op_ids": [uuid, ...] }`, 1 to 1000 ids (`422` outside that range). Response `200`: `{ "checked": n, "unknown_op_ids": [...] }` where `checked` is the number of distinct ids and `unknown_op_ids` lists, in request order, those for which the **caller** has no ledger row. Only the caller's own operations (original operator or submitter) count as known, so another user's `op_id` is reported as unknown, exactly like an id the server never saw; nothing about other users' operations is revealed. The client re-sends unknown journal entries through `POST /sync/operations` (restore recovery, design section 10). Each call writes one counts-only audit row (`sync_verify`, `{checked, unknown}`, no ids).
+
+## `GET /api/v1/sync/snapshot` (slice B3)
+
+**Roles:** Administrator, Equipment Pool Staff, Read Only. Query: `section` (required: `equipment`, `wards`, `departments`, `locations`, `open_transactions`; otherwise `400 INVALID_INPUT`), `cursor` (opaque, from `next_cursor`; malformed is `400 INVALID_INPUT`), `limit` (1 to 500, default 200). Response: `{ section, items, next_cursor, etag, server_time }`; `next_cursor` is `null` on the last page. Ordering is deterministic: `(updated_at, id)` for equipment, `(borrowed_at, id)` for open transactions, `id` for the other sections. Soft-deleted equipment is excluded.
+
+Each row is built from a fixed allow-list (information boundary, `knowledge/architecture/api-information-boundaries.md`; Item No excluded per ADR-004 and Owner decision D1; Asset Number, serial number, QR value and other identifiers are never included):
+
+| Section | Fields |
+|---|---|
+| `equipment` | `id`, `bcm_code`, `equipment_name`, `category_id`, `category_name`, `status` |
+| `wards` | `id`, `code`, `name`, `department_id`, `phone` |
+| `departments` | `id`, `code`, `name`, `phone` |
+| `locations` | `id`, `name`, `type` |
+| `open_transactions` | `id`, `equipment_id`, `ward_id`, `borrowed_at` |
+
+Cheap refresh: every response carries an `ETag` (hash of the page content, excluding `server_time`) and `Cache-Control: private, no-cache`. A request with a matching `If-None-Match` receives `304` with no body.
+
+## `GET /api/v1/sync/status` (slice B3)
+
+**Roles:** Administrator only. Counts for the last 48 hours: `ops_by_status` (all five ledger statuses), `resent_attempts` (sum of `attempt_count - 1`, a flaky-link signal), `time_flag_ops`, `unresolved_conflicts` and `oldest_unresolved_conflict_age_s` (all time; `null` when none), `verify_calls` and `verify_calls_with_unknown` (a spike means a restore happened). No payload bodies or ids.
+
+## `GET /api/v1/sync/stats` (slice B3)
+
+**Roles:** Administrator only. Query `from`, `to` (ISO datetimes; defaults: last 30 days; `from` must precede `to`; range at most 366 days; otherwise `400 INVALID_INPUT`). Operations are selected by `received_at`. Response: `volume` (`total_ops`, `by_status`, `recorded_offline` = received more than 120 s after `occurred_at`, `conflicts`, `conflicts_per_1000_ops`, `resolution_time_s` median and p90, `truncated` if more than 200,000 rows) and `clock_skew` (histograms of absolute `clock_offset_ms`, `offset_age_s` and receive lag, `time_flag_ops`, `time_flag_share`, `time_flag_counts`). Aggregates only: no `payload`, `op_id`, device, user, equipment or ward identifiers. The collision statistics and CSV export belong to slice B4b/D1.
