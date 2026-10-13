@@ -2,8 +2,8 @@
 volume/clock-skew statistics (docs/design/PR25D_OFFLINE_OPERATION_PLAN.md
 sections 10, 16, 16.1).
 
-Read-only over ``client_operations`` except for one counts-only audit row per
-verify call that found unknown ids (the section 16 restore signal). Nothing
+Read-only over ``client_operations`` except for one counts-only audit row
+written on every verify call (the section 16 restore signal). Nothing
 here touches equipment or transaction state, and no payload body is ever
 selected or returned.
 """

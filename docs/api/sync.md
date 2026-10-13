@@ -5,7 +5,7 @@
 **Update trigger:** The endpoint's envelope, result codes, or ledger behavior changes.
 **Maintainer:** Repository Owner
 
-> **Scope (Roadmap PR25E slice B2).** Dispatch and receipt only. Business-time adjustment/clamping (B2b), adoption of another user's operations (B2c), and the conflict review endpoints (B4) are not part of this slice; `verify`, `snapshot`, `status`, and `stats` are documented below (slice B3). The recorded business time is still the server time at apply.
+> **Scope (Roadmap PR25E slice B2).** Dispatch and receipt only. Adoption of another user's operations (B2c) and the conflict review endpoints (B4) are not part of this slice; `verify`, `snapshot`, `status`, and `stats` are documented below (slice B3). Business time (slice B2b): `occurred_at_local + clock_offset_ms` (missing offset = 0), clamped per design section 11 and stored as `borrowed_at`/`returned_at` and the ledger `occurred_at`; `time_flag` is one of `clamped_future` (later than server now + 2 min -> now), `clamped_old` (older than now - 7 days -> now), `before_dispatch` (receipt earlier than its dispatch -> dispatch time), `before_last_receipt` (dispatch earlier than the equipment's latest `returned_at` -> that time). Bounds are strict; flagged ops are still applied. Online `/borrow` and `/return` keep server time.
 
 ## `POST /api/v1/sync/operations`
 
@@ -20,7 +20,7 @@ Body: `{ "operations": [ ... ] }`, 1 to 25 operations, each at most 8 KB seriali
 | `device_seq` | Integer >= 0. Within a batch, operations are processed per device in ascending `device_seq`. |
 | `user_id` | The operator the client believes keyed the operation. Must equal the token user, otherwise `OP_USER_MISMATCH`. |
 | `op_type` | `dispatch` (requires `dispatch`) or `receipt` (requires `receipt`). |
-| `occurred_at_local`, `clock_offset_ms` | Stored for audit only in this slice. |
+| `occurred_at_local`, `clock_offset_ms` | Business time input (see scope note); the device clock never orders anything. |
 | `dispatch` | Exactly the `POST /borrow` body (`docs/api/dispatch.md`). |
 | `receipt` | The `POST /return` body (`docs/api/receipt.md`) plus `transaction_id`. |
 
@@ -61,6 +61,8 @@ Each row is built from a fixed allow-list (information boundary, `knowledge/arch
 | `locations` | `id`, `name`, `type` |
 | `open_transactions` | `id`, `equipment_id`, `ward_id`, `borrowed_at` |
 
+Paging guarantees: pages are not a point-in-time view, and a full scan is eventually consistent. Clients must upsert by `id` (equipment may appear twice if it changes mid-scan). `open_transactions` is ordered by `borrowed_at`, so a row backdated by a sync operation mid-scan can be missed until the next full refresh.
+
 Cheap refresh: every response carries an `ETag` (hash of the page content, excluding `server_time`) and `Cache-Control: private, no-cache`. A request with a matching `If-None-Match` receives `304` with no body.
 
 ## `GET /api/v1/sync/status` (slice B3)
@@ -69,4 +71,4 @@ Cheap refresh: every response carries an `ETag` (hash of the page content, exclu
 
 ## `GET /api/v1/sync/stats` (slice B3)
 
-**Roles:** Administrator only. Query `from`, `to` (ISO datetimes; defaults: last 30 days; `from` must precede `to`; range at most 366 days; otherwise `400 INVALID_INPUT`). Operations are selected by `received_at`. Response: `volume` (`total_ops`, `by_status`, `recorded_offline` = received more than 120 s after `occurred_at`, `conflicts`, `conflicts_per_1000_ops`, `resolution_time_s` median and p90, `truncated` if more than 200,000 rows) and `clock_skew` (histograms of absolute `clock_offset_ms`, `offset_age_s` and receive lag, `time_flag_ops`, `time_flag_share`, `time_flag_counts`). Aggregates only: no `payload`, `op_id`, device, user, equipment or ward identifiers. The collision statistics and CSV export belong to slice B4b/D1.
+**Roles:** Administrator only. Query `from`, `to` (ISO datetimes; defaults: last 30 days; `from` must precede `to`; range at most 366 days; otherwise `400 INVALID_INPUT`). Operations are selected by `received_at`. Response: `volume` (`total_ops`, `by_status`, `recorded_offline` = received more than 120 s after `occurred_at`, `conflicts`, `conflicts_per_1000_ops`, `resolution_time_s` median and p90, `truncated` if more than 200,000 rows) and `clock_skew` (histograms of absolute `clock_offset_ms`, `offset_age_s` and receive lag, `time_flag_ops`, `time_flag_share`, `time_flag_counts`). Receive lag and `recorded_offline` are measured against the stored, clamped business time (`occurred_at`), so `clamped_old` rows show about 0 lag. Aggregates only: no `payload`, `op_id`, device, user, equipment or ward identifiers. The collision statistics and CSV export belong to slice B4b/D1.
