@@ -14,6 +14,7 @@ ledger is re-read (a concurrent duplicate may have won), and only then is a
 import hashlib
 import json
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,7 +37,6 @@ from app.models.client_operation import (
     OP_STATUS_RESOLVED,
     ClientOperation,
 )
-from app.models.user import User
 from app.schemas.sync import (
     OP_TYPE_DISPATCH,
     RESULT_APPLIED,
@@ -48,6 +48,14 @@ from app.schemas.sync import (
     SyncOpResult,
 )
 from app.services import borrow_service
+
+@dataclass(frozen=True)
+class Actor:
+    """The authenticated user, reduced to its id. Each operation may roll the
+    session back, which expires ORM instances; an id survives that."""
+
+    id: uuid.UUID
+
 
 CODE_APPLIED = "APPLIED"
 CODE_DUPLICATE = "DUPLICATE"
@@ -100,7 +108,7 @@ def _mismatch(op: SyncOperation) -> SyncOpResult:
     return _result(op, RESULT_REJECTED, CODE_USER_MISMATCH)
 
 
-def _from_ledger_row(op: SyncOperation, row: ClientOperation, user: User, digest: str) -> SyncOpResult | None:
+def _from_ledger_row(op: SyncOperation, row: ClientOperation, user: Actor, digest: str) -> SyncOpResult | None:
     """Section 6.3 step 1 for an existing row. ``None`` means "execute it":
     a ``pending`` row is never a terminal answer."""
     if user.id not in (row.user_id, row.submitted_by_user_id):
@@ -121,7 +129,7 @@ async def _seq_clash(db: AsyncSession, op: SyncOperation) -> bool:
     return other is not None and other.op_id != op.op_id
 
 
-async def _settle(db: AsyncSession, op: SyncOperation, user: User, digest: str) -> SyncOpResult | None:
+async def _settle(db: AsyncSession, op: SyncOperation, user: Actor, digest: str) -> SyncOpResult | None:
     """Re-read the ledger after a failed attempt (session already rolled
     back). Returns the stored answer, or None when only a ``pending`` row /
     no row exists."""
@@ -133,7 +141,7 @@ async def _settle(db: AsyncSession, op: SyncOperation, user: User, digest: str) 
     return None
 
 
-def _context(op: SyncOperation, user: User, digest: str, *, pending: bool) -> client_op_crud.ClientOpContext:
+def _context(op: SyncOperation, user: Actor, digest: str, *, pending: bool) -> client_op_crud.ClientOpContext:
     return client_op_crud.ClientOpContext(
         op_id=op.op_id,
         device_id=op.device_id,
@@ -149,7 +157,7 @@ def _context(op: SyncOperation, user: User, digest: str, *, pending: bool) -> cl
     )
 
 
-async def _stored_result(db: AsyncSession, op: SyncOperation, user: User, digest: str) -> SyncOpResult:
+async def _stored_result(db: AsyncSession, op: SyncOperation, user: Actor, digest: str) -> SyncOpResult:
     """Return whatever the ledger now holds for this op (after a write that
     a racing winner may have beaten)."""
     row = await client_op_crud.get(db, op.op_id)
@@ -162,7 +170,7 @@ async def _stored_result(db: AsyncSession, op: SyncOperation, user: User, digest
 
 
 async def _execute(
-    db: AsyncSession, op: SyncOperation, user: User, ctx: client_op_crud.ClientOpContext, ip: str | None, ua: str | None
+    db: AsyncSession, op: SyncOperation, user: Actor, ctx: client_op_crud.ClientOpContext, ip: str | None, ua: str | None
 ):
     if op.op_type == OP_TYPE_DISPATCH:
         d = op.dispatch
@@ -198,8 +206,9 @@ async def _execute(
 
 
 async def process_operation(
-    db: AsyncSession, op: SyncOperation, user: User, *, ip_address: str | None = None, user_agent: str | None = None
+    db: AsyncSession, op: SyncOperation, user, *, ip_address: str | None = None, user_agent: str | None = None
 ) -> SyncOpResult:
+    user = Actor(user.id)
     digest = payload_hash(op.business_payload())
 
     # Step 1: user check FIRST, before anything else is revealed.
@@ -248,7 +257,7 @@ async def process_operation(
 async def _record_failure(
     db: AsyncSession,
     op: SyncOperation,
-    user: User,
+    user: Actor,
     ctx: client_op_crud.ClientOpContext,
     digest: str,
     exc: DomainError,
@@ -275,7 +284,7 @@ async def _record_failure(
 
 
 async def _stored_result_for_failure(
-    db: AsyncSession, op: SyncOperation, user: User, digest: str, exc: DomainError
+    db: AsyncSession, op: SyncOperation, user: Actor, digest: str, exc: DomainError
 ) -> SyncOpResult:
     row = await client_op_crud.get(db, op.op_id)
     if row is not None:
@@ -286,10 +295,11 @@ async def _stored_result_for_failure(
 
 
 async def process_batch(
-    db: AsyncSession, operations: list[SyncOperation], user: User, *, ip_address: str | None, user_agent: str | None
+    db: AsyncSession, operations: list[SyncOperation], user, *, ip_address: str | None, user_agent: str | None
 ) -> list[SyncOpResult]:
     # Within one device, strictly by device_seq (section 9.1 item 1); the sort
     # is stable, so the order across devices stays as submitted.
+    user = Actor(user.id)
     first_index: dict[uuid.UUID, int] = {}
     for i, o in enumerate(operations):
         first_index.setdefault(o.device_id, i)
