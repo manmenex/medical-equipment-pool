@@ -18,7 +18,9 @@ Body: `{ "operations": [ ... ] }`, 1 to 25 operations, each at most 8 KB seriali
 | `op_id` | UUID v4, the idempotency key. For a dispatch it is also the new transaction's id. |
 | `device_id` | UUID v4. `(device_id, device_seq)` is unique across all operations. |
 | `device_seq` | Integer >= 0. Within a batch, operations are processed per device in ascending `device_seq`. |
-| `user_id` | The operator the client believes keyed the operation. Must equal the token user, otherwise `OP_USER_MISMATCH`. |
+| `user_id` | The operator the client believes keyed the operation. Must equal the token user, otherwise `OP_USER_MISMATCH`, unless `adopt` is true. |
+| `adopt`, `original_user_id` | Optional (slice B2c, Owner decision D4). `adopt: true` requires `original_user_id` equal to `user_id`; `original_user_id` without `adopt` is `422`. See "Adoption" below. |
+| `snapshot_age_s` | Optional integer >= 0: seconds since the device's last successful snapshot when the op was keyed. The server sets the ledger's `stale_context` when it exceeds 4 hours (14400 s); the flag never blocks an op (design 9.8). |
 | `op_type` | `dispatch` (requires `dispatch`) or `receipt` (requires `receipt`). |
 | `occurred_at_local`, `clock_offset_ms` | Business time input (see scope note); the device clock never orders anything. |
 | `dispatch` | Exactly the `POST /borrow` body (`docs/api/dispatch.md`). |
@@ -39,9 +41,13 @@ Response `200`: `{ "results": [ { "op_id", "result", "code", "transaction_id"?, 
 Semantics worth knowing:
 
 * Concurrent sends of the same `op_id` (two tabs, retry overlap) cannot double-apply: the loser receives `duplicate`, never a conflict. A `pending` operation retried concurrently applies exactly once.
-* The audit actor is the token user; `borrower_user_id` / `received_by_user_id` is the operation's user (identical in this slice). Audit `after_data` additionally carries `op_id`, `device_id`, `device_seq`.
+* The audit actor is the token user; `borrower_user_id` / `received_by_user_id` is the operation's user (the same person unless adopted). Audit `after_data` additionally carries `op_id`, `device_id`, `device_seq`.
 * Every applied operation produces exactly one `export_events` row, written last in the same transaction (`docs/api/export.md`). `duplicate`, `conflict`, `rejected`, and `retry_later` produce none.
 * `POST /borrow` and `POST /return/{id}` are unchanged.
+
+### Adoption (slice B2c)
+
+Another Administrator or Equipment Pool Staff user may send a stranded user's operations from the same device by setting `adopt: true` and `original_user_id` (design 8.3). The server accepts a token user different from `user_id` only when `adopt` is true and `original_user_id` is an existing user holding an Equipment Pool role (active state is not checked, so a departed operator's ops can still be sent) other than the token user; otherwise `OP_USER_MISMATCH` (nothing written, nothing revealed). `read_only` callers get `403` as for any operation. The original operator stays the recorded operator (`borrower_user_id` / `received_by_user_id`, ledger `user_id`); the ledger gets `submitted_by_user_id` = adopter and `adopted_at`. Audit actor and equipment status-history actor are the adopter; the `borrow`/`return` audit `after_data` carries `adopted: true`, `original_user_id`, `submitted_by_user_id`, and one `sync_adopt` audit entry (entity `client_operation`, entity id = op id) is written in the same transaction per applied adopted op. Idempotency is unchanged: replaying an adopted `op_id` (by an adopter naming the same original, or by the original operator) returns `duplicate`. The "fresh login" prompt is a client concern (slice S5b); the server only authenticates the token.
 
 ## `POST /api/v1/sync/verify` (slice B3)
 
