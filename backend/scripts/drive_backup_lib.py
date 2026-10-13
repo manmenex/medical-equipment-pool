@@ -38,6 +38,7 @@ import re
 import socket
 import tempfile
 import time
+import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -539,17 +540,38 @@ class UploadState:
             raise
 
 
+_ERROR_INVALID_PARAMETER = 87  # OpenProcess: no process with this PID
+
+
+def _pid_alive_windows(pid: int, kernel32: Any = None, get_last_error: Callable[[], int] | None = None) -> bool:
+    """Windows liveness check. os.kill(pid, 0) would TERMINATE the process there.
+
+    Only ERROR_INVALID_PARAMETER proves the PID is gone. Any other failure
+    (notably ERROR_ACCESS_DENIED: the process exists under another account,
+    e.g. the scheduled task) must count as alive, or a live lock is stolen.
+    """
+    if kernel32 is None:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        get_last_error = ctypes.get_last_error
+    handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return get_last_error() != _ERROR_INVALID_PARAMETER  # type: ignore[misc]
+    kernel32.CloseHandle(handle)
+    return True
+
+
 def _pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
-    if os.name == "nt":  # os.kill(pid, 0) would TERMINATE the process on Windows
-        import ctypes
-
-        handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
-        if not handle:
-            return False
-        ctypes.windll.kernel32.CloseHandle(handle)
-        return True
+    if os.name == "nt":
+        return _pid_alive_windows(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -574,23 +596,51 @@ class _Lock:
         self._path = path
         self.reclaimed: str | None = None
 
+    def _stale_reason(self) -> str | None:
+        try:
+            if time.time() - self._path.stat().st_mtime > STALE_LOCK_SECONDS:
+                return f"older than {STALE_LOCK_SECONDS // 3600}h"
+            if _lock_owner_dead(self._path):
+                return "its owning process no longer exists"
+        except OSError:
+            pass
+        return None
+
+    def _take_over_stale(self, reason: str) -> bool:
+        """Atomically move a lock judged stale aside. False: it was not ours to take."""
+        try:
+            judged = self._path.read_text(encoding="utf-8")
+        except OSError:
+            return False
+        aside = self._path.with_name(f"{self._path.name}.stale.{uuid.uuid4().hex}")
+        try:
+            os.replace(self._path, aside)
+        except OSError:
+            return False  # a rival already moved or replaced it
+        try:
+            moved = aside.read_text(encoding="utf-8")
+        except OSError:
+            moved = None
+        if moved != judged:
+            # We moved a fresh lock a rival just created. Put it back if free.
+            try:
+                os.link(aside, self._path)
+            except OSError:
+                pass
+            aside.unlink(missing_ok=True)
+            return False
+        aside.unlink(missing_ok=True)
+        self.reclaimed = f"reclaimed stale upload lock ({reason})"
+        logger.warning(self.reclaimed)
+        return True
+
     def __enter__(self) -> _Lock:
-        for _ in range(2):
+        for _ in range(3):
             try:
                 fd = os.open(self._path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             except FileExistsError:
-                reason = None
-                try:
-                    if time.time() - self._path.stat().st_mtime > STALE_LOCK_SECONDS:
-                        reason = f"older than {STALE_LOCK_SECONDS // 3600}h"
-                    elif _lock_owner_dead(self._path):
-                        reason = "its owning process no longer exists"
-                except OSError:
-                    pass
-                if reason is not None:
-                    self._path.unlink(missing_ok=True)
-                    self.reclaimed = f"reclaimed stale upload lock ({reason})"
-                    logger.warning(self.reclaimed)
+                reason = self._stale_reason()
+                if reason is not None and self._take_over_stale(reason):
                     continue
                 raise DriveBusy("another upload running") from None
             with os.fdopen(fd, "w") as fh:

@@ -1,7 +1,7 @@
 # Compact Task Prompt Templates
 
 Roles, the pipeline, and merge rules are defined in
-[`../../PROJECT_WORKFLOW.md`](../PROJECT_WORKFLOW.md); these templates only
+[`../../PROJECT_WORKFLOW.md`](../../PROJECT_WORKFLOW.md); these templates only
 shape a single task. "Independent Reviewer" below means the reviewer agent.
 
 Customize bracketed inputs. These templates reference permanent governance

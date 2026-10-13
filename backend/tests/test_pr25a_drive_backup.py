@@ -297,6 +297,46 @@ def test_newest_complete_pair_is_never_deleted_when_newer_orphan_exists(drive, c
     assert report.pruned == [] and _name(old) in drive.names()
 
 
+class _FakeKernel32:
+    def __init__(self, handle):
+        self.handle, self.closed = handle, []
+        self.OpenProcess = lambda access, inherit, pid: self.handle
+        self.CloseHandle = lambda h: self.closed.append(h)
+
+
+@pytest.mark.parametrize(("error", "alive"), [(5, True), (87, False), (31, True)])
+def test_windows_open_process_failure_only_87_means_dead(error, alive):
+    k = _FakeKernel32(0)
+    assert lib._pid_alive_windows(4242, kernel32=k, get_last_error=lambda: error) is alive
+    assert k.closed == []
+
+
+def test_windows_open_process_success_is_alive_and_closes_handle():
+    k = _FakeKernel32(0x1234)
+    assert lib._pid_alive_windows(4242, kernel32=k, get_last_error=lambda: 0) is True
+    assert k.closed == [0x1234]
+
+
+def test_stale_takeover_race_never_steals_a_rivals_fresh_lock(client, tmp_path, monkeypatch):
+    make_backup(tmp_path, NOW)
+    lock = tmp_path / lib.LOCK_FILENAME
+    lock.write_text(f"999999 {lib.socket.gethostname()}")
+    monkeypatch.setattr(lib, "_pid_alive", lambda pid: False)
+    real_replace, fired = os.replace, []
+
+    def racing_replace(src, dst):
+        if not fired:  # a rival reclaims the stale lock and installs its own, just before we rename
+            fired.append(1)
+            real_replace(src, str(src) + ".rival")
+            Path(src).write_text(f"{os.getpid()} rival-host")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(lib.os, "replace", racing_replace)
+    with pytest.raises(lib.DriveBusy):
+        run_upload(client, tmp_path)
+    assert lock.read_text() == f"{os.getpid()} rival-host"  # the rival's lock was restored intact
+
+
 # --- retention on Drive -----------------------------------------------------
 
 
