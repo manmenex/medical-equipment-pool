@@ -155,3 +155,9 @@ export function canReviewCutoverReadiness(user: RoleLike): boolean {
 export function canRecordCutoverDecision(user: RoleLike): boolean {
   return hasRole(user, "administrator");
 }
+
+// Roadmap PR25E slice S0: ward/department phone edit and bulk import.
+// Mirrors backend ADMINISTRATOR_ONLY_ROLES; usability only.
+export function canManageWardPhones(user: RoleLike): boolean {
+  return hasRole(user, "administrator");
+}

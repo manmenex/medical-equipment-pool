@@ -81,6 +81,7 @@ vi.mock("@/services/borrow", () => ({
 }));
 vi.mock("@/services/masterData", () => ({
   listWards: (...args: unknown[]) => listWards(...args),
+  listDepartments: () => Promise.resolve([]),
 }));
 vi.mock("@/components/QRScanner", () => ({ QRScanner: () => null }));
 vi.mock("@/components/BcmSearchInput", () => ({ BcmSearchInput: () => null }));
