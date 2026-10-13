@@ -1,4 +1,4 @@
-"""Roadmap PR22C (docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md
+"""Roadmap PR22C (docs/archive/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md
 §9-§18, §22-§27, §34) -- rule-module test matrix (§33).
 
 Pure-Python, no database: every rule module is a pure function over an

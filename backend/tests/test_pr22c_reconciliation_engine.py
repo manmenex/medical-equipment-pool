@@ -1,4 +1,4 @@
-"""Roadmap PR22C (docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md
+"""Roadmap PR22C (docs/archive/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md
 §9-§18, §22-§27, §34, §36) -- engine-level tests requiring a real
 PostgreSQL database: the CAS run-claim contract (§8), the genuine
 `REPEATABLE READ` snapshot-consistency proof (§32), determinism (§34),

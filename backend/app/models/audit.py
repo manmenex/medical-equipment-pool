@@ -27,7 +27,7 @@ class AuditLog(UUIDPKMixin, Base):
     correlation_id: Mapped[str | None] = mapped_column(String(64), index=True)
     ip_address: Mapped[str | None] = mapped_column(String(64))
     user_agent: Mapped[str | None] = mapped_column(String(255))
-    # Roadmap PR15B (docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md §3.4/§3.5): the
+    # Roadmap PR15B (docs/archive/design/PR15B_SCHEMA_HYGIENE_PLAN.md §3.4/§3.5): the
     # column and its default were bespoke rather than following
     # TimestampMixin's DateTime(timezone=True) + server_default=func.now()
     # pattern -- naive `timestamp without time zone` with a client-computed

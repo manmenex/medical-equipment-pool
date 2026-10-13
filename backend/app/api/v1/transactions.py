@@ -45,7 +45,7 @@ async def list_transactions(
     if from_date is not None and to_date is not None and from_date > to_date:
         raise InvalidInputError("'from_date' must not be after 'to_date'")
 
-    # Roadmap PR16 Slice 3 (docs/design/PR16_REPORTING_FOUNDATION_PLAN.md
+    # Roadmap PR16 Slice 3 (docs/archive/design/PR16_REPORTING_FOUNDATION_PLAN.md
     # §8): a separate, new check -- business_date_from/_to are compared
     # against the derived business_date value, not the raw
     # borrowed_at/returned_at timestamp from_date/to_date already validate

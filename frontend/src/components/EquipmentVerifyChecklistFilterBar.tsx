@@ -6,7 +6,7 @@ import { STATUS_LABELS } from "@/components/StatusBadge";
 import { listCategories, listDepartments } from "@/services/masterData";
 import type { EquipmentStatus } from "@/types";
 
-// Roadmap PR17 Slice 4 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md §9/
+// Roadmap PR17 Slice 4 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md §9/
 // §10.3): the Equipment Verify Checklist's own, distinct approved filter
 // set -- equipment category, current status, and department. Deliberately
 // NOT the Receive/Issue reports' ReportFilterBar (business date/shift/

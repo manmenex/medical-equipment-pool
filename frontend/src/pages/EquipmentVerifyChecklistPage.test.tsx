@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EquipmentVerifyChecklistPage } from "@/pages/EquipmentVerifyChecklistPage";
 import type { Category, Department, Equipment, Page } from "@/types";
 
-// Roadmap PR17 Slice 4 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+// Roadmap PR17 Slice 4 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md
 // §6.3/§7.3(A)/§12): Equipment Verify Checklist screen tests. Consumes
 // GET /reports/equipment-verify-checklist (services/reports.ts's
 // getEquipmentVerifyChecklist) only -- GET /equipment is never called for

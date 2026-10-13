@@ -1,4 +1,4 @@
-"""Roadmap PR20A (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §6.2,
+"""Roadmap PR20A (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §6.2,
 §6.4, §6.5, §18, §21, architecture-approved via the merged Design PR #89).
 
 Covers the source artifact infrastructure slice only -- upload/

@@ -8,7 +8,7 @@ import { buildPrintDataFilters, getReportPrintData } from "@/services/printRepor
 import "@/styles/print.css";
 import { isReportIdentity } from "@/utils/printFormat";
 
-// Roadmap PR18C (docs/design/PR18_PRINTING_EXPORT_PLAN.md §9/§22 "PR18C --
+// Roadmap PR18C (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §9/§22 "PR18C --
 // Browser print presentation"): a dedicated, bare print view -- deliberately
 // NOT nested under AppShell (see App.tsx) so no navigation/dashboard chrome
 // ever appears in the printed output. It fetches exactly one bounded

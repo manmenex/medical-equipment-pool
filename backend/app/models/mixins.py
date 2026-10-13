@@ -10,7 +10,7 @@ class UTCDateTime(TypeDecorator):
     """`DateTime(timezone=True)` that round-trips consistently across
     PostgreSQL and SQLite, and enforces this application's "UTC only"
     invariant at bind time (Roadmap PR15B,
-    docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md §3.7.5).
+    docs/archive/design/PR15B_SCHEMA_HYGIENE_PLAN.md §3.7.5).
 
     **Read side (cross-dialect round-trip):** PostgreSQL's `timestamptz`
     always returns timezone-aware datetimes. SQLite has no native
@@ -46,7 +46,7 @@ class UTCDateTime(TypeDecorator):
         if value is not None and value.tzinfo is not None and value.utcoffset() != timedelta(0):
             raise ValueError(
                 f"UTCDateTime received a non-UTC aware datetime ({value!r}). This application "
-                "writes UTC only (docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md §3.2) -- convert to "
+                "writes UTC only (docs/archive/design/PR15B_SCHEMA_HYGIENE_PLAN.md §3.2) -- convert to "
                 "UTC explicitly (e.g. value.astimezone(timezone.utc)) before assigning it to this "
                 "column; this type deliberately does not normalize a non-UTC value silently."
             )

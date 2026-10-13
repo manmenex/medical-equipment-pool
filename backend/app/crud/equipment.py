@@ -243,7 +243,7 @@ async def list_for_verify_checklist(
     limit: int = 25,
     cursor: str | None = None,
 ) -> tuple[list[Equipment], str | None, int]:
-    """Roadmap PR17 Slice 4 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+    """Roadmap PR17 Slice 4 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md
     §7.3(A)/§8/§10.3, Owner Decision #1 resolved to interpretation A):
     Equipment Verify Checklist query -- a read-only, current-state listing
     of the pool's own equipment master records, not a transaction/event
@@ -363,7 +363,7 @@ async def update(db: AsyncSession, equipment: Equipment, *, data: dict) -> Equip
     # cannot accept.
     for key, value in data.items():
         setattr(equipment, key, value)
-    # Roadmap PR91-H1 (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    # Roadmap PR91-H1 (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
     # §24): every successful mutation through this function increments the
     # optimistic-concurrency counter by exactly 1 -- but an empty `data`
     # (an empty PATCH body, or any internal caller that ends up with
@@ -382,7 +382,7 @@ async def update(db: AsyncSession, equipment: Equipment, *, data: dict) -> Equip
 async def update_with_cas(
     db: AsyncSession, *, equipment_id: uuid.UUID, expected_version: int, data: dict
 ) -> Equipment | None:
-    """Roadmap PR20E (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    """Roadmap PR20E (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
     §15.1). The compare-and-swap counterpart to `update()` above --
     exclusively for Equipment Master execute()'s UPDATE-row path, never
     for the ordinary `PATCH /equipment/{id}` caller, which already holds
@@ -422,7 +422,7 @@ async def update_with_cas(
 
 async def soft_delete(db: AsyncSession, equipment: Equipment) -> None:
     equipment.deleted_at = datetime.now(timezone.utc)
-    # Roadmap PR20B (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24,
+    # Roadmap PR20B (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24,
     # fix round 7 H13): soft-delete is a mutation like any other and must
     # not silently bypass the version counter -- a future Equipment Master
     # execute path's CAS predicate also independently requires
@@ -464,7 +464,7 @@ async def change_status(
         reason=reason,
     )
     equipment.status = new_status
-    # Roadmap PR20B (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24):
+    # Roadmap PR20B (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24):
     # every status transition through this function -- dispatch, receipt,
     # or manual lifecycle -- is a mutation and must advance the
     # optimistic-concurrency counter, same as any other equipment write.

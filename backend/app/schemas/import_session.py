@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 from app.schemas.common import UUIDStr
 
-# Roadmap PR19A1 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §21).
+# Roadmap PR19A1 (docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §21).
 # Response/request contracts for endpoints #1-#6 only (create, list,
 # summary, status, source register/correct, cancel) -- validate/dry-run/
 # execute/recover/errors/retention-cleanup belong to later slices (§25).
@@ -142,7 +142,7 @@ class ImportRetentionCleanupResult(BaseModel):
     has_more: bool
 
 
-# Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.2,
+# Roadmap PR20D (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.2,
 # §14.6, §30). Explicit, typed DTOs -- never raw ORM passthrough -- for the
 # persisted, immutable DryRunPlan artifact. `action` is a plain string here
 # (matching this codebase's existing enum-as-CHECK-constrained-VARCHAR

@@ -1,6 +1,6 @@
 # Roadmap PR5 — Equipment Master, BCM Search, and Internal QR Item-No Lookup
 
-**Status:** Implemented in Draft PR (branch `feat/pr5-equipment-master-bcm-search`).
+**Status:** Complete and merged (GitHub PR #14, branch `feat/pr5-equipment-master-bcm-search`).
 **Scope:** Equipment Pool only. See "Permanent project boundary" below.
 
 ## 1. Terminology reconciliation with prior planning documents

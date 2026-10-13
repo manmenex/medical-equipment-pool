@@ -22,12 +22,12 @@ from sqlalchemy.types import JSON
 from app.db.base import Base
 from app.models.mixins import TimestampMixin, UTCDateTime, UUIDPKMixin
 
-# Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.2):
+# Roadmap PR20D (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.2):
 # same PostgreSQL-JSONB/SQLite-JSON variant type already used by
 # app.models.equipment/audit/notification/user -- not a new pattern.
 _DryRunPlanJSONType = JSONB().with_variant(JSON(), "sqlite")
 
-# Roadmap PR19A1 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §4).
+# Roadmap PR19A1 (docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §4).
 # Every enum-shaped column below is a plain VARCHAR with an explicitly
 # named CHECK constraint in __table_args__ -- not SQLAlchemy's `Enum` type
 # -- so the constraint's exact name (and therefore its catalog definition)
@@ -219,7 +219,7 @@ class ImportJob(UUIDPKMixin, Base):
 
 
 class ImportSourceBlob(Base):
-    """Roadmap PR20A (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    """Roadmap PR20A (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
     §6.2). 1:1 durable byte storage for a registered `ImportSource`,
     colocated in the same PostgreSQL database as `import_sources` so
     registration is a single physical transaction -- no saga/orphan-cleanup
@@ -256,7 +256,7 @@ class ImportRowError(UUIDPKMixin, Base):
 
 
 class EquipmentMasterDryRunPlan(UUIDPKMixin, Base):
-    """Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    """Roadmap PR20D (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
     §14.2). One persisted, immutable dry-run plan header per successful
     Equipment Master dry-run attempt that reached a countable result --
     the exact artifact an operator reviews and confirms; PR20E's

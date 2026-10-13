@@ -479,7 +479,7 @@ async def test_login_succeeds_on_postgres_even_if_commit_fails(pg_client, pg_see
 
 # ---------------------------------------------------------------------------
 # PR4: transaction-number generation, steady-state PostgreSQL behavior
-# (docs/kickoffs/PR4-architecture-kickoff.md, squash commit
+# (docs/archive/kickoffs/PR4-architecture-kickoff.md, squash commit
 # 91b23b62d864edadb430d1f4335c6b77e59222f0). These exercise
 # generate_transaction_no()'s real nextval()-based path directly against
 # transaction_no_seq (created ad hoc by pg_transaction_seq for these tests
@@ -6756,7 +6756,7 @@ async def test_migration_0010_historical_0009_upgrade_downgrade_re_upgrade_round
 # created_at_id -- matching app.crud.equipment.search()'s and app.crud.
 # transaction.search()'s real `ORDER BY created_at DESC, id DESC` cursor-
 # pagination clause. Index-only: no column, constraint, or data change. See
-# docs/audits/06-pr14b-pagination-index-evidence.md for the full
+# docs/archive/audits/06-pr14b-pagination-index-evidence.md for the full
 # EXPLAIN (ANALYZE, BUFFERS) evidence this migration is based on.
 # ---------------------------------------------------------------------------
 
@@ -7161,7 +7161,7 @@ async def test_migration_0011_planner_uses_the_new_index_for_first_page_transact
 # ---------------------------------------------------------------------------
 # Roadmap PR15B (Schema Hygiene) -- migrations 0012_timezone_conversion.py,
 # 0013_fk_ondelete_policy.py, 0014_index_naming_convergence.py.
-# docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md §11's acceptance criteria require:
+# docs/archive/design/PR15B_SCHEMA_HYGIENE_PLAN.md §11's acceptance criteria require:
 # fresh/historical/downgrade/re-upgrade rehearsal for each migration;
 # verify-and-no-op idempotency (a second run performs zero schema changes and
 # does not corrupt already-converted data); the three fail-closed mixed-state
@@ -7479,7 +7479,7 @@ async def test_migration_0013_fresh_database_all_foreign_keys_are_restrict():
                 # legacy_history_dry_run_plan_rows.dry_run_plan_id ->
                 # legacy_history_dry_run_plans.
                 # - 2, PR #103 fix round (provenance-integrity fix,
-                # docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md
+                # docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md
                 # §8.1): legacy_equipment_events' single-column
                 # .import_source_id FK is replaced by one composite
                 # fk_legacy_equipment_events_source_belongs_to_session ->
@@ -9577,7 +9577,7 @@ async def test_reporting_time_sql_twin_null_column_yields_null_on_postgres(pg_se
 
 
 # ---------------------------------------------------------------------------
-# Roadmap PR17 Slice 4 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+# Roadmap PR17 Slice 4 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md
 # §7.3(A)/§8/§10.3): real multi-page cursor-pagination evidence for
 # GET /reports/equipment-verify-checklist against PostgreSQL.
 #
@@ -9645,7 +9645,7 @@ async def test_verify_checklist_cursor_pagination_no_duplicates_no_missing_rows_
 
 
 # ---------------------------------------------------------------------------
-# Roadmap PR18B (docs/design/PR18_PRINTING_EXPORT_PLAN.md §5/§8/§18/§20.2
+# Roadmap PR18B (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §5/§8/§18/§20.2
 # "PR18B -- Shared backend dataset and document model"): PostgreSQL-backed
 # proof that the backend-owned full-result retrieval loop
 # (app.services.report_export_service._fetch_all_matching_rows) returns
@@ -9750,7 +9750,7 @@ async def test_print_data_row_limit_exceeded_on_postgres_no_partial_document(pg_
 
 
 # ---------------------------------------------------------------------------
-# Roadmap PR19A2 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §7, §9)
+# Roadmap PR19A2 (docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §7, §9)
 # -- genuine two-connection PostgreSQL concurrency proofs. The equivalent
 # CAS/fencing SQL is already exercised deterministically (single-connection,
 # manually-sequenced) in tests/test_import_validation.py; these tests prove
@@ -9860,7 +9860,7 @@ async def test_recovery_single_winner_on_postgres(pg_client, pg_seeded_users, pg
 
 
 # ---------------------------------------------------------------------------
-# Roadmap PR19A3 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §16,
+# Roadmap PR19A3 (docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §16,
 # §17, §18) -- genuine PostgreSQL enforcement/concurrency proofs the design
 # explicitly requires on PostgreSQL specifically:
 #   - §16: "Required PostgreSQL tests (PR19A3): a test adapter that
@@ -10145,7 +10145,7 @@ async def test_concurrent_retention_cleanup_single_winner_on_postgres(
 
 
 # ---------------------------------------------------------------------------
-# Roadmap PR20A (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §6.2, §6.5,
+# Roadmap PR20A (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §6.2, §6.5,
 # §18, architecture-approved via the merged Design PR #89) -- genuine
 # PostgreSQL constraint/concurrency proofs: FK ON DELETE RESTRICT
 # enforcement, real (non-SQLite, non-mocked) transaction atomicity for the
@@ -10770,7 +10770,7 @@ async def test_migration_0017_fresh_and_historical_schemas_converge():
 
 
 async def test_migration_0017_backfills_existing_rows_to_version_one():
-    """The design contract (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    """The design contract (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
     §24): 'every pre-existing row backfills to 1 at migration time.' Proven
     here by inserting an equipment row *before* migration 0017 runs (on a
     schema that stops at 0016, which has no `version` column at all), then
@@ -10926,7 +10926,7 @@ async def test_genuine_update_still_advances_version_on_postgres_after_h1_fix(pg
 
 
 # ---------------------------------------------------------------------------
-# Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.2,
+# Roadmap PR20D (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.2,
 # §24): migration 0018_dry_run_plans.py convergence tests, mirroring
 # 0016_import_source_blobs.py's own discipline (see that section's
 # extensive rationale above -- not restated here), applied to both new
@@ -12198,7 +12198,7 @@ async def test_pr94r3_completion_vs_recovery_concurrent_race_never_produces_spli
 
 
 # ---------------------------------------------------------------------------
-# Roadmap PR20E (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.4,
+# Roadmap PR20E (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.4,
 # §15, §15.1, §16, §18, §19, §20). Genuine two-PostgreSQL-connection
 # concurrency proofs for the two races that specifically require real
 # database-level locking/uniqueness -- §54: "Use real PostgreSQL for: CAS,

@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.common import UUIDStr
 
-# Roadmap PR18B (docs/design/PR18_PRINTING_EXPORT_PLAN.md §7, §14): stable
+# Roadmap PR18B (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §7, §14): stable
 # report identities. Not derived from a filename or localized title (§14) --
 # these three values are the only ones this route family ever accepts, and
 # are exactly the three report families Roadmap PR17 already implemented.

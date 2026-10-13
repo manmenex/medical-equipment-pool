@@ -95,7 +95,7 @@ async def test_viewer_cannot_borrow(client, seeded_users):
 
 
 # ---------------------------------------------------------------------------
-# PR4: transaction-number generation (docs/kickoffs/PR4-architecture-kickoff.md,
+# PR4: transaction-number generation (docs/archive/kickoffs/PR4-architecture-kickoff.md,
 # squash commit 91b23b62d864edadb430d1f4335c6b77e59222f0). These exercise the
 # API contract and audit behavior via the ordinary SQLite-backed `client`
 # fixture, which drives generate_transaction_no()'s SQLite-only compatibility

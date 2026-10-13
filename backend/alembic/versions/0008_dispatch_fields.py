@@ -15,7 +15,7 @@ remaining scope left out of the 7a lifecycle-model slice
                      confirmed-requirements table).
   - routine_round    new, nullable, CHECK-restricted to the four confirmed
                      fixed times {'06:00', '11:00', '15:00', '21:00'}
-                     (same table; repeated verbatim in docs/audits/
+                     (same table; repeated verbatim in docs/archive/audits/
                      03-hospital-equipment-pool-workflow-audit.md's §12
                      acceptance criteria).
   - borrower_name    relaxed from NOT NULL to nullable -- the active

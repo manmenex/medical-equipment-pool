@@ -68,7 +68,7 @@ production-grade concurrency behavior — not available from the prior
 spreadsheet/AppSheet-based process. See "No Spreadsheet database," below.
 
 **Impact:** `docker-compose.yml` runs `postgres:16-alpine`; the backend
-connects via `asyncpg`. `docs/audits/01-database-schema-audit.md` and
+connects via `asyncpg`. `docs/archive/audits/01-database-schema-audit.md` and
 `docs/audits/04-consolidated-implementation-plan.md` Part E (Migration
 Strategy) govern schema evolution. The test suite's PostgreSQL-backed
 tests (see `backend/tests/test_postgres_integration.py`) verify behavior
@@ -89,7 +89,7 @@ daily); FastAPI's typed request/response contract and automatic OpenAPI
 docs reduce integration risk between backend and frontend.
 
 **Impact:** `backend/app/` — layered API → services → CRUD → models
-(SQLAlchemy 2.0 async). `docs/audits/02-backend-architecture-audit.md`
+(SQLAlchemy 2.0 async). `docs/archive/audits/02-backend-architecture-audit.md`
 covers the architectural review; PR1/PR2 (both merged) hardened its
 security and error-handling foundations.
 
@@ -107,7 +107,7 @@ the existing spreadsheet is still planned (Roadmap PR12).
 this workflow needs (one open dispatch per equipment item, one receipt
 per open dispatch, unique equipment identifiers per
 [`../knowledge/adr/ADR-002-identifier-model.md`](../knowledge/adr/ADR-002-identifier-model.md)) —
-see `docs/audits/03-hospital-equipment-pool-workflow-audit.md` §9.
+see `docs/archive/audits/03-hospital-equipment-pool-workflow-audit.md` §9.
 
 **Impact:** The hospital's existing inventory spreadsheet is a one-time
 **data source** for import (see the consolidated plan Part F), not an
@@ -167,7 +167,7 @@ or a separate workflow step.
 **Rationale:** Cleaning is a physical process that may happen before or
 after the digital receipt entry; splitting receipt into a two-step
 "Return Received" / "Cleaning Confirmed" process (as originally proposed
-in `docs/audits/03-hospital-equipment-pool-workflow-audit.md` §6.1) was
+in `docs/archive/audits/03-hospital-equipment-pool-workflow-audit.md` §6.1) was
 explicitly superseded by the hospital's confirmation of a single atomic
 receipt operation — see the consolidated plan Part B.1.
 
@@ -312,6 +312,6 @@ landing first); implementing out of order risks rework or an inconsistent
 intermediate state during a live pilot.
 
 **Impact:** Enforced via `AGENTS.md` (Scope Discipline, Git Discipline)
-and `docs/AI_WORKFLOW.md` (Architecture → Implementation → Draft PR →
+and `docs/PROJECT_WORKFLOW.md` (Architecture → Implementation → Draft PR →
 Independent Review → Fixes → Final Architecture Review → Merge). Current
 status of every PR is tracked in `docs/ROADMAP_STATUS.md`.

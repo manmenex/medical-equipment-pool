@@ -1,4 +1,4 @@
-"""Roadmap PR22B (docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md
+"""Roadmap PR22B (docs/archive/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md
 §9.J, §11, §13-15, §17.2, §18, §20-22, §25, §36 -- OD-PR22-1 through
 OD-PR22-7, all RESOLVED/OWNER APPROVED), refined by the PR22B
 implementation task's own binding field contract -- Reconciliation

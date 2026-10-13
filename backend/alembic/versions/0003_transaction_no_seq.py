@@ -4,7 +4,7 @@ Revision ID: 0003_transaction_no_seq
 Revises: 0002_audit_request_ids
 Create Date: 2026-07-17
 
-Roadmap PR4 (docs/kickoffs/PR4-architecture-kickoff.md, squash commit
+Roadmap PR4 (docs/archive/kickoffs/PR4-architecture-kickoff.md, squash commit
 91b23b62d864edadb430d1f4335c6b77e59222f0): replaces the racy
 COUNT(*)...LIKE transaction-number generator with a single global,
 concurrency-safe PostgreSQL SEQUENCE (transaction_no_seq).

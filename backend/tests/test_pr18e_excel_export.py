@@ -26,7 +26,7 @@ from tests.conftest import auth_headers as _auth_headers
 from tests.conftest import create_ward as _create_ward
 
 # ---------------------------------------------------------------------------
-# Roadmap PR18E (docs/design/PR18_PRINTING_EXPORT_PLAN.md §11, §16): unit
+# Roadmap PR18E (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §11, §16): unit
 # tests for app.services.report_xlsx_service (the openpyxl adapter) and API
 # tests for GET /reports/{report_id}/xlsx.
 # ---------------------------------------------------------------------------

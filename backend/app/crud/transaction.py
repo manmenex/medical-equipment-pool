@@ -11,7 +11,7 @@ from app.models.equipment import Equipment
 from app.models.transaction import BorrowTransaction, DispatchType, RoutineRound, TransactionStatus
 from app.utils.pagination import decode_cursor, encode_cursor
 
-# Roadmap PR4 (docs/kickoffs/PR4-architecture-kickoff.md): the numeric
+# Roadmap PR4 (docs/archive/kickoffs/PR4-architecture-kickoff.md): the numeric
 # suffix's minimum zero-padding width. This is a MINIMUM, not a fixed
 # maximum — a suffix past 99999999 is never rejected or truncated, it is
 # simply wider (Python's :0Nd format spec only ever pads up, never cuts).
@@ -328,7 +328,7 @@ async def search(
     before this function is ever called -- search() trusts its inputs,
     consistent with every other filter here.
 
-    Roadmap PR16 Slice 3 (docs/design/PR16_REPORTING_FOUNDATION_PLAN.md
+    Roadmap PR16 Slice 3 (docs/archive/design/PR16_REPORTING_FOUNDATION_PLAN.md
     §8/§9/§11): business_date_from/business_date_to/shift are a distinct
     filter basis from from_date/to_date above -- they compare against the
     *derived* business_date/shift expression (app.core.reporting_time's
@@ -347,7 +347,7 @@ async def search(
     validated by the caller before this function is ever called, same as
     from_date/to_date.
 
-    Roadmap PR17 Slice 1 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+    Roadmap PR17 Slice 1 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md
     §8/§9/§11): three additive capabilities for the Receive/Issue report
     query functions (app.services.report_query_service) -- none change any
     existing caller's behavior, since GET /transactions never sets any of

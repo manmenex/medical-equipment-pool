@@ -4,7 +4,7 @@ from app.schemas.common import UUIDStr
 
 
 class ReportOperatorOut(BaseModel):
-    """Roadmap PR17 Slice 2 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+    """Roadmap PR17 Slice 2 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md
     §10.4): the bounded, report-scoped operator shape returned by
     `GET /report-options/operators`. Deliberately excludes
     `employee_code`/`email`/`phone`/`role`/any authentication metadata --

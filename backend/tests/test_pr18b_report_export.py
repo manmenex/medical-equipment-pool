@@ -22,7 +22,7 @@ from tests.conftest import create_ward as _create_ward
 # incorrectly flag the synchronous tests).
 
 # ---------------------------------------------------------------------------
-# Roadmap PR18B (docs/design/PR18_PRINTING_EXPORT_PLAN.md §5-§8, §20, §22
+# Roadmap PR18B (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §5-§8, §20, §22
 # "PR18B -- Shared backend dataset and document model"): unit and API tests
 # for app.services.report_export_service and
 # GET /reports/{report_id}/print-data. No browser-print, PDF, or Excel

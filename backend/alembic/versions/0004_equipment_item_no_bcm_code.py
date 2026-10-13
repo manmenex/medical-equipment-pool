@@ -4,7 +4,7 @@ Revision ID: 0004_equipment_item_no_bcm_code
 Revises: 0003_transaction_no_seq
 Create Date: 2026-07-17
 
-Roadmap PR5 (docs/kickoffs/PR5-equipment-master-bcm-search.md): the two
+Roadmap PR5 (docs/archive/kickoffs/PR5-equipment-master-bcm-search.md): the two
 confirmed Equipment Master identifiers.
 
   - item_no: the hospital's existing physical QR label content. Internal

@@ -1,6 +1,6 @@
 import type { PrintValue, PrintValueType, ReportIdentity } from "@/types";
 
-// Roadmap PR18C (docs/design/PR18_PRINTING_EXPORT_PLAN.md §9): "Receive and
+// Roadmap PR18C (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §9): "Receive and
 // Issue default to landscape because of their wider transaction columns;
 // Equipment Verify Checklist defaults to portrait" -- the approved,
 // per-report-identity paper orientation. Not implementation-time layout

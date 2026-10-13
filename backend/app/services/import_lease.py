@@ -1,6 +1,6 @@
 """Shared, job-type-generic lease-renewal and fencing-audit helpers.
 
-Roadmap PR19A2/PR19A3 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md
+Roadmap PR19A2/PR19A3 (docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md
 §9.2, §9.4.2, §19, §25). The single, safety-critical implementation of
 the renewal loop, bounded failure-message formatting, and the
 fence-lost-audit helper -- design §25's "PR19A3 adds no new lease,

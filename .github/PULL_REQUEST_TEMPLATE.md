@@ -52,7 +52,7 @@ Clearly label local, CI, manual, inspection-only, reported, and unknown evidence
 
 ## Merge readiness checklist
 
-See `docs/AI_REVIEW_WORKFLOW.md` for the full Claude → Codex → owner sequence
+See `docs/PROJECT_WORKFLOW.md` for the full Claude → Codex → owner sequence
 this checklist supports.
 
 - [ ] Base SHA recorded (see Reference and purpose)

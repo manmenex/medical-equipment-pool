@@ -99,7 +99,7 @@ MANUAL_LIFECYCLE_TRANSITIONS: dict["EquipmentStatus", frozenset["EquipmentStatus
 
 class Equipment(UUIDPKMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "equipment"
-    # serial_number: Roadmap PR15B (docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md
+    # serial_number: Roadmap PR15B (docs/archive/design/PR15B_SCHEMA_HYGIENE_PLAN.md
     # §6.4) -- explicit name converges with migration 0014's
     # `uq_equipment_serial_number` rename instead of leaving `unique=True`
     # produce PostgreSQL's unnamed `equipment_serial_number_key`. The other
@@ -197,7 +197,7 @@ class Equipment(UUIDPKMixin, TimestampMixin, SoftDeleteMixin, Base):
     # by an inventory import.
     raw_source_status: Mapped[str | None] = mapped_column(String(100))
     equipment_metadata: Mapped[dict] = mapped_column("metadata", JSONType, default=dict)
-    # Roadmap PR20B (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24):
+    # Roadmap PR20B (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24):
     # optimistic-concurrency counter, mirroring ImportSession.version's
     # existing pattern (app/models/import_session.py). Incremented by
     # exactly 1 at the same application/service layer that already performs
@@ -232,7 +232,7 @@ class EquipmentStatusHistory(UUIDPKMixin, Base):
     )
     reason: Mapped[str | None] = mapped_column(Text)
     # See app.models.audit.AuditLog.created_at's identical comment (Roadmap
-    # PR15B, docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md §3.4/§3.5).
+    # PR15B, docs/archive/design/PR15B_SCHEMA_HYGIENE_PLAN.md §3.4/§3.5).
     changed_at: Mapped[datetime] = mapped_column(
         UTCDateTime, default=lambda: datetime.now(timezone.utc), nullable=False
     )

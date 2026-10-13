@@ -5,7 +5,7 @@ Revises: 0013_fk_ondelete_policy
 Create Date: 2026-07-28
 
 Roadmap PR15B (Schema Hygiene), Migration C of three
-(docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md §6/§8.2/§8.7, GitHub PR #52,
+(docs/archive/design/PR15B_SCHEMA_HYGIENE_PLAN.md §6/§8.2/§8.7, GitHub PR #52,
 architecture-approved) -- see §6 for the full rename plan this docstring
 summarizes.
 

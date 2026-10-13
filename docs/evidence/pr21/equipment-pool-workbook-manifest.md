@@ -3,7 +3,7 @@
 This file is the human-readable companion to
 `equipment-pool-workbook-manifest.json`, the machine-readable sanitized
 evidence artifact this manifest pair is built from. Every claim in the
-PR21 design document (`docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`)
+PR21 design document (`docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`)
 that is based on direct inspection of the real Equipment Pool AppSheet
 workbook cites this manifest and the workbook's SHA-256 below as its
 evidence trail.
@@ -131,7 +131,7 @@ pairing heuristic is permitted — ISSUE and RECEIVE import as independent
 `LegacyEquipmentEvent` facts. Any future reconciliation or linking is
 PR22-or-later work, requiring deterministic evidence or an explicitly
 authorized review workflow, never an inferred match. See
-`docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md` §11.2 for
+`docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md` §11.2 for
 the governing decision text; this manifest's own measurements above are
 unchanged and not re-run by that decision.
 
@@ -157,7 +157,7 @@ PR21 V1 authoritative source and excluded the SDC sheets from V1, on
 exactly the evidentiary basis this section states — a source-authority
 decision, not a claim that the row-level-equivalence question this
 section leaves open has since been answered. See
-`docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md` §6.5 for
+`docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md` §6.5 for
 the governing decision text. This manifest's own measurements are not
 re-run or amended by that decision.
 

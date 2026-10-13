@@ -5,7 +5,7 @@ Revises: 0011_pagination_ordering_indexes
 Create Date: 2026-07-28
 
 Roadmap PR15B (Schema Hygiene), Migration A of three
-(docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md, GitHub PR #52, architecture-
+(docs/archive/design/PR15B_SCHEMA_HYGIENE_PLAN.md, GitHub PR #52, architecture-
 approved) -- see §3/§8.2/§8.7 for the full rationale this docstring
 summarizes.
 

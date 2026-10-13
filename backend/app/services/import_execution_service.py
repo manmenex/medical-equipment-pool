@@ -1,6 +1,6 @@
 """Dry-run and execute phase orchestration for the legacy-import pipeline.
 
-Roadmap PR19A3 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §16,
+Roadmap PR19A3 (docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §16,
 §17, §9.4.3). Adds no new lease, heartbeat, fencing, or recovery
 mechanism of its own (§25) -- it composes onto the generic primitives
 PR19A2 already shipped and PR19A3 extends additively:

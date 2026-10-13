@@ -14,7 +14,7 @@ from tests.conftest import create_ward as _create_ward
 pytestmark = pytest.mark.asyncio
 
 # ---------------------------------------------------------------------------
-# Roadmap PR17 Slice 1 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md §7.1/
+# Roadmap PR17 Slice 1 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md §7.1/
 # §7.2/§8/§11/§17): report-domain and query-semantics tests for
 # app.services.report_query_service.search_receive_report/search_issue_report
 # and the additive transaction_crud.search() capabilities they use

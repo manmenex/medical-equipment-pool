@@ -52,7 +52,7 @@ export function ReportsPage() {
         </div>
       </div>
 
-      {/* Roadmap PR17 Slice 3 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+      {/* Roadmap PR17 Slice 3 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md
           §12): entry points to the two new named report screens -- reuses
           this existing /reports page as the navigation hub rather than
           adding new top-level sidebar entries. The trend chart/export

@@ -7,7 +7,7 @@ import { useAppliedReportFilters } from "@/hooks/useAppliedReportFilters";
 import { apiErrorMessage } from "@/services/api";
 import { getReceiveReport } from "@/services/reports";
 
-// Roadmap PR17 Slice 3 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md §6.1/
+// Roadmap PR17 Slice 3 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md §6.1/
 // §7.1/§12): on-screen Receive Report -- what equipment came back to the
 // pool, when, and in what condition. Consumes GET /reports/receive only
 // (never GET /transactions); the backend already guarantees every row

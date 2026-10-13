@@ -802,8 +802,7 @@ below), not this entry.
 
 ### PR18F — Post-implementation governance synchronization
 
-**Status:** Implementation in `docs/pr18f-governance-sync`, pending Owner
-approval before merge. Built from the PR18E baseline
+**Status:** Complete and merged (PR18F governance synchronization). Built from the PR18E baseline
 (`5d8cf7d8f378f6231d43e330310f664f6c19560f`, GitHub PR #78). This slice is
 documentation-only; it records Roadmap PR18 as complete because every
 committed output-format slice (PR18B–PR18E) is merged, and does not itself

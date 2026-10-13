@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ReceiveReportPage } from "@/pages/ReceiveReportPage";
 import type { Category, Page, ReportTransactionOut, Ward } from "@/types";
 
-// Roadmap PR17 Slice 3 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md §6.1/
+// Roadmap PR17 Slice 3 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md §6.1/
 // §7.1/§12): Receive Report screen tests. Consumes GET /reports/receive
 // (services/reports.ts's getReceiveReport) only -- GET /transactions is
 // never called for this page.

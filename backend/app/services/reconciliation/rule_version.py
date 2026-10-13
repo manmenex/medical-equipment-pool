@@ -1,4 +1,4 @@
-"""Roadmap PR22C (docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md §4)
+"""Roadmap PR22C (docs/archive/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md §4)
 -- the single explicit analysis rule version this engine implements.
 
 Deliberately not a git SHA, a timestamp, or a frontend version: it is a

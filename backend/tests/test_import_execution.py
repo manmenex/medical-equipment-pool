@@ -1,4 +1,4 @@
-"""Roadmap PR19A3 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §16,
+"""Roadmap PR19A3 (docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §16,
 §17, §18, §9.4.3). Covers: dry-run read-only enforcement/completion,
 execute single-winner claim/idempotency/completion, TX1/TX2 failure
 fencing reused for dry-run/execute, recovery extended to dry_run/execute,

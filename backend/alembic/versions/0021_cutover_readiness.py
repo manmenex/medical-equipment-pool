@@ -4,7 +4,7 @@ Revision ID: 0021_cutover_readiness
 Revises: 0020_reconciliation_foundation
 Create Date: 2026-08-25
 
-Roadmap PR23B (docs/design/PR23_CUTOVER_READINESS_PLAN.md §9, §10, §11,
+Roadmap PR23B (docs/archive/design/PR23_CUTOVER_READINESS_PLAN.md §9, §10, §11,
 §12 Gate D/E, §15, §16, §26 -- OD-PR23-1 through OD-PR23-6, all
 RESOLVED / OWNER APPROVED via the PR23 Owner Decision Closure round),
 refined by the PR23B implementation task's own binding field contract.
@@ -357,7 +357,7 @@ def _verify_schema_convergence(bind) -> None:
         if unexpected_columns:
             problems.append(
                 f"{table}: unexpected column(s) not part of the PR23B design contract "
-                f"(docs/design/PR23_CUTOVER_READINESS_PLAN.md §15/§26): {sorted(unexpected_columns)}. An extra "
+                f"(docs/archive/design/PR23_CUTOVER_READINESS_PLAN.md §15/§26): {sorted(unexpected_columns)}. An extra "
                 "application column is never silently accepted merely because every expected column also exists."
             )
         unexpected_constraints = _unexpected_object_names(
@@ -438,7 +438,7 @@ def _verify_schema_convergence(bind) -> None:
     if problems:
         raise RuntimeError(
             "Migration 0021 aborted: the existing PostgreSQL catalog diverges from the PR23B design "
-            f"contract (docs/design/PR23_CUTOVER_READINESS_PLAN.md §9/§10/§11/§12/§15/§16/§26) in "
+            f"contract (docs/archive/design/PR23_CUTOVER_READINESS_PLAN.md §9/§10/§11/§12/§15/§16/§26) in "
             f"{len(problems)} way(s). Refusing to silently continue with an incompatible historical "
             "schema:\n\n" + "\n\n".join(problems)
         )

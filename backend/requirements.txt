@@ -22,7 +22,7 @@ APScheduler>=3.10.4
 python-multipart>=0.0.9
 email-validator>=2.2.0
 
-# Roadmap PR18D (docs/design/PR18_PRINTING_EXPORT_PLAN.md §10): backend
+# Roadmap PR18D (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §10): backend
 # HTML/CSS-to-PDF renderer for report PDF export. Requires the native
 # Pango/HarfBuzz packages installed in backend/Dockerfile. Exact-pinned
 # (not the repository's usual floor-pin) because the approved renderer

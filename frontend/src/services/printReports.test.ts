@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/services/api";
 import { buildPrintDataFilters, getReportPrintData, stripPrintDataPaginationParams } from "@/services/printReports";
 
-// Roadmap PR18C (docs/design/PR18_PRINTING_EXPORT_PLAN.md §6.2/§9): proves
+// Roadmap PR18C (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §6.2/§9): proves
 // the print client calls exactly the merged PR18B endpoint
 // (GET /reports/{report_id}/print-data) with the filters it was given, with
 // only `cursor`/`limit` ever removed. Review round 2 (PR18C-H2R) requires

@@ -10,7 +10,7 @@ change was designed (per Repository Owner instruction). Strictly
 index-only: no API behavior change, no pagination-logic change, no
 `COUNT(*)` change, no endpoint contract change.
 
-Evidence (docs/audits/06-pr14b-pagination-index-evidence.md has the full
+Evidence (docs/archive/audits/06-pr14b-pagination-index-evidence.md has the full
 EXPLAIN (ANALYZE, BUFFERS) output this migration is based on): both
 `app.crud.equipment.search()` and `app.crud.transaction.search()` order
 their cursor-paginated result set by `ORDER BY created_at DESC, id DESC`

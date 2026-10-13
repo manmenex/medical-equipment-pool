@@ -1,7 +1,9 @@
 # Roadmap PR21 — Legacy Receive and Issue History Import: Design Specification
 
-**Status:** Design only. Not implemented (except PR21-Foundation, §46,
-genuinely topology-independent generic plumbing, merged as GitHub PR
+**Status:** Complete and merged (PR21-Foundation GitHub PR #100; PR21A-E
+GitHub PR #103-#110; PR21F governance close-out GitHub PR #111). The
+remaining status text is the historical design record. PR21-Foundation (§46,
+genuinely topology-independent generic plumbing) was merged as GitHub PR
 #100, squash SHA `7b99e5866df4b71ffa1aa09d265baa2bc7033c33`). **Owner
 Decision Closure Round 1** (GitHub PR #101, squash SHA
 `e22139346c7bdff1edf841022dd4b7dbebbb3573`) resolved OD-PR21-1,
@@ -152,8 +154,8 @@ given throughout this document):
 - `AGENTS.md`, `docs/PROJECT_PLAYBOOK.md`, `docs/ENGINEERING_WORKFLOW.md`
 - `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, `docs/DECISION_LOG.md`,
   `docs/audits/04-consolidated-implementation-plan.md`
-- `docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`
-- `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md`
+- `docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`
+- `docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md`
 - `backend/app/models/transaction.py`, `backend/app/models/equipment.py`,
   `backend/app/models/master_data.py`, `backend/app/models/user.py`,
   `backend/app/models/import_session.py`, `backend/app/models/audit.py`
@@ -527,7 +529,7 @@ implementation slice).
 ## 7. Source/session topology (H1) — RESOLVED: Option A
 
 **The problem.** PR19's foundation is `ImportSession → exactly one
-ImportSource` (`docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md` §3-4;
+ImportSource` (`docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md` §3-4;
 `AdapterInvocationContext` correspondingly carries one
 `import_session_id`/`import_source_id`/`source_checksum` per invocation,
 `import_adapter_context.py:37-76`). PR21 must reason across **two**
@@ -1219,7 +1221,7 @@ explicit acceptance of the Administrator-ownership policy.
 **Current PR19 runtime behavior is authoritative and is not modified by
 PR21:** if validation contains a blocking `ERROR`, the session becomes
 `validation_failed`; dry-run is not admitted from `validation_failed`
-(`docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md` §13).
+(`docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md` §13).
 
 **Selected: ALL-OR-NOTHING VALIDATION GATE.** Any blocking `ERROR`
 anywhere in the batch → the whole session becomes `validation_failed`;
@@ -2362,7 +2364,7 @@ flows through §29-§36's generalized confirm endpoint.
 ## 38. Retention design (M1) — policy, implementation, and fail-closed semantics
 
 **PR19's 180-day retention POLICY is reused unmodified**
-(`docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md` §18: 180-day
+(`docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md` §18: 180-day
 post-terminal, redact-in-place, `IMPORT_RETENTION_DAYS`-configurable, no
 V1 Administrator UI, no legal/manual hold).
 
@@ -3095,7 +3097,7 @@ as GitHub PR #100, squash SHA `7b99e5866df4b71ffa1aa09d265baa2bc7033c33`
 `docs/audits/04-consolidated-implementation-plan.md`. **GitHub PR #97's
 accepted non-blocking P2 follow-up, and GitHub PR #98's P2-A/P2-B
 follow-ups, remain untouched and unresolved by this PR** — this update
-edits neither `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` nor the
+edits neither `docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` nor the
 PR20-related content of `docs/DECISION_LOG.md`, and does not rewrite any
 prior dated `DECISION_LOG.md` entry's own historical record.
 
@@ -3103,7 +3105,7 @@ prior dated `DECISION_LOG.md` entry's own historical record.
 
 ## 51. Scope guard for this PR
 
-**Touched:** `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+**Touched:** `docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
 (revised), `docs/DECISION_LOG.md` (one new entry recording Owner
 Decision Closure Round 1's findings and resolutions). **Not touched:**
 `backend/**`, `frontend/**`, `alembic/**`, `tests/**`, `.github/**`,
@@ -3772,16 +3774,16 @@ matched line.
 | File | Phrase/category | Classification | Action |
 |---|---|---|---|
 | `docs/PROJECT_MEMORY.md` | initially suspected baseline-SHA hit (later found to be a mis-attributed match against `knowledge/PROJECT_MEMORY.md`, same line number) | A — current, correct as-is (file contains no baseline/current-state claim at all; it is the dated historical log, ending at "Governance Pack v1.0," explicitly distinct from `knowledge/PROJECT_MEMORY.md`) | None |
-| `docs/DOCUMENTATION_AUDIT.md` | "PR20/PR21 imports" (Follow-up actions), "implementation has not started" (PR15B, unrelated to PR21) | B — historical, dated 2026-07-28 snapshot, self-scoped by its own header date | None |
+| `docs/archive/DOCUMENTATION_AUDIT.md` | "PR20/PR21 imports" (Follow-up actions), "implementation has not started" (PR15B, unrelated to PR21) | B — historical, dated 2026-07-28 snapshot, self-scoped by its own header date | None |
 | `docs/api/ERROR_CODES.md` | PR21E0 route-family error-code descriptions | A — current and accurate (PR21E0 is merged; descriptions match implemented behavior) | None |
 | `docs/evidence/pr21/equipment-pool-workbook-manifest.md` | PR21 V1 architecture/source-evidence references | B — dated evidence record tied to Owner Decision Closure Round 2 | None |
-| `docs/design/PR16_REPORTING_FOUNDATION_PLAN.md`, `PR17_OPERATIONAL_REPORTS_PLAN.md`, `PR18_PRINTING_EXPORT_PLAN.md`, `PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`, `PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` | each document's own "next planned item" / "future Roadmap PR21 scope" / `MockImportClient` language, scoped to that PR's own historical position | B — each is that PR's own dated design record describing its own contemporaneous status, not a claim about PR21's current status | None |
+| `docs/archive/design/PR16_REPORTING_FOUNDATION_PLAN.md`, `PR17_OPERATIONAL_REPORTS_PLAN.md`, `PR18_PRINTING_EXPORT_PLAN.md`, `PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`, `PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` | each document's own "next planned item" / "future Roadmap PR21 scope" / `MockImportClient` language, scoped to that PR's own historical position | B — each is that PR's own dated design record describing its own contemporaneous status, not a claim about PR21's current status | None |
 | `docs/ARCHITECTURE_DECISIONS.md`, `docs/BUSINESS_RULES.md`, `docs/DOMAIN_MODEL.md`, `docs/GLOSSARY.md`, `docs/DEFINITION_OF_DONE.md` | generic "legacy"/"import" usage (PR6/PR7/PR8/PR10 legacy-field handling, unrelated to PR19-21) | A — current and correctly scoped to their own subject | None |
-| `docs/PROJECT_WORKFLOW.md`, `docs/PROJECT_PLAYBOOK.md`, `docs/REVIEW_CHECKLIST.md`, `docs/AI_REVIEW_WORKFLOW.md`, `docs/AI_WORKFLOW.md`, `docs/ENGINEERING_WORKFLOW.md` | process/authority documents pointing to `ROADMAP.md`/`ROADMAP_STATUS.md` as the status authority | A — correctly defer to the canonical status documents rather than duplicating status | None |
+| `docs/PROJECT_WORKFLOW.md`, `docs/PROJECT_PLAYBOOK.md`, `docs/DEFINITION_OF_DONE.md`, `docs/ENGINEERING_WORKFLOW.md` | process/authority documents pointing to `ROADMAP.md`/`ROADMAP_STATUS.md` as the status authority | A — correctly defer to the canonical status documents rather than duplicating status | None |
 | `docs/api/dispatch.md` | "this repository's PR20 review round 1" | B — refers to a specific historical code-review round for a `ward_id` validation finding, unrelated to Roadmap PR20 (Equipment Master Import) status | None |
-| `docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md`, `docs/development/TESTING.md`, `docs/prompts/codex-pr-review.md` | "current baseline" (PR15B's own historical baseline), "mock" (frontend test-mocking convention, unrelated to `MockImportClient`) | B — correctly scoped to their own subject | None |
-| All remaining files under `docs/adr/`, `docs/api/`, `docs/architecture/`, `docs/audits/01-02*`, `docs/development/`, `docs/kickoffs/`, `docs/prompts/`, `knowledge/adr/`, `knowledge/architecture/`, `knowledge/business-rules/`, `knowledge/glossary.md`, `knowledge/traceability/README.md`, `knowledge/README.md` | no PR19/PR20/PR21/PR22/legacy-import/mock/baseline hit of any kind | N/A | None |
-| `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, `docs/DECISION_LOG.md`, this design document, `docs/audits/04-consolidated-implementation-plan.md`, `knowledge/CHANGE_HISTORY.md`, `knowledge/CONTEXT.md`, `knowledge/PROJECT_MEMORY.md` (`knowledge/`) | the 8 files already updated by this PR's original commit, checked here for *coverage* (missing files/phrases), not yet independently re-checked for internal drift caused by the round-1 edits themselves | **Correction (Fix Round 2, §56.8): this row's "None (verified consistent)" conclusion was wrong** — a second independent review found stale `2743af8...`/PR20F "current baseline" self-references left behind inside several of these same 8 files (plus `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md`, a 9th file) by the round-1 edit itself. See §56.8 for the corrected audit. | See §56.8 |
+| `docs/archive/design/PR15B_SCHEMA_HYGIENE_PLAN.md`, `docs/development/TESTING.md`, `docs/prompts/codex-pr-review.md` | "current baseline" (PR15B's own historical baseline), "mock" (frontend test-mocking convention, unrelated to `MockImportClient`) | B — correctly scoped to their own subject | None |
+| All remaining files under `docs/adr/`, `docs/api/`, `docs/architecture/`, `docs/archive/audits/01-02*`, `docs/development/`, `docs/archive/kickoffs/`, `docs/prompts/`, `knowledge/adr/`, `knowledge/architecture/`, `knowledge/business-rules/`, `knowledge/glossary.md`, `knowledge/traceability/README.md`, `knowledge/README.md` | no PR19/PR20/PR21/PR22/legacy-import/mock/baseline hit of any kind | N/A | None |
+| `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, `docs/DECISION_LOG.md`, this design document, `docs/audits/04-consolidated-implementation-plan.md`, `knowledge/CHANGE_HISTORY.md`, `knowledge/CONTEXT.md`, `knowledge/PROJECT_MEMORY.md` (`knowledge/`) | the 8 files already updated by this PR's original commit, checked here for *coverage* (missing files/phrases), not yet independently re-checked for internal drift caused by the round-1 edits themselves | **Correction (Fix Round 2, §56.8): this row's "None (verified consistent)" conclusion was wrong** — a second independent review found stale `2743af8...`/PR20F "current baseline" self-references left behind inside several of these same 8 files (plus `docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md`, a 9th file) by the round-1 edit itself. See §56.8 for the corrected audit. | See §56.8 |
 
 **Result (as this subsection originally concluded — corrected by §56.8,
 below):** the 83-file coverage sweep found zero files *missing* an update
@@ -3845,7 +3847,7 @@ Roadmap PR21|future PR21`).
 | `docs/ROADMAP_STATUS.md` (PR19B merge paragraph) | "historical/intermediate, since superseded by `2743af8...` (PR20F, the current baseline; see 'Current baseline' above)" | STALE-CURRENT | Fixed: "superseded by `2743af8...` (PR20F), itself in turn since superseded by `d64d50d...` (PR21E, the current baseline...)" |
 | `docs/ROADMAP_STATUS.md` ("Roadmap PR20 complete" section, PR20F slice line) | "squash SHA `2743af8...` (see 'Current baseline' above)" | HISTORICAL — a neutral pointer to the baseline-history section, does not itself assert `2743af8...` is current | None |
 | `docs/audits/04-consolidated-implementation-plan.md` ("Update — Roadmap PR20..." paragraph) | "The current authoritative base-branch baseline is `2743af8...`" — immediately followed (after round 1's addition) by a second paragraph asserting "The current authoritative base-branch baseline is `d64d50d...`," i.e. two consecutive, contradictory "current" claims | STALE-CURRENT | Fixed: "PR20's own base-branch baseline at the time was `2743af8...` — since superseded as the repository's current authoritative baseline by GitHub PR #110 (Roadmap PR21E), `d64d50d...` (see the update immediately below)" |
-| `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` (status header) | "merged into `claude/medical-equipment-pool-0c7fz0`, current baseline `2743af8...`" — PR20's own design doc calling PR20F's SHA the (repository) current baseline, unqualified | STALE-CURRENT — this is exactly the PR20-design-doc pattern the reviewer named explicitly (§10 of the fix-round instructions) | Fixed: "PR20's own final/historical baseline at the time, `2743af8...` — since superseded as the repository's current baseline by GitHub PR #110 (Roadmap PR21E), `d64d50d...`; see `docs/ROADMAP.md`'s 'Current baseline' section for the live pointer." **Checked against GitHub PR #97's accepted P2 (precise wording of the PR20 design-edit-scope description, immediately following this sentence): this fix adds baseline-SHA context before that sentence and does not edit, touch, or resolve it — P2 remains open, unresolved, exactly as before.** |
+| `docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` (status header) | "merged into `claude/medical-equipment-pool-0c7fz0`, current baseline `2743af8...`" — PR20's own design doc calling PR20F's SHA the (repository) current baseline, unqualified | STALE-CURRENT — this is exactly the PR20-design-doc pattern the reviewer named explicitly (§10 of the fix-round instructions) | Fixed: "PR20's own final/historical baseline at the time, `2743af8...` — since superseded as the repository's current baseline by GitHub PR #110 (Roadmap PR21E), `d64d50d...`; see `docs/ROADMAP.md`'s 'Current baseline' section for the live pointer." **Checked against GitHub PR #97's accepted P2 (precise wording of the PR20 design-edit-scope description, immediately following this sentence): this fix adds baseline-SHA context before that sentence and does not edit, touch, or resolve it — P2 remains open, unresolved, exactly as before.** |
 | `knowledge/CHANGE_HISTORY.md` (PR19B-merged entry) | "the current authoritative baseline is `2743af8...` (PR20F)" — this entry sits below the PR21-complete entry (added at the very top of the file in round 1), so `2743af8...` is no longer the nearest-above "current" pointer | STALE-CURRENT | Fixed: "`2743af8...` (PR20F) ... was the authoritative baseline next, and is itself now also historical — superseded by the entry at the very top of this file, `d64d50d...` (PR21E), the current authoritative baseline" |
 | `knowledge/CHANGE_HISTORY.md` (same entry, "as of this entry" sentence) | "`04f5bf5c...` was, as of this entry, the current authoritative base-branch tip" | HISTORICAL — explicitly self-scoped ("as of this entry") | None |
 | `knowledge/CHANGE_HISTORY.md` ("Roadmap PR20 complete" entry, PR20F bullet) | "squash SHA `2743af8...`" (plain provenance mention, PR20F's own slice bullet) | HISTORICAL | None |
@@ -3853,7 +3855,7 @@ Roadmap PR21|future PR21`).
 | `knowledge/PROJECT_MEMORY.md` (PR19B-merged paragraph) | "superseded by `2743af8...`, the current PR20F baseline; see 'Current baseline and Roadmap' above" | STALE-CURRENT | Fixed: "superseded by `2743af8...`, PR20F's own baseline at the time, itself since superseded by `d64d50d...`, PR21E, the current baseline" |
 | `knowledge/CONTEXT.md` | "`2743af849702ef551927b9c362421df08c80b5d9` (GitHub PR #96, Roadmap PR20F — now historical: its mock workflow has been fully removed by PR21E)" | HISTORICAL — already correctly qualified in round 1 | None |
 | `docs/DECISION_LOG.md` (four hits, inside the dated `## 2026-08-11` and `## 2026-08-16` entries) | "the current authoritative baseline is `2743af8...`" and similar, each inside a dated entry describing that entry's own point-in-time state | HISTORICAL — dated entries are append-only; a dated entry correctly saying the baseline *was* `2743af8...` as of its own date is accurate and must never be rewritten | None (verified each hit sits inside a `## YYYY-MM-DD` header's body, not in an undated summary) |
-| `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md` (this document), §55.9 "Roadmap state after this round," and similar Owner Decision Closure Round 1-3 (§46-§55) status lines | "AUTHORIZED, NOT YET IMPLEMENTED," "STILL BLOCKED," etc. | HISTORICAL — each is a numbered closure round's own "state after this round" snapshot, explicitly time-boxed by its own section number, superseded by §56 above (unaffected by this round) | None |
+| `docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md` (this document), §55.9 "Roadmap state after this round," and similar Owner Decision Closure Round 1-3 (§46-§55) status lines | "AUTHORIZED, NOT YET IMPLEMENTED," "STILL BLOCKED," etc. | HISTORICAL — each is a numbered closure round's own "state after this round" snapshot, explicitly time-boxed by its own section number, superseded by §56 above (unaffected by this round) | None |
 
 **Independent re-verification after the fixes above** (same commands as
 the Method paragraph, re-run against the working tree):
@@ -3866,7 +3868,7 @@ the Method paragraph, re-run against the working tree):
   correctly, sits inside a dated `docs/DECISION_LOG.md` entry, or is
   unrelated to PR20/PR21 (`docs/BUSINESS_RULES.md`'s PR10 role-model
   section, `docs/ENGINEERING_WORKFLOW.md`'s generic baseline-management
-  policy, `docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md`'s and
+  policy, `docs/archive/design/PR15B_SCHEMA_HYGIENE_PLAN.md`'s and
   `PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md`'s own historical baselines).
 - PR21-state sweep (`PR21.*not started|...|future Roadmap PR21|future
   PR21`): every hit is either inside a dated `DECISION_LOG.md` entry, a

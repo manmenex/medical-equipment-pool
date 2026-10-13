@@ -1,4 +1,4 @@
-"""Roadmap PR21A (docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md
+"""Roadmap PR21A (docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md
 §8.1, §14, §24.2, §36) -- Historical Event Schema / Provenance
 Foundation. Covers: `LegacyMigrationAuthority`'s immutable checksum
 binding and distinctness from `ImportSource`; `LegacyEquipmentEvent`'s

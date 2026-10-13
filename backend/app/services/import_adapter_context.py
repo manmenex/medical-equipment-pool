@@ -1,7 +1,7 @@
 """Adapter Invocation Context -- session/source identity for
 `plan_dry_run`/`execute`.
 
-Roadmap PR20A (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §6.4,
+Roadmap PR20A (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §6.4,
 architecture-approved via the merged Design PR #89). `import_execution_
 service.run_dry_run` calls exactly `await adapter.plan_dry_run(ro_db)`,
 and `run_execute` calls exactly `await adapter.execute(db)` -- neither
@@ -65,7 +65,7 @@ class AdapterInvocationContext:
     # (`ImportSession.current_validation_job_id`, existing PR19A field).
     # `None` for `execute`.
     accepted_validation_job_id: uuid.UUID | None
-    # Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §26):
+    # Roadmap PR20D (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §26):
     # the acting user, for audit-event attribution only -- both
     # `run_dry_run`/`run_execute` already receive this as their own
     # `actor_id` parameter, so no new identity resolution is introduced.

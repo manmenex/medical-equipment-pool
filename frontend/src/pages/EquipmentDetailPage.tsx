@@ -22,7 +22,7 @@ const DISPATCH_TYPE_LABELS: Record<DispatchType, string> = {
 
 const ROUTINE_ROUNDS: RoutineRound[] = ["06:00", "11:00", "15:00", "21:00"];
 
-// Roadmap PR16 Slice 4 (docs/design/PR16_REPORTING_FOUNDATION_PLAN.md §10):
+// Roadmap PR16 Slice 4 (docs/archive/design/PR16_REPORTING_FOUNDATION_PLAN.md §10):
 // ค่ากะ -- กลางวัน / กลางคืน, matching the design's own Thai wording.
 const SHIFT_LABELS: Record<Shift, string> = {
   day: "กลางวัน",
@@ -76,7 +76,7 @@ export function EquipmentDetailPage() {
   const [fromDateFilter, setFromDateFilter] = useState("");
   const [toDateFilter, setToDateFilter] = useState("");
 
-  // Roadmap PR16 Slice 4 (docs/design/PR16_REPORTING_FOUNDATION_PLAN.md §10):
+  // Roadmap PR16 Slice 4 (docs/archive/design/PR16_REPORTING_FOUNDATION_PLAN.md §10):
   // business_date_from/business_date_to/shift/event -- a distinct filter
   // basis from the from_date/to_date raw-timestamp pair above, never merged
   // with or substituted for it (see the design's explicit correction on
@@ -359,7 +359,7 @@ export function EquipmentDetailPage() {
           </div>
         </div>
 
-        {/* Roadmap PR16 Slice 4 (docs/design/PR16_REPORTING_FOUNDATION_PLAN.md
+        {/* Roadmap PR16 Slice 4 (docs/archive/design/PR16_REPORTING_FOUNDATION_PLAN.md
             §10): business_date_from/business_date_to/shift/event -- kept as
             an explicitly separate control group from the from_date/to_date
             pair above (never merged, never relabeled), since the two

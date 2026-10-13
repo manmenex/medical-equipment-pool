@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ReportPrintPage } from "@/pages/ReportPrintPage";
 import type { PrintDocumentOut } from "@/types";
 
-// Roadmap PR18C (docs/design/PR18_PRINTING_EXPORT_PLAN.md §9/§20.3): the
+// Roadmap PR18C (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §9/§20.3): the
 // dedicated browser-print view. Consumes GET /reports/{report_id}/print-data
 // (services/printReports.ts's getReportPrintData) only -- it must never
 // call GET /reports/receive, GET /reports/issue,

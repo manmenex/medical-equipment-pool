@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IssueReportPage } from "@/pages/IssueReportPage";
 import type { Category, Page, ReportTransactionOut, Ward } from "@/types";
 
-// Roadmap PR17 Slice 3 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md §6.2/
+// Roadmap PR17 Slice 3 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md §6.2/
 // §7.2/§12): Issue Report screen tests. Consumes GET /reports/issue
 // (services/reports.ts's getIssueReport) only -- GET /transactions is
 // never called for this page. Unlike the Receive Report, the Issue Report

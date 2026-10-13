@@ -73,7 +73,7 @@ export interface EquipmentStatusHistoryItem {
 export type DispatchType = "routine_round" | "on_demand";
 export type RoutineRound = "06:00" | "11:00" | "15:00" | "21:00";
 
-// Roadmap PR16 (docs/design/PR16_REPORTING_FOUNDATION_PLAN.md §7/§8):
+// Roadmap PR16 (docs/archive/design/PR16_REPORTING_FOUNDATION_PLAN.md §7/§8):
 // mirrors the backend's `app.core.reporting_time.Shift` enum exactly --
 // `business_date`/`shift` are always backend-computed (never invented or
 // recalculated here); the frontend only ever sends/displays these two
@@ -136,7 +136,7 @@ export interface Page<T> {
 }
 
 // Roadmap PR17 Slice 2 (backend/app/schemas/transaction.py's
-// ReportTransactionOut, docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md §8/
+// ReportTransactionOut, docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md §8/
 // §10.1/§11): the report-only response DTO for GET /reports/receive and
 // GET /reports/issue -- never used by GET /transactions/GET
 // /transactions/{id}, which continue returning TransactionOut unchanged.
@@ -291,7 +291,7 @@ export interface ImportCommitResponse extends ImportPreviewResponse {
 // filename or localized title -- mirrors the backend enum's values exactly.
 export type ReportIdentity = "receive-report" | "issue-report" | "equipment-verify-checklist";
 
-// Roadmap PR18C (docs/design/PR18_PRINTING_EXPORT_PLAN.md §7.2, backend
+// Roadmap PR18C (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §7.2, backend
 // PrintColumnOut/PrintRowOut/PrintFilterSummaryOut/PrintMetadataOut/
 // PrintDocumentOut): the versioned print/export API contract returned by
 // GET /reports/{report_id}/print-data. Mirrors the backend DTOs field for

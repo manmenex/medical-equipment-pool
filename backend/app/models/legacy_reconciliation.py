@@ -1,6 +1,6 @@
 """Roadmap PR22B -- Reconciliation Schema + Run/Snapshot Foundation.
 
-Authoritative design: `docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`
+Authoritative design: `docs/archive/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md`
 (§9.J two-boundary temporal coverage model, §11/§13-15 reconciliation
 run/finding shape, §17.2 recommended domain model, §18 BME alias, §20-22
 sign-off preconditions, §25, §34 pairing-candidate disposition

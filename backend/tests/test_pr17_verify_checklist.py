@@ -6,7 +6,7 @@ from tests.conftest import auth_headers as _auth_headers
 pytestmark = pytest.mark.asyncio
 
 # ---------------------------------------------------------------------------
-# Roadmap PR17 Slice 4 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+# Roadmap PR17 Slice 4 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md
 # §7.3(A)/§8/§10.3/§14/§17/§18 Owner Decision #1 resolved to interpretation
 # A): API contract tests for GET /reports/equipment-verify-checklist -- a
 # read-only, current-state equipment master/status listing, not a

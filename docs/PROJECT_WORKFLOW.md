@@ -1,7 +1,7 @@
 # Project Workflow
 
 **Purpose:** The requirement-to-merge pipeline, the AI agent team that runs it, and its non-negotiables
-**Authority:** Authoritative for the pipeline, the agent roles, and the merge rules. Where `docs/PROJECT_PLAYBOOK.md`, `docs/AI_REVIEW_WORKFLOW.md`, `docs/prompts/`, or any older document still describes the earlier Claude -> Codex -> ChatGPT -> Owner pipeline, this document supersedes it (Owner decision, 2026-10-13; see `docs/DECISION_LOG.md`).
+**Authority:** Authoritative for the pipeline, the agent roles, and the merge rules. Where `docs/PROJECT_PLAYBOOK.md`, `docs/prompts/`, or any older document still describes the earlier Claude -> Codex -> ChatGPT -> Owner pipeline, this document supersedes it (Owner decision, 2026-10-13; see `docs/DECISION_LOG.md`).
 **Update trigger:** Change to the pipeline, the agent team, or a non-negotiable
 **Maintainer:** Repository Owner
 
@@ -40,7 +40,7 @@ Owner request
    exact head SHA. A red check goes straight back to the implementer, not
    to review.
 5. **Review.** The reviewer agent reviews the green head SHA against
-   `docs/REVIEW_CHECKLIST.md`: correctness, security, database and
+   `docs/DEFINITION_OF_DONE.md`: correctness, security, database and
    transaction safety, test quality, and conformance to the business rules
    and guardrails. A process or governance change is reviewed in the same
    PR as the work it serves; no separate Governance PR is needed.
@@ -104,7 +104,7 @@ assessment.
 
 | Concern | Document |
 |---|---|
-| Review checklist | `docs/REVIEW_CHECKLIST.md` |
+| Review checklist | `docs/DEFINITION_OF_DONE.md` |
 | Review format and severity definitions | `docs/prompts/codex-pr-review.md` (used by the reviewer agent) |
 | Git/branch/merge/release policy | `docs/REPOSITORY_STRATEGY.md` |
 | Known process limitations | `docs/KNOWN_LIMITATIONS.md` |

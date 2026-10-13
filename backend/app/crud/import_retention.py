@@ -13,7 +13,7 @@ from app.models.import_session import (
 )
 from app.services.import_plan_provider import PlanProviderNotRegisteredError, get_plan_provider
 
-# Roadmap PR19A3 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §18).
+# Roadmap PR19A3 (docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §18).
 # A genuinely new concurrency mechanism -- SELECT ... FOR UPDATE SKIP
 # LOCKED -- unrelated to §9's job-lease apparatus (import_job.py), since
 # retention cleanup claims a batch of *sessions*, not one job. Two

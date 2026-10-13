@@ -109,7 +109,7 @@ async def update(db: AsyncSession, user: User, *, data: dict, role_id: uuid.UUID
 
 
 def _operator_ids_subquery():
-    """Roadmap PR17 Slice 2 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+    """Roadmap PR17 Slice 2 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md
     §10.4/§11), extracted as a shared helper by Roadmap PR18B review
     4837668805 (PR18B-H2R): the single source of truth for "who counts as
     a historical operator" -- exactly the distinct `User` rows referenced
@@ -156,7 +156,7 @@ async def list_operators(
     limit: int = 100,
     cursor: str | None = None,
 ) -> tuple[list[User], str | None, int]:
-    """Roadmap PR17 Slice 2 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+    """Roadmap PR17 Slice 2 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md
     §10.4/§11): the bounded, report-scoped operator lookup behind
     `GET /report-options/operators`. Source/population rule documented on
     `_operator_ids_subquery` above.

@@ -50,7 +50,7 @@ class EquipmentUpdate(BaseModel):
     item_no: str | None = Field(default=None, max_length=64)
     bcm_code: str | None = Field(default=None, max_length=64)
 
-    # Roadmap PR91-H1 (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    # Roadmap PR91-H1 (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
     # §24): the same `extra: "forbid"` technique Roadmap PR7b/PR8B/PR9A
     # already established for BorrowRequest/ReturnRequest/
     # WardCorrectionRequest (app.schemas.transaction) -- a caller sending
@@ -79,7 +79,7 @@ class EquipmentOut(EquipmentBase):
     status: EquipmentStatus
     created_at: datetime
     updated_at: datetime
-    # Roadmap PR20B (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24):
+    # Roadmap PR20B (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24):
     # read-only optimistic-concurrency counter, exposed for client-side
     # observability/debugging only (e.g. an admin noticing a record changed
     # between two screen loads) -- never accepted as input by
