@@ -22,11 +22,11 @@
 
 **คำตอบของ Owner (2026-10-13) ที่ปรับเข้าแบบแล้ว (ดูหัวข้อ 18)**
 - ออฟไลน์ค้นหาด้วย **BCM Code เท่านั้น** สแกน QR ใช้เฉพาะตอนออนไลน์ (ADR-004 ไม่เปลี่ยน)
-- **เบอร์โทร:** ในโค้ดปัจจุบันไม่มีเบอร์โทรของวอร์ด/แผนกใน master data และหน้าจอไม่ได้กรอกให้อัตโนมัติ ช่องนี้เป็นข้อความที่พิมพ์เอง (ไม่บังคับ) ออฟไลน์จึงคงพฤติกรรมเดิม ถ้าต้องการกรอกอัตโนมัติ ต้องเพิ่มฟิลด์เบอร์โทรใน master data เป็นงานแยกต่างหาก (ยังไม่ทำ)
+- **เบอร์โทร (ตัดสินใจแล้ว):** เพิ่มฟิลด์เบอร์โทรใน master data ของวอร์ด/แผนก (ปัจจุบันยังไม่มีในโค้ด) แล้วให้ฟอร์มจ่ายเครื่องกรอก `phone_number` อัตโนมัติจากวอร์ดที่เลือก ทั้งออนไลน์และออฟไลน์ (จากข้อมูลวอร์ดที่แคชไว้) และยังแก้ไขได้เหมือนเดิม ทำเป็น slice เล็กแยก (B0 + S0) ก่อนฟอร์มออฟไลน์ มีประโยชน์ตอนออนไลน์ด้วย
 - ผู้ตัดสิน conflict คือ Equipment Pool staff และ Administrator
 - **เครื่องใช้ร่วมกัน (เปลี่ยนแบบ):** ผู้ใช้อื่นที่เป็น Pool staff/Administrator สามารถ **"รับช่วง" (adopt)** รายการค้างของคนที่ไม่กลับมาแล้วส่งต่อได้ ต้องกดยืนยันชัดเจน ต้องออนไลน์และล็อกอินสด และมี audit ทั้งผู้ทำเดิมและผู้รับช่วง ผู้ทำเดิมยังคงเป็นผู้บันทึกของรายการ
 - ขีดจำกัด 500 รายการ/เครื่อง, ย้อนเวลาไม่เกิน 7 วัน, journal 48 ชม., ใช้ screen lock ของเครื่อง: ตกลง
-- **รับคืนอ้างด้วย transaction_id เท่านั้น** และเพิ่มการป้องกัน 2 กรณี: (ก) สลับเครื่องในวอร์ด (รับคืนแล้วจ่ายซ้ำทันที) (ข) ออฟไลน์นานหลายเครื่องคีย์ไม่ตรงกัน: ระบบสร้าง **Timeline** ของเครื่องมือชิ้นนั้นตามเวลาที่ปรับนาฬิกาแล้ว ให้คนตรวจดู และมีปุ่ม "ใช้ทั้งลำดับ" ที่ผ่านการตรวจแล้วเท่านั้น ไม่ apply เองโดยลำพังใน v1 พร้อมแจ้งเตือนเมื่อข้อมูลในเครื่องเก่ากว่า **4 ชั่วโมง** และให้รายการเหล่านั้นถูกจัดลำดับความสำคัญในการตรวจ
+- **รับคืนอ้างด้วย transaction_id เท่านั้น** และเพิ่มการป้องกัน 2 กรณี: (ก) สลับเครื่องในวอร์ด (รับคืนแล้วจ่ายซ้ำทันที) (ข) ออฟไลน์นานหลายเครื่องคีย์ไม่ตรงกัน: ระบบสร้าง **Timeline** ของเครื่องมือชิ้นนั้นตามเวลาที่ปรับนาฬิกาแล้ว ให้คนตรวจดู และมีปุ่ม "ใช้ทั้งลำดับ" ที่ผ่านการตรวจแล้วเท่านั้น ไม่ apply เองโดยลำพังใน v1 พร้อมแจ้งเตือนเมื่อข้อมูลในเครื่องเก่ากว่า **4 ชั่วโมง** (Owner ยืนยันแล้ว) และให้รายการเหล่านั้นถูกจัดลำดับความสำคัญในการตรวจ
 - **คำตอบของ Owner อนุญาตให้เริ่ม PR25E ตามแผน slice ได้ทันทีเมื่อเอกสารนี้ merge**
 
 ---
@@ -90,7 +90,7 @@
 
 | Operation | Offline? | Notes |
 |---|---|---|
-| Dispatch (`routine_round` or `on_demand`) | Yes | Same fields as online: equipment, ward, dispatch type, routine round, optional department/location ids, `phone_number` and notes. `phone_number` behaves exactly as online (section 3.4). |
+| Dispatch (`routine_round` or `on_demand`) | Yes | Same fields as online: equipment, ward, dispatch type, routine round, optional department/location ids, `phone_number` and notes. `phone_number` is auto-filled from the selected ward and stays editable, exactly as online (section 3.4). |
 | Receipt, outcome `usable` | Yes | Atomic, one step. Backend maps to `AVAILABLE_AT_POOL`. Cleaning is never asked or recorded. |
 | Receipt, outcome `defective` | Yes | Backend maps to `UNAVAILABLE_DEFECTIVE`. |
 | Everything else (ward correction, mark defective, reactivate, decommission, master data, users, imports, reports, audit views, cutover pages) | **No**, online only | These are administrative or review actions where stale local state is risky. They show "needs connection". |
@@ -107,15 +107,23 @@ The offline client sends only the business inputs (`receipt_outcome`, never an e
 | Open transactions | Offline receipt | `transaction id`, `equipment id`, `ward id`, `borrowed_at` | same |
 | Round times / dispatch types | Constants | static in the app bundle | n/a |
 
-Not cached: Item No, Asset Number, user lists, phone numbers of others, audit log, reports, history. Item No is excluded by ADR-002/004 (see D1 for QR).
+Not cached: Item No, Asset Number, user lists, user phone numbers (the ward and department phones in section 3.4 are cached), audit log, reports, history. Item No is excluded by ADR-002/004 (see D1 for QR).
 
 Snapshot refresh: after login, then every 15 min while online, plus on every successful reconnect, via a new bounded paginated endpoint (section 6.5). Staleness is displayed, never hidden. The device also applies its **own pending operations** on top of the snapshot locally (a device with a pending dispatch of X shows X as "dispatched (not yet synced)"), which blocks the same operator from double-dispatching X offline.
 
-### 3.4 `phone_number` (Owner decision D2)
+### 3.4 `phone_number` auto-fill from ward master data (Owner decision D2, decided)
 
-Checked in the code: `phone_number` is an optional free-text column on `borrow_transactions` (`String(20)`), accepted by `BorrowRequest` and typed by hand in `BorrowPage.tsx` (`useState("")`, no prefill). `Ward` has only `code`, `name`, `department_id`; `Department` has only `code`, `name`. **No ward or department phone exists in master data today, and nothing fills the field automatically.** The `phone` fields in `schemas/master_data.py` belong to users, not wards.
+**Today (code check):** `phone_number` is an optional free-text column on `borrow_transactions` (`String(20)`), accepted by `BorrowRequest` and typed by hand in `BorrowPage.tsx` (`useState("")`, no prefill). `Ward` has only `code`, `name`, `department_id`; `Department` has only `code`, `name`. No ward or department phone exists in master data and nothing fills the field. The `phone` fields in `schemas/master_data.py` belong to users.
 
-So v1 keeps current behaviour: offline shows the same optional field, empty by default, typed by the operator, with the same length cap. The snapshot carries no phone data. If the Owner wants it prefilled per ward or department, that needs a **new master-data field** (migration, admin form, snapshot field, prefill online and offline). This design does **not** add it; it should be its own Roadmap item with Governance review. The offline design is forward compatible: the snapshot would add the ward phone and the form would prefill it, editable only if the online form allows editing.
+**Decided:** add a phone to ward and department master data, and auto-fill the dispatch form's `phone_number` from the selected ward, online and offline, still editable as today. This is useful online too, so it ships as its own small slice (B0 backend, S0 frontend, section 20) before the offline forms slice, which then relies on it.
+
+Design:
+- **Data:** nullable `phone` (`String(20)`, same cap as `borrow_transactions.phone_number`) on `wards` and on `departments`, by an additive Alembic revision (nullable, no backfill, upgrade/downgrade tested). Ward phone is the primary source. Department phone is a fallback: if the selected ward has no phone, use its department's phone. (The Owner said "ward/department"; ward-then-department fallback is this design's reading and is cheap to simplify to ward-only.)
+- **API:** `WardOut`, `WardCreate`, `DepartmentOut`, `DepartmentCreate` gain optional `phone`. Admin-only create/update follows the existing master-data gates. Per the guardrails no update/delete endpoints are invented solely for this; if ward/department update endpoints do not exist today, the admin form sets the phone at create time and the slice states honestly that editing an existing ward's phone needs the master-data update path to exist (check in B0; if absent, raise it as a flagged prerequisite instead of adding a generic endpoint silently).
+- **Dispatch form:** on ward selection, `phone_number` is set from the ward (or department fallback) when the field has not been edited by the operator; later ward changes re-fill only if the operator has not typed their own value. The field stays editable and optional. The submitted value is whatever is in the field, so server behaviour (`BorrowRequest`) is unchanged.
+- **Offline:** the reference snapshot (`ref_wards`, `ref_departments`) carries the phones; the same prefill runs from the cache. The staleness label on the snapshot applies; a changed ward phone reaches devices at the next snapshot refresh.
+- **Privacy:** these are department/ward contact numbers, not patient or personal data. They sit in the snapshot on devices, which section 12 already treats as equipment-and-organisation data under the OS-screen-lock control.
+- **Not in scope:** no per-user phone use, no validation beyond the existing length cap, no change to `borrow_transactions`.
 
 ### 3.3 Equipment identification offline
 
@@ -564,7 +572,7 @@ Backend (pytest; PostgreSQL-marked tests for concurrency evidence, SQLite not cl
 11c. Apply sequence: a lifecycle-valid sequence applies atomically in corrected-time order with one audit entry per op; an invalid sequence offers no action; already-committed rows are never modified.
 11d. Staleness: `snapshot_age_s` above N sets `stale_context`; flagged ops sort first and are counted; ops are still applied normally when valid; the flag never blocks.
 11e. Adoption: adopt requires `adopt: true`, a pool role and a fresh login; original operator stays `borrower_user_id`/`received_by_user_id`; `submitted_by_user_id`, `sync_adopt` audit and `adopted` markers are written atomically; a non-adopt token mismatch gets `OP_USER_MISMATCH`; a `read_only` user is denied; adopting an already-applied op returns `duplicate`.
-11f. Phone: the offline form submits `phone_number` exactly as online (optional, free text, same cap); the snapshot contains no phone data (contract test).
+11f. Phone: ward phone and department fallback prefill the field online and from the offline cache; the operator can overwrite it and the typed value is what is sent; a ward with no phone and no department phone leaves it empty; the snapshot contract includes ward/department phone and still no Item No/Asset Number/user fields.
 11. Snapshot: pagination determinism, bounded sizes, no Item No/Asset Number/user fields (contract test).
 
 Frontend (Vitest + fake-indexeddb):
@@ -589,7 +597,7 @@ The Owner answered the open questions of the earlier draft. This section is the 
 | # | Decision | Where applied |
 |---|---|---|
 | D1 | Offline QR: agreed. v1 offline identification is BCM Code search only; QR scanning is online only; ADR-004 unchanged. | 3.3 |
-| D2 | `phone_number`: the Owner expected it to be filled per department. Code check: no ward/department phone exists in master data and the form does not prefill; it is optional free text. v1 keeps current behaviour offline. A prefill needs a new master-data field, which is not added here and must be proposed separately. | 3.4 |
+| D2 | `phone_number`: **decided yes.** Add a phone to ward and department master data; the dispatch form auto-fills `phone_number` from the selected ward (department fallback), online and offline from the cached snapshot; still editable. Code check had shown no such field exists today. Own small slice (B0, S0) before the offline forms slice; useful online too. | 3.4, 20 |
 | D3 | Conflicts are resolved by Equipment Pool staff and Administrator (`FORBIDDEN` class: Administrator only). | 9.6 |
 | D4 | Shared devices: **changed.** Another authenticated Equipment Pool staff or Administrator may adopt and send a stranded user's pending operations; explicit, confirmed, online, fresh login, original operator stays the recorded operator, adopter recorded as sender, fully audited. | 8.3, 6.2, 6.3 |
 | D5 | Limits agreed: 500 pending ops per device, 7-day maximum back-dating, 48-hour journal. | 10, 11, 15 |
@@ -603,9 +611,9 @@ Items the Owner did not raise keep the draft defaults and are treated as accepte
 | X1 | UUID-only identity; `transaction_no` hidden in the offline UI and possibly reissued after a restore. | Owner input: UUIDs suffice. |
 | X2 | Unsynced items older than 24 hours show a red badge only; no notification to an Administrator. | Revisit at pilot. |
 | X3 | No dedicated "a restore happened" notice; `verify` detects within 15 minutes. | Optional runbook wording. |
-| X4 | Staleness threshold N = 4 hours (new, from D7). | Configurable constant. |
+| X4 | Staleness threshold N = 4 hours: **confirmed by the Owner.** Remains a configurable constant. | 9.8 |
 
-**Still open for the Owner (does not block PR25E):** whether to commission the ward/department phone master-data field (D2), and whether to enable `SYNC_AUTO_SEQUENCE` after the pilot (9.7).
+**Still open for the Owner (does not block PR25E):** whether to enable `SYNC_AUTO_SEQUENCE` after the pilot (9.7). Nothing else is open.
 
 ---
 
@@ -620,7 +628,7 @@ Items the Owner did not raise keep the draft defaults and are treated as accepte
 - No Item No or Asset Number on devices (D1).
 - No background-sync-while-closed (not reliable on iOS); sync runs when the app is open.
 - No automatic conflict resolution of any kind in v1, including `SYNC_AUTO_SEQUENCE` (specified, not implemented).
-- No new ward/department phone master-data field.
+- No other new master-data fields beyond the ward/department phone in section 3.4.
 - No standby server, no change to PR25A backup design or to the PR25B export API, no Cloudflare work (PR25C) beyond handling its login redirect.
 - No Shift Session or Standby Snapshot work (confirmed future work, not this PR); no change to PR16 derivation logic beyond feeding it the adjusted business time.
 - No change to the existing `POST /borrow` / `POST /return/{id}` contracts.
@@ -630,10 +638,12 @@ Items the Owner did not raise keep the draft defaults and are treated as accepte
 
 ## 20. Slice plan for PR25E
 
-Each slice is one small, independently reviewable PR with its own tests. Order matters. S1 and S2 can run in parallel (different files); S3 depends on S1; backend slices B1 to B3 are strictly ordered.
+Each slice is one small, independently reviewable PR with its own tests. Order matters. S1 and S2 can run in parallel (different files); S3 depends on S1; backend slices B1 to B3 are strictly ordered. B0 and S0 (phone auto-fill) are independent of the offline work, ship first, and may run in parallel with B1 and S1/S2.
 
 | Slice | Content | Depends on | Proves (acceptance tests) |
 |---|---|---|---|
+| **B0** | Ward and department `phone` columns (additive nullable migration), master-data schemas/API/tests; flags if update path is missing | none | Migration upgrade/downgrade; schema round-trip; role gates; existing master-data tests green |
+| **S0** | Admin master-data form fields for phone; dispatch form auto-fills `phone_number` from the selected ward (department fallback), editable; works online with no offline code | B0 | Vitest prefill/edit/overwrite cases; manual check; shippable on its own |
 | **B1** | `client_operations` migration and model; `crud.transaction.create/close` accept explicit `id` and business time; no endpoint yet | none | Migration upgrade/downgrade; existing tests green; explicit-id create works |
 | **B2** | `POST /sync/operations` for dispatch and receipt: envelope schema, ledger-in-service atomicity, idempotency, conflict/rejected rows, error codes, role/user checks; audit enrichment | B1 | Test items 1 to 5, 7 |
 | **B2b** | Business-time handling: clock-offset adjustment, future/old/before-dispatch/before-last-receipt clamps, `time_flag`, PR16 integration | B2 | Test item 8 |
@@ -644,7 +654,7 @@ Each slice is one small, independently reviewable PR with its own tests. Order m
 | **S1** | Frontend: auth/offline hardening only — stop logging out on refresh network errors; unreachable detection helper; `navigateFallbackDenylist`; logout wipe including Cache Storage and React Query | none | Tests item 13 (no-logout-on-network-error), wipe tests; shell loads offline in a manual drill |
 | **S2** | Frontend: IndexedDB layer (`meta`, `outbox`, `journal`, refs), versioned upgrades, per-user isolation, `device_id`/`device_seq`, hard cap; no UI | none | Test items 12, 15 |
 | **S3** | Frontend: sync worker (ordering, hold logic, backoff, Web Lock, token refresh and re-auth, verify and journal replay, clock offset) against B2/B3 | B2, B3, S1, S2 | Test items 13, 14 |
-| **S4** | Frontend: dispatch and receipt forms moved onto the outbox path (online and offline); the `mep-api-cache` runtime rule is removed in this same PR that introduces the IndexedDB snapshot, so there is no window without a reference cache; reference snapshot cache, BCM offline search, local double-entry guard, pending badge, connection chip, stale labels, sync screen | S3 | Test item 16; manual two-profile drill |
+| **S4** | Frontend: dispatch and receipt forms moved onto the outbox path (online and offline), reusing S0's prefill against the cached ward snapshot; the `mep-api-cache` runtime rule is removed in this same PR that introduces the IndexedDB snapshot, so there is no window without a reference cache; reference snapshot cache, BCM offline search, local double-entry guard, pending badge, connection chip, stale labels, sync screen | S3, S0 | Test item 16; manual two-profile drill |
 | **S5** | Frontend: Needs review page with timeline and Apply sequence, header badge, conflict notices, discard-own-item | B4b, S4 | Test item 16; role visibility |
 | **S5b** | Frontend: adopt flow ("items from other users", confirmation, fresh-login prompt), staleness warning | B2c, S5 | Test items 11e, 16 |
 | **S6** | PWA update strategy: `registerType: "prompt"`, update notice, `CLIENT_TOO_OLD` handling, install prompt, `storage.persist()` | S4 | Update-during-pending-ops test |
