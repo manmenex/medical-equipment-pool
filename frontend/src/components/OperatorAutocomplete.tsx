@@ -13,7 +13,7 @@ interface OperatorAutocompleteProps {
   placeholder?: string;
 }
 
-// Roadmap PR17 Slice 3 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md §10.4/
+// Roadmap PR17 Slice 3 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md §10.4/
 // §12): the operator filter's selector. Calls only GET /report-options/
 // operators (services/reports.ts's getOperatorOptions) -- never GET /users,
 // and never exposes any user-management action. The selected operator's

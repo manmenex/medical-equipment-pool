@@ -1,6 +1,6 @@
 """Roadmap PR21A -- Historical Event Schema / Provenance Foundation.
 
-Authoritative design: `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+Authoritative design: `docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
 §8.1 (`LegacyEquipmentEvent` event-first provenance model), §14 (Ward
 alias foundation, OD-PR21-4), §24.2 (`LegacyMigrationAuthority`,
 migration-authority-scoped stable event identity), §36 (PR21-owned

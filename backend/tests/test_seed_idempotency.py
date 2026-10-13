@@ -4,7 +4,7 @@ from app.models.user import ALL_ROLES, ROLE_ADMINISTRATOR, Role, User
 from app.scripts.seed import seed_reference_data
 
 # ---------------------------------------------------------------------------
-# Roadmap PR18D review round 3 (H2): `docs/06-deployment-guide.md` documents
+# Roadmap PR18D review round 3 (H2): `docs/archive/legacy/06-deployment-guide.md` documents
 # `alembic upgrade head` followed by `python -m app.scripts.seed` as the
 # deployment sequence. Migration 0009 (role_consolidation) already creates
 # the confirmed roles (`administrator`, `equipment_pool_staff`, `read_only`)

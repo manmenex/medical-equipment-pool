@@ -1,6 +1,6 @@
 """Roadmap PR16 (Reporting Foundation) business_date/shift derivation.
 
-Computed, never persisted (docs/design/PR16_REPORTING_FOUNDATION_PLAN.md §6,
+Computed, never persisted (docs/archive/design/PR16_REPORTING_FOUNDATION_PLAN.md §6,
 Option A) -- no migration, no new column. `business_date_and_shift()` is the
 pure-Python reference implementation; `business_date_and_shift_sql()` is its
 SQLAlchemy-expression twin for use inside `crud/transaction.py`'s
@@ -92,7 +92,7 @@ def classify(ts_local: datetime) -> tuple[date, Shift]:
 def business_date_and_shift(ts: datetime) -> tuple[date, Shift]:
     """Pure-Python reference derivation from an aware UTC datetime (matching
     `UTCDateTime`'s existing contract -- see
-    docs/design/PR16_REPORTING_FOUNDATION_PLAN.md §11)."""
+    docs/archive/design/PR16_REPORTING_FOUNDATION_PLAN.md §11)."""
     if ts.tzinfo is None or ts.utcoffset() != timedelta(0):
         raise ValueError(
             f"business_date_and_shift() requires an aware UTC datetime, got {ts!r}. "

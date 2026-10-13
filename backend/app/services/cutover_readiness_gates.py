@@ -1,6 +1,6 @@
 """Roadmap PR23C -- Readiness Gate Evaluation.
 
-Authoritative design: `docs/design/PR23_CUTOVER_READINESS_PLAN.md` §12
+Authoritative design: `docs/archive/design/PR23_CUTOVER_READINESS_PLAN.md` §12
 (Readiness Gates A-G), §13 (Go/No-Go, BLOCKER/WARNING/INFO), §16
 (Concurrency/Freshness), §26 (OD-PR23-1/2/6, all RESOLVED / OWNER
 APPROVED).

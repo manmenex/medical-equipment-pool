@@ -4,7 +4,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { listCategories, listDepartments } from "@/services/masterData";
 import type { Equipment } from "@/types";
 
-// Roadmap PR17 Slice 4 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+// Roadmap PR17 Slice 4 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md
 // §7.3(A)/§8): renders exactly what the backend returns -- a current-state
 // listing of Equipment rows. No lifecycle/eligibility logic, no client-side
 // sort, no field derivation of any kind; category/department names are

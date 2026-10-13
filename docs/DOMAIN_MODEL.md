@@ -75,7 +75,7 @@ review — per `docs/audits/04-consolidated-implementation-plan.md` Part D):
 every new dispatch carries a `dispatch_type` (`DispatchType`: `routine_round`
 or `on_demand`) and a required `ward_id`. `routine_round` (`RoutineRound`:
 one of the four confirmed fixed times `06:00`/`11:00`/`15:00`/`21:00`, per
-`docs/HOSPITAL_DOMAIN_MODEL.md` and `docs/audits/
+`docs/HOSPITAL_DOMAIN_MODEL.md` and `docs/archive/audits/
 03-hospital-equipment-pool-workflow-audit.md`'s §12 acceptance criteria) is
 required exactly when `dispatch_type == routine_round` and forbidden
 otherwise — enforced by `BorrowRequest`'s validator and, in PostgreSQL, by

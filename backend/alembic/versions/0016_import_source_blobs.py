@@ -4,7 +4,7 @@ Revision ID: 0016_import_source_blobs
 Revises: 0015_import_foundation
 Create Date: 2026-08-12
 
-Roadmap PR20A (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §6.2,
+Roadmap PR20A (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §6.2,
 architecture-approved via the merged Design PR #89). Introduces one new,
 purely additive table, `import_source_blobs`: 1:1 durable byte storage for
 a registered `ImportSource`, colocated in the same PostgreSQL database so
@@ -172,7 +172,7 @@ def _verify_schema_convergence(bind) -> None:
     if unexpected_columns:
         problems.append(
             f"{_GOVERNED_TABLE}: unexpected column(s) not part of the PR20A design contract "
-            f"(docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §6.2): {sorted(unexpected_columns)}. "
+            f"(docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §6.2): {sorted(unexpected_columns)}. "
             "An extra application column is never silently accepted merely because every expected "
             "column also exists."
         )
@@ -255,7 +255,7 @@ def _verify_schema_convergence(bind) -> None:
     if problems:
         raise RuntimeError(
             "Migration 0016 aborted: the existing PostgreSQL catalog diverges from the PR20A design "
-            f"contract (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §6.2) in {len(problems)} way(s). "
+            f"contract (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §6.2) in {len(problems)} way(s). "
             "Refusing to silently continue with an incompatible historical schema:\n\n" + "\n\n".join(problems)
         )
 

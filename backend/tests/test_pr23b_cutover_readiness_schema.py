@@ -1,4 +1,4 @@
-"""Roadmap PR23B (docs/design/PR23_CUTOVER_READINESS_PLAN.md §9, §10,
+"""Roadmap PR23B (docs/archive/design/PR23_CUTOVER_READINESS_PLAN.md §9, §10,
 §11, §12 Gate D/E, §15, §16, §26 -- OD-PR23-1 through OD-PR23-6, all
 RESOLVED / OWNER APPROVED via the PR23 Owner Decision Closure round) --
 Cutover Readiness Evidence Foundation.

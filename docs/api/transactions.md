@@ -52,7 +52,7 @@ Full status/code reference: `docs/api/ERROR_CODES.md`.
 
 ## `POST /transactions/{transaction_id}/correct-ward` — correct a recorded ward
 
-Roadmap PR9A (`docs/audits/03-hospital-equipment-pool-workflow-audit.md` §7
+Roadmap PR9A (`docs/archive/audits/03-hospital-equipment-pool-workflow-audit.md` §7
 "Ward Recording Rules"): the system records only the first receiving ward
 for a dispatch, which is normally immutable. This endpoint is the one
 narrow, audited exception — it corrects an incorrect original record. **It

@@ -1,4 +1,4 @@
-"""Roadmap PR20E (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.4,
+"""Roadmap PR20E (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.4,
 §14.4a, §14.4b, §14.4c, §15, §15.1, §16). Covers: `precheck_execute`'s
 pre-admission confirmed-plan gate, `execute()`'s CREATE/UPDATE application
 against the exact persisted/confirmed plan (never a live recomputation),

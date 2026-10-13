@@ -4,7 +4,7 @@ Revision ID: 0022_cutover_go_no_go_decision
 Revises: 0021_cutover_readiness
 Create Date: 2026-08-26
 
-Roadmap PR23D (docs/design/PR23_CUTOVER_READINESS_PLAN.md §12 Gate G,
+Roadmap PR23D (docs/archive/design/PR23_CUTOVER_READINESS_PLAN.md §12 Gate G,
 §13 Go/No-Go, §14 Authorization, §15 Evidence/Audit, §16 Concurrency/
 Freshness, §26 OD-PR23-3/OD-PR23-6). Introduces one new, purely
 additive table: `cutover_go_no_go_decisions` -- the immutable final
@@ -222,7 +222,7 @@ def _verify_schema_convergence(bind) -> None:
         if unexpected_columns:
             problems.append(
                 f"{table}: unexpected column(s) not part of the PR23D design contract "
-                f"(docs/design/PR23_CUTOVER_READINESS_PLAN.md §12/§13/§15/§26): {sorted(unexpected_columns)}. "
+                f"(docs/archive/design/PR23_CUTOVER_READINESS_PLAN.md §12/§13/§15/§26): {sorted(unexpected_columns)}. "
                 "An extra application column is never silently accepted merely because every expected column "
                 "also exists."
             )
@@ -304,7 +304,7 @@ def _verify_schema_convergence(bind) -> None:
     if problems:
         raise RuntimeError(
             "Migration 0022 aborted: the existing PostgreSQL catalog diverges from the PR23D design "
-            f"contract (docs/design/PR23_CUTOVER_READINESS_PLAN.md §12/§13/§15/§16/§26) in "
+            f"contract (docs/archive/design/PR23_CUTOVER_READINESS_PLAN.md §12/§13/§15/§16/§26) in "
             f"{len(problems)} way(s). Refusing to silently continue with an incompatible historical "
             "schema:\n\n" + "\n\n".join(problems)
         )

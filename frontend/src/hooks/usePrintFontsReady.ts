@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 export type PrintFontsStatus = "pending" | "ready" | "error" | "unsupported";
 
-// Roadmap PR18C (docs/design/PR18_PRINTING_EXPORT_PLAN.md §17): the exact
+// Roadmap PR18C (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §17): the exact
 // family and weights print.css declares via @font-face -- kept here so the
 // explicit document.fonts.load() calls below request precisely the faces
 // this view actually uses, nothing more.

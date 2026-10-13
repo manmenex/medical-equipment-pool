@@ -1,4 +1,4 @@
-"""Roadmap PR18B (docs/design/PR18_PRINTING_EXPORT_PLAN.md §5-§8, §22
+"""Roadmap PR18B (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §5-§8, §22
 "PR18B -- Shared backend dataset and document model"): the backend export
 foundation. Builds the internal, output-neutral `ExportDocument` for each of
 the three Roadmap PR17 report families, reusing their existing query
@@ -46,7 +46,7 @@ from app.utils.export_filename import build_filename_stem, date_range_segment, s
 
 logger = logging.getLogger(__name__)
 
-# Roadmap PR18A Owner Decision #3 (docs/design/PR18_PRINTING_EXPORT_PLAN.md
+# Roadmap PR18A Owner Decision #3 (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md
 # §8/§18/§23), confirmed by the Repository Owner during PR18B kickoff:
 # a synchronous export/print request whose full matching-row count exceeds
 # this bound is rejected outright (ExportTooLargeError), never silently

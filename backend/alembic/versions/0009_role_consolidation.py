@@ -4,7 +4,7 @@ Revision ID: 0009_role_consolidation
 Revises: 0008_dispatch_fields
 Create Date: 2026-07-23
 
-Roadmap PR10 (docs/audits/03-hospital-equipment-pool-workflow-audit.md §10
+Roadmap PR10 (docs/archive/audits/03-hospital-equipment-pool-workflow-audit.md §10
 "Role and Permission Review"; docs/audits/04-consolidated-implementation-plan.md
 Part D's PR10 entry): replaces the legacy 5-role model (admin,
 biomedical_engineer, ward_nurse, transport_staff, viewer) with the

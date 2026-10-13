@@ -7,7 +7,7 @@ from app.core.reporting_time import Shift
 from app.crud import transaction as transaction_crud
 from app.models.transaction import BorrowTransaction, DispatchType, RoutineRound
 
-# Roadmap PR17 Slice 1 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md §8/§11,
+# Roadmap PR17 Slice 1 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md §8/§11,
 # §17 Slice 1 boundary: "Report Domain and Query Semantics"). This module is
 # the report domain/query layer only -- no HTTP route, no response DTO, no
 # operator-lookup query. Per the merged design's Slice boundary, the two

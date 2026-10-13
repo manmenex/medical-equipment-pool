@@ -1,6 +1,6 @@
 """Parser adapter contract for the legacy-import pipeline.
 
-Roadmap PR19A2 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §10,
+Roadmap PR19A2 (docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §10,
 §11). No concrete adapter for a real legacy dataset (Equipment Master,
 Receive History, Issue History) exists in this repository -- those are
 PR20/PR21's deliverables (§26). This module defines only the abstract
@@ -51,7 +51,7 @@ class DryRunPlan:
 
 
 class AdapterExecutionConflict(RuntimeError):
-    """Roadmap PR20E (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    """Roadmap PR20E (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
     §14.4b). Raised by `execute()` to signal a genuine execution-time
     conflict that must also mark an adapter-owned sub-resource `failed`,
     inside the same TX2 write the framework already performs on any
@@ -165,7 +165,7 @@ class ImportAdapter(abc.ABC):
         raise NotImplementedError
 
     async def persist_dry_run_plan(self, db: AsyncSession, plan: "DryRunPlan") -> None:
-        """Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+        """Roadmap PR20D (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
         §14.3, §6.3). Called by the framework on the normal *writable*
         session, immediately after `plan_dry_run`'s read-only evaluation
         succeeds and closes, in the same transaction as the session's

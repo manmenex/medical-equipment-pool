@@ -1,6 +1,6 @@
 """Roadmap PR21C -- Canonical Receive Parser + Validation (bounded slice).
 
-Authoritative design: `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`,
+Authoritative design: `docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`,
 merged foundation GitHub PR #103 / PR21A (squash SHA
 `28f0f5eabb64cf4b27294fd3df251e90b167de0a`) and GitHub PR #104 / PR21B
 canonical Issue subset (squash SHA

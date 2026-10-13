@@ -7,7 +7,7 @@ import { useAppliedVerifyChecklistFilters } from "@/hooks/useAppliedVerifyCheckl
 import { apiErrorMessage } from "@/services/api";
 import { getEquipmentVerifyChecklist } from "@/services/reports";
 
-// Roadmap PR17 Slice 4 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+// Roadmap PR17 Slice 4 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md
 // §6.3/§7.3(A)/§8/§10.3/§12, Owner Decision #1 resolved to interpretation
 // A): the final functional slice of PR17 -- a read-only, current-state
 // listing of the pool's own equipment master records and their status.

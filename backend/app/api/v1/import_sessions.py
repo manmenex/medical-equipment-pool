@@ -40,7 +40,7 @@ from app.services.import_adapters.legacy_history.common import PR21_MAX_UPLOAD_B
 from app.services.import_service import MAX_UPLOAD_BYTES, _read_upload_bounded, _validate_filename, _validate_zip_archive_bounds
 from app.utils.pagination import decode_cursor, decode_int_cursor, encode_cursor, encode_int_cursor
 
-# Roadmap PR20A (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §6.1,
+# Roadmap PR20A (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §6.1,
 # §6.2): the reserved dataset_type value this design owns. A plain literal
 # (matching this codebase's existing convention for job_type/status
 # literals, e.g. `import_execution_service._DRY_RUN_ALLOWED_FROM_STATUSES`)
@@ -69,7 +69,7 @@ _LEGACY_TRANSACTION_HISTORY_DATASET_TYPE = "legacy_transaction_history"
 # data error instead of a clean 400.
 _CONTENT_TYPE_MAX_LENGTH = 255
 
-# Roadmap PR19A1 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §21).
+# Roadmap PR19A1 (docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §21).
 # Endpoints #1-#6: create, list, summary, status, source register/correct,
 # cancel (PR19A1). Endpoints #7-#9 -- recover, validate, errors -- are
 # Roadmap PR19A2's addition, including the lease/heartbeat/recovery/

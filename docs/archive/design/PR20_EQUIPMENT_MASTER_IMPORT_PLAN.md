@@ -29,7 +29,7 @@ current implementation state on its own; only this Status section and §24
 speak to current state.
 
 **Original status (as authored, now historical for current-state
-purposes — see above):** Design only. Not implemented. This document defines the
+purposes — see above; PR20 is complete and merged, GitHub PR #89-#96):** Design only. This document defines the
 architecture and contract for PR20. Four Owner Decisions were opened by
 this document (§9): **OD-1 (source schema), OD-2 (create/update field
 policy), OD-3 (BCM/Item Number identity policy), and OD-4 (CREATE Asset
@@ -389,7 +389,7 @@ resolution is itself independently reviewed and merged
 | Area | Source | What it established |
 |---|---|---|
 | PR19A backend runtime | `backend/app/models/import_session.py`, `app/schemas/import_session.py`, `app/api/v1/import_sessions.py`, `app/crud/import_session.py`, `app/crud/import_job.py`, `app/crud/import_retention.py`, `app/services/import_validation_service.py`, `app/services/import_execution_service.py`, `app/services/import_retention_service.py`, `app/services/import_lease.py`, `app/services/import_adapter.py`, `alembic/versions/0015_import_foundation.py`, `app/core/config.py` | The exact reusable mechanisms available to PR20 (§3) and, critically, that **no file-upload endpoint exists anywhere in the merged framework** — `POST /{session_id}/source` accepts only checksum+metadata, never raw bytes, and `ImportAdapter.parse(raw_input)` is always called with `raw_input=None` in the merged code. |
-| PR19A design doc | `docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md` §26 (Non-Goals), and its explicit "a future concrete-adapter slice" forward-references (§3.6, source freeze, checksum trust, retention, security table) | PR19A deliberately built zero parsing/upload/byte-storage/security-scanning machinery — that entire surface is PR20's to design, not merely "write an adapter." |
+| PR19A design doc | `docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md` §26 (Non-Goals), and its explicit "a future concrete-adapter slice" forward-references (§3.6, source freeze, checksum trust, retention, security table) | PR19A deliberately built zero parsing/upload/byte-storage/security-scanning machinery — that entire surface is PR20's to design, not merely "write an adapter." |
 | Current Equipment domain runtime | `backend/app/models/equipment.py`, `app/schemas/equipment.py`, `app/crud/equipment.py`, `app/api/v1/equipment.py` | Exact column list, lookup functions, and that **no create-or-update/upsert-by-BCM helper exists** — PR20 must design its own resolution logic. |
 | Existing, unrelated PR12 Inventory Import | `backend/app/services/import_service.py`, `app/api/v1/inventory_import.py`, `backend/tests/test_import.py` | A **different, already-shipped, update-only** feature (BCM-only match key, `.xlsx`-only, its own `REQUIRED_HEADERS` explicitly marked "illustrative... pending confirmation against a real hospital inventory export"). PR20 must not duplicate this code path or its models; it is informative precedent, not an authoritative source for PR20's own field mapping or policy. |
 | Identifier model | `knowledge/adr/ADR-002-identifier-model.md`, `ADR-003-bcm-manual-search.md`, `ADR-004-hospital-item-no-qr.md`, `knowledge/architecture/identifiers.md` | UUID/BCM Code/Item No/Asset Number each have exactly one fixed role; canonicalization functions (`normalize_bcm_code`, `normalize_item_no`) already exist and must be reused, not reimplemented; Asset Number must never be fabricated or inferred from BCM/Item No — the same constraint that forced PR12 into update-only mode is directly relevant to PR20's own create-vs-update question (§9, OD-2). |
@@ -4309,7 +4309,7 @@ statement of the current PR's diff scope.
 PR is **documentation/design/governance-only**. As of this PR's current
 state, it modifies:
 
-- `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` (this file).
+- `docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md` (this file).
 - `docs/DECISION_LOG.md` (Owner Decision resolution entries, per
   `docs/ENGINEERING_WORKFLOW.md` §7's recording requirement).
 

@@ -99,7 +99,7 @@ class InvalidStatusTransitionError(DomainError):
 
 
 class WardCorrectionNoOpError(DomainError):
-    """Roadmap PR9A (docs/audits/03-hospital-equipment-pool-workflow-audit.md
+    """Roadmap PR9A (docs/archive/audits/03-hospital-equipment-pool-workflow-audit.md
     §7 "Ward Recording Rules"): raised when a ward-correction request's
     ``ward_id`` equals the transaction's current ``ward_id`` at the moment
     it was read. Not an error about the target ward or the transaction --
@@ -133,7 +133,7 @@ class WardCorrectionConflictError(DomainError):
 
 
 class ExportTooLargeError(DomainError):
-    """Roadmap PR18B (docs/design/PR18_PRINTING_EXPORT_PLAN.md §8/§18/§23,
+    """Roadmap PR18B (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §8/§18/§23,
     Owner Decision #3): raised when a bulk report export/print request's
     full matching-row count exceeds the approved synchronous row limit
     (``app.services.report_export_service.MAX_EXPORT_ROWS``). Deliberately
@@ -189,7 +189,7 @@ class ConflictError(DomainError):
 
 
 class ImportSessionNotFoundError(DomainError):
-    """Roadmap PR19A1 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md
+    """Roadmap PR19A1 (docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md
     §23) — the session id in the path does not exist."""
 
     code = "IMPORT_SESSION_NOT_FOUND"
@@ -225,7 +225,7 @@ class ImportSourceNotRegisteredError(DomainError):
 
 
 class ImportSourceRegistrationMethodNotAllowedError(DomainError):
-    """Roadmap PR20A (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    """Roadmap PR20A (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
     §6.2) — the existing metadata-only `POST /import-sessions/{id}/source`
     endpoint was called for a session whose `dataset_type` requires the
     single authoritative, server-checksummed upload path (`POST
@@ -298,7 +298,7 @@ class ImportExecutionFailedError(DomainError):
 
 
 class ImportDryRunPlanNotFoundError(DomainError):
-    """Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    """Roadmap PR20D (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
     §14.6, §21) — no plan matches the requested lookup: either the session
     has never had a successful dry-run (`GET .../dry-run-plan`, no
     `active` plan exists), or the path `{plan_id}` does not reference a
@@ -323,7 +323,7 @@ class ImportDryRunPlanStaleError(DomainError):
 
 
 class ImportNoConfirmedPlanError(DomainError):
-    """Roadmap PR20E (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
+    """Roadmap PR20E (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md
     §14.4a) -- raised by `precheck_execute`, before `admit_phase_job`
     runs, so no session state changes -- the session has no `active`
     plan with `confirmed_at IS NOT NULL`, either because the operator
@@ -362,7 +362,7 @@ class LegacyMigrationAuthorityScopeConflictError(DomainError):
 
 
 class ReconciliationRunNotFoundError(DomainError):
-    """Roadmap PR22C (docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md
+    """Roadmap PR22C (docs/archive/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md
     §11/§17.2) -- no `LegacyReconciliationRun` matches the requested id."""
 
     code = "RECONCILIATION_RUN_NOT_FOUND"
@@ -577,7 +577,7 @@ class ReconciliationSignOffEvidenceInconsistentError(DomainError):
 
 
 class CutoverReadinessRunNotFoundError(DomainError):
-    """Roadmap PR23B (docs/design/PR23_CUTOVER_READINESS_PLAN.md §15/§26)
+    """Roadmap PR23B (docs/archive/design/PR23_CUTOVER_READINESS_PLAN.md §15/§26)
     -- no `CutoverReadinessRun` matches the requested id."""
 
     code = "CUTOVER_READINESS_RUN_NOT_FOUND"

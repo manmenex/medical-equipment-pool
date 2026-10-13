@@ -65,7 +65,7 @@ class RoutineRound(str, enum.Enum):
     clock times themselves, the only values confirmed anywhere in the
     source-of-truth docs (docs/audits/04-consolidated-implementation-plan.md
     confirmed-requirements table: "06:00/11:00/15:00/21:00"; repeated
-    verbatim in docs/audits/03-hospital-equipment-pool-workflow-audit.md's
+    verbatim in docs/archive/audits/03-hospital-equipment-pool-workflow-audit.md's
     §12 acceptance criteria). No named label for any round (e.g. "morning")
     is confirmed anywhere, so none is invented here -- the persisted value
     *is* the confirmed value, matching the "do not invent" instruction this
@@ -129,7 +129,7 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     # fresh install's 0001 bootstrap already produced from ORM metadata,
     # the ORM declaration must keep matching it -- renaming it here to the
     # `ix_`-prefixed target name migration 0014 uses (Roadmap PR15B,
-    # docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md §6.2) would make 0001 create
+    # docs/archive/design/PR15B_SCHEMA_HYGIENE_PLAN.md §6.2) would make 0001 create
     # one index under the new name while 0007 unconditionally creates a
     # *second*, differently-named duplicate -- a real bug, not a
     # convergence fix. Migration 0014 renames this index at the database
@@ -160,7 +160,7 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     # are preserved and remain readable (e.g. app.services.report_service).
     quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     # See app.models.audit.AuditLog.created_at's identical comment (Roadmap
-    # PR15B, docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md §3.4/§3.5).
+    # PR15B, docs/archive/design/PR15B_SCHEMA_HYGIENE_PLAN.md §3.4/§3.5).
     borrowed_at: Mapped[datetime] = mapped_column(
         UTCDateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True
     )
@@ -171,7 +171,7 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     # surface too. The column itself, and every existing value, are
     # unchanged and remain queryable/exportable (e.g. app.services.
     # report_service's CSV/XLSX export reads it directly from the ORM row).
-    # Roadmap PR15B (docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md §3.4a):
+    # Roadmap PR15B (docs/archive/design/PR15B_SCHEMA_HYGIENE_PLAN.md §3.4a):
     # deliberately excluded from the timezone conversion applied to the
     # other four naive-`timestamp` columns -- this column was already
     # removed from the write path before its historical values' timezone
@@ -239,7 +239,7 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     legacy_status: Mapped[str | None] = mapped_column(String(20))
 
     equipment: Mapped["Equipment"] = relationship()
-    # Roadmap PR17 Slice 2 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+    # Roadmap PR17 Slice 2 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md
     # §11, corrected per review finding PR17-H5): read-only relationships
     # via the existing borrower_user_id/received_by_user_id FKs -- neither
     # existed before this slice. Feed the two operator-display properties
@@ -310,7 +310,7 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
 
     @property
     def dispatch_business_date(self) -> "date":
-        """Roadmap PR16 Slice 2 (docs/design/PR16_REPORTING_FOUNDATION_PLAN.md
+        """Roadmap PR16 Slice 2 (docs/archive/design/PR16_REPORTING_FOUNDATION_PLAN.md
         §9) -- computed, never persisted, derived from `borrowed_at` (every
         transaction has one, open or closed). Read by
         `app.schemas.transaction.TransactionOut` (`from_attributes`),

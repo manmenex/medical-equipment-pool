@@ -356,7 +356,7 @@ async def test_omitted_dates_leave_behavior_unchanged(client, seeded_users):
 # Roadmap PR16 Slice 2: dispatch_business_date/dispatch_shift/
 # receipt_business_date/receipt_shift surface correctly on both GET
 # /transactions and GET /transactions/{id}, for both open and closed
-# transactions (docs/design/PR16_REPORTING_FOUNDATION_PLAN.md §16 Slice 2
+# transactions (docs/archive/design/PR16_REPORTING_FOUNDATION_PLAN.md §16 Slice 2
 # acceptance criteria).
 # ---------------------------------------------------------------------------
 
@@ -418,7 +418,7 @@ async def test_reporting_time_fields_present_on_closed_transaction_via_list_and_
 
 # ---------------------------------------------------------------------------
 # Roadmap PR16 Slice 3: business_date_from/business_date_to/shift/event
-# filtering on GET /transactions (docs/design/PR16_REPORTING_FOUNDATION_PLAN.md
+# filtering on GET /transactions (docs/archive/design/PR16_REPORTING_FOUNDATION_PLAN.md
 # §8/§9/§11, §16 Slice 3 acceptance criteria). `client`/`db_session` share the
 # same `db_engine` (tests/conftest.py), so a transaction dispatched/received
 # through the API can have its `borrowed_at`/`returned_at` forced to a known

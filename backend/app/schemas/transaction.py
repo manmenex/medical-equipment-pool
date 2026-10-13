@@ -23,7 +23,7 @@ WARD_CORRECTION_REASON_MAX_LENGTH = 500
 class BorrowRequest(BaseModel):
     """Roadmap PR7b (docs/audits/04-consolidated-implementation-plan.md
     Part D PR7 entry; confirmed acceptance criteria in
-    docs/audits/03-hospital-equipment-pool-workflow-audit.md §12):
+    docs/archive/audits/03-hospital-equipment-pool-workflow-audit.md §12):
     ``borrower_name``, ``due_at``, and ``quantity`` are deliberately absent
     -- no longer accepted or required (they were removed from the active
     dispatch write path; existing historical database values for all
@@ -96,7 +96,7 @@ class ReturnRequest(BaseModel):
 
 
 class WardCorrectionRequest(BaseModel):
-    """Roadmap PR9A (docs/audits/03-hospital-equipment-pool-workflow-audit.md
+    """Roadmap PR9A (docs/archive/audits/03-hospital-equipment-pool-workflow-audit.md
     §7 "Ward Recording Rules": "Add a narrow, role-gated ... fully-audited
     'Correct Destination Ward' action -- distinct from any general edit
     capability, writing a clear before/after audit entry every time it's
@@ -183,7 +183,7 @@ class TransactionOut(BaseModel):
     legacy_condition_on_return: str | None
     status: str
     notes: str | None
-    # Roadmap PR16 Slice 2 (docs/design/PR16_REPORTING_FOUNDATION_PLAN.md
+    # Roadmap PR16 Slice 2 (docs/archive/design/PR16_REPORTING_FOUNDATION_PLAN.md
     # §9) -- read-only, computed, never accepted as request input.
     # dispatch_* is always present (every transaction has a `borrowed_at`);
     # receipt_* is `None` until the transaction is received, mirroring
@@ -199,7 +199,7 @@ class TransactionOut(BaseModel):
 
 
 class ReportTransactionOut(TransactionOut):
-    """Roadmap PR17 Slice 2 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md
+    """Roadmap PR17 Slice 2 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md
     §8, §10.1, §11 -- corrected per review finding PR17-H5). Report-only
     response DTO for `GET /reports/receive`/`GET /reports/issue`, never
     used by `GET /transactions`/`GET /transactions/{id}`. Extends

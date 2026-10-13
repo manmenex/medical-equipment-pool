@@ -1,7 +1,7 @@
 """Roadmap PR21D1 -- Combined Canonical Adapter + Source Admission.
 
 Authoritative design: this PR's own `combined.py` module docstring plus
-`docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md` and Owner
+`docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md` and Owner
 Decision Closure Round 3 (GitHub PR #106). Tests the registered
 `LegacyTransactionHistoryAdapter` (`app.services.import_adapters.
 legacy_history.combined`) directly at the adapter-method level --

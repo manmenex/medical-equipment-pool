@@ -45,7 +45,7 @@ AUDIT_ACTION_TOKEN_REFRESH = "token_refresh"
 # has no authenticated actor (ADR-0001), and the locked account is the
 # subject, not the agent.
 AUDIT_ACTION_ACCOUNT_LOCKED = "account_locked"
-# Roadmap PR9A (docs/audits/03-hospital-equipment-pool-workflow-audit.md §7):
+# Roadmap PR9A (docs/archive/audits/03-hospital-equipment-pool-workflow-audit.md §7):
 # a distinct action from AUDIT_ACTION_UPDATE -- this is a narrow, purpose-built
 # correction of a transaction's ward_id, never a generic field update, and the
 # audit trail should say so explicitly rather than reading as an
@@ -56,7 +56,7 @@ AUDIT_ACTION_WARD_CORRECTION = "ward_correction"
 # filename, aggregate row counts) -- deliberately not one entry per
 # imported equipment row; see app.services.import_service.
 AUDIT_ACTION_IMPORT = "import"
-# Roadmap PR19A2 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §3.5,
+# Roadmap PR19A2 (docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §3.5,
 # §19): distinguished from the PR12 AUDIT_ACTION_IMPORT reuse above by
 # entity_type (AUDIT_ENTITY_IMPORT_SESSION), not by a new action string --
 # design §3.5 explicitly reuses "import" for a PR19A3 execute success. This
@@ -75,7 +75,7 @@ AUDIT_ACTION_IMPORT_FENCE_LOST = "import_fence_lost"
 # (§18) -- never speculatively, never for a claimed-but-not-yet-purged or
 # fenced-out session (those write AUDIT_ACTION_IMPORT_FENCE_LOST instead).
 AUDIT_ACTION_IMPORT_RETENTION_CLEANUP = "import_retention_cleanup"
-# Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.3,
+# Roadmap PR20D (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14.3,
 # §26): one entry per successfully persisted `EquipmentMasterDryRunPlan`,
 # written by `EquipmentMasterAdapter.persist_dry_run_plan` inside the same
 # transaction as the plan/rows insert -- never speculatively, never for a

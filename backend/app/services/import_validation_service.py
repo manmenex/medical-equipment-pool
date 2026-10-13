@@ -1,6 +1,6 @@
 """Validate-phase orchestration for the legacy-import pipeline.
 
-Roadmap PR19A2 (docs/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §9,
+Roadmap PR19A2 (docs/archive/design/PR19A_LEGACY_IMPORT_FOUNDATION_PLAN.md §9,
 §10, §11, §12, §13). Implements the complete, generic lease-acquisition /
 heartbeat-renewal / completion-fencing / failure-fencing mechanism (§9)
 for the first time, wired into `VALIDATING` -- what makes `validate` safe

@@ -26,7 +26,7 @@ from tests.conftest import auth_headers as _auth_headers
 from tests.conftest import create_ward as _create_ward
 
 # ---------------------------------------------------------------------------
-# Roadmap PR18D (docs/design/PR18_PRINTING_EXPORT_PLAN.md §10, §16): unit
+# Roadmap PR18D (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §10, §16): unit
 # tests for app.services.report_pdf_service (the WeasyPrint HTML/CSS-to-PDF
 # adapter) and API tests for GET /reports/{report_id}/pdf. No text is
 # asserted only by "starts with %PDF" -- every content assertion below opens

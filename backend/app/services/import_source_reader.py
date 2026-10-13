@@ -1,7 +1,7 @@
 """Verified source reader -- closing the `parse(None)` gap for byte-backed
 sources.
 
-Roadmap PR20A (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §6.5,
+Roadmap PR20A (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §6.5,
 architecture-approved via the merged Design PR #89). A new, PR20-owned
 infrastructure component, called by the framework
 (`import_validation_service.run_validation`/`import_execution_service.

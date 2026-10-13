@@ -11,7 +11,7 @@ from app.models.mixins import TimestampMixin, UTCDateTime, UUIDPKMixin
 
 JSONType = JSONB().with_variant(JSON(), "sqlite")
 
-# Roadmap PR10 (Role Model Consolidation, docs/audits/03-hospital-equipment
+# Roadmap PR10 (Role Model Consolidation, docs/archive/audits/03-hospital-equipment
 # -pool-workflow-audit.md §10): the confirmed 3-role business model. This is
 # the single canonical definition of a valid, assignable role name -- every
 # other module (schemas, deps, seed, tests) imports these constants rather
@@ -47,7 +47,7 @@ ALL_LEGACY_ROLES = [
 # Roadmap PR10 migration decision (docs/DECISION_LOG.md "Roadmap PR10"): the
 # only two legacy roles with a confirmed, evidence-backed equivalent in the
 # new 3-role model. biomedical_engineer/ward_nurse/transport_staff have no
-# confirmed equivalent (docs/audits/03-hospital-equipment-pool-workflow-audit.md
+# confirmed equivalent (docs/archive/audits/03-hospital-equipment-pool-workflow-audit.md
 # §10's own note) and must never be auto-mapped -- see
 # backend/alembic/versions/0009_role_consolidation.py.
 SAFE_LEGACY_ROLE_MAPPING = {
@@ -58,7 +58,7 @@ SAFE_LEGACY_ROLE_MAPPING = {
 
 class Role(UUIDPKMixin, Base):
     __tablename__ = "roles"
-    # Roadmap PR15B (docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md §6.4): explicit
+    # Roadmap PR15B (docs/archive/design/PR15B_SCHEMA_HYGIENE_PLAN.md §6.4): explicit
     # name converges with migration 0014's `uq_roles_name` rename instead of
     # leaving `unique=True` produce PostgreSQL's unnamed `roles_name_key`.
     __table_args__ = (UniqueConstraint("name", name="uq_roles_name"),)

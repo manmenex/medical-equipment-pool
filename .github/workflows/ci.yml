@@ -1,7 +1,7 @@
 name: CI
 
 # Roadmap infrastructure PR (pre-PR7): reliable GitHub CI checks for pull
-# requests targeting the base branch. See docs/AI_REVIEW_WORKFLOW.md for how
+# requests targeting the base branch. See docs/PROJECT_WORKFLOW.md for how
 # these checks fit into the Claude -> Codex -> owner review workflow.
 #
 # Every job uses test-only, hardcoded, non-secret values (POSTGRES_*,
@@ -353,7 +353,7 @@ jobs:
         run: docker exec mep-backend-smoke python -m alembic upgrade head
 
       # app.scripts.seed (already used for local/demo setup, per
-      # docs/06-deployment-guide.md's own documented deployment sequence)
+      # docs/archive/legacy/06-deployment-guide.md's own documented deployment sequence)
       # creates the ADMIN001 user this smoke test logs in as, plus enough
       # equipment rows that the Equipment Verify Checklist PDF below has
       # real, non-empty Thai content to render -- not just an empty-result

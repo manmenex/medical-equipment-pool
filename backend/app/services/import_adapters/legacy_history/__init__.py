@@ -1,7 +1,7 @@
 """Roadmap PR21B/PR21C -- Canonical Issue + Receive Parsers + Validation
 (bounded slices).
 
-Authoritative design: `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+Authoritative design: `docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
 (especially §4, §6.1-6.3, §8.1, §9, §10.1, §13-16.1, §20.1, §22, §24.2,
 §28, §43, §45-47, §54), merged as GitHub PR #103 / PR21A (squash SHA
 `28f0f5eabb64cf4b27294fd3df251e90b167de0a`) and GitHub PR #104 / PR21B

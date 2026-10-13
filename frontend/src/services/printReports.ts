@@ -1,7 +1,7 @@
 import { api } from "@/services/api";
 import type { PrintDocumentOut, ReportIdentity } from "@/types";
 
-// Roadmap PR18C (docs/design/PR18_PRINTING_EXPORT_PLAN.md §6.2/§9): the
+// Roadmap PR18C (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §6.2/§9): the
 // single client for GET /reports/{report_id}/print-data
 // (backend/app/api/v1/reports.py).
 export type PrintReportFilters = Record<string, string | undefined>;

@@ -1,4 +1,4 @@
-"""Roadmap PR18E (docs/design/PR18_PRINTING_EXPORT_PLAN.md §11 "Excel
+"""Roadmap PR18E (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §11 "Excel
 Strategy"): the backend Excel adapter. Turns an already-built
 `app.schemas.report_export.ExportDocument` into `.xlsx` bytes using
 `openpyxl` -- this module owns no report/query/eligibility logic of its own

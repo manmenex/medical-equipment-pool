@@ -1,6 +1,6 @@
 """Internal dry-run-plan provider contract and registry.
 
-Roadmap PR21-Foundation (docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md
+Roadmap PR21-Foundation (docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md
 §29-§38, §46). This module is source-independent internal plumbing only --
 it defines the shape a per-dataset "plan provider" must implement to (a)
 back the existing PR20 static HTTP routes' read/confirm behavior and (b)

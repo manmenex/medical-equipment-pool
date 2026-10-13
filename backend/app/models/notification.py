@@ -24,7 +24,7 @@ class Notification(UUIDPKMixin, Base):
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     payload: Mapped[dict] = mapped_column(JSONType, default=dict)
     # See app.models.audit.AuditLog.created_at's identical comment (Roadmap
-    # PR15B, docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md §3.4/§3.5).
+    # PR15B, docs/archive/design/PR15B_SCHEMA_HYGIENE_PLAN.md §3.4/§3.5).
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True
     )

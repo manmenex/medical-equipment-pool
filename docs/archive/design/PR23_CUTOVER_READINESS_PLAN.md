@@ -1,16 +1,16 @@
 # Roadmap PR23 — Cutover Readiness: Architecture & Operational Design (PR23A)
 
-**Status:** DESIGN, GOVERNANCE, AND OWNER DECISION CLOSURE ONLY. No
+**Status:** Complete and merged. Historical record: DESIGN, GOVERNANCE, AND OWNER DECISION CLOSURE ONLY. No
 `backend/**`, `frontend/**`, `alembic/**`, or `tests/**` file has been
 created or modified by this document or by its Owner Decision Closure
 round. No cutover runtime logic, no deployment, no production data
 migration, no pilot has started. **PR23A (this document) is merged**
 (GitHub PR #122, squash SHA
 `7ca9c87b4c525a1835403dac5d08e6e1be79d33b`). **This Owner Decision
-Closure round records all six PR23 Owner Decisions (OD-PR23-1 through
-OD-PR23-6, §26) as Owner-approved; PR23B remains blocked until this
-closure round's own PR merges** (§27) — see that section for the exact
-gate wording while this closure PR is open.
+Closure round (GitHub PR #123) recorded all six PR23 Owner Decisions
+(OD-PR23-1 through OD-PR23-6, §26) as Owner-approved and is merged;
+PR23B-F are likewise complete and merged (GitHub PR #124-#128), so
+Roadmap PR23 is complete.** See §27 for the historical gate wording.
 
 **Baseline (Owner Decision Closure round):**
 `7ca9c87b4c525a1835403dac5d08e6e1be79d33b` — the real squash-merge SHA
@@ -99,7 +99,7 @@ STOP-worthy conflict exists; this document proceeds.
 Other authoritative inputs consulted, with the specific facts they
 established, cited throughout this document by section:
 
-- `docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md` §36 —
+- `docs/archive/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md` §36 —
   OD-PR22-6 (PR23 cutover-readiness threshold) and OD-PR22-7 (temporal
   coverage model) — see §9 and §12.D below.
 - `docs/audits/04-consolidated-implementation-plan.md` §14 item 7 —
@@ -196,7 +196,7 @@ PR23 consumes, never reimplements, three already-merged capabilities:
   `LegacyEquipmentEvent` (`event_type` = `ISSUE` | `RECEIVE`) —
   never a paired transaction, never a `BorrowTransaction`, and never a
   mutation of current `Equipment.status`/version/location
-  (`docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`, event-
+  (`docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`, event-
   first architecture). PR23 treats this as permanent historical
   evidence, not as a source of current operational state (§11).
 - **PR22 — Legacy Data Validation and Reconciliation.** Produces
@@ -277,7 +277,7 @@ relevant users at the chosen instant?) — see **OD-PR23-1** (§26).
 
 PR23 does not invent a new temporal model. It reuses OD-PR22-7's
 three-boundary model exactly as resolved
-(`docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md` §36):
+(`docs/archive/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md` §36):
 
 - `legacy_coverage_start` / `legacy_coverage_end` — the
   Administrator/Owner-approved historical coverage window recorded on a
@@ -419,7 +419,7 @@ Resolving the questions posed by the task:
   mechanism.
 - **How is ward identity resolved?** Through the same Ward
   normalization/mapping PR21 already established
-  (`docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`), for
+  (`docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`), for
   staff to select the correct ward when re-issuing.
 
 This recommendation (manual, explicit, staff-confirmed re-issue; no
@@ -444,7 +444,7 @@ between the two).
   exact deployed head, database migrations applied and verified
   (`alembic upgrade head` against the head migration,
   `0020_reconciliation_foundation.py` as of this baseline), production
-  configuration validated (real secrets, not defaults — `docs/06-deployment-guide.md`
+  configuration validated (real secrets, not defaults — `docs/archive/legacy/06-deployment-guide.md`
   §4, itself marked "legacy design reference," current authority
   pending §23), backup/restore procedure validated (§23 — currently
   **undesigned**, per Part I's own open item 7).
@@ -780,7 +780,7 @@ task's own instruction and this repository's own confirmed constraint
 (`docs/ARCHITECTURE_DECISIONS.md`, "Managed deployment preferred"):
 production deployment must not assume direct access to hospital-managed
 servers, no specific managed platform has been selected, and the
-current Docker Compose setup (`docs/06-deployment-guide.md`, itself
+current Docker Compose setup (`docs/archive/legacy/06-deployment-guide.md`, itself
 marked "Legacy design reference," not current authority) is a
 development convenience only, not the confirmed production target.
 
@@ -1368,8 +1368,8 @@ exactly as merged through PR22G:
 |---|---|
 | Roadmap PR scope, order, dependencies | `docs/audits/04-consolidated-implementation-plan.md` |
 | Final Go-Live Gates | `docs/audits/04-consolidated-implementation-plan.md` Part I (§13) |
-| PR22 reconciliation/sign-off contract | `docs/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md` |
-| PR21 legacy history import contract | `docs/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md` |
+| PR22 reconciliation/sign-off contract | `docs/archive/design/PR22_LEGACY_DATA_RECONCILIATION_PLAN.md` |
+| PR21 legacy history import contract | `docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md` |
 | Managed deployment constraint | `docs/ARCHITECTURE_DECISIONS.md` |
 | Current-state governance/status | `docs/ROADMAP.md`, `docs/ROADMAP_STATUS.md`, `knowledge/CONTEXT.md` |
 | Decision chronology | `docs/DECISION_LOG.md` |

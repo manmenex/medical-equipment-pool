@@ -1,7 +1,7 @@
 """Equipment Master import adapter -- Roadmap PR20C (Parse + Normalize +
 Validate only).
 
-Authoritative design: `docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md`
+Authoritative design: `docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md`
 §6.3 (adapter shape), §7 (source workbook contract), §8 (32-column field
 mapping), §9 OD-1/OD-2/OD-3/OD-4 (Owner Decisions, all RESOLVED), all
 merged via GitHub PR #92 (squash SHA
@@ -580,7 +580,7 @@ def _rows_with_duplicate_values(values_by_row: dict[int, str]) -> frozenset[int]
 
 
 # ---------------------------------------------------------------------------
-# Roadmap PR20D (docs/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14, §15.1,
+# Roadmap PR20D (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14, §15.1,
 # §8): `plan_dry_run` row-classification helpers. Field selection mirrors §8's
 # CREATE/UPDATE write-column table exactly -- `bcm_code`/`item_no` are
 # identity fields (CREATE-only, immutable on UPDATE); `status` is CREATE-only

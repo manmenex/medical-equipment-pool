@@ -76,7 +76,7 @@ Checked every FK and every WHERE/ORDER BY/GROUP BY clause in `crud/` and `servic
 
 ### 4.1 — Documented partial indexes were never actually implemented
 - **Severity:** High
-- **Why it's a problem:** `docs/02-database-schema.md §2` explicitly specifies:
+- **Why it's a problem:** `docs/archive/legacy/02-database-schema.md §2` explicitly specifies:
   ```sql
   CREATE INDEX idx_equipment_status ON equipment (status) WHERE deleted_at IS NULL;
   CREATE INDEX idx_equipment_pm_due ON equipment (pm_due_date) WHERE deleted_at IS NULL;
@@ -184,7 +184,7 @@ Checked every FK and every WHERE/ORDER BY/GROUP BY clause in `crud/` and `servic
 
 ### 7.1 — Mixed index-naming convention (`idx_*` vs `ix_*`)
 - **Severity:** High
-- **Why it's a problem:** `docs/02-database-schema.md` documents every index with an `idx_` prefix. In the actual code, the *one* hand-declared `Index(...)` (`idx_tx_one_active_borrow` in `transaction.py`) follows that convention — but every other index is produced by SQLAlchemy's `index=True` shorthand, which auto-generates `ix_<table>_<column>` names (e.g. `ix_equipment_status`, `ix_borrow_transactions_ward_id`). The live schema has two competing naming conventions for the same kind of object, purely as an artifact of which declaration style was used, making it harder to audit/grep indexes later and contradicting the documented scheme.
+- **Why it's a problem:** `docs/archive/legacy/02-database-schema.md` documents every index with an `idx_` prefix. In the actual code, the *one* hand-declared `Index(...)` (`idx_tx_one_active_borrow` in `transaction.py`) follows that convention — but every other index is produced by SQLAlchemy's `index=True` shorthand, which auto-generates `ix_<table>_<column>` names (e.g. `ix_equipment_status`, `ix_borrow_transactions_ward_id`). The live schema has two competing naming conventions for the same kind of object, purely as an artifact of which declaration style was used, making it harder to audit/grep indexes later and contradicting the documented scheme.
 - **Proposed fix:** Set an explicit `naming_convention` on `Base.metadata` (e.g. `{"ix": "idx_%(table_name)s_%(column_0_name)s"}`) so all future auto-generated indexes match the documented `idx_` prefix, and rename the existing `ix_*` indexes in a migration to match.
 - **Migration impact:** Low — index renames only (`ALTER INDEX ... RENAME TO ...`), no data impact, can be done online.
 
@@ -284,7 +284,7 @@ Checked every FK and every WHERE/ORDER BY/GROUP BY clause in `crud/` and `servic
 
 ### 10.3 — Random UUIDv4 primary keys undercut the documented rationale for using UUIDs
 - **Severity:** Medium-High
-- **Why it's a problem:** `docs/01-architecture.md` argues UUID primary keys "distribute insert load better than serial" for multi-instance writers — true for avoiding a single auto-increment bottleneck, but `uuid.uuid4()` (fully random) is actually close to worst-case for btree insert locality: each insert lands at a random point in the PK index, causing index page splits/bloat and poor buffer-cache hit rates as the table grows. This directly works against the 500k+/2M+-row performance targets in `docs/07`.
+- **Why it's a problem:** `docs/archive/legacy/01-architecture.md` argues UUID primary keys "distribute insert load better than serial" for multi-instance writers — true for avoiding a single auto-increment bottleneck, but `uuid.uuid4()` (fully random) is actually close to worst-case for btree insert locality: each insert lands at a random point in the PK index, causing index page splits/bloat and poor buffer-cache hit rates as the table grows. This directly works against the 500k+/2M+-row performance targets in `docs/07`.
 - **Proposed fix:** Switch to UUIDv7 (time-ordered) or ULID for primary keys — both remain globally unique and client-generatable without coordination (preserving the original multi-writer rationale) while keeping insert locality roughly sequential, closer to a serial key's index behavior.
 - **Migration impact:** High if changing after data exists (every PK and every FK referencing it must be regenerated or the change limited to new rows going forward with a mixed-format transition period). **Recommend deciding this now, while the dataset is still small/pre-production** — it becomes significantly more expensive to change later.
 

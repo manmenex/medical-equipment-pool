@@ -5,7 +5,7 @@ Revises: 0012_timezone_conversion
 Create Date: 2026-07-28
 
 Roadmap PR15B (Schema Hygiene), Migration B of three
-(docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md §4/§8.2/§8.7, GitHub PR #52,
+(docs/archive/design/PR15B_SCHEMA_HYGIENE_PLAN.md §4/§8.2/§8.7, GitHub PR #52,
 architecture-approved) -- see §4 for the full FK-by-FK table this docstring
 summarizes.
 

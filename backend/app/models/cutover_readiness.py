@@ -1,6 +1,6 @@
 """Roadmap PR23B -- Cutover Readiness Evidence Foundation.
 
-Authoritative design: `docs/design/PR23_CUTOVER_READINESS_PLAN.md` (§9
+Authoritative design: `docs/archive/design/PR23_CUTOVER_READINESS_PLAN.md` (§9
 temporal boundary/`cutover_instant`, §10 current equipment state, §11
 outstanding/open transactions, §12 Gate D/E, §15 evidence/audit, §16
 concurrency/freshness, §26 OD-PR23-1 through OD-PR23-6, all RESOLVED /
@@ -139,7 +139,7 @@ from sqlalchemy.types import JSON
 from app.db.base import Base
 from app.models.mixins import UTCDateTime, UUIDPKMixin
 
-# Roadmap PR23D (docs/design/PR23_CUTOVER_READINESS_PLAN.md §12 Gate G,
+# Roadmap PR23D (docs/archive/design/PR23_CUTOVER_READINESS_PLAN.md §12 Gate G,
 # §13, §26 OD-PR23-3/OD-PR23-6). Same PostgreSQL-JSONB/SQLite-JSON
 # variant type already used by `app.models.legacy_reconciliation`/
 # `app.models.import_session` -- not a new pattern.
@@ -350,7 +350,7 @@ CUTOVER_GO_NO_GO_DECISIONS = ("GO", "NO_GO")
 
 
 class CutoverGoNoGoDecision(UUIDPKMixin, Base):
-    """Roadmap PR23D (docs/design/PR23_CUTOVER_READINESS_PLAN.md §12 Gate
+    """Roadmap PR23D (docs/archive/design/PR23_CUTOVER_READINESS_PLAN.md §12 Gate
     G, §13 Go/No-Go, §14 Authorization, §15 Evidence/Audit, §16
     Concurrency/Freshness, §26 OD-PR23-3/OD-PR23-6). The immutable final
     Go/No-Go decision for one `CutoverReadinessRun` -- exactly the

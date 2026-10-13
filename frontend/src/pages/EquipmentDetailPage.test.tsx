@@ -476,7 +476,7 @@ describe("EquipmentDetailPage history filters and dispatch-type/days-since displ
 });
 
 // ---------------------------------------------------------------------------
-// Roadmap PR16 Slice 4 (docs/design/PR16_REPORTING_FOUNDATION_PLAN.md §10):
+// Roadmap PR16 Slice 4 (docs/archive/design/PR16_REPORTING_FOUNDATION_PLAN.md §10):
 // business_date_from/business_date_to/shift/event filter controls. This
 // slice is frontend only -- business_date/shift are never computed here,
 // only selected and sent verbatim to GET /transactions (services/borrow.ts's

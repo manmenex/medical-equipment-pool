@@ -1,7 +1,7 @@
 import { api } from "@/services/api";
 import type { Equipment, EquipmentStatus, Page, ReportOperatorOut, ReportTransactionOut, Shift } from "@/types";
 
-// Roadmap PR17 Slice 3 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md §10.1/
+// Roadmap PR17 Slice 3 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md §10.1/
 // §10.2/§12): the approved filter set for both Receive and Issue reports --
 // business_date_from/business_date_to/shift/ward_id/equipment_category_id/
 // equipment_id/operator_id. `event` and `require_receipt` are never
@@ -53,7 +53,7 @@ export async function getOperatorOptions(params: OperatorOptionsParams = {}): Pr
   return resp.data;
 }
 
-// Roadmap PR17 Slice 4 (docs/design/PR17_OPERATIONAL_REPORTS_PLAN.md §10.3):
+// Roadmap PR17 Slice 4 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md §10.3):
 // the Equipment Verify Checklist's own, distinct filter set -- current
 // equipment status, category, and department. Deliberately NOT the
 // Receive/Issue reports' business_date/shift/ward/operator filters: this

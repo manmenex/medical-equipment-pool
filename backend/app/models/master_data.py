@@ -9,7 +9,7 @@ from app.models.mixins import UUIDPKMixin
 
 class Department(UUIDPKMixin, Base):
     __tablename__ = "departments"
-    # Roadmap PR15B (docs/design/PR15B_SCHEMA_HYGIENE_PLAN.md §6.4): an
+    # Roadmap PR15B (docs/archive/design/PR15B_SCHEMA_HYGIENE_PLAN.md §6.4): an
     # explicit name converges this column's constraint on the same
     # `uq_<table>_<column>` convention migration 0014 renames the
     # PostgreSQL-catalog constraint to, instead of leaving `unique=True`
