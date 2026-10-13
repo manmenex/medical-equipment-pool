@@ -8967,3 +8967,13 @@ every role on every test (about 1.2 s of setup per test in
 `tests/test_auth.py`). A test-only lower bcrypt cost would cut the suite
 sharply, but it changes how tests exercise password hashing and is left for
 its own PR.
+
+## 2026-10-13 -- Forced password change is now enforced by the backend
+
+`users.must_change_password` was enforced only by the frontend route guard, so
+the holder of an Administrator-set temporary password could call any API with a
+valid token and never change it. The backend now refuses every authenticated
+route with 403 `PASSWORD_CHANGE_REQUIRED` until the password is changed; only
+`GET /auth/me` and `POST /auth/change-password` are exempt (a separate
+dependency, not path matching). Why: reviewer finding on PR #144; the Owner
+chose enforcement. Administrators with the flag are covered too, intentionally.
