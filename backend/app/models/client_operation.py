@@ -50,7 +50,7 @@ ALL_OP_STATUSES = (
     OP_STATUS_RESOLVED,
 )
 
-TIME_FLAGS = ("clamped_future", "clamped_old", "before_dispatch", "before_last_receipt")
+TIME_FLAGS = ("clamped_future", "clamped_old", "before_dispatch", "before_last_receipt", "too_old")
 RESOLUTION_MATCHES = ("same", "different", "dismissed_only")
 
 

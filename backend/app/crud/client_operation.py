@@ -45,6 +45,9 @@ class ClientOpContext:
     pending: bool = False
     # Slice B2b: set by the sync layer after the section 11 time guards.
     time_flag: str | None = None
+    # Set only when no business time is applied (too_old conflict): the
+    # unclamped adjusted time stored in the ledger for the reviewer.
+    occurred_at: datetime | None = None
 
     def audit_fields(self) -> dict[str, str | int]:
         return {"op_id": str(self.op_id), "device_id": str(self.device_id), "device_seq": self.device_seq}
@@ -153,7 +156,13 @@ async def record_outcome(
         await db.execute(
             update(ClientOperation)
             .where(ClientOperation.op_id == ctx.op_id, ClientOperation.status == OP_STATUS_PENDING)
-            .values(status=status, result_code=result_code, attempt_count=ClientOperation.attempt_count + 1)
+            .values(
+                status=status,
+                result_code=result_code,
+                occurred_at=ctx.occurred_at,
+                time_flag=ctx.time_flag,
+                attempt_count=ClientOperation.attempt_count + 1,
+            )
         )
     else:
         await db.execute(
@@ -172,6 +181,8 @@ async def record_outcome(
                     occurred_at_local=ctx.occurred_at_local,
                     clock_offset_ms=ctx.clock_offset_ms,
                     payload=ctx.payload,
+                    occurred_at=ctx.occurred_at,
+                    time_flag=ctx.time_flag,
                     stale_context=False,
                     attempt_count=1,
                 ),
