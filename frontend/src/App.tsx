@@ -48,6 +48,7 @@ const CutoverReadinessListPage = lazy(() =>
 const CutoverReadinessRunDetailPage = lazy(() =>
   import("@/pages/CutoverReadinessRunDetailPage").then((m) => ({ default: m.CutoverReadinessRunDetailPage }))
 );
+const SyncReviewPage = lazy(() => import("@/pages/SyncReviewPage").then((m) => ({ default: m.SyncReviewPage })));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 const ChangePasswordPage = lazy(() => import("@/pages/ChangePasswordPage").then((m) => ({ default: m.ChangePasswordPage })));
 const NotFoundPage = lazy(() => import("@/pages/NotFoundPage").then((m) => ({ default: m.NotFoundPage })));
@@ -131,6 +132,7 @@ export function App() {
               in this PR's scope. */}
           <Route path="/cutover-readiness" element={<CutoverReadinessListPage />} />
           <Route path="/cutover-readiness/:runId" element={<CutoverReadinessRunDetailPage />} />
+          <Route path="/sync-review" element={<SyncReviewPage />} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
