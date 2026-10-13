@@ -1,8 +1,8 @@
 # PR25D — Offline Operation Design
 
 **Purpose:** Design (no code) for letting Equipment Pool staff keep dispatching and receiving equipment while the department server is unreachable, and for syncing safely afterwards.
-**Status:** Draft for Owner approval. PR25E (implementation) does not start until the Owner approves this document and answers the open questions in section 18.
-**Approval:** merging this design PR does **not** approve PR25E and does **not** answer section 18. Approval is a separate, recorded Owner decision (Decision Log entry), made after the Owner answers the open questions.
+**Status:** Owner questions answered 2026-10-13 (section 18). **The Owner's answers authorize starting PR25E per the slice plan (section 20) once this document is merged.** Merging this PR is the trigger; no further approval step is needed for the slices listed, but any change to a decision in section 18 returns to the Owner.
+**Approval:** the Owner decisions in section 18 are the recorded approval of this design (2026-10-13). `DECISION_LOG.md` and `ROADMAP.md` are updated by the PR25E docs slice (D1), not by this PR.
 **Scope of this PR:** this file only. It does not edit `ROADMAP.md`, `DECISION_LOG.md`, ADRs, or any code.
 **Governing sources:** `AGENTS.md`; `docs/BUSINESS_RULES.md`; `docs/ARCHITECTURE_GUARDRAILS.md`; `knowledge/adr/ADR-002` to `ADR-006`; `docs/DECISION_LOG.md` (2026-10-13, "Local Production on the department host"); `docs/ROADMAP.md` ("Stage 1", PR25A to PR25E).
 
@@ -20,7 +20,14 @@
 5. หน้าแอปโหลดได้แม้เซิร์ฟเวอร์ล่ม เพราะเป็น PWA ที่ติดตั้งแล้ว (service worker เก็บไฟล์หน้าเว็บไว้)
 6. ข้อมูลที่เก็บในเครื่องมีเท่าที่จำเป็น (รหัส BCM, ชื่อเครื่อง, วอร์ด, สถานะล่าสุด) และล้างเมื่อ logout ส่วนรายการที่ยังไม่ sync จะไม่ถูกลบ
 
-**ข้อจำกัดสำคัญที่ Owner ต้องตัดสินใจ (ดูหัวข้อ 18):** การสแกน QR ออฟไลน์ต้องมีตาราง Item No ในเครื่อง ซึ่งขัดกับ ADR-004 (Item No ห้ามอยู่ใน response ปกติ) ข้อเสนอเริ่มต้นคือ **ออฟไลน์ใช้การค้นหา BCM Code เท่านั้น** และเลื่อน QR ออฟไลน์ไว้จนกว่าจะแก้ ADR-004
+**คำตอบของ Owner (2026-10-13) ที่ปรับเข้าแบบแล้ว (ดูหัวข้อ 18)**
+- ออฟไลน์ค้นหาด้วย **BCM Code เท่านั้น** สแกน QR ใช้เฉพาะตอนออนไลน์ (ADR-004 ไม่เปลี่ยน)
+- **เบอร์โทร:** ในโค้ดปัจจุบันไม่มีเบอร์โทรของวอร์ด/แผนกใน master data และหน้าจอไม่ได้กรอกให้อัตโนมัติ ช่องนี้เป็นข้อความที่พิมพ์เอง (ไม่บังคับ) ออฟไลน์จึงคงพฤติกรรมเดิม ถ้าต้องการกรอกอัตโนมัติ ต้องเพิ่มฟิลด์เบอร์โทรใน master data เป็นงานแยกต่างหาก (ยังไม่ทำ)
+- ผู้ตัดสิน conflict คือ Equipment Pool staff และ Administrator
+- **เครื่องใช้ร่วมกัน (เปลี่ยนแบบ):** ผู้ใช้อื่นที่เป็น Pool staff/Administrator สามารถ **"รับช่วง" (adopt)** รายการค้างของคนที่ไม่กลับมาแล้วส่งต่อได้ ต้องกดยืนยันชัดเจน ต้องออนไลน์และล็อกอินสด และมี audit ทั้งผู้ทำเดิมและผู้รับช่วง ผู้ทำเดิมยังคงเป็นผู้บันทึกของรายการ
+- ขีดจำกัด 500 รายการ/เครื่อง, ย้อนเวลาไม่เกิน 7 วัน, journal 48 ชม., ใช้ screen lock ของเครื่อง: ตกลง
+- **รับคืนอ้างด้วย transaction_id เท่านั้น** และเพิ่มการป้องกัน 2 กรณี: (ก) สลับเครื่องในวอร์ด (รับคืนแล้วจ่ายซ้ำทันที) (ข) ออฟไลน์นานหลายเครื่องคีย์ไม่ตรงกัน: ระบบสร้าง **Timeline** ของเครื่องมือชิ้นนั้นตามเวลาที่ปรับนาฬิกาแล้ว ให้คนตรวจดู และมีปุ่ม "ใช้ทั้งลำดับ" ที่ผ่านการตรวจแล้วเท่านั้น ไม่ apply เองโดยลำพังใน v1 พร้อมแจ้งเตือนเมื่อข้อมูลในเครื่องเก่ากว่า **4 ชั่วโมง** และให้รายการเหล่านั้นถูกจัดลำดับความสำคัญในการตรวจ
+- **คำตอบของ Owner อนุญาตให้เริ่ม PR25E ตามแผน slice ได้ทันทีเมื่อเอกสารนี้ merge**
 
 ---
 
@@ -54,7 +61,7 @@
 | `borrowed_at` / `returned_at` are set by the server at write time; PR16 derives `business_date` and `shift` from them | `models/transaction.py`; `core/reporting_time.py` | A dispatch replayed hours later would be filed under the wrong shift unless the true event time is carried (section 11). |
 | Transaction PK is `UUIDPKMixin` (`uuid4` default); `transaction_no` is a separate server sequence value | `models/mixins.py`; `crud/transaction.py` | A client-chosen UUID can become the transaction PK. `transaction_no` stays server-assigned and is simply not used by offline clients. |
 | `idx_tx_one_active_borrow` (unique on `equipment_id` where `status='open'`) | `models/transaction.py` | The database already guarantees at most one open transaction per equipment, even under replay races. |
-| Equipment responses deliberately **exclude Item No**; QR resolution is server-side `POST /equipment/resolve-qr` | `schemas/equipment.py`; ADR-002/004 | Offline QR scan cannot work without shipping Item No to devices (open question Q1). |
+| Equipment responses deliberately **exclude Item No**; QR resolution is server-side `POST /equipment/resolve-qr` | `schemas/equipment.py`; ADR-002/004 | Offline QR scan cannot work without shipping Item No to devices (Owner decision D1: offline is BCM-only). |
 | Access token lifetime 15 min; refresh token 7 days in an httpOnly cookie | `core/config.py`; `api/v1/auth.py` | A device offline for hours always has an expired access token; replay needs a refresh first (section 8.4). |
 | Frontend persists `accessToken` and `user` to `localStorage` key `mep-auth` | `frontend/src/store/authStore.ts` | Existing behaviour; wipe-on-logout must cover it (section 12). |
 | `api.ts` response interceptor calls `logout()` whenever `/auth/refresh` fails, **including on a network error** | `frontend/src/services/api.ts` | Offline, the first expired token would log the operator out and discard the session. Must change to log out only on a real 401/403 from refresh (slice S1). |
@@ -83,7 +90,7 @@
 
 | Operation | Offline? | Notes |
 |---|---|---|
-| Dispatch (`routine_round` or `on_demand`) | Yes | Same fields as online: equipment, ward, dispatch type, routine round, optional department/location ids and notes. |
+| Dispatch (`routine_round` or `on_demand`) | Yes | Same fields as online: equipment, ward, dispatch type, routine round, optional department/location ids, `phone_number` and notes. `phone_number` behaves exactly as online (section 3.4). |
 | Receipt, outcome `usable` | Yes | Atomic, one step. Backend maps to `AVAILABLE_AT_POOL`. Cleaning is never asked or recorded. |
 | Receipt, outcome `defective` | Yes | Backend maps to `UNAVAILABLE_DEFECTIVE`. |
 | Everything else (ward correction, mark defective, reactivate, decommission, master data, users, imports, reports, audit views, cutover pages) | **No**, online only | These are administrative or review actions where stale local state is risky. They show "needs connection". |
@@ -100,13 +107,19 @@ The offline client sends only the business inputs (`receipt_outcome`, never an e
 | Open transactions | Offline receipt | `transaction id`, `equipment id`, `ward id`, `borrowed_at` | same |
 | Round times / dispatch types | Constants | static in the app bundle | n/a |
 
-Not cached: Item No, Asset Number, user lists, phone numbers of others, audit log, reports, history. Item No is excluded by ADR-002/004 (see Q1 for QR).
+Not cached: Item No, Asset Number, user lists, phone numbers of others, audit log, reports, history. Item No is excluded by ADR-002/004 (see D1 for QR).
 
 Snapshot refresh: after login, then every 15 min while online, plus on every successful reconnect, via a new bounded paginated endpoint (section 6.5). Staleness is displayed, never hidden. The device also applies its **own pending operations** on top of the snapshot locally (a device with a pending dispatch of X shows X as "dispatched (not yet synced)"), which blocks the same operator from double-dispatching X offline.
 
+### 3.4 `phone_number` (Owner decision D2)
+
+Checked in the code: `phone_number` is an optional free-text column on `borrow_transactions` (`String(20)`), accepted by `BorrowRequest` and typed by hand in `BorrowPage.tsx` (`useState("")`, no prefill). `Ward` has only `code`, `name`, `department_id`; `Department` has only `code`, `name`. **No ward or department phone exists in master data today, and nothing fills the field automatically.** The `phone` fields in `schemas/master_data.py` belong to users, not wards.
+
+So v1 keeps current behaviour: offline shows the same optional field, empty by default, typed by the operator, with the same length cap. The snapshot carries no phone data. If the Owner wants it prefilled per ward or department, that needs a **new master-data field** (migration, admin form, snapshot field, prefill online and offline). This design does **not** add it; it should be its own Roadmap item with Governance review. The offline design is forward compatible: the snapshot would add the ward phone and the form would prefill it, editable only if the online form allows editing.
+
 ### 3.3 Equipment identification offline
 
-Offline identification is **manual BCM Code search against the cached list** (ADR-003 semantics: BCM is the only manual-search identifier; matching uses the canonical persisted form, so the snapshot must carry the canonical form of each BCM Code and the client must match against it using the same canonicalisation rule as the server; PR25E confirms the exact rule in the BCM search code). QR scanning offline is **not in v1** unless the Owner approves an ADR-004 change (Q1, options in section 18).
+Offline identification is **manual BCM Code search against the cached list** (ADR-003 semantics: BCM is the only manual-search identifier; matching uses the canonical persisted form, so the snapshot must carry the canonical form of each BCM Code and the client must match against it using the same canonicalisation rule as the server; PR25E confirms the exact rule in the BCM search code). QR scanning is **online only** (Owner decision D1); ADR-004 is unchanged and no Item No data ever reaches a device.
 
 ---
 
@@ -149,7 +162,7 @@ One new router `backend/app/api/v1/sync.py`. Existing `POST /borrow` and `POST /
 | `POST /api/v1/sync/operations` | Submit an ordered batch (max 25 ops, each max 8 KB). Returns one result per op. | `EQUIPMENT_POOL_OPERATION_ROLES` |
 | `POST /api/v1/sync/verify` | Send the `op_id`s from the 48 h journal; returns those the server does not know (restore recovery, section 10). Max 1000 ids. | same |
 | `GET /api/v1/sync/snapshot` | Cursor-paginated reference snapshot (equipment, wards, departments, locations, open transactions) with a `server_time` field. Bounded page size. | `VIEW_AND_REPORT_ROLES` |
-| `GET /api/v1/sync/conflicts` | Paginated review list, filter by status. | `equipment_pool_staff`, `administrator` (Q4) |
+| `GET /api/v1/sync/conflicts` | Paginated review list, filter by status. | `equipment_pool_staff`, `administrator` (D3) |
 | `POST /api/v1/sync/conflicts/{op_id}/resolve` | Resolve one item (section 9.6). | same |
 | `GET /api/v1/sync/status` | Counts by status for the last 48 h, oldest unresolved conflict age. | `administrator` |
 
@@ -183,7 +196,9 @@ One additive Alembic revision (next after `0024_login_lockout`; additive-first, 
 | `op_id` | UUID, PK | idempotency key |
 | `device_id` | UUID, not null | |
 | `device_seq` | bigint, not null | `UNIQUE (device_id, device_seq)` |
-| `user_id` | FK `users.id`, not null | from token |
+| `user_id` | FK `users.id`, not null | original operator (token user, or `original_user_id` for an adopted op) |
+| `submitted_by_user_id`, `adopted_at` | FK `users.id` null / timestamptz null | adopter, see section 8.3 |
+| `stale_context` | bool | device snapshot older than the staleness threshold when keyed (section 9.8) |
 | `op_type` | `dispatch` / `receipt` | |
 | `payload_hash` | text | SHA-256 of canonical JSON of the business payload; detects `op_id` reuse with different content |
 | `transaction_id` | FK `borrow_transactions.id`, nullable | set when applied; for receipt, the target |
@@ -205,7 +220,7 @@ No new equipment state, no new transaction state: `BorrowTransaction.status` sta
 For each op the sync service:
 
 1. Checks the token user, then looks up `op_id`. Order matters:
-   - Found, and its `user_id` differs from the token user → `rejected`, `OP_USER_MISMATCH`, **without** revealing the stored result or `transaction_id` (this check precedes every other check so another user replaying an `op_id` learns nothing).
+   - Found, and the token user is neither its `user_id` nor its `submitted_by_user_id` (adoption, section 8.3) → `rejected`, `OP_USER_MISMATCH`, **without** revealing the stored result or `transaction_id` (this check precedes every other check so another user replaying an `op_id` learns nothing).
    - Found `applied`/`resolved` with the same `payload_hash` → return `duplicate` with the original `transaction_id` (client marks it acked).
    - Found with a different `payload_hash` → `rejected`, `OP_ID_REUSED` (client bug; never silently accepted).
    - Found `conflict`/`rejected` → return the stored result without re-running (re-send is a no-op until a human acts).
@@ -220,6 +235,7 @@ A receipt whose target transaction is already `CLOSED` **by this same `op_id`** 
 - `crud.transaction.create()` accepts an optional explicit `id` and optional business `borrowed_at`; `close()` accepts an optional business `returned_at`. Both default to current behaviour, so online paths are untouched.
 - Audit: the existing `borrow` / `return` audit rows continue. Add the `op_id`, `device_id` and `device_seq` to the audit `after_data` for sync-originated rows (uses the existing redaction and bounded-field rules).
 - `transaction_no` is still generated by the sequence at replay time. It is not shown as a key anywhere in the offline UI. After a restore, numbers issued in the lost window may be reissued to different transactions; this is harmless because the UUID is the identity (Owner: UUIDs suffice).
+- Staleness (section 9.8): the envelope carries `snapshot_age_s`; the server sets `stale_context`.
 - Reports and the PR25B export API: they should expose `op_id`-independent UUIDs only; add a boolean `recorded_offline` (derived from `received_at - occurred_at` beyond a threshold, or from ledger presence) to the export later if the consumer wants it. Not required for v1.
 
 ### 6.5 Snapshot endpoint rules
@@ -259,20 +275,36 @@ Triggers: app start, login, `online` event, visibility change, every 30 s while 
 
 ### 8.1 Per-user queues
 
-Every `outbox` and `journal` row carries `user_id`. The UI and the sync worker only ever show or send the logged-in user's rows. Another user logging in on the same device cannot see, send, edit or cancel them, and they are not attributed to the new user.
+Every `outbox` and `journal` row carries `user_id`. The UI and the sync worker only ever show or send the logged-in user's rows. Another user logging in on the same device cannot see, edit or cancel them, and they are never silently sent or attributed to the new user. The only path by which another user can send them is the explicit, audited **adoption** action in section 8.3.
 
 ### 8.2 Logout
 
-- Online logout with pending ops: the client first tries to flush; if it cannot, it warns: "You have N unsynced items. They stay on this device and will send when you next log in here." The operator can proceed.
+- Online logout with pending ops: the client first tries to flush; if it cannot, it warns: "You have N unsynced items. They stay on this device and will send when you next log in here, or when another pool staff member adopts them." The operator can proceed.
 - Logout never deletes pending ops or conflict items (losing them would lose real equipment movements).
 - Logout **does** wipe the reference caches, the `mep-api-cache` Cache Storage, React Query cache, `mep-auth` localStorage (token and profile), and the service-worker-held API responses (section 12.2).
 - Journal entries survive logout until 48 h from ack (needed for restore recovery), but remain private to their user.
 
-### 8.3 Shared-device rules
+### 8.3 Shared-device rules and adoption (Owner decision D4)
 
-- A user's unsynced ops on a shared device are only sent when that user logs in again on that device. Shown to that user at next login as a banner.
-- If the user never returns, those ops are stranded. Mitigation: before logout on a shared device while online, the app blocks until the outbox is empty (it can be empty in seconds), so stranding only occurs if the server was down at logout. Residual risk in section 15; adoption by another user is a non-goal (Q5).
-- The operator can choose "discard this unsynced item" for their own pending ops (confirmation required; written to the local journal as `discarded` so the action is explainable). Discard is local-only; nothing is sent to the server for an op the server never saw.
+- By default a user's unsynced ops are sent only when that user logs in again on that device.
+- Stranding is reduced two ways: the app blocks online logout until the user's outbox is empty (normally seconds), and other pool staff can **adopt** whatever is left so the process continues without the original operator.
+- The operator can still "discard" their own pending ops (confirmation required; written to the local journal as `discarded`). Discard is local-only.
+
+**Adoption design**
+
+| Aspect | Rule |
+|---|---|
+| Who may adopt | `equipment_pool_staff` or `administrator`. Never `read_only`. |
+| Preconditions | Adopter is logged in on that device with a **fresh online login** (server-verified token issued within the last 15 minutes, else the app asks for the password again) and the server is reachable. Never possible offline, never automatic. |
+| Explicit action | The sync screen shows "N items left by other users on this device". The adopter opens "Review items from other users"; only here are other users' rows displayed (BCM Code, ward, entry time, operator name, type). The adopter selects items and confirms: "You are sending N items entered by <names>. They stay recorded under the original operator; your name is recorded as the sender." No pre-checked boxes, no adoption on login. |
+| Recorded operator | **The original operator.** `borrower_user_id` / `received_by_user_id`, report operator names (PR17) and PR16 counts keep the person who physically did the work, which is the business fact. The adopter is recorded as sender in the ledger and audit. Rejected alternative: attribute to the adopter, which would falsely show the adopter handled the equipment. |
+| Envelope | Adds `original_user_id` and `adopt: true`. The server accepts a token user different from `original_user_id` **only** when `adopt` is true, the token user holds an Equipment Pool role, and `original_user_id` is an existing user who holds one. Otherwise `OP_USER_MISMATCH`. |
+| Ledger | `client_operations.user_id` stays the original operator. New columns `submitted_by_user_id` (adopter; equals `user_id` for normal ops) and `adopted_at`. |
+| Audit | One audit entry per adopted batch, action `sync_adopt`, entity `client_operation`: original operator(s), adopter, `device_id`, op ids, count, adopter's fresh-login time. The normal `borrow`/`return` audit rows carry `adopted: true` and `submitted_by_user_id` in `after_data`; both names are visible in the audit log. |
+| Trust boundary | The server cannot prove the original operator created the op (offline devices hold no credentials to sign with). The control is: trusted pool staff, explicit action, full audit, and every op still passes the normal lifecycle services. |
+| Replay safety | Idempotency is unchanged (`op_id`). Section 6.3 step 1 allows replay only by the original user or the recorded `submitted_by_user_id`; anyone else gets `OP_USER_MISMATCH` with no data. |
+| Restore recovery | The adopter can run "Check other users' recent entries (48 h)", which sends `verify` for the other users' journal and re-queues unknown ones for adoption. |
+| Conflicts on adopted ops | Appear in the review list with both names, and on the original operator's sync screen at next login ("sent by <adopter>"). |
 
 ### 8.4 Token expiry while offline
 
@@ -324,7 +356,7 @@ Re-sending an already applied `op_id` returns `duplicate` silently. The operator
 
 ### 9.6 Review list: who resolves, how, audit
 
-- **Who:** `equipment_pool_staff` and `administrator` can view the list and resolve; `read_only` cannot see it (Q4: the Owner may prefer administrator-only for `FORBIDDEN` items; the draft proposes that the `FORBIDDEN` class is administrator-only because it concerns user permissions).
+- **Who:** `equipment_pool_staff` and `administrator` can view the list and resolve; `read_only` cannot see it (Owner decision D3; the `FORBIDDEN` class stays administrator-only because it concerns user permissions).
 - **Where:** a "Needs review" page and a count badge in the header for those roles. The operator who originated an op also sees their own conflict items on the sync screen (read-only, with the reason) so they know their entry did not apply.
 - **Resolution actions** (exactly two in v1):
   1. **Dismiss** with a reason code (`already_recorded`, `duplicate_physical_entry`, `not_real`, `handled_elsewhere`) and an optional note. Meaning: no further system change is needed. Ledger `status=resolved`, `resolution=dismissed`.
@@ -334,6 +366,35 @@ Re-sending an already applied `op_id` returns `duplicate` silently. The operator
 - **Nothing expires:** conflict items stay until a human resolves them. The admin dashboard shows the age of the oldest unresolved item.
 
 ---
+
+### 9.7 Same-equipment collisions: timeline, in-ward swaps, long offline periods (Owner decision D7)
+
+Receipt stays by `transaction_id` only (D7); the scenarios the Owner raised are handled by what the review does with it.
+
+**Scenario (a), in-ward swap.** Device A receives X (transaction T1) and immediately re-dispatches X to the same ward (T2) while offline, because the pool is short. Meanwhile device B (online or offline) also acts on T1, for example another person receives X, or sees T1 open in a stale cache and dispatches/receives again. Typical results at replay: B's receipt of T1 loses (`TRANSACTION_ALREADY_RETURNED` / `RECEIPT_RACE_LOST`), or A's receipt loses and A's follow-up dispatch of X is held behind it.
+
+**Scenario (b), long offline.** Two devices both offline for hours key receipts and dispatches on the same equipment with no snapshot updates in between, so each is internally consistent but they disagree with each other.
+
+**Mechanism**
+
+1. **Per-equipment timeline.** For any conflict on equipment X the server builds a timeline of: (i) committed transactions for X in the last 7 days (their `borrowed_at`/`returned_at`, ward, outcome, operator, device if offline-originated), and (ii) all non-applied ledger ops for X (conflict, rejected, pending). Events are ordered by **corrected event time** (`occurred_at`, section 11). Within one device, `device_seq` always overrides time. Each event shows an uncertainty band, `± (30 s + 1 min per hour since that device's clock offset was measured)`. Events whose bands overlap are labelled "order uncertain". Each event also shows `stale_context` and any `time_flag`.
+2. **Review screen** shows this timeline above the Dismiss / Apply now actions, with the plain-language reading: "T1 was closed usable by Somchai at 10:05 (device A). Receipt from device B at 10:06 has the same outcome: likely the same physical receipt entered twice." For receipts the screen also states whether the conflicting outcome equals the committed one (same outcome: likely duplicate, mismatch usable/defective: needs a decision).
+3. **Held dependents are released by Dismiss.** If a receipt conflicts as `already_recorded` with the same outcome, dismissing it releases the held follow-up dispatch of X on that device (the Owner's swap case), which is then sent and validated normally. If the outcome differs, the resolver decides first (and uses the normal defective/reactivate screens for any correction).
+4. **"Apply sequence" action.** When several non-applied ops for X exist, the server dry-runs them against the current committed state in corrected-time order (with `device_seq` constraints) using the lifecycle rules, without writing. If the whole sequence is lifecycle-valid the screen offers one confirm button; on confirm the ops are applied in that order through the normal services, each as its own audited step, attributed as in section 8.3 (original operator kept, resolver recorded). If any op would fail, no button appears and the resolver handles ops individually. It never rewrites already-committed history; if committed records themselves are out of true order, correction uses the existing screens.
+
+**Is there a strictly safe automatic path? Decision: not in v1.**
+
+An automatic path would have to apply ops in corrected-time order without a human. Candidate safe conditions: all ops from one equipment pending together, the full sequence lifecycle-valid, no op `stale_context`, every device's offset measured within 15 minutes before keying, no overlapping uncertainty bands, at most 4 ops, and no unresolved conflict on X. Even then:
+- a valid sequence is not necessarily the true one: with the physical item in one place, two lifecycle-valid orders can exist (receive then dispatch versus dispatch then receive of a different cycle) and only clocks distinguish them, while clocks are exactly what cannot be trusted across devices (9.2);
+- the Owner's rule "never silently resolve" would be weakened to "silently resolve when conditions look safe", and the error would land in PR16 shift counts and operator attribution without anyone noticing.
+So v1 ships human-confirmed sequencing only (point 4). A server setting `SYNC_AUTO_SEQUENCE` is **specified but not implemented**: default off, implemented only if the pilot shows review volume is a real burden, and then only with the conditions above, an audit entry per auto-applied sequence (action `sync_auto_sequence`, listing every op id and the evidence), a visible "auto-applied" badge in the review list and on the operators' sync screens, and an Owner decision recorded first. This keeps the option without taking the risk now.
+
+### 9.8 Staleness warning (N = 4 hours)
+
+- The device tracks `snapshot_age` (time since the last successful snapshot) and `offline_for` (time since the server was last reachable).
+- If either exceeds **N = 4 hours** (proposed: it is shorter than a 12-hour shift and about the gap between routine rounds at 06:00, 11:00, 15:00 and 21:00; the constant is configurable and reviewable at pilot), then before the operator keys the first dispatch or receipt in the session a full-screen warning appears: "This device has not synced for N hours. Equipment status shown may be out of date. Entries may need review." The operator must acknowledge to continue; the banner stays on the entry form afterwards.
+- Every op keyed in that state carries `snapshot_age_s` in its envelope; the server sets `stale_context = true` when it exceeds N hours (the server, not the client, decides, and the threshold is server-side).
+- `stale_context` ops are shown with a badge, sorted first in the review list, and counted separately in `GET /sync/status`. They are still applied through the normal path when there is no conflict; the flag changes review priority and timeline labelling only. It never blocks entry (work must continue).
 
 ## 10. 48-hour journal and restore recovery
 
@@ -358,7 +419,7 @@ Backups are hourly. If the server PC dies, the restored database misses up to ab
 
 ### 10.4 Retention rationale for 48 hours
 
-1 hour of backup gap plus detection delay, plus a weekend-sized buffer for rarely used devices opened once a day or two. Journal entries are small (a few hundred bytes). The window is a constant, reviewable by the Owner (Q8).
+1 hour of backup gap plus detection delay, plus a weekend-sized buffer for rarely used devices opened once a day or two. Journal entries are small (a few hundred bytes). The window is a constant, confirmed by the Owner (D5).
 
 ---
 
@@ -385,7 +446,7 @@ Backups are hourly. If the server PC dies, the restored database misses up to ab
 - What is stored: UUIDs, BCM Codes, equipment names, ward names, `op` payloads (ward, round, notes), the logged-in user's profile and token (already persisted today in `localStorage`). No patient data exists in the system, and the Owner accepted the equipment-data-only risk profile (Decision Log 2026-10-13).
 - Notes are free text. The offline form shows the same hint as the online form: do not enter patient names or HN. A length cap (the existing `notes` bound) applies.
 - Minimum data: the snapshot contains only fields already in operator-facing responses (section 3.2), no Item No, no Asset Number, no user list.
-- No app-level encryption in v1: a key cannot be derived without a password check that offline mode deliberately lacks. Protection relies on the OS screen lock and the browser sandbox. Recommend (operational, not code) that personal phones used for this app keep a screen lock; this is a hospital IT policy item for the Owner (Q9).
+- No app-level encryption in v1: a key cannot be derived without a password check that offline mode deliberately lacks. Protection relies on the OS screen lock and the browser sandbox. Recommend (operational, not code) that personal phones used for this app keep a screen lock; this is a hospital IT policy item for the Owner (D6).
 - The access token in `localStorage` is existing behaviour. Moving to memory-only is a separate hardening item; this design records it and does not depend on it.
 
 ### 12.2 Wipe on logout
@@ -455,7 +516,7 @@ Current: `registerType: "autoUpdate"` activates a new service worker and may rel
 | 6 | Two receipts of the same transaction | Second loses | `TRANSACTION_ALREADY_RETURNED` / `RECEIPT_RACE_LOST` → review |
 | 7 | Refresh cookie expired during a long outage | Cannot sync | Queue kept; re-login as same user; no data loss |
 | 8 | Different user logs in on a shared device | Must not send first user's ops | Queue is per-user and locked |
-| 9 | First user never returns to the shared device | Their unsynced ops stranded | Forced flush before online logout; red badge after 24 h reaches that user next login; residual risk accepted for v1 (Q5) |
+| 9 | First user never returns to the shared device | Their unsynced ops stranded until adopted | Forced flush before online logout; another pool staff or administrator can adopt the remaining items (section 8.3) |
 | 10 | Server restored from backup (up to ~1 h lost) | Missing committed ops | Journal verify and replay; unrecoverable only if no device still holds the op |
 | 11 | Restore plus admin edits lost in the window | Replayed ops reference missing master data | `EQUIPMENT_NOT_FOUND` / `INVALID_INPUT` → review; runbook step to re-enter master data |
 | 12 | Receipt arrives before its dispatch (other device or restore ordering) | Transient `TRANSACTION_NOT_FOUND` | `retry_later` up to 48 h, then conflict |
@@ -498,6 +559,12 @@ Backend (pytest; PostgreSQL-marked tests for concurrency evidence, SQLite not cl
 8. Business-time guards: future, old, before-dispatch clamps, and a backdated dispatch predating the equipment's latest `returned_at` is clamped (`before_last_receipt`) so usage intervals never overlap; PR16 `business_date`/`shift` computed from adjusted time.
 9. Resolution: dismiss, apply-now preconditions, audit entry atomic with ledger update, role gates, `read_only` denied.
 10. Migration: additive upgrade/downgrade tests for `client_operations`; existing `POST /borrow` and `/return` tests unchanged and still green.
+11a. In-ward swap: A receives T1 then re-dispatches X (T2) offline; B's receipt of T1 arrives first and wins. A's receipt conflicts, A's dispatch is held; the timeline shows both; Dismiss as same-outcome duplicate releases A's dispatch, which applies as T2; a different-outcome case (usable vs defective) requires an explicit resolver choice and does not release the dispatch until resolved.
+11b. Long-offline cross-device: devices A and B both offline for more than N hours key receipts and dispatches on the same equipment from stale caches; replay in either arrival order produces no history rewrite, correct conflict rows, a timeline ordered by corrected time with `device_seq` overriding time within a device, "order uncertain" for overlapping bands, and a skewed device clock does not change which op wins (arrival and lifecycle decide).
+11c. Apply sequence: a lifecycle-valid sequence applies atomically in corrected-time order with one audit entry per op; an invalid sequence offers no action; already-committed rows are never modified.
+11d. Staleness: `snapshot_age_s` above N sets `stale_context`; flagged ops sort first and are counted; ops are still applied normally when valid; the flag never blocks.
+11e. Adoption: adopt requires `adopt: true`, a pool role and a fresh login; original operator stays `borrower_user_id`/`received_by_user_id`; `submitted_by_user_id`, `sync_adopt` audit and `adopted` markers are written atomically; a non-adopt token mismatch gets `OP_USER_MISMATCH`; a `read_only` user is denied; adopting an already-applied op returns `duplicate`.
+11f. Phone: the offline form submits `phone_number` exactly as online (optional, free text, same cap); the snapshot contains no phone data (contract test).
 11. Snapshot: pagination determinism, bounded sizes, no Item No/Asset Number/user fields (contract test).
 
 Frontend (Vitest + fake-indexeddb):
@@ -506,32 +573,39 @@ Frontend (Vitest + fake-indexeddb):
 13. Sync loop: ordering by `device_seq`, `held` dependency logic, backoff, Web Lock single-flight, unreachable detection (network error, timeout, 502/503/504, HTML/redirect response), no logout on refresh network error, re-auth prompt on refresh 401.
 14. Journal: 48 h purge, verify then re-queue of unknown ids, duplicate result handling.
 15. IDB upgrade tests from each prior version; `CLIENT_TOO_OLD` keeps queue.
-16. UI: badges, stale labels, saved-vs-recorded wording, conflict notice, review page actions.
+16. UI: staleness warning requires acknowledgement and persists as a banner; adopt flow shows other users' rows only inside the adopt screen with explicit confirmation and no pre-checked boxes; review timeline rendering; badges, stale labels, saved-vs-recorded wording, conflict notice, review page actions.
 
 End-to-end / manual evidence (reported honestly as such, not as CI):
 
-17. Playwright or manual drill: stop the backend container, perform dispatch and receipts on two browser profiles, restart, verify results; drill a restore-from-backup using the runbook plus journal replay; test on a real Android phone and iPhone with the installed PWA.
+17. Playwright or manual drill (include an in-ward swap drill and a two-device long-offline drill): stop the backend container, perform dispatch and receipts on two browser profiles, restart, verify results; drill a restore-from-backup using the runbook plus journal replay; test on a real Android phone and iPhone with the installed PWA.
 18. Evidence classes follow `docs/PROJECT_WORKFLOW.md`: local drills are labelled local rehearsal, not UAT.
 
 ---
 
-## 18. Open questions for the Owner
+## 18. Owner decisions (2026-10-13)
 
-(Q1 has a Thai note; the Thai summary in section 0 covers the rest)
+The Owner answered the open questions of the earlier draft. This section is the record. **These answers authorize starting PR25E per the slice plan in section 20 once this document is merged.**
 
-| # | Question | Draft recommendation | Why it matters |
-|---|---|---|---|
-| **Q1** | **Offline QR scanning.** QR resolves Item No on the server, and ADR-004 keeps Item No out of operator responses. Choose: **(a)** offline identification by BCM Code search only (v1); **(b)** ship a one-way hashed Item No → UUID table to devices (needs an ADR-004 amendment; hashes of short codes are guessable, so this weakens the boundary); **(c)** let the operator scan offline, store the raw scanned text on the op, and resolve it on the server at replay (no confirmation on screen, wrong-item risk). | **(a)** for v1; decide (b) only after seeing real outage frequency | Biggest functional gap versus online. ออฟไลน์สแกน QR ได้หรือไม่ ขัด ADR-004 |
-| Q2 | Is "UUIDs only, `transaction_no` hidden in the offline UI" acceptable, and are printed or remembered ticket numbers used anywhere today? | Yes | Numbers may change after a restore |
-| Q3 | Which dispatch fields stay available offline? Draft keeps all online fields. `phone_number` is typed free text that would sit on phones. | Keep, with a notes/phone hint; or drop `phone_number` offline | Data at rest on personal phones |
-| Q4 | Who resolves conflicts? Draft: Equipment Pool staff and Administrator; `FORBIDDEN` class Administrator only. | As drafted | Governance, accountability |
-| Q5 | Shared devices: if a user leaves with unsynced ops and never returns, is stranding acceptable, or may a different pool staff/admin "adopt" them (recorded under their own name with the original user kept in the ledger)? | Accept stranding in v1; no adoption | Attribution vs data loss |
-| Q6 | Offline hard cap: 500 pending ops per device and 7-day max business-time backdating. Reasonable? | Yes | Storage and report integrity |
-| Q7 | Is a device-level red badge after 24 h unsynced enough, or should long-pending items notify an Administrator once the server is back? | Badge only (v1) | Operational follow-up |
-| Q8 | Journal window 48 h: confirm, or lengthen (for example 72 h) to cover weekends? | 48 h as decided | Recovery coverage vs stored data |
-| Q9 | Personal phones: is requiring an OS screen lock (and optionally a "remove data" button procedure when a phone is replaced) acceptable as the only at-rest control? App-level PIN/encryption is a non-goal in v1. | Yes | Hospital IT policy |
-| Q10 | After a restore, should a runbook step mark that "restore happened" and show operators a notice ("some entries are being re-sent")? | Optional; verify already detects within 15 min | Operator reassurance |
-| Q11 | An offline receipt is only possible for a transaction in this device's cache or dispatched on this device; an item dispatched on another device while this one is offline cannot be received offline. Acceptable as "record on paper and key later"? Alternative is receipt-by-equipment (server finds the open transaction), which risks closing the wrong dispatch (re-dispatched meanwhile). | Receipt by `transaction_id` only | Safety versus convenience |
+| # | Decision | Where applied |
+|---|---|---|
+| D1 | Offline QR: agreed. v1 offline identification is BCM Code search only; QR scanning is online only; ADR-004 unchanged. | 3.3 |
+| D2 | `phone_number`: the Owner expected it to be filled per department. Code check: no ward/department phone exists in master data and the form does not prefill; it is optional free text. v1 keeps current behaviour offline. A prefill needs a new master-data field, which is not added here and must be proposed separately. | 3.4 |
+| D3 | Conflicts are resolved by Equipment Pool staff and Administrator (`FORBIDDEN` class: Administrator only). | 9.6 |
+| D4 | Shared devices: **changed.** Another authenticated Equipment Pool staff or Administrator may adopt and send a stranded user's pending operations; explicit, confirmed, online, fresh login, original operator stays the recorded operator, adopter recorded as sender, fully audited. | 8.3, 6.2, 6.3 |
+| D5 | Limits agreed: 500 pending ops per device, 7-day maximum back-dating, 48-hour journal. | 10, 11, 15 |
+| D6 | OS screen lock is the only at-rest control on personal phones; no app-level PIN or encryption in v1. | 12.1 |
+| D7 | Receipt by `transaction_id` only, agreed, with added protection for in-ward swaps and long-offline cross-device cases: per-equipment timeline, human-confirmed "Apply sequence", no automatic resolution in v1, 4-hour staleness warning and `stale_context` review priority. | 9.7, 9.8 |
+
+Items the Owner did not raise keep the draft defaults and are treated as accepted for implementation, revisitable at pilot:
+
+| # | Default | Note |
+|---|---|---|
+| X1 | UUID-only identity; `transaction_no` hidden in the offline UI and possibly reissued after a restore. | Owner input: UUIDs suffice. |
+| X2 | Unsynced items older than 24 hours show a red badge only; no notification to an Administrator. | Revisit at pilot. |
+| X3 | No dedicated "a restore happened" notice; `verify` detects within 15 minutes. | Optional runbook wording. |
+| X4 | Staleness threshold N = 4 hours (new, from D7). | Configurable constant. |
+
+**Still open for the Owner (does not block PR25E):** whether to commission the ward/department phone master-data field (D2), and whether to enable `SYNC_AUTO_SEQUENCE` after the pilot (9.7).
 
 ---
 
@@ -543,8 +617,10 @@ End-to-end / manual evidence (reported honestly as such, not as CI):
 - No ward-to-ward transfer tracking, no patient data, no HN, no MEMS/N Smart call or dependency.
 - No offline login or password check; no app-level encryption or PIN in v1.
 - No multi-device real-time sync or peer-to-peer sync between devices.
-- No Item No or Asset Number on devices (pending Q1).
+- No Item No or Asset Number on devices (D1).
 - No background-sync-while-closed (not reliable on iOS); sync runs when the app is open.
+- No automatic conflict resolution of any kind in v1, including `SYNC_AUTO_SEQUENCE` (specified, not implemented).
+- No new ward/department phone master-data field.
 - No standby server, no change to PR25A backup design or to the PR25B export API, no Cloudflare work (PR25C) beyond handling its login redirect.
 - No Shift Session or Standby Snapshot work (confirmed future work, not this PR); no change to PR16 derivation logic beyond feeding it the adjusted business time.
 - No change to the existing `POST /borrow` / `POST /return/{id}` contracts.
@@ -561,13 +637,16 @@ Each slice is one small, independently reviewable PR with its own tests. Order m
 | **B1** | `client_operations` migration and model; `crud.transaction.create/close` accept explicit `id` and business time; no endpoint yet | none | Migration upgrade/downgrade; existing tests green; explicit-id create works |
 | **B2** | `POST /sync/operations` for dispatch and receipt: envelope schema, ledger-in-service atomicity, idempotency, conflict/rejected rows, error codes, role/user checks; audit enrichment | B1 | Test items 1 to 5, 7 |
 | **B2b** | Business-time handling: clock-offset adjustment, future/old/before-dispatch/before-last-receipt clamps, `time_flag`, PR16 integration | B2 | Test item 8 |
+| **B2c** | Adoption support: `original_user_id`/`adopt` envelope fields, `submitted_by_user_id`/`adopted_at` columns, `sync_adopt` audit, stale_context flag | B2 | Test items 11d, 11e |
 | **B3** | `POST /sync/verify`, `GET /sync/snapshot` (bounded cursor), `GET /sync/status` | B2 | Test items 6, 11 |
-| **B4** | Conflict list and resolve endpoints (dismiss, apply-now), audit on resolve, role gates | B2 | Test item 9 |
+| **B4** | Conflict list and resolve endpoints (dismiss, apply-now), audit on resolve, role gates; held-dependent release | B2 | Test item 9 |
+| **B4b** | Per-equipment timeline endpoint and dry-run "Apply sequence" | B4, B2b | Test items 11a to 11c |
 | **S1** | Frontend: auth/offline hardening only — stop logging out on refresh network errors; unreachable detection helper; `navigateFallbackDenylist`; logout wipe including Cache Storage and React Query | none | Tests item 13 (no-logout-on-network-error), wipe tests; shell loads offline in a manual drill |
 | **S2** | Frontend: IndexedDB layer (`meta`, `outbox`, `journal`, refs), versioned upgrades, per-user isolation, `device_id`/`device_seq`, hard cap; no UI | none | Test items 12, 15 |
 | **S3** | Frontend: sync worker (ordering, hold logic, backoff, Web Lock, token refresh and re-auth, verify and journal replay, clock offset) against B2/B3 | B2, B3, S1, S2 | Test items 13, 14 |
 | **S4** | Frontend: dispatch and receipt forms moved onto the outbox path (online and offline); the `mep-api-cache` runtime rule is removed in this same PR that introduces the IndexedDB snapshot, so there is no window without a reference cache; reference snapshot cache, BCM offline search, local double-entry guard, pending badge, connection chip, stale labels, sync screen | S3 | Test item 16; manual two-profile drill |
-| **S5** | Frontend: Needs review page and header badge, conflict notices, discard-own-item | B4, S4 | Test item 16; role visibility |
+| **S5** | Frontend: Needs review page with timeline and Apply sequence, header badge, conflict notices, discard-own-item | B4b, S4 | Test item 16; role visibility |
+| **S5b** | Frontend: adopt flow ("items from other users", confirmation, fresh-login prompt), staleness warning | B2c, S5 | Test items 11e, 16 |
 | **S6** | PWA update strategy: `registerType: "prompt"`, update notice, `CLIENT_TOO_OLD` handling, install prompt, `storage.persist()` | S4 | Update-during-pending-ops test |
 | **D1** | Docs and runbook updates: restore runbook additions (Needs review, master-data re-entry), operator quick guide (Thai), `docs/api/` pages for sync endpoints, `ROADMAP`/`DECISION_LOG`/knowledge updates as the workflow requires | all | Docs review |
 | **E1** | Evidence drill (no code): outage drill, restore-and-replay drill, real phones; recorded with the correct evidence class | all | Owner-visible report |
