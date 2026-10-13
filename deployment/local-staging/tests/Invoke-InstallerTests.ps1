@@ -91,9 +91,13 @@ function New-MockContext {
         [bool]$BackupManifestMissing = $false,
         [int]$PrerequisiteFailures = 0,
         [bool]$ScheduleRegistered = $false,
-        [int]$ScheduleLastResult = 0
+        [int]$ScheduleLastResult = 0,
+        [bool]$DriveConfigured = $false,
+        [bool]$DriveDownloadNoFile = $false
     )
     return [pscustomobject]@{
+        DriveConfigured      = $DriveConfigured
+        DriveDownloadNoFile  = $DriveDownloadNoFile
         ScheduleRegistered   = $ScheduleRegistered
         ScheduleLastResult   = $ScheduleLastResult
         ExitCodeRules        = $ExitCodeRules
@@ -137,6 +141,8 @@ function Invoke-WithMocks {
         . (Join-Path $deploymentRoot 'lib/Operations.ps1')
         . (Join-Path $deploymentRoot 'lib/Backup.ps1')
         . (Join-Path $deploymentRoot 'lib/Schedule.ps1')
+        . (Join-Path $deploymentRoot 'lib/DriveBackup.ps1')
+        $script:TestPassword = ConvertTo-SecureString 'Test-Windows-Pass-NotReal-1' -AsPlainText -Force
 
         # --- Windows Task Scheduler seam --------------------------------
         # The ScheduledTasks cmdlets exist only on Windows, so they are
@@ -151,6 +157,7 @@ function Invoke-WithMocks {
             LastSettings = $null
             LastPrincipal = $null
             LastDescription = $null
+            LastRegistration = $null
             Unregistered = $false
         }
         function New-ScheduledTaskAction {
@@ -188,9 +195,12 @@ function Invoke-WithMocks {
             return $script:ScheduledTaskState.LastPrincipal
         }
         function Register-ScheduledTask {
-            param([string]$TaskName, $Action, $Trigger, $Settings, $Principal, [string]$Description, [switch]$Force)
+            param([string]$TaskName, $Action, $Trigger, $Settings, $Principal, [string]$User, [string]$Password, [string]$RunLevel, [string]$Description, [switch]$Force)
             $script:ScheduledTaskState.Registered = $true
             $script:ScheduledTaskState.LastDescription = $Description
+            $script:ScheduledTaskState.LastRegistration = [pscustomobject]@{
+                User = $User; Password = $Password; RunLevel = $RunLevel; Principal = $Principal
+            }
             return [pscustomobject]@{ TaskName = $TaskName; State = 'Ready' }
         }
         function Unregister-ScheduledTask {
@@ -234,6 +244,8 @@ function Invoke-WithMocks {
                 Args      = $joined
                 Phase     = $Phase
                 TargetUrl = $env:RESTORE_TARGET_DATABASE_URL
+                DriveEnvId = $env:MEP_DRIVE_CLIENT_ID
+                DriveEnvSecret = $env:MEP_DRIVE_CLIENT_SECRET
             }
 
             # --- real-CLI precondition fidelity (Fix Round 2, §20) ------
@@ -352,6 +364,20 @@ function Invoke-WithMocks {
                 }
             }
 
+            # PR25A: emulate drive_backup.py download delivering a verified
+            # archive + manifest into the bind-mounted backup root.
+            if ($exitCode -eq 0 -and ($joined -like '*drive_backup.py*') -and ($joined -like '* download*')) {
+                if (-not $ctx.DriveDownloadNoFile) {
+                    $dlName = if ($joined -match '--name (\S+)') { $Matches[1] } else { 'mep-postgres-localstaging-20260101T000000Z.dump' }
+                    $dlPath = Join-Path $script:TestBackupRoot $dlName
+                    Set-Content -LiteralPath $dlPath -Value 'PGDMP-from-drive' -NoNewline
+                    $dlHash = (Get-FileHash -LiteralPath $dlPath -Algorithm SHA256).Hash.ToLowerInvariant()
+                    (@{ backup_filename = $dlName; created_at = '2026-01-01T00:00:00+00:00'; environment = 'local-staging'; alembic_revision = 'testrev'; checksum_sha256 = $dlHash } | ConvertTo-Json) |
+                        Set-Content -LiteralPath "$dlPath.manifest.json"
+                }
+                $output = @("[drive] OK: /mep-backups/$(if ($joined -match '--name (\S+)') { $Matches[1] } else { 'mep-postgres-localstaging-20260101T000000Z.dump' })")
+            }
+
             if ($Arguments -contains 'ps' -and @($script:StoppedServices).Count -gt 0) {
                 $output = @($output | ForEach-Object {
                         $line = "$_"
@@ -381,6 +407,10 @@ function Invoke-WithMocks {
         else { Join-Path ([System.IO.Path]::GetTempPath()) ("mep-test-backups-" + [Guid]::NewGuid().ToString('N')) }
         New-Item -ItemType Directory -Path $script:TestBackupRoot -Force | Out-Null
         function Get-MepBackupRoot { return $script:TestBackupRoot }
+        $script:TestSecretsRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("mep-test-secrets-" + [Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:TestSecretsRoot -Force | Out-Null
+        if ($ctx.DriveConfigured) { Set-Content -LiteralPath (Join-Path $script:TestSecretsRoot 'drive-oauth.json') -Value '{}' }
+        function Get-MepDriveSecretsRoot { return $script:TestSecretsRoot }
         function Get-MepConfiguredValue {
             param([Parameter(Mandatory)] [string]$Name)
             switch ($Name) {
@@ -1987,7 +2017,7 @@ Test-Case 'start: never runs a migration' {
 Test-Case 'schedule: registers pwsh running the real backup.ps1, hidden and non-interactive' {
     $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
     $state = Invoke-WithMocks -Context $ctx -Body {
-        Register-MepBackupSchedule -IntervalHours 1 | Out-Null
+        Register-MepBackupSchedule -IntervalHours 1 -Password $script:TestPassword | Out-Null
         return $script:ScheduledTaskState
     }
     Assert-True $state.Registered 'the task must actually be registered'
@@ -2011,7 +2041,7 @@ Test-Case 'schedule: the registered script path really exists on disk' {
     # and provides none.
     $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
     $arg = Invoke-WithMocks -Context $ctx -Body {
-        Register-MepBackupSchedule -IntervalHours 1 | Out-Null
+        Register-MepBackupSchedule -IntervalHours 1 -Password $script:TestPassword | Out-Null
         return $script:ScheduledTaskState.LastAction.Argument
     }
     $path = ([regex]::Match($arg, '-File "([^"]+)"')).Groups[1].Value
@@ -2022,7 +2052,7 @@ Test-Case 'schedule: the registered script path really exists on disk' {
 Test-Case 'schedule: a slow backup can never have the next hour stack on top of it' {
     $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
     $state = Invoke-WithMocks -Context $ctx -Body {
-        Register-MepBackupSchedule -IntervalHours 1 | Out-Null
+        Register-MepBackupSchedule -IntervalHours 1 -Password $script:TestPassword | Out-Null
         return $script:ScheduledTaskState
     }
     Assert-True ($state.LastSettings.MultipleInstances -eq 'IgnoreNew') `
@@ -2031,15 +2061,45 @@ Test-Case 'schedule: a slow backup can never have the next hour stack on top of 
     Assert-True ($null -ne $state.LastSettings.ExecutionTimeLimit) 'a wedged run must be reaped'
 }
 
-Test-Case 'schedule: runs as the interactive user, because Docker Desktop lives in that session' {
+Test-Case 'schedule: registered with the account password so it runs with no one logged in' {
     $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
-    $principal = Invoke-WithMocks -Context $ctx -Body {
-        Register-MepBackupSchedule -IntervalHours 1 | Out-Null
-        return $script:ScheduledTaskState.LastPrincipal
+    $reg = Invoke-WithMocks -Context $ctx -Body {
+        Register-MepBackupSchedule -IntervalHours 1 -Password $script:TestPassword -UserName 'HOST\deptuser' | Out-Null
+        return $script:ScheduledTaskState.LastRegistration
     }
-    Assert-True ($principal.LogonType -eq 'Interactive') `
-        'a SYSTEM task could not reach the per-user Docker daemon at all'
-    Assert-True ($principal.RunLevel -eq 'Limited') 'the backup needs no elevation'
+    Assert-True ($reg.User -eq 'HOST\deptuser') 'the task must run as the named Windows account'
+    Assert-True ($reg.Password -eq 'Test-Windows-Pass-NotReal-1') 'the password must reach Task Scheduler (that is what enables non-interactive logon)'
+    Assert-True ($reg.RunLevel -eq 'Limited') 'the backup needs no elevation'
+    Assert-True ($null -eq $reg.Principal) 'an Interactive-logon principal would make the task require a logged-in user'
+}
+
+Test-Case 'schedule: the password never appears in the task description or the log' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
+    $seen = Invoke-WithMocks -Context $ctx -Body {
+        $script:Logged = @()
+        function Write-InstallLog { param($Phase, $Message, $Level) $script:Logged += $Message }
+        Register-MepBackupSchedule -IntervalHours 1 -Password $script:TestPassword | Out-Null
+        return (@($script:Logged) + @($script:ScheduledTaskState.LastDescription, $script:ScheduledTaskState.LastAction.Argument)) -join "`n"
+    }
+    Assert-True (-not ($seen -match 'Test-Windows-Pass')) 'the Windows password must never be logged or put in the task definition'
+}
+
+Test-Case 'schedule: starts at :15 past the hour -- never :00 or :30 (N Smart is hit then by other tools)' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $minutes = @()
+        foreach ($m in 0..59) {
+            $start = Get-MepNextBackupStart -Now ([datetime]'2026-10-14T09:00:00').AddMinutes($m)
+            $minutes += $start.Minute
+        }
+        Register-MepBackupSchedule -IntervalHours 1 -Password $script:TestPassword | Out-Null
+        return [pscustomobject]@{ Minutes = $minutes; Trigger = $script:ScheduledTaskState.LastTrigger }
+    }
+    Assert-True (@($result.Minutes | Where-Object { $_ -ne 15 }).Count -eq 0) 'every computed start must be at minute 15'
+    Assert-True ($result.Trigger.At.Minute -eq 15) 'the registered trigger must start at minute 15'
+    Assert-True ($result.Trigger.RepetitionInterval -eq (New-TimeSpan -Hours 1)) 'the schedule must stay hourly'
+    $early = Invoke-WithMocks -Context $ctx -Body { Get-MepNextBackupStart -Now ([datetime]'2026-10-14T09:14:00') }
+    Assert-True ($early.Hour -eq 10) 'a start less than 2 minutes away must roll to the next hour'
 }
 
 Test-Case 'schedule: refuses an interval outside 1-24 hours' {
@@ -2047,7 +2107,7 @@ Test-Case 'schedule: refuses an interval outside 1-24 hours' {
     $result = Invoke-WithMocks -Context $ctx -Body {
         $threw = 0
         foreach ($h in @(0, -1, 25)) {
-            try { Register-MepBackupSchedule -IntervalHours $h | Out-Null } catch { $threw++ }
+            try { Register-MepBackupSchedule -IntervalHours $h -Password $script:TestPassword | Out-Null } catch { $threw++ }
         }
         return [pscustomobject]@{ Threw = $threw; Registered = $script:ScheduledTaskState.Registered }
     }
@@ -2094,6 +2154,229 @@ Test-Case 'schedule: no schedule is reported plainly, with the RPO consequence s
     }
     Assert-True ($output -match 'NOT REGISTERED') 'an unscheduled deployment must say so'
     Assert-True ($output -match 'RPO') 'the operator must be told the consequence, not just the state'
+}
+
+
+# ===========================================================================
+# PR25A: off-host Google Drive backup. The upload engine is Python (tested
+# with mocked HTTP in backend/tests/test_pr25a_drive_backup.py); what is
+# proven HERE is the orchestration: what runs, with which mounts, what is
+# never on a command line, and that a Drive failure can never fail a backup.
+# ===========================================================================
+
+Test-Case 'drive upload: runs the Python tool in the backend container with backup + secrets mounts' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $true
+    $calls = Invoke-WithMocks -Context $ctx -Body {
+        Invoke-MepDriveUpload | Out-Null
+        return ,@($script:RecordedCalls | ForEach-Object { $_.Args })
+    }
+    $upload = @($calls -match 'scripts/drive_backup\.py')
+    Assert-True ($upload.Count -eq 1) 'exactly one tool invocation per upload'
+    Assert-True ($upload[0] -match 'backend python scripts/drive_backup\.py') 'must run in the backend container'
+    Assert-True ($upload[0] -match ':/mep-backups') 'the backup directory must be mounted'
+    Assert-True ($upload[0] -match ':/mep-drive-secrets') 'the secrets directory must be mounted'
+    Assert-True ($upload[0] -match '--no-deps') 'must not drag the application up'
+    Assert-True ($upload[0] -match ' -T ') 'no TTY under Task Scheduler'
+    Assert-True ($upload[0] -notmatch '--name') 'a fixed container name could wedge later runs'
+    Assert-True ($upload[0] -match ' upload$') 'the subcommand is upload'
+}
+
+Test-Case 'drive upload: a failed upload NEVER throws and leaves the local archive in place' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $true `
+        -ExitCodeRules @(@{ Match = ' upload'; ExitCode = 3; Output = @('[drive] FAIL: network error') })
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $archive = Invoke-MepBackup -Reason 'test'
+        $script:Logged = @()
+        function Write-InstallLog { param($Phase, $Message, $Level) $script:Logged += "$Level|$Phase|$Message" }
+        $ok = Invoke-MepDriveUpload
+        return [pscustomobject]@{ Ok = $ok; ArchiveStillThere = (Test-Path -LiteralPath $archive.FullName); Logged = @($script:Logged) }
+    }
+    Assert-True ($result.Ok -eq $false) 'an incomplete upload must be reported as not-ok'
+    Assert-True $result.ArchiveStillThere 'the local backup must survive a Drive failure'
+    Assert-True (@($result.Logged -match 'WARN\|drive-upload').Count -gt 0) 'the failure must be recorded for status'
+    Assert-True (@($result.Logged -match 'queued').Count -gt 0) 'the log must say the upload is queued for retry'
+}
+
+Test-Case 'drive upload: an exception inside the tool wrapper is contained, not propagated' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $true
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        function Invoke-MepDriveTool { throw 'docker exploded' }
+        return (Invoke-MepDriveUpload)
+    }
+    Assert-True ($result -eq $false) 'must return false, never throw'
+}
+
+Test-Case 'drive upload: not configured -> no docker call and an explicit warning, never an error' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $false
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $out = Invoke-MepDriveUpload 6>&1 | Out-String
+        return [pscustomobject]@{ Calls = @($script:RecordedCalls | ForEach-Object { $_.Args }); Out = $out }
+    }
+    Assert-True (@($result.Calls -match 'drive_backup').Count -eq 0) 'nothing may run when Drive is not set up'
+    Assert-True ($result.Out -match 'ONLY on this PC') 'the operator must be told the backup is not off-host'
+}
+
+Test-Case 'drive upload: backup.ps1 releases the lock before uploading and ignores the upload result' {
+    $text = Get-Content -LiteralPath (Join-Path $script:DeploymentRootForTests 'backup.ps1') -Raw
+    $code = ($text -replace '(?s)<#.*?#>', '') -split "`n" | Where-Object { $_.Trim() -notmatch '^#' }
+    $code = $code -join "`n"
+    $backupAt = $code.IndexOf('Invoke-MepBackup')
+    $unlockAt = $code.IndexOf('Exit-MepMutationLock $lock')
+    $uploadAt = $code.IndexOf('Invoke-MepDriveUpload')
+    Assert-True ($backupAt -ge 0 -and $backupAt -lt $unlockAt -and $unlockAt -lt $uploadAt) 'order must be backup -> unlock -> upload'
+    Assert-True ($code -match 'Invoke-MepDriveUpload \| Out-Null') 'the upload result must not influence the exit code'
+}
+
+Test-Case 'drive setup: client secret travels by environment NAME only and is cleared afterwards' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $false
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $secret = ConvertTo-SecureString 'CLIENT-SECRET-VALUE-9z' -AsPlainText -Force
+        Invoke-MepDriveSetup -ClientId 'client-id-VALUE-1a' -ClientSecret $secret
+        return [pscustomobject]@{
+            Calls    = @($script:RecordedCalls)
+            EnvAfter = "$env:MEP_DRIVE_CLIENT_ID$env:MEP_DRIVE_CLIENT_SECRET"
+        }
+    }
+    $setup = @($result.Calls | Where-Object { $_.Args -match 'drive_backup\.py' })
+    Assert-True ($setup.Count -eq 1) 'one setup invocation'
+    Assert-True ($setup[0].Args -match '-e MEP_DRIVE_CLIENT_ID -e MEP_DRIVE_CLIENT_SECRET') 'names are passed, so values stay out of argv'
+    Assert-True ($setup[0].Args -notmatch 'CLIENT-SECRET-VALUE-9z|client-id-VALUE-1a') 'no credential value may be on a command line'
+    Assert-True ($setup[0].DriveEnvSecret -eq 'CLIENT-SECRET-VALUE-9z') 'the value must be in this process environment during the call'
+    Assert-True ($result.EnvAfter -eq '') 'the environment must be cleared afterwards'
+    Assert-True ($setup[0].Args -match ' setup$') 'the subcommand is setup'
+}
+
+Test-Case 'drive setup: a failed consent throws and still clears the environment' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $false `
+        -ExitCodeRules @(@{ Match = ' setup'; ExitCode = 1 })
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $threw = $false
+        try { Invoke-MepDriveSetup -ClientId 'cid' -ClientSecret (ConvertTo-SecureString 'csecret-xyz' -AsPlainText -Force) } catch { $threw = $true }
+        return [pscustomobject]@{ Threw = $threw; EnvAfter = "$env:MEP_DRIVE_CLIENT_ID$env:MEP_DRIVE_CLIENT_SECRET" }
+    }
+    Assert-True $result.Threw 'a failed setup must surface as an error'
+    Assert-True ($result.EnvAfter -eq '') 'the environment must be cleared even on failure'
+}
+
+Test-Case 'drive setup: re-running with a saved configuration reuses it and passes no credentials' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $true
+    $calls = Invoke-WithMocks -Context $ctx -Body {
+        Invoke-MepDriveSetup
+        return ,@($script:RecordedCalls | ForEach-Object { $_.Args })
+    }
+    $setup = @($calls -match 'drive_backup\.py')[0]
+    Assert-True ($setup -notmatch 'MEP_DRIVE_CLIENT') 'saved credentials are reused inside the container'
+}
+
+Test-Case 'drive secrets: directory is locked down, and failing to lock it down fails closed' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
+    $calls = Invoke-WithMocks -Context $ctx -Body {
+        Protect-MepDriveSecretsRoot
+        return ,@($script:RecordedCalls | ForEach-Object { "$($_.FilePath) $($_.Args)" })
+    }
+    Assert-True (@($calls -match '^(icacls .*/inheritance:r|chmod 700)').Count -eq 1) 'owner-only permissions must be applied'
+
+    $bad = New-MockContext -EnvFileExists $true -InstallCompleted $true `
+        -ExitCodeRules @(@{ Match = 'inheritance:r'; ExitCode = 5 }, @{ Match = '700'; ExitCode = 1 })
+    $threw = Invoke-WithMocks -Context $bad -Body {
+        try { Protect-MepDriveSecretsRoot; return $false } catch { return $true }
+    }
+    Assert-True $threw 'an ACL failure must stop setup rather than leave a token exposed'
+}
+
+Test-Case 'drive secrets: the secrets directory is gitignored' {
+    $ignore = Get-Content -LiteralPath (Join-Path (Split-Path -Parent (Split-Path -Parent $script:DeploymentRootForTests)) '.gitignore') -Raw
+    Assert-True ($ignore -match 'deployment/local-staging/secrets/') 'the secrets directory must be gitignored'
+}
+
+Test-Case 'drive status: unhealthy tool exit is reported as not-ok and its lines are shown' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $true `
+        -ExitCodeRules @(@{ Match = ' status'; ExitCode = 1; Output = @('Pending uploads:   2', 'STATUS: ATTENTION - off-host copy is behind') })
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $out = Show-MepDriveStatus 6>&1 | Out-String
+        return [pscustomobject]@{ Out = $out }
+    }
+    Assert-True ($result.Out -match 'Pending uploads:\s+2') 'pending count must be shown'
+}
+
+Test-Case 'drive restore: downloads, then hands the EXACT file to the existing restore tooling' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $true
+    $calls = Invoke-WithMocks -Context $ctx -Body {
+        Invoke-MepRestoreFromDrive -Name 'mep-postgres-localstaging-20260101T000000Z.dump' | Out-Null
+        return ,@($script:RecordedCalls | ForEach-Object { $_.Args })
+    }
+    $dl = Get-CallIndex -Calls $calls -Pattern 'drive_backup\.py.* download --name mep-postgres-localstaging-20260101T000000Z\.dump'
+    $rs = Get-CallIndex -Calls $calls -Pattern 'restore_postgres\.py'
+    Assert-True ($dl -ge 0 -and $dl -lt $rs) 'download must precede restore'
+    Assert-True ((@($calls -match 'restore_postgres\.py')[0]) -match '--backup-file /mep-backups/mep-postgres-localstaging-20260101T000000Z\.dump') 'restore must be bound to the downloaded file'
+    Assert-True (-not ($calls -match 'force-non-empty|allow-production')) 'no PR24C guard may be bypassed'
+    Assert-True (@($calls -match 'CREATE DATABASE mep_local_restore_rehearsal_').Count -gt 0) 'restores into a disposable database, as restore.ps1 does'
+    Assert-True (-not ($calls -match 'CREATE DATABASE mep_local_staging_db')) 'the live database is never the target'
+}
+
+Test-Case 'drive restore: default is the latest backup on Drive' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $true
+    $calls = Invoke-WithMocks -Context $ctx -Body {
+        Invoke-MepRestoreFromDrive | Out-Null
+        return ,@($script:RecordedCalls | ForEach-Object { $_.Args })
+    }
+    Assert-True (@($calls -match 'drive_backup\.py.* download --latest').Count -eq 1) 'latest is the default selector'
+}
+
+Test-Case 'drive restore: a failed download restores nothing' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $true `
+        -ExitCodeRules @(@{ Match = ' download'; ExitCode = 1 })
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $threw = $false
+        try { Invoke-MepRestoreFromDrive | Out-Null } catch { $threw = $true }
+        return [pscustomobject]@{ Threw = $threw; Calls = @($script:RecordedCalls | ForEach-Object { $_.Args }) }
+    }
+    Assert-True $result.Threw 'must fail'
+    Assert-True (@($result.Calls -match 'restore_postgres|CREATE DATABASE').Count -eq 0) 'no restore step may run after a failed download'
+}
+
+Test-Case 'drive restore: a download that left no file on the host restores nothing' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $true -DriveDownloadNoFile $true
+    $result = Invoke-WithMocks -Context $ctx -Body {
+        $threw = $false
+        try { Invoke-MepRestoreFromDrive | Out-Null } catch { $threw = $true }
+        return [pscustomobject]@{ Threw = $threw; Calls = @($script:RecordedCalls | ForEach-Object { $_.Args }) }
+    }
+    Assert-True $result.Threw 'must fail closed'
+    Assert-True (@($result.Calls -match 'restore_postgres').Count -eq 0) 'nothing may be restored'
+}
+
+Test-Case 'drive restore: refuses when Drive is not set up, and refuses a malformed -Name' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $false
+    $a = Invoke-WithMocks -Context $ctx -Body { try { Invoke-MepRestoreFromDrive | Out-Null; return $false } catch { return $true } }
+    Assert-True $a 'not configured must be refused'
+    $ctx2 = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $true
+    $b = Invoke-WithMocks -Context $ctx2 -Body {
+        $n = 0
+        foreach ($bad in @('../x.dump', 'mep-postgres-x-1.dump', 'foo; rm -rf', 'mep-postgres-a-20260101T000000Z.dump --force')) {
+            try { Invoke-MepRestoreFromDrive -Name $bad | Out-Null } catch { $n++ }
+        }
+        return [pscustomobject]@{ Refused = $n; DriveCalls = @($script:RecordedCalls | Where-Object { $_.Args -match 'drive_backup' }).Count }
+    }
+    Assert-True ($b.Refused -eq 4) 'every malformed name must be refused'
+    Assert-True ($b.DriveCalls -eq 0) 'a malformed name must never reach the tool'
+}
+
+Test-Case 'drive restore: the downloaded-file report must name exactly one in-mount backup' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
+    $count = Invoke-WithMocks -Context $ctx -Body {
+        $bad = @(
+            @('[drive] OK: /mep-backups/mep-postgres-localstaging-20260101T000000Z.dump', '[drive] OK: /mep-backups/mep-postgres-localstaging-20260102T000000Z.dump'),
+            @('[drive] OK: /mep-backups/nested/mep-postgres-localstaging-20260101T000000Z.dump'),
+            @('[drive] OK: /tmp/mep-postgres-localstaging-20260101T000000Z.dump'),
+            @(),
+            @('[drive] uploaded: something')
+        )
+        $n = 0
+        foreach ($o in $bad) { try { Resolve-MepDownloadedBackup -Output $o -BackupRoot (Get-MepBackupRoot) | Out-Null } catch { $n++ } }
+        return $n
+    }
+    Assert-True ($count -eq 5) "all five malformed reports must fail closed (got $count)"
 }
 
 # ===========================================================================

@@ -17,6 +17,11 @@ outside the PostgreSQL Docker volume, so they survive stop/start and the
 default uninstall, and can be copied elsewhere with an ordinary file
 copy. Retention is PR24C's Owner-approved 30 days.
 
+PR25A: after the local backup (and outside the lock) the new archive is
+also uploaded to the department's Google Drive when .\drive-backup.ps1
+-Setup has been run. An upload failure never fails this script; it is
+queued and retried on the next run. See .\drive-backup.ps1 -Status.
+
 No secret is ever printed: not the database password, not JWT_SECRET_KEY,
 not a credential-bearing DATABASE_URL.
 
@@ -30,6 +35,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib/Common.ps1')
 . (Join-Path $PSScriptRoot 'lib/Operations.ps1')
 . (Join-Path $PSScriptRoot 'lib/Backup.ps1')
+. (Join-Path $PSScriptRoot 'lib/DriveBackup.ps1')
 
 Write-Host ''
 Write-Host '=== Medical Equipment Pool -- Local Staging/UAT Backup ===' -ForegroundColor Cyan
@@ -48,6 +54,15 @@ try {
     # There is deliberately no backup-specific lock.
     $lock = Enter-MepMutationLock
     Invoke-MepBackup -Reason 'manual' | Out-Null
+
+    # PR25A: release the mutation lock BEFORE the (possibly slow, network
+    # bound) Drive upload so a slow link can never block an update or stop.
+    # The upload only reads finished archives and NEVER affects this
+    # script's outcome: a Drive failure is logged and queued for the next
+    # run, and the local backup above stands.
+    Exit-MepMutationLock $lock
+    $lock = $null
+    Invoke-MepDriveUpload | Out-Null
 }
 catch {
     Write-InstallLog -Phase 'backup' -Level 'ERROR' -Message $_.Exception.Message
