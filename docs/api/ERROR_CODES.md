@@ -81,6 +81,7 @@ A `422` validation error additionally includes an `errors` array:
 | `OP_ID_REUSED` | per-op result | n/a | Roadmap PR25E B2: `op_id` already recorded with a different payload hash (client bug) |
 | `DEVICE_SEQ_REUSED` | per-op result | n/a | Roadmap PR25E B2: `(device_id, device_seq)` already belongs to a different `op_id` (client bug) |
 | `DEPENDENCY_MISSING` | per-op result (`retry_later`) | n/a | Roadmap PR25E B2: a sync receipt's `transaction_id` is unknown and the op is within 48 h of first sight; after 48 h it is a `conflict` with `TRANSACTION_NOT_FOUND` |
+| `OP_TOO_OLD` | per-op result (`conflict`) | n/a | Roadmap PR25E B2b (Owner D9): the offline op's adjusted business time is older than 7 days before the server first received it; nothing is applied, the op waits in the review list with its unclamped time |
 | `INVALID_INPUT` (sync read endpoints) | 400 | `InvalidInputError` | Roadmap PR25E B3 (`docs/api/sync.md`): unknown or malformed `section`/`cursor` on `GET /sync/snapshot`, or an invalid `from`/`to` range on `GET /sync/stats`. `POST /sync/verify` over 1000 ids or empty is `422 VALIDATION_ERROR`; `304` (no body) on `GET /sync/snapshot` with a matching `If-None-Match` |
 | `DUPLICATE` | 409 | `DuplicateError` | A unique-constraint violation was classified as `unique_violation` (see Integrity error translation below) |
 | `RESOURCE_NOT_FOUND` | 404 | `ResourceNotFoundError` | Generic not-found for resources without a dedicated error class (currently: user lookup in `app/api/v1/users.py`) |

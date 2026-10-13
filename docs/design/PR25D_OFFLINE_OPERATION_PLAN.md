@@ -27,6 +27,7 @@
 - **เบอร์โทร (ตัดสินใจแล้ว):** เพิ่มฟิลด์เบอร์โทรใน master data ของวอร์ด/แผนก (ปัจจุบันยังไม่มีในโค้ด) แล้วให้ฟอร์มจ่ายเครื่องกรอก `phone_number` อัตโนมัติจากวอร์ดที่เลือก ทั้งออนไลน์และออฟไลน์ (จากข้อมูลวอร์ดที่แคชไว้) และยังแก้ไขได้เหมือนเดิม ทำเป็น slice เล็กแยก (B0 + S0) ก่อนฟอร์มออฟไลน์ มีประโยชน์ตอนออนไลน์ด้วย
 - ผู้ตัดสิน conflict คือ Equipment Pool staff และ Administrator
 - **เครื่องใช้ร่วมกัน (เปลี่ยนแบบ):** ผู้ใช้อื่นที่เป็น Pool staff/Administrator สามารถ **"รับช่วง" (adopt)** รายการค้างของคนที่ไม่กลับมาแล้วส่งต่อได้ ต้องกดยืนยันชัดเจน ต้องออนไลน์และล็อกอินสด และมี audit ทั้งผู้ทำเดิมและผู้รับช่วง ผู้ทำเดิมยังคงเป็นผู้บันทึกของรายการ
+- **รายการเก่าเกิน 7 วัน (D9, ตัวเลือก ค):** ไม่บันทึกอัตโนมัติและไม่ปรับเวลาเป็นปัจจุบัน แต่ส่งเข้ารายการรอตรวจสอบเป็น conflict รหัส `OP_TOO_OLD` เก็บเวลาที่ปรับแล้วไว้ ไม่เกิดธุรกรรมหรือ export event เจ้าหน้าที่เลือกยกเลิก หรือบันทึกด้วยเวลาที่เก็บไว้ (B4); เวลาอ้างอิงคือเวลาที่เซิร์ฟเวอร์รับรายการครั้งแรก
 - ขีดจำกัด 500 รายการ/เครื่อง, ย้อนเวลาไม่เกิน 7 วัน, journal 48 ชม., ใช้ screen lock ของเครื่อง: ตกลง
 - **รับคืนอ้างด้วย transaction_id เท่านั้น** และเพิ่มการป้องกัน 2 กรณี: (ก) สลับเครื่องในวอร์ด (รับคืนแล้วจ่ายซ้ำทันที) (ข) ออฟไลน์นานหลายเครื่องคีย์ไม่ตรงกัน: ระบบสร้าง **Timeline** ของเครื่องมือชิ้นนั้นตามเวลาที่ปรับนาฬิกาแล้ว ให้คนตรวจดู และมีปุ่ม "ใช้ทั้งลำดับ" ที่ผ่านการตรวจแล้วเท่านั้น ไม่ apply เองโดยลำพังใน v1 (Owner ยืนยัน: **ยังไม่เปิด SYNC_AUTO_SEQUENCE** จะตัดสินใหม่หลัง pilot จากสถิติที่ระบบเก็บตั้งแต่วันแรก ได้แก่ จำนวน conflict ข้ามเครื่องต่อเครื่องมือ, กี่รายการที่ลำดับตามเวลาที่ปรับแล้วถูกต้องตาม lifecycle, กี่รายการที่คนตัดสินตามลำดับนั้น/ต่างจากนั้น, และการกระจายของนาฬิกาคลาดเคลื่อน) พร้อมแจ้งเตือนเมื่อข้อมูลในเครื่องเก่ากว่า **4 ชั่วโมง** (Owner ยืนยันแล้ว) และให้รายการเหล่านั้นถูกจัดลำดับความสำคัญในการตรวจ
 - **คำตอบของ Owner อนุญาตให้เริ่ม PR25E ตามแผน slice ได้ทันทีเมื่อเอกสารนี้ merge**
@@ -217,7 +218,7 @@ One additive Alembic revision (the next free revision after `0025_export_events`
 | `occurred_at` | timestamptz | adjusted business time actually used (section 11) |
 | `occurred_at_local`, `clock_offset_ms` | | as sent, for audit |
 | `first_seen_at` | timestamptz | server time the op was first received; also stored for `retry_later` (ledger row status `pending`) so the 48 h cutoff is server-measured |
-| `time_flag` | text null | `clamped_future`, `clamped_old`, `before_dispatch`, `before_last_receipt` |
+| `time_flag` | text null | `clamped_future`, `before_dispatch`, `before_last_receipt`, `too_old` (D9; legacy `clamped_old` stays allowed in the CHECK but is no longer written) |
 | `received_at` | timestamptz default now | server clock |
 | `attempt_count` | int | |
 | `payload` | JSONB | stored only for non-applied ops (needed for review); applied ops keep it too for 48 h-gap forensics. No patient data exists in the payload by construction |
@@ -446,10 +447,11 @@ Backups are hourly. If the server PC dies, the restored database misses up to ab
 - Every successful API response gives the client the server's `Date` header; the client stores `offset = serverTime - localTime` with its measurement time. Each op stores `occurred_at_local` and the offset in force at that moment.
 - Server computes `occurred_at = occurred_at_local + clock_offset_ms`, then applies guards:
   - If later than `received_at + 2 min` → clamp to `received_at`, `time_flag=clamped_future`.
-  - If older than `received_at - 7 days` → clamp to `received_at`, `time_flag=clamped_old`.
+  - If older than `received_at - 7 days` (**Owner decision D9**) → the op is **not applied**. It is stored as a `conflict` with result code `OP_TOO_OLD`, `time_flag=too_old`, and the **unclamped** adjusted time in the ledger `occurred_at`. No transaction, no audit of a business change, no export event. The relational clamps below are skipped. A human resolves it in the review list (B4): dismiss, or apply-now. **Expectation for B4:** apply-now must use the stored ledger `occurred_at` (the adjusted time) as `borrowed_at`/`returned_at`, not the current time, so PR16 `business_date`/`shift` stay true; the lifecycle service still validates current state and the relational clamps.
+  - `received_at` for all bounds is the server's first receipt of the `op_id` (`first_seen_at`), not the time of the current attempt. A `retry_later` op applied later is therefore judged against when it was first received.
   - A receipt earlier than its dispatch `borrowed_at` → clamp to the dispatch time, `time_flag=before_dispatch`.
   - A dispatch earlier than the same equipment's latest `returned_at` → clamp to that `returned_at`, `time_flag=before_last_receipt`. Without this, a backdated dispatch (up to 7 days) overlaps the previous usage interval and distorts PR16 `business_date`/`shift` counts.
-- Flagged ops are applied normally (the operator did act) but appear in a "time adjusted" filter on the review list and in the admin status page. They never block.
+- Ops flagged `clamped_future`, `before_dispatch` or `before_last_receipt` are applied normally (the operator did act) but appear in a "time adjusted" filter on the review list and in the admin status page. They never block.
 - The device clock is never used to *order* anything (9.2). A device whose clock was wrong and never contacted the server since being fixed produces a bad offset; the guards above bound the damage to the flagged window.
 - Display: the pending badge shows the local entry time; the confirmed record later shows the adjusted time.
 
@@ -545,7 +547,7 @@ Current: `registerType: "autoUpdate"` activates a new service worker and may rel
 | 19 | Server disk full or DB error at replay | 5xx | Treated as unreachable; backoff; no ledger write; retry later |
 | 20 | Malicious or buggy client sends forged `user_id` | Wrong attribution | Server ignores client user, uses token; mismatch rejected |
 | 21 | Operator edits an already queued item | Divergence | Queued items are immutable; "discard" and re-enter instead |
-| 22 | Replay of a very old op (> 7 days) | Time anomaly | Applied with `clamped_old`; flagged |
+| 22 | Replay of a very old op (> 7 days) | Time anomaly | Not applied; `conflict` / `OP_TOO_OLD`, `too_old`, unclamped `occurred_at` kept for review (D9) |
 | 23 | Server host down and also the Drive backup stale | Beyond recovery of this feature | Out of scope; PR25A monitoring |
 | 24 | Two users on one shared device dispatch the same equipment offline | Possible duplicate pending entry | The local double-entry guard is per device, not per user: it blocks with a generic "this item already has a pending entry on this device" message and shows nothing of the other user's rows (8.1 holds); the server would reject the second anyway |
 
@@ -630,6 +632,7 @@ The Owner answered the open questions of the earlier draft. This section is the 
 | D4 | Shared devices: **changed.** Another authenticated Equipment Pool staff or Administrator may adopt and send a stranded user's pending operations; explicit, confirmed, online, fresh login, original operator stays the recorded operator, adopter recorded as sender, fully audited. | 8.3, 6.2, 6.3 |
 | D5 | Limits agreed: 500 pending ops per device, 7-day maximum back-dating, 48-hour journal. | 10, 11, 15 |
 | D6 | OS screen lock is the only at-rest control on personal phones; no app-level PIN or encryption in v1. | 12.1 |
+| D9 | An offline op whose adjusted business time is older than 7 days (`received_at − 7 d`, `received_at` = first receipt) is **not** auto-applied with time clamped to now (option ค). It goes to the review list as `conflict` / `OP_TOO_OLD` with `time_flag=too_old` and the unclamped `occurred_at`; no business change, no export event. A human dismisses it or applies it now (B4 uses the stored adjusted time). Future-time and relational clamps are unchanged. | 11, 15 (item 22) |
 | D8 | `SYNC_AUTO_SEQUENCE` is **not enabled in v1**. It will be re-decided after the pilot from collected statistics; PR25E collects them from day one. No auto-resolution of any kind ships. | 9.7, 16.1 |
 | D7 | Receipt by `transaction_id` only, agreed, with added protection for in-ward swaps and long-offline cross-device cases: per-equipment timeline, human-confirmed "Apply sequence", no automatic resolution in v1, 4-hour staleness warning and `stale_context` review priority. | 9.7, 9.8 |
 
