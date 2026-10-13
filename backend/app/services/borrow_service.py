@@ -22,8 +22,10 @@ from app.crud import audit as audit_crud
 from app.crud import equipment as equipment_crud
 from app.crud import transaction as transaction_crud
 from app.models.equipment import EquipmentStatus
+from app.models.export import EVENT_TYPE_DISPATCH, EVENT_TYPE_RECEIPT
 from app.models.master_data import Ward
 from app.models.transaction import BorrowTransaction, DispatchType, ReceiptOutcome, RoutineRound, TransactionStatus
+from app.services import export_service
 from app.utils.parsing import parse_uuid
 
 # Roadmap PR8B (knowledge/adr/ADR-006-receipt-outcome-contract.md): the
@@ -144,6 +146,12 @@ async def borrow(
         ip_address=ip_address,
         user_agent=user_agent,
     )
+    # Roadmap PR25B: must stay the LAST write before commit -- it takes the
+    # export counter's row lock, which is what makes the export cursor
+    # follow commit order (see app.services.export_service).
+    await export_service.record_event(
+        db, transaction_id=tx.id, event_type=EVENT_TYPE_DISPATCH, event_at=tx.borrowed_at
+    )
     await db.commit()
     await cache_delete_prefix("equipment:search:")
     await cache_delete_prefix("dashboard:")
@@ -250,6 +258,10 @@ async def return_equipment(
         after_data={"receipt_outcome": receipt_outcome.value},
         ip_address=ip_address,
         user_agent=user_agent,
+    )
+    # Roadmap PR25B: last write before commit (see borrow() above).
+    await export_service.record_event(
+        db, transaction_id=tx.id, event_type=EVENT_TYPE_RECEIPT, event_at=tx.returned_at
     )
     await db.commit()
     await db.refresh(tx, attribute_names=["equipment"])

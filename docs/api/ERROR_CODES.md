@@ -129,12 +129,13 @@ A `422` validation error additionally includes an `errors` array:
 | `CUTOVER_DECISION_BLOCKED_BY_READINESS` | 422 | `CutoverDecisionBlockedByReadinessError` | Roadmap PR23D (design §12/§13): a `GO` decision was attempted while a fresh re-evaluation of Gates A-F still returns at least one BLOCKER item -- cutover Go is deterministically impossible while any mandatory gate fails; `NO_GO` is never blocked by this check |
 | `CUTOVER_DECISION_WARNINGS_NOT_ACKNOWLEDGED` | 422 | `CutoverDecisionWarningsNotAcknowledgedError` | Roadmap PR23D (design §13): a `GO` decision was attempted without acknowledging every currently-live WARNING item code from a fresh Gate A-F re-evaluation -- compared against the live warning-code set computed at decision time, never an earlier/stale evaluation; only raised for `GO` |
 | `CUTOVER_DECISION_NOT_FOUND` | 404 | `CutoverDecisionNotFoundError` | Roadmap PR23D: `GET .../decision` was called for a `CutoverReadinessRun` that has no persisted `CutoverGoNoGoDecision` row yet -- distinct from `CUTOVER_READINESS_RUN_NOT_FOUND` (the run itself may exist and simply not have a final decision recorded) |
+| `EXPORT_CURSOR_AHEAD` | 409 | `ExportCursorAheadError` | Roadmap PR25B (`GET /export/events`): the `after` cursor is greater than the newest event in this database -- the database was restored from an older backup, or the cursor belongs to another deployment. Re-seed the consumer from `GET /export/cursor` |
 
 ### FastAPI/Starlette-level errors (`backend/app/main.py`)
 
 | Code | Status | Raised when |
 |---|---|---|
-| `NOT_AUTHENTICATED` | 401 | Missing bearer credentials, invalid/expired JWT, wrong token type, or the token's user is gone/inactive (`app.api.v1.deps.get_current_user`) — response includes a `WWW-Authenticate: Bearer` header |
+| `NOT_AUTHENTICATED` | 401 | Missing bearer credentials, invalid/expired JWT, wrong token type, or the token's user is gone/inactive (`app.api.v1.deps.get_current_user`) — response includes a `WWW-Authenticate: Bearer` header. On `/export/*` (Roadmap PR25B): missing, unknown, or revoked `X-API-Key`, or a human bearer token presented instead of a key — identical response for all of them, with `WWW-Authenticate: ApiKey` |
 | `FORBIDDEN` | 403 | Authenticated caller's role is not in the endpoint's `require_roles(...)` allow-list |
 | `NOT_FOUND` | 404 | No route matches the request path |
 | `METHOD_NOT_ALLOWED` | 405 | Route exists but not for this HTTP method |
