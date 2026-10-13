@@ -237,12 +237,19 @@ async def _record_failed_attempt(
     if attempts is None:  # pragma: no cover - the row was just read
         return
 
+    user.failed_login_attempts = attempts
     if attempts >= MAXIMUM_FAILED_LOGIN_ATTEMPTS and not is_locked(user, now=now):
         locked_until = now + LOCKOUT_DURATION
         await db.execute(
-            sa.update(User).where(User.id == user.id).values(locked_until=locked_until)
+            sa.update(User)
+            .where(User.id == user.id)
+            .values(locked_until=locked_until, failed_login_attempts=0)
         )
         user.locked_until = locked_until
+        # The lock is the penalty for this run of failures, so the run is
+        # spent. Left at the threshold, the first wrong password after the
+        # lock expired would re-lock for another full duration.
+        user.failed_login_attempts = 0
         # Its own audit action, not a second login_failure: "this account was
         # locked" is the event an administrator fielding a support call needs
         # to find, and burying it among the failures that caused it would
@@ -255,7 +262,6 @@ async def _record_failed_attempt(
             entity_id=user.id,
             request=request,
         )
-    user.failed_login_attempts = attempts
 
 
 async def _clear_failed_attempts(db: AsyncSession, user: User) -> None:

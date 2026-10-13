@@ -17,6 +17,7 @@ from app.models.user import ROLE_ADMINISTRATOR, User
 from app.services.auth_service import (
     LOCKOUT_DURATION,
     MAXIMUM_FAILED_LOGIN_ATTEMPTS,
+    is_locked,
 )
 from tests.conftest import login
 
@@ -120,6 +121,37 @@ async def test_the_lock_lifts_by_itself_without_anything_running(
     await db_session.commit()
 
     assert (await _attempt(client, CORRECT)).status_code == 200
+
+
+async def test_after_the_lock_expires_the_count_starts_fresh(
+    client, seeded_users, db_session
+):
+    """Five failures lock; after expiry one failure must not re-lock."""
+    await _fail_to_the_threshold(client)
+    assert (await _attempt(client, CORRECT)).status_code == 423
+
+    async def _user():
+        db_session.expire_all()
+        return (
+            await db_session.execute(
+                select(User).where(User.employee_code == ADMIN_EMPLOYEE_CODE)
+            )
+        ).scalar_one()
+
+    user = await _user()
+    user.locked_until = datetime.now(timezone.utc) - timedelta(seconds=1)
+    await db_session.commit()
+
+    resp = await _attempt(client, WRONG)
+    assert resp.status_code == 401, resp.text
+    assert resp.json()["code"] == "INVALID_CREDENTIALS"
+    assert not is_locked(await _user())
+
+    # Four more (five in all since the lock expired) lock it again; the
+    # attempt that trips the lock still answers 401, the next one 423.
+    for _ in range(MAXIMUM_FAILED_LOGIN_ATTEMPTS - 1):
+        assert (await _attempt(client, WRONG)).status_code == 401
+    assert (await _attempt(client, WRONG)).status_code == 423
 
 
 async def test_a_successful_login_resets_the_counter(client, seeded_users):
