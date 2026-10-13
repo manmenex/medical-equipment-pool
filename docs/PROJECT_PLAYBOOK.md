@@ -5,8 +5,6 @@
 **Update trigger:** Governance baseline, workflow, authority, or role-policy change
 **Maintainer:** Documentation/Governance Engineer with Repository Owner approval
 
-> **Notice (Owner decision 2026-10-13):** [`PROJECT_WORKFLOW.md`](PROJECT_WORKFLOW.md) supersedes this Playbook's role, pipeline, review, and merge sections. Where they describe the Claude -> Codex -> ChatGPT -> Owner pipeline, or say the Owner makes every merge decision, follow `PROJECT_WORKFLOW.md` instead (the orchestrator merges once CI is green and the reviewer approves the head SHA; the Owner alone authorizes Production deployment).
-
 ## Project purpose and boundary
 
 The Medical Equipment Pool is a browser/PWA system used by Equipment Pool
@@ -26,7 +24,7 @@ current-versus-future workflow live in
 | 4 | [`audits/04-consolidated-implementation-plan.md`](audits/04-consolidated-implementation-plan.md) | Roadmap PR scope, order, dependencies, and acceptance criteria not already governed by Level 2 or 3 |
 | 5 | [`ROADMAP_STATUS.md`](ROADMAP_STATUS.md) | Current status only; it does not redefine scope |
 | 6 | Task-specific instructions | The authorized task inside the boundaries above |
-| 7 | Audits 01–03, legacy design documents, and [`../knowledge/traceability/`](../knowledge/traceability/README.md) | Historical evidence, rationale, and non-authoritative implementation traceability — never current policy |
+| 7 | Archived audits, legacy documents and design plans (`archive/`), and [`../knowledge/traceability/`](../knowledge/traceability/README.md) | Historical evidence, rationale, and non-authoritative implementation traceability — never current policy |
 
 Use the narrowest interpretation that satisfies all higher authorities. A task
 cannot silently override confirmed domain guardrails, security policy, or
@@ -46,7 +44,8 @@ document; do not infer ownership from a document's own claims about itself.
 | Topic | Owning document | Level |
 |---|---|---|
 | Repository-wide rules and domain guardrails | [`AGENTS.md`](../AGENTS.md) | 1 |
-| Governance process, roles, and workflow | This Playbook | — (governs the process itself, not a domain topic) |
+| Pipeline, agent roles, merge rules | [`PROJECT_WORKFLOW.md`](PROJECT_WORKFLOW.md) | — (process, not a domain topic) |
+| Governance hierarchy and change control | This Playbook | — |
 | Equipment Pool scope boundary | [`knowledge/adr/ADR-001`](../knowledge/adr/ADR-001-equipment-pool-scope.md) | 2 |
 | Equipment identifier model (UUID / BCM Code / Item No / Asset Number) | [`knowledge/adr/ADR-002`](../knowledge/adr/ADR-002-identifier-model.md) | 2 |
 | BCM manual search | [`knowledge/adr/ADR-003`](../knowledge/adr/ADR-003-bcm-manual-search.md) | 2 |
@@ -72,38 +71,28 @@ previously owned it is updated in the same change to point here instead of
 continuing to state the topic independently — see "Scope and change control"
 below.
 
-## Roles and independence
+## Roles and workflow
 
-| Role | Primary responsibility | May write? | Final authority? |
-|---|---|---:|---:|
-| Architecture Owner | Bound scope and resolve architecture choices | Governance/docs | Architecture decisions |
-| Implementation Engineer | Implement one assigned change and its tests | In assigned scope | No |
-| Independent Reviewer | Review actual diff, tests, and surrounding code | One direct PR review only | Review recommendation |
-| Security Reviewer | Assess auth, secrets, privacy, audit, and abuse cases | One direct PR review only | Security recommendation |
-| Test Engineer | Design and execute proportionate verification | Tests when authorized | Evidence only |
-| Documentation/Governance Engineer | Maintain authoritative documents and templates | Documentation scope | No |
-| Repository Owner | Decide readiness, merge, release, and emergency authority | Repository state | Yes |
+The pipeline, the agent roles (orchestrator, implementer, reviewer, helper),
+the merge rules, and the loop limit are owned by
+[`PROJECT_WORKFLOW.md`](PROJECT_WORKFLOW.md) (Owner decision, 2026-10-13) and
+are not restated here. In short: implementer agents build one PR each;
+CI must be fully green on the exact head SHA; the reviewer agent reviews that
+SHA ([`prompts/codex-pr-review.md`](prompts/codex-pr-review.md) is its
+prompt); the orchestrator squash-merges the approved SHA and reports to the
+Repository Owner, who sets direction and alone authorizes Production
+deployment.
 
-Implementation agents may self-review, but self-review is not independent
-review. The same agent/session must not be the final independent reviewer of
-its own implementation. Review-only tasks never modify files; their sole
-permitted GitHub write is one direct Pull Request review submission under
-[`prompts/codex-pr-review.md`](prompts/codex-pr-review.md). Fixes require
-explicit authorization. Merge authority is defined in `PROJECT_WORKFLOW.md` (see notice at top).
+Playbook-level principles that complement it:
 
-## Standard workflow
-
-1. Bound the task against the relevant Roadmap PR or approved exception.
-2. Implement on a focused branch; do not mix governance or unrelated refactors.
-3. Run risk-appropriate tests and record exact evidence.
-4. Open a Draft PR with scope, exclusions, impacts, evidence, rollback, and limitations.
-5. Obtain independent review; the reviewer submits it directly to the Pull
-   Request and verifies the target, reviewed head SHA, and action. Add security
-   or database review when risk requires it.
-6. Apply authorized fixes without broadening scope.
-7. Recheck architecture, Definition of Done, and evidence claims.
-8. Repository Owner marks ready and merges using repository policy.
-9. Update status documents after merge, not before.
+- Bound each task against the relevant Roadmap PR or approved exception, on a
+  focused branch; do not mix governance or unrelated refactors.
+- Self-review is not independent review. The same agent/session must not be the
+  reviewer of its own implementation.
+- Review-only tasks never modify files; their sole permitted GitHub write is
+  one direct Pull Request review submission. Fixes are a separate task.
+- Record exact evidence (see "Evidence and claim policy"), and update status
+  documents after merge, not before.
 
 See [`REPOSITORY_STRATEGY.md`](REPOSITORY_STRATEGY.md),
 [`DEFINITION_OF_DONE.md`](DEFINITION_OF_DONE.md), and the compact exception
@@ -114,7 +103,7 @@ flows below.
 | Task | Mandatory reads | Conditional reads |
 |---|---|---|
 | Implementation | `AGENTS.md`; this Playbook; assigned Roadmap section; task prompt | DoD sections for affected layer; ADR/guardrail linked by scope |
-| Independent review | `AGENTS.md`; this Playbook; [`prompts/codex-pr-review.md`](prompts/codex-pr-review.md); PR diff and assigned Roadmap section | DoD/ADR for affected risk |
+| Review (reviewer agent) | `AGENTS.md`; this Playbook; [`prompts/codex-pr-review.md`](prompts/codex-pr-review.md); PR diff and assigned Roadmap section | DoD/ADR for affected risk |
 | Governance | `AGENTS.md`; this Playbook; affected authoritative documents | Repository strategy, memory, or ADR index |
 | Focused bugfix | `AGENTS.md`; this Playbook; task/issue; affected code | DoD and technical-debt item |
 | Hotfix/incident | `AGENTS.md`; this Playbook; repository strategy; incident context | Security, migration, rollback, or deployment authority |
@@ -153,11 +142,11 @@ secret values, or sensitive screenshots/logs in evidence.
 ## Exception workflows
 
 - **Governance PR:** inventory authority → propose map → edit docs/templates only
-  → validate links/duplication → Draft PR → governance review → owner merge.
+  → validate links/duplication → Draft PR → reviewer-agent review → orchestrator merge.
 - **Focused bugfix:** reproduce → bound regression → smallest fix → targeted and
-  regression tests → Draft PR → independent review.
+  regression tests → Draft PR → reviewer-agent review.
 - **Security hotfix:** contain exposure → preserve evidence safely → focused fix
-  → security review → expedited owner-approved merge → follow-up analysis.
+  → security review → expedited merge with explicit Owner authorization → follow-up analysis.
 - **Migration emergency:** stop rollout → protect/backup data → run approved
   downgrade or forward fix → verify row counts/invariants → document outcome.
 - **Production incident:** stabilize → record timeline/evidence → restore service
@@ -170,8 +159,9 @@ secret values, or sensitive screenshots/logs in evidence.
 | Document | Purpose / authority | Read | Update trigger | Owner role |
 |---|---|---|---|---|
 | `AGENTS.md` | Permanent repository rules | Mandatory | Guardrail/repository-rule change | Architecture Owner |
-| This Playbook | Entry point and workflow | Mandatory | Governance baseline change | Governance Engineer |
-| `ENGINEERING_WORKFLOW.md` | Standard engineering, review, merge, baseline, and governance-sync workflow | Conditional | Engineering process change | Governance Engineer |
+| This Playbook | Entry point, hierarchy, and change control | Mandatory | Governance baseline change | Governance Engineer |
+| `PROJECT_WORKFLOW.md` | Pipeline, agent roles, merge rules | Mandatory for process questions | Pipeline/role change (rides in the PR it serves) | Repository Owner |
+| `ENGINEERING_WORKFLOW.md` | Engineering detail: design PRs, baselines, slicing, governance-sync | Conditional | Engineering process change | Governance Engineer |
 | `REPOSITORY_STRATEGY.md` | Git/PR/release/cleanup policy | Conditional | Repository policy change | Repository Owner |
 | `DEFINITION_OF_DONE.md` | Risk-based completion standard | Conditional | Quality-gate change | Architecture Owner |
 | `ARCHITECTURE_GUARDRAILS.md` | Prohibitions and invariants | Conditional | Guardrail change | Architecture Owner |
@@ -187,7 +177,7 @@ secret values, or sensitive screenshots/logs in evidence.
 | `PROJECT_MEMORY.md` | Major chronological decisions | Conditional | Major decision/phase | Governance Engineer |
 | `TECH_DEBT.md` | Evidence-based deferred defects | Conditional | Debt discovered/closed | Architecture Owner |
 | `prompts/` | Reusable task/review instructions | Task-dependent | Workflow/template change | Governance Engineer |
-| Audits 01–03 | Historical findings | Conditional | Never for policy alignment | Historical |
+| `archive/audits/` (01–03, 05–06) | Historical findings | Conditional | Never for policy alignment | Historical |
 
 ## Size and version targets
 

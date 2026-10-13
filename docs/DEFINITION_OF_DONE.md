@@ -6,9 +6,10 @@
 **Maintainer:** Architecture Owner
 
 Apply only the sections affected by the change. “Not applicable” requires a
-reason; it is not a shortcut. Severity definitions and the detailed independent
-review format remain authoritative in
-[`prompts/codex-pr-review.md`](prompts/codex-pr-review.md).
+reason; it is not a shortcut. Severity definitions and the detailed review
+format remain authoritative in
+[`prompts/codex-pr-review.md`](prompts/codex-pr-review.md) (the reviewer-agent
+prompt). Roles and merge rules are in [`PROJECT_WORKFLOW.md`](PROJECT_WORKFLOW.md).
 
 ## Universal requirements
 
@@ -23,11 +24,13 @@ review format remain authoritative in
 - [ ] Rollback or forward-fix plan is proportionate to risk.
 - [ ] Monitoring/verification after deployment or merge is identified, or marked not applicable.
 - [ ] PR description matches the final diff and commit set.
-- [ ] Independent review completed by someone other than the implementing
+- [ ] CI is fully green on the exact head SHA.
+- [ ] Reviewer-agent review completed by someone other than the implementing
       agent/session, submitted directly to the correct Pull Request for the
       exact reviewed head SHA, and verified after posting.
-- [ ] Critical/High findings are resolved or the Repository Owner explicitly blocks merge.
-- [ ] Repository Owner gives final approval and performs/authorizes merge.
+- [ ] Critical/High findings are resolved or escalated to the Repository Owner.
+- [ ] The orchestrator merges the approved head SHA and reports to the Owner;
+      Production deployment is authorized by the Owner alone.
 
 ## Backend and API
 

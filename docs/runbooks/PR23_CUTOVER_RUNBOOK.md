@@ -1,13 +1,25 @@
 # Cutover Runbook — Medical Equipment Pool (Roadmap PR23)
 ## คู่มือปฏิบัติการเปลี่ยนระบบ (Cutover) — ระบบบริหารจัดการเครื่องมือแพทย์ส่วนกลาง
 
+> **Note (Owner decision, 2026-10-13): Production runs on the department host.**
+> Production is a department PC (Windows 11 Pro, Docker), not a managed cloud
+> platform; see the "Local Production on the department host" entry in
+> `docs/DECISION_LOG.md` and Roadmap PR25A-E. This revises OD-PR24-1.
+> The department host has no standby machine: recovery is restore-from-backup onto
+> any Docker-capable PC. Off-host backup to Google Drive (PR25A), external
+> access through Cloudflare Tunnel + Access (PR25C), and offline operation
+> (PR25D/E) are planned and not built yet; nothing here describes them as done.
+> Where this runbook below says production is a "managed deployment" or that
+> the platform is "not yet selected", read that as superseded by the note
+> above; the cutover steps themselves are unchanged.
+
 **Status:** Operational execution document. Governs the one-time
 transition from the legacy AppSheet operational system to this
 repository's Medical Equipment Pool web application.
 เอกสารนี้ใช้สำหรับปฏิบัติจริงเมื่อทำการเปลี่ยนระบบ (cutover) จากระบบ AppSheet
 เดิม มาเป็นระบบ Medical Equipment Pool (เว็บแอปพลิเคชัน) — เป็นการเปลี่ยนระบบ
 เพียงครั้งเดียว (one-time transition)
-**Authority:** `docs/design/PR23_CUTOVER_READINESS_PLAN.md` controls the
+**Authority:** `docs/archive/design/PR23_CUTOVER_READINESS_PLAN.md` controls the
 underlying architecture, gates, and Owner Decisions (OD-PR23-1 through
 OD-PR23-6) this runbook operationalizes. Where this runbook and that
 design document conflict, the design document controls, and the
@@ -145,10 +157,12 @@ Reconciliation sign-off ID:                               __________________
 `docs/ARCHITECTURE_DECISIONS.md`, "Managed deployment preferred") ณ
 baseline ที่เอกสารนี้อ้างอิง:
 
-- **ยังไม่ได้เลือกแพลตฟอร์ม/ผู้ให้บริการสำหรับ production deployment**
-  แนวทางที่ต้องการคือ managed deployment (production ต้องไม่สมมติว่ามีสิทธิ์
-  เข้าถึง server ของโรงพยาบาลโดยตรง) แต่ยังไม่ได้เลือกแพลตฟอร์มที่ชัดเจน
-  เอกสารนี้**ไม่ได้เลือก**แพลตฟอร์มให้
+- **ที่ตั้ง production:** เจ้าของระบบ (Owner) ตัดสินใจเมื่อ 2026-10-13 ให้
+  production ทำงานบนเครื่อง PC ของแผนก (Windows 11 Pro + Docker) แทน managed
+  cloud (ข้อความเดิมว่า "managed deployment preferred" ถูกแทนที่แล้ว) การสำรอง
+  ข้อมูลออกนอกเครื่องไป Google Drive (PR25A) และการเข้าถึงจากภายนอกผ่าน
+  Cloudflare (PR25C) **ยังเป็นแผน ยังไม่ได้สร้าง** เอกสารนี้ไม่ได้ระบุว่า
+  เสร็จแล้ว
 - **ยังไม่เคยมีการออกแบบหรือทดสอบกระบวนการ backup/restore จริงในรีโพซิทอรี
   นี้** ถูกระบุไว้ว่าเป็นเงื่อนไขที่ยังเปิดอยู่ (open) สำหรับ Pilot/Production
   Readiness ไม่ใช่สิ่งที่คู่มือนี้ — หรือ PR เอกสารใดๆ — จะปิดได้ด้วยการเขียน
@@ -663,11 +677,12 @@ Production GO ไว้ตาม Gate A / Production Readiness เสมอ** PR
 
 ## 18. เป้าหมาย Production deployment (รายการที่ยังเปิดอยู่ — ห้ามอ้างว่าปิดแล้ว)
 
-คู่มือนี้**ไม่ได้เลือก**ผู้ให้บริการหรือแพลตฟอร์ม deployment ตาม
-`docs/ARCHITECTURE_DECISIONS.md` ("Managed deployment preferred")
-แนวทางที่ต้องการคือ managed deployment และห้ามสมมติว่ามีสิทธิ์เข้าถึง server
-ของโรงพยาบาลโดยตรง แต่เป้าหมายจริงยังคงเป็นการตัดสินใจที่ต้องกำกับดูแลแยก
-ต่างหากและยังเปิดอยู่
+เป้าหมาย production คือเครื่อง PC ของแผนก (Windows 11 Pro + Docker) ตามการ
+ตัดสินใจของ Owner เมื่อ 2026-10-13 (`docs/DECISION_LOG.md`, "Local Production
+on the department host") ไม่ใช่ managed deployment ตามที่
+`docs/ARCHITECTURE_DECISIONS.md` ("Managed deployment preferred") เคยระบุ
+อย่างไรก็ดี การเริ่มใช้งาน production จริงยังคงเป็นการตัดสินใจของ Owner
+และยังเปิดอยู่
 
 ```
 เอกสารอ้างอิง production environment:              __________________
@@ -762,7 +777,7 @@ ID, sign-off ID, source checksum) มีวินัยนี้อยู่แ�
 
 ## Related documents
 
-- `docs/design/PR23_CUTOVER_READINESS_PLAN.md` — architecture, gates,
+- `docs/archive/design/PR23_CUTOVER_READINESS_PLAN.md` — architecture, gates,
   Owner Decisions this runbook operationalizes.
 - `docs/audits/04-consolidated-implementation-plan.md` Part I — the
   repository's existing Development/UAT/Pilot/Production Readiness

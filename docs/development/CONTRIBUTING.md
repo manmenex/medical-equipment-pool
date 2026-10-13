@@ -37,9 +37,9 @@ Use lowercase kebab-case. Full detail: `docs/REPOSITORY_STRATEGY.md` (Branch nam
 1. Open as **Draft** — this is the default for every normal change (`docs/REPOSITORY_STRATEGY.md`, Draft PR and merge policy).
 2. Fill out `.github/PULL_REQUEST_TEMPLATE.md` completely: base SHA, scope (included / explicitly out of scope), change surface (files, API/database/security/documentation impact), evidence table (with exact commands and results, local vs. CI clearly labeled), operations (rollback plan, monitoring, known limitations, deferred follow-ups), and both checklists.
 3. Push and wait for `.github/workflows/ci.yml` to run — see `TESTING.md` for what each job checks.
-4. Mark **Ready for review** only once CI is green on the exact head SHA you want reviewed (`docs/AI_REVIEW_WORKFLOW.md`).
-5. An independent reviewer (Codex) and, where used, a Project Governor review (ChatGPT) follow — see `CODE_REVIEW.md`. Any commit pushed after a review invalidates that review's approval; the new head needs re-review.
-6. The Repository Owner gives final approval and performs (or explicitly authorizes) the merge. Nothing in this repository merges automatically.
+4. Mark **Ready for review** only once CI is green on the exact head SHA you want reviewed (`docs/PROJECT_WORKFLOW.md`).
+5. The reviewer agent reviews that head — see `CODE_REVIEW.md`. Any commit pushed after a review invalidates that review's approval; the new head needs re-review.
+6. Once CI is green and the reviewer has approved the exact head SHA, the orchestrator squash-merges it and reports to the Repository Owner (`docs/PROJECT_WORKFLOW.md`). The Owner alone authorizes Production deployment.
 
 ## Knowledge Update Policy
 

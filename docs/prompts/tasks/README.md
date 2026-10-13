@@ -1,5 +1,9 @@
 # Compact Task Prompt Templates
 
+Roles, the pipeline, and merge rules are defined in
+[`../PROJECT_WORKFLOW.md`](../PROJECT_WORKFLOW.md); these templates only
+shape a single task. "Independent Reviewer" below means the reviewer agent.
+
 Customize bracketed inputs. These templates reference permanent governance
 instead of copying it. Add only task-specific facts, permissions, commands, and
 deliverables.
@@ -45,12 +49,13 @@ Deliverables: document map, changed authority, before/after reading set, Draft P
 Stop: do not change runtime/repository settings, mark ready, or merge
 ```
 
-## Independent review
+## Reviewer agent review
 
 ```text
-Role: Independent Reviewer
+Role: Reviewer agent
 PR: [number/URL]
-Minimum reads: AGENTS.md; docs/PROJECT_PLAYBOOK.md; docs/prompts/codex-pr-review.md;
+Head SHA: [exact SHA; CI must be fully green on it]
+Minimum reads: AGENTS.md; docs/PROJECT_PLAYBOOK.md; docs/prompts/codex-pr-review.md (the reviewer-agent prompt);
 assigned Roadmap section; actual PR diff/tests/surrounding code
 Boundary: review only; no file, commit, push, PR metadata, ready, merge, close,
 or fix mutations
@@ -59,15 +64,15 @@ GitHub write: exactly one review submission under docs/prompts/codex-pr-review.m
 with optional focused inline comments
 Deliverable: authoritative review submitted directly to the target PR; verify the
 PR number, exact reviewed head SHA, reviewer identity, and action after posting
-Stop: after verified submission; self-review must use COMMENT and be labeled clearly
+Stop: after verified submission (the orchestrator merges, not the reviewer); self-review must use COMMENT and be labeled clearly
 ```
 
 ## Corrective rereview
 
 ```text
-Role: Independent Reviewer
+Role: Reviewer agent
 PR and prior findings: [PR]; [finding IDs]
-Minimum reads: AGENTS.md; docs/PROJECT_PLAYBOOK.md; docs/prompts/codex-pr-review.md;
+Minimum reads: AGENTS.md; docs/PROJECT_PLAYBOOK.md; docs/prompts/codex-pr-review.md (the reviewer-agent prompt);
 prior review; corrective diff/tests
 Boundary: verify each finding and detect regressions in changed surface; follow the
 authoritative review-only write restrictions and submission policy

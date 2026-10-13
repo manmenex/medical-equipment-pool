@@ -94,4 +94,4 @@ Frontend tests use Vitest + `@testing-library/react` (jsdom environment). `src/t
 
 ## Reporting test evidence in a PR
 
-Per `.github/PULL_REQUEST_TEMPLATE.md` and `docs/REVIEW_CHECKLIST.md`, always distinguish **local** evidence from **CI** evidence explicitly, and never describe a local run as CI evidence. Include the exact command and its final summary line (e.g. `273 passed, 78 deselected in ...`).
+Per `.github/PULL_REQUEST_TEMPLATE.md` and `docs/DEFINITION_OF_DONE.md`, always distinguish **local** evidence from **CI** evidence explicitly, and never describe a local run as CI evidence. Include the exact command and its final summary line (e.g. `273 passed, 78 deselected in ...`).
