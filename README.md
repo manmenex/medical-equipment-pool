@@ -11,18 +11,27 @@ PM, calibration, recalls, or the hospital-wide asset lifecycle. See
 
 ## Start here
 
-- [`docs/PROJECT_PLAYBOOK.md`](docs/PROJECT_PLAYBOOK.md) — compact governance
-  entry point, authority hierarchy, roles, workflow, and task reading sets
+1. [`docs/OVERVIEW.md`](docs/OVERVIEW.md) — what the system is, what it does
+   and does not do, and where the project stands (non-technical, Thai)
+2. [`docs/ROADMAP.md`](docs/ROADMAP.md) — single source of project status,
+   baseline, and PR ordering
+3. [`AGENTS.md`](AGENTS.md) — permanent guardrails and rules for contributors
+   and AI agents
+
+Then, as needed:
+
+- [`docs/PROJECT_PLAYBOOK.md`](docs/PROJECT_PLAYBOOK.md) — authority hierarchy,
+  roles, and task reading sets
+- [`docs/PROJECT_WORKFLOW.md`](docs/PROJECT_WORKFLOW.md) — requirement-to-merge
+  pipeline and agent team
 - [`docs/HOSPITAL_DOMAIN_MODEL.md`](docs/HOSPITAL_DOMAIN_MODEL.md) — confirmed
   terminology and current/future workflow boundary
-- [`docs/ROADMAP.md`](docs/ROADMAP.md) — authoritative Roadmap detail and ordering
-- [`docs/ROADMAP_STATUS.md`](docs/ROADMAP_STATUS.md) — concise current-status dashboard
 - [`docs/audits/04-consolidated-implementation-plan.md`](docs/audits/04-consolidated-implementation-plan.md)
   — authoritative Roadmap PR scope and order
 
-Legacy design documents under `docs/01-...` through `docs/09-...` are retained
-as clearly labelled historical evidence. They may describe proposals
-superseded by current guardrails and are not governance authority.
+Superseded design documents are kept under `docs/archive/` as historical
+evidence only. They may describe proposals superseded by current guardrails
+and are not governance authority.
 
 ## Repository layout
 
