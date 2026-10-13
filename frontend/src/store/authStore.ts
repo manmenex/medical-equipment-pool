@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 import { queryClient } from "@/lib/queryClient";
+import { wipeOnLogout } from "@/offline/offlineStore";
 import type { UserProfile } from "@/types";
 
 interface AuthState {
@@ -20,6 +21,9 @@ function wipeCachedData(): void {
   } catch {
     /* ignore */
   }
+  // PR25E S2: clear the IndexedDB reference snapshot; unsynced outbox/journal
+  // rows and device identity are deliberately kept (design 8.2).
+  void wipeOnLogout().catch(() => undefined);
   try {
     if (typeof caches !== "undefined") {
       void caches
