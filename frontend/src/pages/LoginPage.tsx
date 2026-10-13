@@ -1,9 +1,17 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { apiErrorMessage } from "@/services/api";
+import { apiErrorCode, apiErrorMessage } from "@/services/api";
 import { login } from "@/services/auth";
 import { useAuthStore } from "@/store/authStore";
+
+// Mirrors auth_service.MAXIMUM_FAILED_LOGIN_ATTEMPTS and LOCKOUT_DURATION.
+// The backend's own `detail` already says this, but in English -- and the
+// person reading it is a ward nurse mid-shift whose password just stopped
+// working. Branching on the stable `code` and writing the message in Thai is
+// the difference between "I can wait ten minutes" and a support call.
+const MAXIMUM_FAILED_LOGIN_ATTEMPTS = 5;
+const LOCKOUT_MINUTES = 10;
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -23,7 +31,15 @@ export function LoginPage() {
       setAccessToken(access_token);
       navigate("/", { replace: true });
     } catch (err) {
-      setError(apiErrorMessage(err, "เข้าสู่ระบบไม่สำเร็จ"));
+      if (apiErrorCode(err) === "ACCOUNT_LOCKED") {
+        setError(
+          `บัญชีนี้ถูกล็อกชั่วคราว เพราะใส่รหัสผ่านผิด ${MAXIMUM_FAILED_LOGIN_ATTEMPTS} ครั้งติดกัน ` +
+            `กรุณารออีกประมาณ ${LOCKOUT_MINUTES} นาทีแล้วลองใหม่ ` +
+            "ถ้าจำรหัสผ่านไม่ได้ ให้ติดต่อผู้ดูแลระบบเพื่อตั้งรหัสใหม่",
+        );
+      } else {
+        setError(apiErrorMessage(err, "เข้าสู่ระบบไม่สำเร็จ"));
+      }
     } finally {
       setLoading(false);
     }
@@ -40,8 +56,14 @@ export function LoginPage() {
           <p className="text-sm text-[var(--text-muted)]">ระบบรับ-ส่งเครื่องมือแพทย์</p>
         </div>
 
-        <label className="mb-1 block text-sm font-medium">รหัสพนักงาน / อีเมล</label>
+        {/* htmlFor/id, not decoration: without the association these labels
+            are loose text and a screen reader announces two unlabelled text
+            fields on the sign-in screen. */}
+        <label htmlFor="login-identifier" className="mb-1 block text-sm font-medium">
+          รหัสพนักงาน / อีเมล
+        </label>
         <input
+          id="login-identifier"
           autoFocus
           value={identifier}
           onChange={(e) => setIdentifier(e.target.value)}
@@ -50,9 +72,12 @@ export function LoginPage() {
           required
         />
 
-        <label className="mb-1 block text-sm font-medium">รหัสผ่าน</label>
+        <label htmlFor="login-password" className="mb-1 block text-sm font-medium">
+          รหัสผ่าน
+        </label>
         <div className="mb-4 flex items-center rounded-lg border border-[var(--border)]">
           <input
+            id="login-password"
             type={showPassword ? "text" : "password"}
             value={password}
             onChange={(e) => setPassword(e.target.value)}

@@ -35,6 +35,16 @@ AUDIT_ACTION_LOGIN_SUCCESS = "login_success"
 AUDIT_ACTION_LOGIN_FAILURE = "login_failure"
 AUDIT_ACTION_LOGOUT = "logout"
 AUDIT_ACTION_TOKEN_REFRESH = "token_refresh"
+
+# Roadmap PR24D follow-up: an account crossed the consecutive-failure
+# threshold and was locked (auth_service.MAXIMUM_FAILED_LOGIN_ATTEMPTS). A
+# distinct action rather than another login_failure, because "this account
+# got locked" is what an administrator fielding a support call searches for
+# -- burying it among the failures that caused it would make them
+# reconstruct the event by counting rows. Carries no actor: a failed attempt
+# has no authenticated actor (ADR-0001), and the locked account is the
+# subject, not the agent.
+AUDIT_ACTION_ACCOUNT_LOCKED = "account_locked"
 # Roadmap PR9A (docs/audits/03-hospital-equipment-pool-workflow-audit.md §7):
 # a distinct action from AUDIT_ACTION_UPDATE -- this is a narrow, purpose-built
 # correction of a transaction's ward_id, never a generic field update, and the

@@ -8685,20 +8685,69 @@ Operations Engine) started, not merged
   `PASSWORD_TOO_COMMON`, `PASSWORD_CONTAINS_IDENTIFIER` — so the form can
   say which rule was broken in Thai instead of making the user guess.
 
-- **OUTSTANDING, and larger than everything above: there is no login
-  throttle and no account lockout.** Verified — no such code exists. Failed
-  logins are audited and nothing else happens, so an attempt costs an
-  attacker only bcrypt's ~250 ms. Against someone at a ward workstation
-  trying the fifty most likely passwords for a colleague, the blocklist and
-  the identifier rule are the *entire* defence, and a six-character minimum
-  gives them little room.
+- **Login lockout: 5 consecutive failures, 10 minutes, per account — Owner
+  decision.** This was recorded as the outstanding gap in the entry above
+  when the password rules were designed; it is now built
+  (`auth_service.MAXIMUM_FAILED_LOGIN_ATTEMPTS`, `LOCKOUT_DURATION`).
 
-  **A login throttle would be worth more than every rule in this entry
-  combined.** It is not built here because locking staff out of a clinical
-  system mid-shift is an operational decision with patient-safety
-  consequences — the threshold, the lockout duration, and whether it is
-  per-account or per-source-address are the Owner's to set, not something
-  to infer. Recorded as the next security item rather than assumed away.
+  **Stored in PostgreSQL, not Redis.** Redis is optional in this deployment
+  — `GET /api/v1/ready` reports `redis: degraded` and the application keeps
+  serving — so a counter living only in the cache would silently stop
+  existing whenever Redis was down, with nothing reporting that the control
+  had gone. A security control that vanishes without a trace is worse than
+  no control, because its absence is invisible. The columns sit on the row
+  the login path already reads.
+
+  **The cost this buys, stated rather than buried: anyone who knows an
+  employee code can lock that person out for 10 minutes at will**, by
+  failing five times deliberately. That is inherent to per-account lockout —
+  the chosen shape, not a defect — and 10 minutes is short enough to be a
+  nuisance rather than a denial of care. Per-source-address and exponential
+  backoff were the alternatives not chosen.
+
+  **Four properties worth knowing, each with its own test:**
+
+  | Property | Why it matters |
+  |---|---|
+  | The lock is checked **before** the password | Attempts against a locked account do not extend the lock, so an attacker who keeps trying cannot hold the real user out indefinitely |
+  | The lock expires by elapsed time | No job, no cron, no cleanup task — anything that has to *run* to release a lock can fail quietly and leave a nurse locked out through a shift |
+  | The counter is incremented SQL-side | Two simultaneous wrong attempts would otherwise both read the same value and write the same result, letting an attacker stay under the threshold by firing in parallel |
+  | `change-password` shares the counter | It verifies the same secret, so a stolen access token would otherwise be an unlimited oracle for the current password there while `/auth/login` was locked — real on one door, decorative on the other |
+
+  **`ACCOUNT_LOCKED` (HTTP 423) confirms the account exists**, which the
+  login path otherwise refuses to do: it returns the same
+  `INVALID_CREDENTIALS` for an unknown identifier and a wrong password. That
+  is an accepted trade. Employee codes are printed on badges, so "does
+  BME001 exist" is not a secret this API is keeping; and the alternative is a
+  ward nurse whose correct password stops working with no explanation,
+  mid-shift, who keeps trying and extends the lock. Flipping it to a silent
+  `INVALID_CREDENTIALS` is a one-line change in `authenticate`.
+
+  Locking is audited as its own action, `AUDIT_ACTION_ACCOUNT_LOCKED`, not as
+  another `login_failure` — "this account got locked" is what an
+  administrator fielding the support call searches for, and burying it among
+  the failures that caused it would make them reconstruct the event by
+  counting rows.
+
+- **`PATCH /users/{id}` stays free of the password policy — Owner
+  decision.** An Administrator may set any password for another user: no
+  minimum length, no character set, no blocklist, no identifier rule. The
+  credential it produces is temporary by construction
+  (`must_change_password = True`), so the owner must replace it with a
+  policy-conforming one before they can use the application. A test asserts
+  that `"ab"` — below the minimum, no digit, too few distinct characters —
+  is accepted here and that the account is then required to change it.
+
+  **One check still applies on that path, and it is not policy:**
+  `bcrypt.hashpw` raises above 72 bytes, so without a guard an Administrator
+  typing a long password got an unhandled HTTP 500. It is now refused as
+  `INVALID_INPUT` with an explanation. This closes the gap the previous
+  entry flagged, without imposing the policy the Owner excluded.
+
+  Setting a password here also clears any lockout: the Administrator is
+  already resetting the credential, and leaving the account locked for
+  another ten minutes would just produce a second support call for the same
+  incident.
 
 - **The bootstrap one-time password now uses the same alphabet.** It came
   from `secrets.token_urlsafe`, whose base64url set includes `-` and `_` —

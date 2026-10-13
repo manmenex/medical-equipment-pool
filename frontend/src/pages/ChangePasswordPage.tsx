@@ -123,7 +123,12 @@ export function ChangePasswordPage() {
       navigate("/", { replace: true });
     } catch (err) {
       const code = (err as { response?: { data?: { code?: string } } })?.response?.data?.code;
-      if (code === "INVALID_CREDENTIALS") {
+      if (code === "ACCOUNT_LOCKED") {
+        setError(
+          "บัญชีนี้ถูกล็อกชั่วคราว เพราะใส่รหัสผ่านปัจจุบันผิดหลายครั้งติดกัน " +
+            "กรุณารอประมาณ 10 นาทีแล้วลองใหม่",
+        );
+      } else if (code === "INVALID_CREDENTIALS") {
         setError("รหัสผ่านปัจจุบันไม่ถูกต้อง");
       } else if (code === "SAME_PASSWORD") {
         setError("รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม");

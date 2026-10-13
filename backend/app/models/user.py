@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, ForeignKey, String, UniqueConstraint, text
+from sqlalchemy import Boolean, ForeignKey, Integer, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
@@ -101,6 +101,28 @@ class User(UUIDPKMixin, TimestampMixin, Base):
     must_change_password: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false"), nullable=False
     )
+    # --- Login lockout (Owner decision: 5 failures, 10 minutes, per account)
+    #
+    # Stored in PostgreSQL, not Redis, deliberately. Redis is optional in
+    # this deployment -- `GET /api/v1/ready` reports `redis: degraded` and
+    # the application keeps serving -- so a lockout counter living only in
+    # the cache would silently stop existing exactly when nobody is
+    # watching. A security control that disappears without a trace is worse
+    # than no control, because the absence is invisible.
+    #
+    # Counts consecutive failures. Reset to 0 by any successful
+    # authentication, and by an Administrator setting a new password (they
+    # are already resetting the credential; leaving the account locked would
+    # just mean a second support call).
+    failed_login_attempts: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0"), nullable=False
+    )
+    # NULL means not locked. Compared against `now()` on every attempt, so a
+    # lock expires on its own with nothing scheduled to clear it -- no job,
+    # no cron, nothing that can fail silently and leave somebody locked out
+    # through a shift.
+    locked_until: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
     last_login_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     # Roadmap PR10 migration provenance (mirrors BorrowTransaction.
     # legacy_status's established pattern, Roadmap PR7): the exact legacy
