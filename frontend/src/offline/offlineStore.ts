@@ -117,6 +117,9 @@ const MIGRATIONS: Upgrade[] = [
   },
 ];
 
+/** Number of migration steps; must equal DB_VERSION (asserted in tests). */
+export const MIGRATION_COUNT = MIGRATIONS.length;
+
 let dbPromise: Promise<IDBPDatabase<OfflineDB>> | null = null;
 
 function classify(error: unknown, fallback = "Offline storage failed"): OfflineStoreError {
@@ -166,6 +169,17 @@ export function openOfflineDb(): Promise<IDBPDatabase<OfflineDB>> {
     throw classify(e);
   });
   return dbPromise;
+}
+
+/**
+ * PR25E S6: rows still to be delivered (pending / sending / held) for ANY user
+ * on this device. Used to decide whether an app update may reload the page.
+ */
+export async function listAllActiveOutboxCount(): Promise<number> {
+  return guarded(async (db) => {
+    const rows = await db.getAll("outbox");
+    return rows.filter((r) => r.state === "pending" || r.state === "sending" || r.state === "held").length;
+  });
 }
 
 /** Close the cached connection (tests, "reload" simulation). */

@@ -11,7 +11,8 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: "autoUpdate",
+      // PR25E S6: never reload on a new service worker by itself (design 13.3).
+      registerType: "prompt",
       includeAssets: ["icons/icon-192.png", "icons/icon-512.png"],
       manifest: {
         name: "Medical Equipment Pool",
