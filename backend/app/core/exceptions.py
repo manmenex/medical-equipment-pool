@@ -804,3 +804,21 @@ class SyncApplyFailedError(DomainError):
 
     code = "SYNC_APPLY_FAILED"
     status_code = 409
+
+
+class ClientTooOldError(DomainError):
+    """Roadmap PR25E slice S6 (design 13.3): the sync envelope version is
+    older than the server still understands. Whole-request 426; the client
+    keeps its queue untouched and asks the operator to reload the app."""
+
+    code = "CLIENT_TOO_OLD"
+    status_code = 426
+
+
+class EnvelopeVersionUnsupportedError(DomainError):
+    """Roadmap PR25E slice S6: the sync envelope version is newer than this
+    server understands (e.g. a new frontend reached an old backend; deploy
+    order is backend first). Whole-request 400; nothing is written."""
+
+    code = "ENVELOPE_VERSION_UNSUPPORTED"
+    status_code = 400
