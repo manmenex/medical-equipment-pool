@@ -936,8 +936,11 @@ function Install-MepSourceTree {
     }
 
     $oldRoot = Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($TargetDir))) ('.mep-old-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    Write-Host "The previous code is kept in $oldRoot until the replace succeeds (do not delete it while this runs)."
     $moved = New-Object System.Collections.Generic.List[string]
     $copied = New-Object System.Collections.Generic.List[string]
+    $committed = $false
+    $failure = $null
     try {
         foreach ($rel in (Get-MepSourceUnits -Root $TargetDir)) {
             $src = Join-MepRelative $TargetDir $rel
@@ -952,31 +955,40 @@ function Install-MepSourceTree {
             $copied.Add($rel)   # recorded first: a half-copied unit must be removed too
             Copy-MepUnit -Source (Join-MepRelative $StagedRoot $rel) -Destination $dst
         }
+        $committed = $true
     }
     catch {
+        # Ordinary errors only. Ctrl+C raises PipelineStoppedException, which
+        # skips this block, so the restore below lives in `finally`.
         $failure = $_.Exception.Message
-        $problems = @()
-        foreach ($rel in $copied) {
-            $dst = Join-MepRelative $TargetDir $rel
-            try { if (Test-Path -LiteralPath $dst) { Remove-Item -LiteralPath $dst -Recurse -Force } }
-            catch { $problems += "could not remove partial copy $dst" }
-        }
-        foreach ($rel in $moved) {
-            $src = Join-MepRelative $TargetDir $rel
-            $old = Join-MepRelative $oldRoot $rel
-            try {
-                $parent = Split-Path -Parent $src
-                if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-                Move-Item -LiteralPath $old -Destination $src
+    }
+    finally {
+        if (-not $committed) {
+            $problems = @()
+            foreach ($rel in $copied) {
+                $dst = Join-MepRelative $TargetDir $rel
+                try { if (Test-Path -LiteralPath $dst) { Remove-Item -LiteralPath $dst -Recurse -Force } }
+                catch { $problems += "could not remove partial copy $dst" }
             }
-            catch { $problems += "could not restore $src from $old" }
+            foreach ($rel in $moved) {
+                $src = Join-MepRelative $TargetDir $rel
+                $old = Join-MepRelative $oldRoot $rel
+                try {
+                    $parent = Split-Path -Parent $src
+                    if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+                    Move-Item -LiteralPath $old -Destination $src
+                }
+                catch { $problems += "could not restore $src from $old" }
+            }
+            if ($problems.Count -gt 0) {
+                throw "Replacing the code was interrupted AND automatic restore was incomplete: $($problems -join '; '). The previous files are in $oldRoot. Ask the system administrator; do not delete that folder."
+            }
+            if (Test-Path -LiteralPath $oldRoot) {
+                try { Remove-Item -LiteralPath $oldRoot -Recurse -Force } catch { Write-Host "WARNING: could not remove leftover folder $oldRoot" -ForegroundColor Yellow }
+            }
         }
-        if ($problems.Count -gt 0) {
-            throw "Replacing the code failed ($failure) AND automatic restore was incomplete: $($problems -join '; '). The previous files are in $oldRoot. Ask the system administrator; do not delete that folder."
-        }
-        if (Test-Path -LiteralPath $oldRoot) {
-            try { Remove-Item -LiteralPath $oldRoot -Recurse -Force } catch { Write-Host "WARNING: could not remove leftover folder $oldRoot" -ForegroundColor Yellow }
-        }
+    }
+    if ($null -ne $failure) {
         throw "Replacing the code failed ($failure). The previous version was restored; nothing was changed."
     }
     try { Remove-Item -LiteralPath $oldRoot -Recurse -Force }

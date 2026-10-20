@@ -717,6 +717,46 @@ Test-Case 'a copy failure mid-replace restores the previous tree and leaves no p
     finally { Remove-TempDir $tmp }
 }
 
+Test-Case 'Ctrl+C (PipelineStoppedException) mid-replace also restores the previous tree' {
+    $tmp = New-TempDir
+    try {
+        $root = New-InstalledTree $tmp
+        $zip = Join-Path $tmp 'src.zip'
+        New-TestZip -Path $zip -Entries (Get-SourceEntries -Root 'medical-equipment-pool-x' -Migrations @('0001_init.py', '0002_new.py')) -Comment $script:ShaB
+        # PipelineStoppedException unwinds past ordinary catch blocks (including
+        # this harness's), so the replace runs in its own runspace.
+        $code = @'
+param($lib, $zip, $root)
+Set-StrictMode -Version Latest
+. $lib
+$script:copies = 0
+function Copy-MepUnit {
+    param([string]$Source, [string]$Destination)
+    $script:copies++
+    if ($script:copies -ge 2) { throw [System.Management.Automation.PipelineStoppedException]::new() }
+    Copy-Item -LiteralPath $Source -Destination $Destination -Recurse -Force
+}
+Install-MepSourceFromZip -ZipPath $zip -TargetDir $root | Out-Null
+'@
+        $ps = [powershell]::Create()
+        try {
+            [void]$ps.AddScript($code).AddArgument($script:LibPath).AddArgument($zip).AddArgument($root)
+            try { [void]$ps.Invoke() } catch { }
+            Assert-True ($ps.HadErrors -or $ps.InvocationStateInfo.State -ne 'Completed') 'the injected stop actually interrupted the replace'
+        }
+        finally { $ps.Dispose() }
+        $dep = Join-Path (Join-Path $root 'deployment') 'local-staging'
+        Assert-Equal 'old' ((Get-Content -LiteralPath (Join-Path $dep 'compose.yml') -Raw).Trim()) 'old compose.yml back'
+        Assert-True (Test-Path -LiteralPath (Join-Path $dep 'old-only.ps1')) 'old script back'
+        Assert-True (Test-Path -LiteralPath (Join-Path $root 'backend/alembic/versions/0000_stale.py')) 'old migration back'
+        Assert-True (Test-Path -LiteralPath (Join-Path $root '.git/HEAD')) '.git back'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $root 'backend/alembic/versions/0002_new.py'))) 'no partial new file'
+        Assert-Equal 'SECRET=keep-me' ((Get-Content -LiteralPath (Join-Path $dep '.env') -Raw).Trim()) '.env untouched'
+        Assert-Equal 0 @(Get-ChildItem -LiteralPath $tmp -Force -Directory | Where-Object { $_.Name -like '.mep-old-*' }).Count 'no leftover .mep-old folder'
+    }
+    finally { Remove-TempDir $tmp }
+}
+
 Test-Case 'insufficient free space refuses before anything is moved' {
     $tmp = New-TempDir
     try {
