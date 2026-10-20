@@ -7,6 +7,7 @@ import { QRScanner } from "@/components/QRScanner";
 import { OfflineReceiptForm } from "@/components/OfflineReceiptForm";
 import { WardCorrectionAction } from "@/components/WardCorrectionAction";
 import { canCorrectTransactionWard, useAuth } from "@/hooks/useAuth";
+import { useDirtyForm } from "@/hooks/useDirtyForm";
 import { useOfflineMode } from "@/hooks/useOfflineMode";
 import { apiErrorCode, apiErrorMessage } from "@/services/api";
 import { createReturn, listActiveBorrows } from "@/services/borrow";
@@ -79,6 +80,7 @@ export function ReturnPage() {
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  useDirtyForm(transaction !== null && !success);
   const [submitting, setSubmitting] = useState(false);
 
   // Roadmap PR9B: only fetched when the current user can even reach the

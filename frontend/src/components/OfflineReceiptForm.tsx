@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { useDirtyForm } from "@/hooks/useDirtyForm";
+
 import { OfflineStaleGate } from "@/components/OfflineStaleGate";
 import {
   enqueueOfflineReceipt,
@@ -30,6 +32,7 @@ export function OfflineReceiptForm() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  useDirtyForm(selected !== null && !saved);
 
   const load = () =>
     listReceiptCandidates()

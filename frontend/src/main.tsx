@@ -6,9 +6,12 @@ import { BrowserRouter } from "react-router-dom";
 import { App } from "@/App";
 import "@/index.css";
 import { queryClient } from "@/lib/queryClient";
+import { captureInstallPrompt, registerServiceWorker } from "@/offline/pwa";
 import { applyTheme, useUiStore } from "@/store/uiStore";
 
 applyTheme(useUiStore.getState().theme);
+captureInstallPrompt();
+void registerServiceWorker().catch(() => undefined);
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import { useOfflineMode } from "@/hooks/useOfflineMode";
 import { countMyConflicts, countMyUnsent } from "@/offline/localOps";
-import { subscribeSync } from "@/offline/syncWorker";
+import { getSyncState, subscribeSync } from "@/offline/syncWorker";
 import { useAuthStore } from "@/store/authStore";
 
 // PR25E S4 (design 14): connection chip + pending badge. Polls the local
@@ -12,10 +12,12 @@ export function OfflineStatusChip() {
   const userId = useAuthStore((s) => s.user?.id);
   const [pending, setPending] = useState(0);
   const [conflicts, setConflicts] = useState(0);
+  const [versionMismatch, setVersionMismatch] = useState(false);
 
   useEffect(() => {
     let live = true;
     const refresh = () => {
+      setVersionMismatch(getSyncState().lastError === "ENVELOPE_VERSION_UNSUPPORTED");
       void countMyUnsent()
         .then((n) => live && setPending(n))
         .catch(() => undefined);
@@ -38,6 +40,11 @@ export function OfflineStatusChip() {
       {offline && (
         <span className="rounded-full bg-status-repair/15 px-2 py-0.5 text-status-repair">
           เซิร์ฟเวอร์ไม่พร้อม — ทำงานแบบออฟไลน์
+        </span>
+      )}
+      {versionMismatch && (
+        <span className="rounded-full bg-status-repair/15 px-2 py-0.5 text-status-repair">
+          เซิร์ฟเวอร์ยังเป็นเวอร์ชันเก่า ส่งข้อมูลไม่ได้ชั่วคราว — รายการยังอยู่ครบ แจ้งผู้ดูแลระบบ
         </span>
       )}
       {pending > 0 && (

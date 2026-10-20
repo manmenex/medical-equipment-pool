@@ -129,3 +129,18 @@ Whole-request validation happens before any write: an unknown id `404`; a repeat
 ### `GET /api/v1/sync/collisions/export`
 
 **Roles:** Administrator only; same `from`/`to`. `text/csv` attachment (UTF-8 with BOM, `Cache-Control: no-store`) with columns `op_id, op_type, status, result_code, resolution, bcm_code, ward, operator, resolved_by, occurred_at, received_at, resolved_at, device_id, stale_context, time_flag`. No payload, notes or patient data (none exists); cells that start with a formula character are prefixed with `'`.
+
+## Envelope versioning and app updates (slice S6)
+
+Design: `docs/design/PR25D_OFFLINE_OPERATION_PLAN.md` section 13.3.
+
+Each operation may carry `envelope_version` (integer, optional, default `1`). A missing field means version 1, so operations queued on a device before S6 are accepted unchanged. The server supports `MIN_SUPPORTED_ENVELOPE_VERSION` (1) through `CURRENT_ENVELOPE_VERSION` (1), defined in `backend/app/schemas/sync.py`. The check covers the whole request before anything is processed or written; one bad operation rejects the batch.
+
+| Condition | HTTP | `code` | Client behaviour |
+|---|---|---|---|
+| version below the minimum supported | `426` | `CLIENT_TOO_OLD` | Queue untouched (rows return to `pending`); the app shows "update required" and stops sending until reloaded. |
+| version above the current | `400` | `ENVELOPE_VERSION_UNSUPPORTED` | Queue untouched; the status chip tells the operator the server is on an older version; backs off and retries (a newer frontend reached an older backend: deploy-order mistake). |
+
+Rules for future envelope changes: additive only; raise `CURRENT_ENVELOPE_VERSION` in the release that adds a field; keep the previous version in range for at least one release; raise `MIN_SUPPORTED_ENVELOPE_VERSION` only when the old contract is dropped, which turns stale clients into `CLIENT_TOO_OLD` instead of silent misbehaviour. The client constant is `ENVELOPE_VERSION` in `frontend/src/offline/localOps.ts`.
+
+Client update behaviour: the PWA uses `registerType: "prompt"`. A new service worker waits; the operator sees "มีเวอร์ชันใหม่" and taps update. After `CLIENT_TOO_OLD` the pending-row check is skipped (the queue can only drain after the reload, and IndexedDB survives it). Otherwise the reload is refused while any outbox row is `pending`/`sending`/`held` (any user on the device), a dispatch/receipt form is dirty, or the sync worker is mid-send. IndexedDB (`mep-offline`) is upgraded in place by forward-only migrations (`MIGRATIONS` in `offlineStore.ts`); a database newer than the app yields `STORE_TOO_NEW` and is never touched. Deploy order: backend first, then frontend (`docs/runbooks/PR24_STAGING_DEPLOYMENT_RUNBOOK.md`, section 11A).

@@ -1,5 +1,6 @@
 import { deleteLegacyApiCache, useAuthStore } from "@/store/authStore";
 
+import { requestPersistentStorage } from "./pwa";
 import { startSnapshotRefresh } from "./snapshot";
 import { resetStaleAcknowledgement } from "./staleness";
 import { startSyncWorker } from "./syncWorker";
@@ -11,6 +12,7 @@ import { startSyncWorker } from "./syncWorker";
  */
 export function startOfflineServices(): () => void {
   void deleteLegacyApiCache();
+  void requestPersistentStorage(); // design 13.1
   const stopSync = startSyncWorker();
   const stopSnapshot = startSnapshotRefresh();
   const unsub = useAuthStore.subscribe((s, prev) => {
