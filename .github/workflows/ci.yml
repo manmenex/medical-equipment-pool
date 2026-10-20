@@ -64,7 +64,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: backend/requirements.lock
 
       # Roadmap PR18D: WeasyPrint (the backend PDF renderer, exercised by
       # app.api.v1.reports's PDF export tests) loads Pango/HarfBuzz at
@@ -74,7 +74,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
 
       - name: Install backend dependencies
-        run: pip install -r requirements.txt
+        run: pip install --require-hashes -r requirements.lock
 
       # tests/conftest.py sets DATABASE_URL to an in-memory SQLite database
       # and CACHE_ENABLED=false via os.environ.setdefault(...) before the
@@ -159,14 +159,14 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: backend/requirements.lock
 
       # Roadmap PR18D: see the matching step in the backend-tests job above.
       - name: Install WeasyPrint native dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
 
       - name: Install backend dependencies
-        run: pip install -r requirements.txt
+        run: pip install --require-hashes -r requirements.lock
 
       # Fail closed, before pytest ever runs: tests/test_postgres_integration.py's
       # own fixtures call pytest.skip() whenever PostgreSQL is unreachable/unusable
@@ -264,10 +264,10 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: backend/requirements.lock
 
       - name: Install backend dependencies
-        run: pip install -r requirements.txt
+        run: pip install --require-hashes -r requirements.lock
 
       # A standalone, single-purpose gate distinct from the exhaustive
       # postgres-marked pytest suite above: proves every migration in

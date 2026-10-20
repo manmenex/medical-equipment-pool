@@ -44,18 +44,14 @@ RUN install -d /usr/share/postgresql-common/pgdg \
     && apt-get install -y --no-install-recommends postgresql-client-16 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-
-# Roadmap PR18D review 4838921407 round 2 (H3): requirements.txt stays a
-# single file (no new dependency-file hierarchy, per the approved PR18D
-# plan) -- but pdfplumber and the other test-only packages (see
-# requirements.txt's own "testing / local sqlite fallback" comment) must
-# never ship in the production image. This filters them out by name before
-# install; CI's backend-tests/backend-postgres-tests jobs still
-# `pip install -r requirements.txt` directly (the full file, unfiltered) on
-# the runner, so pytest continues to see every test dependency there.
-RUN grep -vE '^(aiosqlite|pytest|pytest-asyncio|httpx|pdfplumber|PyYAML)([><=~! ]|$)' requirements.txt > requirements.runtime.txt \
-    && pip install --no-cache-dir -r requirements.runtime.txt
+# Reproducible install: requirements.runtime.lock is the hash-verified,
+# fully pinned runtime set (direct + transitive), generated from
+# requirements.txt minus the test-only packages (pytest, pytest-asyncio,
+# httpx, aiosqlite, pdfplumber, PyYAML), which therefore never ship in the
+# production image. CI installs the full requirements.lock instead. Both are
+# regenerated together -- see docs/runbooks/DEPENDENCY_UPGRADES.md.
+COPY requirements.runtime.lock .
+RUN pip install --no-cache-dir --require-hashes -r requirements.runtime.lock
 
 COPY . .
 
