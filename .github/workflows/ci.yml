@@ -522,6 +522,65 @@ jobs:
       - name: TypeScript check and production build
         run: npm run build
 
+  # PR25E E1: offline browser drills (Playwright + Chromium) against the real
+  # backend on throwaway SQLite with synthetic fixtures and the built frontend.
+  # A separate job so it never lengthens the backend shards. Evidence class:
+  # local rehearsal, not UAT and not PostgreSQL evidence.
+  frontend-e2e-drills:
+    name: Offline browser drills (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.lock
+
+      - name: Install WeasyPrint native dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install --require-hashes -r requirements.lock
+
+      - name: Install frontend dependencies (npm ci)
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Run offline drills
+        working-directory: frontend
+        run: npx playwright test
+
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: frontend/test-results
+          if-no-files-found: ignore
+
   frontend-healthcheck-smoke-test:
     name: Frontend image healthcheck (build + container health)
     runs-on: ubuntu-latest

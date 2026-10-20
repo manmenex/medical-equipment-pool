@@ -40,6 +40,16 @@ export async function loginAndWaitForSnapshot(page: Page, who: Persona): Promise
     // last_snapshot_at is written only after ALL snapshot sections are stored.
     .poll(() => hasMeta(page, "last_snapshot_at"), { message: "reference snapshot stored", timeout: 30_000 })
     .toBe(true);
+  // Finding (E1): with registerType "prompt" the service worker installed on the
+  // very first visit does not control that page until it is reloaded, so a
+  // lazily loaded route (e.g. /borrow) fails offline in that first session. A
+  // real device has normally been opened more than once; reload like it would.
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  if (!(await page.evaluate(() => Boolean(navigator.serviceWorker.controller)))) {
+    await page.reload();
+    await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
+    await expect(page.getByText("หน้าหลัก").first()).toBeVisible();
+  }
 }
 
 export async function hasMeta(page: Page, name: string): Promise<boolean> {

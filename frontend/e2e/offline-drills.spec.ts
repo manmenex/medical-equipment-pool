@@ -255,3 +255,55 @@ test("g: staleness warning after 4 hours requires acknowledgement and stays as a
   await expect(page.getByRole("status").filter({ hasText: "ไม่ได้ซิงค์มานานกว่า 4 ชั่วโมง" })).toBeVisible();
   await context.close();
 });
+
+test("f: outdated envelope version -> CLIENT_TOO_OLD keeps the queue and asks for an update", async ({ browser }) => {
+  const code = bcm(6);
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const api = await apiContext();
+  const adminToken = await apiLogin(api, USERS.admin);
+
+  await loginAndWaitForSnapshot(page, USERS.poolA);
+  await goOffline(context, page);
+  await dispatchByBcm(page, code);
+  await expectSavedLocally(page);
+  const [rec] = await outboxRecords(page);
+  // Simulate an old installed app: its queued envelope predates the version
+  // the server still accepts (MIN_SUPPORTED_ENVELOPE_VERSION = 1).
+  await page.evaluate(
+    (id) =>
+      new Promise<void>((resolve, reject) => {
+        const open = indexedDB.open("mep-offline");
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const tx = open.result.transaction("outbox", "readwrite");
+          const store = tx.objectStore("outbox");
+          const get = store.get(id);
+          get.onsuccess = () => {
+            const r = get.result;
+            r.envelope.envelope_version = 0;
+            store.put(r);
+          };
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        };
+      }),
+    rec.op_id,
+  );
+
+  await goOnline(context);
+  await expect(page.getByText("ต้องอัปเดตแอปก่อนส่งข้อมูลต่อ")).toBeVisible({ timeout: 60_000 });
+  // Nothing was applied and nothing was lost.
+  expect(await outboxRecords(page)).toHaveLength(1);
+  expect(await equipmentStatus(api, adminToken, code)).toBe("available_at_pool");
+  expect(await transactionsFor(api, adminToken, code)).toHaveLength(0);
+  // For a required update the reload must NOT be blocked by pending rows (the
+  // queue can only drain after the reload), and the queue survives it.
+  const reloaded = page.waitForEvent("load");
+  await page.getByRole("button", { name: "อัปเดตและรีโหลด" }).click();
+  await reloaded;
+  await expect(page.getByText("หน้าหลัก").first()).toBeVisible();
+  expect(await outboxRecords(page)).toHaveLength(1);
+  expect(await equipmentStatus(api, adminToken, code)).toBe("available_at_pool");
+  await context.close();
+});
