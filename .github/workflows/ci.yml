@@ -64,7 +64,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: backend/requirements.lock
 
       # Roadmap PR18D: WeasyPrint (the backend PDF renderer, exercised by
       # app.api.v1.reports's PDF export tests) loads Pango/HarfBuzz at
@@ -74,7 +74,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
 
       - name: Install backend dependencies
-        run: pip install -r requirements.txt
+        run: pip install --require-hashes -r requirements.lock
 
       # tests/conftest.py sets DATABASE_URL to an in-memory SQLite database
       # and CACHE_ENABLED=false via os.environ.setdefault(...) before the
@@ -159,14 +159,14 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: backend/requirements.lock
 
       # Roadmap PR18D: see the matching step in the backend-tests job above.
       - name: Install WeasyPrint native dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
 
       - name: Install backend dependencies
-        run: pip install -r requirements.txt
+        run: pip install --require-hashes -r requirements.lock
 
       # Fail closed, before pytest ever runs: tests/test_postgres_integration.py's
       # own fixtures call pytest.skip() whenever PostgreSQL is unreachable/unusable
@@ -264,10 +264,10 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: backend/requirements.lock
 
       - name: Install backend dependencies
-        run: pip install -r requirements.txt
+        run: pip install --require-hashes -r requirements.lock
 
       # A standalone, single-purpose gate distinct from the exhaustive
       # postgres-marked pytest suite above: proves every migration in
@@ -306,9 +306,19 @@ jobs:
       # (which installs the WeasyPrint native Pango/HarfBuzz packages, see
       # backend/Dockerfile) was previously never actually built anywhere in
       # CI -- backend-tests/backend-postgres-tests install
-      # requirements.txt directly on the runner, not via the Dockerfile.
+      # requirements.lock directly on the runner, not via the Dockerfile
+      # (which installs requirements.runtime.lock).
       - name: Build production image
         run: docker build -t mep-backend:ci ./backend
+
+      # Production-only scripts run inside this image (e.g. Drive backup via
+      # deployment/local-staging/lib/DriveBackup.ps1). If one imports a
+      # package missing from requirements.runtime.lock it fails only in
+      # production, so prove the import here.
+      - name: Production scripts import inside the image
+        run: |
+          docker run --rm --entrypoint python mep-backend:ci \
+            -c "import scripts.drive_backup, scripts.backup_postgres, scripts.restore_postgres"
 
       # Round 2 (H2): a build-only smoke test cannot prove the native
       # runtime dependencies and embedded fonts actually work -- only
@@ -578,6 +588,25 @@ jobs:
       - name: Stop the container
         if: always()
         run: docker rm -f mep-frontend-smoke || true
+
+  dependency-lock-check:
+    name: Dependency lock drift
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        run: pip install uv==0.11.32
+
+      # Re-resolves requirements.txt constrained to the committed lock and
+      # fails if requirements.lock / requirements.runtime.lock differ, i.e.
+      # requirements.txt changed without regenerating the locks. It never
+      # upgrades anything on its own.
+      - name: Check backend locks are up to date
+        run: backend/scripts/lock_deps.sh check
 
   whitespace-check:
     name: git diff --check

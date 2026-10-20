@@ -366,3 +366,38 @@ async def test_actor_defaults_to_operator_and_can_differ(db_session, seeded_user
     assert ret.user_id == admin.id
     await db_session.refresh(tx)
     assert tx.received_by_user_id == staff.id
+
+
+async def test_s6_envelope_version_compat(client, ctx, db_session):
+    """S6: a missing envelope_version (queued before S6) is version 1 and
+    accepted; explicit 1 is accepted; 0 is CLIENT_TOO_OLD (426); a future
+    version is ENVELOPE_VERSION_UNSUPPORTED (400). Rejections write nothing."""
+    ledger_before = await _count(db_session, ClientOperation)
+    old = dispatch_op(ctx["staff_id"], ctx["eq"], ctx["ward"], seq=1)
+    assert "envelope_version" not in old
+    assert (await _send(client, ctx["staff"], old))[0]["result"] == "applied"
+
+    eq2 = await _equipment(client, ctx["admin"], n=2)
+    v1 = dispatch_op(ctx["staff_id"], eq2, ctx["ward"], seq=1, device_id=old["device_id"])
+    v1["device_seq"] = 2
+    v1["envelope_version"] = 1
+    assert (await _send(client, ctx["staff"], v1))[0]["result"] == "applied"
+
+    count_after_ok = await _count(db_session, ClientOperation)
+    assert count_after_ok == ledger_before + 2
+
+    eq3 = await _equipment(client, ctx["admin"], n=3)
+    too_old = dispatch_op(ctx["staff_id"], eq3, ctx["ward"], seq=1)
+    too_old["envelope_version"] = 0
+    body = await _send(client, ctx["staff"], too_old, expect=426)
+    assert body["code"] == "CLIENT_TOO_OLD"
+
+    future = dispatch_op(ctx["staff_id"], eq3, ctx["ward"], seq=1)
+    future["envelope_version"] = 2
+    body = await _send(client, ctx["staff"], future, expect=400)
+    assert body["code"] == "ENVELOPE_VERSION_UNSUPPORTED"
+
+    # One bad op rejects the whole request: the good op in the batch is not applied.
+    good = dispatch_op(ctx["staff_id"], eq3, ctx["ward"], seq=1)
+    await _send(client, ctx["staff"], good, future, expect=400)
+    assert await _count(db_session, ClientOperation) == count_after_ok

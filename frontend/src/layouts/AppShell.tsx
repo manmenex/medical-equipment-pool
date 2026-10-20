@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
+import { UpdateNotice } from "@/components/UpdateNotice";
 import { OfflineStatusChip } from "@/components/OfflineStatusChip";
 import {
   canDispatchOrReceiveEquipment,
@@ -208,6 +209,7 @@ export function AppShell() {
       </aside>
 
       <div className="flex min-h-screen flex-1 flex-col">
+        <UpdateNotice />
         <header className="surface flex items-center justify-between border-b px-4 py-3">
           <div className="text-sm font-medium md:hidden">Medical Equipment Pool</div>
           <div className="hidden text-sm text-[var(--text-muted)] md:block">

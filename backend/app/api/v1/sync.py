@@ -18,7 +18,7 @@ from app.api.v1.deps import (
 from app.core.security import decode_token
 from app.core.exceptions import InvalidInputError
 from app.db.session import get_db
-from app.schemas.sync import SyncBatchRequest, SyncBatchResponse
+from app.schemas.sync import SyncBatchRequest, SyncBatchResponse, check_envelope_versions
 from app.schemas.sync_read import (
     SyncSnapshotPage,
     SyncStatsResponse,
@@ -71,6 +71,7 @@ async def submit_operations(
     db: AsyncSession = Depends(get_db),
     user=Depends(require_roles(*EQUIPMENT_POOL_OPERATION_ROLES)),
 ):
+    check_envelope_versions(payload.operations)
     ip = request.client.host if request.client else None
     ua = request.headers.get("user-agent")
     results = await sync_service.process_batch(

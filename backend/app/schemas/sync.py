@@ -24,6 +24,12 @@ MAX_DEVICE_SEQ = 2**62
 OP_TYPE_DISPATCH = "dispatch"
 OP_TYPE_RECEIPT = "receipt"
 
+# Roadmap PR25E slice S6 (design 13.3). Envelope changes are additive; the
+# server accepts MIN_SUPPORTED_ENVELOPE_VERSION..CURRENT_ENVELOPE_VERSION.
+# A missing field means version 1 (clients queued before S6).
+CURRENT_ENVELOPE_VERSION = 1
+MIN_SUPPORTED_ENVELOPE_VERSION = 1
+
 RESULT_APPLIED = "applied"
 RESULT_DUPLICATE = "duplicate"
 RESULT_CONFLICT = "conflict"
@@ -47,6 +53,9 @@ class SyncOperation(BaseModel):
     # the real user from the token and rejects a mismatch (OP_USER_MISMATCH).
     user_id: UUID
     op_type: Literal["dispatch", "receipt"]
+    # Range-checked per request by ``check_envelope_versions`` (not here) so a
+    # stale or future client gets a stable, specific code instead of a 422.
+    envelope_version: int = Field(default=1, ge=0, le=2**31)
     occurred_at_local: datetime
     clock_offset_ms: int | None = Field(default=None, ge=-(2**40), le=2**40)
     # Section 9.8: seconds since the device's last successful snapshot when the
@@ -113,3 +122,18 @@ class SyncOpResult(BaseModel):
 
 class SyncBatchResponse(BaseModel):
     results: list[SyncOpResult]
+
+
+def check_envelope_versions(operations: list[SyncOperation]) -> None:
+    """Whole-request guard run before anything is processed or written."""
+    from app.core.exceptions import ClientTooOldError, EnvelopeVersionUnsupportedError
+
+    versions = {o.envelope_version for o in operations}
+    if any(v < MIN_SUPPORTED_ENVELOPE_VERSION for v in versions):
+        raise ClientTooOldError(
+            "This app version is too old to sync. Reload the app; your saved entries are kept."
+        )
+    if any(v > CURRENT_ENVELOPE_VERSION for v in versions):
+        raise EnvelopeVersionUnsupportedError(
+            f"Unsupported envelope_version; this server supports up to {CURRENT_ENVELOPE_VERSION}."
+        )
