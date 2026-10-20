@@ -22,10 +22,15 @@ def adopt(op):
     return {**op, "adopt": True, "original_user_id": op["user_id"]}
 
 
-def _token(user_id: str, *, age_minutes: float) -> dict:
+def _token(user_id: str, *, age_minutes: float | None, iat_fresh: bool = True) -> dict:
+    """Access token whose password-login time (auth_time) is `age_minutes` old;
+    None omits the claim. iat is always fresh (as after a refresh)."""
     now = datetime.now(timezone.utc)
+    claims = {"sub": user_id, "type": "access", "iat": now, "exp": now + timedelta(hours=1)}
+    if age_minutes is not None:
+        claims["auth_time"] = int((now - timedelta(minutes=age_minutes)).timestamp())
     tok = jwt.encode(
-        {"sub": user_id, "type": "access", "iat": now - timedelta(minutes=age_minutes), "exp": now + timedelta(hours=1)},
+        claims,
         settings.JWT_SECRET_KEY,
         algorithm=settings.JWT_ALGORITHM,
     )
@@ -41,7 +46,7 @@ async def test_adopt_with_fresh_token_ok_and_issue_time_audited(client, ctx, db_
     [res] = await _send(client, _token(ctx["admin_id"], age_minutes=14), op)
     assert res["result"] == "applied"
     [audit] = await _audit_adopt(db_session)
-    assert audit.after_data["token_issued_at"] is not None
+    assert audit.after_data["auth_time"] is not None
 
 
 async def test_adopt_with_stale_token_rejected_nothing_written(client, ctx, db_session):
@@ -85,3 +90,36 @@ async def test_adopting_pending_row_created_by_original_user(client, ctx, db_ses
     ).scalar_one()
     assert str(row.user_id) == ctx["staff_id"] and str(row.submitted_by_user_id) == ctx["admin_id"]
     assert row.adopted_at is not None
+
+
+async def test_adopt_without_auth_time_claim_fails_closed(client, ctx):
+    op = adopt(dispatch_op(ctx["staff_id"], ctx["eq"], ctx["ward"]))
+    [res] = await _send(client, _token(ctx["admin_id"], age_minutes=None), op)
+    assert res["code"] == "ADOPT_REAUTH_REQUIRED"
+
+
+async def test_refresh_does_not_renew_auth_time(client, ctx):
+    from app.core.redis import store_refresh_token
+    from app.core.security import create_refresh_token, decode_token
+
+    old = int((datetime.now(timezone.utc) - timedelta(minutes=30)).timestamp())
+    refresh = create_refresh_token(ctx["admin_id"], old)
+    await store_refresh_token(decode_token(refresh)["jti"], ctx["admin_id"], ttl_seconds=3600)
+    client.cookies.set("refresh_token", refresh)
+    r = await client.post("/api/v1/auth/refresh")
+    assert r.status_code == 200, r.text
+    access = r.json()["access_token"]
+    assert decode_token(access)["auth_time"] == old
+    op = adopt(dispatch_op(ctx["staff_id"], ctx["eq"], ctx["ward"]))
+    [res] = await _send(client, {"Authorization": f"Bearer {access}"}, op)
+    assert res["result"] == "rejected" and res["code"] == "ADOPT_REAUTH_REQUIRED"
+
+
+async def test_password_login_sets_auth_time_and_adopts(client, ctx):
+    from app.core.security import decode_token
+
+    token = ctx["admin"]["Authorization"].split()[1]
+    assert abs(decode_token(token)["auth_time"] - datetime.now(timezone.utc).timestamp()) < 60
+    op = adopt(dispatch_op(ctx["staff_id"], ctx["eq"], ctx["ward"]))
+    [res] = await _send(client, ctx["admin"], op)
+    assert res["result"] == "applied"

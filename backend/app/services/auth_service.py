@@ -360,8 +360,9 @@ async def authenticate(
     role_name = role.name
     await commit_best_effort(db)
 
-    access_token = create_access_token(user_id_str, role_name)
-    refresh_token = create_refresh_token(user_id_str)
+    auth_time = int(datetime.now(timezone.utc).timestamp())  # password login time
+    access_token = create_access_token(user_id_str, role_name, auth_time)
+    refresh_token = create_refresh_token(user_id_str, auth_time)
     refresh_payload = decode_token(refresh_token)
     await store_refresh_token(
         refresh_payload["jti"], user_id_str, ttl_seconds=settings.JWT_REFRESH_EXPIRE_DAYS * 24 * 3600
@@ -417,7 +418,8 @@ async def refresh_access_token(
     role_name = role.name
     await commit_best_effort(db)
 
-    return create_access_token(user_id, role_name)
+    # auth_time is carried over unchanged: a refresh is not a password login.
+    return create_access_token(user_id, role_name, payload.get("auth_time"))
 
 
 async def logout(db: AsyncSession, refresh_token: str | None, *, request: Request | None = None) -> None:

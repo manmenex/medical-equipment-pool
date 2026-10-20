@@ -34,7 +34,13 @@ export interface AdoptableGroup {
   ops: AdoptableOp[];
 }
 
-/** Rows that still need sending: never conflicts/rejections (already answered) or held ones. */
+/**
+ * Rows that still need sending: never conflicts/rejections (already answered)
+ * or held ones. `sending` counts as sendable: the original user is logged out
+ * on this device (the adopter is the one logged in), so no worker of theirs is
+ * really mid-flight; the row is left over from a closed tab and the server's
+ * op_id idempotency makes a re-send safe.
+ */
 function isSendable(r: OutboxRecord): boolean {
   return r.state === "pending" || r.state === "sending";
 }
@@ -125,13 +131,18 @@ export async function adoptOps(
     summary.error = "OFFLINE";
     return summary;
   }
-  const rows = (await listOtherUsersOutbox(currentUserId)).filter(
-    (r) => isSendable(r) && originalUserIds.has(r.user_id),
-  );
+  const all = (await listOtherUsersOutbox(currentUserId)).filter((r) => originalUserIds.has(r.user_id));
+  // Mirror the worker's hold logic (applyHolds): in device_seq order, a
+  // conflict/rejected/held row blocks later rows touching the same
+  // equipment/transaction, so they are not sent ahead of it.
   const blocked = new Set<string>();
   const queue: OutboxRecord[] = [];
-  for (const r of rows) {
+  for (const r of all) {
     const keys = dependencyKeys(r);
+    if (!isSendable(r)) {
+      for (const k of keys) blocked.add(k);
+      continue;
+    }
     if (keys.some((k) => blocked.has(k))) {
       summary.left_pending += 1;
       continue;

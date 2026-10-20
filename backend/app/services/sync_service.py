@@ -61,8 +61,8 @@ class Actor:
     # Section 8.3: set only while validating an adopted op; the original
     # operator whose stranded op this token user is sending.
     adopted_for: uuid.UUID | None = None
-    # JWT ``iat`` of the access token that submitted the batch (section 8.3).
-    token_issued_at: datetime | None = None
+    # JWT ``auth_time`` (password login) of the access token that submitted the batch (section 8.3).
+    auth_time: datetime | None = None
 
 
 CODE_APPLIED = "APPLIED"
@@ -177,7 +177,7 @@ def _context(op: SyncOperation, user: Actor, digest: str, *, pending: bool) -> c
         user_id=user.adopted_for if adopted else user.id,
         submitted_by_user_id=user.id,
         adopted_at=datetime.now(timezone.utc) if adopted else None,
-        adopter_token_issued_at=user.token_issued_at if adopted else None,
+        adopter_auth_time=user.auth_time if adopted else None,
         stale_context=op.snapshot_age_s is not None and op.snapshot_age_s > STALE_CONTEXT_THRESHOLD_S,
         op_type=op.op_type,
         payload_hash=digest,
@@ -286,11 +286,11 @@ async def _execute(
     )
 
 
-def _fresh_login(token_issued_at: datetime | None) -> bool:
-    """Fail closed: a missing ``iat`` is never fresh."""
-    if token_issued_at is None:
+def _fresh_login(auth_time: datetime | None) -> bool:
+    """Fail closed: a missing ``auth_time`` is never fresh."""
+    if auth_time is None:
         return False
-    return datetime.now(timezone.utc) - _utc(token_issued_at) <= ADOPT_FRESH_LOGIN_WINDOW
+    return datetime.now(timezone.utc) - _utc(auth_time) <= ADOPT_FRESH_LOGIN_WINDOW
 
 
 async def process_operation(
@@ -300,9 +300,9 @@ async def process_operation(
     *,
     ip_address: str | None = None,
     user_agent: str | None = None,
-    token_issued_at: datetime | None = None,
+    auth_time: datetime | None = None,
 ) -> SyncOpResult:
-    user = Actor(user.id, token_issued_at=token_issued_at)
+    user = Actor(user.id, auth_time=auth_time)
     digest = payload_hash(op.business_payload())
 
     # Step 1: user check FIRST, before anything else is revealed.
@@ -319,7 +319,7 @@ async def process_operation(
             or role.name not in (ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF)
         ):
             return _mismatch(op)
-        if not _fresh_login(user.token_issued_at):
+        if not _fresh_login(user.auth_time):
             return _result(op, RESULT_REJECTED, CODE_ADOPT_REAUTH_REQUIRED)
         user = replace(user, adopted_for=original.id)
     row = await client_op_crud.get(db, op.op_id)
@@ -426,18 +426,18 @@ async def process_batch(
     *,
     ip_address: str | None,
     user_agent: str | None,
-    token_issued_at: datetime | None = None,
+    auth_time: datetime | None = None,
 ) -> list[SyncOpResult]:
     # Within one device, strictly by device_seq (section 9.1 item 1); the sort
     # is stable, so the order across devices stays as submitted.
-    user = Actor(user.id, token_issued_at=token_issued_at)
+    user = Actor(user.id, auth_time=auth_time)
     first_index: dict[uuid.UUID, int] = {}
     for i, o in enumerate(operations):
         first_index.setdefault(o.device_id, i)
     ordered = sorted(operations, key=lambda o: (first_index[o.device_id], o.device_seq))
     return [
         await process_operation(
-            db, o, user, ip_address=ip_address, user_agent=user_agent, token_issued_at=token_issued_at
+            db, o, user, ip_address=ip_address, user_agent=user_agent, auth_time=auth_time
         )
         for o in ordered
     ]

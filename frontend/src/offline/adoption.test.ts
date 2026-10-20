@@ -7,7 +7,7 @@ import type { SyncOperationResult } from "@/services/syncClient";
 import { useAuthStore } from "@/store/authStore";
 
 import { adoptOps, listAdoptableGroups, reauthenticate } from "./adoption";
-import { closeOfflineDb, enqueueOperation, listJournal, listOutbox, rememberUserName } from "./offlineStore";
+import { closeOfflineDb, enqueueOperation, listJournal, listOutbox, rememberUserName, updateOutbox } from "./offlineStore";
 
 const post = vi.fn();
 vi.mock("@/services/syncClient", async (orig) => ({
@@ -83,6 +83,17 @@ describe("adoption", () => {
     const out = await adoptOps("adopter", new Set(["orig"]), () => true);
     expect(out.error).toBe("NETWORK");
     expect((await listOutbox("orig")).every((r) => r.state === "pending")).toBe(true);
+  });
+
+  it("a conflict/rejected/held row of the original user blocks later ops on the same equipment", async () => {
+    const [first] = await listOutbox("orig"); // e1
+    await updateOutbox("orig", first.op_id, { state: "conflict" });
+    await enqueueOperation("orig", { body: disp("e1") }); // later op, same equipment -> held back
+    post.mockImplementation(async (ops) => res(ops, "applied"));
+    const out = await adoptOps("adopter", new Set(["orig"]), () => true);
+    expect(out.applied).toBe(1); // only e2
+    expect(out.left_pending).toBe(1);
+    expect(post.mock.calls[0][0]).toHaveLength(1);
   });
 
   it("only adopts the selected users", async () => {

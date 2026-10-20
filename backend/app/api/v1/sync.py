@@ -38,16 +38,16 @@ from app.services import sync_review_service, sync_service, sync_snapshot_servic
 router = APIRouter(prefix="/sync", tags=["sync"])
 
 
-def _token_issued_at(request: Request) -> datetime | None:
-    """``iat`` of the bearer token. The auth dependency has already verified
+def _token_auth_time(request: Request) -> datetime | None:
+    """``auth_time`` (password-login time) of the bearer token. The auth dependency has already verified
     it; a missing/invalid claim yields None (adoption then fails closed)."""
     header = request.headers.get("authorization", "")
     scheme, _, token = header.partition(" ")
     if scheme.lower() != "bearer" or not token:
         return None
     try:
-        iat = decode_token(token.strip()).get("iat")
-        return datetime.fromtimestamp(float(iat), tz=timezone.utc)
+        at = decode_token(token.strip()).get("auth_time")
+        return datetime.fromtimestamp(float(at), tz=timezone.utc)
     except (jwt.PyJWTError, TypeError, ValueError):
         return None
 
@@ -62,7 +62,7 @@ async def submit_operations(
     ip = request.client.host if request.client else None
     ua = request.headers.get("user-agent")
     results = await sync_service.process_batch(
-        db, payload.operations, user, ip_address=ip, user_agent=ua, token_issued_at=_token_issued_at(request)
+        db, payload.operations, user, ip_address=ip, user_agent=ua, auth_time=_token_auth_time(request)
     )
     return SyncBatchResponse(results=results)
 
