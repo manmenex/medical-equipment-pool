@@ -167,11 +167,16 @@ export async function effectiveCachedEquipment(
   return { equipment, locallyDispatched };
 }
 
+/** Matches backend CURRENT_ENVELOPE_VERSION (backend/app/schemas/sync.py). */
+export const ENVELOPE_VERSION = 1;
+
 // ---- envelopes ------------------------------------------------------------
 
 async function baseEnvelope(userId: string, opType: "dispatch" | "receipt", now: number) {
   const offset = await getClockOffset();
   return {
+    // S6: lets the server accept this client for one release after a contract change.
+    envelope_version: ENVELOPE_VERSION,
     user_id: userId,
     op_type: opType,
     occurred_at_local: new Date(now).toISOString(),

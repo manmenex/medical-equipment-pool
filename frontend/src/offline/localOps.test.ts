@@ -83,6 +83,7 @@ describe("offline dispatch", () => {
     });
     const env = rec.envelope as Record<string, unknown>;
     expect(env).toMatchObject({
+      envelope_version: 1,
       user_id: "u1",
       op_type: "dispatch",
       dispatch: { equipment_id: "e1", ward_id: "w1", dispatch_type: "routine_round", routine_round: "11:00", phone_number: "111", notes: "n" },

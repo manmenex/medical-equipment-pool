@@ -6,6 +6,7 @@ import { BcmSearchInput } from "@/components/BcmSearchInput";
 import { OfflineStaleGate } from "@/components/OfflineStaleGate";
 import { QRScanner } from "@/components/QRScanner";
 import { StatusBadge } from "@/components/StatusBadge";
+import { useDirtyForm } from "@/hooks/useDirtyForm";
 import { useOfflineMode } from "@/hooks/useOfflineMode";
 import {
   effectiveCachedEquipment,
@@ -49,6 +50,7 @@ export function BorrowPage() {
   const [routineRound, setRoutineRound] = useState<RoutineRound | "">("");
   const [phone, setPhone] = useState("");
   const [notes, setNotes] = useState("");
+  useDirtyForm(equipment !== null && !success && !pendingSync);
 
   const { data: onlineWards } = useQuery({ queryKey: ["wards"], queryFn: listWards });
   const { data: onlineDepartments } = useQuery({ queryKey: ["departments"], queryFn: listDepartments });

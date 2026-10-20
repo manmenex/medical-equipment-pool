@@ -1,5 +1,6 @@
 import axios from "axios";
 
+import { markClientTooOld } from "./appUpdate";
 import { isUnreachableError } from "@/services/connectivity";
 import { MAX_BATCH_OPS, postOperations, type SyncOperationResult } from "@/services/syncClient";
 import { useAuthStore } from "@/store/authStore";
@@ -29,7 +30,7 @@ export function computeBackoff(failures: number): number {
   return Math.min(BACKOFF_BASE_MS * 2 ** (failures - 1), BACKOFF_MAX_MS);
 }
 
-export type SyncStatus = "idle" | "running" | "backoff" | "auth_required" | "stopped";
+export type SyncStatus = "idle" | "running" | "backoff" | "auth_required" | "update_required" | "stopped";
 export interface SyncState {
   status: SyncStatus;
   failures: number;
@@ -44,6 +45,7 @@ export type RunOutcome =
   | "skipped_backoff"
   | "backoff"
   | "auth_required"
+  | "update_required"
   | "aborted";
 
 let state: SyncState = { status: "idle", failures: 0, nextAttemptAt: 0, lastError: null };
@@ -155,6 +157,12 @@ function errorStatus(e: unknown): number | undefined {
   return axios.isAxiosError(e) ? e.response?.status : undefined;
 }
 
+function errorCode(e: unknown): string | undefined {
+  if (!axios.isAxiosError(e)) return undefined;
+  const code = (e.response?.data as { code?: unknown } | undefined)?.code;
+  return typeof code === "string" ? code : undefined;
+}
+
 async function revert(userId: string, batch: OutboxRecord[], code: string | null): Promise<void> {
   for (const rec of batch) {
     try {
@@ -189,6 +197,19 @@ async function runLocked(userId: string): Promise<RunOutcome> {
       results = await postOperations(batch.map((r) => r.envelope));
     } catch (e) {
       const status = errorStatus(e);
+      if (errorCode(e) === "CLIENT_TOO_OLD") {
+        // S6: stale client. The queue is untouched (rows go back to pending);
+        // the operator is told to reload. Not retried until the app updates.
+        await revert(userId, batch, "CLIENT_TOO_OLD");
+        markClientTooOld();
+        setState({ status: "update_required", lastError: "CLIENT_TOO_OLD" });
+        return "update_required";
+      }
+      if (errorCode(e) === "ENVELOPE_VERSION_UNSUPPORTED") {
+        // Frontend newer than backend (deploy-order mistake): keep the queue, back off.
+        await revert(userId, batch, "ENVELOPE_VERSION_UNSUPPORTED");
+        return "backoff";
+      }
       if (status === 401 || status === 403 || status === 423) {
         await revert(userId, batch, `HTTP_${status}`);
         setState({ status: "auth_required", lastError: `HTTP_${status}` });
@@ -240,6 +261,7 @@ export async function syncNow(opts: { force?: boolean } = {}): Promise<RunOutcom
   const userId = currentUserId();
   if (!userId) return "skipped_no_user";
   if (running) return "skipped_locked";
+  if (state.status === "update_required") return "skipped_backoff"; // reload first (S6)
   if (!opts.force && Date.now() < state.nextAttemptAt) return "skipped_backoff";
   running = true;
   setState({ status: "running" });

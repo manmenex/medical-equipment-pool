@@ -288,3 +288,36 @@ describe("single flight", () => {
     expect(localStorage.getItem(LEASE_KEY)).toBeNull();
   });
 });
+
+describe("S6 stale client handling", () => {
+  const codedError = (status: number, code: string) =>
+    new AxiosError("x", String(status), undefined, undefined, {
+      status,
+      data: { code },
+      headers: {},
+      statusText: "",
+      config: {} as never,
+    } as never);
+
+  it("CLIENT_TOO_OLD keeps the whole queue pending, flags update_required and stops retrying", async () => {
+    await enqueueOperation("u1", { body: disp("a") });
+    await enqueueOperation("u1", { body: disp("b") });
+    post.mockRejectedValue(codedError(426, "CLIENT_TOO_OLD"));
+    expect(await syncNow()).toBe("update_required");
+    expect(getSyncState().status).toBe("update_required");
+    const rows = await listOutbox("u1");
+    expect(rows.map((r) => r.state)).toEqual(["pending", "pending"]);
+    expect(rows.every((r) => r.last_error_code === "CLIENT_TOO_OLD")).toBe(true);
+    expect(await listJournal("u1")).toHaveLength(0);
+    post.mockClear();
+    expect(await syncNow()).toBe("skipped_backoff");
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("ENVELOPE_VERSION_UNSUPPORTED keeps the queue and backs off", async () => {
+    await enqueueOperation("u1", { body: disp("a") });
+    post.mockRejectedValue(codedError(400, "ENVELOPE_VERSION_UNSUPPORTED"));
+    expect(await syncNow()).toBe("backoff");
+    expect((await listOutbox("u1")).map((r) => r.state)).toEqual(["pending"]);
+  });
+});

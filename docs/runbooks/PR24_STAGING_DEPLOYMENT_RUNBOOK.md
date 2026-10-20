@@ -330,6 +330,22 @@ logged, or placed in a CI log.
 
 ---
 
+## 11A. Deploy order for offline-capable clients (PR25E S6)
+
+Deploy the **backend first, then the frontend**. Installed PWAs keep running
+the previous frontend (and may hold queued operations) until the operator
+accepts the "new version" notice, so a new backend must accept the previous
+client's sync envelope for at least one release (`envelope_version`, see
+`docs/api/sync.md`). A frontend that reaches an older backend gets
+`ENVELOPE_VERSION_UNSUPPORTED` and keeps its queue, retrying with backoff.
+Rolling back the backend below the frontend's `envelope_version` has the same
+effect; roll back the frontend first, or both together. Do not raise
+`MIN_SUPPORTED_ENVELOPE_VERSION` until clients have had time to update;
+stale clients then get `CLIENT_TOO_OLD` (queue preserved, reload required).
+nginx must keep `/sw.js` as `no-cache` so update checks are not delayed.
+
+---
+
 ## 12. Rollback
 
 Application rollback = redeploy the previously recorded backend/frontend
