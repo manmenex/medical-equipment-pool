@@ -15,13 +15,23 @@
 
 **Resolution path:** A repository-settings change the Repository Owner performs directly — see `docs/REPOSITORY_STRATEGY.md`, "Branch protection and ruleset recommendation" ("requires applicable status checks once reliable CI exists... governance tasks do not mutate them"). Tracked as `docs/TECH_DEBT.md` TD-003 (partially resolved).
 
-## Offline adoption (PR25E S5b) deferrals
+## Offline operation (PR25E) limitations
 
-**Symptom / limits:** (1) The "รายการค้างของผู้ใช้อื่น" panel appears only on `/sync-review`; there is no badge or link elsewhere (status chip, nav) pointing to other users' leftover items. (2) Only `pending`/`sending` rows can be adopted; another user's `conflict`, `rejected` and `held` rows are not adoptable (they hold later ops on the same equipment instead). (3) The design 8.3 "Check other users' recent entries (48 h)" recovery action (verify other users' journal and re-queue unknown ones) is not built. (4) There is no offline-logout warning about unsynced items.
+Design and rationale: `docs/design/PR25D_OFFLINE_OPERATION_PLAN.md` (see 18.1); guides: `docs/runbooks/PR25E_OPERATOR_GUIDE_TH.md`, `docs/runbooks/PR25E_REVIEWER_GUIDE_TH.md`. Not yet exercised on real devices (slice E1).
 
-**Impact:** Stranded items are only found by a pool user who opens the review page; restore-recovery of other users' journal entries stays manual.
+1. **Duplicate dispatch when the network drops mid-submit.** If a request commits on the server but the response is lost, the client keeps the row and re-sends the same `op_id`; this is idempotent. But if the operator, seeing "pending", re-enters the same dispatch as a new entry, it becomes a second operation. The server records it as a `conflict` (equipment no longer available) for review, and a local double-entry guard blocks the repeat on the same device. A repeat from another device is only caught by review.
+2. **Shared device: another user's unsent dispatch cannot be received.** The offline receipt form offers only open dispatches from the reference snapshot plus the current user's own unsent dispatches. A dispatch that user A recorded on a shared device and has not sent is not offered to user B until it is sent or adopted (`docs/runbooks/PR25E_OPERATOR_GUIDE_TH.md` section 7). The equipment may meanwhile be physically returned with no receipt recordable on that device.
+3. **Adoption (S5b).** (a) The "รายการค้างของผู้ใช้อื่น" panel is on `/sync-review` only; no badge elsewhere. (b) Only `pending`/`sending` rows can be adopted, not `conflict`, `rejected` or `held`. (c) The design 8.3 "Check other users' recent entries (48 h)" action is not built. (d) No offline-logout warning about unsynced items.
+4. **Timeline scan cap.** The per-equipment timeline reads at most 2000 reviewable ledger rows (`MAX_SCAN_ROWS`); beyond that older rows are not shown.
+5. **Clock offset via the `Date` header.** The client refines its clock offset from the `Date` response header. Browsers expose it to scripts only for same-origin responses (or when the server lists it in `Access-Control-Expose-Headers`); on a cross-origin deployment the offset updates from snapshot `server_time` only, which is less frequent.
+6. **`auth_time` after deploy.** Adoption requires the JWT `auth_time` claim (password login within 15 minutes). Tokens issued before the release that added it have no `auth_time` and are treated as not fresh (fail closed): affected users log in again before adopting. Token refresh does not renew `auth_time`.
+7. **Business time is resolution time.** Operations applied by a reviewer (Apply now, Apply sequence) count at the time of resolution, not the time of the event, in PR16 `business_date`/`shift` reporting; only `OP_TOO_OLD` items keep their stored time.
+8. **No automatic resolution.** `SYNC_AUTO_SEQUENCE` is not implemented; every conflict needs a human (Owner decisions D7, D8). Collision statistics and CSV are the evidence for the post-pilot decision.
+9. **Scope.** QR scanning and Item No / Asset Number search are online only; no offline admin, master data or reports; no sync while the app is closed (iOS does not allow it); unsynced data is protected only by the device screen lock; `transaction_no` is hidden offline and may be reissued after a restore.
 
-**Resolution path:** Follow-up slices after S5b, to be scheduled in `docs/ROADMAP.md`.
+**Impact:** Items 1 to 3 and 7 are handled by the review page; the rest are accepted for the pilot.
+
+**Resolution path:** Follow-up slices after the pilot, to be scheduled in `docs/ROADMAP.md`.
 
 ## Related documents
 
