@@ -775,12 +775,12 @@ Test-Case 'preflight facts: Windows 11, admin, pwsh 7, RAM and disk are each enf
         }
         Assert-Equal 0 (Test-MepPreflightFacts (New-Facts)).Errors.Count 'good host passes'
         Assert-Equal 0 (Test-MepPreflightFacts (New-Facts @{ RamBytes = 7.8GB })).Errors.Count 'an 8 GB PC reporting 7.8 GB passes'
-        Assert-True ((Test-MepPreflightFacts (New-Facts @{ OsBuild = 19045 })).Errors -match 'Windows 11') 'Windows 10 refused'
-        Assert-True ((Test-MepPreflightFacts (New-Facts @{ IsAdmin = $false })).Errors -match 'Administrator') 'non-admin refused'
-        Assert-True ((Test-MepPreflightFacts (New-Facts @{ PwshMajor = 5 })).Errors -match 'PowerShell 7') 'pwsh 5 refused'
-        Assert-True ((Test-MepPreflightFacts (New-Facts @{ RamBytes = 4GB })).Errors -match 'RAM') 'low RAM refused'
-        Assert-True ((Test-MepPreflightFacts (New-Facts @{ FreeDiskBytes = 5GB })).Errors -match 'disk') 'low disk refused'
-        Assert-True ((Test-MepPreflightFacts (New-Facts @{ IsWindows = $false })).Errors -match 'Windows 11') 'non-Windows refused'
+        Assert-True (@((Test-MepPreflightFacts (New-Facts @{ OsBuild = 19045 })).Errors -match 'Windows 11').Count -gt 0) 'Windows 10 refused'
+        Assert-True (@((Test-MepPreflightFacts (New-Facts @{ IsAdmin = $false })).Errors -match 'Administrator').Count -gt 0) 'non-admin refused'
+        Assert-True (@((Test-MepPreflightFacts (New-Facts @{ PwshMajor = 5 })).Errors -match 'PowerShell 7').Count -gt 0) 'pwsh 5 refused'
+        Assert-True (@((Test-MepPreflightFacts (New-Facts @{ RamBytes = 4GB })).Errors -match 'RAM').Count -gt 0) 'low RAM refused'
+        Assert-True (@((Test-MepPreflightFacts (New-Facts @{ FreeDiskBytes = 5GB })).Errors -match 'disk').Count -gt 0) 'low disk refused'
+        Assert-True (@((Test-MepPreflightFacts (New-Facts @{ IsWindows = $false })).Errors -match 'Windows 11').Count -gt 0) 'non-Windows refused'
     } | Out-Null
 }
 
