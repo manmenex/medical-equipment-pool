@@ -299,6 +299,39 @@ export async function listOutbox(userId: string): Promise<OutboxRecord[]> {
   });
 }
 
+/**
+ * PR25E S5b (design 8.3): rows left on this device by users OTHER than
+ * `currentUserId`. Only the explicit adoption action may read these; callers
+ * must not display more than type / BCM / time / count.
+ */
+export async function listOtherUsersOutbox(currentUserId: string): Promise<OutboxRecord[]> {
+  return guarded(async (db) => {
+    const rows = await db.getAll("outbox");
+    return rows.filter((r) => r.user_id !== currentUserId).sort((a, b) => a.device_seq - b.device_seq);
+  });
+}
+
+const USER_NAMES_KEY = "user_names";
+
+/** Remember a display name so another user can see whose items are left (design 8.3). Best effort. */
+export async function rememberUserName(userId: string, fullName: string): Promise<void> {
+  try {
+    const names = (await getMeta<Record<string, string>>(USER_NAMES_KEY)) ?? {};
+    if (names[userId] === fullName) return;
+    await setMeta(USER_NAMES_KEY, { ...names, [userId]: fullName });
+  } catch {
+    /* names are a convenience only */
+  }
+}
+
+export async function getUserNames(): Promise<Record<string, string>> {
+  try {
+    return (await getMeta<Record<string, string>>(USER_NAMES_KEY)) ?? {};
+  } catch {
+    return {};
+  }
+}
+
 /** The user's sendable ops (state `pending`) in device_seq order. */
 export async function listSendable(userId: string): Promise<OutboxRecord[]> {
   return (await listOutbox(userId)).filter((r) => r.state === "pending");
