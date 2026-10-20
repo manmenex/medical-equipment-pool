@@ -47,7 +47,8 @@ RUN install -d /usr/share/postgresql-common/pgdg \
 # Reproducible install: requirements.runtime.lock is the hash-verified,
 # fully pinned runtime set (direct + transitive), generated from
 # requirements.txt minus the test-only packages (pytest, pytest-asyncio,
-# httpx, aiosqlite, pdfplumber, PyYAML), which therefore never ship in the
+# aiosqlite, pdfplumber, PyYAML; httpx is NOT test-only -- the Drive backup
+# scripts import it), which therefore never ship in the
 # production image. CI installs the full requirements.lock instead. Both are
 # regenerated together -- see docs/runbooks/DEPENDENCY_UPGRADES.md.
 COPY requirements.runtime.lock .

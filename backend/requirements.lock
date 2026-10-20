@@ -1,6 +1,7 @@
 # GENERATED FILE -- do not edit by hand. Exact, hash-verified lock of every
-# direct and transitive backend dependency (Python 3.12, as in CI/Docker).
-# Regenerate deliberately; see docs/runbooks/DEPENDENCY_UPGRADES.md.
+# direct and transitive backend dependency, including test dependencies
+# (Python 3.12, Linux; used by CI). Regenerate with
+# backend/scripts/lock_deps.sh; see docs/runbooks/DEPENDENCY_UPGRADES.md.
 # Install with: pip install --require-hashes -r requirements.lock
 aiosqlite==0.22.1 \
     --hash=sha256:043e0bd78d32888c0a9ca90fc788b38796843360c855a7262a532813133a0650 \
