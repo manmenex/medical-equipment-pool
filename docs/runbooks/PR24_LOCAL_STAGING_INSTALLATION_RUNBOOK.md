@@ -33,6 +33,10 @@
 
 ---
 
+> สำหรับเครื่อง CES-BCM มีสคริปต์ติดตั้งครั้งเดียวและอัปเดตออนไลน์/USB/ย้อนกลับ:
+> ดู [`CES_BCM_INSTALL_TH.md`](CES_BCM_INSTALL_TH.md)
+> (`setup-ces-bcm.ps1`, `update-online.ps1`)
+
 ## 1. สิ่งที่ต้องมีก่อนติดตั้ง (Prerequisites)
 
 1. **Windows** พร้อมสิทธิ์ Administrator บนเครื่องนั้น
