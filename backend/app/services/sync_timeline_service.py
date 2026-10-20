@@ -98,22 +98,29 @@ async def _equipment_ids(db: AsyncSession, rows: list[ClientOperation]) -> dict[
 
 # ---- timeline ---------------------------------------------------------------
 
-async def _reviewable_for_equipment(db: AsyncSession, equipment_id: uuid.UUID, is_admin: bool) -> list[ClientOperation]:
+async def _reviewable_for_equipment(
+    db: AsyncSession, equipment_id: uuid.UUID, is_admin: bool
+) -> tuple[list[ClientOperation], bool]:
+    """Newest-first scan of the reviewable set (the equipment lives inside the
+    JSON payload / target transaction, so it is matched after loading); a
+    ``truncated`` flag says the scan hit its cap."""
     now = review._now()
-    rows = (
+    rows = list(
         (
             await db.execute(
                 select(ClientOperation)
                 .where(review._visible_clause(now, "unresolved", is_admin))
-                .order_by(ClientOperation.received_at, ClientOperation.op_id)
-                .limit(MAX_SCAN_ROWS)
+                .order_by(ClientOperation.received_at.desc(), ClientOperation.op_id)
+                .limit(MAX_SCAN_ROWS + 1)
             )
         )
         .scalars()
         .all()
     )
-    eq_of = await _equipment_ids(db, list(rows))
-    return [r for r in rows if eq_of.get(r.op_id) == equipment_id]
+    truncated = len(rows) > MAX_SCAN_ROWS
+    rows = rows[:MAX_SCAN_ROWS]
+    eq_of = await _equipment_ids(db, rows)
+    return [r for r in rows if eq_of.get(r.op_id) == equipment_id], truncated
 
 
 def _op_time(row: ClientOperation) -> datetime:
@@ -137,7 +144,7 @@ async def timeline(db: AsyncSession, equipment_id: uuid.UUID, *, is_admin: bool)
         raise ResourceNotFoundError("Equipment not found")
     now = review._now()
     cutoff = now - TIMELINE_WINDOW
-    rows = await _reviewable_for_equipment(db, equipment_id, is_admin)
+    rows, truncated = await _reviewable_for_equipment(db, equipment_id, is_admin)
     txs = (
         (
             await db.execute(
@@ -201,6 +208,7 @@ async def timeline(db: AsyncSession, equipment_id: uuid.UUID, *, is_admin: bool)
     return {
         "equipment": {"id": eq.id, "bcm_code": eq.bcm_code, "equipment_name": eq.equipment_name, "status": eq.status.value},
         "server_time": now,
+        "truncated": truncated,
         "events": events,
     }
 
@@ -264,7 +272,7 @@ async def apply_sequence(
     if len(set(op_ids)) != len(op_ids):
         raise InvalidInputError("op_ids must not repeat.")
     eq = await db.get(Equipment, equipment_id)
-    if eq is None:
+    if eq is None or getattr(eq, "deleted_at", None) is not None:
         raise ResourceNotFoundError("Equipment not found")
     # Whole-request validation BEFORE any write: unknown (404), not open /
     # already resolved (409), administrator-only class (403).
@@ -272,6 +280,11 @@ async def apply_sequence(
     eq_of = await _equipment_ids(db, rows)
     if any(eq_of.get(r.op_id) != equipment_id for r in rows):
         raise InvalidInputError("All operations must belong to the equipment of the timeline.")
+    last_seq: dict[uuid.UUID, int] = {}
+    for r in rows:
+        if r.device_seq < last_seq.get(r.device_id, -1):
+            raise InvalidInputError("Operations from one device must be listed in device_seq order.")
+        last_seq[r.device_id] = r.device_seq
     if dry_run:
         steps, failed, remaining = await _simulate(db, eq, rows)
         return {"dry_run": True, "steps": steps, "failed": failed, "remaining": remaining}
@@ -287,6 +300,16 @@ async def apply_sequence(
                 "dry_run": False,
                 "steps": steps,
                 "failed": _step(oid, False, exc.code, exc.message),
+                "remaining": op_ids[n + 1 :],
+            }
+        except Exception:  # unexpected: report the committed prefix, never lose it
+            if not steps:
+                raise
+            await db.rollback()
+            return {
+                "dry_run": False,
+                "steps": steps,
+                "failed": _step(oid, False, "INTERNAL_ERROR", "Unexpected error; the run stopped."),
                 "remaining": op_ids[n + 1 :],
             }
         steps.append(_step(oid, True, new_op_id=res["new_op_id"], transaction_id=res["transaction_id"]))
@@ -410,7 +433,7 @@ async def stats(db: AsyncSession, range_from: datetime | None, range_to: datetim
 
 def _cell(v) -> str:
     s = "" if v is None else (v.isoformat() if isinstance(v, datetime) else str(v))
-    return "'" + s if s.startswith(_FORMULA_PREFIXES) else s
+    return "'" + s if s.lstrip(" \t\r\n").startswith(_FORMULA_PREFIXES) or s.startswith(_FORMULA_PREFIXES) else s
 
 
 CSV_COLUMNS = (

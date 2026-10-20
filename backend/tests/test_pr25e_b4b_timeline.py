@@ -256,3 +256,43 @@ async def test_csv_neutralises_formula_cells(client, ctx, db_session):
     from app.services.sync_timeline_service import _cell
 
     assert _cell("=1+1") == "'=1+1" and _cell("@x") == "'@x" and _cell(None) == "" and _cell("ok") == "ok"
+    for raw in (" =1+1", "\t+cmd", "  -2", "\n@x"):
+        assert _cell(raw).startswith("'"), raw
+    assert _cell("a=b") == "a=b"
+
+
+async def test_sequence_with_op_too_old_uses_confirmed_time(client, ctx, db_session):
+    op1, op2, op3 = await _scenario(client, ctx, db_session)
+    old = datetime.now(timezone.utc) - timedelta(days=10)
+    await _set(db_session, op2["op_id"], result_code="OP_TOO_OLD", occurred_at=old)
+    r = await client.post(_seq(ctx["eq"]), headers=ctx["admin"], json={"op_ids": [op2["op_id"], op3["op_id"]]})
+    assert r.status_code == 200 and r.json()["failed"] is None, r.text
+    tx = await db_session.get(BorrowTransaction, uuid.UUID(op2["op_id"]))
+    first = await db_session.get(BorrowTransaction, uuid.UUID(op1["op_id"]))
+    await db_session.refresh(tx)
+    await db_session.refresh(first)
+
+    def u(d):
+        return d.replace(tzinfo=timezone.utc) if d.tzinfo is None else d
+
+    # relational guard: not earlier than the equipment's latest receipt
+    assert u(tx.borrowed_at) >= u(first.returned_at)
+    assert u(tx.returned_at) >= u(tx.borrowed_at)
+
+
+async def test_sequence_rejects_device_seq_inversion_and_deleted_equipment(client, ctx, db_session):
+    op1 = dispatch_op(ctx["staff_id"], ctx["eq"], ctx["ward"], seq=1)
+    await _send(client, ctx["staff"], op1)
+    dev = str(uuid.uuid4())
+    a = dispatch_op(ctx["staff_id"], ctx["eq"], ctx["ward"], seq=1, device_id=dev)
+    b = dispatch_op(ctx["staff_id"], ctx["eq"], ctx["ward"], seq=2, device_id=dev)
+    await _send(client, ctx["staff"], a, b)
+    r = await client.post(_seq(ctx["eq"]), headers=ctx["staff"], json={"op_ids": [b["op_id"], a["op_id"]]})
+    assert r.status_code == 400
+    assert (await client.get(_tl(ctx["eq"]), headers=ctx["staff"])).json()["truncated"] is False
+    await db_session.execute(
+        update(Equipment).where(Equipment.id == uuid.UUID(ctx["eq"])).values(deleted_at=datetime.now(timezone.utc))
+    )
+    await db_session.commit()
+    r = await client.post(_seq(ctx["eq"]), headers=ctx["staff"], json={"op_ids": [a["op_id"], b["op_id"]]})
+    assert r.status_code == 404

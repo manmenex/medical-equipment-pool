@@ -38,6 +38,7 @@ class TimelineEvent(BaseModel):
 class EquipmentTimeline(BaseModel):
     equipment: ReviewEquipment
     server_time: datetime
+    truncated: bool = False
     events: list[TimelineEvent]
 
 
