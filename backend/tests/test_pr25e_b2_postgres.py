@@ -6,6 +6,7 @@ sections 6.3, 17 items 1, 11g, 11i). SQLite cannot show row-lock behaviour.
 """
 import asyncio
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import func, select
@@ -47,6 +48,12 @@ async def world(maker, pg_seeded_users, pg_transaction_seq):
         return {"ward": str(ward.id), "eq": str(eq.id), "user": pg_seeded_users[ROLE_EQUIPMENT_POOL_STAFF].id}
 
 
+def _recent(**delta):
+    """ISO-8601 UTC timestamp relative to now, so ops stay inside the 7-day
+    OP_TOO_OLD window however old the test run is (never hard-code dates)."""
+    return (datetime.now(timezone.utc) - timedelta(**delta)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _dispatch(world, *, op_id=None, seq=1, device=None, eq=None):
     return SyncOperation.model_validate(
         {
@@ -55,7 +62,7 @@ def _dispatch(world, *, op_id=None, seq=1, device=None, eq=None):
             "device_seq": seq,
             "user_id": str(world["user"]),
             "op_type": "dispatch",
-            "occurred_at_local": "2026-10-13T08:00:00Z",
+            "occurred_at_local": _recent(hours=2),
             "dispatch": {"equipment_id": eq or world["eq"], "ward_id": world["ward"], "dispatch_type": "on_demand"},
         }
     )
@@ -69,7 +76,7 @@ def _receipt(world, tx_id, *, op_id=None, seq=2, device=None, outcome="usable"):
             "device_seq": seq,
             "user_id": str(world["user"]),
             "op_type": "receipt",
-            "occurred_at_local": "2026-10-13T09:00:00Z",
+            "occurred_at_local": _recent(hours=1),
             "receipt": {"transaction_id": str(tx_id), "receipt_outcome": outcome},
         }
     )
