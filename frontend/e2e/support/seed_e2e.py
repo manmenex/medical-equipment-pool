@@ -5,7 +5,9 @@ throwaway SQLite file:
 
     DATABASE_URL=sqlite+aiosqlite:///./e2e.db python ../frontend/e2e/support/seed_e2e.py
 
-Creates the schema, the three roles, four users (one per drill persona),
+Creates the schema (Base.metadata.create_all: the Alembic chain targets
+PostgreSQL and does not apply to SQLite, so it is covered by the backend CI
+`alembic upgrade head` step instead), the three roles, four users (one per drill persona),
 two wards, one department with a fallback phone and 40 equipment rows
 (BCM9001 .. BCM9040) so every drill scenario uses equipment of its own.
 """

@@ -248,3 +248,21 @@ export async function exportReader(api: APIRequestContext, adminToken: string) {
     return (await res.json()).events;
   };
 }
+
+export async function getMeta(page: Page, name: string): Promise<unknown> {
+  return page.evaluate(
+    (n) =>
+      new Promise<unknown>((resolve) => {
+        const open = indexedDB.open("mep-offline");
+        open.onerror = () => resolve(undefined);
+        open.onsuccess = () => {
+          const db = open.result;
+          if (!db.objectStoreNames.contains("meta")) return resolve(undefined);
+          const req = db.transaction("meta").objectStore("meta").get(n);
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => resolve(undefined);
+        };
+      }),
+    name,
+  );
+}

@@ -5,7 +5,7 @@ import { VitePWA } from "vite-plugin-pwa";
 // vitest/config re-exports Vite's defineConfig with the `test` property's
 // types merged in -- this is the one config file both `vite build` and
 // `vitest run` read (docs/development/TESTING.md).
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [
@@ -69,5 +69,7 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     globals: false,
+    // Playwright drills (e2e/) run under `npx playwright test`, not vitest.
+    exclude: [...configDefaults.exclude, "e2e/**"],
   },
 });

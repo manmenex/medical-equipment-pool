@@ -565,6 +565,10 @@ jobs:
         working-directory: frontend
         run: npx playwright install --with-deps chromium
 
+      - name: Type-check drills
+        working-directory: frontend
+        run: npx tsc -p tsconfig.e2e.json
+
       - name: Build frontend
         working-directory: frontend
         run: npm run build

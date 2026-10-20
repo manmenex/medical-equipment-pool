@@ -11,6 +11,7 @@ import {
   expectSavedLocally,
   exportReader,
   goOffline,
+  getMeta,
   goOnline,
   goTo,
   login,
@@ -110,9 +111,9 @@ test("b: two devices dispatch the same equipment offline -> one applied, one con
   const reviewer = await ctx3.newPage();
   await login(reviewer, USERS.admin);
   await goTo(reviewer, "ตรวจสอบรายการออฟไลน์");
-  await expect(reviewer.getByTestId("sync-review-item")).toHaveCount(1);
+  await expect(reviewItem(reviewer, code)).toHaveCount(1);
   await dismissReviewItem(reviewer, code);
-  await expect(reviewer.getByText("ไม่มีรายการที่รอตรวจสอบ")).toBeVisible();
+  await expect(reviewItem(reviewer, code)).toHaveCount(0);
 
   expect(await transactionsFor(api, adminToken, code)).toHaveLength(1);
   expect(await equipmentStatus(api, adminToken, code)).toBe("issued_to_ward");
@@ -175,8 +176,8 @@ test("d: dispatch older than 7 days -> OP_TOO_OLD in review -> apply now", async
   const reviewer = await ctx2.newPage();
   await login(reviewer, USERS.admin);
   await goTo(reviewer, "ตรวจสอบรายการออฟไลน์");
-  await expect(reviewItem(reviewer, "OP_TOO_OLD")).toHaveCount(1);
-  await applyReviewItemNow(reviewer, "OP_TOO_OLD");
+  await expect(reviewItem(reviewer, code).filter({ hasText: "OP_TOO_OLD" })).toHaveCount(1);
+  await applyReviewItemNow(reviewer, code);
 
   expect(await equipmentStatus(api, adminToken, code)).toBe("issued_to_ward");
   const txs = await transactionsFor(api, adminToken, code);
@@ -206,9 +207,14 @@ test("e: shared device -> user B adopts user A's queued op with password", async
   expect(await outboxRecords(page)).toHaveLength(1);
 
   await goOnline(context);
+  const snapshotBefore = await getMeta(page, "last_snapshot_at");
   await login(page, USERS.poolB);
-  // B's own sync loop does not send A's operation.
-  await page.waitForTimeout(3_000);
+  // Deterministic signal that B's session finished its own sync run: B's
+  // reference snapshot is stored (last_snapshot_at is written last).
+  await expect.poll(() => getMeta(page, "last_snapshot_at"), { timeout: 30_000 }).not.toEqual(snapshotBefore);
+  // B's own sync loop does not send A's operation: it is still pending.
+  const [recA] = await outboxRecords(page);
+  expect(recA.state).toBe("pending");
   expect(await equipmentStatus(api, adminToken, code)).toBe("available_at_pool");
 
   await goTo(page, "ตรวจสอบรายการออฟไลน์");
@@ -216,6 +222,12 @@ test("e: shared device -> user B adopts user A's queued op with password", async
   await expect(group).toContainText("Drill Pool A");
   await group.getByRole("button", { name: "ส่งแทน" }).click();
   const dialog = page.getByRole("dialog", { name: "ยืนยันการส่งแทน" });
+  // Wrong password is refused and nothing is sent.
+  await dialog.getByLabel("ยืนยันรหัสผ่านของคุณ").fill("Wrong@Pass999");
+  await dialog.getByRole("button", { name: "ยืนยันและส่ง" }).click();
+  await expect(dialog.getByRole("alert")).toBeVisible();
+  expect(await equipmentStatus(api, adminToken, code)).toBe("available_at_pool");
+  expect((await outboxRecords(page))[0].state).toBe("pending");
   await dialog.getByLabel("ยืนยันรหัสผ่านของคุณ").fill(PASSWORD);
   await dialog.getByRole("button", { name: "ยืนยันและส่ง" }).click();
   await expect(page.getByTestId("adopt-summary")).toContainText("ส่งสำเร็จ 1 รายการ");
