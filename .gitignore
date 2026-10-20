@@ -49,6 +49,8 @@ deployment/local-staging/secrets/
 drive-oauth*.json
 deployment/local-staging/.install.lock
 deployment/local-staging/.install-metadata.json
+# Installed/previous source version (setup-ces-bcm.ps1, update-online.ps1). No secrets.
+deployment/local-staging/.version-history.json
 
 # --- Testing ------------------------------------------------------------------
 .pytest_cache/

@@ -739,6 +739,15 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File deployment/local-staging/tests/Invoke-InstallerTests.ps1
 
+      # Host setup (setup-ces-bcm.ps1) and Owner-triggered online/offline
+      # update (update-online.ps1): resumable state file, version
+      # selection, dirty-tree refusal, rollback migration-boundary refusal
+      # and ZIP handling. git, docker, winget and the GitHub API are mocked
+      # at the module's own seams; real ZIPs are built in a temp folder.
+      - name: Run PowerShell host setup and online update behavior tests
+        shell: pwsh
+        run: pwsh -NoProfile -File deployment/local-staging/tests/Invoke-HostSetupTests.ps1
+
       # PR24D-L2 Fix Round 2 (P1-A): Fix Round 1 shipped
       # `docker compose run --no-build`, a flag that does not exist -- so
       # the migration could never have run anywhere. Structural tests
