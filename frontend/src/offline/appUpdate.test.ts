@@ -87,6 +87,29 @@ describe("update safety (design 13.3)", () => {
     globalThis.indexedDB = saved;
   });
 
+  it("CLIENT_TOO_OLD with a queue blocked by it still applies (no deadlock); dirty form still blocks", async () => {
+    const apply = vi.fn(async () => undefined);
+    setUpdateReady(apply);
+    await enqueueOperation("u1", { body: { op_type: "dispatch" } });
+    expect(await updateBlockReason(false)).toBe("ops_pending");
+    markClientTooOld();
+    const release = registerFormDirty(Symbol("f"), true);
+    expect(await applyUpdateIfSafe(false)).toBe("form_dirty");
+    release();
+    expect(await applyUpdateIfSafe(true)).toBe("sync_sending");
+    expect(await applyUpdateIfSafe(false)).toBeNull();
+    expect(apply).toHaveBeenCalledOnce();
+    expect(await listOutbox("u1")).toHaveLength(1);
+  });
+
+  it("re-checks the sync worker right before applying", async () => {
+    const apply = vi.fn(async () => undefined);
+    setUpdateReady(apply);
+    let calls = 0;
+    expect(await applyUpdateIfSafe(() => ++calls > 1)).toBe("sync_sending");
+    expect(apply).not.toHaveBeenCalled();
+  });
+
   it("CLIENT_TOO_OLD flags the update as required", () => {
     markClientTooOld();
     expect(getUpdateState().required).toBe(true);

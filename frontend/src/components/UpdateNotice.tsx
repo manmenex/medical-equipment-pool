@@ -28,7 +28,7 @@ export function UpdateNotice() {
   useEffect(() => subscribeInstall(() => setInstallable(canInstall())), []);
 
   const apply = async () => {
-    setBlock(await applyUpdateIfSafe(getSyncState().status === "running"));
+    setBlock(await applyUpdateIfSafe(() => getSyncState().status === "running"));
   };
 
   if (!update.ready && !update.required && !installable) return null;

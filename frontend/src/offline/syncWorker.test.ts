@@ -318,6 +318,7 @@ describe("S6 stale client handling", () => {
     await enqueueOperation("u1", { body: disp("a") });
     post.mockRejectedValue(codedError(400, "ENVELOPE_VERSION_UNSUPPORTED"));
     expect(await syncNow()).toBe("backoff");
+    expect(getSyncState().lastError).toBe("ENVELOPE_VERSION_UNSUPPORTED");
     expect((await listOutbox("u1")).map((r) => r.state)).toEqual(["pending"]);
   });
 });

@@ -208,6 +208,7 @@ async function runLocked(userId: string): Promise<RunOutcome> {
       if (errorCode(e) === "ENVELOPE_VERSION_UNSUPPORTED") {
         // Frontend newer than backend (deploy-order mistake): keep the queue, back off.
         await revert(userId, batch, "ENVELOPE_VERSION_UNSUPPORTED");
+        setState({ lastError: "ENVELOPE_VERSION_UNSUPPORTED" });
         return "backoff";
       }
       if (status === 401 || status === 403 || status === 423) {

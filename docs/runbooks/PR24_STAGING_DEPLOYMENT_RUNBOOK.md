@@ -342,6 +342,11 @@ Rolling back the backend below the frontend's `envelope_version` has the same
 effect; roll back the frontend first, or both together. Do not raise
 `MIN_SUPPORTED_ENVELOPE_VERSION` until clients have had time to update;
 stale clients then get `CLIENT_TOO_OLD` (queue preserved, reload required).
+Devices still on a pre-S6 frontend use `autoUpdate`: the first S6 service
+worker may reload them once on its own, possibly mid-send. This is safe: rows
+left in `sending` are returned to `pending` by the sync worker's startup
+recovery (`runLocked` in `syncWorker.ts`) and re-sent; the server's `op_id`
+idempotency answers `duplicate` if the first send had committed.
 nginx must keep `/sw.js` as `no-cache` so update checks are not delayed.
 
 ---

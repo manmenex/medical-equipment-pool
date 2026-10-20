@@ -63,6 +63,9 @@ export type UpdateBlock = "form_dirty" | "ops_pending" | "sync_sending" | "stora
 export async function updateBlockReason(syncRunning: boolean): Promise<UpdateBlock | null> {
   if (hasDirtyForm()) return "form_dirty";
   if (syncRunning) return "sync_sending";
+  // CLIENT_TOO_OLD: the queue can only drain AFTER the reload (IndexedDB
+  // survives it), so pending rows must not block, or the device deadlocks.
+  if (state.required) return null;
   try {
     if ((await listAllActiveOutboxCount()) > 0) return "ops_pending";
   } catch {
@@ -73,9 +76,16 @@ export async function updateBlockReason(syncRunning: boolean): Promise<UpdateBlo
 }
 
 /** Apply the waiting update if safe. Returns the blocking reason, or null if applied. */
-export async function applyUpdateIfSafe(syncRunning: boolean): Promise<UpdateBlock | null> {
-  const block = await updateBlockReason(syncRunning);
+export async function applyUpdateIfSafe(
+  syncRunning: boolean | (() => boolean),
+): Promise<UpdateBlock | null> {
+  const running = () => (typeof syncRunning === "function" ? syncRunning() : syncRunning);
+  const block = await updateBlockReason(running());
   if (block) return block;
+  // The check above awaited IndexedDB; re-check the cheap synchronous guards
+  // right before reloading so a send or edit that started meanwhile wins.
+  if (running()) return "sync_sending";
+  if (hasDirtyForm()) return "form_dirty";
   if (applyFn) await applyFn();
   else window.location.reload(); // CLIENT_TOO_OLD with no waiting worker: plain reload
   return null;
