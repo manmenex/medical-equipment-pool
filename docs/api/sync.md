@@ -101,4 +101,31 @@ No body (any request body is ignored). Re-runs the stored payload through `borro
 
 Failure modes: the precondition no longer holds (`409 SYNC_APPLY_FAILED`): nothing is applied, the item stays `conflict`, `result_code` is refreshed (never for the administrator-only class) and `resolution_note` records `apply_failed:<CODE>`. Already resolved/applied, or lost to a concurrent resolver (`409 SYNC_OP_NOT_RESOLVABLE`): of two simultaneous resolvers exactly one wins; the loser's business write is rolled back.
 
-Held dependents: holds are client-side (design 9.1 item 3); there is no server hold state. Once the original row is `resolved` the client sends its held follow-up ops, validated normally. Per-equipment timelines and Apply sequence are slice B4b.
+Held dependents: holds are client-side (design 9.1 item 3); there is no server hold state. Once the original row is `resolved` the client sends its held follow-up ops, validated normally. Per-equipment timelines, Apply sequence and collision statistics are slice B4b (next section).
+
+## Timeline, Apply sequence and collision statistics (slice B4b)
+
+Owner decisions D7 (human-confirmed sequencing) and D8: **`SYNC_AUTO_SEQUENCE` is not enabled and no auto-sequencing code exists**; the statistics below are the evidence for the post-pilot decision. Nothing here applies anything without a resolver's explicit request.
+
+### `GET /api/v1/sync/equipment/{equipment_id}/timeline`
+
+**Roles:** Administrator, Equipment Pool Staff (Read Only `403`, no token `401`, unknown equipment `404`). Rows of the `FORBIDDEN` class are returned to administrators only. Response `{ equipment {id, bcm_code, equipment_name, status}, server_time, events }`. `events` merges (a) committed transactions for the equipment (a `dispatch` event at `borrowed_at`, a `receipt` event at `returned_at`; last 7 days plus any open one; `source: "transaction"`, never selectable) with (b) the equipment's reviewable ledger ops (`conflict`, expired `pending`; `source: "op"`, `selectable: true`; the equipment of a receipt comes from its target transaction, or from the reviewable dispatch that will create it). Order: `at` (the ledger `occurred_at`, falling back to `received_at`), committed history first on ties; within one device the ops are re-ordered by `device_seq`, which overrides time. Each event carries `band_s` (uncertainty, 30 s + 1 min per hour since the device clock offset was measured; 0 for committed events) and `order_uncertain` (true when its band overlaps another event's from a different source/device). Op events also carry `op_id`, `status`, `result_code`, `admin_only`, `stale_context`, `time_flag`, `device_id`, `device_seq`, `operator`, `ward_name`, `receipt_outcome`. No payload, Item No or Asset Number.
+
+### `POST /api/v1/sync/equipment/{equipment_id}/apply-sequence`
+
+**Roles:** as above. Body (strict): `{ "op_ids": [uuid, ...] (1 to 25, ordered), "dry_run"?: bool }`. The resolver confirms the order; the server applies it as given.
+
+Whole-request validation happens before any write: an unknown id `404`; a repeated id, or an op that belongs to another equipment `400 INVALID_INPUT`; an op not open for review (already applied/resolved) `409 SYNC_OP_NOT_RESOLVABLE`; an administrator-only op for staff `403 SYNC_REVIEW_ADMIN_ONLY` (nothing applied).
+
+* `dry_run: true`: an advisory lifecycle simulation (equipment availability and the target transaction, carried forward step by step); writes nothing. Returns `{ dry_run, steps, failed, remaining }`.
+* Otherwise each op runs through exactly the Apply now path (`borrow_service.borrow` / `return_equipment`) as **its own transaction**, in the given order, and the run **stops at the first failure** (design 9.7 point 4: not all-or-nothing, because the services own their commit boundaries and each applied op is a true, individually valid event). Per op: new `applied` ledger row, original `resolved` / `applied_as`, one `sync_conflict_resolved` audit entry (actor = resolver, `original_user_id` = recorded operator), exactly one export event; a dispatch's transaction id is the original `op_id`, so a later receipt in the same sequence resolves. Business time is the resolution time, as for Apply now (`OP_TOO_OLD` ops keep the confirmed stored time).
+* Response `200 { dry_run:false, steps:[{op_id, ok:true, new_op_id, transaction_id}], failed:{op_id, ok:false, code, message}|null, remaining:[op_id...] }`. When the **first** op fails nothing was applied and the Apply now error is returned unchanged (`409 SYNC_APPLY_FAILED` or `409 SYNC_OP_NOT_RESOLVABLE`); a failure after at least one success is a `200` with `failed` set. The failed op stays in review with `apply_failed:<CODE>`; later ops are untouched.
+* Idempotent under double submit: the per-op conditional UPDATE decides the winner, so each op is applied at most once; a repeat (or the loser of two simultaneous submissions) gets `409 SYNC_OP_NOT_RESOLVABLE` and writes nothing.
+
+### `GET /api/v1/sync/collisions/stats`
+
+**Roles:** Administrator only. Query `from`, `to` (defaults: last 30 days; `from` before `to`; at most 366 days; otherwise `400`). Operations that conflicted (still `conflict`, or since `resolved`) received in range: `total_conflicts`, `by_result_code`, `by_status`, `by_day`, `truncated` (more than 50,000 rows), and `groups`: `equipment_with_multiple_conflicts`, `cross_device`, `by_outcome` (`open`, `same` = all applied in corrected-time order, `different`, `dismissed_only`, `mixed`), `agreement_rate` (`same` / (`same` + `different`)) and `would_have_auto_sequenced` (`conditions_met` = cross-device, no `stale_context`, no overlapping bands; of those `resolved_same_order`, `resolved_differently`, `agreement_rate`). Groups are derived at query time from the ledger (per equipment); the stored `collision_group_id` / proposal columns are not populated by this slice. Aggregates only.
+
+### `GET /api/v1/sync/collisions/export`
+
+**Roles:** Administrator only; same `from`/`to`. `text/csv` attachment (UTF-8 with BOM, `Cache-Control: no-store`) with columns `op_id, op_type, status, result_code, resolution, bcm_code, ward, operator, resolved_by, occurred_at, received_at, resolved_at, device_id, stale_context, time_flag`. No payload, notes or patient data (none exists); cells that start with a formula character are prefixed with `'`.
