@@ -106,6 +106,10 @@ Other properties:
 - Delivery is **at-least-once** from the consumer's point of view if it crashes between processing and saving its cursor. It must dedupe on `event_id`.
 - `ward`, `equipment.name` and operator names are read when the page is served. A later ward correction (PR9A) does **not** emit a new event; a consumer that has already processed the dispatch keeps the ward it saw.
 
+## Event times are not monotonic (offline-recorded events)
+
+Page strictly by `seq` (the cursor), never by event time. An operation recorded offline and synced later (PR25E, `docs/api/sync.md`) is exported when it commits, with its business time (possibly hours or days older than events already delivered). Event times can therefore go backwards across `seq`. Choosing a start point with `at=` is for the starting position only; after that, use `next_cursor`.
+
 ## How Nsmart Realtime should poll
 
 1. **First run only:** `GET /export/cursor` (from now) or `?at=...`, or use `0` to replay history. Save the value as `cursor`.

@@ -647,6 +647,18 @@ Items the Owner did not raise keep the draft defaults and are treated as accepte
 
 **Still open for the Owner:** nothing blocks PR25E. One decision is scheduled: whether to enable automatic sequencing, after the pilot (D8, section 16.1).
 
+### 18.1 Implementation notes and deviations (PR25E, recorded by D1)
+
+What was built differs from this document in these places. The code and `docs/api/sync.md` are authoritative.
+
+- **Adoption audit.** Adoption writes one `sync_adopt` audit entry per adopted operation (carrying the adopter's password-login time, `auth_time`), not one entry per adoption batch. The adopter must have logged in with the password within 15 minutes (`ADOPT_REAUTH_REQUIRED` otherwise).
+- **Envelope versioning.** The envelope carries `envelope_version` (missing = 1) with `MIN_SUPPORTED_ENVELOPE_VERSION`..`CURRENT_ENVELOPE_VERSION` instead of a server-supplied `min_client_version` (slice S6; `docs/api/sync.md`).
+- **Collision statistics** are derived at query time per equipment; the stored `collision_group_id` and proposal columns are not populated (B4b). `resolution_matches_proposal` is therefore not stored.
+- **Timeline** scans at most 2000 ledger rows per equipment (`MAX_SCAN_ROWS`), 7-day committed history window.
+- **Deferred from section 8.3:** the "Check other users' recent entries (48 h)" action, an adoption entry point outside `/sync-review`, and an offline-logout warning. See `docs/KNOWN_LIMITATIONS.md`.
+- **`OP_TOO_OLD`** (D9): the 7-day bound is measured from the server's first receipt of the `op_id`; Apply now / Apply sequence use the stored unclamped time for these items and resolution time for all others.
+- **Operator documentation:** `docs/runbooks/PR25E_OPERATOR_GUIDE_TH.md` and `docs/runbooks/PR25E_REVIEWER_GUIDE_TH.md`.
+
 ---
 
 ## 19. Explicit non-goals
