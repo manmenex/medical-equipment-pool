@@ -139,6 +139,8 @@ checks ไม่ได้ จากนั้นสคริปต์ **แทน
 | Could not query GitHub | ระบุ `-Version <tag หรือ sha>` เอง หรือใช้ `-SourceZip` |
 | ... does not have all GitHub checks green | เลือกเวอร์ชันอื่น; ใช้ `-Force` ต่อเมื่อ Owner ตัดสินใจแล้ว |
 | has local changes | มีไฟล์ในโฟลเดอร์ซอร์สถูกแก้ อย่าลบเอง แจ้งผู้ดูแลระบบ |
+| อยากเริ่มขั้นตอนใหม่ / ล้างการ resume | ไฟล์ความคืบหน้าอยู่ที่ `C:\MEP\setup-state.json` (โฟลเดอร์แม่ของ `-InstallDir`) เปลี่ยนชื่อไฟล์นี้ (เช่น เป็น `setup-state.old.json`) แล้วรัน `setup-ces-bcm.ps1` ใหม่ ขั้นตอนจะเริ่มจากต้น แต่ install.ps1 และ clone รันซ้ำได้อย่างปลอดภัย ข้อมูล backup และ `.env` ไม่ถูกลบ |
+| แทนที่โค้ดจาก ZIP ล้มเหลวกลางทาง | สคริปต์ย้อนไฟล์เดิมกลับให้เอง; ถ้าแจ้งว่ากู้คืนไม่ครบ ไฟล์เดิมอยู่ในโฟลเดอร์ `.mep-old-*` ข้างโฟลเดอร์ติดตั้ง อย่าลบ แจ้งผู้ดูแลระบบ; โฟลเดอร์ `.mep-staging-*`/`.mep-peek-*` ที่ค้างลบได้ภายหลัง |
 | state file unreadable | ไฟล์ `C:\MEP\setup-state.json` เสีย ให้เปลี่ยนชื่อไฟล์แล้วรันซ้ำ (สิ่งที่ติดตั้งแล้วไม่ถูกแตะ) |
 | install/drive/schedule ล้มเหลว | อ่านข้อความ ERROR/ACTION แล้วรันคำสั่งเดิมซ้ำ ขั้นที่เสร็จแล้วจะไม่ทำซ้ำ |
 | อย่างอื่น | ดูข้อ 8 ของ `PR24_LOCAL_STAGING_INSTALLATION_RUNBOOK.md` และ **อย่าแก้ฐานข้อมูลหรือ Docker volume เอง** |

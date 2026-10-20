@@ -405,6 +405,10 @@ function Assert-MepSafeRef {
 function Test-MepCheckRunsGreen {
     <#
     .SYNOPSIS
+    NOTE: only GitHub CHECK RUNS (Actions and check-run apps) are evaluated.
+    Legacy commit statuses (the /status API) are deliberately not consulted;
+    this repository's CI reports as check runs.
+
     True only when the response lists at least one check run, lists ALL of
     them (not a truncated page), every one has completed, and every
     conclusion is success, neutral or skipped. Anything uncertain is not
@@ -852,6 +856,54 @@ function Assert-MepRecognisedInstallDir {
     }
 }
 
+function Join-MepRelative {
+    param([Parameter(Mandatory)] [string]$Base, [Parameter(Mandatory)] [string]$Relative)
+    $p = $Base
+    foreach ($seg in ($Relative -split '/')) { $p = Join-Path $p $seg }
+    return $p
+}
+
+function Get-MepSourceUnits {
+    <#
+    .SYNOPSIS
+    The replaceable units of an install tree as '/'-separated relative
+    paths: every top-level item, except that deployment/ and
+    deployment/local-staging/ are opened one level so the preserved runtime
+    names (.env, backups, ...) are never a unit.
+    #>
+    param([Parameter(Mandatory)] [string]$Root)
+    $units = @()
+    foreach ($child in @(Get-ChildItem -LiteralPath $Root -Force)) {
+        if ($child.Name -eq 'deployment' -and $child.PSIsContainer) {
+            foreach ($d in @(Get-ChildItem -LiteralPath $child.FullName -Force)) {
+                if ($d.Name -eq 'local-staging' -and $d.PSIsContainer) {
+                    foreach ($f in @(Get-ChildItem -LiteralPath $d.FullName -Force)) {
+                        if ($f.Name -in $Script:MepPreservedRuntimeNames) { continue }
+                        $units += "deployment/local-staging/$($f.Name)"
+                    }
+                }
+                else { $units += "deployment/$($d.Name)" }
+            }
+        }
+        else { $units += $child.Name }
+    }
+    return $units
+}
+
+function Get-MepFreeBytes {
+    param([Parameter(Mandatory)] [string]$Path)
+    $full = [IO.Path]::GetFullPath($Path)
+    return [int64]([IO.DriveInfo]::new([IO.Path]::GetPathRoot($full))).AvailableFreeSpace
+}
+
+function Copy-MepUnit {
+    <# Seam: one unit copy. Tests replace it to inject a failure. #>
+    param([Parameter(Mandatory)] [string]$Source, [Parameter(Mandatory)] [string]$Destination)
+    $parent = Split-Path -Parent $Destination
+    if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+    Copy-Item -LiteralPath $Source -Destination $Destination -Recurse -Force
+}
+
 function Install-MepSourceTree {
     <#
     .SYNOPSIS
@@ -859,6 +911,15 @@ function Install-MepSourceTree {
     preserved runtime names under deployment/local-staging (.env, backups,
     logs, secrets, metadata) untouched. Stale code is removed first so an
     old Alembic migration cannot linger beside the new ones.
+
+    .DESCRIPTION
+    Transactional. Checks free space against the staged size first. Each
+    superseded unit is RENAMED into a sibling .mep-old-<guid> folder (same
+    volume, so no copy and no data loss), the staged units are copied in, and
+    only after every copy succeeded is .mep-old removed. On any failure
+    (antivirus lock, disk full, long path, Ctrl+C) partial copies are removed
+    and every moved unit is moved back, so the tree is never left
+    half-installed.
     #>
     param([Parameter(Mandatory)] [string]$StagedRoot, [Parameter(Mandatory)] [string]$TargetDir)
     Assert-MepRecognisedInstallDir -TargetDir $TargetDir
@@ -866,23 +927,60 @@ function Install-MepSourceTree {
         throw 'The staged source is incomplete (deployment/local-staging/compose.yml missing); nothing was changed.'
     }
     if (-not (Test-Path -LiteralPath $TargetDir)) { New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null }
-    foreach ($child in @(Get-ChildItem -LiteralPath $TargetDir -Force)) {
-        if ($child.Name -eq 'deployment' -and $child.PSIsContainer) {
-            foreach ($d in @(Get-ChildItem -LiteralPath $child.FullName -Force)) {
-                if ($d.Name -eq 'local-staging' -and $d.PSIsContainer) {
-                    foreach ($f in @(Get-ChildItem -LiteralPath $d.FullName -Force)) {
-                        if ($f.Name -in $Script:MepPreservedRuntimeNames) { continue }
-                        Remove-Item -LiteralPath $f.FullName -Recurse -Force
-                    }
-                }
-                else { Remove-Item -LiteralPath $d.FullName -Recurse -Force }
-            }
+
+    $stagedBytes = [int64](Get-ChildItem -LiteralPath $StagedRoot -Recurse -File -Force | Measure-Object -Property Length -Sum).Sum
+    $needed = $stagedBytes + 200MB
+    $free = Get-MepFreeBytes -Path $TargetDir
+    if ($free -lt $needed) {
+        throw ("Not enough free disk space to replace the code: {0:N0} MB needed, {1:N0} MB free. Nothing was changed." -f ($needed / 1MB), ($free / 1MB))
+    }
+
+    $oldRoot = Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($TargetDir))) ('.mep-old-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    $moved = New-Object System.Collections.Generic.List[string]
+    $copied = New-Object System.Collections.Generic.List[string]
+    try {
+        foreach ($rel in (Get-MepSourceUnits -Root $TargetDir)) {
+            $src = Join-MepRelative $TargetDir $rel
+            $dst = Join-MepRelative $oldRoot $rel
+            $dstParent = Split-Path -Parent $dst
+            if (-not (Test-Path -LiteralPath $dstParent)) { New-Item -ItemType Directory -Path $dstParent -Force | Out-Null }
+            Move-Item -LiteralPath $src -Destination $dst
+            $moved.Add($rel)
         }
-        else { Remove-Item -LiteralPath $child.FullName -Recurse -Force }
+        foreach ($rel in (Get-MepSourceUnits -Root $StagedRoot)) {
+            $dst = Join-MepRelative $TargetDir $rel
+            $copied.Add($rel)   # recorded first: a half-copied unit must be removed too
+            Copy-MepUnit -Source (Join-MepRelative $StagedRoot $rel) -Destination $dst
+        }
     }
-    foreach ($item in @(Get-ChildItem -LiteralPath $StagedRoot -Force)) {
-        Copy-Item -LiteralPath $item.FullName -Destination $TargetDir -Recurse -Force
+    catch {
+        $failure = $_.Exception.Message
+        $problems = @()
+        foreach ($rel in $copied) {
+            $dst = Join-MepRelative $TargetDir $rel
+            try { if (Test-Path -LiteralPath $dst) { Remove-Item -LiteralPath $dst -Recurse -Force } }
+            catch { $problems += "could not remove partial copy $dst" }
+        }
+        foreach ($rel in $moved) {
+            $src = Join-MepRelative $TargetDir $rel
+            $old = Join-MepRelative $oldRoot $rel
+            try {
+                $parent = Split-Path -Parent $src
+                if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+                Move-Item -LiteralPath $old -Destination $src
+            }
+            catch { $problems += "could not restore $src from $old" }
+        }
+        if ($problems.Count -gt 0) {
+            throw "Replacing the code failed ($failure) AND automatic restore was incomplete: $($problems -join '; '). The previous files are in $oldRoot. Ask the system administrator; do not delete that folder."
+        }
+        if (Test-Path -LiteralPath $oldRoot) {
+            try { Remove-Item -LiteralPath $oldRoot -Recurse -Force } catch { Write-Host "WARNING: could not remove leftover folder $oldRoot" -ForegroundColor Yellow }
+        }
+        throw "Replacing the code failed ($failure). The previous version was restored; nothing was changed."
     }
+    try { Remove-Item -LiteralPath $oldRoot -Recurse -Force }
+    catch { Write-Host "WARNING: the replace succeeded but the leftover folder $oldRoot could not be removed; delete it later." -ForegroundColor Yellow }
 }
 
 function Install-MepSourceFromZip {
@@ -901,7 +999,10 @@ function Install-MepSourceFromZip {
         Install-MepSourceTree -StagedRoot $staged -TargetDir $TargetDir
     }
     finally {
-        if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $staging) {
+            try { Remove-Item -LiteralPath $staging -Recurse -Force }
+            catch { Write-Host "WARNING: could not remove leftover folder $staging; delete it later." -ForegroundColor Yellow }
+        }
     }
     if (-not $info.Sha) {
         Write-Host 'WARNING: this ZIP carries no commit SHA; its version could not be verified. Recorded as "unverified-zip".' -ForegroundColor Yellow
@@ -1089,7 +1190,10 @@ function Invoke-MepZipUpdate {
         $boundary = Get-MepMigrationBoundary -FromNames (Get-MepMigrationNamesFromDir -Root $Root) -ToNames (Get-MepMigrationNamesFromDir -Root $peekRoot)
     }
     finally {
-        if (Test-Path -LiteralPath $stagingCheck) { Remove-Item -LiteralPath $stagingCheck -Recurse -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $stagingCheck) {
+            try { Remove-Item -LiteralPath $stagingCheck -Recurse -Force }
+            catch { Write-Host "WARNING: could not remove leftover folder $stagingCheck; delete it later." -ForegroundColor Yellow }
+        }
     }
     if ($boundary.Crosses) {
         Write-Host 'This ZIP is OLDER than the installed code: the installed version has migrations the ZIP lacks:' -ForegroundColor Red

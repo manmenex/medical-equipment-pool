@@ -686,6 +686,53 @@ Test-Case 'ZIP replace swaps the code but preserves .env, backups, secrets; remo
     finally { Remove-TempDir $tmp }
 }
 
+Test-Case 'a copy failure mid-replace restores the previous tree and leaves no partial files' {
+    $tmp = New-TempDir
+    try {
+        $root = New-InstalledTree $tmp
+        $zip = Join-Path $tmp 'src.zip'
+        New-TestZip -Path $zip -Entries (Get-SourceEntries -Root 'medical-equipment-pool-x' -Migrations @('0001_init.py', '0002_new.py')) -Comment $script:ShaB
+        $msg = Invoke-Isolated {
+            $script:copies = 0
+            function Copy-MepUnit {
+                param([string]$Source, [string]$Destination)
+                $script:copies++
+                if ($script:copies -ge 2) { throw 'simulated antivirus lock' }
+                Copy-Item -LiteralPath $Source -Destination $Destination -Recurse -Force
+            }
+            try { Install-MepSourceFromZip -ZipPath $zip -TargetDir $root | Out-Null } catch { return $_.Exception.Message }
+        }
+        Assert-True ("$msg" -match 'previous version was restored') "restored (got '$msg')"
+        $dep = Join-Path (Join-Path $root 'deployment') 'local-staging'
+        Assert-Equal 'old' ((Get-Content -LiteralPath (Join-Path $dep 'compose.yml') -Raw).Trim()) 'old compose.yml back'
+        Assert-True (Test-Path -LiteralPath (Join-Path $dep 'old-only.ps1')) 'old script back'
+        Assert-True (Test-Path -LiteralPath (Join-Path $root 'backend/alembic/versions/0000_stale.py')) 'old migration back'
+        Assert-True (Test-Path -LiteralPath (Join-Path $root '.git/HEAD')) '.git back'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $root 'backend/alembic/versions/0002_new.py'))) 'no partial new file'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $root 'README.md'))) 'no partial new top-level file'
+        Assert-Equal 'SECRET=keep-me' ((Get-Content -LiteralPath (Join-Path $dep '.env') -Raw).Trim()) '.env untouched'
+        Assert-True (Test-Path -LiteralPath (Join-Path $dep 'backups/b1.dump')) 'backup untouched'
+        Assert-Equal 0 @(Get-ChildItem -LiteralPath $tmp -Force -Directory | Where-Object { $_.Name -like '.mep-old-*' -or $_.Name -like '.mep-staging-*' }).Count 'no leftover folders'
+    }
+    finally { Remove-TempDir $tmp }
+}
+
+Test-Case 'insufficient free space refuses before anything is moved' {
+    $tmp = New-TempDir
+    try {
+        $root = New-InstalledTree $tmp
+        $zip = Join-Path $tmp 'src.zip'
+        New-TestZip -Path $zip -Entries (Get-SourceEntries -Root 'medical-equipment-pool-x') -Comment $script:ShaB
+        $msg = Invoke-Isolated {
+            function Get-MepFreeBytes { param([string]$Path) 1MB }
+            try { Install-MepSourceFromZip -ZipPath $zip -TargetDir $root | Out-Null } catch { return $_.Exception.Message }
+        }
+        Assert-True ("$msg" -match 'Not enough free disk space') "refused (got '$msg')"
+        Assert-True (Test-Path -LiteralPath (Join-Path $root 'backend/alembic/versions/0000_stale.py')) 'tree untouched'
+    }
+    finally { Remove-TempDir $tmp }
+}
+
 Test-Case 'ZIP replace refuses a non-empty folder that is not this project and deletes nothing' {
     $tmp = New-TempDir
     try {
