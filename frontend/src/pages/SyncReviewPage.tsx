@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
+import { OtherUsersOutboxPanel } from "@/components/OtherUsersOutboxPanel";
 import { SyncStatsPanel } from "@/components/SyncStatsPanel";
 import { SyncTimelinePanel } from "@/components/SyncTimelinePanel";
 import { canReviewSyncConflicts, useAuth } from "@/hooks/useAuth";
@@ -40,6 +41,7 @@ export function SyncReviewPage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [timelineFor, setTimelineFor] = useState<string | null>(null);
+  const [messageKind, setMessageKind] = useState<"success" | "warning">("success");
 
   if (!allowed) {
     return <p className="p-4 text-sm">คุณไม่มีสิทธิ์เข้าถึงหน้านี้</p>;
@@ -65,9 +67,11 @@ export function SyncReviewPage() {
     try {
       if (pending.kind === "dismiss") {
         await dismissSyncConflict(pending.item.op_id, reason as DismissReason, note.trim() || undefined);
+        setMessageKind("success");
         setMessage("ปิดรายการเรียบร้อยแล้ว");
       } else {
         await applySyncConflictNow(pending.item.op_id);
+        setMessageKind("success");
         setMessage("บันทึกรายการเรียบร้อยแล้ว");
       }
       close();
@@ -75,10 +79,12 @@ export function SyncReviewPage() {
     } catch (e) {
       const code = apiErrorCode(e);
       if (code === "SYNC_OP_NOT_RESOLVABLE") {
+        setMessageKind("success");
         setMessage("รายการนี้ถูกดำเนินการไปแล้ว รีเฟรชรายการให้แล้ว");
         close();
         await refresh();
       } else if (code === "SYNC_APPLY_FAILED") {
+        setMessageKind("warning");
         setMessage("ไม่สามารถบันทึกรายการได้ เงื่อนไขของอุปกรณ์เปลี่ยนไปแล้ว รายการยังรอการตรวจสอบ");
         close();
         await refresh();
@@ -95,8 +101,15 @@ export function SyncReviewPage() {
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-semibold">ตรวจสอบรายการออฟไลน์</h1>
+      <OtherUsersOutboxPanel />
       {message && (
-        <p role="status" className="rounded-lg bg-status-available/15 px-3 py-2 text-sm">
+        <p
+          role="status"
+          data-testid="sync-review-message"
+          className={`rounded-lg px-3 py-2 text-sm ${
+            messageKind === "warning" ? "bg-status-repair/15 text-status-repair" : "bg-status-available/15"
+          }`}
+        >
           {message}
         </p>
       )}

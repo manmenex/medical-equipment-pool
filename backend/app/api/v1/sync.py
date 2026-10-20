@@ -3,6 +3,7 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import jwt
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
@@ -14,6 +15,7 @@ from app.api.v1.deps import (
     VIEW_AND_REPORT_ROLES,
     require_roles,
 )
+from app.core.security import decode_token
 from app.core.exceptions import InvalidInputError
 from app.db.session import get_db
 from app.schemas.sync import SyncBatchRequest, SyncBatchResponse
@@ -48,6 +50,20 @@ from app.services import (
 router = APIRouter(prefix="/sync", tags=["sync"])
 
 
+def _token_auth_time(request: Request) -> datetime | None:
+    """``auth_time`` (password-login time) of the bearer token. The auth dependency has already verified
+    it; a missing/invalid claim yields None (adoption then fails closed)."""
+    header = request.headers.get("authorization", "")
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return None
+    try:
+        at = decode_token(token.strip()).get("auth_time")
+        return datetime.fromtimestamp(float(at), tz=timezone.utc)
+    except (jwt.PyJWTError, TypeError, ValueError):
+        return None
+
+
 @router.post("/operations", response_model=SyncBatchResponse)
 async def submit_operations(
     payload: SyncBatchRequest,
@@ -57,7 +73,9 @@ async def submit_operations(
 ):
     ip = request.client.host if request.client else None
     ua = request.headers.get("user-agent")
-    results = await sync_service.process_batch(db, payload.operations, user, ip_address=ip, user_agent=ua)
+    results = await sync_service.process_batch(
+        db, payload.operations, user, ip_address=ip, user_agent=ua, auth_time=_token_auth_time(request)
+    )
     return SyncBatchResponse(results=results)
 
 

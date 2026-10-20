@@ -44,7 +44,7 @@ from app.services import sync_review_service as review
 
 logger = logging.getLogger(__name__)
 
-TIMELINE_WINDOW =timedelta(days=7)
+TIMELINE_WINDOW = timedelta(days=7)
 MAX_SCAN_ROWS = 2000
 MAX_STATS_ROWS = 50_000
 BASE_BAND_S = 30

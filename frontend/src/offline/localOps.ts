@@ -6,6 +6,7 @@ import {
   listActiveEnvelopes,
   listOutbox,
   listRefs,
+  rememberUserName,
   type OutboxRecord,
 } from "./offlineStore";
 import { getClockOffset } from "./serverTime";
@@ -35,6 +36,11 @@ export class LocalOpError extends Error {
 
 /** Generic on purpose: never says whose entry it is or what it contains (design 8.1). */
 export const DUPLICATE_LOCAL_MESSAGE = "มีรายการของเครื่องนี้ที่ยังไม่ได้ส่งอยู่ในเครื่องนี้แล้ว ไม่สามารถบันทึกซ้ำได้";
+
+function rememberCurrentName(): void {
+  const { user } = useAuthStore.getState();
+  if (user) void rememberUserName(String(user.id), user.full_name);
+}
 
 function currentUserId(): string {
   const { user, accessToken } = useAuthStore.getState();
@@ -211,6 +217,7 @@ export async function enqueueOfflineDispatch(input: OfflineDispatchInput): Promi
     body: { ...(await baseEnvelope(userId, "dispatch", now)), dispatch },
     local,
   });
+  rememberCurrentName();
   requestSync();
   return rec;
 }
@@ -237,6 +244,7 @@ export async function enqueueOfflineReceipt(input: OfflineReceiptInput): Promise
     body: { ...(await baseEnvelope(userId, "receipt", now)), receipt },
     local,
   });
+  rememberCurrentName();
   requestSync();
   return rec;
 }

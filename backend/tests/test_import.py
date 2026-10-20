@@ -284,6 +284,28 @@ async def test_update_never_changes_asset_number(client, seeded_users, db_sessio
 # ---------------------------------------------------------------------------
 
 
+async def test_update_existing_text_parsing(client, seeded_users, db_session):
+    """The field is parsed from raw text (inventory_import._parse_update_existing):
+    omitted/"TRUE"/" 1 " succeed, "false"/"0" hit the update-only rejection,
+    anything else is a 400 INVALID_INPUT."""
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    await _seed_equipment(db_session, bcm_code="BCM311")
+    row = _base_row(**{"ID CODE": "311"})
+
+    async def post(**data):
+        return await client.post("/api/v1/import/preview", headers=headers, files=_upload([row]), data=data)
+
+    assert (await post()).status_code == 200
+    assert (await post(update_existing="TRUE")).status_code == 200
+    assert (await post(update_existing=" 1 ")).status_code == 200
+    for falsy in ("false", "0"):
+        r = await post(update_existing=falsy)
+        assert r.status_code == 400 and "update-only" in r.json()["detail"]
+    r = await post(update_existing="maybe")
+    assert r.status_code == 400 and r.json()["code"] == "INVALID_INPUT"
+    assert "boolean" in r.json()["detail"]
+
+
 async def test_update_existing_false_is_rejected_with_clear_error(client, seeded_users, db_session):
     """Review finding PR12-H1R: Roadmap PR12 is update-only, so
     `update_existing=false` no longer has a coherent meaning -- there is

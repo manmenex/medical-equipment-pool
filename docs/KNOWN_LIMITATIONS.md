@@ -15,6 +15,14 @@
 
 **Resolution path:** A repository-settings change the Repository Owner performs directly — see `docs/REPOSITORY_STRATEGY.md`, "Branch protection and ruleset recommendation" ("requires applicable status checks once reliable CI exists... governance tasks do not mutate them"). Tracked as `docs/TECH_DEBT.md` TD-003 (partially resolved).
 
+## Offline adoption (PR25E S5b) deferrals
+
+**Symptom / limits:** (1) The "รายการค้างของผู้ใช้อื่น" panel appears only on `/sync-review`; there is no badge or link elsewhere (status chip, nav) pointing to other users' leftover items. (2) Only `pending`/`sending` rows can be adopted; another user's `conflict`, `rejected` and `held` rows are not adoptable (they hold later ops on the same equipment instead). (3) The design 8.3 "Check other users' recent entries (48 h)" recovery action (verify other users' journal and re-queue unknown ones) is not built. (4) There is no offline-logout warning about unsynced items.
+
+**Impact:** Stranded items are only found by a pool user who opens the review page; restore-recovery of other users' journal entries stays manual.
+
+**Resolution path:** Follow-up slices after S5b, to be scheduled in `docs/ROADMAP.md`.
+
 ## Related documents
 
 | Concern | Document |

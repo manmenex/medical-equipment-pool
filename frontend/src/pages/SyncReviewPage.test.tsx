@@ -122,7 +122,9 @@ describe("SyncReviewPage", () => {
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "บันทึกทันที" }));
     fireEvent.click(screen.getByRole("button", { name: "ยืนยัน" }));
-    expect(await screen.findByText(/เงื่อนไขของอุปกรณ์เปลี่ยนไปแล้ว/)).toBeInTheDocument();
+    const box = await screen.findByText(/เงื่อนไขของอุปกรณ์เปลี่ยนไปแล้ว/);
+    expect(box).toHaveClass("text-status-repair");
+    expect(box).not.toHaveClass("bg-status-available/15");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await waitFor(() => expect(fetchSyncConflicts.mock.calls.length).toBeGreaterThan(1));
   });
