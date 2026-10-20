@@ -254,7 +254,7 @@ jobs:
         continue-on-error: true
         run: |
           pip install --quiet pip-audit
-          pip-audit -r requirements.txt --desc
+          pip-audit --require-hashes -r requirements.lock --desc
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -451,7 +451,7 @@ jobs:
 
       - name: Install backend dependencies (for the smoke-check script)
         working-directory: backend
-        run: pip install -r requirements.txt
+        run: pip install --require-hashes -r requirements.lock
 
       # PR24D §18/§32: readiness-gated post-deploy smoke check, reusing
       # the exact same script a real Staging/Production deployment would
