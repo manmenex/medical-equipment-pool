@@ -19,6 +19,12 @@ from app.schemas.sync import SyncOperation
 from app.services import borrow_service, sync_service
 from tests.conftest import auth_headers as _auth_headers
 
+def _recent(**delta):
+    """ISO-8601 UTC timestamp relative to now, so ops stay inside the 7-day
+    OP_TOO_OLD window however old the test run is (never hard-code dates)."""
+    return (datetime.now(timezone.utc) - timedelta(**delta)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 pytestmark = pytest.mark.asyncio
 
 URL = "/api/v1/sync/operations"
@@ -49,7 +55,7 @@ def dispatch_op(user_id, equipment_id, ward_id, *, seq=1, op_id=None, device_id=
         "device_seq": seq,
         "user_id": user_id,
         "op_type": "dispatch",
-        "occurred_at_local": "2026-10-13T08:00:00Z",
+        "occurred_at_local": _recent(hours=2),
         "clock_offset_ms": 0,
         "dispatch": {"equipment_id": equipment_id, "ward_id": ward_id, "dispatch_type": "on_demand", **extra},
     }
@@ -62,7 +68,7 @@ def receipt_op(user_id, tx_id, *, seq=2, op_id=None, device_id=None, outcome="us
         "device_seq": seq,
         "user_id": user_id,
         "op_type": "receipt",
-        "occurred_at_local": "2026-10-13T09:00:00Z",
+        "occurred_at_local": _recent(hours=1),
         "receipt": {"transaction_id": str(tx_id), "receipt_outcome": outcome},
     }
 
