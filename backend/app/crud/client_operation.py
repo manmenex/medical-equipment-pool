@@ -91,6 +91,8 @@ class ClientOpContext:
     # Set only when no business time is applied (too_old conflict): the
     # unclamped adjusted time stored in the ledger for the reviewer.
     occurred_at: datetime | None = None
+    # Slice S5b: password-login time (JWT auth_time) of the adopter's token, recorded in the sync_adopt audit.
+    adopter_auth_time: datetime | None = None
     # Slice B2c: set only for an adopted op (section 8.3) / a stale snapshot.
     adopted_at: datetime | None = None
     stale_context: bool = False
@@ -228,6 +230,7 @@ async def _audit_adopt(db: AsyncSession, ctx: ClientOpContext) -> None:
             "op_ids": [str(ctx.op_id)],
             "count": 1,
             "adopted_at": ctx.adopted_at.isoformat(),
+            "auth_time": ctx.adopter_auth_time.isoformat() if ctx.adopter_auth_time else None,
         },
     )
 
