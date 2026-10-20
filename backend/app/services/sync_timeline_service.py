@@ -21,6 +21,7 @@ decisions D7 and D8).
 """
 import csv
 import io
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -41,7 +42,9 @@ from app.models.transaction import BorrowTransaction, TransactionStatus
 from app.models.user import User
 from app.services import sync_review_service as review
 
-TIMELINE_WINDOW = timedelta(days=7)
+logger = logging.getLogger(__name__)
+
+TIMELINE_WINDOW =timedelta(days=7)
 MAX_SCAN_ROWS = 2000
 MAX_STATS_ROWS = 50_000
 BASE_BAND_S = 30
@@ -303,6 +306,7 @@ async def apply_sequence(
                 "remaining": op_ids[n + 1 :],
             }
         except Exception:  # unexpected: report the committed prefix, never lose it
+            logger.exception("apply_sequence: unexpected error at op %s (step %d of %d)", oid, n + 1, len(op_ids))
             if not steps:
                 raise
             await db.rollback()
