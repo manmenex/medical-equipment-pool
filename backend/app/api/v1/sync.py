@@ -33,7 +33,19 @@ from app.schemas.sync_review import (
     ReviewList,
     ResolveResponse,
 )
-from app.services import sync_review_service, sync_service, sync_snapshot_service, sync_verify_service
+from app.schemas.sync_timeline import (
+    ApplySequenceRequest,
+    ApplySequenceResponse,
+    CollisionStats,
+    EquipmentTimeline,
+)
+from app.services import (
+    sync_review_service,
+    sync_service,
+    sync_snapshot_service,
+    sync_timeline_service,
+    sync_verify_service,
+)
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 
@@ -193,3 +205,56 @@ async def apply_conflict_now(
     uid = user.id
     is_admin = await sync_review_service.is_administrator(db, uid)
     return await sync_review_service.apply_now(db, op_id, uid, is_admin=is_admin, ip_address=ip, user_agent=ua)
+
+
+# ---- Slice B4b: per-equipment timeline, Apply sequence, collision stats/CSV ----
+
+@router.get("/equipment/{equipment_id}/timeline", response_model=EquipmentTimeline)
+async def get_equipment_timeline(
+    equipment_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_roles(*EQUIPMENT_POOL_OPERATION_ROLES)),
+):
+    is_admin = await sync_review_service.is_administrator(db, user.id)
+    return await sync_timeline_service.timeline(db, equipment_id, is_admin=is_admin)
+
+
+@router.post("/equipment/{equipment_id}/apply-sequence", response_model=ApplySequenceResponse)
+async def apply_sequence(
+    equipment_id: uuid.UUID,
+    payload: ApplySequenceRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_roles(*EQUIPMENT_POOL_OPERATION_ROLES)),
+):
+    ip, ua = _client(request)
+    uid = user.id
+    is_admin = await sync_review_service.is_administrator(db, uid)
+    return await sync_timeline_service.apply_sequence(
+        db, equipment_id, payload.op_ids, uid, is_admin=is_admin, dry_run=payload.dry_run, ip_address=ip, user_agent=ua
+    )
+
+
+@router.get("/collisions/stats", response_model=CollisionStats)
+async def get_collision_stats(
+    range_from: datetime | None = Query(default=None, alias="from"),
+    range_to: datetime | None = Query(default=None, alias="to"),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
+):
+    return await sync_timeline_service.stats(db, range_from, range_to)
+
+
+@router.get("/collisions/export")
+async def export_collisions_csv(
+    range_from: datetime | None = Query(default=None, alias="from"),
+    range_to: datetime | None = Query(default=None, alias="to"),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
+):
+    body = await sync_timeline_service.export_csv(db, range_from, range_to)
+    return Response(
+        content="﻿" + body,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="sync-conflicts.csv"', "Cache-Control": "no-store"},
+    )

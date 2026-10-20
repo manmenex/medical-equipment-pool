@@ -2,6 +2,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { OtherUsersOutboxPanel } from "@/components/OtherUsersOutboxPanel";
+import { SyncStatsPanel } from "@/components/SyncStatsPanel";
+import { SyncTimelinePanel } from "@/components/SyncTimelinePanel";
 import { canReviewSyncConflicts, useAuth } from "@/hooks/useAuth";
 import { apiErrorCode, apiErrorMessage } from "@/services/api";
 import {
@@ -38,6 +40,7 @@ export function SyncReviewPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [timelineFor, setTimelineFor] = useState<string | null>(null);
   const [messageKind, setMessageKind] = useState<"success" | "warning">("success");
 
   if (!allowed) {
@@ -110,6 +113,10 @@ export function SyncReviewPage() {
           {message}
         </p>
       )}
+      {user?.role === "administrator" && <SyncStatsPanel />}
+      {timelineFor && (
+        <SyncTimelinePanel equipmentId={timelineFor} onClose={() => setTimelineFor(null)} onChanged={refresh} />
+      )}
       {query.isLoading && <p className="text-sm text-[var(--text-muted)]">กำลังโหลด...</p>}
       {query.isError && (
         <p role="alert" className="text-sm text-status-repair">
@@ -162,6 +169,15 @@ export function SyncReviewPage() {
                 >
                   บันทึกทันที
                 </button>
+                {item.equipment && !adminOnly && (
+                  <button
+                    className="rounded-lg border px-3 py-1"
+                    disabled={busy}
+                    onClick={() => setTimelineFor(item.equipment?.id ?? null)}
+                  >
+                    ดูลำดับเหตุการณ์
+                  </button>
+                )}
               </div>
             </li>
           );
