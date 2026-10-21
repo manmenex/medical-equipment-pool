@@ -37,6 +37,12 @@ weasyprint==69.0
 # by the test suite's ASGI client. It must stay in the runtime lock.
 httpx>=0.27.0
 
+# RUNTIME dependency (demo-only legacy sheet sync, docs/DECISION_LOG.md
+# Governance 2026-10-21): app/services/legacy_sheet_sync signs the
+# service-account JWT assertion with google.auth (crypt + jwt only); the
+# Sheets REST calls themselves go through httpx. Not used by the web app.
+google-auth>=2.30.0
+
 # testing / local sqlite fallback for fast unit tests
 aiosqlite>=0.20.0
 pytest>=8.3.0

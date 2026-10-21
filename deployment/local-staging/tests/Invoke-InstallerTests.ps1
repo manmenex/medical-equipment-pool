@@ -93,11 +93,13 @@ function New-MockContext {
         [bool]$ScheduleRegistered = $false,
         [int]$ScheduleLastResult = 0,
         [bool]$DriveConfigured = $false,
-        [bool]$DriveDownloadNoFile = $false
+        [bool]$DriveDownloadNoFile = $false,
+        [bool]$LegacySyncEnabled = $false
     )
     return [pscustomobject]@{
         DriveConfigured      = $DriveConfigured
         DriveDownloadNoFile  = $DriveDownloadNoFile
+        LegacySyncEnabled    = $LegacySyncEnabled
         ScheduleRegistered   = $ScheduleRegistered
         ScheduleLastResult   = $ScheduleLastResult
         ExitCodeRules        = $ExitCodeRules
@@ -429,6 +431,7 @@ function Invoke-WithMocks {
         # after which Compose commands legitimately start working.
         function Test-EnvFileExists { return ($ctx.EnvFileExists -or $script:EnvGenerated) }
         function Get-ConfiguredHttpPort { return 80 }
+        function Test-MepLegacySyncEnabled { return [bool]$ctx.LegacySyncEnabled }
         function Get-CurrentSourceSha { return 'testsha0000000000000000000000000000000000' }
         # Returns exactly as many failures as the context asks for, and
         # -- critically -- returns them the way the REAL function does:
@@ -2391,6 +2394,53 @@ Test-Case 'drive restore: the downloaded-file report must name exactly one in-mo
         return $n
     }
     Assert-True ($count -eq 5) "all five malformed reports must fail closed (got $count)"
+}
+
+# --- Demo-only legacy sheet sync service (profile-gated) -------------------
+
+function Get-UpdateCallsWithSync {
+    param([bool]$Enabled, [hashtable[]]$ExtraRules = @())
+    $rules = @(@{ Match = 'ps --all --filter'; ExitCode = 0; Output = $healthyContainers }) + $ExtraRules
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -ExitCodeRules $rules -LegacySyncEnabled $Enabled
+    return Invoke-WithMocks -Context $ctx -Body {
+        $threw = $false
+        try { Invoke-MepUpdate | Out-Null } catch { $threw = $true }
+        return [pscustomobject]@{ Threw = $threw; Calls = @($script:RecordedCalls | ForEach-Object { $_.Args }) }
+    }
+}
+
+Test-Case 'sync: update with the sync enabled stops it BEFORE backup, rebuilds it, restarts it AFTER migration' {
+    $r = Get-UpdateCallsWithSync -Enabled $true
+    Assert-True (-not $r.Threw) 'update must succeed'
+    $stop = Get-CallIndex -Calls $r.Calls -Pattern '--profile legacy-sheet-sync stop legacy-sheet-sync'
+    $backup = Get-CallIndex -Calls $r.Calls -Pattern 'backup_postgres\.py'
+    $migrate = Get-CallIndex -Calls $r.Calls -Pattern 'deploy_migrate\.py'
+    $build = Get-CallIndex -Calls $r.Calls -Pattern '--profile legacy-sheet-sync build legacy-sheet-sync'
+    $start = Get-CallIndex -Calls $r.Calls -Pattern '--profile legacy-sheet-sync up -d legacy-sheet-sync'
+    Assert-True ($build -ge 0 -and $build -lt $backup) 'sync image rebuilt from current source before backup/migration'
+    Assert-True ($stop -ge 0 -and $stop -lt $backup) 'sync stopped before the pre-update backup'
+    Assert-True ($start -gt $migrate) 'sync restarted only after the migration'
+}
+
+Test-Case 'sync: update with the sync disabled never mentions the service' {
+    $r = Get-UpdateCallsWithSync -Enabled $false
+    Assert-True (-not $r.Threw) 'update must succeed'
+    Assert-True (@($r.Calls | Where-Object { $_ -match 'legacy-sheet-sync' }).Count -eq 0) 'no legacy-sheet-sync calls when disabled'
+}
+
+Test-Case 'sync: failure to stop the sync blocks backup and migration' {
+    $r = Get-UpdateCallsWithSync -Enabled $true -ExtraRules @(@{ Match = 'stop legacy-sheet-sync'; ExitCode = 1; Output = @('boom') })
+    Assert-True $r.Threw 'update must fail closed'
+    Assert-True (@($r.Calls | Where-Object { $_ -match 'backup_postgres\.py|deploy_migrate\.py' }).Count -eq 0) 'no backup/migration while the sync may still write'
+}
+
+Test-Case 'sync: stop.ps1 path passes the profile so the sync is stopped too' {
+    $ctx = New-MockContext -EnvFileExists $true
+    $calls = Invoke-WithMocks -Context $ctx -Body {
+        Invoke-MepStop
+        return @($script:RecordedCalls | ForEach-Object { $_.Args })
+    }
+    Assert-True (@($calls | Where-Object { $_ -match '--profile legacy-sheet-sync stop$' }).Count -eq 1) 'compose stop must carry --profile legacy-sheet-sync'
 }
 
 # ===========================================================================

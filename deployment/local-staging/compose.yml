@@ -141,6 +141,40 @@ services:
     ports:
       - "${LOCAL_STAGING_HTTP_PORT:-80}:80"
 
+  # DEMO-ONLY legacy pool sheet shadow sync (Governance 2026-10-21,
+  # docs/DECISION_LOG.md). Never starts by default: it sits behind the
+  # `legacy-sheet-sync` profile, which only enable-legacy-sheet-sync.ps1
+  # activates, and the process also refuses to run unless
+  # LEGACY_SHEET_SYNC_ENABLED=true. Read-only against Google Sheets; every row
+  # goes through the normal dispatch/receipt services via the sync ledger.
+  # MUST be disabled (.\enable-legacy-sheet-sync.ps1 -Disable) before
+  # Production go-live. The key directory is mounted read-only and holds only
+  # this service's key (not the Drive backup secrets).
+  legacy-sheet-sync:
+    profiles: ["legacy-sheet-sync"]
+    build: ../../backend
+    restart: unless-stopped
+    command: ["python", "-m", "app.services.legacy_sheet_sync", "--loop"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:?POSTGRES_USER must be set}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB must be set}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set. Generate one with the Python secrets module.}"
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:?ALLOWED_ORIGINS must be set to this host's actual LAN URL (see .env.example)}"
+      ENVIRONMENT: production
+      DEBUG: "false"
+      COOKIE_SECURE: "false"
+      LEGACY_SHEET_SYNC_ENABLED: "${LEGACY_SHEET_SYNC_ENABLED:-false}"
+      LEGACY_SHEET_SYNC_KEY_FILE: /mep-legacy-sheet-secrets/key.json
+      LEGACY_SHEET_SYNC_SPREADSHEET_ID: "${LEGACY_SHEET_SYNC_SPREADSHEET_ID:-}"
+      LEGACY_SHEET_SYNC_INTERVAL_SECONDS: "${LEGACY_SHEET_SYNC_INTERVAL_SECONDS:-300}"
+      LEGACY_SHEET_SYNC_START_DATE: "${LEGACY_SHEET_SYNC_START_DATE:-}"
+      LEGACY_SHEET_SYNC_EMPLOYEE_CODE: "${LEGACY_SHEET_SYNC_EMPLOYEE_CODE:-LEGACY-SYNC}"
+    volumes:
+      - ./secrets/legacy-sheet:/mep-legacy-sheet-secrets:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+
 volumes:
   local_staging_postgres_data:
   local_staging_redis_data:
