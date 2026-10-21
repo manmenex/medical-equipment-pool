@@ -179,7 +179,7 @@ export function ReconciliationDispositionDialog({
           <div className="font-medium">{reconciliationFindingCodeLabel(finding.code)}</div>
           {finding.equipment && (
             <div className="text-[var(--text-muted)]">
-              {finding.equipment.equipment_name} · {finding.equipment.asset_number}
+              {finding.equipment.equipment_name} · {finding.equipment.asset_number ?? "-"}
             </div>
           )}
         </div>

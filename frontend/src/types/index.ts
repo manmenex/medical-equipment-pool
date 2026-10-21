@@ -29,7 +29,7 @@ export interface UserProfile {
 
 export interface Equipment {
   id: string;
-  asset_number: string;
+  asset_number: string | null;
   serial_number: string | null;
   equipment_name: string;
   category_id: string | null;
@@ -99,7 +99,7 @@ export type ReceiptOutcome = "usable" | "defective";
 export interface TransactionOut {
   id: string;
   transaction_no: string;
-  equipment: { id: string; asset_number: string; equipment_name: string; status: EquipmentStatus };
+  equipment: { id: string; asset_number: string | null; equipment_name: string; status: EquipmentStatus };
   quantity: number;
   borrowed_at: string;
   // Roadmap PR7b: due_at is deliberately absent -- removed from the active
@@ -187,7 +187,7 @@ export interface BorrowTrendPoint {
 
 export interface TopBorrowedItem {
   equipment_id: string;
-  asset_number: string;
+  asset_number: string | null;
   equipment_name: string;
   borrow_count: number;
 }

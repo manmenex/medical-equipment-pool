@@ -185,7 +185,7 @@ export function WardCorrectionDialog({ transaction, wards, onClose, onUpdated, t
         <div className="rounded-lg bg-[var(--border)]/20 p-3 text-sm">
           <div className="font-medium">{transaction.equipment.equipment_name}</div>
           <div className="text-[var(--text-muted)]">
-            {transaction.equipment.asset_number}
+            {transaction.equipment.asset_number ?? "-"}
             {transaction.transaction_no ? ` · เลขที่รายการ ${transaction.transaction_no}` : ""}
           </div>
         </div>

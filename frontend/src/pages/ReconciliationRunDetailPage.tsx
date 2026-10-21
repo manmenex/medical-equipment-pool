@@ -579,7 +579,7 @@ function FindingDetailContent({ finding, canEditDisposition, onClose, onDispose 
         <div className="rounded-lg bg-[var(--border)]/20 p-3 text-sm">
           <div className="font-medium">{finding.equipment.equipment_name}</div>
           <div className="text-[var(--text-muted)]">
-            {finding.equipment.asset_number}
+            {finding.equipment.asset_number ?? "-"}
             {finding.equipment.bcm_code ? ` · BCM ${finding.equipment.bcm_code}` : ""}
           </div>
         </div>

@@ -72,7 +72,7 @@ export function EquipmentListPage() {
             <div className="min-w-0">
               <div className="truncate font-medium">{eq.equipment_name}</div>
               <div className="truncate text-sm text-[var(--text-muted)]">
-                {eq.asset_number}
+                {eq.asset_number ?? "-"}
                 {eq.serial_number ? ` · SN ${eq.serial_number}` : ""}
               </div>
             </div>

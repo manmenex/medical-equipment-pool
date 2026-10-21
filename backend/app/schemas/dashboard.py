@@ -16,6 +16,6 @@ class BorrowTrendPoint(BaseModel):
 
 class TopBorrowedItem(BaseModel):
     equipment_id: str
-    asset_number: str
+    asset_number: str | None
     equipment_name: str
     borrow_count: int

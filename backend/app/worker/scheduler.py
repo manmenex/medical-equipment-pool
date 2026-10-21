@@ -106,7 +106,7 @@ async def check_pm_cal_due() -> None:
                     db,
                     recipient_ids,
                     title=f"PM ใกล้ครบกำหนด: {eq.equipment_name}",
-                    body=f"เครื่อง {eq.asset_number} มีกำหนด PM วันที่ {eq.pm_due_date}",
+                    body=f"เครื่อง {eq.asset_number or eq.equipment_name} มีกำหนด PM วันที่ {eq.pm_due_date}",
                     notif_type="pm",
                 )
 
@@ -115,7 +115,7 @@ async def check_pm_cal_due() -> None:
                     db,
                     recipient_ids,
                     title=f"Calibration ใกล้ครบกำหนด: {eq.equipment_name}",
-                    body=f"เครื่อง {eq.asset_number} มีกำหนด Calibration วันที่ {eq.cal_due_date}",
+                    body=f"เครื่อง {eq.asset_number or eq.equipment_name} มีกำหนด Calibration วันที่ {eq.cal_due_date}",
                     notif_type="calibration",
                 )
 

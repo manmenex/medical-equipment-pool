@@ -149,7 +149,7 @@ export async function effectiveCachedEquipment(
   }
   const equipment: Equipment = {
     id,
-    asset_number: "", // never cached (D1)
+    asset_number: null, // never cached (D1)
     serial_number: null,
     equipment_name: cached.equipment_name ?? "",
     category_id: null,
