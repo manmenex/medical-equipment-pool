@@ -198,7 +198,7 @@ export function ReturnPage() {
     <div className="mx-auto flex max-w-sm flex-col gap-4">
       <div className="surface rounded-xl border p-4">
         <div className="font-medium">{transaction.equipment.equipment_name}</div>
-        <div className="text-sm text-[var(--text-muted)]">{transaction.equipment.asset_number}</div>
+        <div className="text-sm text-[var(--text-muted)]">{transaction.equipment.asset_number ?? "-"}</div>
         <div className="mt-1 text-sm text-[var(--text-muted)]">
           {transaction.borrower_name ? `ผู้เบิก: ${transaction.borrower_name} · ` : ""}เบิกเมื่อ{" "}
           {new Date(transaction.borrowed_at).toLocaleString("th-TH")}

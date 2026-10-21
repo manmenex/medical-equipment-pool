@@ -810,3 +810,14 @@ describe("EquipmentDetailPage event-basis request serialization (PR61 review fix
     );
   });
 });
+
+describe("EquipmentDetailPage without an Asset Number (Governance 2026-10-21)", () => {
+  it('shows "-" instead of an Asset Number when the equipment has none', async () => {
+    getEquipment.mockResolvedValue({ ...equipment, asset_number: null, serial_number: null });
+    renderPage();
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Infusion Pump" })).toBeInTheDocument());
+    expect(screen.queryByText(/AST-1/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/null/)).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Infusion Pump" }).nextElementSibling).toHaveTextContent("-");
+  });
+});

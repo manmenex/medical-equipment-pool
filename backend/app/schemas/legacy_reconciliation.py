@@ -83,7 +83,7 @@ class EquipmentSummary(BaseModel):
     internals (§10 of the task)."""
 
     id: UUIDStr
-    asset_number: str
+    asset_number: str | None
     equipment_name: str
     item_no: str | None
     bcm_code: str | None

@@ -423,7 +423,7 @@ async def test_execute_update_target_soft_deleted_is_rejected(client: AsyncClien
 
 
 # ---------------------------------------------------------------------------
-# CREATE: OD-4 authoritative asset_number, OD-2 lifecycle, identity races.
+# CREATE: optional asset_number (Governance 2026-10-21), OD-2 lifecycle, identity races.
 # Real dry-run/parse output can never produce an executable CREATE row
 # today (§9 OD-4 unconditionally blocks every CREATE candidate) -- these
 # tests construct the persisted plan directly, matching PR20D's own
@@ -481,7 +481,11 @@ async def test_execute_create_row_with_authoritative_asset_number_succeeds(
     assert refreshed_plan.status == "consumed"
 
 
-async def test_execute_create_row_without_asset_number_fails_closed(client: AsyncClient, seeded_users, db_session):
+async def test_execute_create_row_without_asset_number_creates_with_null(
+    client: AsyncClient, seeded_users, db_session
+):
+    """Governance 2026-10-21: Asset Number is optional; a CREATE row with no
+    asset_number is created with NULL (never fabricated, never from asset_id)."""
     admin = seeded_users["administrator"]
     session, plan = await _seed_confirmed_plan(
         db_session,
@@ -490,11 +494,10 @@ async def test_execute_create_row_without_asset_number_fails_closed(client: Asyn
             {
                 "action": "CREATE",
                 "normalized_values": {
-                    # No "asset_number" key at all -- matches exactly what
-                    # the real parser produces today (§9 OD-4).
                     "bcm_code": "BCM_NO_ASSET",
                     "item_no": "ITEM_NO_ASSET",
-                    "equipment_name": "Should Never Be Created",
+                    "equipment_name": "Created Without Asset Number",
+                    "asset_id": "AID-NOASSET",
                     "status": EquipmentStatus.AVAILABLE_AT_POOL.value,
                 },
             }
@@ -503,15 +506,16 @@ async def test_execute_create_row_without_asset_number_fails_closed(client: Asyn
     plan_id = plan.id
     headers = await auth_headers(client)
     r = await client.post(f"/api/v1/import-sessions/{session.id}/execute", headers=headers)
-    assert r.status_code == 500, r.text
-    assert r.json()["code"] == "IMPORT_EXECUTION_FAILED"
+    assert r.status_code == 200, r.text
+    assert r.json()["imported_rows"] == 1
 
     db_session.expire_all()
-    exists = (await db_session.execute(select(Equipment).where(Equipment.bcm_code == "BCM_NO_ASSET"))).scalar_one_or_none()
-    assert exists is None, "a CREATE row lacking an authoritative asset_number must never fabricate one"
+    created = (await db_session.execute(select(Equipment).where(Equipment.bcm_code == "BCM_NO_ASSET"))).scalar_one()
+    assert created.asset_number is None
+    assert created.asset_id == "AID-NOASSET", "asset_id stays its own column and is never copied into asset_number"
 
     refreshed_plan = (await db_session.execute(select(EquipmentMasterDryRunPlan).where(EquipmentMasterDryRunPlan.id == plan_id))).scalar_one()
-    assert refreshed_plan.status == "failed"
+    assert refreshed_plan.status == "consumed"
 
 
 async def test_execute_create_row_issued_to_ward_status_fails_closed(client: AsyncClient, seeded_users, db_session):

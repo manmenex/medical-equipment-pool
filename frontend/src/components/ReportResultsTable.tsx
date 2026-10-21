@@ -70,7 +70,7 @@ export function ReportResultsTable({ rows }: { rows: ReportTransactionOut[] }) {
               <td className="py-2 pr-3">{row.transaction_no}</td>
               <td className="py-2 pr-3">
                 {row.equipment.equipment_name}
-                <div className="text-xs text-[var(--text-muted)]">{row.equipment.asset_number}</div>
+                <div className="text-xs text-[var(--text-muted)]">{row.equipment.asset_number ?? "-"}</div>
               </td>
               <td className="py-2 pr-3">{wardName(row.ward_id)}</td>
               <td className="py-2 pr-3">{row.dispatch_operator_display_name ?? "-"}</td>
