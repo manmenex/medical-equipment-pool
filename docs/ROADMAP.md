@@ -468,7 +468,7 @@ system of record. Excluded by the Owner, 2026-10-13.
 
 | Item | Scope | Status |
 |---|---|---|
-| Legacy pool sheet shadow sync | Demo-only, disabled by default. Reads the pool team's current Google Sheet (read-only scope) and replays its dispatch and return rows through the existing dispatch/receipt services via the offline sync ledger, so conflicts go to the existing review page. No writes to the sheet, no patient data, no ward-side person names, no note import. Must be switched off before Production go-live (Owner decision). Boundaries: `docs/DECISION_LOG.md` (Governance 2026-10-21) | Approved 2026-10-21; implementation PR follows this Governance PR |
+| Legacy pool sheet shadow sync | Demo-only, disabled by default. Reads the pool team's current Google Sheet (read-only scope) and replays its dispatch and return rows through the existing dispatch/receipt services via the offline sync ledger, so conflicts go to the existing review page. No writes to the sheet, no patient data, no ward-side person names, no note import. Must be switched off before Production go-live (Owner decision), and the Owner decides database reset/re-import because demo-synced data would otherwise remain. Boundaries: `docs/DECISION_LOG.md` (Governance 2026-10-21) | Approved 2026-10-21; implementation PR follows this Governance PR |
 
 ## Notes on PR14, PR15 and GitHub PR #40
 

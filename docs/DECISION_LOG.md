@@ -9069,6 +9069,19 @@ Details: `docs/design/PR25D_OFFLINE_OPERATION_PLAN.md` section 18.
      pool-staff user.
   7. The service-account key is never committed, logged or printed. The
      Owner places it on the host.
+  8. Known data limits, accepted for the demo: every return is recorded
+     as outcome `usable` (the Owner has not defined a defective mapping), and
+     when a return has no matching sheet dispatch it falls back to the
+     equipment's current open transaction, which may be one entered in the
+     application rather than from the sheet.
+  9. Identity: `LEGACY-SYNC` is a service identity (Equipment Pool Staff
+     role) with no human login. It is created with a random password that is
+     never recorded or shared, and nobody signs in as it.
+  10. Go-live data: transactions, ledger rows and review items created by the
+     sync stay in the database if the demo host becomes Production. Before
+     go-live the Owner decides whether to reset or re-import the database.
+     This decision, together with confirming the sync is disabled and the key
+     removed, is an item on the go-live checklist.
 - **Clarification of "No MEMS integration":** the source is the pool team's
   own legacy log sheet, not N Smart. The QR links in that sheet point to
   nsmart URLs, but the sync only reads the sheet; nothing calls, writes to or
