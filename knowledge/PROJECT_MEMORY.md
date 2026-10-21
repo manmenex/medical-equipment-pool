@@ -25,7 +25,8 @@ Sources: `AGENTS.md`, `docs/BUSINESS_RULES.md`,
 - Receipt uses a binary `usable` / `defective` outcome; backend services map
   the outcome to equipment state.
 - BCM Code, Item Number, hospital Asset Number, and internal UUID have distinct
-  roles. Existing hospital Item Number QR codes are preserved.
+  roles. Existing hospital Item Number QR codes are preserved. Asset Number is
+  optional (unique when present, never fabricated; Governance 2026-10-21).
 - The first receiving ward is recorded; later physical movements are not
   tracked.
 - The backend is authoritative for business rules and authorization.

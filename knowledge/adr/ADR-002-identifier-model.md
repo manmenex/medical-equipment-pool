@@ -38,6 +38,13 @@ identifier substitutes for another.
 
 4. **Asset Number**
    - Retained as inventory metadata only.
+   - **Optional** (Governance 2026-10-21, Owner decision): equipment may
+     exist with no Asset Number. When present it is unique across all
+     equipment. It is never fabricated or derived: not copied from Asset
+     ID (`asset_id` stays its own optional column, Roadmap PR12 Part E),
+     not generated, not a placeholder. A blank input is stored as no
+     value (NULL). Rationale: the hospital pool list has Item No and BCM
+     Code for every item but no Asset Number source.
    - Not a supported QR identifier and not a manual-search identifier.
    - Not merged with, or inferred from, BCM Code or Item No.
 
@@ -48,7 +55,8 @@ role it meant.
 
 Cardinality: one equipment record has exactly one value (or none, before
 that identifier has been assigned) for each of BCM Code, Item No, and
-Asset Number. No identifier is shared across equipment records.
+Asset Number. No identifier is shared across equipment records. (Amended
+2026-10-21: "none" is a permanent, valid state for Asset Number.)
 
 ## Consequences
 

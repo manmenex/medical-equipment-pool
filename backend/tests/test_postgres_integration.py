@@ -13196,3 +13196,86 @@ async def test_migration_0027_client_operations_both_paths():
             await engine.dispose()
     finally:
         await _drop_scratch_database()
+
+
+
+# ---------------------------------------------------------------------------
+# Governance 2026-10-21: migration 0029_asset_number_optional.py. Fresh install
+# (create_all already nullable; DROP NOT NULL is a no-op) and historical upgrade
+# (NOT NULL after downgrade to 0028, then relaxed), NULLs allowed with UNIQUE kept
+# for non-NULL values, and downgrade refusing while any NULL row exists. No
+# pinned table/column/index counts change (nullability only).
+# ---------------------------------------------------------------------------
+
+
+async def _asset_number_state() -> tuple:
+    engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+    try:
+        async with engine.connect() as conn:
+            col = (
+                await conn.execute(
+                    text(
+                        "SELECT data_type, character_maximum_length, is_nullable FROM information_schema.columns "
+                        "WHERE table_schema='public' AND table_name='equipment' AND column_name='asset_number'"
+                    )
+                )
+            ).one()
+            idx = (
+                await conn.execute(
+                    text("SELECT indexdef FROM pg_indexes WHERE tablename='equipment' AND indexname='ix_equipment_asset_number'")
+                )
+            ).scalar_one()
+            return tuple(col), "UNIQUE" in idx.upper()
+    finally:
+        await engine.dispose()
+
+
+async def test_migration_0029_asset_number_optional_both_paths():
+    from sqlalchemy.exc import IntegrityError
+
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+    expected = (("character varying", 50, "YES"), True)
+    try:
+        _run_alembic("upgrade", "head")
+        assert await _asset_number_state() == expected
+
+        # Historical path: pre-0029 schema is NOT NULL.
+        _run_alembic("downgrade", "0028_client_op_time_flag_too_old")
+        assert (await _asset_number_state())[0][2] == "NO"
+        _run_alembic("upgrade", "head")
+        assert await _asset_number_state() == expected
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            ins = text(
+                "INSERT INTO equipment (id, asset_number, equipment_name, status, metadata) "
+                "VALUES (gen_random_uuid(), :a, :n, 'available_at_pool', '{}'::jsonb)"
+            )
+            async with engine.begin() as conn:
+                await conn.execute(ins, {"a": None, "n": "No asset 1"})
+                await conn.execute(ins, {"a": None, "n": "No asset 2"})
+                await conn.execute(ins, {"a": "AN-0029", "n": "With asset"})
+            with pytest.raises(IntegrityError):
+                async with engine.begin() as conn:
+                    await conn.execute(ins, {"a": "AN-0029", "n": "Dup asset"})
+        finally:
+            await engine.dispose()
+
+        # Downgrade refuses while NULL rows exist (never fabricates a value).
+        result = _run_alembic_allow_failure("downgrade", "0028_client_op_time_flag_too_old")
+        assert result.returncode != 0
+        assert "Cannot downgrade 0029" in (result.stdout + result.stderr)
+
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("DELETE FROM equipment WHERE asset_number IS NULL"))
+        finally:
+            await engine.dispose()
+        _run_alembic("downgrade", "0028_client_op_time_flag_too_old")
+        assert (await _asset_number_state())[0][2] == "NO"
+    finally:
+        await _drop_scratch_database()

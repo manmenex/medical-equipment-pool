@@ -16,14 +16,15 @@ mutates `equipment` -- `plan_dry_run`/`execute` are intentionally left at
 the base `ImportAdapter` class's `NotImplementedError` default (§24:
 PR20D/PR20E's own scope, not this module's).
 
-**OD-4 (never fabricate `asset_number`):** the current 32-column
-`export_template.xlsx` contract supplies no `asset_number` source. Every
-row that would otherwise be a potential CREATE candidate therefore always
-receives the blocking `ASSET_NUMBER_REQUIRED_FOR_CREATE` finding (§9
-OD-4) -- this is the correct, designed behavior, not a bug: parser/
-validation readiness (this module) is deliberately distinct from
-CREATE-execution readiness (blocked until the Repository Owner supplies
-an authoritative Asset Number source).
+**OD-4 (never fabricate `asset_number`) -- relaxed by Governance
+2026-10-21:** the 32-column `export_template.xlsx` contract still supplies
+no `asset_number` source. Asset Number is now OPTIONAL
+(docs/BUSINESS_RULES.md, ADR-002 amendment), so a CREATE candidate is no
+longer blocked for lacking one: the new Equipment row is created with
+`asset_number = NULL`. It is still never fabricated or derived -- in
+particular never copied from `asset_id`, which remains its own optional
+column. The former blocking `ASSET_NUMBER_REQUIRED_FOR_CREATE` finding is
+retired.
 """
 
 from __future__ import annotations
@@ -168,11 +169,9 @@ STATUS_MAPPING: dict[str, EquipmentStatus] = {
 }
 
 # ---------------------------------------------------------------------------
-# §12: centralized, stable finding codes. `ASSET_NUMBER_REQUIRED_FOR_CREATE`
-# is used verbatim as specified by §9 OD-4 -- every other code follows this
-# module's own `EQUIPMENT_MASTER_<CONDITION>` convention (§12's own
-# illustrative naming), since no exact code beyond the OD-4 one is fixed by
-# the merged design.
+# §12: centralized, stable finding codes, following this module's own
+# `EQUIPMENT_MASTER_<CONDITION>` convention. (`ASSET_NUMBER_REQUIRED_FOR_CREATE`,
+# formerly §9 OD-4, was retired by Governance 2026-10-21.)
 # ---------------------------------------------------------------------------
 CODE_BCM_MISSING = "EQUIPMENT_MASTER_BCM_MISSING"
 CODE_BCM_INVALID = "EQUIPMENT_MASTER_BCM_INVALID"
@@ -188,11 +187,6 @@ CODE_ASSET_ID_CONFLICT = "EQUIPMENT_MASTER_ASSET_ID_CONFLICT"
 CODE_STATUS_MISSING = "EQUIPMENT_MASTER_STATUS_MISSING"
 CODE_STATUS_UNMAPPABLE = "EQUIPMENT_MASTER_STATUS_UNMAPPABLE"
 CODE_STATUS_MISMATCH = "EQUIPMENT_MASTER_STATUS_MISMATCH"
-# §9 OD-4: this exact code is the merged design's own stable identifier --
-# not prefixed with this module's own convention, since OD-4 names it
-# directly.
-CODE_ASSET_NUMBER_REQUIRED_FOR_CREATE = "ASSET_NUMBER_REQUIRED_FOR_CREATE"
-
 
 # ---------------------------------------------------------------------------
 # §7: cell-level extraction for the two governed identifiers. Distinct
@@ -891,23 +885,6 @@ class EquipmentMasterAdapter(ImportAdapter):
                 )
             )
 
-        # §9 OD-4: every potential CREATE candidate is blocked -- the
-        # currently-approved 32-column contract supplies no authoritative
-        # asset_number source. This finding is unconditional for every
-        # CREATE candidate, by design.
-        findings.append(
-            FieldError(
-                field="asset_number",
-                error_code=CODE_ASSET_NUMBER_REQUIRED_FOR_CREATE,
-                message=(
-                    "An authoritative Asset Number source is required to create a new Equipment "
-                    "record; none is available in the current Equipment Master workbook contract. "
-                    "This row cannot become executable CREATE work until the Repository Owner "
-                    "supplies one (Roadmap PR20 §9 OD-4)."
-                ),
-            )
-        )
-
         return findings
 
     def _validate_update_candidate(
@@ -1010,15 +987,10 @@ class EquipmentMasterAdapter(ImportAdapter):
         writes. Every row resolves to exactly one of CREATE/UPDATE/SKIP
         (§6): a row carrying any blocking (`severity == "error"`) finding
         is always SKIP (never an executable CREATE/UPDATE, closing §9
-        OD-4's CREATE Asset Number gate and every other blocking
-        validation finding the same way); a CREATE candidate with no
-        blocking finding would be plan-ed as CREATE, but under the
-        current 32-column source contract this branch is unreachable in
-        practice, since `_validate_create_candidate` unconditionally
-        emits the blocking `ASSET_NUMBER_REQUIRED_FOR_CREATE` finding for
-        every CREATE candidate (§9 OD-4) -- kept so a future, richer
-        source contract can light this path up without a further
-        `plan_dry_run` change. An UPDATE row captures
+        every blocking validation finding the same way); a CREATE
+        candidate with no blocking finding is plan-ed as CREATE (Asset
+        Number is optional since Governance 2026-10-21, so its absence is
+        no longer a blocking finding). An UPDATE row captures
         `matched_equipment.version` (PR20B) *now*, at dry-run time, into
         `expected_equipment_version` -- the only place this value is ever
         captured (§15.1); it is never re-read at execute time (PR20E)."""
@@ -1241,9 +1213,9 @@ class EquipmentMasterAdapter(ImportAdapter):
 
         Applies every plan row's already-persisted action, exactly as
         planned: `CREATE` via a plain insert guarded by Equipment's
-        existing unique constraints (§16) -- a row lacking a genuine,
-        non-fabricated `asset_number` (§9 OD-4) or an approved
-        `status` mapping (§9 OD-2, never `ISSUED_TO_WARD` -- creating
+        existing unique constraints (§16) -- `asset_number` is stored
+        as-is from the plan (NULL when absent; never fabricated), and a
+        row lacking an approved `status` mapping (§9 OD-2, never `ISSUED_TO_WARD` -- creating
         Equipment directly into that state without a `BorrowTransaction`
         would violate the ledger invariant, so this is refused exactly
         like every other unauthorized CREATE) is refused, never
@@ -1255,7 +1227,7 @@ class EquipmentMasterAdapter(ImportAdapter):
         update()`'s own empty-`data` guard).
 
         Any conflict -- missing plan, source-binding mismatch, a CREATE
-        row with no authoritative `asset_number`/status, a unique-
+        row with no approved status, a unique-
         constraint violation, a missing UPDATE target, or a stale
         `expected_equipment_version` -- raises `AdapterExecutionConflict`
         carrying the resolved plan's own id, so the framework's TX2
@@ -1368,20 +1340,11 @@ class EquipmentMasterAdapter(ImportAdapter):
         # `PendingRollbackError` instead, masking the real conflict.
         row_id = row.id
         values = row.normalized_values or {}
-        # §9 OD-4: this codebase's own PR20C parser never persists this
-        # key today (no authoritative source exists under the current
-        # 32-column contract, §9 OD-4) -- kept as a real, enforced check
-        # (never assumed unreachable) so a future, richer source contract
-        # can light this path up safely, and so a plan row that somehow
-        # reached this point despite upstream validation fails closed
-        # rather than fabricating a placeholder.
-        asset_number = values.get("asset_number")
-        if not asset_number:
-            raise AdapterExecutionConflict(
-                f"Plan row {row_id} is a CREATE action with no authoritative asset_number -- refusing to "
-                "fabricate one.",
-                resolved_resource_id=plan_id,
-            )
+        # Governance 2026-10-21: asset_number is optional. This codebase's
+        # PR20C parser never persists it (no source in the 32-column
+        # contract), so it is None here -- stored as NULL, never fabricated
+        # and never copied from asset_id.
+        asset_number = values.get("asset_number") or None
         status_raw = values.get("status")
         try:
             status = EquipmentStatus(status_raw) if status_raw is not None else None

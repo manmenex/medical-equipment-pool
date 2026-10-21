@@ -241,7 +241,7 @@ export function EquipmentDetailPage() {
         <div>
           <h1 className="text-lg font-semibold">{equipment.equipment_name}</h1>
           <p className="text-sm text-[var(--text-muted)]">
-            {equipment.asset_number}
+            {equipment.asset_number ?? "-"}
             {equipment.serial_number ? ` · SN ${equipment.serial_number}` : ""}
           </p>
           <div className="mt-2">

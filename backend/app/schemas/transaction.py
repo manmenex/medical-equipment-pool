@@ -138,7 +138,7 @@ class WardCorrectionRequest(BaseModel):
 
 class EquipmentSummary(BaseModel):
     id: UUIDStr
-    asset_number: str
+    asset_number: str | None
     equipment_name: str
     status: str
 
