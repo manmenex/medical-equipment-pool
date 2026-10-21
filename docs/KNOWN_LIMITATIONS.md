@@ -15,6 +15,18 @@
 
 **Resolution path:** A repository-settings change the Repository Owner performs directly — see `docs/REPOSITORY_STRATEGY.md`, "Branch protection and ruleset recommendation" ("requires applicable status checks once reliable CI exists... governance tasks do not mutate them"). Tracked as `docs/TECH_DEBT.md` TD-003 (partially resolved).
 
+## Go-live initial pool import (Owner decision 2026-10-21, option "ข")
+
+The initial import of the hospital pool list loads every Active item as `AVAILABLE_AT_POOL`, although about 312 of the 464 items are physically at wards. No opening-balance dispatch transactions are created (Owner accepted the risk; `docs/DECISION_LOG.md`, Governance 2026-10-21).
+
+1. **Dispatch of an item that is actually out.** The system shows the item as available, so staff can dispatch it. The physical item is not at the pool, so staff must verify the item is in hand before dispatching.
+2. **No receipt for a pre-system dispatch.** An item dispatched before go-live has no open transaction, so its return cannot be recorded as a receipt. When it comes back it must be handled by the go-live/cutover runbook procedure (`docs/runbooks/PR23_CUTOVER_RUNBOOK.md`), not by editing status by hand.
+3. **Asset Number is optional.** Most imported items have no Asset Number; the system shows "-". It is never filled in from Asset ID.
+
+**Impact:** Pool counts and "available" lists are overstated until the ward-held items have come back.
+
+**Resolution path:** Operational, through the cutover runbook; no code change planned.
+
 ## Offline operation (PR25E) limitations
 
 Design and rationale: `docs/design/PR25D_OFFLINE_OPERATION_PLAN.md` (see 18.1); guides: `docs/runbooks/PR25E_OPERATOR_GUIDE_TH.md`, `docs/runbooks/PR25E_REVIEWER_GUIDE_TH.md`. Not yet exercised on real devices (slice E1).

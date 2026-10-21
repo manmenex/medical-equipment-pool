@@ -58,7 +58,7 @@ export function EquipmentVerifyChecklistTable({ rows }: { rows: Equipment[] }) {
                 {row.bcm_code && <div className="text-xs text-[var(--text-muted)]">{row.bcm_code}</div>}
               </td>
               <td className="py-2 pr-3">
-                {row.asset_number}
+                {row.asset_number ?? "-"}
                 {row.serial_number && <div className="text-xs text-[var(--text-muted)]">SN {row.serial_number}</div>}
               </td>
               <td className="py-2 pr-3">{categoryName(row.category_id)}</td>

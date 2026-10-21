@@ -81,13 +81,13 @@ function EquipmentForm() {
     setMessage(null);
     try {
       await createEquipment({
-        asset_number: assetNumber,
+        asset_number: assetNumber.trim() || undefined,
         equipment_name: name,
         brand,
         model,
         bcm_code: bcmCode || undefined,
       });
-      setMessage(`เพิ่มเครื่อง ${assetNumber} สำเร็จ`);
+      setMessage(`เพิ่มเครื่อง ${assetNumber.trim() || name} สำเร็จ`);
       setAssetNumber("");
       setName("");
       setBrand("");
@@ -102,8 +102,7 @@ function EquipmentForm() {
   return (
     <form onSubmit={handleSubmit} className="surface flex max-w-md flex-col gap-3 rounded-xl border p-4">
       <input
-        required
-        placeholder="เลขครุภัณฑ์ (Asset Number)"
+        placeholder="เลขครุภัณฑ์ (Asset Number) - ไม่บังคับ"
         value={assetNumber}
         onChange={(e) => setAssetNumber(e.target.value)}
         className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"

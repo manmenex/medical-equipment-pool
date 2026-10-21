@@ -1,6 +1,6 @@
 """Roadmap PR20D (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §14,
 §14.2-§14.9, §15.1). Covers: `plan_dry_run` row classification (CREATE/
-UPDATE/SKIP, OD-4 CREATE gate, summary invariants), `persist_dry_run_plan`
+UPDATE/SKIP, optional-Asset-Number CREATE, summary invariants), `persist_dry_run_plan`
 persistence/immutability/supersession, the UPDATE-row concurrency-token
 capture discipline, read-only-domain enforcement (no Equipment mutation),
 the `GET .../dry-run-plan` / `POST .../dry-run-plan/{id}/confirm` API
@@ -34,7 +34,6 @@ from app.models.user import User
 from app.services import import_execution_service, import_lease
 from app.services.import_adapter_context import AdapterInvocationContext, adapter_invocation_context
 from app.services.import_adapters.equipment_master import (
-    CODE_ASSET_NUMBER_REQUIRED_FOR_CREATE,
     CODE_BCM_MISSING,
     CODE_IDENTITY_CONFLICT,
     DATASET_TYPE,
@@ -224,11 +223,10 @@ async def test_plan_dry_run_blocking_finding_produces_skip_with_reason(db_sessio
     assert plan.summary["creates"] == 0
 
 
-async def test_plan_dry_run_create_candidate_always_blocked_by_od4(db_session, seeded_users):
-    """§9 OD-4: a CREATE candidate is never plan-ed as executable under
-    the current source contract -- always SKIP, never a CREATE row with a
-    fabricated asset_number."""
-    content = _build_workbook_bytes([_valid_row(bcm="BCM_NEVER_CREATE", item_no="ITEM_NEVER_CREATE")])
+async def test_plan_dry_run_create_candidate_not_blocked_without_asset_number(db_session, seeded_users):
+    """Governance 2026-10-21: Asset Number is optional, so a clean CREATE
+    candidate is plan-ed as CREATE with no asset_number (never fabricated)."""
+    content = _build_workbook_bytes([_valid_row(bcm="BCM_NOW_CREATE", item_no="ITEM_NOW_CREATE")])
     adapter = EquipmentMasterAdapter()
     ctx = _invocation_context(
         session_id=uuid.uuid4(),
@@ -242,11 +240,11 @@ async def test_plan_dry_run_create_candidate_always_blocked_by_od4(db_session, s
         plan = await adapter.plan_dry_run(db_session)
 
     row = plan.summary["rows"][0]
-    assert row["action"] == "SKIP"
-    codes = {w["error_code"] for w in row["warnings"]}
-    assert CODE_ASSET_NUMBER_REQUIRED_FOR_CREATE in codes
-    assert plan.summary["creates"] == 0
-    assert plan.summary["skips"] == 1
+    assert row["action"] == "CREATE"
+    assert not row["warnings"]
+    assert "asset_number" not in (row.get("normalized_values") or {})
+    assert plan.summary["creates"] == 1
+    assert plan.summary["skips"] == 0
 
 
 async def test_plan_dry_run_identity_conflict_counted_as_blocking_conflict(db_session, seeded_users):
@@ -277,7 +275,7 @@ async def test_plan_dry_run_summary_matches_row_counts_exactly(db_session, seede
         [
             _valid_row(bcm="BCM_SUM_UPD", item_no="ITEM_SUM_UPD"),  # UPDATE
             _valid_row(bcm=None, item_no="ITEM_SUM_SKIP"),  # SKIP (blocking)
-            _valid_row(bcm="BCM_SUM_CREATE", item_no="ITEM_SUM_CREATE"),  # SKIP (OD-4)
+            _valid_row(bcm="BCM_SUM_CREATE", item_no="ITEM_SUM_CREATE"),  # CREATE (asset_number optional)
         ]
     )
     adapter = EquipmentMasterAdapter()
@@ -297,9 +295,9 @@ async def test_plan_dry_run_summary_matches_row_counts_exactly(db_session, seede
     assert plan.summary["creates"] == sum(1 for r in rows if r["action"] == "CREATE")
     assert plan.summary["updates"] == sum(1 for r in rows if r["action"] == "UPDATE")
     assert plan.summary["skips"] == sum(1 for r in rows if r["action"] == "SKIP")
-    assert plan.summary["creates"] == 0
+    assert plan.summary["creates"] == 1
     assert plan.summary["updates"] == 1
-    assert plan.summary["skips"] == 2
+    assert plan.summary["skips"] == 1
 
 
 # ---------------------------------------------------------------------------

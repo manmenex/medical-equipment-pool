@@ -30,7 +30,6 @@ from app.services import import_adapters
 from app.services.import_adapters import equipment_master
 from app.services.import_adapters.equipment_master import (
     CODE_ASSET_ID_CONFLICT,
-    CODE_ASSET_NUMBER_REQUIRED_FOR_CREATE,
     CODE_BCM_DUPLICATE_IN_SOURCE,
     CODE_BCM_INVALID,
     CODE_BCM_MISSING,
@@ -633,18 +632,16 @@ async def _seed_equipment(db_session, **kwargs) -> Equipment:
 async def test_case1_new_bcm_new_item_is_create_candidate_no_conflict(db_session, seeded_users):
     [findings] = await _run_adapter(db_session, [_valid_row(bcm="BCM_NEW1", item_no="NEW-ITEM-1")])
     assert CODE_IDENTITY_CONFLICT not in _codes(findings)
-    # §9 OD-4: a CREATE candidate is always blocked pending an authoritative
-    # Asset Number, but that is a distinct finding from an identity conflict.
-    assert CODE_ASSET_NUMBER_REQUIRED_FOR_CREATE in _codes(findings)
+    # Governance 2026-10-21: Asset Number is optional, so a clean CREATE
+    # candidate carries no blocking finding at all.
+    assert not [f for f in findings if f.severity == "error"]
 
 
 async def test_case2_bcm_and_item_match_same_equipment_is_update_candidate(db_session, seeded_users):
     existing = await _seed_equipment(db_session, bcm_code="BCM_A", item_no="ITEM_A")
     [findings] = await _run_adapter(db_session, [_valid_row(bcm="BCM_A", item_no="ITEM_A")])
     assert CODE_IDENTITY_CONFLICT not in _codes(findings)
-    assert CODE_ASSET_NUMBER_REQUIRED_FOR_CREATE not in _codes(findings), (
-        "an UPDATE candidate must never receive the CREATE-only Asset Number finding"
-    )
+    assert not [f for f in findings if f.field == "asset_number"]
 
 
 async def test_case3_bcm_matches_a_item_unexpected_is_conflict(db_session, seeded_users):
@@ -671,10 +668,7 @@ async def test_case6_duplicate_bcm_never_reaches_identity_resolution(db_session,
     findings_a, findings_b = await _run_adapter(db_session, rows)
     for findings in (findings_a, findings_b):
         assert CODE_IDENTITY_CONFLICT not in _codes(findings)
-        assert CODE_ASSET_NUMBER_REQUIRED_FOR_CREATE not in _codes(findings), (
-            "a row blocked at the blank/duplicate precondition must never also reach identity "
-            "resolution/classification"
-        )
+        assert not [f for f in findings if f.field == "asset_number"]
 
 
 async def test_case7_duplicate_item_no_never_reaches_identity_resolution(db_session, seeded_users):
@@ -682,7 +676,7 @@ async def test_case7_duplicate_item_no_never_reaches_identity_resolution(db_sess
     findings_a, findings_b = await _run_adapter(db_session, rows)
     for findings in (findings_a, findings_b):
         assert CODE_IDENTITY_CONFLICT not in _codes(findings)
-        assert CODE_ASSET_NUMBER_REQUIRED_FOR_CREATE not in _codes(findings)
+        assert not [f for f in findings if f.field == "asset_number"]
 
 
 # ---------------------------------------------------------------------------
@@ -690,18 +684,15 @@ async def test_case7_duplicate_item_no_never_reaches_identity_resolution(db_sess
 # ---------------------------------------------------------------------------
 
 
-async def test_od4_create_candidate_always_blocked_never_fabricated(db_session, seeded_users):
+async def test_create_candidate_without_asset_number_is_not_blocked(db_session, seeded_users):
+    """Governance 2026-10-21 (relaxes OD-4): Asset Number is optional, so a
+    CREATE candidate is never blocked for lacking one; it is also never
+    fabricated from Asset ID (no asset_number finding or value is produced)."""
     [findings] = await _run_adapter(
         db_session, [_valid_row(bcm="BCM_CREATE_1", item_no="ITEM_CREATE_1", **{"Asset ID": "AST-LEGACY-1"})]
     )
-    blocking = [f for f in findings if f.error_code == CODE_ASSET_NUMBER_REQUIRED_FOR_CREATE]
-    assert len(blocking) == 1
-    assert blocking[0].severity == "error"
-    assert blocking[0].field == "asset_number"
-    # No substitute identifier is ever produced as a stand-in asset_number --
-    # this adapter never writes an asset_number value anywhere; the proof is
-    # structural: FieldError carries no value field to smuggle one through,
-    # and no Equipment write occurs at all (see no-mutation tests below).
+    assert not [f for f in findings if f.severity == "error"]
+    assert not [f for f in findings if f.field == "asset_number"]
 
 
 async def test_od4_update_candidate_retains_existing_asset_number_untouched(db_session, seeded_users):
@@ -760,9 +751,8 @@ _AUTHORITATIVE_MAPPED_STATUSES = (
 async def test_authoritative_status_mapping_create_candidate(db_session, seeded_users, source_value, expected_status):
     """Table-driven proof of the exact Repository-Owner-confirmed mapping
     for a CREATE candidate: no CODE_STATUS_* blocking/unmappable finding
-    is produced for any of the three mappable authoritative values (the
-    row is still blocked overall by OD-4's unrelated
-    ASSET_NUMBER_REQUIRED_FOR_CREATE, which is not a status finding)."""
+    is produced for any of the three mappable authoritative values (Asset
+    Number is optional, so it never blocks a row)."""
     [findings] = await _run_adapter(
         db_session, [_valid_row(bcm=f"BCM_AUTH_{source_value}", item_no=f"ITEM_AUTH_{source_value}", status=source_value)]
     )
@@ -1085,7 +1075,7 @@ async def test_end_to_end_valid_workbook_persists_findings_and_coherent_counters
     session = await _create_session(client, headers)
     content = _build_workbook_bytes(
         [
-            _valid_row(bcm="BCM_E2E_1", item_no="1"),  # CREATE candidate -> blocked by OD-4
+            _valid_row(bcm="BCM_E2E_1", item_no="1"),  # CREATE candidate -> valid (asset_number optional)
             _valid_row(bcm=None, item_no="2"),  # blank BCM -> blocked
         ]
     )
@@ -1097,14 +1087,14 @@ async def test_end_to_end_valid_workbook_persists_findings_and_coherent_counters
     body = r.json()
     assert body["status"] == "validation_failed"
     assert body["total_rows"] == 2
-    assert body["invalid_rows"] == 2
-    assert body["valid_rows"] == 0
+    assert body["invalid_rows"] == 1
+    assert body["valid_rows"] == 1
 
     errors = await client.get(f"/api/v1/import-sessions/{session['id']}/errors", headers=headers)
     assert errors.status_code == 200
     codes = {item["error_code"] for item in errors.json()["items"]}
-    assert CODE_ASSET_NUMBER_REQUIRED_FOR_CREATE in codes
     assert CODE_BCM_MISSING in codes
+    assert "ASSET_NUMBER_REQUIRED_FOR_CREATE" not in codes
 
 
 async def test_end_to_end_dispatches_to_equipment_master_adapter_only(client: AsyncClient, seeded_users):

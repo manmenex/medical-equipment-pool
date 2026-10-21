@@ -328,7 +328,9 @@ async def _resolve_equipment_label(db: AsyncSession, equipment_id: uuid.UUID | N
     equipment = await equipment_crud.get_by_id(db, equipment_id)
     if equipment is None:
         return None
-    return f"{equipment.asset_number} - {equipment.equipment_name}"
+    if equipment.asset_number:
+        return f"{equipment.asset_number} - {equipment.equipment_name}"
+    return equipment.equipment_name
 
 
 def _status_filter_summary(status: EquipmentStatus | None) -> ExportFilterSummary | None:

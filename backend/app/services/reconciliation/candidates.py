@@ -94,7 +94,7 @@ class EquipmentSnapshot:
 
     id: uuid.UUID
     status: str
-    asset_number: str
+    asset_number: str | None
     bcm_code: str | None
     item_no: str | None
 

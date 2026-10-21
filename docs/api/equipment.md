@@ -136,7 +136,7 @@ Deliberately minimal — never includes `item_no`, device name, brand, model, se
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `asset_number` | string, 1–50 chars | Yes | |
+| `asset_number` | string, 1–50 chars | No | Optional (Governance 2026-10-21). Unique when present; blank is stored as `null`; never fabricated. Responses return `null` when absent. |
 | `serial_number` | string, ≤100 chars, or `null` | No | |
 | `equipment_name` | string, 1–255 chars | Yes | |
 | `category_id`, `department_owner_id`, `current_location_id` | string (UUID) or `null` | No | Validated to reference an existing row (`400 INVALID_INPUT` otherwise) |

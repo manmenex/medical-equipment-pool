@@ -154,7 +154,7 @@ export function EquipmentAutocomplete({
                   >
                     <div className="font-medium">{equipment.equipment_name}</div>
                     <div className="text-xs text-[var(--text-muted)]">
-                      {equipment.asset_number}
+                      {equipment.asset_number ?? "-"}
                       {equipment.bcm_code ? ` · BCM ${equipment.bcm_code}` : ""}
                     </div>
                   </button>
