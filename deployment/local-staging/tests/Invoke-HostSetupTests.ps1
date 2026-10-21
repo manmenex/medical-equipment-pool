@@ -1024,6 +1024,23 @@ Test-Case 'update-online.ps1 always delegates to update.ps1 (no direct docker or
     Assert-True ($lib -match "Production deployment is the Owner's decision") 'Owner-decision notice present'
 }
 
+Test-Case 'Invoke-MepHostCommand -NoCapture returns an object with ExitCode even when the child prints' {
+    # Runs the REAL helper in a fresh pwsh (this file mocks it). Regression:
+    # child output leaked into the return value, so .ExitCode was missing.
+    $pwsh = (Get-Process -Id $PID).Path
+    $probe = @"
+`$ErrorActionPreference = 'Stop'
+. '$($script:LibPath -replace "'", "''")'
+`$r = Invoke-MepHostCommand -FilePath '$($pwsh -replace "'", "''")' -Arguments @('-NoProfile','-Command','Write-Output child-line; exit 3') -AllowNonZeroExit -NoCapture
+if (`$r.ExitCode -ne 3) { exit 10 }
+if (@(`$r.Output).Count -ne 0) { exit 11 }
+exit 0
+"@
+    $out = & $pwsh -NoProfile -Command $probe 2>&1 | ForEach-Object { "$_" }
+    Assert-Equal 0 $LASTEXITCODE "probe exit (10 = wrong ExitCode, 11 = output leaked); output: $($out -join ' | ')"
+    Assert-True (($out -join "`n") -match 'child-line') 'child output is still shown to the operator'
+}
+
 # ===========================================================================
 
 Write-Host ''
