@@ -9071,3 +9071,58 @@ opening-balance transactions are created.
   demo-only legacy sheet sync is planned and may correct statuses. No code
   change; recorded as a known limitation.
 - **Source:** `docs/KNOWN_LIMITATIONS.md` ("Go-live initial pool import").
+
+## 2026-10-21 — Governance: temporary demo-only legacy pool sheet shadow sync
+
+- **Decision (Owner, 2026-10-21):** During the DEMO/trial period only, the
+  system may continuously mirror dispatches and returns from the pool team's
+  current Google Sheet (workbook "บันทึกข้อมูล Equipment Pool", tabs
+  "ข้อมูลส่งเครื่องมือ" and "ข้อมูลรับเครื่องมือ") so the new system runs its
+  normal flow on real traffic and defects surface before go-live. The feature
+  is called "Legacy pool sheet shadow sync".
+- **Boundaries (all binding):**
+  1. Read-only: the Google service account is used with the
+     `spreadsheets.readonly` scope only. The sync never writes to the sheet.
+  2. Every row enters only through the existing dispatch/receipt services,
+     via the offline sync ledger (`client_operations`, the same path as
+     `POST /sync/operations`). It is therefore idempotent, and lifecycle
+     conflicts land in the existing review page. No direct equipment or
+     transaction state maintenance, and no new equipment state.
+  3. Disabled by default. It runs only when explicitly enabled on a
+     non-production (demo) host.
+  4. It must be switched off before Production go-live. This is an Owner
+     decision; the go-live checklist must verify it is disabled and the key
+     file is removed from the host.
+  5. No patient data. A cell that looks like a patient hospital number (HN)
+     causes that row to be skipped and reported. Free-text notes (column
+     "หมายเหตุ") are not imported; only a short summary of accessory
+     check-mark failures (screen, charger cable, pole clamp) is kept.
+  6. Ward-side person names (column "ชื่อ (User)") are never stored: ward
+     staff are not application users (AGENTS.md). The pool staff first name
+     ("ชื่อ BME") appears only inside the operation note; no users are
+     created or mapped from it. Operations are recorded under one dedicated
+     pool-staff user.
+  7. The service-account key is never committed, logged or printed. The
+     Owner places it on the host.
+  8. Known data limits, accepted for the demo: every return is recorded
+     as outcome `usable` (the Owner has not defined a defective mapping), and
+     when a return has no matching sheet dispatch it falls back to the
+     equipment's current open transaction, which may be one entered in the
+     application rather than from the sheet.
+  9. Identity: `LEGACY-SYNC` is a service identity (Equipment Pool Staff
+     role) with no human login. It is created with a random password that is
+     never recorded or shared, and nobody signs in as it.
+  10. Go-live data: transactions, ledger rows and review items created by the
+     sync stay in the database if the demo host becomes Production. Before
+     go-live the Owner decides whether to reset or re-import the database.
+     This decision, together with confirming the sync is disabled and the key
+     removed, is an item on the go-live checklist.
+- **Clarification of "No MEMS integration":** the source is the pool team's
+  own legacy log sheet, not N Smart. The QR links in that sheet point to
+  nsmart URLs, but the sync only reads the sheet; nothing calls, writes to or
+  depends on N Smart. The guardrail is unchanged.
+- **Reason:** The legacy process is being replaced; running the new flow on
+  its live traffic is the cheapest way to find bugs before the pilot.
+- **Expiry:** Removal of the feature is not scheduled; it is a demo aid, not
+  a permanent integration. A later governance decision may delete it.
+- **Source:** Owner instruction 2026-10-21; `docs/ROADMAP.md` (Demo aids).

@@ -464,6 +464,12 @@ narrows "No MEMS integration" to "read from MEMS, never write".
 **Stage 3 (out of scope):** this system replacing N Smart as the hospital's
 system of record. Excluded by the Owner, 2026-10-13.
 
+## Demo aids (temporary, not part of the Production scope)
+
+| Item | Scope | Status |
+|---|---|---|
+| Legacy pool sheet shadow sync | Demo-only, disabled by default. Reads the pool team's current Google Sheet (read-only scope) and replays its dispatch and return rows through the existing dispatch/receipt services via the offline sync ledger, so conflicts go to the existing review page. No writes to the sheet, no patient data, no ward-side person names, no note import. Must be switched off before Production go-live (Owner decision), and the Owner decides database reset/re-import because demo-synced data would otherwise remain. Boundaries: `docs/DECISION_LOG.md` (Governance 2026-10-21) | Approved 2026-10-21; implementation PR follows this Governance PR |
+
 ## Notes on PR14, PR15 and GitHub PR #40
 
 **PR14 above is Reliability and Performance Hardening — it is not related to GitHub PR #14 (which implemented Roadmap PR5).** See the numbering note. Roadmap PR14 (both PR14A Reliability Correctness and PR14B Pagination Performance) is now fully complete — see the Completed table and the PR14 note above. **Roadmap PR15 slices are complete:** PR15A (Observability, #50) and PR15B (Schema Hygiene, #54) are both merged — see the Completed table and the PR15 note above. Application metrics, tracing, dashboards, log aggregation, and alerting are **not** scheduled to either PR15 slice and remain open Roadmap PR15 scope, not yet assigned to any Roadmap PR, pending a future slice or an explicit governance decision to remove them from scope — Roadmap PR15 as a whole may not be marked complete until every one of its topics has been implemented, completed by an earlier PR, or explicitly removed through a governance decision.
