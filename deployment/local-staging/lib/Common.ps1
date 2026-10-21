@@ -162,7 +162,8 @@ function Invoke-MepCommand {
     )
 
     if ($NoCapture) {
-        & $FilePath @Arguments
+        # Out-Host: show the output without leaking it into the return value.
+        & $FilePath @Arguments | Out-Host
         $exitCode = $LASTEXITCODE
         $output = @()
     }

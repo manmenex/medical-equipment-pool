@@ -58,7 +58,9 @@ function Invoke-MepHostCommand {
         [switch]$NoCapture
     )
     if ($NoCapture) {
-        & $FilePath @Arguments
+        # Out-Host keeps the child's output on screen instead of letting it
+        # leak into this function's return value (which broke .ExitCode).
+        & $FilePath @Arguments | Out-Host
         $exitCode = $LASTEXITCODE
         $output = @()
     }
