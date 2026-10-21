@@ -9036,3 +9036,38 @@ another staff member may adopt a stranded user's pending ops (D4); limits of
 only at-rest control (D6); receipt by `transaction_id` with human-confirmed
 sequencing (D7); no auto-sequencing in v1, re-decided after the pilot (D8).
 Details: `docs/design/PR25D_OFFLINE_OPERATION_PLAN.md` section 18.
+
+## 2026-10-21 — Governance: Asset Number optional; go-live pool import loads every Active item as AVAILABLE_AT_POOL
+
+**Decision 1 — Asset Number is optional (Owner, recorded from the Owner's
+chat answer "1.ก").** `equipment.asset_number` becomes nullable (migration
+`0029_asset_number_optional`). The UNIQUE index stays, so a non-NULL value
+is unique while any number of rows may have none. Equipment may be created
+(API or Equipment Master import) without it. It is never fabricated or
+derived, and never copied from Asset ID, which remains its own optional
+`asset_id` column (Roadmap PR12 Part E). The four-identifier model and the
+four equipment states are unchanged.
+
+- **Reason:** The hospital pool list (464 items) has Item No and BCM Code for
+  every item but Asset ID for only 85 and no Asset Number source at all. OD-4
+  blocked CREATE for every row, so the list could not be loaded.
+- **Supersedes:** Roadmap PR20 OD-4 (CREATE Asset Number gate) and the
+  `ASSET_NUMBER_REQUIRED_FOR_CREATE` finding, now retired. The Equipment
+  Master adapter creates the row with `asset_number = NULL`. The older
+  update-only legacy inventory import (PR12) is unchanged.
+- **Downgrade:** migration 0029 refuses to downgrade while any row has no
+  Asset Number; it never invents values.
+- **Source:** `docs/BUSINESS_RULES.md`, `knowledge/adr/ADR-002-identifier-model.md`.
+
+**Decision 2 — go-live initial pool import, option "ข" (Owner).** The
+initial import loads every Active item as `AVAILABLE_AT_POOL`, although about
+312 of them are physically at wards. The Owner accepted the risk. No
+opening-balance transactions are created.
+
+- **Risk:** Pool staff may dispatch an item the system shows as available but
+  that is actually out. A receipt for a pre-system dispatch cannot be recorded
+  (there is no open transaction). No transaction is recorded; the item
+  already shows as available, so staff simply return it to the shelf. A
+  demo-only legacy sheet sync is planned and may correct statuses. No code
+  change; recorded as a known limitation.
+- **Source:** `docs/KNOWN_LIMITATIONS.md` ("Go-live initial pool import").

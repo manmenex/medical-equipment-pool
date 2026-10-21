@@ -7,6 +7,10 @@
 
 This file tracks *what changed in the shared mental model* over time, one line of context per concept. For the PR-by-PR rationale behind each change, see `docs/DECISION_LOG.md` (from Roadmap PR5 onward) and `docs/PROJECT_MEMORY.md` (Roadmap PR1 through Governance Pack v1.0).
 
+## Asset Number becomes optional (Governance 2026-10-21)
+
+Asset Number is no longer required: equipment may have none, it stays unique when present and is never fabricated or copied from Asset ID. This retires Roadmap PR20 OD-4's CREATE gate. The go-live pool import loads every Active item as `AVAILABLE_AT_POOL` (option "ข", risk accepted). See `docs/DECISION_LOG.md` and `docs/KNOWN_LIMITATIONS.md`.
+
 ## Local Production decision and Stage 1 (GitHub PR #150, 2026-10-13)
 
 Production moved from a managed-cloud target to an Owner-designated department host (Windows 11 Pro, Docker), reached through Cloudflare Tunnel + Access, with hourly backups copied off-host to Google Drive. Managed Staging is superseded. Stage 1 (PR25A-E) adds off-host backup, a read-only export API for Nsmart Realtime, external access, and offline operation. Stage 2 (read-only PM/CAL and Repair dashboards from N Smart) is a confirmed direction needing its own Governance PR; Stage 3 (replacing N Smart) is out of scope. See `docs/ROADMAP.md` and `docs/DECISION_LOG.md`.

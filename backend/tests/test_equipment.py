@@ -1937,3 +1937,60 @@ async def test_patch_with_unchanged_value_still_advances_version(client, seeded_
         "a supported field explicitly supplied, even with its existing value, is a genuine "
         "update_data entry (not empty) and must still advance version"
     )
+
+
+# ---------------------------------------------------------------------------
+# Governance 2026-10-21: Asset Number is optional (unique when present).
+# ---------------------------------------------------------------------------
+
+
+async def test_create_equipment_without_asset_number(client, seeded_users):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    resp = await client.post(
+        "/api/v1/equipment", headers=headers, json={"equipment_name": "No Asset 1", "bcm_code": "BCM90001"}
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["asset_number"] is None
+    # Several rows without an Asset Number coexist (NULLs are distinct).
+    resp2 = await client.post(
+        "/api/v1/equipment", headers=headers, json={"equipment_name": "No Asset 2", "bcm_code": "BCM90002"}
+    )
+    assert resp2.status_code == 201, resp2.text
+    got = await client.get(f"/api/v1/equipment/{resp.json()['id']}", headers=headers)
+    assert got.status_code == 200 and got.json()["asset_number"] is None
+
+
+async def test_blank_asset_number_is_stored_as_null_not_fabricated(client, seeded_users):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    for i, blank in enumerate(["", "   ", None]):
+        resp = await client.post(
+            "/api/v1/equipment",
+            headers=headers,
+            json={"equipment_name": "Blank Asset", "asset_number": blank, "bcm_code": f"BCM9100{i}"},
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["asset_number"] is None
+
+
+async def test_asset_number_uniqueness_still_enforced_when_present(client, seeded_users):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    first = await client.post(
+        "/api/v1/equipment", headers=headers, json={"asset_number": "AST-OPT-1", "equipment_name": "A"}
+    )
+    assert first.status_code == 201, first.text
+    dup = await client.post(
+        "/api/v1/equipment", headers=headers, json={"asset_number": "AST-OPT-1", "equipment_name": "B"}
+    )
+    assert dup.status_code == 409, dup.text
+    assert dup.json()["code"] == "DUPLICATE"
+
+
+async def test_search_and_listing_handle_equipment_without_asset_number(client, seeded_users):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    created = await client.post(
+        "/api/v1/equipment", headers=headers, json={"equipment_name": "Searchable Nameless Asset"}
+    )
+    assert created.status_code == 201, created.text
+    listing = await client.get("/api/v1/equipment", headers=headers, params={"q": "Nameless"})
+    assert listing.status_code == 200
+    assert [i["asset_number"] for i in listing.json()["items"]] == [None]

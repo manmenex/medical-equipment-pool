@@ -1,12 +1,14 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.equipment import EquipmentStatus
 
 
 class EquipmentBase(BaseModel):
-    asset_number: str = Field(min_length=1, max_length=50)
+    # Governance 2026-10-21: optional. A blank/whitespace value is treated as
+    # "not supplied" (None); a non-blank value is trimmed, never fabricated.
+    asset_number: str | None = Field(default=None, min_length=1, max_length=50)
     serial_number: str | None = Field(default=None, max_length=100)
     equipment_name: str = Field(min_length=1, max_length=255)
     category_id: str | None = None
@@ -20,6 +22,14 @@ class EquipmentBase(BaseModel):
     # matches against (See ADR-002, ADR-003). Optional -- existing
     # equipment predates this field.
     bcm_code: str | None = Field(default=None, max_length=64)
+
+    @field_validator("asset_number", mode="before")
+    @classmethod
+    def _blank_asset_number_is_none(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
 
 
 class EquipmentCreate(EquipmentBase):

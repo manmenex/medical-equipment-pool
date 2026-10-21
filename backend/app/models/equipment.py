@@ -118,7 +118,11 @@ class Equipment(UUIDPKMixin, TimestampMixin, SoftDeleteMixin, Base):
     # `RETURNING updated_at` too, so the value is always already loaded.
     __mapper_args__ = {"eager_defaults": True}
 
-    asset_number: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+    # Governance 2026-10-21 (ADR-002 amendment): Asset Number is OPTIONAL --
+    # NULL when the hospital has no authoritative value. Never fabricated or
+    # derived (never copied from asset_id). UNIQUE still applies to non-NULL
+    # values (NULLs are distinct in PostgreSQL and SQLite unique indexes).
+    asset_number: Mapped[str | None] = mapped_column(String(50), unique=True, nullable=True, index=True)
     serial_number: Mapped[str | None] = mapped_column(String(100))
     equipment_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     # See ADR-002 (identifier model), ADR-003 (BCM manual search), ADR-004

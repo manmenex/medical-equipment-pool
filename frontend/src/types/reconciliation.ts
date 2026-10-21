@@ -74,7 +74,7 @@ export interface ReconciliationFindingListItem {
 
 export interface ReconciliationEquipmentSummary {
   id: string;
-  asset_number: string;
+  asset_number: string | null;
   equipment_name: string;
   item_no: string | null;
   bcm_code: string | null;

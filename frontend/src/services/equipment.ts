@@ -43,7 +43,7 @@ export async function getEquipmentHistory(id: string): Promise<EquipmentStatusHi
 }
 
 export interface EquipmentCreatePayload {
-  asset_number: string;
+  asset_number?: string;
   equipment_name: string;
   serial_number?: string;
   category_id?: string;
