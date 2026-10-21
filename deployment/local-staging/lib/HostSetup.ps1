@@ -58,10 +58,30 @@ function Invoke-MepHostCommand {
         [switch]$NoCapture
     )
     if ($NoCapture) {
-        # Out-Host keeps the child's output on screen instead of letting it
-        # leak into this function's return value (which broke .ExitCode).
-        & $FilePath @Arguments | Out-Host
-        $exitCode = $LASTEXITCODE
+        # The child inherits this console directly (no pipe), so its output
+        # cannot leak into this function's return value AND its Read-Host
+        # prompts stay in order with its other lines. (Piping the child to
+        # Out-Host buffered its stdout while prompts went straight to the
+        # console, so prompts appeared above earlier lines.)
+        $exe = $FilePath
+        if (-not [IO.Path]::IsPathRooted($exe)) {
+            $cmd = Get-Command -Name $exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($cmd) { $exe = $cmd.Source }
+        }
+        $quoted = @($Arguments | ForEach-Object {
+                $a = "$_"
+                if ($a -eq '' -or $a -match '[\s"]') { '"' + ($a -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1') + '"' } else { $a }
+            })
+        # No -Wait: in PowerShell 7 it waits for the whole process tree (a
+        # child that leaves a background process, e.g. after a winget Docker
+        # install, would hang). Touch .Handle once so ExitCode is retained,
+        # then wait for this process only.
+        $startArgs = @{ FilePath = $exe; NoNewWindow = $true; PassThru = $true }
+        if ($quoted.Count -gt 0) { $startArgs.ArgumentList = $quoted }
+        $proc = Start-Process @startArgs
+        $null = $proc.Handle
+        $proc.WaitForExit()
+        $exitCode = $proc.ExitCode
         $output = @()
     }
     else {
@@ -445,19 +465,89 @@ function Test-MepCommitChecksGreen {
     return Test-MepCheckRunsGreen -Response (Get-MepCheckRuns -Sha $Sha)
 }
 
+function Get-MepHttpStatus {
+    <#
+    .SYNOPSIS
+    The HTTP status code carried by a caught web error, or $null. Works for
+    PowerShell 7's HttpResponseException (.Response.StatusCode) and for
+    exceptions that expose .StatusCode directly.
+    #>
+    param([Parameter(Mandatory)] $ErrorRecord)
+    $ex = $ErrorRecord.Exception
+    $names = @($ex.PSObject.Properties.Name)
+    if ($names -contains 'StatusCode' -and $null -ne $ex.StatusCode) { return [int]$ex.StatusCode }
+    if ($names -contains 'Response' -and $null -ne $ex.Response -and @($ex.Response.PSObject.Properties.Name) -contains 'StatusCode') {
+        return [int]$ex.Response.StatusCode
+    }
+    return $null
+}
+
+function Get-MepCheckRunsOrEmpty {
+    <#
+    .SYNOPSIS
+    Get-MepCheckRuns, except that HTTP 422 ("No commit found for SHA" /
+    "Validation Failed", which GitHub returns for a commit it cannot list
+    check runs for) is reported as "no check runs", i.e. not green. Every
+    other failure (network, rate limit, 5xx) still throws.
+    #>
+    param([Parameter(Mandatory)] [string]$Sha)
+    try { return Get-MepCheckRuns -Sha $Sha }
+    catch {
+        if ((Get-MepHttpStatus -ErrorRecord $_) -eq 422) {
+            return [pscustomobject]@{ total_count = 0; check_runs = @() }
+        }
+        throw
+    }
+}
+
+function Get-MepMergedPullRequestForCommit {
+    <#
+    .SYNOPSIS
+    The merged pull request whose SQUASH merge produced $Sha on $Branch, or
+    $null. Requires merged_at set, base branch = $Branch and
+    merge_commit_sha = $Sha exactly, so a commit that merely appears in some
+    PR (a fast-forwarded branch commit, a direct push) does not qualify.
+    #>
+    param([Parameter(Mandatory)] [string]$Sha, [Parameter(Mandatory)] [string]$Branch)
+    $prs = @(Invoke-MepGitHubApi -Path "/repos/$($Script:MepRepoSlug)/commits/$Sha/pulls?per_page=10")
+    foreach ($pr in $prs) {
+        if (-not $pr.merged_at) { continue }
+        if ("$($pr.merge_commit_sha)" -ne $Sha) { continue }
+        if ("$($pr.base.ref)" -ne $Branch) { continue }
+        if ("$($pr.head.sha)" -notmatch '^[0-9a-f]{40}$') { continue }
+        return $pr
+    }
+    return $null
+}
+
 function Get-MepLatestGreenCommit {
     <#
     .SYNOPSIS
-    Newest commit on the repository's default branch whose check runs are
-    all green, scanning at most -MaxCommits. Throws on any API failure or
-    when none qualifies; the caller then requires an explicit -Version.
+    Newest commit on the repository's default branch that is verified green,
+    scanning at most -MaxCommits. Throws on any API failure or when none
+    qualifies; the caller then requires an explicit -Version.
+
+    .DESCRIPTION
+    CI runs on pull_request only, so a default-branch commit normally has NO
+    check runs of its own. A commit therefore qualifies when either
+      * it has check runs and all are green, or
+      * it has none, but it is the squash-merge commit of a merged PR into
+        the default branch (PR merge_commit_sha = the commit) whose HEAD
+        commit has check runs that are all green.
+    API budget (unauthenticated limit: 60 requests per hour): 2 requests plus
+    at most 3 per scanned commit (own check runs, its PR, the PR head's
+    check runs); with the default -MaxCommits 8 that is at most 26, and the
+    scan stops at the first qualifying commit.
+    The default branch's commit list is requested WITHOUT a branch name in
+    the URL (no sha= parameter), so a branch such as 'claude/foo' never
+    needs URL encoding.
     #>
-    param([int]$MaxCommits = 15)
+    param([int]$MaxCommits = 8)
     try {
         $repo = Invoke-MepGitHubApi -Path "/repos/$($Script:MepRepoSlug)"
         $branch = "$($repo.default_branch)"
         if (-not $branch) { throw 'default branch not reported' }
-        $commits = @(Invoke-MepGitHubApi -Path ("/repos/$($Script:MepRepoSlug)/commits?sha=" + [uri]::EscapeDataString($branch) + "&per_page=$MaxCommits"))
+        $commits = @(Invoke-MepGitHubApi -Path "/repos/$($Script:MepRepoSlug)/commits?per_page=$MaxCommits")
     }
     catch {
         throw "Could not query GitHub for the latest verified version ($($_.Exception.Message)). Re-run with -Version <release-tag-or-commit-sha>."
@@ -465,23 +555,36 @@ function Get-MepLatestGreenCommit {
     $skipped = 0
     foreach ($c in $commits) {
         $sha = "$($c.sha)"
-        $green = $false
-        try { $green = Test-MepCommitChecksGreen -Sha $sha }
+        try {
+            $own = Get-MepCheckRunsOrEmpty -Sha $sha
+            if ([int]$own.total_count -gt 0) {
+                if (Test-MepCheckRunsGreen -Response $own) {
+                    return [pscustomobject]@{ Sha = $sha; Branch = $branch; NewerNotGreen = $skipped; Via = 'checks'; PullRequest = $null }
+                }
+                $skipped++
+                continue
+            }
+            $pr = Get-MepMergedPullRequestForCommit -Sha $sha -Branch $branch
+            if ($pr) {
+                $headRuns = Get-MepCheckRunsOrEmpty -Sha "$($pr.head.sha)"
+                if (Test-MepCheckRunsGreen -Response $headRuns) {
+                    return [pscustomobject]@{ Sha = $sha; Branch = $branch; NewerNotGreen = $skipped; Via = 'pull-request'; PullRequest = [int]$pr.number }
+                }
+            }
+        }
         catch {
             throw "Could not read GitHub check results ($($_.Exception.Message)). Re-run with -Version <release-tag-or-commit-sha>."
         }
-        if ($green) {
-            return [pscustomobject]@{ Sha = $sha; Branch = $branch; NewerNotGreen = $skipped }
-        }
         $skipped++
     }
-    throw "None of the newest $MaxCommits commits on '$branch' has all checks green. Re-run with -Version <release-tag-or-commit-sha>."
+    throw "None of the newest $MaxCommits commits on '$branch' is verified green (own checks, or a squash-merged pull request whose checks are all green). Re-run with -Version <release-tag-or-commit-sha>."
 }
 
 function Assert-MepCommitVerified {
     <#
     .SYNOPSIS
-    Requires the commit's GitHub checks to be all green unless -Force. An
+    Requires the commit's GitHub checks to be all green (directly, or via its
+    squash-merged pull request, see below) unless -Force. An
     API failure also refuses (unverified), because -Force is an explicit
     Owner decision, not a fallback.
     #>
@@ -490,8 +593,23 @@ function Assert-MepCommitVerified {
         Write-Host "WARNING: -Force given; GitHub checks for $Sha were NOT verified." -ForegroundColor Yellow
         return
     }
+    # Own check runs decide when present. A default-branch commit usually has
+    # none (CI runs on pull requests), so it is then verified through the
+    # PR squash-merged into the default branch as exactly this commit, whose
+    # head checks must all be green (same rule as the automatic selection).
     $green = $false
-    try { $green = Test-MepCommitChecksGreen -Sha $Sha }
+    try {
+        $own = Get-MepCheckRunsOrEmpty -Sha $Sha
+        if ([int]$own.total_count -gt 0) { $green = Test-MepCheckRunsGreen -Response $own }
+        else {
+            $repo = Invoke-MepGitHubApi -Path "/repos/$($Script:MepRepoSlug)"
+            $branch = "$($repo.default_branch)"
+            if ($branch) {
+                $pr = Get-MepMergedPullRequestForCommit -Sha $Sha -Branch $branch
+                if ($pr) { $green = Test-MepCheckRunsGreen -Response (Get-MepCheckRunsOrEmpty -Sha "$($pr.head.sha)") }
+            }
+        }
+    }
     catch {
         throw "Could not verify GitHub checks for $Sha ($($_.Exception.Message)). Refusing. The Owner may re-run with -Force to accept an unverified version."
     }
@@ -666,6 +784,110 @@ function Set-MepVersionRecord {
     $dir = Split-Path -Parent $Path
     if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     $record | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $Path -Encoding utf8
+}
+
+function Sync-MepVersionRecordWithHead {
+    <#
+    .SYNOPSIS
+    Makes the recorded "current" version equal the ACTUAL HEAD of the install
+    directory (git rev-parse HEAD). An operator may have run `git checkout`
+    by hand; the old current then becomes "previous", so
+    update-online.ps1 -Rollback targets the version really replaced.
+    Returns the actual HEAD sha, or $null when InstallDir is not a git clone
+    (ZIP installs keep their recorded version).
+    #>
+    param([Parameter(Mandatory)] [string]$InstallDir, [Parameter(Mandatory)] [string]$HistoryPath)
+    if (-not (Test-MepIsGitRepo -RepoDir $InstallDir)) { return $null }
+    $head = Get-MepHeadSha -RepoDir $InstallDir
+    if (-not $head) { return $null }
+    $h = Get-MepVersionHistory -Path $HistoryPath
+    if (-not $h.current -or "$($h.current.sha)" -ne $head) {
+        Set-MepVersionRecord -Path $HistoryPath -Sha $head -Ref $head -Source git
+    }
+    return $head
+}
+
+function Reset-MepStaleSourceStep {
+    <#
+    .SYNOPSIS
+    When the source step is recorded 'done' but the operator now asks for a
+    DIFFERENT -Version (git installs only), forgets that step so it runs
+    again to the requested version (fetch, verify, detached checkout). A
+    dirty working tree is refused BEFORE anything is changed. Returns $true
+    when the step was reset. Installed containers are not touched; apply the
+    new code with update.ps1 afterwards.
+    #>
+    param(
+        [Parameter(Mandatory)] [string]$StatePath,
+        [Parameter(Mandatory)] [string]$InstallDir,
+        [string]$Version = '',
+        [string]$SourceZip = ''
+    )
+    if (-not $Version -or $SourceZip) { return $false }
+    if (-not (Test-Path -LiteralPath $StatePath)) { return $false }
+    $state = Read-MepSetupState -Path $StatePath
+    if (-not $state.steps.ContainsKey('source') -or $state.steps['source'].status -ne 'done') { return $false }
+    if (-not (Test-MepIsGitRepo -RepoDir $InstallDir)) { return $false }
+    $head = Get-MepHeadSha -RepoDir $InstallDir
+    if (-not $head) { return $false }
+    Assert-MepSafeRef $Version
+    $target = Resolve-MepCommit -RepoDir $InstallDir -Ref $Version
+    if (-not $target) {
+        Assert-MepOriginIsPublicRepo -RepoDir $InstallDir
+        Invoke-MepFetchPublicRepo -RepoDir $InstallDir
+        $target = Resolve-MepCommit -RepoDir $InstallDir -Ref $Version
+    }
+    if (-not $target) { throw "Version '$Version' does not exist in $($Script:MepRepoUrl)." }
+    if ($target -eq $head) { return $false }
+    Assert-MepWorkingTreeClean -RepoDir $InstallDir
+    Write-Host "The source folder is at $head but -Version $Version is ${target}: the source step will run again." -ForegroundColor Yellow
+    Write-Host 'Installed containers are not changed by this; apply the new code afterwards with update.ps1 (it takes a verified backup first).' -ForegroundColor Yellow
+    $state.steps.Remove('source')
+    Write-MepSetupState -Path $StatePath -State $state
+    return $true
+}
+
+function Invoke-MepGitSourceStep {
+    <#
+    .SYNOPSIS
+    The git branch of setup's 'source' step: pick the version (explicit
+    -Version, or the newest verified commit), clone/fetch, verify, require a
+    clean tree, check out detached, and record the history. The version
+    actually on disk before the change is synced into the record first, so
+    "previous" is always the real predecessor. Returns the checked-out sha.
+    #>
+    param(
+        [Parameter(Mandatory)] [string]$InstallDir,
+        [Parameter(Mandatory)] [string]$HistoryPath,
+        [string]$Version = '',
+        [switch]$Force
+    )
+    if ($Version) {
+        Assert-MepSafeRef $Version
+        Initialize-MepSourceClone -InstallDir $InstallDir
+        $sha = Resolve-MepCommit -RepoDir $InstallDir -Ref $Version
+        if (-not $sha) { throw "Version '$Version' does not exist in $($Script:MepRepoUrl)." }
+        Assert-MepCommitVerified -Sha $sha -Force:$Force
+        $ref = $Version
+    }
+    else {
+        $latest = Get-MepLatestGreenCommit
+        $how = if ($latest.Via -eq 'pull-request') { "squash-merged from pull request #$($latest.PullRequest) whose checks are all green" } else { 'all checks green' }
+        Write-Host "Newest verified commit on '$($latest.Branch)': $($latest.Sha) ($how)"
+        Initialize-MepSourceClone -InstallDir $InstallDir
+        $sha = Resolve-MepCommit -RepoDir $InstallDir -Ref $latest.Sha
+        if (-not $sha) { throw "Commit $($latest.Sha) could not be fetched." }
+        $ref = $latest.Sha
+    }
+    Assert-MepWorkingTreeClean -RepoDir $InstallDir
+    # Only when a version was recorded: a fresh clone's default-branch tip was
+    # never an installed version and must not become "previous".
+    if ((Get-MepVersionHistory -Path $HistoryPath).current) {
+        Sync-MepVersionRecordWithHead -InstallDir $InstallDir -HistoryPath $HistoryPath | Out-Null
+    }
+    Invoke-MepCheckoutDetached -RepoDir $InstallDir -Sha $sha
+    Set-MepVersionRecord -Path $HistoryPath -Sha $sha -Ref $ref -Source git
+    return $sha
 }
 
 # ---------------------------------------------------------------------------
@@ -1266,6 +1488,37 @@ function Get-MepConfiguredPort {
         }
     }
     return 80
+}
+
+function Test-MepFirewallRuleExists {
+    <# Seam: is there an inbound rule with this display name? Read-only. #>
+    param([Parameter(Mandatory)] [string]$DisplayName)
+    if (-not (Test-MepCommandExists 'Get-NetFirewallRule')) { return $false }
+    return [bool](Get-NetFirewallRule -DisplayName $DisplayName -ErrorAction SilentlyContinue)
+}
+
+function Get-MepFirewallGuidance {
+    <#
+    .SYNOPSIS
+    Whether the LAN firewall rule for the web port exists (by display name)
+    and the exact command that creates it. This module never creates it.
+    #>
+    param([int]$Port = 80)
+    $name = "MEP Web (TCP $Port)"
+    $cmd = "New-NetFirewallRule -DisplayName `"$name`" -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -Profile Private,Domain"
+    return [pscustomobject]@{ DisplayName = $name; Exists = (Test-MepFirewallRuleExists -DisplayName $name); Command = $cmd }
+}
+
+function Show-MepFirewallGuidance {
+    param([int]$Port = 80)
+    $g = Get-MepFirewallGuidance -Port $Port
+    if ($g.Exists) {
+        Write-Host "  Firewall rule for other PCs on the LAN: present ($($g.DisplayName))." -ForegroundColor Green
+        return
+    }
+    Write-Host '  Firewall rule for other PCs on the LAN: NOT found (this script does not create it). In this administrator PowerShell run:' -ForegroundColor Yellow
+    Write-Host "    $($g.Command)" -ForegroundColor Yellow
+    Write-Host '  and set this PC''s Wi-Fi/network profile to Private (Settings > Network & internet > the network > Network profile type).' -ForegroundColor Yellow
 }
 
 function Show-MepAutoLogonGuidance {

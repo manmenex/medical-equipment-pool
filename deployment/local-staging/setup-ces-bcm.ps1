@@ -26,9 +26,13 @@ masterdata, drive, schedule, final.
 
 .PARAMETER Version
 Release tag or commit SHA to install. Default: the newest commit on the
-default branch whose GitHub checks are all green (public API, no token).
-If GitHub cannot be queried, -Version is required. With -SourceZip it is the
-commit SHA the ZIP is expected to be.
+default branch that is verified green (public API, no token): its own checks
+are all green, or (CI runs on pull requests, so usually) it is the squash-merge
+commit of a merged pull request whose head checks are all green. If GitHub
+cannot be queried, -Version is required. With -SourceZip it is the commit SHA
+the ZIP is expected to be. Re-running with a different -Version after the
+source step was done repeats the source step to that version (a dirty tree is
+refused); apply it to the running system with update.ps1.
 .PARAMETER SourceZip
 Offline: a GitHub "Download ZIP" of one commit instead of git.
 .PARAMETER WardsCsv
@@ -124,25 +128,7 @@ try {
             Write-Host "Source installed from ZIP: $recordSha"
             return 'done'
         }
-        if ($Version) {
-            Assert-MepSafeRef $Version
-            Initialize-MepSourceClone -InstallDir $InstallDir
-            $sha = Resolve-MepCommit -RepoDir $InstallDir -Ref $Version
-            if (-not $sha) { throw "Version '$Version' does not exist in $($Script:MepRepoUrl)." }
-            Assert-MepCommitVerified -Sha $sha -Force:$Force
-            $ref = $Version
-        }
-        else {
-            $latest = Get-MepLatestGreenCommit
-            Write-Host "Newest commit with all checks green on '$($latest.Branch)': $($latest.Sha)"
-            Initialize-MepSourceClone -InstallDir $InstallDir
-            $sha = Resolve-MepCommit -RepoDir $InstallDir -Ref $latest.Sha
-            if (-not $sha) { throw "Commit $($latest.Sha) could not be fetched." }
-            $ref = $latest.Sha
-        }
-        Assert-MepWorkingTreeClean -RepoDir $InstallDir
-        Invoke-MepCheckoutDetached -RepoDir $InstallDir -Sha $sha
-        Set-MepVersionRecord -Path $historyPath -Sha $sha -Ref $ref -Source git
+        $sha = Invoke-MepGitSourceStep -InstallDir $InstallDir -HistoryPath $historyPath -Version $Version -Force:$Force
         Write-Host "Source ready at $sha"
         return 'done'
     }
@@ -199,6 +185,10 @@ try {
         return 'done'
     }
 
+    # A finished source step is repeated when -Version now names a different
+    # commit (a dirty tree is refused before anything changes).
+    Reset-MepStaleSourceStep -StatePath $statePath -InstallDir $InstallDir -Version $Version -SourceZip $SourceZip | Out-Null
+
     $outcome = Invoke-MepSetupSteps -StatePath $statePath -Steps $steps
 
     if ($outcome.Halted) {
@@ -213,11 +203,18 @@ try {
     $urls = @(Get-MepLanUrls -Port $port)
     if ($urls.Count -eq 0) { Write-Host "  URL on this PC: http://localhost:$port" }
     foreach ($u in $urls) { Write-Host "  LAN URL: $u" }
+    # Report the ACTUAL source on disk (git HEAD), not a possibly stale record
+    # (e.g. after a manual `git checkout`); the record is brought in line so
+    # update-online.ps1 -Rollback targets the right previous version.
+    Sync-MepVersionRecordWithHead -InstallDir $InstallDir -HistoryPath $historyPath | Out-Null
     $hist = Get-MepVersionHistory -Path $historyPath
-    if ($hist.current) { Write-Host "  Installed version: $($hist.current.sha)" }
+    if ($hist.current) {
+        Write-Host "  Source version: $($hist.current.sha)"
+        Write-Host '    (the code on disk; running containers are updated with update.ps1)'
+    }
     foreach ($s in $outcome.AlreadyDone + $outcome.Ran) { Write-Host "  done    : $s" -ForegroundColor Green }
     foreach ($s in $outcome.Skipped) { Write-Host "  PENDING : $s (run this command again, or the script named above, when ready)" -ForegroundColor Yellow }
-    Write-Host '  Open firewall port for other PCs on the LAN: not done by this script (runbook section 2.5).' -ForegroundColor Yellow
+    Show-MepFirewallGuidance -Port $port
     Show-MepAutoLogonGuidance
     Write-Host ''
     Write-Host 'This setup does not prove production readiness or any backup RPO target.' -ForegroundColor Yellow

@@ -21,7 +21,7 @@
 | อินเทอร์เน็ต (ครั้งแรก) | ถ้าไม่มี ให้ใช้ ZIP จาก USB (ข้อ 6) |
 | PowerShell 7 | ถ้าเปิดด้วย PowerShell 5.1 สคริปต์จะพิมพ์คำสั่งติดตั้งให้ |
 | ไฟล์ซอร์สโค้ด | GitHub > Code > Download ZIP แล้วแตกไฟล์ไว้ที่ใดก็ได้ (เช่น Desktop) |
-| ไฟล์ CSV หอผู้ป่วย / หมวดอุปกรณ์ (ถ้ามี) | ข้อ 8.5 ของคู่มือ Local Staging; ไม่เก็บใน repository |
+| ไฟล์ CSV หอผู้ป่วย / หมวดอุปกรณ์ (ถ้ามี) | ข้อ 8.5 ของคู่มือ Local Staging; ไม่เก็บใน repository จะวางไว้ที่โฟลเดอร์รากของ repo ข้าง `README` ก็ได้ แต่ตอนสั่งรันให้ใส่ **path เต็ม** เสมอ เช่น `C:\Users\<ชื่อ>\Desktop\medical-equipment-pool\wards.csv` |
 | OAuth client ID/secret ของ Google Drive (ถ้าจะตั้งสำรองข้อมูลไป Drive) | `PR24_BACKUP_RESTORE_RUNBOOK.md` ข้อ 12.2 |
 | รหัสผ่าน Windows ของบัญชีที่ใช้รันงานสำรองข้อมูล | ใช้ตอนลงทะเบียน Task Scheduler เท่านั้น |
 
@@ -29,6 +29,25 @@
 หรือเขียนลงไฟล์**
 
 ## 2. ลำดับการรัน (ติดตั้งครั้งแรก)
+
+### 2.0 Windows บล็อกสคริปต์และไฟล์ที่ดาวน์โหลดมา (ทำก่อนทุกครั้งที่แตก ZIP ใหม่)
+
+ไฟล์ที่ดาวน์โหลดจากอินเทอร์เน็ตจะถูกติดเครื่องหมาย "บล็อก" ทำให้ PowerShell ไม่ยอมรันสคริปต์
+(ขึ้นข้อความว่า running scripts is disabled / is not digitally signed) แก้ได้ดังนี้
+(มีผลเฉพาะหน้าต่างนี้ ไม่แก้ค่าถาวรของเครื่อง):
+
+1. เปิด **PowerShell 7 แบบ Run as administrator**
+2. เข้าโฟลเดอร์ `deployment\local-staging` ของโฟลเดอร์ที่แตก ZIP แล้วรันสองคำสั่งนี้:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+Get-ChildItem -Path ..\.. -Recurse -File | Unblock-File
+```
+
+คำสั่งแรกอนุญาตให้รันสคริปต์ในหน้าต่างนี้เท่านั้น คำสั่งที่สองปลดบล็อกไฟล์ทุกไฟล์ใน repository
+(`..\..` คือโฟลเดอร์รากของ repository) ถ้าเปิดหน้าต่างใหม่ต้องรันคำสั่งแรกซ้ำ
+
+### 2.1 รันสคริปต์
 
 เปิด **PowerShell 7 แบบ Run as administrator** แล้วเข้าโฟลเดอร์ที่แตก ZIP:
 
@@ -51,8 +70,18 @@ cd <โฟลเดอร์ที่แตก ZIP>\deployment\local-staging
 ```
 
 ค่าเริ่มต้น: ติดตั้งที่ `C:\MEP\app` และบันทึกความคืบหน้าที่ `C:\MEP\setup-state.json`
-ถ้าเวอร์ชันไม่ระบุ สคริปต์จะเลือก commit ล่าสุดของ branch หลักที่ **GitHub checks
-ผ่านทั้งหมด** ถ้าถาม GitHub ไม่ได้ ต้องระบุ `-Version` เอง
+ถ้าเวอร์ชันไม่ระบุ สคริปต์จะเลือก commit ล่าสุดของ branch หลักที่ **ตรวจสอบแล้วว่าผ่าน**:
+CI ของโปรเจกต์รันเฉพาะบน pull request ดังนั้น commit บน branch หลักมักไม่มี check ของตัวเอง
+สคริปต์จึงหา pull request ที่ถูก **squash merge** เป็น commit นั้นพอดี (merge commit ตรงกัน)
+และรับก็ต่อเมื่อ checks ของ commit ปลายทาง (head) ของ PR นั้น **ผ่านทั้งหมด** ถ้าตรวจไม่ได้
+หรือถาม GitHub ไม่ได้ ต้องระบุ `-Version` เอง (สคริปต์เรียก GitHub แบบไม่ใช้ token
+ไม่เกิน 26 ครั้งต่อการรัน จากโควตา 60 ครั้งต่อชั่วโมง)
+
+**รันซ้ำด้วย `-Version` คนละเวอร์ชัน** หลังขั้น source เสร็จแล้ว: สคริปต์จะทำขั้น source ใหม่ให้เป็นเวอร์ชันที่ขอ
+(fetch, ตรวจ, checkout แบบ detached) และ **ปฏิเสธถ้า working tree มีการแก้ไขค้าง** ไม่ต้องสลับเวอร์ชันด้วยมือ
+สรุปท้ายสคริปต์แสดงเวอร์ชันจริงที่อยู่ในโฟลเดอร์ติดตั้ง (`git rev-parse HEAD`) และเวอร์ชันก่อนหน้าที่ใช้กับ
+`update-online.ps1 -Rollback` ถูกบันทึกให้ตรงกัน การเปลี่ยนขั้น source ไม่ได้เปลี่ยน container ที่รันอยู่ ให้ใช้
+`update.ps1` (หรือ `update-online.ps1`) เพื่อนำโค้ดใหม่ไปใช้
 
 ขั้นตอนที่สคริปต์ทำ (รันซ้ำได้ จะเริ่มต่อจากขั้นที่ยังไม่เสร็จ):
 
@@ -63,25 +92,53 @@ cd <โฟลเดอร์ที่แตก ZIP>\deployment\local-staging
 3. **source** clone จาก `https://github.com/manmenex/medical-equipment-pool.git`
    ไปที่ `C:\MEP\app` และ checkout เวอร์ชันที่เลือก (บันทึกเวอร์ชันที่ติดตั้ง)
 4. **install** รัน `install.ps1` เดิม จะถาม LAN URL, port และข้อมูลผู้ดูแลระบบ
-   (รหัสผ่านชั่วคราวแสดงครั้งเดียวโดย backend)
+   (รหัสผ่านชั่วคราวแสดงครั้งเดียวโดย backend ดูข้อ 2.2)
 5. **masterdata** ถ้าระบุ CSV ครบทั้งสองไฟล์ จะรัน `load-master-data.ps1 -Apply`
    ถ้าไม่ระบุ จะข้าม (ทำภายหลังได้)
 6. **drive** ตั้งค่า Google Drive (`drive-backup.ps1 -Setup`): จะได้ URL และรหัส
    ให้เปิดบนอุปกรณ์ใดก็ได้ ล็อกอินด้วยบัญชี Gmail ของหน่วยงานแล้วกดอนุญาต
 7. **schedule** ลงทะเบียนงานสำรองข้อมูลทุกชั่วโมง (`schedule-backup.ps1 -Install`)
    Windows จะถามรหัสผ่าน ส่งตรงให้ Task Scheduler สคริปต์ไม่เห็น ไม่เก็บ ไม่พิมพ์
+   ต้องเป็น **รหัสผ่านเต็มของบัญชี Windows** (ถ้าเข้าเครื่องด้วยอีเมล คือรหัสผ่านของบัญชี Microsoft)
+   **ไม่ใช่ PIN**
 8. **final** แสดง `status.ps1`, LAN URL และสรุปสิ่งที่เสร็จ/ค้างอยู่ (PENDING)
 
 สคริปต์ **ไม่ลบข้อมูล ไม่ลบ volume ไม่ลบ backup ไม่ลบ `.env`** และไม่เคยรัน
 `docker compose down -v`
 
+### 2.2 ตอน install.ps1 ถามข้อมูล และรหัสผ่านผู้ดูแลระบบครั้งเดียว
+
+- **ลำดับข้อความอาจสลับ**: ข้อความที่ถามอาจโผล่ **เหนือ** บรรทัดผลลัพธ์อื่นที่ยังไม่แสดง
+  ไม่ต้องตกใจ ให้พิมพ์ตามลำดับที่ install.ps1 ถาม คือ
+  **รหัสพนักงาน (employee code) → อีเมล (email) → ชื่อ-นามสกุล (full name)** ของผู้ดูแลระบบ
+  (ก่อนหน้านั้นจะถาม LAN URL และ port ซึ่งกด Enter เพื่อใช้ค่าในวงเล็บได้)
+- **รหัสผ่านชั่วคราวของผู้ดูแลระบบแสดงครั้งเดียว** หลังข้อความ `Administrator created.`
+  และอาจเลื่อนหายไปเพราะมีข้อความตามมาอีกมาก ให้กด **Ctrl+Shift+F** ในหน้าต่าง Terminal
+  แล้วค้นคำว่า `temporary password` เพื่อหาบรรทัดนั้น จดไว้ในที่ปลอดภัยทันที
+  แล้วเปลี่ยนรหัสผ่านเมื่อเข้าระบบครั้งแรก **อย่าส่งต่อทางแชต/อีเมล และอย่าเก็บในไฟล์**
+  ถ้าไม่ทันเห็น ให้ปรึกษาผู้ดูแลระบบเรื่องการตั้งรหัสผ่านใหม่ อย่าแก้ฐานข้อมูลเอง
+
 ### การเปิดระบบอัตโนมัติหลังไฟดับ (ทางเลือก)
 
-สคริปต์แสดงขั้นตอนให้เท่านั้น ไม่ได้เปลี่ยนค่าใด ๆ: ตั้ง Docker Desktop ให้เริ่มเมื่อ
-sign in และ (ถ้า Owner เห็นชอบ) ตั้ง auto sign-in ด้วย `netplwiz` หรือ Sysinternals
-Autologon ข้อควรระวัง: ใครเปิดเครื่องได้ก็ใช้บัญชีนั้นได้ ควรตั้งเครื่องในห้องควบคุม
+สคริปต์แสดงขั้นตอนให้เท่านั้น ไม่ได้เปลี่ยนค่าใด ๆ:
 
-Firewall สำหรับเครื่องอื่นใน LAN สคริปต์ไม่ได้เปิดให้ ดูข้อ 2.5 ของคู่มือ Local Staging
+- **Docker Desktop** > Settings > General > ติ๊ก **Start Docker Desktop when you sign in to your computer**
+  (ถ้าไม่ติ๊ก หลังไฟดับ/รีสตาร์ต ระบบและการสำรองข้อมูลจะไม่ทำงานจนกว่าจะเปิด Docker เอง)
+- (ถ้า Owner เห็นชอบ) ตั้ง auto sign-in ด้วย `netplwiz` หรือ Sysinternals Autologon
+  ข้อควรระวัง: ใครเปิดเครื่องได้ก็ใช้บัญชีนั้นได้ ควรตั้งเครื่องในห้องควบคุม
+
+### Firewall สำหรับเครื่องอื่นใน LAN
+
+สคริปต์ **ไม่สร้างกฎ firewall ให้เอง** แต่ตอนสรุปท้ายสคริปต์จะตรวจหากฎชื่อ `MEP Web (TCP <port>)`
+ถ้ายังไม่มีจะพิมพ์คำสั่งให้คัดลอก ใน PowerShell 7 แบบ Administrator:
+
+```powershell
+New-NetFirewallRule -DisplayName "MEP Web (TCP 80)" -Direction Inbound -Protocol TCP -LocalPort 80 -Action Allow -Profile Private,Domain
+```
+
+(ถ้าใช้ port อื่น ให้เปลี่ยนเลข port ทั้งในชื่อและ `-LocalPort`) กฎนี้ใช้กับเครือข่ายโปรไฟล์ Private/Domain เท่านั้น
+จึงต้องตั้งเครือข่าย Wi-Fi ของเครื่องเป็น **Private**: Settings > Network & internet > Wi-Fi > (ชื่อเครือข่าย)
+> Network profile type > **Private network** ถ้าเป็น Public เครื่องอื่นจะเข้าไม่ได้ ดูข้อ 2.5 ของคู่มือ Local Staging
 
 ## 3. อัปเดตผ่านอินเทอร์เน็ต (Owner เป็นผู้สั่งเท่านั้น)
 
@@ -133,10 +190,13 @@ checks ไม่ได้ จากนั้นสคริปต์ **แทน
 
 | อาการ | ทำอย่างไร |
 |---|---|
+| ขึ้น running scripts is disabled / not digitally signed / ถูกบล็อก | ทำตามข้อ 2.0 (`Set-ExecutionPolicy -Scope Process ...` และ `Unblock-File`) ในหน้าต่าง Administrator เดียวกับที่จะรันสคริปต์ |
+| ข้อความถามของ install.ps1 โผล่เหนือบรรทัดอื่น | ปกติ พิมพ์ตามลำดับ employee code → email → full name (ข้อ 2.2) |
+| สรุปแสดงเวอร์ชันที่ติดตั้งไม่ตรงกับที่ต้องการ | รันซ้ำด้วย `-Version <เวอร์ชันที่ต้องการ>` สคริปต์จะทำขั้น source ใหม่ให้ (ข้อ 2.1) |
 | เปิดด้วย PowerShell 5.1 แล้วสคริปต์หยุด | รัน `winget install -e --id Microsoft.PowerShell` แล้วเปิด "PowerShell 7" แบบ Administrator |
 | Preflight ไม่ผ่าน | แก้ตามรายการที่แสดง (สิทธิ์ Admin, RAM, ที่ว่างดิสก์) แล้วรันซ้ำ |
 | หยุดที่ prerequisites หลังติดตั้ง Docker/Git | รีสตาร์ต Windows หรือเปิด PowerShell ใหม่ เปิด Docker Desktop จนขึ้น Engine running แล้วรันคำสั่งเดิม |
-| Could not query GitHub | ระบุ `-Version <tag หรือ sha>` เอง หรือใช้ `-SourceZip` |
+| Could not query GitHub / None of the newest ... is verified green | ระบุ `-Version <tag หรือ sha>` เอง หรือใช้ `-SourceZip` |
 | ... does not have all GitHub checks green | เลือกเวอร์ชันอื่น; ใช้ `-Force` ต่อเมื่อ Owner ตัดสินใจแล้ว |
 | has local changes | มีไฟล์ในโฟลเดอร์ซอร์สถูกแก้ อย่าลบเอง แจ้งผู้ดูแลระบบ |
 | อยากเริ่มขั้นตอนใหม่ / ล้างการ resume | ไฟล์ความคืบหน้าอยู่ที่ `C:\MEP\setup-state.json` (โฟลเดอร์แม่ของ `-InstallDir`) เปลี่ยนชื่อไฟล์นี้ (เช่น เป็น `setup-state.old.json`) แล้วรัน `setup-ces-bcm.ps1` ใหม่ ขั้นตอนจะเริ่มจากต้น แต่ install.ps1 และ clone รันซ้ำได้อย่างปลอดภัย ข้อมูล backup และ `.env` ไม่ถูกลบ |
