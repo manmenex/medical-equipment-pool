@@ -13,7 +13,7 @@ Design summary (do not restate elsewhere -- read the plan for rationale):
     key used to find the existing equipment record a row refers to; a row
     whose BCM Code does not match an existing record fails validation
     rather than creating one, because the import source file has no
-    Asset Number column and equipment.asset_number is NOT NULL/UNIQUE
+    Asset Number column and equipment.asset_number is UNIQUE (optional since Governance 2026-10-21)
     real inventory metadata this workflow must never generate, derive,
     or synthesize (ADR-002: "Not merged with, or inferred from, BCM Code
     or Item No"). Create-from-import is deferred to a future Roadmap
@@ -165,7 +165,8 @@ FIELD_MAX_LENGTHS: dict[str, int] = {
 }
 
 # Review findings PR12-H1 / PR12-H1R (ADR-002) + Repository Owner decision:
-# equipment.asset_number is NOT NULL + UNIQUE and used throughout the
+# equipment.asset_number was NOT NULL + UNIQUE (now optional, Governance
+# 2026-10-21; still UNIQUE when present) and used throughout the
 # application (dashboards, reports, PM/Calibration notifications, API
 # responses) as a real, hospital-assigned business identifier. The import
 # source file has no "Asset Number" column, and both an attempted
@@ -626,7 +627,7 @@ async def _validate_rows(db: AsyncSession, parsed_rows: list[_ParsedRow]) -> lis
     # Roadmap PR12 is update-only. A row whose BCM Code does not match an
     # existing equipment record fails validation rather than creating a
     # new record -- the import source file has no Asset Number column,
-    # and equipment.asset_number is NOT NULL/UNIQUE real inventory
+    # and equipment.asset_number is UNIQUE (optional since Governance 2026-10-21) real inventory
     # metadata that this workflow must never generate, derive, or
     # synthesize (ADR-002). Create-from-import is deferred to a future
     # Roadmap item.

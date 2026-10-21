@@ -9066,7 +9066,8 @@ opening-balance transactions are created.
 
 - **Risk:** Pool staff may dispatch an item the system shows as available but
   that is actually out. A receipt for a pre-system dispatch cannot be recorded
-  (there is no open transaction), so such an item must be handled by the
-  go-live/cutover runbook procedure (`docs/runbooks/PR23_CUTOVER_RUNBOOK.md`)
-  when it comes back. No code change; recorded as a known limitation.
+  (there is no open transaction). No transaction is recorded; the item
+  already shows as available, so staff simply return it to the shelf. A
+  demo-only legacy sheet sync is planned and may correct statuses. No code
+  change; recorded as a known limitation.
 - **Source:** `docs/KNOWN_LIMITATIONS.md` ("Go-live initial pool import").

@@ -33,7 +33,7 @@ BCM Code is the primary operator-facing identifier and the only identifier accep
 
 ## Asset Number is optional inventory metadata
 
-Asset Number is the hospital-assigned inventory number. **It is optional** (Governance 2026-10-21, Owner decision): equipment may be created and may exist without one. When present it is unique across all equipment and non-blank. It is never fabricated or derived — not generated, not a placeholder, and in particular never copied from Asset ID (`asset_id` remains its own optional column, "not renamed, reused, or merged", Roadmap PR12 Part E). A blank value supplied on create is stored as no value. Displays and exports show "-" when it is absent. It is still not a QR identifier and not a manual-search identifier. The four-identifier model is unchanged.
+Asset Number is the hospital-assigned inventory number. **It is optional** (Governance 2026-10-21, Owner decision): equipment may be created and may exist without one. When present it is unique across all equipment and non-blank. It is never fabricated or derived — not generated, not a placeholder, and in particular never copied from Asset ID (`asset_id` remains its own optional column, "not renamed, reused, or merged", Roadmap PR12 Part E). A blank value supplied on create is stored as no value. Displays show "-" when it is absent; an XLSX export leaves the cell empty and a CSV export writes an empty string. It is still not a QR identifier and not a manual-search identifier. The four-identifier model is unchanged.
 
 - Source: `knowledge/adr/ADR-002-identifier-model.md` (amended 2026-10-21); `docs/DECISION_LOG.md` (Governance 2026-10-21); migration `backend/alembic/versions/0029_asset_number_optional.py`.
 
