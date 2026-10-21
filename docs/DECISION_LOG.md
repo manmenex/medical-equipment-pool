@@ -9036,3 +9036,45 @@ another staff member may adopt a stranded user's pending ops (D4); limits of
 only at-rest control (D6); receipt by `transaction_id` with human-confirmed
 sequencing (D7); no auto-sequencing in v1, re-decided after the pilot (D8).
 Details: `docs/design/PR25D_OFFLINE_OPERATION_PLAN.md` section 18.
+
+## 2026-10-21 — Governance: temporary demo-only legacy pool sheet shadow sync
+
+- **Decision (Owner, 2026-10-21):** During the DEMO/trial period only, the
+  system may continuously mirror dispatches and returns from the pool team's
+  current Google Sheet (workbook "บันทึกข้อมูล Equipment Pool", tabs
+  "ข้อมูลส่งเครื่องมือ" and "ข้อมูลรับเครื่องมือ") so the new system runs its
+  normal flow on real traffic and defects surface before go-live. The feature
+  is called "Legacy pool sheet shadow sync".
+- **Boundaries (all binding):**
+  1. Read-only: the Google service account is used with the
+     `spreadsheets.readonly` scope only. The sync never writes to the sheet.
+  2. Every row enters only through the existing dispatch/receipt services,
+     via the offline sync ledger (`client_operations`, the same path as
+     `POST /sync/operations`). It is therefore idempotent, and lifecycle
+     conflicts land in the existing review page. No direct equipment or
+     transaction state maintenance, and no new equipment state.
+  3. Disabled by default. It runs only when explicitly enabled on a
+     non-production (demo) host.
+  4. It must be switched off before Production go-live. This is an Owner
+     decision; the go-live checklist must verify it is disabled and the key
+     file is removed from the host.
+  5. No patient data. A cell that looks like a patient hospital number (HN)
+     causes that row to be skipped and reported. Free-text notes (column
+     "หมายเหตุ") are not imported; only a short summary of accessory
+     check-mark failures (screen, charger cable, pole clamp) is kept.
+  6. Ward-side person names (column "ชื่อ (User)") are never stored: ward
+     staff are not application users (AGENTS.md). The pool staff first name
+     ("ชื่อ BME") appears only inside the operation note; no users are
+     created or mapped from it. Operations are recorded under one dedicated
+     pool-staff user.
+  7. The service-account key is never committed, logged or printed. The
+     Owner places it on the host.
+- **Clarification of "No MEMS integration":** the source is the pool team's
+  own legacy log sheet, not N Smart. The QR links in that sheet point to
+  nsmart URLs, but the sync only reads the sheet; nothing calls, writes to or
+  depends on N Smart. The guardrail is unchanged.
+- **Reason:** The legacy process is being replaced; running the new flow on
+  its live traffic is the cheapest way to find bugs before the pilot.
+- **Expiry:** Removal of the feature is not scheduled; it is a demo aid, not
+  a permanent integration. A later governance decision may delete it.
+- **Source:** Owner instruction 2026-10-21; `docs/ROADMAP.md` (Demo aids).
