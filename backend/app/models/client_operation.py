@@ -27,11 +27,17 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.types import JSON
 
 from app.db.base import Base
 from app.models.mixins import UTCDateTime
-from app.models.audit import JSONType
+
+# Defined here, not imported from app.models.audit: app.db.base imports this
+# module while app.models.audit is still initialising (circular import when
+# app.crud.audit is the first import, e.g. scripts/bootstrap_admin.py).
+JSONType = JSONB().with_variant(JSON(), "sqlite")
 
 OP_TYPE_DISPATCH = "dispatch"
 OP_TYPE_RECEIPT = "receipt"
