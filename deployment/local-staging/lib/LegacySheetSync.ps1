@@ -36,6 +36,14 @@ function Set-MepEnvValue {
     Set-Content -LiteralPath $Script:EnvFilePath -Value $out
 }
 
+function Remove-MepEnvValue {
+    <# Removes NAME=... from the generated .env (no-op when absent). #>
+    param([Parameter(Mandatory)] [string]$Name)
+    if (-not (Test-Path -LiteralPath $Script:EnvFilePath)) { return }
+    $kept = @(Get-Content -LiteralPath $Script:EnvFilePath) | Where-Object { $_ -notmatch "^\s*$([regex]::Escape($Name))\s*=" }
+    Set-Content -LiteralPath $Script:EnvFilePath -Value @($kept)
+}
+
 function Protect-MepLegacySyncDir {
     <# Creates the key directory and restricts it (fails closed). #>
     if (-not (Test-Path -LiteralPath $Script:LegacySyncDir)) {
@@ -99,6 +107,8 @@ function Enable-MepLegacySheetSync {
         throw 'Dry run failed; the sync was NOT enabled. Fix the error above (sheet shared? sync user created?) and rerun.'
     }
     Set-MepEnvValue -Name 'LEGACY_SHEET_SYNC_ENABLED' -Value 'true'
+    # So plain `docker compose` (stop/ps/logs) and update.ps1 see the service.
+    Set-MepEnvValue -Name 'COMPOSE_PROFILES' -Value $Script:LegacySyncService
     $up = Invoke-DockerCompose -Arguments @('--profile', $Script:LegacySyncService, 'up', '-d', '--build', $Script:LegacySyncService) -AllowNonZeroExit -Phase 'legacy-sync-up'
     if ($up.ExitCode -ne 0) { throw 'Could not start the legacy-sheet-sync service.' }
     Write-InstallLog -Phase 'legacy-sync' -Message 'Legacy sheet sync ENABLED (demo only).'
@@ -111,6 +121,7 @@ function Disable-MepLegacySheetSync {
     if (Test-Path -LiteralPath $Script:LegacySyncDir) {
         Remove-Item -LiteralPath $Script:LegacySyncDir -Recurse -Force
     }
+    Remove-MepEnvValue -Name 'COMPOSE_PROFILES'
     Write-InstallLog -Phase 'legacy-sync' -Message 'Legacy sheet sync DISABLED; key removed from this host.'
     Write-Host 'Legacy sheet sync is OFF and the key file was removed from this host.' -ForegroundColor Green
     Write-Host 'Also remove the service account from the Google Sheet sharing list.' -ForegroundColor Yellow

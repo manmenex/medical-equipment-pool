@@ -153,7 +153,7 @@ services:
   legacy-sheet-sync:
     profiles: ["legacy-sheet-sync"]
     build: ../../backend
-    restart: on-failure
+    restart: unless-stopped
     command: ["python", "-m", "app.services.legacy_sheet_sync", "--loop"]
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:?POSTGRES_USER must be set}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB must be set}

@@ -38,6 +38,15 @@ async def _pass(cfg: SyncConfig, *, dry_run: bool, session_factory=None, reader=
     return await run_once(session_factory, reader, cfg, dry_run=dry_run)
 
 
+def _idle() -> None:
+    """Disabled service: stay up doing nothing (exit 0 would make
+    ``restart: unless-stopped`` respawn it in a tight loop)."""
+    import time
+
+    while True:
+        time.sleep(3600)
+
+
 async def _loop(cfg: SyncConfig) -> int:
     logger.info("legacy_sheet_sync loop started interval=%ss", cfg.interval_seconds)
     while True:
@@ -64,7 +73,10 @@ def main(argv: list[str] | None = None) -> int:
         cfg = load_config()
         if not cfg.enabled and not args.dry_run:
             print("Legacy sheet sync is disabled (LEGACY_SHEET_SYNC_ENABLED is not true). Nothing done.")
-            return 0 if args.loop else 2
+            if args.loop:
+                _idle()
+                return 0
+            return 2
         if args.loop:
             return asyncio.run(_loop(cfg))
         print_report(asyncio.run(_pass(cfg, dry_run=args.dry_run)))

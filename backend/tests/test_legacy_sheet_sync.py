@@ -239,7 +239,9 @@ def test_disabled_by_default(monkeypatch, capsys):
         monkeypatch.delenv(name, raising=False)
     assert cli.main(["--once"]) == 2
     assert "disabled" in capsys.readouterr().out
-    assert cli.main(["--loop"]) == 0
+    idled = []
+    monkeypatch.setattr(cli, "_idle", lambda: idled.append(True))
+    assert cli.main(["--loop"]) == 0 and idled  # disabled loop idles, never syncs
 
 
 async def test_interval_and_start_parsing():
@@ -320,6 +322,37 @@ def test_compose_service_is_profile_gated_readonly_and_unpublished():
     assert svc["environment"]["LEGACY_SHEET_SYNC_ENABLED"].endswith(":-false}")
     assert all(v.endswith(":ro") for v in svc["volumes"])
     assert svc["volumes"][0].startswith("./secrets/legacy-sheet:")
+    assert svc["restart"] == "unless-stopped"
+
+
+def test_update_and_stop_scripts_handle_the_profile_service():
+    """Static guard: the profile-gated service must be stopped before the
+    pre-update backup/migration, rebuilt, restarted afterwards, and stopped by
+    stop.ps1 (a plain `compose stop` skips profile services)."""
+    import pathlib
+
+    base = pathlib.Path(__file__).resolve().parents[2] / "deployment/local-staging"
+    ops = (base / "lib/Operations.ps1").read_text(encoding="utf-8")
+    update = ops[ops.index("function Invoke-MepUpdate"):ops.index("function Invoke-MepStart")]
+    assert update.index("Stop-MepLegacySync") < update.index("Invoke-MepBackup -Reason 'pre-update'")
+    assert "Start-MepApplication" in update  # which calls Start-MepLegacySync
+    assert "Start-MepLegacySync\n}" in ops
+    assert "'build', 'legacy-sheet-sync'" in ops
+    stop = ops[ops.index("function Invoke-MepStop"):ops.index("function Invoke-MepUninstall")]
+    assert "'--profile', $Script:LegacySyncProfile, 'stop'" in stop
+    enable = (base / "lib/LegacySheetSync.ps1").read_text(encoding="utf-8")
+    assert "Set-MepEnvValue -Name 'COMPOSE_PROFILES'" in enable
+    assert "Remove-MepEnvValue -Name 'COMPOSE_PROFILES'" in enable
+
+
+def test_runtime_lock_is_installed_with_require_hashes():
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    assert "pip install --no-cache-dir --require-hashes -r requirements.runtime.lock" in (
+        root / "backend/Dockerfile").read_text(encoding="utf-8")
+    assert "--require-hashes -r requirements.lock" in (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "google-auth==" in (root / "backend/requirements.runtime.lock").read_text(encoding="utf-8")
 
 
 def test_cli_error_output_has_no_key_path(monkeypatch, capsys, tmp_path):

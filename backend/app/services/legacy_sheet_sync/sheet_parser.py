@@ -192,7 +192,7 @@ def parse_tab(kind: str, values: list[list[str]]) -> ParsedTab:
             continue
         seen.add(row_id.lower())
         if not cell("bcm"):
-            skip("missing_me_code")
+            skip("missing_bcm")
             continue
         if not cell("ward"):
             skip("missing_ward")

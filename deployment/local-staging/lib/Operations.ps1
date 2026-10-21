@@ -25,6 +25,53 @@ function New-MepFailure {
 # Building (Fix Round 1, P1-A/P1-B: image freshness is a hard precondition)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# DEMO-ONLY legacy sheet sync service (Governance 2026-10-21)
+# ---------------------------------------------------------------------------
+# The service sits behind the `legacy-sheet-sync` compose profile, so plain
+# `compose stop/build/up backend frontend` never touches it. These helpers make
+# update/start/stop handle it explicitly whenever it is enabled, so it never
+# keeps writing during a backup or migration and never runs a stale image
+# against a new schema. `--profile` is passed explicitly in addition to
+# COMPOSE_PROFILES in .env (written by enable-legacy-sheet-sync.ps1).
+
+$Script:LegacySyncProfile = 'legacy-sheet-sync'
+
+function Test-MepLegacySyncEnabled {
+    try {
+        $envMap = Read-EnvFile
+        return ($envMap.ContainsKey('LEGACY_SHEET_SYNC_ENABLED') -and $envMap['LEGACY_SHEET_SYNC_ENABLED'].Trim().ToLowerInvariant() -eq 'true')
+    }
+    catch { return $false }
+}
+
+function Stop-MepLegacySync {
+    <# Stops the sync service when enabled and verifies it is not running. Fails closed. #>
+    if (-not (Test-MepLegacySyncEnabled)) { return }
+    $result = Invoke-DockerCompose -Arguments @('--profile', $Script:LegacySyncProfile, 'stop', 'legacy-sheet-sync') -AllowNonZeroExit -Phase 'stop-legacy-sync'
+    if ($result.ExitCode -ne 0) {
+        throw (New-MepFailure 'Failed to stop the legacy sheet sync service. Nothing was backed up or migrated: it would keep writing during the backup/migration.')
+    }
+    $states = Get-MepServiceStates
+    if ($null -eq $states) {
+        throw (New-MepFailure 'Could not verify that the legacy sheet sync service stopped (docker compose ps failed).')
+    }
+    if (Test-MepServiceRunning -ServiceStates $states -Service 'legacy-sheet-sync') {
+        throw (New-MepFailure 'The legacy sheet sync container is still running after `docker compose stop`. Refusing to continue.')
+    }
+    Write-InstallLog -Phase 'stop-legacy-sync' -Message 'Legacy sheet sync stopped and verified not running.'
+}
+
+function Start-MepLegacySync {
+    if (-not (Test-MepLegacySyncEnabled)) { return }
+    $result = Invoke-DockerCompose -Arguments @('--profile', $Script:LegacySyncProfile, 'up', '-d', 'legacy-sheet-sync') -AllowNonZeroExit -Phase 'start-legacy-sync'
+    if ($result.ExitCode -ne 0) {
+        # Demo aid: never fail an update/start of the real application over it.
+        Write-Host 'WARNING: the legacy sheet sync service did not start. Run .\enable-legacy-sheet-sync.ps1 -Status.' -ForegroundColor Yellow
+        Write-InstallLog -Phase 'start-legacy-sync' -Level 'WARN' -Message 'Legacy sheet sync did not start.'
+    }
+}
+
 function Invoke-MepBuildImages {
     <#
     .SYNOPSIS
@@ -44,6 +91,10 @@ function Invoke-MepBuildImages {
     #>
     Write-Host 'Building application images from the current source...'
     $result = Invoke-DockerCompose -Arguments @('build', 'backend', 'frontend') -AllowNonZeroExit -Phase 'build'
+    if ($result.ExitCode -eq 0 -and (Test-MepLegacySyncEnabled)) {
+        # Same source, separate image: rebuild so it is not stale on the new schema.
+        $result = Invoke-DockerCompose -Arguments @('--profile', $Script:LegacySyncProfile, 'build', 'legacy-sheet-sync') -AllowNonZeroExit -Phase 'build'
+    }
     if ($result.ExitCode -ne 0) {
         throw (New-MepFailure 'Image build failed. Migration was NOT run and the application was NOT started. Fix the build error above and rerun.')
     }
@@ -142,6 +193,7 @@ which service is not healthy, then read that service's logs:
 failing probe's own output. .\status.ps1 gives a summary.
 '@)
     }
+    Start-MepLegacySync
 }
 
 function Stop-MepApplication {
@@ -421,6 +473,10 @@ bootstrap. update.ps1 is not an installation-recovery mechanism.
     # pre-existing archive can never satisfy the current update's gate,
     # because Invoke-MepBackup identifies its artifact from PR24C's own
     # reported path and throws if that cannot be established.
+    # Demo-only sync service (if enabled): stop it BEFORE the backup so it
+    # cannot write during backup or migration. Start-MepApplication restarts
+    # it (rebuilt above) after the migration.
+    Stop-MepLegacySync
     $preUpdateBackup = Invoke-MepBackup -Reason 'pre-update'
     Write-InstallLog -Phase 'update' -Message "Pre-update backup gate satisfied by archive $($preUpdateBackup.Name) created by this update run."
 
@@ -491,7 +547,7 @@ function Invoke-MepStop {
     }
     # `stop` (never `down`): containers are stopped but not removed, and
     # the named volumes are never touched by this command.
-    $result = Invoke-DockerCompose -Arguments @('stop') -AllowNonZeroExit -Phase 'stop'
+    $result = Invoke-DockerCompose -Arguments @('--profile', $Script:LegacySyncProfile, 'stop') -AllowNonZeroExit -Phase 'stop'
     if ($result.ExitCode -ne 0) {
         throw (New-MepFailure 'docker compose stop reported a failure. PostgreSQL data, configuration, and any backups were not modified.')
     }
