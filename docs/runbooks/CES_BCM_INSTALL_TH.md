@@ -1,0 +1,311 @@
+# คู่มือติดตั้งเครื่อง CES-BCM ทีละขั้น (ติดตั้ง อัปเดต ย้อนกลับ)
+
+เอกสารนี้อธิบายสคริปต์ `setup-ces-bcm.ps1` และ `update-online.ps1`
+(อยู่ใน `deployment/local-staging/`) สำหรับเครื่อง Windows 11 Pro ของหน่วยงาน
+ชื่อ CES-BCM (i5-8500, RAM 8 GB, Docker Desktop แบบ Linux containers)
+
+> **ข้อจำกัดที่ต้องรู้ก่อน**
+> - เอกสารและสคริปต์นี้ **ไม่ได้ยืนยันว่าระบบพร้อมใช้งานจริง (production-ready)**
+>   และ **ไม่ได้พิสูจน์เป้าหมาย RPO** การสำรองข้อมูลรายชั่วโมงเป็นเพียงกลไก
+>   ต้องสังเกตผลจริงต่อเนื่องจึงจะอ้างได้
+> - สคริปต์ผ่านการทดสอบอัตโนมัติด้วยตัวจำลอง (mock) เท่านั้น ยังไม่เคยรันบนเครื่อง
+>   Windows จริง ให้ตรวจผลแต่ละขั้นด้วยตาเสมอ
+> - **การนำขึ้นใช้งานจริงเป็นการตัดสินใจของ Owner** ระบบไม่อัปเดตตัวเอง
+>   ไม่มีการตั้งเวลาอัปเดตอัตโนมัติ
+
+## 1. สิ่งที่ต้องเตรียม
+
+| รายการ | หมายเหตุ |
+|---|---|
+| เครื่อง Windows 11, บัญชีที่เป็น Administrator | RAM 8 GB, ที่ว่างดิสก์ 15 GB ขึ้นไป |
+| อินเทอร์เน็ต (ครั้งแรก) | ถ้าไม่มี ให้ใช้ ZIP จาก USB (ข้อ 6) |
+| PowerShell 7 | ถ้าเปิดด้วย PowerShell 5.1 สคริปต์จะพิมพ์คำสั่งติดตั้งให้ |
+| ไฟล์ซอร์สโค้ด | GitHub > Code > Download ZIP แล้วแตกไฟล์ไว้ที่ใดก็ได้ (เช่น Desktop) |
+| ไฟล์ CSV หอผู้ป่วย / หมวดอุปกรณ์ (ถ้ามี) | ข้อ 8.5 ของคู่มือ Local Staging; ไม่เก็บใน repository จะวางไว้ที่โฟลเดอร์รากของ repo ข้าง `README` ก็ได้ แต่ตอนสั่งรันให้ใส่ **path เต็ม** เสมอ เช่น `C:\Users\<ชื่อ>\Desktop\medical-equipment-pool\wards.csv` |
+| OAuth client ID/secret ของ Google Drive (ถ้าจะตั้งสำรองข้อมูลไป Drive) | `PR24_BACKUP_RESTORE_RUNBOOK.md` ข้อ 12.2 |
+| รหัสผ่าน Windows ของบัญชีที่ใช้รันงานสำรองข้อมูล | ใช้ตอนลงทะเบียน Task Scheduler เท่านั้น |
+
+ไม่ต้องมี GitHub token (repository เป็น public) **ห้ามส่งรหัสผ่านหรือ token ให้ใคร
+หรือเขียนลงไฟล์**
+
+## 2. ลำดับการรัน (ติดตั้งครั้งแรก)
+
+### 2.0 Windows บล็อกสคริปต์และไฟล์ที่ดาวน์โหลดมา (ทำก่อนทุกครั้งที่แตก ZIP ใหม่)
+
+ไฟล์ที่ดาวน์โหลดจากอินเทอร์เน็ตจะถูกติดเครื่องหมาย "บล็อก" ทำให้ PowerShell ไม่ยอมรันสคริปต์
+(ขึ้นข้อความว่า running scripts is disabled / is not digitally signed) แก้ได้ดังนี้
+(มีผลเฉพาะหน้าต่างนี้ ไม่แก้ค่าถาวรของเครื่อง):
+
+1. เปิด **PowerShell 7 แบบ Run as administrator**
+2. เข้าโฟลเดอร์ `deployment\local-staging` ของโฟลเดอร์ที่แตก ZIP แล้วรันสองคำสั่งนี้:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+Get-ChildItem -Path ..\.. -Recurse -File | Unblock-File
+```
+
+คำสั่งแรกอนุญาตให้รันสคริปต์ในหน้าต่างนี้เท่านั้น คำสั่งที่สองปลดบล็อกไฟล์ทุกไฟล์ใน repository
+(`..\..` คือโฟลเดอร์รากของ repository) ถ้าเปิดหน้าต่างใหม่ต้องรันคำสั่งแรกซ้ำ
+
+### 2.1 รันสคริปต์
+
+เปิด **PowerShell 7 แบบ Run as administrator** แล้วเข้าโฟลเดอร์ที่แตก ZIP:
+
+```powershell
+cd <โฟลเดอร์ที่แตก ZIP>\deployment\local-staging
+.\setup-ces-bcm.ps1
+```
+
+ตัวเลือกที่พบบ่อย:
+
+```powershell
+# ระบุเวอร์ชัน (tag หรือ commit SHA) แทนค่าเริ่มต้น
+.\setup-ces-bcm.ps1 -Version v1.0.0
+
+# พร้อมโหลดข้อมูลหลัก
+.\setup-ces-bcm.ps1 -WardsCsv D:\wards.csv -CategoriesCsv D:\categories.csv
+
+# ไม่มีอินเทอร์เน็ต: ใช้ ZIP ของ commit ที่ระบุ
+.\setup-ces-bcm.ps1 -SourceZip D:\mep.zip -Version <commit-sha>
+```
+
+ค่าเริ่มต้น: ติดตั้งที่ `C:\MEP\app` และบันทึกความคืบหน้าที่ `C:\MEP\setup-state.json`
+ถ้าเวอร์ชันไม่ระบุ สคริปต์จะเลือก commit ล่าสุดของ branch หลักที่ **ตรวจสอบแล้วว่าผ่าน**:
+CI ของโปรเจกต์รันเฉพาะบน pull request ดังนั้น commit บน branch หลักมักไม่มี check ของตัวเอง
+สคริปต์จึงหา pull request ที่ถูก **squash merge** เป็น commit นั้นพอดี (merge commit ตรงกัน)
+และรับก็ต่อเมื่อ checks ของ commit ปลายทาง (head) ของ PR นั้น **ผ่านทั้งหมด** ถ้าตรวจไม่ได้
+หรือถาม GitHub ไม่ได้ ต้องระบุ `-Version` เอง (สคริปต์เรียก GitHub แบบไม่ใช้ token
+ไม่เกิน 26 ครั้งต่อการรัน จากโควตา 60 ครั้งต่อชั่วโมง)
+
+**รันซ้ำด้วย `-Version` คนละเวอร์ชัน** หลังขั้น source เสร็จแล้ว: สคริปต์จะทำขั้น source ใหม่ให้เป็นเวอร์ชันที่ขอ
+(fetch, ตรวจ, checkout แบบ detached) และ **ปฏิเสธถ้า working tree มีการแก้ไขค้าง** ไม่ต้องสลับเวอร์ชันด้วยมือ
+สรุปท้ายสคริปต์แสดงเวอร์ชันจริงที่อยู่ในโฟลเดอร์ติดตั้ง (`git rev-parse HEAD`) และเวอร์ชันก่อนหน้าที่ใช้กับ
+`update-online.ps1 -Rollback` ถูกบันทึกให้ตรงกัน การเปลี่ยนขั้น source ไม่ได้เปลี่ยน container ที่รันอยู่ ให้ใช้
+`update.ps1` (หรือ `update-online.ps1`) เพื่อนำโค้ดใหม่ไปใช้
+
+ขั้นตอนที่สคริปต์ทำ (รันซ้ำได้ จะเริ่มต่อจากขั้นที่ยังไม่เสร็จ):
+
+1. **preflight** ตรวจ Windows 11, สิทธิ์ Administrator, PowerShell 7, RAM, ที่ว่างดิสก์
+2. **prerequisites** ตรวจ Docker Desktop และ Git ถ้าไม่มีจะ **ถามยืนยัน** ก่อนติดตั้งด้วย
+   `winget install -e --id Docker.DockerDesktop` / `Git.Git` และเปิด WSL2
+   แล้ว **หยุดให้คุณรีสตาร์ต Windows** (หรือเปิด PowerShell ใหม่) จากนั้นรันคำสั่งเดิมอีกครั้ง
+3. **source** clone จาก `https://github.com/manmenex/medical-equipment-pool.git`
+   ไปที่ `C:\MEP\app` และ checkout เวอร์ชันที่เลือก (บันทึกเวอร์ชันที่ติดตั้ง)
+4. **install** รัน `install.ps1` เดิม จะถาม LAN URL, port และข้อมูลผู้ดูแลระบบ
+   (รหัสผ่านชั่วคราวแสดงครั้งเดียวโดย backend ดูข้อ 2.2)
+5. **masterdata** ถ้าระบุ CSV ครบทั้งสองไฟล์ จะรัน `load-master-data.ps1 -Apply`
+   ถ้าไม่ระบุ จะข้าม (ทำภายหลังได้)
+6. **drive** ตั้งค่า Google Drive (`drive-backup.ps1 -Setup`): จะได้ URL และรหัส
+   ให้เปิดบนอุปกรณ์ใดก็ได้ ล็อกอินด้วยบัญชี Gmail ของหน่วยงานแล้วกดอนุญาต
+7. **schedule** ลงทะเบียนงานสำรองข้อมูลทุกชั่วโมง (`schedule-backup.ps1 -Install`)
+   Windows จะถามรหัสผ่าน ส่งตรงให้ Task Scheduler สคริปต์ไม่เห็น ไม่เก็บ ไม่พิมพ์
+   ต้องเป็น **รหัสผ่านเต็มของบัญชี Windows** (ถ้าเข้าเครื่องด้วยอีเมล คือรหัสผ่านของบัญชี Microsoft)
+   **ไม่ใช่ PIN**
+8. **final** แสดง `status.ps1`, LAN URL และสรุปสิ่งที่เสร็จ/ค้างอยู่ (PENDING)
+
+สคริปต์ **ไม่ลบข้อมูล ไม่ลบ volume ไม่ลบ backup ไม่ลบ `.env`** และไม่เคยรัน
+`docker compose down -v`
+
+### 2.1.1 โหลดรายการอุปกรณ์ของ Pool จากไฟล์ Excel (ทำหลังโหลดข้อมูลหลัก)
+
+ใช้ไฟล์ส่งออกของโรงพยาบาล (`.xlsx`, `.xlsm`, `.xltx` หรือ `.xltm`) **ห้ามเก็บไว้ใน repository** ต้องโหลดหมวดอุปกรณ์
+(`load-master-data.ps1`) ให้เสร็จก่อน เพราะคอลัมน์ "ชื่อเครื่องมือ" ต้องตรงกับชื่อหมวดที่มีอยู่แล้ว และใช้ **path เต็ม** เสมอ
+
+```powershell
+.\load-equipment.ps1 -PoolFile C:\data\pool.xltx           # ทดลอง (dry-run) ไม่เขียนข้อมูล
+.\load-equipment.ps1 -PoolFile C:\data\pool.xltx -Apply    # เขียนจริง (transaction เดียว, audit 1 รายการ)
+.\load-equipment.ps1 -PoolFile C:\data\pool.xltx -Apply -UpdateExisting   # แก้ยี่ห้อ/รุ่น/S/N/Asset ID/Item No ของรายการที่มีอยู่
+```
+
+ถ้าขึ้น `INPUT ERRORS` (ชื่อหมวดไม่ตรง, BCM หรือ Item No ซ้ำ, สถานะไม่รู้จัก, หัวตารางขาด) จะไม่มีการเขียนข้อมูล ให้แก้ไฟล์แล้วรันใหม่
+รายละเอียดดูข้อ 8.5.1 ของคู่มือ Local Staging
+
+> **หมายเหตุก่อนใช้งานจริง (ตามการตัดสินใจของ Owner):** รายการที่ทำเครื่องหมาย "ยังไม่ส่งคืน" จะถูกโหลดเป็นสถานะ **พร้อมใช้ (available)**
+> เจ้าหน้าที่ **ห้ามจ่ายอุปกรณ์ที่ไม่ได้อยู่บนชั้นจริง** และการยืมที่เกิดก่อนเริ่มใช้ระบบ **รับคืนในระบบไม่ได้**
+> เมื่ออุปกรณ์นั้นถูกส่งคืน ไม่ต้องบันทึกอะไรในระบบ
+
+### 2.2 ตอน install.ps1 ถามข้อมูล และรหัสผ่านผู้ดูแลระบบครั้งเดียว
+
+- **ลำดับข้อความอาจสลับ**: ข้อความที่ถามอาจโผล่ **เหนือ** บรรทัดผลลัพธ์อื่นที่ยังไม่แสดง
+  ไม่ต้องตกใจ ให้พิมพ์ตามลำดับที่ install.ps1 ถาม คือ
+  **รหัสพนักงาน (employee code) → อีเมล (email) → ชื่อ-นามสกุล (full name)** ของผู้ดูแลระบบ
+  (ก่อนหน้านั้นจะถาม LAN URL และ port ซึ่งกด Enter เพื่อใช้ค่าในวงเล็บได้)
+- **รหัสผ่านชั่วคราวของผู้ดูแลระบบแสดงครั้งเดียว** หลังข้อความ `Administrator created.`
+  และอาจเลื่อนหายไปเพราะมีข้อความตามมาอีกมาก ให้กด **Ctrl+Shift+F** ในหน้าต่าง Terminal
+  แล้วค้นคำว่า `temporary password` เพื่อหาบรรทัดนั้น จดไว้ในที่ปลอดภัยทันที
+  แล้วเปลี่ยนรหัสผ่านเมื่อเข้าระบบครั้งแรก **อย่าส่งต่อทางแชต/อีเมล และอย่าเก็บในไฟล์**
+  ถ้าไม่ทันเห็น ให้ปรึกษาผู้ดูแลระบบเรื่องการตั้งรหัสผ่านใหม่ อย่าแก้ฐานข้อมูลเอง
+
+### การเปิดระบบอัตโนมัติหลังไฟดับ (ทางเลือก)
+
+สคริปต์แสดงขั้นตอนให้เท่านั้น ไม่ได้เปลี่ยนค่าใด ๆ:
+
+- **Docker Desktop** > Settings > General > ติ๊ก **Start Docker Desktop when you sign in to your computer**
+  (ถ้าไม่ติ๊ก หลังไฟดับ/รีสตาร์ต ระบบและการสำรองข้อมูลจะไม่ทำงานจนกว่าจะเปิด Docker เอง)
+- (ถ้า Owner เห็นชอบ) ตั้ง auto sign-in ด้วย `netplwiz` หรือ Sysinternals Autologon
+  ข้อควรระวัง: ใครเปิดเครื่องได้ก็ใช้บัญชีนั้นได้ ควรตั้งเครื่องในห้องควบคุม
+
+### Firewall สำหรับเครื่องอื่นใน LAN
+
+สคริปต์ **ไม่สร้างกฎ firewall ให้เอง** แต่ตอนสรุปท้ายสคริปต์จะตรวจหากฎชื่อ `MEP Web (TCP <port>)`
+ถ้ายังไม่มีจะพิมพ์คำสั่งให้คัดลอก ใน PowerShell 7 แบบ Administrator:
+
+```powershell
+New-NetFirewallRule -DisplayName "MEP Web (TCP 80)" -Direction Inbound -Protocol TCP -LocalPort 80 -Action Allow -Profile Private,Domain
+```
+
+(ถ้าใช้ port อื่น ให้เปลี่ยนเลข port ทั้งในชื่อและ `-LocalPort`) กฎนี้ใช้กับเครือข่ายโปรไฟล์ Private/Domain เท่านั้น
+จึงต้องตั้งเครือข่าย Wi-Fi ของเครื่องเป็น **Private**: Settings > Network & internet > Wi-Fi > (ชื่อเครือข่าย)
+> Network profile type > **Private network** ถ้าเป็น Public เครื่องอื่นจะเข้าไม่ได้ ดูข้อ 2.5 ของคู่มือ Local Staging
+
+## 3. อัปเดตผ่านอินเทอร์เน็ต (Owner เป็นผู้สั่งเท่านั้น)
+
+```powershell
+cd C:\MEP\app\deployment\local-staging
+.\update-online.ps1 -Version v1.1.0      # tag หรือ commit SHA
+```
+
+ลำดับ: fetch จาก repository public > ตรวจว่ามี commit นั้นจริง และ GitHub checks
+ผ่านทั้งหมด (ข้ามได้ด้วย `-Force` ซึ่งเป็นการตัดสินใจของ Owner) > **ปฏิเสธถ้า
+working tree มีการแก้ไขค้างอยู่** > checkout แบบ detached > รัน `update.ps1`
+(สำรองข้อมูลและตรวจสอบก่อนเสมอ "ไม่มี backup = ไม่อัปเดต") > บันทึกเวอร์ชันที่ติดตั้ง
+และเวอร์ชันก่อนหน้า (`.version-history.json`)
+
+ถ้า `update.ps1` ล้มเหลว โค้ดจะค้างที่เวอร์ชันใหม่ แต่ไม่มีการลบข้อมูล: รันคำสั่งเดิมซ้ำ
+หรือใช้ `-Rollback` เพื่อกลับไปเวอร์ชันล่าสุดที่ใช้ได้
+
+## 4. อัปเดตผ่าน USB (ไม่มีอินเทอร์เน็ต)
+
+1. บนเครื่องที่มีอินเทอร์เน็ต: ไปหน้า commit ที่ต้องการบน GitHub > Code > Download ZIP
+   (จดตัวอักษร commit SHA ไว้) แล้วคัดลอกใส่ USB
+2. ที่ CES-BCM:
+
+```powershell
+.\update-online.ps1 -SourceZip E:\mep-<sha>.zip -Version <commit-sha>
+```
+
+สคริปต์อ่าน commit SHA จากตัว ZIP เองและเทียบกับ `-Version` ถ้าไม่ตรงหรืออ่านไม่ได้
+จะปฏิเสธ ถ้าไม่ใส่ `-Version` จะเตือนว่า ZIP ไม่ได้รับการตรวจสอบ ออฟไลน์ตรวจ GitHub
+checks ไม่ได้ จากนั้นสคริปต์ **แทนที่เฉพาะโค้ด** (คง `.env`, backups, logs, secrets) แล้วรัน
+`update.ps1` ZIP ที่เก่ากว่าเวอร์ชันที่ติดตั้ง (มี migration น้อยกว่า) จะถูกปฏิเสธ
+
+## 5. ย้อนกลับเวอร์ชัน (Rollback)
+
+```powershell
+.\update-online.ps1 -Rollback
+```
+
+- ย้อน **เฉพาะโค้ด** ไปเวอร์ชันก่อนหน้า แล้วรัน `update.ps1` (มี backup ก่อนเสมอ)
+- **ไม่มีการ downgrade ฐานข้อมูลอัตโนมัติ** ถ้าเวอร์ชันใหม่เพิ่ม migration ที่เวอร์ชันเก่าไม่มี
+  สคริปต์จะ **ปฏิเสธ** พร้อมรายชื่อ migration
+- ถ้า Owner ตัดสินใจแล้วจริง ๆ ให้เพิ่ม `-ConfirmMigrationRollback` (ต้องมี backup ที่ตรวจสอบแล้ว):
+  สคริปต์จะสลับโค้ดอย่างเดียว **ไม่รัน `update.ps1`** และพิมพ์ขั้นตอนกู้คืนฐานข้อมูล
+  ซึ่งต้องทำด้วยมือโดย Owner กำกับตาม `PR24_BACKUP_RESTORE_RUNBOOK.md` ข้อ 12.6
+  (ซ้อมก่อนด้วย `.\restore.ps1 -Backup <ไฟล์> -KeepRehearsalDatabase`)
+  ไม่มีคำสั่งเดียวที่ restore ทับฐานข้อมูลจริง โดยตั้งใจ
+
+## 6. แก้ปัญหาเบื้องต้น
+
+| อาการ | ทำอย่างไร |
+|---|---|
+| ขึ้น running scripts is disabled / not digitally signed / ถูกบล็อก | ทำตามข้อ 2.0 (`Set-ExecutionPolicy -Scope Process ...` และ `Unblock-File`) ในหน้าต่าง Administrator เดียวกับที่จะรันสคริปต์ |
+| ข้อความถามของ install.ps1 โผล่เหนือบรรทัดอื่น | ปกติ พิมพ์ตามลำดับ employee code → email → full name (ข้อ 2.2) |
+| สรุปแสดงเวอร์ชันที่ติดตั้งไม่ตรงกับที่ต้องการ | รันซ้ำด้วย `-Version <เวอร์ชันที่ต้องการ>` สคริปต์จะทำขั้น source ใหม่ให้ (ข้อ 2.1) |
+| เปิดด้วย PowerShell 5.1 แล้วสคริปต์หยุด | รัน `winget install -e --id Microsoft.PowerShell` แล้วเปิด "PowerShell 7" แบบ Administrator |
+| Preflight ไม่ผ่าน | แก้ตามรายการที่แสดง (สิทธิ์ Admin, RAM, ที่ว่างดิสก์) แล้วรันซ้ำ |
+| หยุดที่ prerequisites หลังติดตั้ง Docker/Git | รีสตาร์ต Windows หรือเปิด PowerShell ใหม่ เปิด Docker Desktop จนขึ้น Engine running แล้วรันคำสั่งเดิม |
+| Could not query GitHub / None of the newest ... is verified green | ระบุ `-Version <tag หรือ sha>` เอง หรือใช้ `-SourceZip` |
+| ... does not have all GitHub checks green | เลือกเวอร์ชันอื่น; ใช้ `-Force` ต่อเมื่อ Owner ตัดสินใจแล้ว |
+| has local changes | มีไฟล์ในโฟลเดอร์ซอร์สถูกแก้ อย่าลบเอง แจ้งผู้ดูแลระบบ |
+| ลืมรหัสผ่านผู้ดูแลระบบ / บัญชีถูกล็อก (ใส่ผิด 5 ครั้ง ล็อก 10 นาที) | บนเครื่องนี้ เปิด PowerShell 7 แบบ Administrator: `cd C:\MEP\app\deployment\local-staging` แล้ว `.\reset-password.ps1 -EmployeeCode ADMIN001` ระบบแสดงรหัสผ่านชั่วคราวครั้งเดียว (ไม่บันทึกลง log) ปลดล็อกบัญชี และบังคับตั้งรหัสใหม่ตอน login ห้ามส่งรหัสนี้ให้ใคร |
+| อยากเริ่มขั้นตอนใหม่ / ล้างการ resume | ไฟล์ความคืบหน้าอยู่ที่ `C:\MEP\setup-state.json` (โฟลเดอร์แม่ของ `-InstallDir`) เปลี่ยนชื่อไฟล์นี้ (เช่น เป็น `setup-state.old.json`) แล้วรัน `setup-ces-bcm.ps1` ใหม่ ขั้นตอนจะเริ่มจากต้น แต่ install.ps1 และ clone รันซ้ำได้อย่างปลอดภัย ข้อมูล backup และ `.env` ไม่ถูกลบ |
+| แทนที่โค้ดจาก ZIP ล้มเหลวกลางทาง | สคริปต์ย้อนไฟล์เดิมกลับให้เอง; ถ้าแจ้งว่ากู้คืนไม่ครบ ไฟล์เดิมอยู่ในโฟลเดอร์ `.mep-old-*` ข้างโฟลเดอร์ติดตั้ง อย่าลบ แจ้งผู้ดูแลระบบ; โฟลเดอร์ `.mep-staging-*`/`.mep-peek-*` ที่ค้างลบได้ภายหลัง |
+| state file unreadable | ไฟล์ `C:\MEP\setup-state.json` เสีย ให้เปลี่ยนชื่อไฟล์แล้วรันซ้ำ (สิ่งที่ติดตั้งแล้วไม่ถูกแตะ) |
+| install/drive/schedule ล้มเหลว | อ่านข้อความ ERROR/ACTION แล้วรันคำสั่งเดิมซ้ำ ขั้นที่เสร็จแล้วจะไม่ทำซ้ำ |
+| อย่างอื่น | ดูข้อ 8 ของ `PR24_LOCAL_STAGING_INSTALLATION_RUNBOOK.md` และ **อย่าแก้ฐานข้อมูลหรือ Docker volume เอง** |
+
+## 7. สิ่งที่ยังไม่ได้ตรวจบนเครื่องจริง
+
+winget/Docker Desktop/WSL2 บน Windows 11 จริง, การคัดลอกไฟล์ตอนแทนที่โค้ดจาก ZIP,
+การลงทะเบียน Task Scheduler ด้วยรหัสผ่าน และ OAuth device flow ของ Google
+ต้องให้ Owner ตรวจและบันทึกผลระหว่างติดตั้งครั้งแรก
+
+## 8. (เฉพาะช่วง DEMO) ซิงก์ข้อมูลจาก Google Sheet เดิมของทีม Pool
+
+ใช้เฉพาะช่วงทดลอง/เดโมเท่านั้น (Governance 2026-10-21 ใน `docs/DECISION_LOG.md`)
+ระบบจะ **อ่านอย่างเดียว** จากชีต "บันทึกข้อมูล Equipment Pool" (แท็บ "ข้อมูลส่งเครื่องมือ"
+และ "ข้อมูลรับเครื่องมือ") แล้วบันทึกเป็นรายการส่ง/รับผ่านขั้นตอนปกติของระบบ
+ไม่เขียนกลับไปที่ชีต ไม่เรียก N Smart ไม่นำเข้าหมายเหตุ ไม่เก็บชื่อผู้ใช้ฝั่งหอผู้ป่วย
+(คอลัมน์ "ชื่อ (User)") และแถวที่มีตัวเลขคล้าย HN จะถูกข้ามและรายงาน
+**ปิดฟีเจอร์นี้ก่อน Go-Live ทุกครั้ง** (ข้อ 8.5)
+
+ค่าเริ่มต้นคือ **ปิด** ระบบไม่เชื่อมชีตจนกว่าจะรันสคริปต์ในข้อ 8.3
+
+### 8.1 เตรียมฝั่ง Google (Owner)
+
+1. แชร์ชีตให้บัญชี service account `nsmart-reader@bcm-nsmart-realtime.iam.gserviceaccount.com`
+   สิทธิ์ **Viewer** เท่านั้น
+2. นำไฟล์คีย์ JSON ของบัญชีนี้ไปวางบนเครื่อง CES-BCM (เช่น `C:\MEP\secrets-in\key.json`)
+   **ห้าม** ใส่ใน repository, อีเมล หรือแชท และห้ามพิมพ์เนื้อหาไฟล์ออกหน้าจอ
+3. จด Spreadsheet ID จาก URL: `https://docs.google.com/spreadsheets/d/<ID>/edit`
+
+### 8.2 เตรียมฝั่งระบบ
+
+สร้างผู้ใช้ role Equipment Pool Staff ที่ employee code `LEGACY-SYNC` ในหน้าผู้ดูแลระบบ
+เป็น **service identity ที่ไม่มีคนล็อกอิน**: ตั้งรหัสผ่านสุ่มยาวที่ไม่มีใครรู้ เช่น
+`python -c "import secrets; print(secrets.token_urlsafe(32))"` แล้ววางลงช่องรหัสผ่านทันที
+**ห้ามจด ห้ามแชร์ ห้ามเก็บ** และห้ามใครล็อกอินด้วยบัญชีนี้ (ระบบใช้บัญชีนี้บันทึกรายการจากชีตทั้งหมดผ่านโปรแกรมเท่านั้น
+ไม่สร้างผู้ใช้เองและไม่แปลงชื่อ BME เป็นผู้ใช้ ชื่อ BME อยู่ในหมายเหตุของรายการเท่านั้น)
+ต้องมีหอผู้ป่วย (Ward) ชื่อตรงกับชีต และอุปกรณ์ที่มี BCM Code ตรงกันอยู่ในระบบแล้ว
+แถวที่หา Ward/BCM ไม่เจอจะถูกข้ามและรายงาน ไม่เดา
+
+**ข้อจำกัดของข้อมูลที่ต้องรู้ (ช่วงเดโม):**
+- ทุกรายการรับคืนถูกบันทึกเป็นผลลัพธ์ `usable` เสมอ (Owner ยังไม่กำหนดเกณฑ์ defective); เครื่องมือที่ชีตทำเครื่องหมาย ✗ ที่อุปกรณ์เสริมจะมีแค่ข้อความในหมายเหตุ
+- ถ้าแถวรับคืนไม่มีแถวส่งที่ตรงกันในชีต ระบบจะใช้ธุรกรรมที่เปิดอยู่ของอุปกรณ์นั้นในขณะนั้น ซึ่งอาจเป็นรายการที่เจ้าหน้าที่บันทึกในแอปเอง ไม่ใช่จากชีต และจะถูกปิดโดยรายการรับคืนจากชีต
+
+### 8.3 เปิดใช้งาน
+
+```powershell
+cd C:\MEP\medical-equipment-pool\deployment\local-staging
+.\enable-legacy-sheet-sync.ps1 -KeyFile C:\MEP\secrets-in\key.json -SpreadsheetId <ID>
+```
+
+สคริปต์จะคัดลอกคีย์ไปที่ `deployment\local-staging\secrets\legacy-sheet\` (สิทธิ์เฉพาะผู้ใช้/Administrators)
+รัน dry-run ก่อน (อ่านอย่างเดียว ไม่บันทึกอะไร) แล้วจึงเปิดบริการ รอบละ 5 นาที
+ตัวเลือก: `-StartDate 2026-10-15` (เริ่มย้อนหลังตั้งแต่วันนั้น; ค่าเริ่มต้น = 7 วันล่าสุด
+รายการที่เก่ากว่า 7 วันจะไปรอตรวจในหน้า Review ด้วยรหัส OP_TOO_OLD), `-IntervalSeconds`, `-EmployeeCode`
+
+ดูแผนโดยไม่เขียนข้อมูล: `docker compose ... run --rm legacy-sheet-sync python -m app.services.legacy_sheet_sync --once --dry-run`
+
+### 8.4 ตรวจสถานะ
+
+```powershell
+.\enable-legacy-sheet-sync.ps1 -Status
+```
+
+แสดงว่าเปิดอยู่หรือไม่ สถานะ container และบรรทัดสรุปรอบล่าสุด เช่น
+`applied=3 already_applied=40 skipped=2 conflict=1` รายการที่ขัดแย้ง (เช่น ส่งเครื่องที่ถูกส่งไปแล้ว)
+จะอยู่ในหน้า Review เดิมของระบบ ให้เจ้าหน้าที่ตัดสินใจ ไม่ถูกแก้อัตโนมัติ รันซ้ำปลอดภัย (ไม่ซ้ำรายการ)
+
+### 8.5 ปิดก่อน Go-Live (บังคับ)
+
+```powershell
+.\enable-legacy-sheet-sync.ps1 -Disable
+```
+
+หยุดบริการ ตั้งค่า `LEGACY_SHEET_SYNC_ENABLED=false` ลบ `COMPOSE_PROFILES` ออกจาก `.env` และ **ลบไฟล์คีย์ออกจากเครื่อง**
+จากนั้น Owner ถอนสิทธิ์แชร์ของ service account ออกจากชีต
+
+**รายการที่ต้องมีใน checklist Go-Live:**
+1. ยืนยันว่าปิดซิงก์แล้ว (`-Status` แสดง Enabled = no, Key file present = no) และถอนการแชร์ชีตแล้ว
+2. **Owner ตัดสินใจเรื่องฐานข้อมูล:** ธุรกรรม รายการใน ledger และรายการรอตรวจ (review) ที่ซิงก์สร้างไว้
+   จะยังอยู่ในฐานข้อมูลถ้าเครื่องเดโมนี้กลายเป็น Production ก่อน Go-Live Owner ต้องตัดสินใจว่าจะรีเซ็ต
+   หรือนำเข้าข้อมูลใหม่ (reset/re-import) หรือไม่ และบันทึกการตัดสินใจนั้นไว้
+
+คำสั่ง `update.ps1` หยุดบริการซิงก์ก่อน backup/migration และ build + เริ่มใหม่หลังอัปเดตให้เองเมื่อเปิดใช้งานอยู่
+`stop.ps1` หยุดบริการนี้ด้วย
+
+### 8.6 ยังไม่ได้ตรวจบนเครื่องจริง
+
+สคริปต์ PowerShell และการอ่าน Google Sheets จริงยังไม่ได้ทดสอบบนเครื่อง CES-BCM
+(ทดสอบอัตโนมัติใช้ข้อมูลสมมุติและ mock เท่านั้น) ให้ Owner ตรวจผลรอบแรกจาก dry-run
