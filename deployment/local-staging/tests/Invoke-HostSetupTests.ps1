@@ -435,6 +435,29 @@ Test-Case 'explicit version: red or unverifiable checks refuse unless -Force' {
     } | Out-Null
 }
 
+Test-Case 'explicit version: a squash-merged default-branch commit with no checks is verified through its PR' {
+    Invoke-Isolated {
+        . $script:GitMockBlock
+        $ctx = New-Ctx
+        $ctx.Checks = @{ $script:ShaC = 'none'; $script:ShaB = 'none'; $script:ShaA = 'none'; $script:ShaD = 'green'; $script:ShaE = 'red' }
+        $ctx.Pulls = @{
+            $script:ShaC = @(New-TestPr -Number 1 -MergeSha $script:ShaC -HeadSha $script:ShaD)
+            $script:ShaB = @(New-TestPr -Number 2 -MergeSha $script:ShaB -HeadSha $script:ShaE)
+            $script:ShaA = @(New-TestPr -Number 3 -MergeSha $script:ShaE -HeadSha $script:ShaD)
+        }
+        Assert-Equal $null (Assert-MepCommitVerified -Sha $script:ShaC) 'merged PR with green head accepted'
+        Assert-Throws { Assert-MepCommitVerified -Sha $script:ShaB } 'checks green' 'PR head red refused'
+        Assert-Throws { Assert-MepCommitVerified -Sha $script:ShaA } 'checks green' 'merge_commit_sha differs refused'
+        Assert-Equal $null (Assert-MepCommitVerified -Sha $script:ShaA -Force) '-Force still accepts'
+        $ctx.Pulls = @{ $script:ShaC = @(New-TestPr -Number 1 -MergeSha $script:ShaC -HeadSha $script:ShaD -Base 'other') }
+        Assert-Throws { Assert-MepCommitVerified -Sha $script:ShaC } 'checks green' 'other base branch refused'
+        $ctx.Pulls = @{}
+        Assert-Throws { Assert-MepCommitVerified -Sha $script:ShaC } 'checks green' 'no PR refused'
+        $ctx.Checks[$script:ShaC] = 'unprocessable'
+        Assert-Throws { Assert-MepCommitVerified -Sha $script:ShaC } 'checks green' '422 means unverified, refused'
+    } | Out-Null
+}
+
 Test-Case 'refs are validated and resolved tag-first' {
     $sha = Invoke-Isolated {
         . $script:GitMockBlock
@@ -1283,6 +1306,8 @@ Test-Case 'Invoke-MepHostCommand -NoCapture gives the child the console directly
     $lib = Get-Content -LiteralPath $script:LibPath -Raw
     $fn = [regex]::Match($lib, '(?s)function Invoke-MepHostCommand \{.*?\n\}\n').Value
     Assert-True ($fn -match 'Start-Process') 'child inherits the console via Start-Process'
+    Assert-True ($fn -notmatch '(?m)^\s*[^#\n]*\bWait\s*=') 'no -Wait (PS7 waits for the whole process tree)'
+    Assert-True ($fn -match 'PassThru' -and $fn -match '\.Handle' -and $fn -match 'WaitForExit') 'PassThru, Handle touched, WaitForExit'
     Assert-True ($fn -notmatch '\|\s*Out-Host') 'no Out-Host pipe: it buffered child output behind its Read-Host prompts'
     # Runs the REAL helper in a fresh pwsh: arguments with spaces and quotes arrive as one argument each.
     $pwsh = (Get-Process -Id $PID).Path

@@ -208,7 +208,10 @@ try {
     # update-online.ps1 -Rollback targets the right previous version.
     Sync-MepVersionRecordWithHead -InstallDir $InstallDir -HistoryPath $historyPath | Out-Null
     $hist = Get-MepVersionHistory -Path $historyPath
-    if ($hist.current) { Write-Host "  Installed version: $($hist.current.sha)" }
+    if ($hist.current) {
+        Write-Host "  Source version: $($hist.current.sha)"
+        Write-Host '    (the code on disk; running containers are updated with update.ps1)'
+    }
     foreach ($s in $outcome.AlreadyDone + $outcome.Ran) { Write-Host "  done    : $s" -ForegroundColor Green }
     foreach ($s in $outcome.Skipped) { Write-Host "  PENDING : $s (run this command again, or the script named above, when ready)" -ForegroundColor Yellow }
     Show-MepFirewallGuidance -Port $port

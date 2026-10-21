@@ -72,9 +72,14 @@ function Invoke-MepHostCommand {
                 $a = "$_"
                 if ($a -eq '' -or $a -match '[\s"]') { '"' + ($a -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1') + '"' } else { $a }
             })
-        $startArgs = @{ FilePath = $exe; NoNewWindow = $true; Wait = $true; PassThru = $true }
+        # No -Wait: in PowerShell 7 it waits for the whole process tree (a
+        # child that leaves a background process, e.g. after a winget Docker
+        # install, would hang). Touch .Handle once so ExitCode is retained,
+        # then wait for this process only.
+        $startArgs = @{ FilePath = $exe; NoNewWindow = $true; PassThru = $true }
         if ($quoted.Count -gt 0) { $startArgs.ArgumentList = $quoted }
         $proc = Start-Process @startArgs
+        $null = $proc.Handle
         $proc.WaitForExit()
         $exitCode = $proc.ExitCode
         $output = @()
@@ -578,7 +583,8 @@ function Get-MepLatestGreenCommit {
 function Assert-MepCommitVerified {
     <#
     .SYNOPSIS
-    Requires the commit's GitHub checks to be all green unless -Force. An
+    Requires the commit's GitHub checks to be all green (directly, or via its
+    squash-merged pull request, see below) unless -Force. An
     API failure also refuses (unverified), because -Force is an explicit
     Owner decision, not a fallback.
     #>
@@ -587,8 +593,23 @@ function Assert-MepCommitVerified {
         Write-Host "WARNING: -Force given; GitHub checks for $Sha were NOT verified." -ForegroundColor Yellow
         return
     }
+    # Own check runs decide when present. A default-branch commit usually has
+    # none (CI runs on pull requests), so it is then verified through the
+    # PR squash-merged into the default branch as exactly this commit, whose
+    # head checks must all be green (same rule as the automatic selection).
     $green = $false
-    try { $green = Test-MepCommitChecksGreen -Sha $Sha }
+    try {
+        $own = Get-MepCheckRunsOrEmpty -Sha $Sha
+        if ([int]$own.total_count -gt 0) { $green = Test-MepCheckRunsGreen -Response $own }
+        else {
+            $repo = Invoke-MepGitHubApi -Path "/repos/$($Script:MepRepoSlug)"
+            $branch = "$($repo.default_branch)"
+            if ($branch) {
+                $pr = Get-MepMergedPullRequestForCommit -Sha $Sha -Branch $branch
+                if ($pr) { $green = Test-MepCheckRunsGreen -Response (Get-MepCheckRunsOrEmpty -Sha "$($pr.head.sha)") }
+            }
+        }
+    }
     catch {
         throw "Could not verify GitHub checks for $Sha ($($_.Exception.Message)). Refusing. The Owner may re-run with -Force to accept an unverified version."
     }
