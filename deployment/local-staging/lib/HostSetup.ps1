@@ -819,7 +819,7 @@ function Reset-MepStaleSourceStep {
     if (-not $target) { throw "Version '$Version' does not exist in $($Script:MepRepoUrl)." }
     if ($target -eq $head) { return $false }
     Assert-MepWorkingTreeClean -RepoDir $InstallDir
-    Write-Host "The source folder is at $head but -Version $Version is $target: the source step will run again." -ForegroundColor Yellow
+    Write-Host "The source folder is at $head but -Version $Version is ${target}: the source step will run again." -ForegroundColor Yellow
     Write-Host 'Installed containers are not changed by this; apply the new code afterwards with update.ps1 (it takes a verified backup first).' -ForegroundColor Yellow
     $state.steps.Remove('source')
     Write-MepSetupState -Path $StatePath -State $state
