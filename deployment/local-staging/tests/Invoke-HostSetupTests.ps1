@@ -89,6 +89,16 @@ function Remove-TempDir {
 $script:ShaA = 'a' * 40
 $script:ShaB = 'b' * 40
 $script:ShaC = 'c' * 40
+$script:ShaD = 'd' * 40
+$script:ShaE = '1' * 40
+
+function New-TestPr {
+    param([int]$Number, [string]$MergeSha, [string]$HeadSha, [string]$MergedAt = '2026-10-01T00:00:00Z', [string]$Base = 'main')
+    return [pscustomobject]@{
+        number = $Number; merged_at = $MergedAt; merge_commit_sha = $MergeSha
+        base = [pscustomobject]@{ ref = $Base }; head = [pscustomobject]@{ sha = $HeadSha }
+    }
+}
 
 # A fake install tree that looks like a git clone with a deployment folder.
 function New-FakeInstall {
@@ -140,12 +150,20 @@ $script:GitMockBlock = {
         if ($Path -match '/commits/([0-9a-f]{40})/check-runs') {
             $state = $ctx.Checks[$Matches[1]]
             if ($state -eq 'error') { throw 'HTTP 500' }
+            if ($state -eq 'unprocessable') {
+                throw [System.Net.Http.HttpRequestException]::new('No commit found for SHA', $null, [System.Net.HttpStatusCode]::UnprocessableEntity)
+            }
+            if ($state -eq 'none') { return [pscustomobject]@{ total_count = 0; check_runs = @() } }
             $conclusion = if ($state -eq 'green') { 'success' } else { 'failure' }
             return [pscustomobject]@{ total_count = 2; check_runs = @(
                     [pscustomobject]@{ status = 'completed'; conclusion = 'success' },
                     [pscustomobject]@{ status = 'completed'; conclusion = $conclusion }) }
         }
-        if ($Path -match '/commits\?sha=') { return @($ctx.CommitList | ForEach-Object { [pscustomobject]@{ sha = $_ } }) }
+        if ($Path -match '/commits/([0-9a-f]{40})/pulls') {
+            if ($ctx.Pulls.ContainsKey($Matches[1])) { return @($ctx.Pulls[$Matches[1]]) }
+            return @()
+        }
+        if ($Path -match '/commits\?per_page=') { return @($ctx.CommitList | ForEach-Object { [pscustomobject]@{ sha = $_ } }) }
         return [pscustomobject]@{ default_branch = 'main' }
     }
 }
@@ -161,7 +179,7 @@ function New-Ctx {
     $c = @{
         Calls = @(); ApiCalls = @(); Prompts = @(); Confirm = $true; Dirty = $false; FetchOk = $true; ApiDown = $false
         Head = $script:ShaA; Origin = 'https://github.com/manmenex/medical-equipment-pool.git'
-        Refs = @{}; Migrations = @{}; Ancestors = @(); Checks = @{}; CommitList = @(); UpdateExit = 0
+        Refs = @{}; Migrations = @{}; Ancestors = @(); Checks = @{}; CommitList = @(); Pulls = @{}; UpdateExit = 0
     }
     foreach ($k in $Overrides.Keys) { $c[$k] = $Overrides[$k] }
     return $c
@@ -319,6 +337,92 @@ Test-Case 'GitHub API failure or no green commit requires an explicit -Version' 
     } | Out-Null
 }
 
+Test-Case 'default-branch commit with no check runs is accepted via its squash-merged PR whose head checks are green' {
+    $r = Invoke-Isolated {
+        . $script:GitMockBlock
+        $ctx = New-Ctx
+        $ctx.CommitList = @($script:ShaC, $script:ShaB)
+        $ctx.Checks = @{ $script:ShaC = 'none'; $script:ShaB = 'none'; $script:ShaD = 'red'; $script:ShaE = 'green' }
+        $ctx.Pulls = @{
+            $script:ShaC = @(New-TestPr -Number 8 -MergeSha $script:ShaC -HeadSha $script:ShaD)
+            $script:ShaB = @(New-TestPr -Number 7 -MergeSha $script:ShaB -HeadSha $script:ShaE)
+        }
+        $res = Get-MepLatestGreenCommit
+        return [pscustomobject]@{ res = $res; api = $ctx.ApiCalls }
+    }
+    Assert-Equal $script:ShaB $r.res.Sha 'newest commit whose PR head is red is skipped; the next squash-merged green PR wins'
+    Assert-Equal 'pull-request' $r.res.Via 'accepted through the pull request'
+    Assert-Equal 7 $r.res.PullRequest 'PR number reported'
+    Assert-Equal 1 $r.res.NewerNotGreen 'one newer commit skipped'
+    Assert-True (@($r.api | Where-Object { $_ -match 'sha=' }).Count -eq 0) 'the branch name is never put in a URL'
+    Assert-True (@($r.api | Where-Object { $_ -match '/pulls' }).Count -eq 2) 'PR lookup per commit without checks'
+}
+
+Test-Case 'a PR is not accepted unless merged into the default branch as exactly this squash commit' {
+    Invoke-Isolated {
+        . $script:GitMockBlock
+        $cases = @{
+            'merge commit differs (not a squash of this commit)' = (New-TestPr -Number 1 -MergeSha $script:ShaE -HeadSha $script:ShaD)
+            'not merged'                                         = (New-TestPr -Number 2 -MergeSha $script:ShaC -HeadSha $script:ShaD -MergedAt '')
+            'merged into another branch'                         = (New-TestPr -Number 3 -MergeSha $script:ShaC -HeadSha $script:ShaD -Base 'other')
+        }
+        foreach ($k in $cases.Keys) {
+            $ctx = New-Ctx
+            $ctx.CommitList = @($script:ShaC)
+            $ctx.Checks = @{ $script:ShaC = 'none'; $script:ShaD = 'green' }
+            $ctx.Pulls = @{ $script:ShaC = @($cases[$k]) }
+            Assert-Throws { Get-MepLatestGreenCommit } '-Version' $k
+        }
+        # no PR at all, and a PR whose head has no checks / has a failure
+        $ctx = New-Ctx
+        $ctx.CommitList = @($script:ShaC)
+        $ctx.Checks = @{ $script:ShaC = 'none' }
+        Assert-Throws { Get-MepLatestGreenCommit } '-Version' 'direct push without a PR'
+        $ctx.Pulls = @{ $script:ShaC = @(New-TestPr -Number 4 -MergeSha $script:ShaC -HeadSha $script:ShaD) }
+        $ctx.Checks = @{ $script:ShaC = 'none'; $script:ShaD = 'none' }
+        Assert-Throws { Get-MepLatestGreenCommit } '-Version' 'PR head without check runs'
+        $ctx.Checks = @{ $script:ShaC = 'none'; $script:ShaD = 'red' }
+        Assert-Throws { Get-MepLatestGreenCommit } '-Version' 'PR head red'
+        # a PR-lookup transport error is fail-closed, not skipped
+        $ctx.Checks = @{ $script:ShaC = 'none'; $script:ShaD = 'error' }
+        Assert-Throws { Get-MepLatestGreenCommit } 'Could not read' 'PR head API error'
+    } | Out-Null
+}
+
+Test-Case 'HTTP 422 from check-runs counts as "no check runs" (not an abort); other errors still abort' {
+    $r = Invoke-Isolated {
+        . $script:GitMockBlock
+        $ctx = New-Ctx
+        $ctx.CommitList = @($script:ShaC, $script:ShaB)
+        $ctx.Checks = @{ $script:ShaC = 'unprocessable'; $script:ShaB = 'none'; $script:ShaD = 'green' }
+        $ctx.Pulls = @{ $script:ShaB = @(New-TestPr -Number 5 -MergeSha $script:ShaB -HeadSha $script:ShaD) }
+        $res = Get-MepLatestGreenCommit
+        $ctx.Checks = @{ $script:ShaC = 'unprocessable'; $script:ShaB = 'unprocessable' }
+        $allFail = $null
+        try { Get-MepLatestGreenCommit | Out-Null } catch { $allFail = $_.Exception.Message }
+        return [pscustomobject]@{ res = $res; allFail = $allFail }
+    }
+    Assert-Equal $script:ShaB $r.res.Sha '422 on the newest commit is skipped, older verified commit used'
+    Assert-True ("$($r.allFail)" -match '-Version') 'nothing verifiable still fails closed and asks for -Version'
+}
+
+Test-Case 'default version scan stays inside the unauthenticated API budget' {
+    $api = Invoke-Isolated {
+        . $script:GitMockBlock
+        $ctx = New-Ctx
+        $shas = @(1..8 | ForEach-Object { ('{0:x}' -f $_) * 40 })
+        $ctx.CommitList = $shas
+        $ctx.Checks = @{}
+        foreach ($s in $shas) { $ctx.Checks[$s] = 'none' }
+        $ctx.Pulls = @{}
+        foreach ($s in $shas) { $ctx.Pulls[$s] = @(New-TestPr -Number 9 -MergeSha $s -HeadSha $script:ShaD) }
+        $ctx.Checks[$script:ShaD] = 'red'
+        try { Get-MepLatestGreenCommit | Out-Null } catch { }
+        return $ctx.ApiCalls
+    }
+    Assert-True (@($api).Count -le 26) "worst case uses at most 26 requests (used $(@($api).Count))"
+}
+
 Test-Case 'explicit version: red or unverifiable checks refuse unless -Force' {
     Invoke-Isolated {
         . $script:GitMockBlock
@@ -343,6 +447,140 @@ Test-Case 'refs are validated and resolved tag-first' {
         Resolve-MepCommit -RepoDir 'x' -Ref 'v1.2.0'
     }
     Assert-Equal $script:ShaB $sha 'tag wins over a same-named branch/ref'
+}
+
+# ===========================================================================
+Write-Host ''
+Write-Host 'Setup source step: actual HEAD, re-run on a different -Version' -ForegroundColor Cyan
+
+Test-Case 'the version record follows the actual HEAD; the replaced version becomes previous' {
+    $tmp = New-TempDir
+    try {
+        $root = New-FakeInstall $tmp
+        $r = Invoke-Isolated {
+            . $script:GitMockBlock
+            $hp = Get-MepVersionHistoryPath -Root $root
+            Set-MepVersionRecord -Path $hp -Sha $script:ShaA -Ref $script:ShaA -Source git
+            $ctx = New-Ctx -Overrides @{ Head = $script:ShaB }   # operator ran git checkout by hand
+            $head = Sync-MepVersionRecordWithHead -InstallDir $root -HistoryPath $hp
+            return [pscustomobject]@{ head = $head; hist = (Get-MepVersionHistory -Path $hp) }
+        }
+        Assert-Equal $script:ShaB $r.head 'actual HEAD returned'
+        Assert-Equal $script:ShaB $r.hist.current.sha 'current is the real HEAD'
+        Assert-Equal $script:ShaA $r.hist.previous.sha 'previous is the version that was recorded before'
+    }
+    finally { Remove-TempDir $tmp }
+}
+
+Test-Case 'a different -Version after the source step is done resets only that step; same version or dirty tree do not' {
+    $tmp = New-TempDir
+    try {
+        $root = New-FakeInstall $tmp
+        $r = Invoke-Isolated {
+            . $script:GitMockBlock
+            $sp = Join-Path $tmp 'setup-state.json'
+            $fresh = { Write-MepSetupState -Path $sp -State @{ schemaVersion = 1; lastError = $null; steps = @{
+                        source = @{ status = 'done'; atUtc = 'x' }; install = @{ status = 'done'; atUtc = 'x' } } } }
+            $ctx = New-Ctx -Overrides @{ Head = $script:ShaA; Refs = @{ 'refs/tags/v2' = $script:ShaB; 'refs/tags/v1' = $script:ShaA } }
+            & $fresh
+            $same = Reset-MepStaleSourceStep -StatePath $sp -InstallDir $root -Version 'v1'
+            $stillDone = (Read-MepSetupState -Path $sp).steps.ContainsKey('source')
+            $ctx.Dirty = $true
+            $dirtyErr = $null
+            try { Reset-MepStaleSourceStep -StatePath $sp -InstallDir $root -Version 'v2' | Out-Null } catch { $dirtyErr = $_.Exception.Message }
+            $keptOnDirty = (Read-MepSetupState -Path $sp).steps.ContainsKey('source')
+            $ctx.Dirty = $false
+            $zip = Reset-MepStaleSourceStep -StatePath $sp -InstallDir $root -Version 'v2' -SourceZip 'x.zip'
+            $none = Reset-MepStaleSourceStep -StatePath $sp -InstallDir $root -Version ''
+            $reset = Reset-MepStaleSourceStep -StatePath $sp -InstallDir $root -Version 'v2'
+            $st = Read-MepSetupState -Path $sp
+            return [pscustomobject]@{ same = $same; stillDone = $stillDone; dirtyErr = $dirtyErr; keptOnDirty = $keptOnDirty
+                zip = $zip; none = $none; reset = $reset; hasSource = $st.steps.ContainsKey('source'); hasInstall = $st.steps.ContainsKey('install') }
+        }
+        Assert-True (-not $r.same -and $r.stillDone) 'same version as HEAD leaves the step done'
+        Assert-True ("$($r.dirtyErr)" -match 'local changes') 'dirty tree refused'
+        Assert-True $r.keptOnDirty 'dirty tree refusal leaves the state untouched'
+        Assert-True (-not $r.zip -and -not $r.none) 'no -Version, or -SourceZip, never resets'
+        Assert-True $r.reset 'different version resets'
+        Assert-True (-not $r.hasSource) 'source step forgotten so it runs again'
+        Assert-True $r.hasInstall 'other steps stay done'
+    }
+    finally { Remove-TempDir $tmp }
+}
+
+Test-Case 're-running the source step to a new version fetches, verifies, checks out detached and records the real previous version' {
+    $tmp = New-TempDir
+    try {
+        $root = New-FakeInstall $tmp
+        $r = Invoke-Isolated {
+            . $script:GitMockBlock
+            $hp = Get-MepVersionHistoryPath -Root $root
+            Set-MepVersionRecord -Path $hp -Sha $script:ShaA -Ref $script:ShaA -Source git   # recorded at setup time
+            # the operator then checked out ShaC by hand, and now asks for ShaB
+            $ctx = New-Ctx -Overrides @{ Head = $script:ShaC; Refs = @{ $script:ShaB = $script:ShaB }; Checks = @{ $script:ShaB = 'green' } }
+            $sha = Invoke-MepGitSourceStep -InstallDir $root -HistoryPath $hp -Version $script:ShaB
+            return [pscustomobject]@{ sha = $sha; head = $ctx.Head; calls = $ctx.Calls; hist = (Get-MepVersionHistory -Path $hp) }
+        }
+        Assert-Equal $script:ShaB $r.sha 'returns the requested commit'
+        Assert-Equal $script:ShaB $r.head 'HEAD is now the requested commit'
+        Assert-True ((Get-CallIndex $r.calls 'git fetch*') -ge 0) 'fetched'
+        Assert-True ((Get-CallIndex $r.calls 'git checkout --detach*') -ge 0) 'detached checkout'
+        Assert-Equal $script:ShaB $r.hist.current.sha 'current recorded'
+        Assert-Equal $script:ShaC $r.hist.previous.sha 'previous is the version actually on disk before, so -Rollback targets it'
+    }
+    finally { Remove-TempDir $tmp }
+}
+
+Test-Case 'source step on a dirty tree or an unverified version changes nothing' {
+    $tmp = New-TempDir
+    try {
+        $root = New-FakeInstall $tmp
+        $r = Invoke-Isolated {
+            . $script:GitMockBlock
+            $hp = Get-MepVersionHistoryPath -Root $root
+            $ctx = New-Ctx -Overrides @{ Head = $script:ShaA; Dirty = $true; Refs = @{ $script:ShaB = $script:ShaB }; Checks = @{ $script:ShaB = 'green' } }
+            $e1 = $null; try { Invoke-MepGitSourceStep -InstallDir $root -HistoryPath $hp -Version $script:ShaB | Out-Null } catch { $e1 = $_.Exception.Message }
+            $ctx.Dirty = $false; $ctx.Checks = @{ $script:ShaB = 'red' }
+            $e2 = $null; try { Invoke-MepGitSourceStep -InstallDir $root -HistoryPath $hp -Version $script:ShaB | Out-Null } catch { $e2 = $_.Exception.Message }
+            return [pscustomobject]@{ e1 = $e1; e2 = $e2; head = $ctx.Head; hist = (Test-Path -LiteralPath $hp) }
+        }
+        Assert-True ("$($r.e1)" -match 'local changes') 'dirty refused'
+        Assert-True ("$($r.e2)" -match 'checks green') 'red refused'
+        Assert-Equal $script:ShaA $r.head 'HEAD unchanged'
+        Assert-True (-not $r.hist) 'no history written'
+    }
+    finally { Remove-TempDir $tmp }
+}
+
+Test-Case 'setup-ces-bcm.ps1 wires the stale-source reset, the HEAD sync and the firewall hint' {
+    $code = Get-Content -LiteralPath (Join-Path $script:DeploymentRoot 'setup-ces-bcm.ps1') -Raw
+    Assert-True ($code -match 'Reset-MepStaleSourceStep') 'resets a stale source step'
+    Assert-True ($code -match 'Sync-MepVersionRecordWithHead') 'summary reads the actual HEAD'
+    Assert-True ($code -match 'Show-MepFirewallGuidance') 'firewall hint in the summary'
+}
+
+# ===========================================================================
+Write-Host ''
+Write-Host 'Firewall hint (never created automatically)' -ForegroundColor Cyan
+
+Test-Case 'firewall guidance detects the rule by display name and prints the exact command otherwise' {
+    $r = Invoke-Isolated {
+        function Test-MepFirewallRuleExists { param([string]$DisplayName) $script:asked = $DisplayName; return $false }
+        $absent = Get-MepFirewallGuidance -Port 8080
+        function Test-MepFirewallRuleExists { param([string]$DisplayName) return $true }
+        $present = Get-MepFirewallGuidance -Port 80
+        return [pscustomobject]@{ absent = $absent; present = $present; asked = $script:asked }
+    }
+    Assert-True (-not $r.absent.Exists) 'absent rule reported'
+    Assert-Equal 'MEP Web (TCP 8080)' $r.asked 'looked up by display name'
+    Assert-Equal 'New-NetFirewallRule -DisplayName "MEP Web (TCP 8080)" -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow -Profile Private,Domain' $r.absent.Command 'exact command'
+    Assert-True $r.present.Exists 'present rule reported'
+}
+
+Test-Case 'the module only prints the firewall command; it never runs New-NetFirewallRule' {
+    $lib = Get-Content -LiteralPath $script:LibPath
+    $hits = @($lib | Where-Object { $_ -match 'New-NetFirewallRule' -and $_ -notmatch '^\s*\$cmd = "New-NetFirewallRule' -and $_ -notmatch '^\s*#' })
+    Assert-Equal 0 $hits.Count "New-NetFirewallRule appears outside the printed-command string: $($hits -join ' | ')"
 }
 
 # ===========================================================================
@@ -1039,6 +1277,25 @@ exit 0
     $out = & $pwsh -NoProfile -Command $probe 2>&1 | ForEach-Object { "$_" }
     Assert-Equal 0 $LASTEXITCODE "probe exit (10 = wrong ExitCode, 11 = output leaked); output: $($out -join ' | ')"
     Assert-True (($out -join "`n") -match 'child-line') 'child output is still shown to the operator'
+}
+
+Test-Case 'Invoke-MepHostCommand -NoCapture gives the child the console directly (no pipe) and keeps arguments intact' {
+    $lib = Get-Content -LiteralPath $script:LibPath -Raw
+    $fn = [regex]::Match($lib, '(?s)function Invoke-MepHostCommand \{.*?\n\}\n').Value
+    Assert-True ($fn -match 'Start-Process') 'child inherits the console via Start-Process'
+    Assert-True ($fn -notmatch '\|\s*Out-Host') 'no Out-Host pipe: it buffered child output behind its Read-Host prompts'
+    # Runs the REAL helper in a fresh pwsh: arguments with spaces and quotes arrive as one argument each.
+    $pwsh = (Get-Process -Id $PID).Path
+    $probe = @"
+`$ErrorActionPreference = 'Stop'
+. '$($script:LibPath -replace "'", "''")'
+`$r = Invoke-MepHostCommand -FilePath '$($pwsh -replace "'", "''")' -Arguments @('-NoProfile','-Command','if (`$args.Count -ne 0) { exit 20 }; Write-Output "two words"; exit 4') -AllowNonZeroExit -NoCapture
+if (`$r.ExitCode -ne 4) { exit 10 }
+exit 0
+"@
+    $out = & $pwsh -NoProfile -Command $probe 2>&1 | ForEach-Object { "$_" }
+    Assert-Equal 0 $LASTEXITCODE "probe exit (10 = wrong ExitCode); output: $($out -join ' | ')"
+    Assert-True (($out -join "`n") -match 'two words') 'quoted text reached the child intact'
 }
 
 # ===========================================================================
