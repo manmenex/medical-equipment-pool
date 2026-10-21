@@ -191,6 +191,35 @@ async def test_unsupported_extension(tmp_path):
     assert code == 2 and "unsupported file type" in out
 
 
+async def test_numeric_item_no_cells_warn_and_load(tmp_path, session_maker):
+    rows = [row("BCM90001", 123), row("BCM90002", 123456.0), row("BCM90003", "0007")]
+    code, out = await _load(make_book(tmp_path / "pool.xlsx", rows), apply=True)
+    assert code == 0 and "2 Item No cells were numbers" in out and "leading zeros may have been lost" in out
+    assert "item_no=123456" in out and "item_no=0007" in out
+    eq = await _equipment(session_maker)
+    assert eq["BCM90001"].item_no == "123" and eq["BCM90002"].item_no == "123456"
+
+
+@pytest.mark.parametrize("bad", [2**53, 10**20, 1e20, 12.5])
+async def test_unsafe_numeric_item_no_is_error(tmp_path, session_maker, bad):
+    code, out = await _load(make_book(tmp_path / "pool.xlsx", [row("BCM90001", bad)]), apply=True)
+    assert code == 2 and "non-integer or >= 2^53" in out
+    assert await _equipment(session_maker) == {}
+
+
+async def test_numeric_bcm_cell_warns(tmp_path):
+    code, out = await _load(make_book(tmp_path / "pool.xlsx", [row(90001, "1")]))
+    assert code == 0 and "1 ID CODE cells were numbers" in out and "BCM90001" in out
+
+
+@pytest.mark.parametrize("ph", ["-", "—", "N/A", "NA", "n/a", "ไม่มี", "none", "None", "  "])
+async def test_serial_placeholders_are_blank(tmp_path, session_maker, ph):
+    rows = [row("BCM90001", "1", sn=ph), row("BCM90002", "2", sn=ph)]  # duplicates if kept
+    code, out = await _load(make_book(tmp_path / "pool.xlsx", rows), apply=True)
+    assert code == 0, out
+    assert all(e.serial_number is None for e in (await _equipment(session_maker)).values())
+
+
 def test_powershell_wrapper_static_contract():
     """No PowerShell on CI: assert the wrapper's contract statically."""
     from pathlib import Path

@@ -85,6 +85,8 @@ STATUS_MAP = {
     "decommission": EquipmentStatus.DECOMMISSIONED,
     "wait decom": EquipmentStatus.DECOMMISSIONED,
 }
+MAX_SAFE_NUMERIC = 2**53
+SERIAL_PLACEHOLDERS = {"", "-", "—", "n/a", "na", "ไม่มี", "none"}
 NOT_MARKED = {"", "0", "-", "false", "no", "n", "none", "null"}
 
 
@@ -115,6 +117,7 @@ class PlanItem:
     bcm_code: str
     action: str  # create | unchanged | update | skip
     status: EquipmentStatus | None = None
+    item_no: str | None = None
     detail: str = ""
     data: dict = field(default_factory=dict, repr=False)  # create payload / update changes
     entity: object = field(default=None, repr=False)
@@ -194,22 +197,40 @@ def read_pool_sheet(path: Path) -> tuple[list[tuple[int, dict[str, str]]], bool]
     out = []
     for i in range(header_idx + 1, len(rows)):
         row = rows[i]
-        rec = {h: _cell_text(row[cols[h]]) if cols[h] < len(row) else "" for h in wanted}
+        raw = {h: row[cols[h]] if cols[h] < len(row) else None for h in wanted}
+        rec = {h: _cell_text(v) for h, v in raw.items()}
         if all(v == "" for v in rec.values()):
             continue
+        # Numeric identifier cells: Excel stores them as numbers, so leading
+        # zeros may already be lost. Unsafe/non-integer numbers are errors.
+        for h in (H_ITEM, H_BCM):
+            v = raw[h]
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                if (isinstance(v, float) and not v.is_integer()) or abs(v) >= MAX_SAFE_NUMERIC:
+                    rec["__numeric_error__" + h] = f"{h} cell is a number that is non-integer or >= 2^53 ({v!r}); store it as text"
+                else:
+                    rec["__numeric__" + h] = "1"
         out.append((i + 1, rec))
     return out, has_nr
 
 
-def parse_rows(path: Path) -> tuple[list[PoolRow], list[str], bool]:
-    """Returns (rows, row_errors, has_not_returned_column)."""
+def parse_rows(path: Path) -> tuple[list[PoolRow], list[str], bool, list[str]]:
+    """Returns (rows, row_errors, has_not_returned_column, warnings)."""
     raw_rows, has_nr = read_pool_sheet(path)
     rows, errors = [], []
     seen_bcm: dict[str, int] = {}
     seen_item: dict[str, int] = {}
     seen_serial: dict[str, int] = {}
+    numeric_items = numeric_bcms = 0
     for line, r in raw_rows:
         pre = f"{path.name} row {line}"
+        for h in (H_ITEM, H_BCM):
+            if "__numeric_error__" + h in r:
+                errors.append(f"{pre}: {r['__numeric_error__' + h]}")
+        if "__numeric__" + H_ITEM in r:
+            numeric_items += 1
+        if "__numeric__" + H_BCM in r:
+            numeric_bcms += 1
         bcm = None
         if not r[H_BCM]:
             errors.append(f"{pre}: ID CODE (BCM) is blank")
@@ -230,7 +251,7 @@ def parse_rows(path: Path) -> tuple[list[PoolRow], list[str], bool]:
             errors.append(f"{pre}: unknown Asset status {raw_status!r} (expected Active, Defective, Decommission or Wait decom)")
         if not r[H_NAME]:
             errors.append(f"{pre}: ชื่อเครื่องมือ is blank")
-        serial = r[H_SERIAL] if r[H_SERIAL] not in ("", "-") else None
+        serial = None if r[H_SERIAL].strip().casefold() in SERIAL_PLACEHOLDERS else r[H_SERIAL]
         vals = {"brand": r[H_BRAND] or None, "model": r[H_MODEL] or None,
                 "serial_number": serial, "asset_id": r[H_ASSET] or None}
         for k, v in vals.items():
@@ -253,7 +274,12 @@ def parse_rows(path: Path) -> tuple[list[PoolRow], list[str], bool]:
                             serial, raw_status, status, nr))
     if not rows and not errors:
         errors.append(f"{path.name}: no data rows")
-    return rows, errors, has_nr
+    warnings = []
+    if numeric_items:
+        warnings.append(f"{numeric_items} Item No cells were numbers; leading zeros may have been lost - check against QR labels")
+    if numeric_bcms:
+        warnings.append(f"{numeric_bcms} ID CODE cells were numbers; leading zeros may have been lost - check against labels")
+    return rows, errors, has_nr, warnings
 
 
 async def build_plan(db, rows: list[PoolRow], *, update_existing: bool, file_errors: list[str], file_name: str):
@@ -292,19 +318,19 @@ async def build_plan(db, rows: list[PoolRow], *, update_existing: bool, file_err
                 "brand": r.brand, "model": r.model, "serial_number": r.serial_number,
                 "status": r.status, "raw_source_status": r.raw_status or None,
             }
-            plan.append(PlanItem(r.line, r.bcm_code, "create", status=r.status, data=data))
+            plan.append(PlanItem(r.line, r.bcm_code, "create", item_no=r.item_no, status=r.status, data=data))
             continue
         want = {"brand": r.brand, "model": r.model, "serial_number": r.serial_number,
                 "asset_id": r.asset_id, "item_no": r.item_no}
         changes = {k: v for k, v in want.items() if v is not None and getattr(existing, k) != v}
         if not changes:
-            plan.append(PlanItem(r.line, r.bcm_code, "unchanged", status=existing.status, entity=existing))
+            plan.append(PlanItem(r.line, r.bcm_code, "unchanged", item_no=r.item_no, status=existing.status, entity=existing))
         elif update_existing:
             before = {k: getattr(existing, k) for k in changes}
-            plan.append(PlanItem(r.line, r.bcm_code, "update", status=existing.status,
+            plan.append(PlanItem(r.line, r.bcm_code, "update", item_no=r.item_no, status=existing.status,
                                  detail="changes: " + ", ".join(changes), data=changes, entity=existing, before=before))
         else:
-            plan.append(PlanItem(r.line, r.bcm_code, "skip", status=existing.status, entity=existing,
+            plan.append(PlanItem(r.line, r.bcm_code, "skip", item_no=r.item_no, status=existing.status, entity=existing,
                                  detail="differs in " + ", ".join(changes) + " (use -UpdateExisting)"))
     return plan, errors
 
@@ -329,7 +355,7 @@ def summarize(plan: list[PlanItem], rows: list[PoolRow], has_nr_col: bool) -> di
 def format_plan(plan: list[PlanItem], summary: dict, errors: list[str]) -> str:
     lines = [f"--- equipment ({len(plan)}) ---"]
     for p in plan:
-        bits = [f"{p.action.upper():9}", p.bcm_code]
+        bits = [f"{p.action.upper():9}", p.bcm_code, f"item_no={p.item_no or '-'}"]
         if p.status:
             bits.append(p.status.value)
         if p.detail:
@@ -369,7 +395,7 @@ async def apply_plan(db, plan: list[PlanItem], summary: dict, *, update_existing
 
 async def run(pool_path: Path, *, apply: bool, update_existing: bool, out=print) -> int:
     try:
-        rows, file_errors, has_nr = parse_rows(pool_path)
+        rows, file_errors, has_nr, warnings = parse_rows(pool_path)
     except InputError as exc:
         out("INPUT ERRORS (nothing was written):")
         for e in exc.errors:
@@ -380,6 +406,8 @@ async def run(pool_path: Path, *, apply: bool, update_existing: bool, out=print)
                                         file_errors=file_errors, file_name=pool_path.name)
         summary = summarize(plan, rows, has_nr)
         out(format_plan(plan, summary, errors))
+        for w in warnings:
+            out(f"WARNING: {w}")
         if errors:
             out("INPUT ERRORS (nothing was written):")
             for e in errors:
