@@ -306,6 +306,22 @@ async def test_unreadable_key_error_and_http_error_do_not_leak_path(tmp_path):
     assert ok_key not in str(e.value)
 
 
+def test_compose_service_is_profile_gated_readonly_and_unpublished():
+    import pathlib
+
+    import yaml
+
+    compose = yaml.safe_load(
+        (pathlib.Path(__file__).resolve().parents[2] / "deployment/local-staging/compose.yml").read_text(encoding="utf-8")
+    )
+    svc = compose["services"]["legacy-sheet-sync"]
+    assert svc["profiles"] == ["legacy-sheet-sync"]  # never starts with a plain `up`
+    assert "ports" not in svc
+    assert svc["environment"]["LEGACY_SHEET_SYNC_ENABLED"].endswith(":-false}")
+    assert all(v.endswith(":ro") for v in svc["volumes"])
+    assert svc["volumes"][0].startswith("./secrets/legacy-sheet:")
+
+
 def test_cli_error_output_has_no_key_path(monkeypatch, capsys, tmp_path):
     missing = str(tmp_path / "super-secret-missing.json")
     monkeypatch.setenv("LEGACY_SHEET_SYNC_ENABLED", "true")
