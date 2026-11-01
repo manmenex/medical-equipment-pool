@@ -9126,3 +9126,28 @@ opening-balance transactions are created.
 - **Expiry:** Removal of the feature is not scheduled; it is a demo aid, not
   a permanent integration. A later governance decision may delete it.
 - **Source:** Owner instruction 2026-10-21; `docs/ROADMAP.md` (Demo aids).
+
+## Owner decision 2026-11-01: per-account login lockout disabled by default
+
+- **Decision:** The per-account login lockout (5 failed attempts, locked 10
+  minutes; migration 0024, `auth_service`) is turned OFF by default. It is now
+  configurable through `LOGIN_LOCKOUT_ENABLED` (default `false`),
+  `LOGIN_LOCKOUT_MAX_ATTEMPTS` (default 5) and `LOGIN_LOCKOUT_MINUTES`
+  (default 10), wired through `.env.example`, the local-staging installer's
+  generated `.env` (fresh installs only; an existing `.env` is never
+  overwritten, and an absent variable means `false`) and `compose.yml`.
+- **Behaviour when disabled:** `locked_until` is never set and never enforced
+  (an existing value is ignored, so a currently locked account is usable
+  after deploy), on both `/auth/login` and `/auth/change-password`.
+  `failed_login_attempts` is still counted, failed logins are still audited
+  (brute force stays visible), and a successful login still resets the count.
+  When enabled, behaviour is unchanged, using the configured numbers; the
+  locked message now also states the unlock time (UTC).
+- **Condition (must not be forgotten):** `LOGIN_LOCKOUT_ENABLED=true` MUST be
+  set before any external/internet access, e.g. the Cloudflare Tunnel in
+  Roadmap PR25C. This is a PR25C / go-live checklist item
+  (`docs/ROADMAP.md`, `docs/KNOWN_LIMITATIONS.md`).
+- **Reason:** On the single LAN host the lockout locked the shared host
+  account with no benefit; the risk it mitigates is internet brute force.
+- **Source:** Owner chat answer "ข้อ 2", 2026-11-01. Not a change to the
+  business rules or guardrails.

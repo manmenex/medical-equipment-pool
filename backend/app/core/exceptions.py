@@ -2,8 +2,11 @@ class DomainError(Exception):
     code = "DOMAIN_ERROR"
     status_code = 400
 
-    def __init__(self, message: str):
+    def __init__(self, message: str, details: dict | None = None):
         self.message = message
+        # Optional machine-readable extras; serialized as `details` only
+        # when present, so every existing error response is unchanged.
+        self.details = details
         super().__init__(message)
 
 

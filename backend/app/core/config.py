@@ -94,6 +94,16 @@ class Settings(BaseSettings):
 
     ALLOWED_ORIGINS: str = DEFAULT_ALLOWED_ORIGINS
 
+    # Per-account login lockout (migration 0024). Owner decision 2026-11-01
+    # (docs/DECISION_LOG.md): OFF by default. It MUST be turned on
+    # (LOGIN_LOCKOUT_ENABLED=true) before any external/internet exposure,
+    # e.g. the Cloudflare Tunnel PR25C. When off, failed attempts are still
+    # counted and audited, but no lock is ever set or enforced (an existing
+    # locked_until is ignored).
+    LOGIN_LOCKOUT_ENABLED: bool = False
+    LOGIN_LOCKOUT_MAX_ATTEMPTS: int = 5
+    LOGIN_LOCKOUT_MINUTES: int = 10
+
     # PR24D-L1 (docs/design/PR24_PRODUCTION_DEPLOYMENT_GO_LIVE_PLAN.md §32;
     # the full operator runbook is planned for PR24D-L3 and does not exist
     # yet):

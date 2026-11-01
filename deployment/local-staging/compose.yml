@@ -103,6 +103,10 @@ services:
       ENVIRONMENT: production
       DEBUG: "false"
       COOKIE_SECURE: "false"
+      # Owner decision 2026-11-01: lockout OFF by default; absent var -> false.
+      LOGIN_LOCKOUT_ENABLED: "${LOGIN_LOCKOUT_ENABLED:-false}"
+      LOGIN_LOCKOUT_MAX_ATTEMPTS: "${LOGIN_LOCKOUT_MAX_ATTEMPTS:-5}"
+      LOGIN_LOCKOUT_MINUTES: "${LOGIN_LOCKOUT_MINUTES:-10}"
     depends_on:
       postgres:
         condition: service_healthy

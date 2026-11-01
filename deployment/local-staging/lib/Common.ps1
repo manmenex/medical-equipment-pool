@@ -553,7 +553,10 @@ function New-LocalStagingEnvFile {
         "POSTGRES_PASSWORD=$postgresPassword",
         "JWT_SECRET_KEY=$jwtSecret",
         "ALLOWED_ORIGINS=$AllowedOrigins",
-        "LOCAL_STAGING_HTTP_PORT=$HttpPort"
+        "LOCAL_STAGING_HTTP_PORT=$HttpPort",
+        "LOGIN_LOCKOUT_ENABLED=false",
+        "LOGIN_LOCKOUT_MAX_ATTEMPTS=5",
+        "LOGIN_LOCKOUT_MINUTES=10"
     )
     Set-Content -LiteralPath $Script:EnvFilePath -Value $lines
     Write-InstallLog -Phase 'config' -Message 'Generated new .env with fresh secrets (values never logged).'

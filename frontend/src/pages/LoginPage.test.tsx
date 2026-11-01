@@ -21,10 +21,10 @@ vi.mock("@/store/authStore", () => ({
 // look like a real axios error -- `apiErrorCode` returns undefined for
 // anything `axios.isAxiosError` rejects, which would make a naive mock pass
 // the test while the real page fell through to the generic message.
-function axiosLikeError(code: string, detail: string) {
+function axiosLikeError(code: string, detail: string, details?: Record<string, unknown>) {
   return {
     isAxiosError: true,
-    response: { data: { code, detail, status: code === "ACCOUNT_LOCKED" ? 423 : 401 } },
+    response: { data: { code, detail, details, status: code === "ACCOUNT_LOCKED" ? 423 : 401 } },
   };
 }
 
@@ -55,6 +55,7 @@ describe("LoginPage lockout message", () => {
       axiosLikeError(
         "ACCOUNT_LOCKED",
         "This account is temporarily locked after 5 failed sign-in attempts.",
+        { max_attempts: 5, lockout_minutes: 10, locked_until: "2026-11-01T10:30:00+00:00" },
       ),
     );
     const user = userEvent.setup();
@@ -63,8 +64,27 @@ describe("LoginPage lockout message", () => {
 
     const alert = await screen.findByText(/ถูกล็อกชั่วคราว/);
     expect(alert).toHaveTextContent("5 ครั้ง");
-    expect(alert).toHaveTextContent("10 นาที");
+    // 10:30 UTC = 17:30 in Thailand (Asia/Bangkok), whatever the test TZ.
+    expect(alert).toHaveTextContent("17:30");
     expect(alert).toHaveTextContent("ผู้ดูแลระบบ");
+  });
+
+  it("uses the server's numbers, not hard-coded ones", async () => {
+    login.mockRejectedValue(
+      axiosLikeError("ACCOUNT_LOCKED", "locked", {
+        max_attempts: 3,
+        lockout_minutes: 30,
+        locked_until: "2026-11-01T00:45:00+00:00",
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await submit(user);
+
+    const alert = await screen.findByText(/ถูกล็อกชั่วคราว/);
+    expect(alert).toHaveTextContent("3 ครั้ง");
+    expect(alert).not.toHaveTextContent("5 ครั้ง");
+    expect(alert).toHaveTextContent("07:45");
   });
 
   it("still shows the backend message for an ordinary wrong password", async () => {

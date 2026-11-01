@@ -78,7 +78,12 @@ class AccountLockedError(DomainError):
     status_code = 423
 
 
-# Owner decision: 5 consecutive failures, locked for 10 minutes, per account.
+# Owner decision: per-account lockout, defaults 5 consecutive failures /
+# locked for 10 minutes -- but OFF by default since 2026-11-01
+# (settings.LOGIN_LOCKOUT_ENABLED; numbers from LOGIN_LOCKOUT_MAX_ATTEMPTS /
+# LOGIN_LOCKOUT_MINUTES, read at call time so a restart with new env applies).
+# When disabled nothing here sets or enforces a lock; failures are still
+# counted and audited.
 #
 # **The cost this buys, stated plainly: anyone who knows an employee code can
 # lock that person out for 10 minutes at will**, by failing five times
@@ -86,8 +91,42 @@ class AccountLockedError(DomainError):
 # shape, not a defect -- and 10 minutes is short enough that it is a nuisance
 # rather than a denial of care. The alternative shapes (per-source-address,
 # or exponential backoff without a hard lock) were not chosen.
-MAXIMUM_FAILED_LOGIN_ATTEMPTS = 5
-LOCKOUT_DURATION = timedelta(minutes=10)
+def lockout_enabled() -> bool:
+    return bool(settings.LOGIN_LOCKOUT_ENABLED)
+
+
+def maximum_failed_login_attempts() -> int:
+    return max(1, int(settings.LOGIN_LOCKOUT_MAX_ATTEMPTS))
+
+
+def lockout_duration() -> timedelta:
+    return timedelta(minutes=max(1, int(settings.LOGIN_LOCKOUT_MINUTES)))
+
+
+def _locked_error(user: User, *, what: str) -> "AccountLockedError":
+    seconds = lock_expires_in_seconds(user)
+    unlock_at = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+    return AccountLockedError(
+        _locked_message(user, what=what),
+        details={
+            "max_attempts": maximum_failed_login_attempts(),
+            "lockout_minutes": int(lockout_duration().total_seconds() // 60),
+            "locked_until": unlock_at.isoformat(),
+        },
+    )
+
+
+def _locked_message(user: User, *, what: str) -> str:
+    """Names the attempt limit and the unlock time (UTC), not just a duration."""
+    seconds = lock_expires_in_seconds(user)
+    minutes = max(1, round(seconds / 60))
+    unlock_at = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+    return (
+        f"This account is temporarily locked after "
+        f"{maximum_failed_login_attempts()} failed {what}. "
+        f"Try again in about {minutes} minute(s), "
+        f"at {unlock_at.strftime('%Y-%m-%d %H:%M')} UTC."
+    )
 
 
 # The rules themselves live in app/services/password_policy.py -- they are an
@@ -133,12 +172,7 @@ async def change_password(
     # here while /auth/login was locked -- the lockout would be real on one
     # door and decorative on the other.
     if is_locked(user):
-        minutes = max(1, round(lock_expires_in_seconds(user) / 60))
-        raise AccountLockedError(
-            f"This account is temporarily locked after "
-            f"{MAXIMUM_FAILED_LOGIN_ATTEMPTS} failed attempts. "
-            f"Try again in about {minutes} minute(s)."
-        )
+        raise _locked_error(user, what="attempts")
 
     if not verify_password(current_password, user.password_hash):
         await record_best_effort_audit_event(
@@ -190,6 +224,10 @@ def is_locked(user: User, *, now: datetime | None = None) -> bool:
     that has to run to release a lock is something that can fail quietly
     and leave a nurse locked out through a shift.
     """
+    if not lockout_enabled():
+        # Disabled by the Owner (2026-11-01): any stored locked_until is
+        # ignored, so a lock set before the switch-off stops mattering.
+        return False
     if user.locked_until is None:
         return False
     reference = now or datetime.now(timezone.utc)
@@ -238,8 +276,11 @@ async def _record_failed_attempt(
         return
 
     user.failed_login_attempts = attempts
-    if attempts >= MAXIMUM_FAILED_LOGIN_ATTEMPTS and not is_locked(user, now=now):
-        locked_until = now + LOCKOUT_DURATION
+    if not lockout_enabled():
+        # Count and audit only; never set a lock.
+        return
+    if attempts >= maximum_failed_login_attempts() and not is_locked(user, now=now):
+        locked_until = now + lockout_duration()
         await db.execute(
             sa.update(User)
             .where(User.id == user.id)
@@ -299,12 +340,7 @@ async def authenticate(
             request=request,
         )
         await commit_best_effort(db)
-        minutes = max(1, round(lock_expires_in_seconds(user) / 60))
-        raise AccountLockedError(
-            f"This account is temporarily locked after "
-            f"{MAXIMUM_FAILED_LOGIN_ATTEMPTS} failed sign-in attempts. "
-            f"Try again in about {minutes} minute(s)."
-        )
+        raise _locked_error(user, what="sign-in attempts")
 
     if user is None or not user.is_active or not verify_password(password, user.password_hash):
         # Per ADR-0001: the actor is never the authentication target — a

@@ -46,6 +46,14 @@ Design and rationale: `docs/design/PR25D_OFFLINE_OPERATION_PLAN.md` (see 18.1); 
 
 **Resolution path:** Follow-up slices after the pilot, to be scheduled in `docs/ROADMAP.md`.
 
+## Login lockout is OFF by default (Owner decision 2026-11-01)
+
+The per-account login lockout is disabled (`LOGIN_LOCKOUT_ENABLED=false`).
+Failed logins are still counted and audited. **Go-live / PR25C checklist:
+set `LOGIN_LOCKOUT_ENABLED=true` in the host `.env` (then run update/start)
+before any external/internet access such as Cloudflare Tunnel.** See
+`docs/DECISION_LOG.md`.
+
 ## Related documents
 
 | Concern | Document |
