@@ -1,0 +1,44 @@
+name: Governance or documentation change
+description: Report a conflict, stale document, missing authority, or navigation problem.
+title: "docs: "
+labels: ["type:docs"]
+body:
+  - type: textarea
+    id: issue
+    attributes:
+      label: Documentation problem
+      description: Identify the exact file, section, conflict, duplication, or broken link.
+    validations:
+      required: true
+  - type: dropdown
+    id: authority
+    attributes:
+      label: Authority affected
+      options:
+        - Permanent repository rule
+        - Architecture decision
+        - Roadmap scope/order
+        - Current status
+        - Domain terminology
+        - Repository process
+        - Historical/reference document
+        - Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed authoritative home or pointer
+      description: Prefer consolidation and links over copied policy.
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact if unchanged
+      description: Describe implementation, review, security, or token-efficiency impact.
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope confirmation
+      options:
+        - label: This request is documentation/governance only and does not authorize runtime changes.
+          required: true

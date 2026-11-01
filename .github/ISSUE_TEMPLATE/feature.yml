@@ -1,0 +1,46 @@
+name: Approved feature proposal
+description: Propose a bounded feature for governance/Roadmap consideration.
+title: "feature: "
+labels: ["type:feature"]
+body:
+  - type: markdown
+    attributes:
+      value: "An issue does not authorize implementation or change Roadmap scope."
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and user outcome
+      description: Describe the operational need without prescribing unrelated implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: boundary
+    attributes:
+      label: Proposed scope and exclusions
+      description: Include current versus future workflow and what must remain unchanged.
+    validations:
+      required: true
+  - type: textarea
+    id: authority
+    attributes:
+      label: Governance/Roadmap relationship
+      description: Link the existing decision/Roadmap section or state what approval is missing.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Observable acceptance criteria
+  - type: textarea
+    id: risk
+    attributes:
+      label: Security, data, migration, API, and operational risks
+  - type: checkboxes
+    id: guardrails
+    attributes:
+      label: Guardrail confirmation
+      options:
+        - label: This proposal does not introduce patient tracking or a cleaning workflow.
+          required: true
+        - label: I understand approval requires a Governance/Roadmap decision before implementation.
+          required: true
