@@ -1,4 +1,7 @@
-"""Login lockout: 5 consecutive failures, 10 minutes, per account.
+"""Login lockout: 5 consecutive failures, 10 minutes, per account (ENABLED here).
+
+Lockout is OFF by default (Owner 2026-11-01); this module turns it on explicitly
+via the autouse fixture below. Disabled behaviour: test_login_lockout_disabled.py.
 
 Owner decision. These tests assert the *behaviour* an operator would
 observe, not the counter: that the sixth attempt is refused even with the
@@ -14,14 +17,22 @@ from sqlalchemy import select
 from app.core.audit import AUDIT_ACTION_ACCOUNT_LOCKED
 from app.models.audit import AuditLog
 from app.models.user import ROLE_ADMINISTRATOR, User
-from app.services.auth_service import (
-    LOCKOUT_DURATION,
-    MAXIMUM_FAILED_LOGIN_ATTEMPTS,
-    is_locked,
-)
+from app.core.config import settings
+from app.services.auth_service import is_locked, lockout_duration
 from tests.conftest import login
 
 pytestmark = pytest.mark.asyncio
+
+MAXIMUM_FAILED_LOGIN_ATTEMPTS = 5
+LOCKOUT_DURATION = lockout_duration()
+
+
+@pytest.fixture(autouse=True)
+def _lockout_enabled(monkeypatch):
+    monkeypatch.setattr(settings, "LOGIN_LOCKOUT_ENABLED", True)
+    monkeypatch.setattr(settings, "LOGIN_LOCKOUT_MAX_ATTEMPTS", 5)
+    monkeypatch.setattr(settings, "LOGIN_LOCKOUT_MINUTES", 10)
+
 
 ADMIN_EMPLOYEE_CODE = f"{ROLE_ADMINISTRATOR.upper()}001"
 CORRECT = "Password@123"
@@ -74,7 +85,9 @@ async def test_the_lock_message_says_how_long_to_wait(client, seeded_users):
     support call and more load."""
     await _fail_to_the_threshold(client)
     resp = await _attempt(client, CORRECT)
-    assert "10 minute" in resp.json()["detail"]
+    detail = resp.json()["detail"]
+    assert "10 minute" in detail
+    assert " UTC" in detail  # the unlock time is shown
 
 
 async def test_attempts_against_a_locked_account_do_not_extend_the_lock(

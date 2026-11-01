@@ -253,6 +253,9 @@ export interface ApiError {
   detail: string;
   code: string;
   status: number;
+  // Present only on errors that carry machine-readable extras, e.g.
+  // ACCOUNT_LOCKED: { max_attempts, lockout_minutes, locked_until (ISO UTC) }.
+  details?: Record<string, unknown>;
 }
 
 // Roadmap PR9B (backend/app/schemas/transaction.py's WardCorrectionRequest):

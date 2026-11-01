@@ -1,17 +1,36 @@
+import axios from "axios";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { apiErrorCode, apiErrorMessage } from "@/services/api";
 import { login } from "@/services/auth";
+import type { ApiError } from "@/types";
 import { useAuthStore, whenLogoutWipeDone } from "@/store/authStore";
 
-// Mirrors auth_service.MAXIMUM_FAILED_LOGIN_ATTEMPTS and LOCKOUT_DURATION.
-// The backend's own `detail` already says this, but in English -- and the
-// person reading it is a ward nurse mid-shift whose password just stopped
-// working. Branching on the stable `code` and writing the message in Thai is
-// the difference between "I can wait ten minutes" and a support call.
-const MAXIMUM_FAILED_LOGIN_ATTEMPTS = 5;
-const LOCKOUT_MINUTES = 10;
+// The backend's own `detail` is English, and the person reading it is a ward
+// nurse mid-shift whose password just stopped working. Branching on the
+// stable `code` and writing the message in Thai is the difference between "I
+// can wait" and a support call. The numbers come from the server
+// (error `details`), never hard-coded: lockout is configurable.
+export function lockedMessage(details: Record<string, unknown> | undefined): string {
+  const maxAttempts = typeof details?.max_attempts === "number" ? details.max_attempts : undefined;
+  const lockedUntil = typeof details?.locked_until === "string" ? new Date(details.locked_until) : undefined;
+  const validUntil = lockedUntil && !Number.isNaN(lockedUntil.getTime()) ? lockedUntil : undefined;
+  const reason = maxAttempts
+    ? `เพราะใส่รหัสผ่านผิด ${maxAttempts} ครั้งติดกัน `
+    : "เพราะใส่รหัสผ่านผิดหลายครั้งติดกัน ";
+  const wait = validUntil
+    ? `กรุณารอจนถึงเวลา ${validUntil.toLocaleTimeString("th-TH", {
+        timeZone: "Asia/Bangkok",
+        hour: "2-digit",
+        minute: "2-digit",
+      })} น. แล้วลองใหม่ `
+    : "กรุณารอสักครู่แล้วลองใหม่ ";
+  return (
+    `บัญชีนี้ถูกล็อกชั่วคราว ${reason}${wait}` +
+    "ถ้าจำรหัสผ่านไม่ได้ ให้ติดต่อผู้ดูแลระบบเพื่อตั้งรหัสใหม่"
+  );
+}
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -34,11 +53,10 @@ export function LoginPage() {
       navigate("/", { replace: true });
     } catch (err) {
       if (apiErrorCode(err) === "ACCOUNT_LOCKED") {
-        setError(
-          `บัญชีนี้ถูกล็อกชั่วคราว เพราะใส่รหัสผ่านผิด ${MAXIMUM_FAILED_LOGIN_ATTEMPTS} ครั้งติดกัน ` +
-            `กรุณารออีกประมาณ ${LOCKOUT_MINUTES} นาทีแล้วลองใหม่ ` +
-            "ถ้าจำรหัสผ่านไม่ได้ ให้ติดต่อผู้ดูแลระบบเพื่อตั้งรหัสใหม่",
-        );
+        const data = axios.isAxiosError(err)
+          ? (err.response?.data as ApiError | undefined)
+          : (err as { response?: { data?: ApiError } })?.response?.data;
+        setError(lockedMessage(data?.details));
       } else {
         setError(apiErrorMessage(err, "เข้าสู่ระบบไม่สำเร็จ"));
       }

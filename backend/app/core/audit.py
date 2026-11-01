@@ -37,7 +37,7 @@ AUDIT_ACTION_LOGOUT = "logout"
 AUDIT_ACTION_TOKEN_REFRESH = "token_refresh"
 
 # Roadmap PR24D follow-up: an account crossed the consecutive-failure
-# threshold and was locked (auth_service.MAXIMUM_FAILED_LOGIN_ATTEMPTS). A
+# threshold and was locked (settings.LOGIN_LOCKOUT_MAX_ATTEMPTS). A
 # distinct action rather than another login_failure, because "this account
 # got locked" is what an administrator fielding a support call searches for
 # -- burying it among the failures that caused it would make them
