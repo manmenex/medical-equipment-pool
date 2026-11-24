@@ -45,7 +45,7 @@ jobs:
   # both the matrix and the gate's total.
   backend-tests:
     name: Backend tests (non-PostgreSQL) shard ${{ matrix.shard }}/5
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -100,7 +100,7 @@ jobs:
     # always(): a skipped required check can read as passing, so this gate
     # must run and fail itself when any shard failed or was cancelled.
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Require every shard to have passed
         if: needs.backend-tests.result != 'success'
@@ -124,7 +124,7 @@ jobs:
 
   backend-postgres-tests:
     name: Backend tests (PostgreSQL) shard ${{ matrix.shard }}/3
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -211,7 +211,7 @@ jobs:
     # always(): a skipped required check can read as passing, so this gate
     # must run and fail itself when any shard failed or was cancelled.
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Require every shard to have passed
         if: needs.backend-postgres-tests.result != 'success'
@@ -235,7 +235,7 @@ jobs:
 
   migrations:
     name: Alembic migration upgrade validation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: backend
@@ -281,7 +281,7 @@ jobs:
 
   backend-docker-smoke-test:
     name: Backend production Docker image (build + runtime smoke test)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16-alpine
@@ -488,7 +488,7 @@ jobs:
 
   frontend:
     name: Frontend build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: frontend
@@ -528,7 +528,7 @@ jobs:
   # local rehearsal, not UAT and not PostgreSQL evidence.
   frontend-e2e-drills:
     name: Offline browser drills (Playwright)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -587,7 +587,7 @@ jobs:
 
   frontend-healthcheck-smoke-test:
     name: Frontend image healthcheck (build + container health)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -654,7 +654,7 @@ jobs:
 
   dependency-lock-check:
     name: Dependency lock drift
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -673,7 +673,7 @@ jobs:
 
   whitespace-check:
     name: git diff --check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout (full history)
         uses: actions/checkout@v4
@@ -686,7 +686,7 @@ jobs:
 
   powershell-validation:
     name: PowerShell script validation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
