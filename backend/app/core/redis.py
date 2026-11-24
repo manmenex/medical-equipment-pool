@@ -90,6 +90,24 @@ async def revoke_refresh_token(jti: str) -> None:
         logger.warning("Redis revoke_refresh_token failed jti=%s: %s: %s", _redact(jti), type(exc).__name__, exc)
 
 
+async def revoke_all_refresh_tokens_for_user(user_id: str) -> int:
+    """Delete every stored refresh token belonging to `user_id`.
+
+    Tokens are stored as `refresh:<jti>` -> user_id, so this scans that prefix.
+    Best effort like the other helpers: a Redis outage is logged, not raised.
+    """
+    removed = 0
+    try:
+        client = get_redis()
+        async for key in client.scan_iter(match="refresh:*"):
+            if await client.get(key) == user_id:
+                await client.delete(key)
+                removed += 1
+    except Exception as exc:
+        logger.warning("Redis revoke_all_refresh_tokens_for_user failed: %s: %s", type(exc).__name__, exc)
+    return removed
+
+
 async def cache_delete_prefix(prefix: str) -> None:
     if not settings.CACHE_ENABLED:
         return
