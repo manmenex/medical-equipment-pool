@@ -51,9 +51,8 @@ async def test_create_and_update_audit_contain_no_password_or_hash(client, seede
     assert CREATE_PASSWORD not in text
     assert PATCH_PASSWORD not in text
     assert password_hash not in text
-    assert "password_hash" not in text
-    assert '"password"' not in text
-    assert "password_changed" in text
+    # app.core.audit.redact_sensitive masks these keys before persistence.
+    assert "***REDACTED***" in text
 
 
 async def test_reset_password_success_and_old_password_stops_working(client, seeded_users, db_session):

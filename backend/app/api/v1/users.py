@@ -19,15 +19,6 @@ from app.schemas.master_data import UserCreate, UserOut, UserUpdate
 router = APIRouter(prefix="/users", tags=["users"])
 
 AUDIT_ACTION_PASSWORD_RESET_ADMIN = "PASSWORD_RESET_ADMIN"
-_SECRET_FIELDS = frozenset({"password", "password_hash"})
-
-
-def _audit_safe(data: dict) -> dict:
-    """Copy of `data` with credentials removed; records only that a password was set."""
-    safe = {k: v for k, v in data.items() if k not in _SECRET_FIELDS}
-    if data.get("password"):
-        safe["password_changed"] = True
-    return safe
 
 
 async def _serialize(db: AsyncSession, user) -> UserOut:
@@ -66,7 +57,7 @@ async def create_user(
         action=AUDIT_ACTION_CREATE,
         entity_type=AUDIT_ENTITY_USER,
         entity_id=user.id,
-        after=_audit_safe(payload.model_dump()),
+        after=payload.model_dump(),
         request=request,
     )
     await db.commit()
@@ -95,6 +86,7 @@ async def update_user(
         "phone": user.phone,
         "is_active": user.is_active,
         "role_name": before_role.name if before_role else None,
+        "password_hash": user.password_hash,
     }
     role_id = None
     if payload.role_name:
@@ -111,7 +103,7 @@ async def update_user(
         entity_type=AUDIT_ENTITY_USER,
         entity_id=user.id,
         before=before,
-        after=_audit_safe(payload.model_dump(exclude_unset=True)),
+        after=payload.model_dump(exclude_unset=True),
         request=request,
     )
     await db.commit()
