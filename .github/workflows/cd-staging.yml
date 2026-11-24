@@ -65,7 +65,7 @@ env:
 jobs:
   resolve-ref:
     name: Resolve and validate trusted deployment ref
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
     steps:
@@ -126,7 +126,7 @@ jobs:
   build-push-images:
     name: Build and push immutable images (SHA tag + digest identity)
     needs: resolve-ref
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -224,7 +224,7 @@ jobs:
   dependency-scan:
     name: Dependency vulnerability scan (informational)
     needs: resolve-ref
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout resolved ref
         uses: actions/checkout@v4
@@ -276,7 +276,7 @@ jobs:
   image-scan:
     name: Container image vulnerability scan (digest-pinned, blocking)
     needs: [resolve-ref, build-push-images]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: read
@@ -328,7 +328,7 @@ jobs:
     # start/verification can never run concurrently with, or ahead of,
     # a blocking scan result.
     needs: [resolve-ref, build-push-images, image-scan]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: read
