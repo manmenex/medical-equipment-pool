@@ -110,3 +110,52 @@ async def test_reset_password_self_refused(client, seeded_users):
     assert resp.status_code == 409
     login = await client.post("/api/v1/auth/login", json={"identifier": me.employee_code, "password": "Password@123"})
     assert login.status_code == 200
+
+
+async def test_admin_cannot_deactivate_or_change_own_role(client, seeded_users):
+    me_id = str(seeded_users[ROLE_ADMINISTRATOR].id)
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    r1 = await client.patch(f"/api/v1/users/{me_id}", headers=headers, json={"is_active": False})
+    assert r1.status_code == 409
+    r2 = await client.patch(f"/api/v1/users/{me_id}", headers=headers, json={"role_name": ROLE_READ_ONLY})
+    assert r2.status_code == 409
+    # Harmless self edits (same role, name change) still work.
+    r3 = await client.patch(
+        f"/api/v1/users/{me_id}", headers=headers, json={"role_name": ROLE_ADMINISTRATOR, "full_name": "Renamed"}
+    )
+    assert r3.status_code == 200, r3.text
+
+
+async def test_other_user_can_still_be_deactivated(client, seeded_users):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    created = await _create(client, headers)
+    resp = await client.patch(f"/api/v1/users/{created['id']}", headers=headers, json={"is_active": False})
+    assert resp.status_code == 200
+
+
+class _FakeRedis:
+    def __init__(self, data):
+        self.data = dict(data)
+
+    async def scan_iter(self, match=None):
+        for k in list(self.data):
+            yield k
+
+    async def get(self, key):
+        return self.data.get(key)
+
+    async def delete(self, key):
+        self.data.pop(key, None)
+
+
+async def test_reset_password_revokes_target_refresh_tokens_only(client, seeded_users, monkeypatch):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    created = await _create(client, headers)
+    other = str(seeded_users[ROLE_READ_ONLY].id)
+    fake = _FakeRedis({"refresh:a": created["id"], "refresh:b": created["id"], "refresh:c": other})
+    import app.core.redis as redis_mod
+
+    monkeypatch.setattr(redis_mod, "get_redis", lambda: fake)
+    resp = await client.post(f"/api/v1/users/{created['id']}/reset-password", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert fake.data == {"refresh:c": other}

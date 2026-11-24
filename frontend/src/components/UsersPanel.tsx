@@ -56,6 +56,7 @@ export function UsersPanel({ currentUserId }: { currentUserId?: string }) {
   };
 
   const closeTemp = () => {
+    resetMutation.reset();
     setTempResult(null);
     setCopied(false);
   };

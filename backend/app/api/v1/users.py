@@ -8,6 +8,7 @@ from app.api.v1.deps import require_roles
 from app.core.audit import AUDIT_ACTION_CREATE, AUDIT_ACTION_UPDATE, AUDIT_ENTITY_USER, record_audit_event
 from app.core.db_errors import translate_integrity_error
 from app.core.exceptions import ConflictError, InvalidInputError, ResourceNotFoundError
+from app.core.redis import revoke_all_refresh_tokens_for_user
 from app.core.security import hash_password
 from app.crud import user as user_crud
 from app.db.session import get_db
@@ -84,6 +85,11 @@ async def update_user(
     if user is None:
         raise ResourceNotFoundError("User not found")
     before_role = await db.get(Role, user.role_id)
+    if user.id == actor.id:
+        if payload.is_active is False:
+            raise ConflictError("Administrators cannot deactivate their own account.")
+        if payload.role_name and (before_role is None or payload.role_name != before_role.name):
+            raise ConflictError("Administrators cannot change their own role.")
     before = {
         "full_name": user.full_name,
         "phone": user.phone,
@@ -144,4 +150,6 @@ async def reset_user_password(
         request=request,
     )
     await db.commit()
+    # Existing sessions must not survive a credential reset.
+    await revoke_all_refresh_tokens_for_user(str(user.id))
     return PasswordResetOut(employee_code=user.employee_code, temporary_password=temp_password)
