@@ -125,6 +125,11 @@ Durable facts as of the post-#150 state:
   first-login password enforced by the backend, and account lockout (#144,
   #148). Backups run hourly with tiered retention (#143); the RPO <= 1h target
   is not yet proven end to end.
+- Demo period (Owner 2026-11-24): external access via Tailscale Funnel
+  instead of Cloudflare; login lockout stays OFF (accepted risk, mitigations
+  in `docs/DECISION_LOG.md`); admins cannot view passwords, an admin reset UI
+  is planned; Production GO is not authorized. Cloudflare PR25C remains the
+  production target and the lockout checklist applies there.
 
 Roadmap numbers and GitHub PR numbers are independent. Legacy migration is
 mandatory before Go-live.

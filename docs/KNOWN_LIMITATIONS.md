@@ -54,6 +54,19 @@ set `LOGIN_LOCKOUT_ENABLED=true` in the host `.env` (then run update/start)
 before any external/internet access such as Cloudflare Tunnel.** See
 `docs/DECISION_LOG.md`.
 
+### Demo-period exception: Tailscale Funnel with lockout OFF (Owner decision 2026-11-24)
+
+For the demo period only, the CES-BCM host is exposed through Tailscale Funnel
+(public HTTPS URL, no identity gate in front of the app login), and the Owner
+keeps `LOGIN_LOCKOUT_ENABLED=false`. Accepted risk: unlimited online password
+guessing (failures are still counted and audited). Mitigations: admin
+passwords of at least 12 characters, and review of the audit log for failed
+logins. This supersedes the checklist line above for the demo only; it still
+applies before production go-live via Cloudflare. Administrators cannot view
+passwords (one-way hashes, by design); an admin reset issues a one-time
+temporary password instead. Production GO is not authorized. See
+`docs/DECISION_LOG.md`.
+
 ## Related documents
 
 | Concern | Document |
