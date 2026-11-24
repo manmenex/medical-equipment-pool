@@ -321,8 +321,10 @@ cd C:\MEP\medical-equipment-pool\deployment\local-staging
 1. เปิด PowerShell 7 ในโฟลเดอร์ `deployment\local-staging` แล้วรัน `.\enable-online.ps1`
 2. ถ้ายังไม่มี Tailscale สคริปต์จะถามก่อนติดตั้งด้วย winget (หรือดาวน์โหลดเองที่ https://tailscale.com/download/windows)
 3. ถ้ายังไม่ล็อกอิน สคริปต์รัน `tailscale up` และเปิดเบราว์เซอร์ให้ล็อกอิน (ใช้บัญชีที่ Owner กำหนด)
-4. ถ้าสคริปต์แสดงลิงก์ `https://login.tailscale.com/...` แปลว่า tailnet ยังไม่เปิด Funnel/HTTPS:
-   เปิดลิงก์ กดปุ่ม Enable แล้วรัน `.\enable-online.ps1` อีกครั้ง
+   หน้าต่าง PowerShell จะรอจนล็อกอินในเบราว์เซอร์เสร็จ ไม่ใช่ค้าง
+4. ถ้ามีลิงก์ `https://login.tailscale.com/...` แสดงขึ้นมา แปลว่า tailnet ยังไม่เปิด Funnel/HTTPS:
+   เปิดลิงก์ กดปุ่ม Enable แล้วรอ สคริปต์จะทำงานต่อเองและตรวจว่า Funnel เปิดแล้ว
+   (ถ้าสคริปต์จบด้วยข้อผิดพลาด ให้รัน `.\enable-online.ps1` อีกครั้ง)
 5. เมื่อสำเร็จจะแสดง URL สาธารณะ ตรวจสถานะภายหลังด้วย `.\enable-online.ps1 -Status`
 
 สคริปต์ไม่แก้ `.env` และไม่รีสตาร์ตคอนเทนเนอร์: ผู้ใช้เข้าผ่าน nginx ของระบบ (พอร์ตตาม `LOCAL_STAGING_HTTP_PORT`,

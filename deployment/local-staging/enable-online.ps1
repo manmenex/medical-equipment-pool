@@ -55,14 +55,19 @@ function Get-FunnelHostName {
     return $null
 }
 
-function Get-FunnelAdminUrl {
-    param([string[]]$Lines)
-    $m = [regex]::Match(($Lines -join "`n"), 'https://login\.tailscale\.com/\S+')
-    if ($m.Success) { return $m.Value }
-    return $null
-}
-
 function Test-FunnelActive {
+    # Prefer the JSON form: any AllowFunnel entry set to true means Funnel is on.
+    $j = Invoke-Tailscale -Arguments @('funnel', 'status', '--json')
+    if ($j.ExitCode -eq 0) {
+        try {
+            $cfg = ($j.Output -join "`n") | ConvertFrom-Json
+            if ($cfg -and $cfg.PSObject.Properties['AllowFunnel'] -and $cfg.AllowFunnel) {
+                foreach ($p in $cfg.AllowFunnel.PSObject.Properties) { if ($p.Value -eq $true) { return $true } }
+            }
+            return $false
+        }
+        catch { }
+    }
     $r = Invoke-Tailscale -Arguments @('funnel', 'status')
     return ($r.ExitCode -eq 0 -and (($r.Output -join "`n") -match 'Funnel on'))
 }
@@ -71,7 +76,7 @@ function Show-FunnelStatus {
     $hostName = Get-FunnelHostName
     $r = Invoke-Tailscale -Arguments @('funnel', 'status')
     $r.Output | ForEach-Object { Write-Host $_ }
-    if ((Test-FunnelActive) -and $hostName) {
+    if ($r.ExitCode -eq 0 -and (($r.Output -join "`n") -match 'Funnel on') -and $hostName) {
         Write-Host "สถานะ: เปิดใช้งานจากอินเทอร์เน็ตอยู่ -> https://$hostName" -ForegroundColor Green
     }
     else {
@@ -125,18 +130,13 @@ try {
 
     $port = Get-ConfiguredHttpPort
     Write-InstallLog -Phase 'online' -Message "Starting Tailscale Funnel to local port $port."
-    $r = Invoke-Tailscale -Arguments @('funnel', '--bg', "$port")
-    if ($r.ExitCode -ne 0) {
-        $url = Get-FunnelAdminUrl -Lines $r.Output
-        if ($url) {
-            Write-Host ''
-            Write-Host 'Funnel/HTTPS ยังไม่ได้เปิดใช้งานสำหรับ tailnet นี้' -ForegroundColor Yellow
-            Write-Host "1) เปิดลิงก์นี้ในเบราว์เซอร์ (ล็อกอินด้วยบัญชีผู้ดูแล Tailscale): $url"
-            Write-Host '2) กดปุ่ม Enable (เปิดใช้งาน HTTPS / Funnel)'
-            Write-Host '3) กลับมารัน .\enable-online.ps1 อีกครั้ง'
-            exit 1
-        }
-        throw "tailscale funnel ล้มเหลว: $($r.Output -join ' ')"
+    # Streamed live (-NoCapture): on a tailnet without Funnel/HTTPS enabled,
+    # tailscale prints a login.tailscale.com/f/... link and WAITS for the
+    # admin to enable it, so the operator must see that link as it appears.
+    Write-Host 'ถ้ามีลิงก์ https://login.tailscale.com/... แสดงขึ้นมา ให้เปิดลิงก์ กดปุ่ม Enable แล้วรอ สคริปต์จะทำงานต่อเอง' -ForegroundColor Yellow
+    $r = Invoke-Tailscale -Arguments @('funnel', '--bg', "$port") -NoCapture
+    if ($r.ExitCode -ne 0 -or -not (Test-FunnelActive)) {
+        throw 'เปิด Funnel ไม่สำเร็จ: หากมีลิงก์ Enable ให้เปิดและกด Enable ก่อน แล้วรัน .\enable-online.ps1 อีกครั้ง'
     }
 
     $hostName = Get-FunnelHostName
