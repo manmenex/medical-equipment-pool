@@ -7,6 +7,10 @@
 
 This file tracks *what changed in the shared mental model* over time, one line of context per concept. For the PR-by-PR rationale behind each change, see `docs/DECISION_LOG.md` (from Roadmap PR5 onward) and `docs/PROJECT_MEMORY.md` (Roadmap PR1 through Governance Pack v1.0).
 
+## Demo external access via Tailscale Funnel; lockout stays off (Owner 2026-11-24)
+
+Demo-only external access uses Tailscale Funnel instead of Cloudflare; the Owner keeps login lockout off for the demo, superseding the 2026-11-01 pre-exposure checklist line for the demo only (it still applies before production go-live). Passwords stay unviewable; an admin one-time-password reset UI is planned. Production GO is not authorized. See `docs/DECISION_LOG.md`.
+
 ## Asset Number becomes optional (Governance 2026-10-21)
 
 Asset Number is no longer required: equipment may have none, it stays unique when present and is never fabricated or copied from Asset ID. This retires Roadmap PR20 OD-4's CREATE gate. The go-live pool import loads every Active item as `AVAILABLE_AT_POOL` (option "ข", risk accepted). See `docs/DECISION_LOG.md` and `docs/KNOWN_LIMITATIONS.md`.

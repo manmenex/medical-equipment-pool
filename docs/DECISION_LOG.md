@@ -9151,3 +9151,29 @@ opening-balance transactions are created.
   account with no benefit; the risk it mitigates is internet brute force.
 - **Source:** Owner chat answer "ข้อ 2", 2026-11-01. Not a change to the
   business rules or guardrails.
+
+## Owner decision 2026-11-24: demo external access via Tailscale Funnel; lockout stays off
+
+- **Decision:** (1) For the demo period only, external access uses Tailscale
+  Funnel (public HTTPS URL `<host>.<tailnet>.ts.net`, no domain needed) on the
+  CES-BCM host instead of Cloudflare Tunnel + Access. Cloudflare (Roadmap
+  PR25C) remains the target for production go-live; Funnel is temporary.
+  Funnel has no identity gate in front of the app login, so the app's own
+  password login is the only protection.
+  (2) The Owner keeps login lockout OFF (`LOGIN_LOCKOUT_ENABLED=false`) even
+  while exposed via Funnel ("password alone is enough"). Accepted risk:
+  unlimited online password guessing; failed logins are still counted and
+  audited. Mitigations: strong passwords (at least 12 characters) for admin
+  accounts, and review of the audit log for failed logins.
+  (3) Administrators cannot view user passwords (stored only as one-way
+  hashes; kept by design). Instead an admin user-management UI will list
+  accounts (employee code, name, role, active) and provide admin password
+  reset that shows a one-time temporary password once, with
+  `must_change_password`. Implementation is a separate future PR.
+  (4) Production GO remains NOT authorized.
+- **Supersedes (demo only):** the 2026-11-01 checklist line requiring lockout
+  to be enabled before external exposure. That line still applies before
+  production go-live via Cloudflare.
+- **Source:** Owner instruction 2026-11-24. Docs-only; no change to business
+  rules or guardrails. See `docs/ROADMAP.md` (PR25C, PR25C-demo) and
+  `docs/KNOWN_LIMITATIONS.md`.
