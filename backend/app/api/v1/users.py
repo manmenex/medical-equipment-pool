@@ -1,18 +1,32 @@
 import uuid
 
 from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import require_roles
 from app.core.audit import AUDIT_ACTION_CREATE, AUDIT_ACTION_UPDATE, AUDIT_ENTITY_USER, record_audit_event
 from app.core.db_errors import translate_integrity_error
-from app.core.exceptions import InvalidInputError, ResourceNotFoundError
+from app.core.exceptions import ConflictError, InvalidInputError, ResourceNotFoundError
+from app.core.security import hash_password
 from app.crud import user as user_crud
 from app.db.session import get_db
 from app.models.user import ROLE_ADMINISTRATOR, Role
+from app.scripts.bootstrap_admin import generate_temporary_password
 from app.schemas.master_data import UserCreate, UserOut, UserUpdate
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+AUDIT_ACTION_PASSWORD_RESET_ADMIN = "PASSWORD_RESET_ADMIN"
+_SECRET_FIELDS = frozenset({"password", "password_hash"})
+
+
+def _audit_safe(data: dict) -> dict:
+    """Copy of `data` with credentials removed; records only that a password was set."""
+    safe = {k: v for k, v in data.items() if k not in _SECRET_FIELDS}
+    if data.get("password"):
+        safe["password_changed"] = True
+    return safe
 
 
 async def _serialize(db: AsyncSession, user) -> UserOut:
@@ -51,7 +65,7 @@ async def create_user(
         action=AUDIT_ACTION_CREATE,
         entity_type=AUDIT_ENTITY_USER,
         entity_id=user.id,
-        after=payload.model_dump(),
+        after=_audit_safe(payload.model_dump()),
         request=request,
     )
     await db.commit()
@@ -75,7 +89,6 @@ async def update_user(
         "phone": user.phone,
         "is_active": user.is_active,
         "role_name": before_role.name if before_role else None,
-        "password_hash": user.password_hash,
     }
     role_id = None
     if payload.role_name:
@@ -92,8 +105,43 @@ async def update_user(
         entity_type=AUDIT_ENTITY_USER,
         entity_id=user.id,
         before=before,
-        after=payload.model_dump(exclude_unset=True),
+        after=_audit_safe(payload.model_dump(exclude_unset=True)),
         request=request,
     )
     await db.commit()
     return await _serialize(db, user)
+
+
+class PasswordResetOut(BaseModel):
+    employee_code: str
+    temporary_password: str
+
+
+@router.post("/{user_id}/reset-password", response_model=PasswordResetOut)
+async def reset_user_password(
+    user_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    actor=Depends(require_roles(ROLE_ADMINISTRATOR)),
+):
+    user = await user_crud.get_by_id(db, user_id)
+    if user is None:
+        raise ResourceNotFoundError("User not found")
+    if user.id == actor.id:
+        raise ConflictError("Administrators cannot reset their own password here; use change password.")
+    temp_password = generate_temporary_password(user.employee_code, user.full_name, user.email)
+    user.password_hash = hash_password(temp_password)
+    user.must_change_password = True
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    await record_audit_event(
+        db,
+        actor_user_id=actor.id,
+        action=AUDIT_ACTION_PASSWORD_RESET_ADMIN,
+        entity_type=AUDIT_ENTITY_USER,
+        entity_id=user.id,
+        after={"employee_code": user.employee_code, "must_change_password": True},
+        request=request,
+    )
+    await db.commit()
+    return PasswordResetOut(employee_code=user.employee_code, temporary_password=temp_password)

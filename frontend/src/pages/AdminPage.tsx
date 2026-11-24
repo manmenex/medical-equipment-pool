@@ -2,15 +2,16 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { PhoneEditRow } from "@/components/PhoneEditRow";
+import { UsersPanel } from "@/components/UsersPanel";
 import { WardPhoneImportPanel } from "@/components/WardPhoneImportPanel";
-import { canImportInventory, canManageWardPhones, useAuth } from "@/hooks/useAuth";
+import { canImportInventory, canManageUsers, canManageWardPhones, useAuth } from "@/hooks/useAuth";
 import { apiErrorMessage } from "@/services/api";
 import { createEquipment } from "@/services/equipment";
 import { commitImport, previewImport } from "@/services/import";
 import { listCategories, listDepartments, listLocations, listWards, updateDepartmentPhone, updateWardPhone } from "@/services/masterData";
 import type { ImportCommitResponse, ImportPreviewResponse, ImportRowResult, ImportRowStatus } from "@/types";
 
-type Tab = "equipment" | "departments" | "wards" | "locations" | "categories" | "import" | "wardPhones";
+type Tab = "equipment" | "departments" | "wards" | "locations" | "categories" | "import" | "wardPhones" | "users";
 
 const BASE_TABS: { key: Tab; label: string }[] = [
   { key: "equipment", label: "เพิ่มเครื่องมือ" },
@@ -28,6 +29,8 @@ const IMPORT_TAB: { key: Tab; label: string } = { key: "import", label: "นำ�
 
 const WARD_PHONES_TAB: { key: Tab; label: string } = { key: "wardPhones", label: "นำเข้าเบอร์โทรหอผู้ป่วย" };
 
+const USERS_TAB: { key: Tab; label: string } = { key: "users", label: "ผู้ใช้" };
+
 export function AdminPage() {
   const [tab, setTab] = useState<Tab>("equipment");
   const { user } = useAuth();
@@ -35,6 +38,7 @@ export function AdminPage() {
     ...BASE_TABS,
     ...(canImportInventory(user) ? [IMPORT_TAB] : []),
     ...(canManageWardPhones(user) ? [WARD_PHONES_TAB] : []),
+    ...(canManageUsers(user) ? [USERS_TAB] : []),
   ];
 
   return (
@@ -60,6 +64,7 @@ export function AdminPage() {
       {tab === "locations" && <LocationsList />}
       {tab === "categories" && <CategoriesList />}
       {tab === "import" && <InventoryImportPanel />}
+      {tab === "users" && canManageUsers(user) && <UsersPanel currentUserId={user?.id} />}
       {tab === "wardPhones" && canManageWardPhones(user) && <WardPhoneImportPanel />}
     </div>
   );
