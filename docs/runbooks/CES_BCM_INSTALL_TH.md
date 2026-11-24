@@ -309,3 +309,49 @@ cd C:\MEP\medical-equipment-pool\deployment\local-staging
 
 สคริปต์ PowerShell และการอ่าน Google Sheets จริงยังไม่ได้ทดสอบบนเครื่อง CES-BCM
 (ทดสอบอัตโนมัติใช้ข้อมูลสมมุติและ mock เท่านั้น) ให้ Owner ตรวจผลรอบแรกจาก dry-run
+
+## 9. เปิดใช้งานจากนอก รพ. (ช่วง demo) ด้วย Tailscale Funnel
+
+ตามมติ Owner 2026-11-24 (`docs/DECISION_LOG.md`) ช่วง demo ใช้ Tailscale Funnel บนเครื่อง CES-BCM
+ให้ได้ URL แบบ `https://<ชื่อเครื่อง>.<tailnet>.ts.net` โดยไม่ต้องมีโดเมน
+(ตอน Go-Live จริงใช้ Cloudflare ตาม Roadmap PR25C)
+
+### 9.1 ขั้นตอน
+
+1. เปิด PowerShell 7 ในโฟลเดอร์ `deployment\local-staging` แล้วรัน `.\enable-online.ps1`
+2. ถ้ายังไม่มี Tailscale สคริปต์จะถามก่อนติดตั้งด้วย winget (หรือดาวน์โหลดเองที่ https://tailscale.com/download/windows)
+3. ถ้ายังไม่ล็อกอิน สคริปต์รัน `tailscale up` และเปิดเบราว์เซอร์ให้ล็อกอิน (ใช้บัญชีที่ Owner กำหนด)
+   หน้าต่าง PowerShell จะรอจนล็อกอินในเบราว์เซอร์เสร็จ ไม่ใช่ค้าง
+4. ถ้ามีลิงก์ `https://login.tailscale.com/...` แสดงขึ้นมา แปลว่า tailnet ยังไม่เปิด Funnel/HTTPS:
+   เปิดลิงก์ กดปุ่ม Enable แล้วรอ สคริปต์จะทำงานต่อเองและตรวจว่า Funnel เปิดแล้ว
+   (ถ้าสคริปต์จบด้วยข้อผิดพลาด ให้รัน `.\enable-online.ps1` อีกครั้ง)
+5. เมื่อสำเร็จจะแสดง URL สาธารณะ ตรวจสถานะภายหลังด้วย `.\enable-online.ps1 -Status`
+
+สคริปต์ไม่แก้ `.env` และไม่รีสตาร์ตคอนเทนเนอร์: ผู้ใช้เข้าผ่าน nginx ของระบบ (พอร์ตตาม `LOCAL_STAGING_HTTP_PORT`,
+ปกติ 80) และเรียก `/api/` ที่ origin เดียวกัน จึงไม่ต้องตั้ง CORS/Host/คุกกี้เพิ่ม (ตรวจจากโค้ดแล้ว:
+ไม่มี TrustedHost หรือ CSRF origin check; คุกกี้ refresh เป็น SameSite=Strict ซึ่งใช้ได้กับ origin เดียวกัน)
+
+### 9.2 ความเสี่ยง
+
+- ไม่มีด่านยืนยันตัวตนก่อนถึงหน้าล็อกอินของระบบ ใครมี URL ก็เปิดหน้าล็อกอินได้
+- ตามมติ Owner การล็อกอินผิดซ้ำไม่ล็อกบัญชี (`LOGIN_LOCKOUT_ENABLED=false`) จึงเดารหัสผ่านได้ไม่จำกัดครั้ง
+  (ระบบยังนับและบันทึก audit) ต้องใช้รหัสผ่านที่คาดเดายาก อย่างน้อย 12 ตัวอักษร โดยเฉพาะบัญชีผู้ดูแล
+  และตรวจ audit log เป็นระยะ
+- ใช้เฉพาะช่วง demo
+
+### 9.3 ปิดการเข้าถึงจากภายนอก
+
+รัน `.\enable-online.ps1 -Disable` (ใช้ `tailscale funnel --https=443 off` หรือ `tailscale funnel reset`)
+การใช้งานใน LAN ไม่กระทบ
+
+### 9.4 หลังรีบูตและหลังอัปเดต
+
+- Funnel ถูกตั้งแบบ `--bg` จึงเก็บใน Tailscale service และคงอยู่ข้าม `start.ps1`/`stop.ps1`/`update.ps1`/`update-online.ps1`
+  ไม่ต้องรันสคริปต์ซ้ำ (ระหว่างหยุดระบบ URL จะเปิดไม่ได้จนกว่าจะเริ่มใหม่)
+- Tailscale Windows service เริ่มเองตอนเปิดเครื่อง
+- Docker Desktop ต้องตั้งให้เริ่มเมื่อ sign in (Settings > General > Start Docker Desktop when you sign in)
+  และต้องมีการ sign in เข้า Windows หลังรีบูต ระบบจึงจะกลับมา
+
+### 9.5 ยังไม่ได้ตรวจบนเครื่องจริง
+
+สคริปต์ยังไม่ได้ทดสอบกับ Tailscale/Funnel จริงบนเครื่อง CES-BCM (CI ตรวจเฉพาะ syntax)
