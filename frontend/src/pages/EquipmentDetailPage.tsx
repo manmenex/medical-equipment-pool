@@ -5,6 +5,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { StatusBadge } from "@/components/StatusBadge";
 import { WardCorrectionAction } from "@/components/WardCorrectionAction";
 import { apiErrorMessage } from "@/services/api";
+import { HnReveal } from "@/components/entry/HnField";
 import { listTransactions } from "@/services/borrow";
 import { getEquipment, getEquipmentHistory } from "@/services/equipment";
 import { listWards } from "@/services/masterData";
@@ -519,6 +520,7 @@ export function EquipmentDetailPage() {
                   {tx.status === "open" && (
                     <div className="text-xs text-[var(--text-muted)]">เบิกมาแล้ว {daysSinceDispatch(tx.borrowed_at)} วัน</div>
                   )}
+                  {tx.has_hn && <HnReveal transactionId={tx.id} />}
                   <div className="mt-1">
                     <WardCorrectionAction
                       transaction={tx}

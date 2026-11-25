@@ -340,6 +340,9 @@ function Invoke-MepInstall {
     }
     else {
         Write-InstallLog -Phase 'install' -Message 'Existing .env found; preserving all secrets and configuration unchanged.'
+        # Roadmap PR29: an .env from before patient HN existed gets an
+        # HN_ENCRYPTION_KEY added (never replaced when already present).
+        [void](Initialize-HnEncryptionKey)
     }
 
     if ((Invoke-DockerComposeConfigOnly) -ne 0) {
@@ -439,6 +442,11 @@ bootstrap. update.ps1 is not an installation-recovery mechanism.
     if ($initialState -notin @('EXISTING_HEALTHY', 'EXISTING_STOPPED')) {
         throw (New-MepFailure "Installation state is '$initialState'; update requires a previously completed installation (EXISTING_HEALTHY or EXISTING_STOPPED).`nACTION: Run .\status.ps1 to inspect, then .\install.ps1 to converge the installation before updating.")
     }
+
+    # Roadmap PR29: an .env from before patient HN existed gets an
+    # HN_ENCRYPTION_KEY (generated once, never replaced, never printed) so the
+    # updated application can store HNs. Nothing is stopped or migrated yet.
+    [void](Initialize-HnEncryptionKey)
 
     # Build first: a failed build must never leave the old application
     # stopped, so nothing is stopped until the new images exist.

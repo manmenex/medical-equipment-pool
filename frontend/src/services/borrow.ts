@@ -39,6 +39,8 @@ export interface BorrowPayload {
   ward_contact_name?: string;
   dispatch_checks?: Checks;
   expected_status?: EquipmentStatus;
+  // Roadmap PR29 (D1): optional patient HN (write-only; never returned).
+  hn?: string;
 }
 
 export async function createBorrow(payload: BorrowPayload): Promise<TransactionOut> {
@@ -95,7 +97,8 @@ export interface DispatchBatchItem {
   acknowledge_status_warning?: boolean;
   expected_open_transaction_id?: string | null;
   expected_status?: EquipmentStatus | null;
-  // Roadmap PR29 adds the optional patient HN here (not part of this PR).
+  // Roadmap PR29 (D1): optional patient HN of this equipment (write-only).
+  hn?: string;
 }
 
 export interface DispatchBatchPayload {
@@ -127,6 +130,17 @@ export async function dispatchBatch(payload: DispatchBatchPayload): Promise<Batc
 
 export async function receiptBatch(payload: ReceiptBatchPayload): Promise<BatchResponse> {
   return (await api.post<BatchResponse>("/transactions/receipt-batch", payload)).data;
+}
+
+/**
+ * Roadmap PR29 (D1/D13): the ONLY call that returns a patient HN. Staff and
+ * administrators; the server writes an audit row (who/when/which transaction,
+ * never the value). Callers must keep the value in component state only and
+ * hide it again after REVEAL_SECONDS.
+ */
+export async function revealHn(transactionId: string): Promise<string> {
+  const resp = await api.post<{ hn: string }>(`/transactions/${transactionId}/reveal-hn`);
+  return resp.data.hn;
 }
 
 export async function createReturn(transactionId: string, payload: ReturnPayload): Promise<TransactionOut> {

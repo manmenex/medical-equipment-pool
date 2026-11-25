@@ -8,6 +8,7 @@ from app.models.equipment import EquipmentStatus
 from app.models.transaction import DispatchType, ReceiptOutcome, RoutineRound
 from app.schemas.checklist import Checks, ContactName, CuffCounts
 from app.schemas.common import UUIDStr
+from app.schemas.hn import HN_FIELD, HnInput
 
 # Roadmap PR9A: bounded, consistent with other free-text metadata fields in
 # this schema module's neighborhood (e.g. EquipmentBase.equipment_name at
@@ -77,6 +78,10 @@ class BorrowRequest(BaseModel):
     ward_contact_name: ContactName = None
     dispatch_checks: Checks | None = None
     expected_status: EquipmentStatus | None = None
+    # Roadmap PR29 (D1): optional patient HN for this equipment. Write-only:
+    # encrypted by the dispatch service, excluded from model_dump()/repr (so it
+    # is never hashed/stored in the sync ledger payload) and never returned.
+    hn: HnInput = HN_FIELD
 
     # Codex PR20 review round 1, MAJOR 1: the default Pydantic/FastAPI
     # behavior used elsewhere in this codebase (silently ignore unrecognized
@@ -232,6 +237,9 @@ class TransactionOut(BaseModel):
     checklist_kind: str | None = None
     dispatch_checks: Checks | None = None
     receipt_checks: Checks | None = None
+    # Roadmap PR29 (D1): whether a patient HN is recorded. The HN itself is
+    # never part of any response except POST /transactions/{id}/reveal-hn.
+    has_hn: bool = False
     # Roadmap PR16 Slice 2 (docs/archive/design/PR16_REPORTING_FOUNDATION_PLAN.md
     # §9) -- read-only, computed, never accepted as request input.
     # dispatch_* is always present (every transaction has a `borrowed_at`);

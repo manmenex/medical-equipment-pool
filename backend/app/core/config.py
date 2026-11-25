@@ -94,6 +94,14 @@ class Settings(BaseSettings):
 
     ALLOWED_ORIGINS: str = DEFAULT_ALLOWED_ORIGINS
 
+    # Roadmap PR29 (Owner Governance 2026-11-25 D1): Fernet key(s) protecting
+    # the optional patient HN at rest (app.core.hn_crypto). Comma-separated
+    # urlsafe-base64 32-byte keys; the first encrypts, all decrypt (rotation).
+    # Lives only in the host .env, never in the repo, logs, or database
+    # backups. Unset/invalid => HN writes are rejected and HN reads report
+    # "unavailable"; the rest of the application works normally.
+    HN_ENCRYPTION_KEY: str | None = None
+
     # Per-account login lockout (migration 0024). Owner decision 2026-11-01
     # (docs/DECISION_LOG.md): OFF by default. It MUST be turned on
     # (LOGIN_LOCKOUT_ENABLED=true) before any external/internet exposure,

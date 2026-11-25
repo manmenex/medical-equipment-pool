@@ -30,6 +30,8 @@ ALLOWED_KEYS = {
     "checklist_kind",
     "checks",
     "cuffs_outstanding",
+    # Roadmap PR29: indicator only; the HN itself is never in this feed.
+    "has_hn",
 }
 
 

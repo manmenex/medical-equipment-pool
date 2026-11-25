@@ -27,6 +27,19 @@ export type RefStoreName = (typeof REF_STORES)[number];
 
 export type OutboxState = "pending" | "sending" | "held" | "conflict" | "rejected";
 
+/**
+ * Roadmap PR29 (D1): an AES-GCM encrypted patient HN (base64 iv + ciphertext)
+ * with a per-device non-extractable key (src/offline/hnVault.ts). It lives on
+ * the outbox row, never inside `envelope`, is removed when the server
+ * acknowledges the op (applied/duplicate -> journal), answers conflict or
+ * rejected, or the operator discards it, and is never copied to the journal.
+ */
+export interface HnBlob {
+  v: 1;
+  iv: string;
+  ct: string;
+}
+
 export interface OutboxRecord {
   op_id: string;
   user_id: string;
@@ -44,6 +57,8 @@ export interface OutboxRecord {
    */
   stale_context?: boolean;
   snapshot_age_s?: number | null;
+  /** Roadmap PR29: encrypted patient HN of a queued dispatch (see HnBlob). */
+  hn_enc?: HnBlob;
 }
 
 export interface JournalRecord {
@@ -221,6 +236,22 @@ export async function setMeta(name: string, value: unknown): Promise<void> {
   });
 }
 
+/** Atomically store `value` only when `name` is unset; returns the value that is stored afterwards. */
+export async function putMetaIfAbsent(name: string, value: unknown): Promise<unknown> {
+  return guarded(async (db) => {
+    const tx = db.transaction("meta", "readwrite");
+    tx.done.catch(() => undefined); // failures surface via the awaited operations
+    const existing = await tx.store.get(name);
+    if (existing) {
+      await tx.done;
+      return existing.value;
+    }
+    await tx.store.put({ name, value });
+    await tx.done;
+    return value;
+  });
+}
+
 /** Stable per-browser-profile id; created on first call. */
 export async function getDeviceId(): Promise<string> {
   return guarded(async (db) => {
@@ -243,6 +274,8 @@ export interface EnqueueInput {
   body: Record<string, unknown>;
   /** Local-only annotations (never part of the envelope). */
   local?: { stale_context?: boolean; snapshot_age_s?: number | null };
+  /** Roadmap PR29: encrypted patient HN for a dispatch (never put plaintext in `body`). */
+  hn_enc?: HnBlob;
 }
 
 /**
@@ -290,6 +323,7 @@ export async function enqueueOperation(
         envelope: { ...input.body, op_id, device_id: deviceId, device_seq: seq },
         ...(input.local?.stale_context !== undefined ? { stale_context: input.local.stale_context } : {}),
         ...(input.local?.snapshot_age_s !== undefined ? { snapshot_age_s: input.local.snapshot_age_s } : {}),
+        ...(input.hn_enc ? { hn_enc: input.hn_enc } : {}),
       };
       await tx.objectStore("outbox").add(record);
       await tx.done;
@@ -376,6 +410,9 @@ export async function updateOutbox(userId: string, opId: string, patch: OutboxPa
       throw new OfflineStoreError("NOT_FOUND", "Operation not found for this user");
     }
     const next = { ...rec, ...patch };
+    // Roadmap PR29: once the server has answered conflict/rejected the HN is
+    // no longer needed (the ledger never keeps it); drop it from the device.
+    if (patch.state === "conflict" || patch.state === "rejected") delete next.hn_enc;
     await tx.store.put(next);
     await tx.done;
     return next;

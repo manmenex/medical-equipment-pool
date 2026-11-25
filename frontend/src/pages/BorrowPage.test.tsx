@@ -133,7 +133,7 @@ async function addBcm(user: ReturnType<typeof userEvent.setup>, bcm: string) {
 }
 
 describe("dispatch screen layout", () => {
-  it("shows the 3 sections, shift chip, note input and no HN field", async () => {
+  it("shows the 3 sections, shift chip, note input and no HN text until an item is open", async () => {
     renderPage();
     expect(screen.getByRole("heading", { name: "หอผู้ป่วย" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "สแกนเครื่อง (0 เครื่อง)" })).toBeInTheDocument();
@@ -434,5 +434,63 @@ describe("review fixes", () => {
     await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (1 เครื่อง)" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "แก้ไข BCM001" })).not.toBeInTheDocument());
     expect(screen.getByRole("alert")).toHaveTextContent("⛔ BCM001 ปลดระวางแล้ว ไม่ถูกเพิ่ม");
+  });
+});
+
+describe("patient HN (Roadmap PR29, D1)", () => {
+  it("is optional: an item without HN shows no 🔒HN and sends no hn key", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await pickWard(user, "Ward A");
+    await addBcm(user, "BCM001");
+    expect(await screen.findByRole("button", { name: "แก้ไข BCM001" })).not.toHaveTextContent("🔒HN");
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (1 เครื่อง)" }));
+    await waitFor(() => expect(dispatchBatch).toHaveBeenCalled());
+    expect(dispatchBatch.mock.calls[0][0].items[0]).not.toHaveProperty("hn");
+  });
+
+  it("puts the HN field in the edit panel; entered HN is masked, the row shows 🔒HN, and it is sent per item", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await pickWard(user, "Ward A");
+    await addBcm(user, "BCM001");
+    await addBcm(user, "BCM002");
+    await user.click(await screen.findByRole("button", { name: "แก้ไข BCM001" }));
+    const panel = screen.getByRole("group", { name: "แก้ไข BCM001" });
+    await user.type(within(panel).getByLabelText("HN ผู้ป่วย (ไม่บังคับ)"), "AB-123/9");
+    await user.click(within(panel).getByRole("button", { name: "เสร็จ" })); // leaves the field -> masked
+    expect(screen.getByRole("button", { name: "แก้ไข BCM001" })).toHaveTextContent("🔒HN");
+    expect(screen.getByRole("button", { name: "แก้ไข BCM002" })).not.toHaveTextContent("🔒HN");
+    // The value is never in the row text.
+    expect(document.body.textContent).not.toContain("AB-123/9");
+
+    // Re-open: masked with แสดง HN; the local value is revealed on click.
+    await user.click(screen.getByRole("button", { name: "แก้ไข BCM001" }));
+    const again = screen.getByRole("group", { name: "แก้ไข BCM001" });
+    expect(within(again).getByTestId("hn-masked")).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("AB-123/9");
+    await user.click(within(again).getByRole("button", { name: "แสดง HN" }));
+    expect(within(again).getByTestId("hn-value")).toHaveTextContent("AB-123/9");
+    await user.click(within(again).getByRole("button", { name: "เสร็จ" }));
+
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (2 เครื่อง)" }));
+    await waitFor(() => expect(dispatchBatch).toHaveBeenCalled());
+    const items = dispatchBatch.mock.calls[0][0].items;
+    expect(items[0]).toMatchObject({ equipment_id: "e1", hn: "AB-123/9" });
+    expect(items[1]).not.toHaveProperty("hn");
+    expect(JSON.stringify({ ...localStorage })).not.toContain("AB-123/9");
+  });
+
+  it("ignores characters the server would reject and clears back to no indicator", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await addBcm(user, "BCM001");
+    await user.click(await screen.findByRole("button", { name: "แก้ไข BCM001" }));
+    const input = screen.getByLabelText("HN ผู้ป่วย (ไม่บังคับ)");
+    await user.type(input, "12 3;4");
+    expect(input).toHaveValue("1234");
+    await user.clear(input);
+    await user.click(screen.getByRole("button", { name: "เสร็จ" }));
+    expect(screen.getByRole("button", { name: "แก้ไข BCM001" })).not.toHaveTextContent("🔒HN");
   });
 });

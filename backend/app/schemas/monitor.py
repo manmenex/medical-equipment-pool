@@ -1,7 +1,8 @@
 """Roadmap PR32 (D9) Monitor page: read-only event rows.
 
-Explicit whitelist of fields -- no HN (no such field exists yet; when it is
-added it must be masked here, never exposed unmasked, per D9).
+Explicit whitelist of fields. Roadmap PR29: only the ``has_hn`` indicator is
+exposed -- the HN itself is revealed solely by the audited
+POST /transactions/{id}/reveal-hn (D1/D9), never listed here.
 """
 
 from datetime import date, datetime
@@ -52,3 +53,5 @@ class MonitorEvent(BaseModel):
     # Roadmap PR28 (D11): cuffs of this transaction still outstanding (null
     # when it never issued cuffs).
     cuffs_outstanding: CuffCounts | None = None
+    # Roadmap PR29 (D1): the transaction (``id``) has a patient HN recorded.
+    has_hn: bool = False

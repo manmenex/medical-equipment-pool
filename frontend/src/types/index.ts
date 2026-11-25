@@ -138,6 +138,9 @@ export interface TransactionOut {
   checklist_kind?: ChecklistKind | null;
   dispatch_checks?: Checks | null;
   receipt_checks?: Checks | null;
+  // Roadmap PR29 (D1): an HN is recorded. The HN itself is never in any list/detail
+  // response; it is fetched only by the audited POST /transactions/{id}/reveal-hn.
+  has_hn?: boolean;
 }
 
 // Roadmap PR28 (D4/D10): accessory / Cryo-Cuff checklists (docs/api/ward-first-entry.md 2.2).

@@ -7,7 +7,7 @@
 
 **Roles (every endpoint here):** `administrator`, `equipment_pool_staff` (`EQUIPMENT_POOL_OPERATION_ROLES`). Read Only gets `403`, no token `401`. Ward staff are not users.
 
-**Out of scope here:** patient HN (Roadmap PR29 — the schemas are strict, so an `hn` field is a `422` today), the daily shift report (PR30), the Monitor UI. The read-only export API (`/export/events`) is unchanged and does not expose the contact name or checks.
+**Out of scope here:** the daily shift report (PR30), the Monitor UI. Patient HN (Roadmap PR29) is described in section 8 below. The read-only export API (`/export/events`) is unchanged and does not expose the contact name or checks.
 
 ## 1. Ward contact name (D7)
 
@@ -111,7 +111,7 @@ One submission = one ward + N equipment. Every item is its own transaction proce
 }
 ```
 
-`phone` (max 20) → `phone_number`, `note` → `notes`, `ward_contact_name` → `dispatch_contact_name` on every transaction. No dispatch type / round, no HN. Item `checks` is the dispatch checklist.
+`phone` (max 20) → `phone_number`, `note` → `notes`, `ward_contact_name` → `dispatch_contact_name` on every transaction. No dispatch type / round. Item `checks` is the dispatch checklist; item `hn` (optional, Roadmap PR29) is that equipment's own HN.
 
 ### `POST /api/v1/transactions/receipt-batch`
 
@@ -162,3 +162,11 @@ Each event gains: `ward_contact_name` (the event side's name), `checklist_kind`,
 ## Persistence summary (migration `0031_contact_checklists_cuffs`)
 
 `borrow_transactions`: `dispatch_contact_name`, `receipt_contact_name` VARCHAR(100) NULL; `checklist_kind` VARCHAR(20) NULL (CHECK `standard`/`cryo_cuff`); `dispatch_checks`, `receipt_checks` JSONB NULL. `equipment_categories.checklist_kind` VARCHAR(20) NOT NULL DEFAULT `'standard'` (CHECK). New table `transaction_cuffs` (`transaction_id` FK RESTRICT, `cuff_type`, `issued_count > 0`, `0 <= returned_count <= issued_count`, unique per transaction+type). Additive, no backfill other than the category default.
+
+## 8. Patient HN (Roadmap PR29, Owner Governance 2026-11-25 D1)
+
+* **Write:** an optional `hn` string on `POST /borrow`, on each `POST /transactions/dispatch-batch` item (HN is per equipment, never per slip) and on a sync `dispatch` op. Trimmed; blank = none; otherwise 1-20 characters of letters, digits, `-` and `/`, else `422` (the message never echoes the value). Receipt bodies do not accept it.
+* **Storage:** Fernet token (`cryptography`) in `borrow_transactions.hn_ciphertext` using `HN_ENCRYPTION_KEY` from the host `.env` (comma-separated keys allowed for rotation: first encrypts, all decrypt). `has_hn` (boolean) records that one exists.
+* **Read:** every transaction response (`TransactionOut`, report rows, monitor events) carries only `has_hn`. The HN is returned by exactly one endpoint, `POST /transactions/{id}/reveal-hn` (Administrator and Equipment Pool Staff; Read Only `403`): `200 {"hn": "..."}` with `Cache-Control: no-store`. Each successful reveal writes one `hn_reveal` audit row (actor, `borrow_transaction` + id, time; never the value). `404 HN_NOT_RECORDED` when the transaction has none.
+* **No key / wrong key:** a dispatch carrying an `hn` is refused `503 HN_UNAVAILABLE` and nothing is written; dispatches without `hn` are unaffected; reveal answers `503 HN_UNAVAILABLE` (no audit row). Losing the key makes stored HNs permanently unreadable.
+* **Never present in:** logs (a defensive `hn=`/`'hn':` scrubber is in `JsonFormatter`), audit before/after (`hn`/`hn_ciphertext` keys are masked; `borrow` audit stores only `has_hn`), reports/print/PDF/Excel/CSV, `/export/events`, notifications, sync review/timeline/CSV, error messages, database backups (ciphertext only). Not searchable.

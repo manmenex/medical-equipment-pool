@@ -138,6 +138,24 @@ describe("offline dispatch (Roadmap PR27/PR28)", () => {
     expect(requestSync).toHaveBeenCalledTimes(2);
   });
 
+  it("queues an entered HN encrypted on the outbox row only (never in the envelope or in clear), PR29", async () => {
+    await seed();
+    setMarkedOffline(true);
+    const user = userEvent.setup();
+    renderPage(<BorrowPage />, "/borrow");
+    await pickWard(user, "Ward B");
+    await addBcm(user, "BCM001");
+    await user.click(await screen.findByRole("button", { name: "แก้ไข BCM001" }));
+    await user.type(screen.getByLabelText("HN ผู้ป่วย (ไม่บังคับ)"), "HN-OFF-77");
+    await user.click(screen.getByRole("button", { name: "เสร็จ" }));
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (1 เครื่อง)" }));
+    await screen.findByText(/บันทึกในเครื่องแล้ว 1 เครื่อง/);
+    const [rec] = await listOutbox("u1");
+    expect(rec.hn_enc).toBeDefined();
+    expect(JSON.stringify(rec.envelope)).not.toContain("HN-OFF-77");
+    expect(JSON.stringify(rec)).not.toContain("HN-OFF-77");
+  });
+
   it("keeps an item that cannot be queued (already dispatched locally) with the generic message", async () => {
     await seed();
     setMarkedOffline(true);

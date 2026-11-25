@@ -770,10 +770,8 @@ async def test_dispatch_batch_request_validation(client, ctx, db_session):
     assert (
         await client.post(url, headers=h, json={"ward_id": ctx["ward_a"], "items": [{"equipment_id": eq}, {"equipment_id": eq}]})
     ).status_code == 422
-    # HN belongs to PR29: not accepted anywhere yet.
-    assert (
-        await client.post(url, headers=h, json={"ward_id": ctx["ward_a"], "items": [{"equipment_id": eq, "hn": "123"}]})
-    ).status_code == 422
+    # HN is per equipment (PR29, Owner UX answer): an item may carry one, but the
+    # slip-level request never does.
     assert (
         await client.post(url, headers=h, json={"ward_id": ctx["ward_a"], "hn": "1", "items": [{"equipment_id": eq}]})
     ).status_code == 422

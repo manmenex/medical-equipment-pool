@@ -82,6 +82,7 @@ const listTransactions = vi.fn();
 const listWards = vi.fn();
 const correctTransactionWard = vi.fn();
 const getTransaction = vi.fn();
+const revealHn = vi.fn();
 
 vi.mock("@/services/equipment", () => ({
   getEquipment: (...args: unknown[]) => getEquipment(...args),
@@ -91,6 +92,7 @@ vi.mock("@/services/borrow", () => ({
   listTransactions: (...args: unknown[]) => listTransactions(...args),
   correctTransactionWard: (...args: unknown[]) => correctTransactionWard(...args),
   getTransaction: (...args: unknown[]) => getTransaction(...args),
+  revealHn: (...args: unknown[]) => revealHn(...args),
   WARD_CORRECTION_REASON_MAX_LENGTH: 500,
 }));
 vi.mock("@/services/masterData", () => ({
@@ -819,5 +821,26 @@ describe("EquipmentDetailPage without an Asset Number (Governance 2026-10-21)", 
     expect(screen.queryByText(/AST-1/)).not.toBeInTheDocument();
     expect(screen.queryByText(/null/)).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Infusion Pump" }).nextElementSibling).toHaveTextContent("-");
+  });
+});
+
+describe("EquipmentDetailPage patient HN (Roadmap PR29, D1)", () => {
+  it("shows 🔒HN with a mask only for a transaction that has one, and reveals through the audited endpoint on click", async () => {
+    revealHn.mockResolvedValue("HN-4455");
+    listTransactions.mockResolvedValue(page([{ ...openTransaction, has_hn: true }, closedTransaction]));
+    const user = userEvent.setup();
+    renderPage();
+    await waitForHistoryLoaded();
+
+    expect(within(rowFor("TX-CLOSED-1")).queryByText("🔒HN")).not.toBeInTheDocument();
+    const row = rowFor("TX-OPEN-1");
+    expect(within(row).getByText("🔒HN")).toBeInTheDocument();
+    expect(within(row).getByTestId("hn-masked")).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("HN-4455");
+    expect(revealHn).not.toHaveBeenCalled();
+
+    await user.click(within(row).getByRole("button", { name: "แสดง HN" }));
+    expect(revealHn).toHaveBeenCalledWith("tx-open-1");
+    expect(await within(row).findByTestId("hn-value")).toHaveTextContent("HN-4455");
   });
 });

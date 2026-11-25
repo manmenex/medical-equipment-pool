@@ -5,6 +5,7 @@ import { isUnreachableError } from "@/services/connectivity";
 import { MAX_BATCH_OPS, postOperations, type SyncOperationResult } from "@/services/syncClient";
 import { useAuthStore } from "@/store/authStore";
 
+import { envelopeForSend } from "./hnVault";
 import {
   ackOperation,
   listOutbox,
@@ -194,7 +195,8 @@ async function runLocked(userId: string): Promise<RunOutcome> {
 
     let results: SyncOperationResult[];
     try {
-      results = await postOperations(batch.map((r) => r.envelope));
+      // Roadmap PR29: the HN is decrypted only here, into the request body.
+      results = await postOperations(await Promise.all(batch.map((r) => envelopeForSend(r))));
     } catch (e) {
       const status = errorStatus(e);
       if (errorCode(e) === "CLIENT_TOO_OLD") {

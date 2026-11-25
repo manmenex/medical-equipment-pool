@@ -53,6 +53,19 @@ class DispatchWarningStaleError(EquipmentNotAvailableError):
     code = "DISPATCH_WARNING_STALE"
 
 
+class HnUnavailableError(DomainError):
+    """Roadmap PR29: the HN encryption key is missing/invalid (HN cannot be
+    written or read) or the stored value cannot be decrypted with it."""
+
+    code = "HN_UNAVAILABLE"
+    status_code = 503
+
+
+class HnNotRecordedError(DomainError):
+    code = "HN_NOT_RECORDED"
+    status_code = 404
+
+
 class TransactionNotFoundError(DomainError):
     code = "TRANSACTION_NOT_FOUND"
     status_code = 404

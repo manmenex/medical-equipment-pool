@@ -53,6 +53,7 @@ async def create_borrow(
         ward_contact_name=payload.ward_contact_name,
         dispatch_checks=payload.dispatch_checks,
         expected_status=payload.expected_status,
+        hn=payload.hn,
     )
     return tx
 

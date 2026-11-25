@@ -24,6 +24,7 @@ from app.core.exceptions import (
 )
 from app.core.redis import cache_delete_prefix
 from app.core.references import ensure_referenced_row_exists
+from app.core import hn_crypto
 from app.crud import audit as audit_crud
 from app.crud import client_operation as client_op_crud
 from app.crud import cuff as cuff_crud
@@ -149,6 +150,7 @@ async def borrow(
     ward_contact_name: str | None = None,
     dispatch_checks: StandardChecks | CryoCuffChecks | None = None,
     expected_status: EquipmentStatus | None = None,
+    hn: str | None = None,
 ) -> BorrowTransaction:
     # Roadmap PR25E slice B2b: ``borrowed_at`` is business time and is passed
     # only by the sync layer after the section 11 guards; online callers omit
@@ -181,6 +183,11 @@ async def borrow(
     # category-driven kind; rejected before any write.
     checklist_kind = await checklist_service.kind_for_equipment(db, equipment)
     checklist_service.ensure_kind_matches(dispatch_checks, checklist_kind)
+
+    # Roadmap PR29 (D1): encrypt BEFORE any write; a missing key rejects the
+    # dispatch with HN_UNAVAILABLE and nothing is stored. The plaintext never
+    # leaves this function (not in the audit row, logs or the return value).
+    hn_ciphertext = hn_crypto.encrypt_hn(hn) if hn else None
 
     assessment = await assess_dispatch(db, equipment)
     if assessment.blocked:
@@ -274,6 +281,8 @@ async def borrow(
                 "dispatched_while_defective": dispatched_while_defective,
                 "dispatch_contact_name": ward_contact_name,
                 "checklist_kind": checklist_kind,
+                "hn_ciphertext": hn_ciphertext,
+                "has_hn": hn_ciphertext is not None,
                 # Omitted (None) stays SQL NULL = "not recorded".
                 **({"dispatch_checks": dispatch_checks.model_dump(mode="json")} if dispatch_checks is not None else {}),
             },
@@ -308,6 +317,8 @@ async def borrow(
     audit_after = {"transaction_no": tx.transaction_no, "equipment_id": str(equipment.id)}
     if dispatch_checks is not None:
         audit_after["checklist_kind"] = checklist_kind
+    if hn_ciphertext is not None:
+        audit_after["has_hn"] = True  # never the value
     if dispatched_while_defective:
         audit_after["dispatched_while_defective"] = True
         audit_after["previous_equipment_status"] = previous_status.value

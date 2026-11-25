@@ -22,6 +22,11 @@ APScheduler>=3.10.4
 python-multipart>=0.0.9
 email-validator>=2.2.0
 
+# Roadmap PR29 (Owner Governance 2026-11-25 D1): application-level (Fernet)
+# encryption of the optional patient HN. Already present transitively; stated
+# here because the application now imports it directly.
+cryptography>=43.0.0
+
 # Roadmap PR18D (docs/archive/design/PR18_PRINTING_EXPORT_PLAN.md §10): backend
 # HTML/CSS-to-PDF renderer for report PDF export. Requires the native
 # Pango/HarfBuzz packages installed in backend/Dockerfile. Exact-pinned

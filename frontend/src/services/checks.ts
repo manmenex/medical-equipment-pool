@@ -66,6 +66,7 @@ const ERROR_TEXT: Record<string, string> = {
   RECEIPT_RACE_LOST: "มีคำขอรับเครื่องอื่นดำเนินการสำเร็จก่อน กรุณารีเฟรช",
   CUFF_RETURN_EXCEEDS_OUTSTANDING: "จำนวน Cuff ที่รับคืนมากกว่าจำนวนที่ค้างอยู่",
   CUFF_RECEIVE_NOT_ALLOWED: "เครื่องยังไม่ถูกรับคืน บันทึก Cuff พร้อมการรับเครื่อง",
+  HN_UNAVAILABLE: "บันทึก HN ไม่ได้: ระบบยังไม่ได้ตั้งกุญแจเข้ารหัส HN (ลบ HN ออกแล้วบันทึกใหม่ หรือแจ้งผู้ดูแลระบบ)",
   INTERNAL_ERROR: "ระบบขัดข้อง กรุณาลองใหม่",
 };
 

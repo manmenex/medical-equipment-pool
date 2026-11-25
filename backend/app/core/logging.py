@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import sys
 from datetime import datetime, timezone
 
@@ -38,6 +39,16 @@ _EXTRA_FIELDS = (
 )
 
 
+# Roadmap PR29 (D1): defence in depth -- no code path is meant to log an HN, but
+# a stray `hn=...`/`'hn': '...'` in a message, a pydantic error repr or a
+# traceback is masked before it is written.
+_HN_TEXT = re.compile(r"""(?i)(\bhn['"]?\s*[:=]\s*)(['"]?)[^\s'",;)}\]]+\2""")
+
+
+def redact_hn_text(text: str) -> str:
+    return _HN_TEXT.sub(lambda m: f"{m.group(1)}{m.group(2)}***REDACTED***{m.group(2)}", text)
+
+
 class JsonFormatter(logging.Formatter):
     """Structured JSON log formatter (Roadmap PR15A).
 
@@ -51,7 +62,7 @@ class JsonFormatter(logging.Formatter):
             "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "message": redact_hn_text(record.getMessage()),
         }
         for id_field in ("request_id", "correlation_id", "job_run_id"):
             value = getattr(record, id_field, None)
@@ -62,7 +73,7 @@ class JsonFormatter(logging.Formatter):
             if value is not None:
                 payload[field] = value
         if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
+            payload["exception"] = redact_hn_text(self.formatException(record.exc_info))
         return json.dumps(payload, default=str)
 
 

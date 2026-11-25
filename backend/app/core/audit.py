@@ -51,6 +51,9 @@ AUDIT_ACTION_ACCOUNT_LOCKED = "account_locked"
 # audit trail should say so explicitly rather than reading as an
 # undifferentiated "update".
 AUDIT_ACTION_WARD_CORRECTION = "ward_correction"
+# Roadmap PR29 (D1): one row per explicit "แสดง HN" reveal -- who, when, which
+# transaction. The HN value is NEVER part of the row.
+AUDIT_ACTION_HN_REVEAL = "hn_reveal"
 # Roadmap PR12 (docs/audits/04-consolidated-implementation-plan.md Part F.1
 # step 7): one audit_logs entry per import commit batch (who ran it, when,
 # filename, aggregate row counts) -- deliberately not one entry per
@@ -210,9 +213,14 @@ _SENSITIVE_KEY_MARKERS = (
 _MASK = "***REDACTED***"
 
 
+# Roadmap PR29: the patient HN (and its ciphertext) must never be persisted in
+# an audit row. "has_hn" (a boolean indicator) is deliberately NOT masked.
+_HN_KEYS = frozenset({"hn", "patient_hn", "hn_value", "hn_ciphertext"})
+
+
 def _is_sensitive_key(key: str) -> bool:
     lowered = key.lower()
-    return any(marker in lowered for marker in _SENSITIVE_KEY_MARKERS)
+    return lowered in _HN_KEYS or any(marker in lowered for marker in _SENSITIVE_KEY_MARKERS)
 
 
 def redact_sensitive(data):

@@ -126,6 +126,27 @@ describe("receipt screen", () => {
     expect(screen.getByRole("heading", { name: "สแกนเครื่อง (0 เครื่อง)" })).toBeInTheDocument();
   });
 
+  it("refetches the open-transaction list ONCE before saying a scanned device was not dispatched", async () => {
+    // First answer is stale (no FREE1 yet); the forced refetch sees the new dispatch.
+    listActiveBorrows.mockImplementationOnce(async () => active);
+    const withFree = [...active, tx("tf", EQ.FREE1, "ward-1")];
+    listActiveBorrows.mockImplementationOnce(async () => withFree);
+    const user = userEvent.setup();
+    renderPage();
+    await addBcm(user, "FREE1");
+    expect(await screen.findByRole("button", { name: "แก้ไข FREE1" })).toBeInTheDocument();
+    expect(listActiveBorrows).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("still reports 'not dispatched' after exactly one forced refetch", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await addBcm(user, "FREE1");
+    expect(await screen.findByRole("alert")).toHaveTextContent("ไม่ได้ถูกจ่ายออกไป");
+    expect(listActiveBorrows).toHaveBeenCalledTimes(2);
+  });
+
   it("receives from ANY ward without a warning and sends the default usable payload", async () => {
     const user = userEvent.setup();
     renderPage();

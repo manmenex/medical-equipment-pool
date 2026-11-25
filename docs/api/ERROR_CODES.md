@@ -79,6 +79,8 @@ A `422` validation error additionally includes an `errors` array:
 | `CUFF_RETURN_EXCEEDS_OUTSTANDING` | 409 | `CuffReturnExceedsOutstandingError` | Roadmap PR28 (D11): receipt `cuffs_returned` or `receive-cuffs` would return more cuffs of a type than are outstanding; `details.exceeded` lists type/requested/outstanding |
 | `CUFF_RECEIVE_NOT_ALLOWED` | 409 | `CuffReceiveNotAllowedError` | Roadmap PR28 (D11): `receive-cuffs` on a transaction whose device has not been received/closed |
 | `EQUIPMENT_STATUS_CHANGED` | 409 | `EquipmentStatusChangedError` | PR31: equipment status changed concurrently; conditional status write lost |
+| `HN_UNAVAILABLE` | 503 | `HnUnavailableError` | PR29: HN encryption key missing/invalid (HN write refused, nothing stored) or a stored HN cannot be decrypted (reveal) |
+| `HN_NOT_RECORDED` | 404 | `HnNotRecordedError` | PR29: `reveal-hn` on a transaction with no HN |
 | `TRANSACTION_CLOSED_BY_REDISPATCH` | 409 | `TransactionClosedByRedispatchError` | PR31: receipt attempted on a transaction closed by re-dispatch |
 | `EQUIPMENT_NOT_AVAILABLE` | 409 | `EquipmentNotAvailableError` | Dispatch attempted on `decommissioned` equipment, a concurrent dispatch won the unique-index race, or a re-dispatch lost the conditional close of the previous transaction |
 | `TRANSACTION_NOT_FOUND` | 404 | `TransactionNotFoundError` | Transaction ID doesn't resolve (`GET /transactions/{id}`, receipt) |

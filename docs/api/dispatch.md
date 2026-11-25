@@ -84,6 +84,8 @@ Optional `expected_open_transaction_id` ties the acknowledgement to the open tra
 
 `TransactionOut` gains read-only `close_reason` (nullable) and `dispatched_while_defective` (boolean).
 
+**Patient HN (Roadmap PR29):** `BorrowRequest` also accepts an optional write-only `hn`; `TransactionOut` gains read-only `has_hn`. The HN is never returned except by `POST /transactions/{id}/reveal-hn`. Full contract: `docs/api/ward-first-entry.md` section 8.
+
 **Pre-check:** `GET /api/v1/equipment/{id}/dispatch-check` (any authenticated role, read-only) returns `{equipment_id, status, warning, dispatchable, requires_acknowledgement, current_ward_id, current_ward_name, dispatched_at, open_transaction_id, open_transaction_no, checklist_kind}` (`checklist_kind` since PR28: `standard` | `cryo_cuff`) so a client can show the warning at scan time. `warning` is `null`, `already_dispatched`, `defective` or `decommissioned`.
 
 ### Ward contact name, checklist and expected status (Roadmap PR27/PR28)

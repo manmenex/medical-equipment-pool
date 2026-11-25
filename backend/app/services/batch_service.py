@@ -91,6 +91,7 @@ async def dispatch_batch(
                 ward_contact_name=payload.ward_contact_name,
                 dispatch_checks=item.checks,
                 expected_status=item.expected_status,
+                hn=item.hn,
             )
             tx_id, tx_no = tx.id, tx.transaction_no
             results.append(
