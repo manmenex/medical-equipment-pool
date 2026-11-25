@@ -8,6 +8,7 @@ Fernet token (``borrow_transactions.hn_ciphertext``) using a key from the host
 application depends on it. Nothing in this module logs a plaintext, a
 ciphertext, or the key.
 """
+import logging
 import re
 
 from cryptography.fernet import Fernet, InvalidToken, MultiFernet
@@ -44,6 +45,23 @@ def _fernet() -> MultiFernet | None:
     except Exception:  # malformed key: treated exactly like a missing one
         return None
     return MultiFernet(keys) if keys else None
+
+
+def key_is_malformed() -> bool:
+    """True when HN_ENCRYPTION_KEY is set but unusable (unset is not malformed)."""
+    raw = get_settings().HN_ENCRYPTION_KEY
+    return bool(raw and raw.strip()) and _fernet() is None
+
+
+def warn_if_key_malformed() -> bool:
+    """One-time startup warning; never includes the key value."""
+    if key_is_malformed():
+        logging.getLogger(__name__).warning(
+            "HN_ENCRYPTION_KEY is set but is not a valid Fernet key; patient HN cannot be saved or revealed "
+            "until it is fixed. Generate one with cryptography.fernet.Fernet.generate_key()."
+        )
+        return True
+    return False
 
 
 def hn_available() -> bool:

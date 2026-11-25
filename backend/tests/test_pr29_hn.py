@@ -519,3 +519,23 @@ async def test_install_runbook_documents_key_loss_and_separate_env_backup():
     text = _repo("docs", "runbooks", "CES_BCM_INSTALL_TH.md")
     assert "HN_ENCRYPTION_KEY" in text
     assert "อ่านไม่ได้ตลอดไป" in text and "สำรองไฟล์ `.env` แยกต่างหาก" in text
+
+
+async def test_malformed_key_warns_once_without_the_value(monkeypatch, caplog):
+    monkeypatch.setattr(get_settings(), "HN_ENCRYPTION_KEY", "not-a-key-SECRETVALUE")
+    caplog.set_level(logging.WARNING)
+    assert hn_crypto.warn_if_key_malformed() is True
+    assert any("not a valid Fernet key" in r.getMessage() for r in caplog.records)
+    assert "SECRETVALUE" not in "".join(JsonFormatter().format(r) for r in caplog.records)
+    caplog.clear()
+    monkeypatch.setattr(get_settings(), "HN_ENCRYPTION_KEY", None)
+    assert hn_crypto.warn_if_key_malformed() is False  # unset is not malformed
+    monkeypatch.setattr(get_settings(), "HN_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    assert hn_crypto.warn_if_key_malformed() is False
+
+
+async def test_env_key_generation_swaps_atomically_with_backup():
+    common = _repo("deployment", "local-staging", "lib", "Common.ps1")
+    body = common.split("function Initialize-HnEncryptionKey", 1)[1].split("# ----", 1)[0]
+    assert "[System.IO.File]::Replace(" in body and ".env.bak-" in body and ".env.tmp-" in body
+    assert "Set-Content -LiteralPath $Script:EnvFilePath" not in body  # never rewrite .env in place

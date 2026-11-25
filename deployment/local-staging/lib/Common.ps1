@@ -610,8 +610,27 @@ function Initialize-HnEncryptionKey {
         }
     }
     if (-not $found) { $updated += "HN_ENCRYPTION_KEY=$key" }
-    Set-Content -LiteralPath $Script:EnvFilePath -Value $updated
-    Write-InstallLog -Phase 'config' -Message 'Generated HN_ENCRYPTION_KEY in .env (value never logged). Back up .env separately: without this key stored HNs cannot be read.'
+    # Never rewrite .env in place: a crash mid-write could truncate it and lose
+    # POSTGRES_PASSWORD/JWT_SECRET_KEY. Write a temp file in the same directory
+    # (same encoding/newlines as before), verify it kept every original line,
+    # then swap atomically, keeping a timestamped backup (which also holds the
+    # secrets, so it inherits the same protection as .env).
+    $envDir = Split-Path -Parent $Script:EnvFilePath
+    $stamp = Get-Date -Format 'yyyyMMddHHmmss'
+    $tempPath = Join-Path $envDir ".env.tmp-$stamp"
+    $backupPath = Join-Path $envDir ".env.bak-$stamp"
+    try {
+        Set-Content -LiteralPath $tempPath -Value $updated
+        $written = @(Get-Content -LiteralPath $tempPath)
+        if ($written.Count -lt $lines.Count) {
+            throw 'Refusing to replace .env: the rewritten copy is shorter than the original.'
+        }
+        [System.IO.File]::Replace($tempPath, $Script:EnvFilePath, $backupPath)
+    }
+    finally {
+        if (Test-Path -LiteralPath $tempPath) { Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue }
+    }
+    Write-InstallLog -Phase 'config' -Message 'Generated HN_ENCRYPTION_KEY in .env (value never logged; previous .env kept as .env.bak-timestamp). Back up .env separately: without this key stored HNs cannot be read.'
     return $true
 }
 
