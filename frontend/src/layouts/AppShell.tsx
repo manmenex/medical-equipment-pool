@@ -36,6 +36,8 @@ const BASE_NAV_ITEMS = [
 const DISPATCH_NAV_ITEMS = [
   { to: "/borrow", label: "เบิก", icon: "📷" },
   { to: "/return", label: "รับคืน", icon: "↩️" },
+  // Roadmap PR32 (D9/D13): read-only Monitor, Equipment Pool staff + admin.
+  { to: "/monitor", label: "Monitor การจ่าย/รับ", icon: "🖥️" },
 ];
 
 export function AppShell() {
