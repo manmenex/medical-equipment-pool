@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
 import { useDebounce } from "@/hooks/useDebounce";
@@ -24,6 +24,14 @@ interface Group {
   shift: "day" | "night";
   submissions: Submission[];
   equipmentCount: number;
+}
+
+/** Current business date (Bangkok, shift-start anchored: 08:00 cut) and the previous one. */
+export function defaultRange(now: Date = new Date()): { from: string; to: string } {
+  const bkk = new Date(now.getTime() + 7 * 3600_000 - 8 * 3600_000);
+  const to = bkk.toISOString().slice(0, 10);
+  const from = new Date(bkk.getTime() - 24 * 3600_000).toISOString().slice(0, 10);
+  return { from, to };
 }
 
 function hhmm(iso: string): string {
@@ -80,18 +88,40 @@ export function MonitorPage() {
 
   const wards = useQuery({ queryKey: ["wards"], queryFn: listWards, staleTime: 5 * 60_000 });
 
-  const makeQuery = (k: MonitorKind) => ({
-    queryKey: ["monitor-events", k, wardId, q],
-    queryFn: () =>
-      fetchMonitorEvents({ kind: k, ward_id: wardId ?? undefined, q: q || undefined, limit: 200 }),
+  // Default window: current business date + previous one (no silent truncation).
+  const { from, to } = useMemo(() => defaultRange(), []);
+  const filters = {
+    ward_id: wardId ?? undefined,
+    q: q || undefined,
+    business_date_from: from,
+    business_date_to: to,
+  };
+
+  // Only the active tab is polled in full; the other tab fetches just its count.
+  const active = useInfiniteQuery({
+    queryKey: ["monitor-events", kind, wardId, q, from, to],
+    queryFn: ({ pageParam }) =>
+      fetchMonitorEvents({ kind, ...filters, limit: 100, cursor: pageParam ?? undefined }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.next_cursor,
     refetchInterval: MONITOR_REFRESH_MS,
   });
-  const dispatchQ = useQuery(makeQuery("dispatch"));
-  const receiptQ = useQuery(makeQuery("receipt"));
-  const active = kind === "dispatch" ? dispatchQ : receiptQ;
+  const otherKind: MonitorKind = kind === "dispatch" ? "receipt" : "dispatch";
+  const otherCount = useQuery({
+    queryKey: ["monitor-count", otherKind, wardId, q, from, to],
+    queryFn: () => fetchMonitorEvents({ kind: otherKind, ...filters, limit: 1 }),
+    refetchInterval: MONITOR_REFRESH_MS,
+  });
+  const activeTotal = active.data?.pages[0]?.total;
+  const counts = {
+    dispatch: kind === "dispatch" ? activeTotal : otherCount.data?.total,
+    receipt: kind === "receipt" ? activeTotal : otherCount.data?.total,
+  };
 
-  const updatedAt = Math.max(dispatchQ.dataUpdatedAt, receiptQ.dataUpdatedAt);
-  const groups = useMemo(() => groupEvents(active.data?.items ?? []), [active.data]);
+  const updatedAt = active.dataUpdatedAt;
+  const loadedItems = useMemo(() => active.data?.pages.flatMap((p) => p.items) ?? [], [active.data]);
+  const groups = useMemo(() => groupEvents(loadedItems), [loadedItems]);
+  const partial = !!active.hasNextPage;
 
   const wardMatches = useMemo(() => {
     const t = wardText.trim().toLowerCase();
@@ -107,8 +137,8 @@ export function MonitorPage() {
       <div role="tablist" className="grid grid-cols-2 gap-2">
         {(
           [
-            ["dispatch", "จ่าย", dispatchQ.data?.total],
-            ["receipt", "รับ", receiptQ.data?.total],
+            ["dispatch", "จ่าย", counts.dispatch],
+            ["receipt", "รับ", counts.receipt],
           ] as const
         ).map(([k, label, count]) => (
           <button
@@ -176,12 +206,19 @@ export function MonitorPage() {
       {active.isError && <p role="alert">ไม่สามารถโหลดข้อมูลได้</p>}
       {!active.isLoading && !active.isError && groups.length === 0 && <p>ไม่มีรายการ</p>}
 
-      {groups.map((g) => (
+      {activeTotal !== undefined && activeTotal > loadedItems.length && (
+        <p className="text-xs" data-testid="monitor-shown">
+          แสดง {loadedItems.length} จาก {activeTotal} รายการ
+        </p>
+      )}
+
+      {groups.map((g, gi) => (
         <section key={g.key} aria-label={`${g.date} ${g.shift}`} className="flex flex-col gap-2">
           <h2 className="text-sm font-semibold">
             {g.date} · {g.shift === "day" ? "Day" : "Night"}{" "}
             <span className="font-normal text-[var(--text-muted)]">
-              ({g.submissions.length} ครั้ง / {g.equipmentCount} เครื่อง)
+              ({g.submissions.length} ครั้ง / {g.equipmentCount} เครื่อง
+              {partial && gi === groups.length - 1 ? " · ยังไม่ครบ" : ""})
             </span>
           </h2>
           {g.submissions.map((s) => {
@@ -220,6 +257,16 @@ export function MonitorPage() {
           })}
         </section>
       ))}
+      {partial && (
+        <button
+          type="button"
+          onClick={() => active.fetchNextPage()}
+          disabled={active.isFetchingNextPage}
+          className="surface rounded-lg border px-3 py-2 text-sm"
+        >
+          โหลดเพิ่ม
+        </button>
+      )}
     </div>
   );
 }

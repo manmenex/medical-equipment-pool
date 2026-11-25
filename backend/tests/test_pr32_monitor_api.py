@@ -141,3 +141,69 @@ async def test_pagination_and_bad_cursor(client, seeded_users, db_session):
     assert len(seen) == 3 and len(set(seen)) == 3
     bad = await client.get("/api/v1/monitor/events", headers=staff, params={"cursor": "###"})
     assert bad.status_code == 400
+
+
+async def _one(client, admin, staff, db, n, at, w=None):
+    w = w or await _create_ward(client, admin, f"W-B{n}", f"Ward B{n}")
+    e = await _eq(client, admin, f"AST-B-{n}", f"BCM-B-{n}")
+    t = await _dispatch(client, staff, e["id"], w)
+    await _force(db, t["id"], borrowed_at=at)
+    return t
+
+
+async def test_exact_shift_boundaries_and_night_evening(client, seeded_users, db_session):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    # Bangkok local = UTC+7. (utc, expected shift, expected business_date)
+    cases = [
+        (datetime(2026, 7, 27, 0, 59, 59, tzinfo=timezone.utc), "night", "2026-07-26"),  # 07:59:59
+        (datetime(2026, 7, 27, 1, 0, 0, tzinfo=timezone.utc), "day", "2026-07-27"),  # 08:00
+        (datetime(2026, 7, 27, 12, 59, 59, tzinfo=timezone.utc), "day", "2026-07-27"),  # 19:59:59
+        (datetime(2026, 7, 27, 13, 0, 0, tzinfo=timezone.utc), "night", "2026-07-27"),  # 20:00
+        (datetime(2026, 7, 27, 16, 59, 0, tzinfo=timezone.utc), "night", "2026-07-27"),  # 23:59 local
+    ]
+    for n, (at, _, _) in enumerate(cases):
+        await _one(client, admin, staff, db_session, n, at)
+    body = (await client.get("/api/v1/monitor/events", headers=staff)).json()
+    got = {i["event_at"][:19]: (i["shift"], i["business_date"]) for i in body["items"]}
+    for at, shift, bd in cases:
+        assert got[at.strftime("%Y-%m-%dT%H:%M:%S")] == (shift, bd)
+    f = (
+        await client.get(
+            "/api/v1/monitor/events",
+            headers=staff,
+            params={"business_date_from": "2026-07-27", "business_date_to": "2026-07-27"},
+        )
+    ).json()
+    assert f["total"] == 4
+    assert "BCM-B-0" not in [i["equipment"]["bcm_code"] for i in f["items"]]
+
+
+async def test_cursor_tiebreak_identical_timestamps(client, seeded_users, db_session):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    w = await _create_ward(client, admin, "W-TIE", "Tie")
+    for n in range(5):
+        await _one(client, admin, staff, db_session, 100 + n, DAY_UTC, w)
+    seen, cursor = [], None
+    while True:
+        params = {"limit": 2, **({"cursor": cursor} if cursor else {})}
+        page = (await client.get("/api/v1/monitor/events", headers=staff, params=params)).json()
+        seen += [i["id"] for i in page["items"]]
+        cursor = page["next_cursor"]
+        if not cursor:
+            break
+    assert len(seen) == 5 and len(set(seen)) == 5
+
+
+async def test_receipt_operator_is_receiver_not_dispatcher(client, seeded_users, db_session):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    w = await _create_ward(client, admin, "W-OP", "Op")
+    e = await _eq(client, admin, "AST-OP-1", "BCM-OP-1")
+    t = await _dispatch(client, staff, e["id"], w)
+    r = await client.post(f"/api/v1/return/{t['id']}", headers=admin, json={"receipt_outcome": "usable"})
+    assert r.status_code == 200, r.text
+    d = (await client.get("/api/v1/monitor/events", headers=staff, params={"kind": "dispatch"})).json()
+    rc = (await client.get("/api/v1/monitor/events", headers=staff, params={"kind": "receipt"})).json()
+    assert rc["items"][0]["operator"]["id"] != d["items"][0]["operator"]["id"]

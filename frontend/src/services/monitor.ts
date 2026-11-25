@@ -27,6 +27,9 @@ export async function fetchMonitorEvents(params: {
   ward_id?: string;
   q?: string;
   limit?: number;
+  cursor?: string;
+  business_date_from?: string;
+  business_date_to?: string;
 }): Promise<MonitorPageResult> {
   const resp = await api.get<MonitorPageResult>("/monitor/events", { params });
   return resp.data;

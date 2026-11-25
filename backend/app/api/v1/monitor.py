@@ -4,7 +4,7 @@ Never writes; never touches the dispatch/receipt services.
 """
 
 import uuid
-from datetime import date
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -24,6 +24,13 @@ from app.schemas.common import Page
 from app.schemas.monitor import MonitorEquipment, MonitorEvent, MonitorOperator, MonitorWard
 from app.utils.pagination import decode_cursor, encode_cursor
 from app.utils.parsing import parse_uuid
+
+_BKK = timezone(timedelta(hours=7))
+
+
+def _local_8am_utc(d: date) -> datetime:
+    return datetime.combine(d, time(8, 0), tzinfo=_BKK).astimezone(timezone.utc)
+
 
 router = APIRouter(prefix="/monitor", tags=["monitor"])
 
@@ -55,9 +62,13 @@ async def list_events(
         filters.append(tx.ward_id == ward_uuid)
     if business_date_from is not None or business_date_to is not None:
         bd_expr, _ = business_date_and_shift_sql(event_col)
+        # Loose UTC bound first so the event-time index is usable; the exact
+        # business-date predicate below stays authoritative.
         if business_date_from is not None:
+            filters.append(event_col >= _local_8am_utc(business_date_from - timedelta(days=1)))
             filters.append(bd_expr >= business_date_from)
         if business_date_to is not None:
+            filters.append(event_col < _local_8am_utc(business_date_to + timedelta(days=1)))
             filters.append(bd_expr <= business_date_to)
     if q and q.strip():
         like = f"%{q.strip().lower()}%"

@@ -92,6 +92,30 @@ describe("MonitorPage", () => {
     await waitFor(() => expect(screen.getByRole("tab", { name: "จ่าย (1)" })).toBeInTheDocument());
   });
 
+  it("shows partial notice and loads more via next_cursor when truncated", async () => {
+    fetchMonitorEvents.mockImplementation(async ({ cursor, limit }: { cursor?: string; limit?: number }) => {
+      if (limit === 1) return { items: [], next_cursor: null, total: 0 };
+      if (!cursor) return { items: [ev("1"), ev("2")], next_cursor: "c1", total: 3 };
+      return { items: [ev("3", { ward: { id: "w2", name: "ER" } })], next_cursor: null, total: 3 };
+    });
+    listWards.mockResolvedValue([]);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MonitorPage />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("monitor-shown")).toHaveTextContent("แสดง 2 จาก 3 รายการ"));
+    expect(screen.getByText(/ยังไม่ครบ/)).toBeInTheDocument();
+    expect(fetchMonitorEvents).toHaveBeenCalledWith(
+      expect.objectContaining({ business_date_from: expect.any(String), business_date_to: expect.any(String) }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม" }));
+    await waitFor(() => expect(screen.queryByTestId("monitor-shown")).not.toBeInTheDocument());
+    expect(screen.queryByText(/ยังไม่ครบ/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "โหลดเพิ่ม" })).not.toBeInTheDocument();
+  });
+
   it("renders the last-updated label and never renders HN", async () => {
     setup();
     await waitFor(() => expect(screen.getByTestId("monitor-updated").textContent).toMatch(/อัปเดตล่าสุด \d{2}:\d{2}:\d{2}/));
