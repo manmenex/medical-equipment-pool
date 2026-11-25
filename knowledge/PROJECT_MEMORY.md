@@ -130,6 +130,10 @@ Durable facts as of the post-#150 state:
   in `docs/DECISION_LOG.md`); admins cannot view passwords, an admin reset UI
   is planned; Production GO is not authorized. Cloudflare PR25C remains the
   production target and the lockout checklist applies there.
+- Legacy history import (Owner 2026-11-25): PR21 validation is
+  line-authoritative; header/line time gap <= 24h is not a finding, orphan
+  order reference is a WARNING, ward conflict and gap > 24h stay ERRORs
+  (`docs/DECISION_LOG.md`).
 
 Roadmap numbers and GitHub PR numbers are independent. Legacy migration is
 mandatory before Go-live.
