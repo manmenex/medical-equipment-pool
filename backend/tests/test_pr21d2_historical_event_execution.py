@@ -812,6 +812,36 @@ async def test_shared_header_ref_supports_multiple_line_events(client: AsyncClie
     assert {r.source_row_number for r in header_refs} == {2}
 
 
+async def test_orphan_line_without_header_validates_with_warning_and_executes(
+    client: AsyncClient, seeded_users, db_session
+):
+    """Owner decision 2026-11-25: a line with no matching header is a
+    WARNING, builds a header-less candidate, and executes with only a
+    line source ref."""
+    await _seed_equipment(db_session)
+    await _seed_ward(db_session)
+    headers = await auth_headers(client)
+    actor_id = await _actor_id(db_session)
+    content = _default_workbook(
+        issue_lines=[_issue_line_row(order_ref="ORD-NO-HEADER")],
+        receive_headers=[],
+        receive_lines=[],
+    )
+    checksum = hashlib.sha256(content).hexdigest()
+    await _seed_authority(db_session, checksum=checksum, actor_id=actor_id)
+
+    session = await _validate_dry_run_confirm(client, headers, db_session, content, actor_id=actor_id)
+    ex = await client.post(f"/api/v1/import-sessions/{session['id']}/execute", headers=headers)
+    assert ex.status_code == 200, ex.text
+
+    events = (await db_session.execute(select(LegacyEquipmentEvent))).scalars().all()
+    assert len(events) == 1
+    assert events[0].legacy_order_reference == "ORD-NO-HEADER"
+    refs = (await db_session.execute(select(LegacyEquipmentEventSourceRef))).scalars().all()
+    assert len(refs) == 1
+    assert refs[0].sheet_name != ISSUE_HEADER_SHEET
+
+
 async def test_duplicate_refs_not_created_when_second_session_reimports_same_data(
     client: AsyncClient, seeded_users, db_session
 ):

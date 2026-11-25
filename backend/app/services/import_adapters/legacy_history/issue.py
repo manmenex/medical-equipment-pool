@@ -32,6 +32,7 @@ from app.services.identifiers import normalize_bcm_code
 from app.services.import_adapter import RawImportRecord
 from app.services.import_adapters.legacy_history.common import (
     cell_text,
+    HEADER_LINE_TIMESTAMP_TOLERANCE,
     combine_bangkok_datetime,
     load_ward_alias_lookup,
     load_ward_exact_lookup,
@@ -519,14 +520,14 @@ def _validate_timestamp(header: RawImportRecord | None, line: RawImportRecord) -
 
     if header is not None:
         header_dt = combine_bangkok_datetime(header.fields.get("date"), header.fields.get("time"))
-        if header_dt is not None and header_dt != line_dt:
+        if header_dt is not None and abs(header_dt - line_dt) > HEADER_LINE_TIMESTAMP_TOLERANCE:
             findings.append(
                 LegacyIssueFinding(
                     sheet_name=LINE_SHEET_NAME,
                     source_row_number=line.row_number,
                     field="date_time",
                     error_code=CODE_HEADER_LINE_TIMESTAMP_CONFLICT,
-                    message="Header and line date/time do not represent the same event time.",
+                    message="Header and line date/time differ by more than 24 hours.",
                 )
             )
             return findings, None
@@ -617,6 +618,7 @@ def validate_and_build_candidates(
                     field="order_ref",
                     error_code=CODE_ORPHAN_ORDER_REFERENCE,
                     message=f"เลขที่ใบส่ง '{order_ref}' does not match any order header row.",
+                    severity="warning",
                 )
             )
         else:
@@ -634,7 +636,7 @@ def validate_and_build_candidates(
         findings.extend(row_findings)
 
         has_error = any(f.severity == "error" for f in row_findings)
-        if has_error or header_record is None or equipment is None or occurred_at is None:
+        if has_error or equipment is None or occurred_at is None:
             continue
 
         bme_name = line.fields.get("bme_name") or (header_record.fields.get("bme_name") if header_record else None)
@@ -652,7 +654,11 @@ def validate_and_build_candidates(
                 migration_authority_id=migration_authority_id,
                 import_session_id=import_session_id,
                 import_source_id=import_source_id,
-                header_source_ref=SourceCoordinate(sheet_name=HEADER_SHEET_NAME, source_row_number=header_record.row_number),
+                header_source_ref=(
+                    SourceCoordinate(sheet_name=HEADER_SHEET_NAME, source_row_number=header_record.row_number)
+                    if header_record is not None
+                    else None
+                ),
                 line_source_ref=SourceCoordinate(sheet_name=LINE_SHEET_NAME, source_row_number=line.row_number),
             )
         )
