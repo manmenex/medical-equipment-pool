@@ -43,7 +43,7 @@ Item No is the identifier encoded in the hospital's existing QR labels. It is us
 
 - Source: `knowledge/adr/ADR-002-identifier-model.md`; `knowledge/adr/ADR-004-hospital-item-no-qr.md`; `knowledge/architecture/api-information-boundaries.md`.
 
-**"ME Code" is retired.** It does not name any current or planned identifier; any document or task still using it means BCM Code or Item No and should be corrected.
+**"ME Code" is retired.** It does not name any current or planned identifier; any document or task still using it means BCM Code or Item No and should be corrected. **Sole exception (Owner Governance 2026-11-25, third set, D12):** see "Cryo-Cuff checklist, cuff tracking, printed-form label, access" below.
 
 ## Dispatch/Return owns transaction lifecycle
 
@@ -115,6 +115,15 @@ Equipment Pool staff MAY record a patient HN (hospital number) on a dispatch. Th
 - **Monitor page (D9):** dispatch/receipt submissions grouped by date with drill-down; never shows HN unmasked.
 
 - Source: `docs/DECISION_LOG.md` (2026-11-25, second set).
+
+## Cryo-Cuff checklist, cuff tracking, printed-form label, access (Owner Governance 2026-11-25, third set)
+
+- **Cryo-Cuff checklist (D10; amends D4 for this one equipment type only):** Cryo-Cuff dispatch and receipt use a 6-item checklist exactly matching the paper form "แบบบันทึกการรับรับ-ส่ง Cryo-Cuff": (1) ตัวเครื่อง x1 (ไม่แตกหัก เสียหาย); (2) สายชาร์จ x1; (3) ฝาปิดตัวเครื่อง แบบมีสายชาร์จ x1; (4) ฝาปิดตัวเครื่อง แบบไม่มีสายชาร์จ x1; (5) สายท่อน้ำและ O-Ring x1 (O-Ring บริเวณปลาย Hose ทั้งสองข้าง); (6) Cuff (สภาพสมบูรณ์ ไม่มีฉีกขาด) in four types, Back/Hip/Rib, Knee, Shoulder, Ankle, each with a count. Each item is normal/abnormal. All other equipment keeps the three D4 checks. Reports map Cryo-Cuff items 1/2/3 into the same three report columns as other equipment (screen/body, charger, clamp); items 4-6 are stored but not in the daily report. How Cryo-Cuff equipment is identified (equipment category) is decided in implementation from existing master data. The system does not print the Cryo-Cuff form.
+- **Cuff tracking (D11):** cuffs are counted per type; there are no individual cuff IDs. At receipt the operator may receive the device only (cuffs wet or not returned). Outstanding cuffs (type, count, ward = the transaction's first ward) are tracked and shown on the Monitor page and in reports until received. A later "receive cuffs" step (scan the same device, tick the returned cuffs) clears them. The device may be dispatched again while its cuffs are outstanding; the outstanding cuffs stay attributed to the earlier ward/transaction. Cuffs are accessories, not equipment: no equipment state, not part of the four states, and no cleaning state.
+- **Printed daily form label (D12; narrow exception to "ME Code is retired"):** the printed daily form must match the company's official form exactly, including the column header "ME.Code", which shows the BCM Code value. This is allowed only as a verbatim printed-form column label. ME Code is NOT an identifier anywhere in the system, data model, API or other UI, which keep "BCM Code". Revisit when the company changes the form.
+- **Access (D13):** all Equipment Pool staff (normal operators) can use the Monitor page and the "แสดง HN" reveal; every reveal is audited per D1.
+
+- Source: `docs/DECISION_LOG.md` (2026-11-25, third set).
 
 ## Related documents
 

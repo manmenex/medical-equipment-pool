@@ -49,7 +49,9 @@ identifier substitutes for another.
    - Not merged with, or inferred from, BCM Code or Item No.
 
 **"ME Code" is retired.** It does not name any current or planned
-identifier. Where a document still uses it, that document is
+identifier. (Sole exception, Governance 2026-11-25 third set, D12: the
+verbatim printed-daily-form column label "ME.Code", which shows the BCM
+Code value; see `docs/BUSINESS_RULES.md`.) Where a document still uses it, that document is
 out of date and should be corrected to BCM Code or Item No, whichever
 role it meant.
 
