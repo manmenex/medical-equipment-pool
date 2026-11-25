@@ -9177,3 +9177,26 @@ opening-balance transactions are created.
 - **Source:** Owner instruction 2026-11-24. Docs-only; no change to business
   rules or guardrails. See `docs/ROADMAP.md` (PR25C, PR25C-demo) and
   `docs/KNOWN_LIMITATIONS.md`.
+
+## Owner decision 2026-11-25: legacy history import validation is line-authoritative
+
+- **Decision:** Roadmap PR21 legacy Receive/Issue history import validation
+  is relaxed. (1) The line item is authoritative for `occurred_at` (its own
+  date+time), equipment and ward. (2) A header-to-line timestamp difference
+  of 24 hours or less is not a finding and the line time is used; more than
+  24 hours remains an ERROR. (3) A line with no matching header (orphan
+  order reference) becomes a WARNING, not an ERROR, and imports from line
+  fields alone. (4) A header-to-line ward conflict remains an ERROR.
+  (5) Unchanged: all-or-nothing gate on errors, provenance, history-only
+  (never changes current equipment state), no patient identifiers.
+- **Reason:** The real AppSheet data does not fit the original strict
+  header-to-line contract (counts only): on the issue side header and line
+  times differ by seconds to minutes for nearly all of about 17.7k lines; on
+  the receive side most of about 17.5k lines have no header with the same
+  document number because the "Orders คืนเครื่อง" sheet uses a different
+  numbering series. A dry-run reported 35,318 of 45,927 records invalid.
+- **Supersedes:** the strict timestamp-conflict and orphan-reference ERROR
+  rules in `docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
+  (amendment note added at section 15).
+- **Source:** Owner approval in chat, 2026-11-25. Docs-only; no change to
+  business rules or guardrails. Code changes follow in a separate PR.

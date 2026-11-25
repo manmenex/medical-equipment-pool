@@ -1218,6 +1218,20 @@ explicit acceptance of the Administrator-ownership policy.
 
 ## 15. Validation model (H2) — all-or-nothing gate and severity taxonomy
 
+> **Amendment 2026-11-25 (Owner decision, `docs/DECISION_LOG.md`).** The
+> strict header-to-line contract in this design (including §4's orphan
+> `ERROR` and the header/line timestamp conflict `ERROR`) is relaxed because
+> the real AppSheet data does not fit it. (1) The line item is authoritative
+> for `occurred_at` (its own date+time), equipment and ward. (2) A
+> header-to-line timestamp difference of 24 hours or less is not a finding;
+> the line time is used; more than 24 hours remains an `ERROR`
+> (`..._HEADER_LINE_TIMESTAMP_CONFLICT`). (3) A line with no matching header
+> (`..._ORPHAN_ORDER_REFERENCE`) is a `WARNING`, not an `ERROR`, and imports
+> from line fields alone. (4) A header-to-line ward conflict remains an
+> `ERROR`. (5) Unchanged: the all-or-nothing gate on errors, provenance,
+> history-only (never changes current equipment state), no patient
+> identifiers. Where this note conflicts with earlier text, this note wins.
+
 **Current PR19 runtime behavior is authoritative and is not modified by
 PR21:** if validation contains a blocking `ERROR`, the session becomes
 `validation_failed`; dry-run is not admitted from `validation_failed`
