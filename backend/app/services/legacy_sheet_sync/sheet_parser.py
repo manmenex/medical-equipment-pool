@@ -133,22 +133,64 @@ def detect_columns(kind: str, header: list[str]) -> Columns:
     return Columns(kind, index, accessories, frozenset(ignored))
 
 
+_MONTHS: dict[str, int] = {}
+for _i, _names in enumerate(
+    [
+        ("jan", "january", "ม.ค."),
+        ("feb", "february", "ก.พ."),
+        ("mar", "march", "มี.ค."),
+        ("apr", "april", "เม.ย."),
+        ("may", "พ.ค."),
+        ("jun", "june", "มิ.ย."),
+        ("jul", "july", "ก.ค."),
+        ("aug", "august", "ส.ค."),
+        ("sep", "sept", "september", "ก.ย."),
+        ("oct", "october", "ต.ค."),
+        ("nov", "november", "พ.ย."),
+        ("dec", "december", "ธ.ค."),
+    ],
+    start=1,
+):
+    for _n in _names:
+        _MONTHS[_n] = _i
+
+
+def _month_from_name(token: str) -> int | None:
+    # Case-insensitive; Thai abbreviations may contain spaces ("ม. ค.").
+    return _MONTHS.get(re.sub(r"\s+", "", token).lower())
+
+
 def _parse_date(text: str) -> date:
     m = re.fullmatch(r"\s*(\d{1,4})[/\-.](\d{1,2})[/\-.](\d{1,4})\s*", text)
-    if not m:
-        raise ValueError("date")
-    a, b, c = (int(x) for x in m.groups())
-    y, mo, d = (a, b, c) if a > 31 else (c, b, a)  # yyyy-mm-dd or dd/mm/yyyy
+    if m:
+        a, b, c = (int(x) for x in m.groups())
+        y, mo, d = (a, b, c) if a > 31 else (c, b, a)  # yyyy-mm-dd or dd/mm/yyyy
+    else:
+        # d/Mon/yyyy or d-Mon-yyyy (English or Thai month name).
+        m = re.fullmatch(r"\s*(\d{1,2})\s*[/\-]?\s*([^\d/\-]+?)\s*[/\-]?\s*(\d{4})\s*", text)
+        if not m:
+            raise ValueError("date")
+        mo_name = _month_from_name(m.group(2))
+        if mo_name is None:
+            raise ValueError("date")
+        d, mo, y = int(m.group(1)), mo_name, int(m.group(3))
     if y > 2400:  # Buddhist Era
         y -= 543
     return date(y, mo, d)
 
 
 def _parse_time(text: str) -> time:
-    m = re.fullmatch(r"\s*(\d{1,2})[:.](\d{2})(?::(\d{2}))?\s*(?:น\.?)?\s*", text)
+    m = re.fullmatch(
+        r"\s*(\d{1,2})[:.](\d{2})(?::(\d{2}))?\s*(?:(am|pm)|น\.?)?\s*", text, re.IGNORECASE
+    )
     if not m:
         raise ValueError("time")
-    return time(int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
+    hour = int(m.group(1))
+    if m.group(4):
+        if not 1 <= hour <= 12:
+            raise ValueError("time")
+        hour = hour % 12 + (12 if m.group(4).lower() == "pm" else 0)
+    return time(hour, int(m.group(2)), int(m.group(3) or 0))
 
 
 def looks_like_patient_id(cells: list[str], ignore: frozenset[int]) -> bool:

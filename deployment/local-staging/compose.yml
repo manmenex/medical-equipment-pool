@@ -159,6 +159,10 @@ services:
     build: ../../backend
     restart: unless-stopped
     command: ["python", "-m", "app.services.legacy_sheet_sync", "--loop"]
+    # Serves no HTTP; the backend image's HEALTHCHECK (port 8000) would
+    # report this container as permanently unhealthy.
+    healthcheck:
+      disable: true
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:?POSTGRES_USER must be set}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB must be set}
       REDIS_URL: redis://redis:6379/0
