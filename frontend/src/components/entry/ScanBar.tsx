@@ -50,13 +50,13 @@ export function ScanBar({ onBcm, onQr, busy, offline }: ScanBarProps) {
               submit();
             }
           }}
-          className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm"
+          className="min-h-11 min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm"
         />
         <button
           type="button"
           onClick={submit}
           disabled={busy || !text.trim()}
-          className="shrink-0 rounded-lg border border-[var(--border)] px-3 text-sm disabled:opacity-50"
+          className="min-h-11 shrink-0 rounded-lg border border-[var(--border)] px-3 text-sm disabled:opacity-50"
         >
           เพิ่ม
         </button>
@@ -65,7 +65,7 @@ export function ScanBar({ onBcm, onQr, busy, offline }: ScanBarProps) {
             type="button"
             aria-pressed={scanning}
             onClick={() => setScanning((s) => !s)}
-            className="shrink-0 whitespace-nowrap rounded-lg bg-status-borrowed px-3 text-sm font-medium text-white"
+            className="min-h-11 shrink-0 whitespace-nowrap rounded-lg bg-status-borrowed px-3 text-sm font-medium text-white"
           >
             {scanning ? "ปิดกล้อง" : "สแกน QR"}
           </button>

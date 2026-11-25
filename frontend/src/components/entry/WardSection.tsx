@@ -18,9 +18,11 @@ interface WardSectionProps {
   onPhone: (v: string) => void;
   /** Receipt may accept equipment from any ward, so the ward is optional there. */
   required?: boolean;
+  /** The receipt API takes no phone, so the receipt screen hides the field. */
+  showPhone?: boolean;
 }
 
-const inputCls = "w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm";
+const inputCls = "min-h-11 w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm";
 
 // Roadmap PR27/PR28 (D3/D7): section 1 of the ward-first screens -- type-ahead
 // ward search, chips of the most used wards (local history only), the optional
@@ -36,6 +38,7 @@ export function WardSection({
   onContact,
   phone,
   onPhone,
+  showPhone = true,
 }: WardSectionProps) {
   const wardUsage = useUiStore((s) => s.wardUsage);
   const lastWard = useUiStore((s) => s.lastWard);
@@ -100,7 +103,7 @@ export function WardSection({
                 <button
                   type="button"
                   onClick={() => choose(w)}
-                  className="w-full px-3 py-2 text-left text-sm hover:bg-status-borrowed/10"
+                  className="min-h-11 w-full px-3 py-2 text-left text-sm hover:bg-status-borrowed/10"
                 >
                   {w.name}
                 </button>
@@ -117,7 +120,7 @@ export function WardSection({
               type="button"
               onClick={() => choose(w)}
               aria-pressed={w.id === wardId}
-              className={`rounded-full border px-2.5 py-0.5 text-xs ${
+              className={`min-h-11 rounded-full border px-3 text-xs ${
                 w.id === wardId ? "border-status-borrowed bg-status-borrowed/15 text-status-borrowed" : "border-[var(--border)]"
               }`}
             >
@@ -126,7 +129,7 @@ export function WardSection({
           ))}
         </div>
       )}
-      <div className="mt-2 grid grid-cols-2 gap-2">
+      <div className={`mt-2 grid gap-2 ${showPhone ? "grid-cols-2" : "grid-cols-1"}`}>
         <input
           aria-label={contactLabel}
           placeholder={contactLabel}
@@ -135,15 +138,17 @@ export function WardSection({
           onChange={(e) => onContact(e.target.value)}
           className={inputCls}
         />
-        <input
-          aria-label="เบอร์โทร"
-          placeholder="เบอร์โทร"
-          inputMode="tel"
-          value={phone}
-          maxLength={20}
-          onChange={(e) => onPhone(e.target.value)}
-          className={inputCls}
-        />
+        {showPhone && (
+          <input
+            aria-label="เบอร์โทร"
+            placeholder="เบอร์โทร"
+            inputMode="tel"
+            value={phone}
+            maxLength={20}
+            onChange={(e) => onPhone(e.target.value)}
+            className={inputCls}
+          />
+        )}
       </div>
     </section>
   );

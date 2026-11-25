@@ -45,14 +45,14 @@ export function ItemEditPanel({ bcm, name, statusLine, onRemove, onDone, childre
         <button
           type="button"
           onClick={onRemove}
-          className="shrink-0 whitespace-nowrap rounded-md border border-status-repair px-2 py-1 text-[13px] text-status-repair"
+          className="min-h-11 shrink-0 whitespace-nowrap rounded-md border border-status-repair px-3 text-[13px] text-status-repair"
         >
           ลบออก
         </button>
       </div>
       {children}
       {extraSlot}
-      <button type="button" onClick={onDone} className="rounded-lg bg-status-borrowed py-2 text-sm font-medium text-white">
+      <button type="button" onClick={onDone} className="min-h-11 rounded-lg bg-status-borrowed py-2 text-sm font-medium text-white">
         เสร็จ
       </button>
     </div>

@@ -67,11 +67,11 @@ Each row is built from a fixed allow-list (information boundary, `knowledge/arch
 
 | Section | Fields |
 |---|---|
-| `equipment` | `id`, `bcm_code`, `equipment_name`, `category_id`, `category_name`, `status` |
+| `equipment` | `id`, `bcm_code`, `equipment_name`, `category_id`, `category_name`, `checklist_kind`, `status` |
 | `wards` | `id`, `code`, `name`, `department_id`, `phone` |
 | `departments` | `id`, `code`, `name`, `phone` |
 | `locations` | `id`, `name`, `type` |
-| `open_transactions` | `id`, `equipment_id`, `ward_id`, `borrowed_at` |
+| `open_transactions` | `id`, `equipment_id`, `ward_id`, `borrowed_at`, `checklist_kind`, `cuffs_issued` |
 
 Paging guarantees: pages are not a point-in-time view, and a full scan is eventually consistent. Clients must upsert by `id` (equipment may appear twice if it changes mid-scan). `open_transactions` is ordered by `borrowed_at`, so a row backdated by a sync operation mid-scan can be missed until the next full refresh.
 

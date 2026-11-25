@@ -251,3 +251,39 @@ describe("receipt screen", () => {
     expect(await screen.findByText("ไม่มี Cuff ค้าง")).toBeInTheDocument();
   });
 });
+
+describe("review fixes", () => {
+  it("hides the phone field (the receipt API takes no phone)", async () => {
+    renderPage();
+    expect(await screen.findByLabelText("ชื่อผู้ส่งคืน (Ward)")).toBeInTheDocument();
+    expect(screen.queryByLabelText("เบอร์โทร")).not.toBeInTheDocument();
+  });
+
+  it("fetches the open-transaction list once for several scans (cached query data)", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await addBcm(user, "BCM001");
+    await screen.findByRole("button", { name: "แก้ไข BCM001" });
+    await addBcm(user, "BCM002");
+    await screen.findByRole("button", { name: "แก้ไข BCM002" });
+    expect(listActiveBorrows).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a second confirm while a submit is in flight (ref guard)", async () => {
+    let release: (v: unknown) => void = () => undefined;
+    receiptBatch.mockImplementationOnce(
+      () =>
+        new Promise((res) => {
+          release = res;
+        }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await addBcm(user, "BCM001");
+    await screen.findByRole("button", { name: "แก้ไข BCM001" });
+    await user.dblClick(screen.getByRole("button", { name: "ยืนยันการรับคืน (1 เครื่อง)" }));
+    expect(receiptBatch).toHaveBeenCalledTimes(1);
+    release({ total: 1, succeeded: 1, failed: 0, results: [{ index: 0, ok: true, equipment_id: "e1", transaction_id: "t1", transaction_no: "RX-1", cuffs_outstanding: null, error: null }] });
+    expect(await screen.findByText("✓ BCM001 (RX-1)")).toBeInTheDocument();
+  });
+});

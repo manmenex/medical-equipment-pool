@@ -271,3 +271,52 @@ describe("online path", () => {
     expect(screen.getByRole("button", { name: "สแกน QR" })).toBeInTheDocument();
   });
 });
+
+describe("offline Cryo-Cuff (Roadmap PR28)", () => {
+  it("receipt: uses the cached kind and issued cuffs; the queued op carries cryo checks and the cuffs returned", async () => {
+    await seed();
+    await replaceRefs("ref_equipment", [
+      { id: "c1", bcm_code: "CRYO1", equipment_name: "Cryo", category_name: "Cryo-Cuff", checklist_kind: "cryo_cuff", status: "issued_to_ward" },
+    ]);
+    await replaceRefs("ref_open_tx", [
+      { id: "tc", equipment_id: "c1", ward_id: "w2", borrowed_at: "2026-10-13T01:00:00Z", checklist_kind: "cryo_cuff", cuffs_issued: { back_hip_rib: 0, knee: 2, shoulder: 0, ankle: 1 } },
+    ]);
+    setMarkedOffline(true);
+    const user = userEvent.setup();
+    renderPage(<ReturnPage />, "/return");
+    await addBcm(user, "CRYO1");
+    await user.click(await screen.findByRole("button", { name: "แก้ไข CRYO1" }));
+    expect(within(screen.getByRole("group", { name: "แก้ไข CRYO1" })).getAllByRole("listitem")).toHaveLength(6);
+    expect(screen.getByLabelText("จำนวน Knee")).toHaveValue(2);
+    await user.click(screen.getByRole("button", { name: "เสร็จ" }));
+    await user.click(screen.getByRole("button", { name: "ยืนยันการรับคืน (1 เครื่อง)" }));
+    await screen.findByText(/บันทึกในเครื่องแล้ว 1 เครื่อง/);
+    const [rec] = await listOutbox("u1");
+    expect(rec.envelope).toMatchObject({
+      receipt: {
+        transaction_id: "tc",
+        receipt_checks: { kind: "cryo_cuff", cuffs: { back_hip_rib: 0, knee: 2, shoulder: 0, ankle: 1 } },
+        cuffs_returned: { back_hip_rib: 0, knee: 2, shoulder: 0, ankle: 1 },
+      },
+    });
+  });
+
+  it("dispatch: an old cache without checklist_kind falls back to the category name (cryo)", async () => {
+    await seed();
+    await replaceRefs("ref_equipment", [
+      { id: "c1", bcm_code: "CRYO1", equipment_name: "Cryo", category_name: "CRYO CUFF", status: "available_at_pool" },
+    ]);
+    setMarkedOffline(true);
+    const user = userEvent.setup();
+    renderPage(<BorrowPage />, "/borrow");
+    await pickWard(user, "Ward B");
+    await addBcm(user, "CRYO1");
+    await user.click(await screen.findByRole("button", { name: "แก้ไข CRYO1" }));
+    expect(within(screen.getByRole("group", { name: "แก้ไข CRYO1" })).getAllByRole("listitem")).toHaveLength(6);
+    await user.click(screen.getByRole("button", { name: "เสร็จ" }));
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (1 เครื่อง)" }));
+    await screen.findByText(/บันทึกในเครื่องแล้ว 1 เครื่อง/);
+    const [rec] = await listOutbox("u1");
+    expect(rec.envelope).toMatchObject({ dispatch: { dispatch_checks: { kind: "cryo_cuff" } } });
+  });
+});

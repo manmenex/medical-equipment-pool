@@ -1,5 +1,5 @@
 import { useAuthStore } from "@/store/authStore";
-import type { BcmSuggestion, Checks, Cuffs, DispatchType, Equipment, EquipmentStatus, ReceiptOutcome, RoutineRound } from "@/types";
+import type { BcmSuggestion, Checks, ChecklistKind, Cuffs, DispatchType, Equipment, EquipmentStatus, ReceiptOutcome, RoutineRound } from "@/types";
 
 import {
   enqueueOperation,
@@ -62,6 +62,8 @@ interface CachedEquipment {
   bcm_code?: string | null;
   equipment_name?: string;
   category_name?: string | null;
+  // Roadmap PR28: absent in a snapshot cached before this field existed.
+  checklist_kind?: ChecklistKind | null;
   status?: EquipmentStatus;
 }
 
@@ -165,6 +167,13 @@ export async function effectiveCachedEquipment(
     updated_at: "",
   };
   return { equipment, locallyDispatched };
+}
+
+/** Cached checklist kind; old caches without the field fall back to the category name (/cryo/i). */
+export async function cachedChecklistKind(id: string): Promise<ChecklistKind> {
+  const c = ((await listRefs("ref_equipment")) as CachedEquipment[]).find((r) => r.id === id);
+  if (c?.checklist_kind === "cryo_cuff" || c?.checklist_kind === "standard") return c.checklist_kind;
+  return /cryo/i.test(c?.category_name ?? "") ? "cryo_cuff" : "standard";
 }
 
 /** Matches backend CURRENT_ENVELOPE_VERSION (backend/app/schemas/sync.py). */
@@ -279,6 +288,9 @@ export interface ReceiptCandidate {
   /** ISO time; for local dispatches this is the local entry time. */
   borrowed_at: string;
   source: "snapshot" | "local";
+  /** Roadmap PR28: checklist kind and issued cuffs (null when unknown / none). */
+  checklist_kind: ChecklistKind;
+  cuffs_issued: Cuffs | null;
 }
 
 /**
@@ -290,7 +302,9 @@ export async function listReceiptCandidates(): Promise<ReceiptCandidate[]> {
   const [equipment, wards, openTx, mine, ops] = await Promise.all([
     listRefs("ref_equipment") as Promise<CachedEquipment[]>,
     listRefs("ref_wards") as Promise<Array<{ id: string; name?: string }>>,
-    listRefs("ref_open_tx") as Promise<Array<{ id: string; equipment_id?: string; ward_id?: string; borrowed_at?: string }>>,
+    listRefs("ref_open_tx") as Promise<
+      Array<{ id: string; equipment_id?: string; ward_id?: string; borrowed_at?: string; checklist_kind?: ChecklistKind | null; cuffs_issued?: Cuffs | null }>
+    >,
     listOutbox(userId),
     activeOps(),
   ]);
@@ -304,6 +318,8 @@ export async function listReceiptCandidates(): Promise<ReceiptCandidate[]> {
     ward_id: string | null,
     borrowed_at: string,
     source: ReceiptCandidate["source"],
+    kind: ChecklistKind,
+    cuffs: Cuffs | null,
   ): ReceiptCandidate => ({
     transaction_id: id,
     equipment_id,
@@ -313,18 +329,36 @@ export async function listReceiptCandidates(): Promise<ReceiptCandidate[]> {
     ward_name: ward_id ? (wardName.get(ward_id) ?? null) : null,
     borrowed_at,
     source,
+    checklist_kind: kind,
+    cuffs_issued: cuffs,
   });
   for (const t of openTx) {
     if (received.has(t.id) || !t.equipment_id) continue;
-    out.push(mk(t.id, t.equipment_id, t.ward_id ?? null, t.borrowed_at ?? "", "snapshot"));
+    const kind = t.checklist_kind ?? (await cachedChecklistKind(t.equipment_id));
+    out.push(mk(t.id, t.equipment_id, t.ward_id ?? null, t.borrowed_at ?? "", "snapshot", kind, t.cuffs_issued ?? null));
   }
   const seen = new Set(out.map((c) => c.transaction_id));
   for (const rec of mine) {
     if (rec.state !== "pending" && rec.state !== "sending" && rec.state !== "held") continue;
-    const env = rec.envelope as { op_type?: string; occurred_at_local?: string; dispatch?: { equipment_id?: string; ward_id?: string } };
+    const env = rec.envelope as {
+      op_type?: string;
+      occurred_at_local?: string;
+      dispatch?: { equipment_id?: string; ward_id?: string; dispatch_checks?: Checks };
+    };
     if (env.op_type !== "dispatch" || !env.dispatch?.equipment_id) continue;
     if (received.has(rec.op_id) || seen.has(rec.op_id)) continue;
-    out.push(mk(rec.op_id, env.dispatch.equipment_id, env.dispatch.ward_id ?? null, env.occurred_at_local ?? "", "local"));
+    const dc = env.dispatch.dispatch_checks;
+    out.push(
+      mk(
+        rec.op_id,
+        env.dispatch.equipment_id,
+        env.dispatch.ward_id ?? null,
+        env.occurred_at_local ?? "",
+        "local",
+        dc?.kind ?? (await cachedChecklistKind(env.dispatch.equipment_id)),
+        dc?.kind === "cryo_cuff" ? dc.cuffs : null,
+      ),
+    );
   }
   return out.sort((a, b) => (a.bcm_code ?? "").localeCompare(b.bcm_code ?? ""));
 }

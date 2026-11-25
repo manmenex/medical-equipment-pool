@@ -48,7 +48,7 @@ function ReceiveRow({ tx, wardName, onDone }: { tx: OutstandingCuffTx; wardName:
         aria-expanded={open}
         aria-label={`รับ Cuff ${tx.bcm_code ?? tx.equipment_name}`}
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-left"
+        className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-left"
       >
         <strong className="text-sm">{tx.bcm_code ?? tx.equipment_name}</strong>
         <span className="min-w-0 flex-1 truncate text-xs text-[var(--text-muted)]">{wardName ?? "-"}</span>
@@ -76,7 +76,7 @@ function ReceiveRow({ tx, wardName, onDone }: { tx: OutstandingCuffTx; wardName:
                         const v = Math.max(0, Math.min(tx.cuffs[t.key], Math.trunc(Number(e.target.value) || 0)));
                         setCounts((c) => ({ ...c, [t.key as CuffType]: v }));
                       }}
-                      className="w-14 rounded border border-[var(--border)] bg-transparent px-2 py-1 text-center text-sm disabled:opacity-40"
+                      className="min-h-11 w-16 rounded border border-[var(--border)] bg-transparent px-2 py-1 text-center text-sm disabled:opacity-40"
                     />
                   </label>
                 ))}
@@ -93,7 +93,7 @@ function ReceiveRow({ tx, wardName, onDone }: { tx: OutstandingCuffTx; wardName:
                 type="button"
                 disabled={busy || totalCuffs(counts) === 0}
                 onClick={() => void submit()}
-                className="rounded-lg bg-status-available py-2 text-sm font-medium text-white disabled:opacity-50"
+                className="min-h-11 rounded-lg bg-status-available py-2 text-sm font-medium text-white disabled:opacity-50"
               >
                 {busy ? "กำลังบันทึก..." : "บันทึกรับ Cuff"}
               </button>

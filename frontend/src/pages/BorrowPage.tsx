@@ -10,7 +10,7 @@ import { WardSection } from "@/components/entry/WardSection";
 import { OfflineStaleGate } from "@/components/OfflineStaleGate";
 import { useDirtyForm } from "@/hooks/useDirtyForm";
 import { useOfflineMode } from "@/hooks/useOfflineMode";
-import { effectiveCachedEquipment, enqueueOfflineDispatch, LocalOpError } from "@/offline/localOps";
+import { cachedChecklistKind, effectiveCachedEquipment, enqueueOfflineDispatch, LocalOpError } from "@/offline/localOps";
 import { OfflineStoreError } from "@/offline/offlineStore";
 import { apiErrorMessage } from "@/services/api";
 import { dispatchBatch, type DispatchBatchItem } from "@/services/borrow";
@@ -67,6 +67,7 @@ export function BorrowPage() {
   const [queuedCount, setQueuedCount] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [adding, setAdding] = useState(false);
+  const submittingRef = useRef(false);
   const itemsRef = useRef<DispatchItem[]>([]);
   itemsRef.current = items;
   useDirtyForm(items.length > 0);
@@ -86,7 +87,7 @@ export function BorrowPage() {
         setNotice(`⛔ ${label} ปลดระวางแล้ว ไม่ถูกเพิ่ม`);
         return;
       }
-      const kind: ChecklistKind = check?.checklist_kind ?? "standard";
+      const kind: ChecklistKind = check?.checklist_kind ?? (offline ? await cachedChecklistKind(eq.id) : "standard");
       setNotice(null);
       setDone([]);
       setItems((prev) =>
@@ -158,7 +159,8 @@ export function BorrowPage() {
   };
 
   const submit = async () => {
-    if (!wardId || items.length === 0 || submitting) return;
+    if (!wardId || items.length === 0 || submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
     setNotice(null);
     const sent = items;
@@ -237,7 +239,14 @@ export function BorrowPage() {
       await Promise.all(
         refresh.map(async (id) => {
           try {
-            patch(id, { check: await getDispatchCheck(id) });
+            const fresh = await getDispatchCheck(id);
+            if (fresh.warning === "decommissioned" || !fresh.dispatchable) {
+              const gone = keep.find((k) => k.equipmentId === id);
+              setItems((prev) => prev.filter((i) => i.equipmentId !== id));
+              setNotice(`⛔ ${gone?.bcm ?? ""} ปลดระวางแล้ว ไม่ถูกเพิ่ม`);
+            } else {
+              patch(id, { check: fresh });
+            }
           } catch {
             /* keep the old check; the operator can remove and re-scan */
           }
@@ -246,6 +255,7 @@ export function BorrowPage() {
     } catch (err) {
       setNotice(apiErrorMessage(err, "เบิกเครื่องมือไม่สำเร็จ"));
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
@@ -289,7 +299,7 @@ export function BorrowPage() {
                     type="button"
                     aria-label={`แก้ไข ${it.bcm}`}
                     onClick={() => setEditing(it.equipmentId)}
-                    className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left ${
+                    className={`flex min-h-11 w-full items-center gap-2 rounded-lg border px-3 py-2 text-left ${
                       warn ? "border-amber-500/60 bg-amber-500/10" : "border-[var(--border)]"
                     }`}
                   >

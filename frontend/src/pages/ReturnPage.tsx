@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
@@ -57,6 +57,8 @@ export function ReturnPage() {
   const bumpWardUsage = useUiStore((s) => s.bumpWardUsage);
   const setLastWard = useUiStore((s) => s.setLastWard);
 
+  const queryClient = useQueryClient();
+  const submittingRef = useRef(false);
   const [tab, setTab] = useState<"receive" | "cuffs">("receive");
   const [wardId, setWardId] = useState("");
   const [contact, setContact] = useState("");
@@ -75,7 +77,7 @@ export function ReturnPage() {
   useDirtyForm(items.length > 0);
 
   const ward = wards.find((w) => w.id === wardId);
-  const { data: active, refetch: refetchActive } = useQuery({
+  const { data: active } = useQuery({
     queryKey: ["active-borrows"],
     queryFn: listActiveBorrows,
     enabled: !offline && !!wardId,
@@ -104,9 +106,11 @@ export function ReturnPage() {
       let item: ReceiptItem | null = null;
       if (offline) {
         const cand = (await listReceiptCandidates()).find((c) => c.equipment_id === eq.id);
-        if (cand) item = toItem(eq, { id: cand.transaction_id, kind: "standard", issued: null, wardName: cand.ward_name });
+        if (cand) item = toItem(eq, { id: cand.transaction_id, kind: cand.checklist_kind, issued: cand.cuffs_issued, wardName: cand.ward_name });
       } else {
-        const tx: TransactionOut | undefined = (await listActiveBorrows()).find((t) => t.equipment.id === eq.id);
+        // Cached open-transaction list (shared with the ward list): one fetch, not one per scan.
+        const open = await queryClient.fetchQuery({ queryKey: ["active-borrows"], queryFn: listActiveBorrows, staleTime: 30_000 });
+        const tx: TransactionOut | undefined = open.find((t) => t.equipment.id === eq.id);
         if (tx) {
           const kind: ChecklistKind = tx.checklist_kind ?? (await getDispatchCheck(eq.id)).checklist_kind;
           const issued = tx.dispatch_checks?.kind === "cryo_cuff" ? tx.dispatch_checks.cuffs : null;
@@ -123,7 +127,7 @@ export function ReturnPage() {
       setItems((prev) => (prev.some((i) => i.equipmentId === eq.id) ? prev : [...prev, add]));
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [offline],
+    [offline, queryClient],
   );
 
   const addById = useCallback(
@@ -184,7 +188,8 @@ export function ReturnPage() {
   };
 
   const submit = async () => {
-    if (items.length === 0 || submitting) return;
+    if (items.length === 0 || submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
     setNotice(null);
     const sent = items;
@@ -240,13 +245,14 @@ export function ReturnPage() {
           bumpWardUsage(wardId);
         }
         setNote("");
-        void refetchActive();
+        void queryClient.invalidateQueries({ queryKey: ["active-borrows"] });
       }
       setDone(ok);
       setItems(keep);
     } catch (err) {
       setNotice(apiErrorMessage(err, "รับคืนเครื่องมือไม่สำเร็จ"));
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
@@ -268,7 +274,7 @@ export function ReturnPage() {
             role="tab"
             aria-selected={tab === k}
             onClick={() => setTab(k)}
-            className={`rounded-lg px-3 py-2 text-sm font-medium ${tab === k ? "bg-status-borrowed/15 text-status-borrowed" : "surface"}`}
+            className={`min-h-11 rounded-lg px-3 py-2 text-sm font-medium ${tab === k ? "bg-status-borrowed/15 text-status-borrowed" : "surface"}`}
           >
             {label}
           </button>
@@ -290,6 +296,7 @@ export function ReturnPage() {
             onContact={setContact}
             phone={phone}
             onPhone={setPhone}
+            showPhone={false}
           />
 
           {!offline && wardId && ward && (
@@ -298,7 +305,7 @@ export function ReturnPage() {
                 type="button"
                 aria-expanded={showOpen}
                 onClick={() => setShowOpen((o) => !o)}
-                className="flex w-full items-center justify-between text-sm font-medium"
+                className="flex min-h-11 w-full items-center justify-between text-sm font-medium"
               >
                 <span>
                   เครื่องที่ค้างอยู่ {ward.name} ({wardOpen.length})
@@ -314,7 +321,7 @@ export function ReturnPage() {
                         type="button"
                         aria-label={`เพิ่ม ${t.equipment.asset_number ?? t.equipment.equipment_name}`}
                         onClick={() => void addById(t.equipment.id)}
-                        className="flex w-full items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-1.5 text-left text-sm"
+                        className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-1.5 text-left text-sm"
                       >
                         <strong>{t.equipment.asset_number ?? t.equipment.equipment_name}</strong>
                         <span className="min-w-0 flex-1 truncate text-xs text-[var(--text-muted)]">{t.equipment.equipment_name}</span>
@@ -347,7 +354,7 @@ export function ReturnPage() {
                         type="button"
                         aria-label={`แก้ไข ${it.bcm}`}
                         onClick={() => setEditing(it.transactionId)}
-                        className="flex w-full items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-left"
+                        className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-left"
                       >
                         <strong className="text-sm">{it.bcm}</strong>
                         <span className="min-w-0 flex-1 truncate text-xs text-[var(--text-muted)]">{it.name}</span>
@@ -379,7 +386,7 @@ export function ReturnPage() {
                                 type="button"
                                 aria-pressed={it.outcome === o.value}
                                 onClick={() => patch(it.transactionId, { outcome: o.value })}
-                                className={`rounded-lg border px-3 py-2 text-sm ${it.outcome === o.value ? o.cls : "border-[var(--border)]"}`}
+                                className={`min-h-11 rounded-lg border px-3 py-2 text-sm ${it.outcome === o.value ? o.cls : "border-[var(--border)]"}`}
                               >
                                 {o.label}
                               </button>
@@ -391,7 +398,7 @@ export function ReturnPage() {
                               <button
                                 type="button"
                                 onClick={() => patch(it.transactionId, { outcome: "defective" })}
-                                className="mt-1 rounded-md bg-status-repair px-3 py-1 text-xs font-medium text-white"
+                                className="mt-1 min-h-11 rounded-md bg-status-repair px-3 text-xs font-medium text-white"
                               >
                                 เปลี่ยนเป็น "เสีย"
                               </button>

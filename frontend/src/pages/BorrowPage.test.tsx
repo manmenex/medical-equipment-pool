@@ -392,3 +392,47 @@ describe("submit results", () => {
     expect(screen.getByRole("button", { name: "ยืนยันการเบิก (1 เครื่อง)" })).toBeDisabled();
   });
 });
+
+describe("review fixes", () => {
+  it("ignores a second confirm while a submit is in flight (ref guard)", async () => {
+    let release: (v: unknown) => void = () => undefined;
+    dispatchBatch.mockImplementationOnce(
+      () =>
+        new Promise((res) => {
+          release = res;
+        }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await pickWard(user, "Ward A");
+    await addBcm(user, "BCM001");
+    await screen.findByRole("button", { name: "แก้ไข BCM001" });
+    const btn = screen.getByRole("button", { name: "ยืนยันการเบิก (1 เครื่อง)" });
+    await user.dblClick(btn);
+    expect(dispatchBatch).toHaveBeenCalledTimes(1);
+    release({ total: 1, succeeded: 1, failed: 0, results: [{ index: 0, ok: true, equipment_id: "e1", transaction_id: "t", transaction_no: "TX-1", cuffs_outstanding: null, error: null }] });
+    expect(await screen.findByText("✓ BCM001 (TX-1)")).toBeInTheDocument();
+  });
+
+  it("removes an item with the red notice when the re-check finds it decommissioned", async () => {
+    dispatchBatch.mockResolvedValueOnce({
+      total: 1, succeeded: 0, failed: 1,
+      results: [{ index: 0, ok: false, equipment_id: "e1", transaction_id: null, transaction_no: null, cuffs_outstanding: null, error: { code: "EQUIPMENT_NOT_AVAILABLE", message: "x", status: 409 } }],
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await pickWard(user, "Ward A");
+    await addBcm(user, "BCM001");
+    await screen.findByRole("button", { name: "แก้ไข BCM001" });
+    // status changed between scan and submit: the backend now reports a warning, the re-check says decommissioned
+    dispatchBatch.mockReset();
+    dispatchBatch.mockResolvedValueOnce({
+      total: 1, succeeded: 0, failed: 1,
+      results: [{ index: 0, ok: false, equipment_id: "e1", transaction_id: null, transaction_no: null, cuffs_outstanding: null, error: { code: "DISPATCH_WARNING_STALE", message: "x", status: 409 } }],
+    });
+    checkFor.e1 = { status: "decommissioned", warning: "decommissioned", dispatchable: false };
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (1 เครื่อง)" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "แก้ไข BCM001" })).not.toBeInTheDocument());
+    expect(screen.getByRole("alert")).toHaveTextContent("⛔ BCM001 ปลดระวางแล้ว ไม่ถูกเพิ่ม");
+  });
+});

@@ -8,7 +8,7 @@ interface ChecksEditorProps {
   issuedCuffs?: Cuffs | null;
 }
 
-const countCls = "w-14 rounded border border-[var(--border)] bg-transparent px-2 py-1 text-center text-sm disabled:opacity-40";
+const countCls = "min-h-11 w-16 rounded border border-[var(--border)] bg-transparent px-2 py-1 text-center text-sm disabled:opacity-40";
 
 function OkToggle({ label, ok, onChange }: { label: string; ok: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -18,7 +18,7 @@ function OkToggle({ label, ok, onChange }: { label: string; ok: boolean; onChang
         aria-label={`${label} ปกติ`}
         aria-pressed={ok}
         onClick={() => onChange(true)}
-        className={`px-3 py-1 text-sm ${ok ? "bg-status-available/20 text-status-available" : ""}`}
+        className={`min-h-11 min-w-11 px-3 py-1 text-sm ${ok ? "bg-status-available/20 text-status-available" : ""}`}
       >
         ✓
       </button>
@@ -27,7 +27,7 @@ function OkToggle({ label, ok, onChange }: { label: string; ok: boolean; onChang
         aria-label={`${label} ไม่ปกติ`}
         aria-pressed={!ok}
         onClick={() => onChange(false)}
-        className={`px-3 py-1 text-sm ${!ok ? "bg-orange-500/20 text-orange-400" : ""}`}
+        className={`min-h-11 min-w-11 px-3 py-1 text-sm ${!ok ? "bg-orange-500/20 text-orange-400" : ""}`}
       >
         ✗
       </button>
@@ -43,7 +43,7 @@ export function ChecksEditor({ checks, onChange, issuedCuffs }: ChecksEditorProp
     return (
       <div className="flex flex-col gap-1.5">
         {STANDARD_ITEMS.map((it) => (
-          <label key={it.key} className="flex items-center gap-2 text-sm">
+          <label key={it.key} className="flex min-h-11 items-center gap-2 text-sm">
             <input
               type="checkbox"
               checked={checks[it.key]}
@@ -85,7 +85,8 @@ export function ChecksEditor({ checks, onChange, issuedCuffs }: ChecksEditorProp
                 const max = issuedCuffs ? issuedCuffs[c.key] : 99;
                 const unavailable = max === 0;
                 return (
-                  <div key={c.key} className="flex items-center gap-2 text-sm">
+                  <div key={c.key} className="flex min-h-11 items-center gap-2 text-sm">
+                    <label className="flex min-h-11 min-w-0 flex-1 items-center gap-2">
                     <input
                       type="checkbox"
                       aria-label={c.label}
@@ -94,6 +95,7 @@ export function ChecksEditor({ checks, onChange, issuedCuffs }: ChecksEditorProp
                       onChange={(e) => setCuff(c.key, e.target.checked ? Math.max(1, n || (issuedCuffs ? max : 1)) : 0)}
                     />
                     <span className="min-w-0 flex-1">{c.label}</span>
+                    </label>
                     <input
                       type="number"
                       min={0}
