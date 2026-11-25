@@ -9379,3 +9379,8 @@ opening-balance transactions are created.
   because the system has no standby data (Standby Snapshots remain future work).
 - **D12:** printed form column header "ME.Code" shows the BCM Code; no other
   surface uses "ME Code".
+
+## 2026-11-25 — Owner confirmations for PR30 (daily report)
+
+- **D6 interpretation confirmed.** An event in the ±N-minute grace window around 08:00 or 20:00 is attributed to whichever of the two shifts meeting at that boundary the operator worked more events in (counting only that operator's events outside every grace window); ties or no other events fall back to the clock rule. Example confirmed by the Owner: an operator who keyed most events in the preceding Night shift and keys an event at 08:30 has that event counted as Night. This settles the interpretation recorded in the PR30 note above.
+- **"Stand By" column stays blank by design.** The Owner fills the Stand By counts (equipment placed on standby per ward) by hand in the exported workbook. The system does not derive them: standby stock includes demo and loaned devices that have no BCM Code and are not tracked in this system. No Standby Snapshot feature is introduced (still separate future work per ROADMAP).
