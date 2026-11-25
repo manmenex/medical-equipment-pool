@@ -47,7 +47,7 @@ serve.
 # Domain Guardrails (compact — see `docs/BUSINESS_RULES.md` and `docs/ARCHITECTURE_GUARDRAILS.md` for full rationale)
 
 - Only Equipment Pool staff record transactions; ward staff are not application users.
-- Exactly four equipment identifiers (UUID, BCM Code, Item No, Asset Number), each with one fixed role. "ME Code" is retired and must not be used.
+- Exactly four equipment identifiers (UUID, BCM Code, Item No, Asset Number), each with one fixed role. "ME Code" is retired and must not be used (sole exception: the verbatim printed-daily-form column label "ME.Code", which shows the BCM Code value; see `docs/BUSINESS_RULES.md`, D12).
 - Exactly four equipment states; no cleaning state exists or may be added.
 - Equipment receipt is one atomic usable/defective operation; cleaning is never tracked.
 - Dispatch/receipt services own the transaction lifecycle; do not bypass them via manual status maintenance.

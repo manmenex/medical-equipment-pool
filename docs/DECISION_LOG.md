@@ -9313,3 +9313,45 @@ opening-balance transactions are created.
   code change. Implementation: Roadmap PR27 (D7), PR30 (D6), PR31 (D8), PR32
   (D9) in `docs/ROADMAP.md`.
 - **Status:** Approved; implementation not started.
+
+## 2026-11-25 (third set) — Cryo-Cuff checklist, cuff tracking, verbatim daily form, staff access
+
+- **Decision (Repository Owner, in chat, 2026-11-25):**
+  - **D10 Cryo-Cuff checklist (amends D4 for this one equipment type only):**
+    Cryo-Cuff dispatch and receipt use a 6-item checklist exactly matching the
+    paper form "แบบบันทึกการรับรับ-ส่ง Cryo-Cuff": 1 ตัวเครื่อง x1 (ไม่แตกหัก
+    เสียหาย), 2 สายชาร์จ x1, 3 ฝาปิดตัวเครื่อง แบบมีสายชาร์จ x1, 4 ฝาปิดตัวเครื่อง
+    แบบไม่มีสายชาร์จ x1, 5 สายท่อน้ำและ O-Ring x1 (O-Ring บริเวณปลาย Hose
+    ทั้งสองข้าง), 6 Cuff (สภาพสมบูรณ์ ไม่มีฉีกขาด) with four types Back/Hip/Rib,
+    Knee, Shoulder, Ankle, each with a count; each item normal/abnormal. All
+    other equipment keeps the 3 checks. Reports map Cryo-Cuff items 1/2/3 into
+    the same three report columns as other equipment (screen/body, charger,
+    clamp); items 4-6 are stored but not in the daily report. The equipment
+    category that identifies Cryo-Cuff is decided in implementation from
+    existing master data. No Cryo-Cuff form printing from the system.
+  - **D11 Cuff tracking:** cuffs are counted per type (no individual IDs). At
+    receipt the operator may receive the device only (cuffs wet or not
+    returned); outstanding cuffs (type, count, ward = the transaction's first
+    ward) are tracked and shown on the Monitor page and in reports until
+    received. A later "receive cuffs" step (scan the same device, tick returned
+    cuffs) clears them. The device may be dispatched again while cuffs are
+    outstanding; they remain attributed to the earlier ward/transaction. Cuffs
+    are accessories, not equipment: no equipment state, not part of the four
+    states, no cleaning state.
+  - **D12 Printed daily form label:** the printed daily form must match the
+    company's official form exactly, including the column header "ME.Code"
+    (the column shows the BCM Code value). Narrow exception to the "ME Code is
+    retired" guardrail: only as a verbatim printed-form column label. ME Code
+    is NOT an identifier anywhere in the system, data model, API or other UI,
+    which keep "BCM Code". Revisit when the company changes the form.
+  - **D13 Access:** all Equipment Pool staff (normal operators) can use the
+    Monitor page and the "แสดง HN" reveal; every reveal is audited (D1).
+- **Reason:** Match the pool team's paper Cryo-Cuff form and the company's
+  official daily form; cuffs are frequently returned late.
+- **Amends:** `AGENTS.md` (ME Code guardrail line: pointer to the D12
+  exception), `docs/BUSINESS_RULES.md` (D4 for Cryo-Cuff, cuff tracking,
+  printed-form label exception), `docs/ROADMAP.md` (PR27/PR28/PR30/PR32 scope).
+  `docs/ARCHITECTURE_GUARDRAILS.md` has no ME Code rule and is unchanged.
+- **Source:** Owner decisions in chat, 2026-11-25. Docs-only Governance PR; no
+  code change.
+- **Status:** Approved; implementation not started.

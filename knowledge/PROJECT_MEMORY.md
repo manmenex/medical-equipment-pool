@@ -30,6 +30,13 @@ Sources: `AGENTS.md`, `docs/BUSINESS_RULES.md`,
   free-text ward contact name (PR27); D8 dispatch not blocked by status
   except decommissioned (PR31); D9 monitor page (PR32). Source:
   `docs/DECISION_LOG.md`.
+- Owner Governance 2026-11-25 (third set): D10 Cryo-Cuff 6-item checklist
+  (this equipment type only; items 1/2/3 map to the report columns); D11 cuffs
+  counted per type, outstanding cuffs tracked until a "receive cuffs" step (not
+  equipment, no state); D12 printed daily form shows the verbatim "ME.Code"
+  column label (BCM Code value; label-only exception, ME Code is still not an
+  identifier); D13 all pool staff may use Monitor and the HN reveal (audited).
+  Source: `docs/DECISION_LOG.md`.
 
 - Equipment states are exactly `AVAILABLE_AT_POOL`, `ISSUED_TO_WARD`,
   `UNAVAILABLE_DEFECTIVE`, and `DECOMMISSIONED`.

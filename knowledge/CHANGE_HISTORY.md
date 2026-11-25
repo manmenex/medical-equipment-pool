@@ -15,6 +15,10 @@ This file tracks *what changed in the shared mental model* over time, one line o
 
 UX questions answered (HN per equipment, no warning on cross-ward receipt, accessory checks default checked). Reporting attributes events near 08:00/20:00 to the operator's predominant shift (D6, PR30); an optional free-text ward contact name returns at dispatch/receipt (D7, PR27); dispatch is no longer blocked by status except decommissioned, with audited re-dispatch closure (D8, PR31); a monitor page is planned (D9, PR32). See `docs/DECISION_LOG.md`.
 
+## Cryo-Cuff checklist, cuff tracking, verbatim daily form, staff access (Owner 2026-11-25, third set)
+
+Cryo-Cuff gets its own 6-item dispatch/receipt checklist (D10, amends D4 for that type only), with cuffs counted per type and tracked as outstanding until a later "receive cuffs" step (D11; accessories, not equipment, no state). The printed daily form carries the company's verbatim "ME.Code" column header showing the BCM Code value (D12; label-only exception, ME Code stays retired as an identifier). All Equipment Pool staff may use the Monitor page and the audited HN reveal (D13). See `docs/DECISION_LOG.md` (2026-11-25, third set).
+
 ## Legacy history import validation becomes line-authoritative (Owner 2026-11-25)
 
 For the PR21 legacy Receive/Issue history import, the line item is authoritative for time, equipment and ward. A header/line time gap of 24 hours or less is not a finding, an orphan order reference is a warning, and a ward conflict or a gap over 24 hours stays an error. The all-or-nothing gate and history-only rule are unchanged. See `docs/DECISION_LOG.md`.
