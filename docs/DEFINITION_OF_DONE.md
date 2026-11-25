@@ -62,7 +62,7 @@ prompt). Roles and merge rules are in [`PROJECT_WORKFLOW.md`](PROJECT_WORKFLOW.m
 - [ ] Keyboard, focus, labels, contrast, and touch-target impacts are checked proportionately.
 - [ ] Responsive/browser/PWA behavior affected by the change is manually or automatically verified.
 - [ ] API type/contract changes are reflected without hiding backend failures.
-- [ ] No patient data, misleading current-location claim, or cleaning-state workflow is introduced.
+- [ ] No patient data (except the governed optional patient HN on a dispatch (Owner Governance 2026-11-25, `docs/DECISION_LOG.md`), with all its safeguards), misleading current-location claim, or cleaning-state workflow is introduced.
 - [ ] Build and relevant component/E2E tests pass with exact evidence.
 
 ## Security

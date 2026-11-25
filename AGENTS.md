@@ -52,7 +52,16 @@ serve.
 - Equipment receipt is one atomic usable/defective operation; cleaning is never tracked.
 - Dispatch/receipt services own the transaction lifecycle; do not bypass them via manual status maintenance.
 - Only the first receiving ward is recorded — no ward-to-ward transfer tracking.
-- No patient tracking, no MEMS integration, no PM/calibration/recall workflow.
+- No patient tracking beyond one optional dispatch field: Equipment Pool staff
+  MAY record a patient HN on a dispatch, under the mandatory safeguards below
+  (Owner Governance 2026-11-25, `docs/DECISION_LOG.md`). No patient name, no
+  other patient field, no HN search unless separately approved. HN is stored
+  only in the database, encrypted at rest at the application level; masked by
+  default in every UI view and revealed only by an explicit "แสดง HN" click
+  with an audited reveal (never the value); HN never appears in any printed
+  report, PDF, Excel/CSV export, read-only export API, log, notification, or
+  legacy sheet sync/import.
+- No MEMS integration, no PM/calibration/recall workflow.
   "No MEMS integration" means this system never writes to, calls, or depends
   on a MEMS (N Smart). An external tool may read this system's read-only
   export API; that tool, not this system, owns any MEMS integration

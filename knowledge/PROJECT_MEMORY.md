@@ -18,6 +18,13 @@ Sources: `AGENTS.md`, `docs/BUSINESS_RULES.md`,
 
 ## Stable domain rules
 
+- Owner Governance 2026-11-25: optional patient HN on dispatch (encrypted at
+  rest, masked, audited reveal, never in reports/exports/API/logs/sync);
+  `dispatch_type`/`routine_round` removed from data entry (shift from event
+  time); ward-first multi-equipment dispatch/receipt; three yes/no accessory
+  checks per equipment (not a state); daily shift report planned (Roadmap
+  PR26-PR30). Source: `docs/DECISION_LOG.md`.
+
 - Equipment states are exactly `AVAILABLE_AT_POOL`, `ISSUED_TO_WARD`,
   `UNAVAILABLE_DEFECTIVE`, and `DECOMMISSIONED`.
 - Cleaning is a physical activity, not a lifecycle state or workflow.

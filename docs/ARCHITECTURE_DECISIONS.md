@@ -143,7 +143,15 @@ the roadmap entirely (`AGENTS.md`, Domain Guardrails).
 **Decision:** The system never stores patient identifiers (name, HN,
 MRN, bed number) and does not track patient movement.
 
-**Status:** Confirmed, implemented as a guardrail.
+**Amendment (Owner Governance 2026-11-25, D1):** the sentence above is
+narrowly amended. Equipment Pool staff MAY record an optional patient HN on a
+dispatch, only with the safeguards in `docs/DECISION_LOG.md` (2026-11-25):
+encrypted at rest at the application level, masked by default with an audited
+"แสดง HN" reveal, and never present in any report, export, API, log,
+notification, legacy sync/import, or offline queue/client storage in clear.
+Patient name, MRN, bed number and patient movement remain excluded.
+
+**Status:** Confirmed, implemented as a guardrail (amended by D1, above).
 
 **Rationale:** Out of scope by hospital confirmation; also a data-privacy
 boundary — conflating equipment dispatch records with patient data would
