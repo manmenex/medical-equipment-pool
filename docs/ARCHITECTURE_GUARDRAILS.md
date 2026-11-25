@@ -20,7 +20,7 @@
 - Do not create missing Role CRUD, User delete, or master-data update/delete
   endpoints solely to obtain audit coverage.
 - Do not mix patient tracking into the Equipment Pool: no patient name, MRN,
-  bed number, named borrower, or patient movement. The single exception is an
+  bed number, named borrower, or patient movement (the optional free-text ward contact name of Owner Governance 2026-11-25 second set, D7, is a ward staff name, not a borrower or patient). The single exception is an
   optional patient HN on a dispatch (Owner Governance 2026-11-25), which must:
   be stored only in the database, encrypted at rest at the application level
   with a key from the host `.env` (never in the repo, logs, or clear-text

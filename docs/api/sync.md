@@ -40,6 +40,7 @@ Response `200`: `{ "results": [ { "op_id", "result", "code", "transaction_id"?, 
 
 Semantics worth knowing:
 
+* From Roadmap PR27 (Owner Governance 2026-11-25 second set, D7), the dispatch/receipt payloads of `/sync/operations` will carry the optional ward contact name.
 * Concurrent sends of the same `op_id` (two tabs, retry overlap) cannot double-apply: the loser receives `duplicate`, never a conflict. A `pending` operation retried concurrently applies exactly once.
 * The audit actor is the token user; `borrower_user_id` / `received_by_user_id` is the operation's user (the same person unless adopted). Audit `after_data` additionally carries `op_id`, `device_id`, `device_seq`.
 * Every applied operation produces exactly one `export_events` row, written last in the same transaction (`docs/api/export.md`). `duplicate`, `conflict`, `rejected`, and `retry_later` produce none.

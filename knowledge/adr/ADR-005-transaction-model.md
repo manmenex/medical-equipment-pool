@@ -107,6 +107,8 @@ decision requiring its own ADR. See `docs/BUSINESS_RULES.md`, `docs/
 DOMAIN_MODEL.md`, and `docs/DECISION_LOG.md` ("Roadmap PR7 (7b slice)") for
 the resulting current-state rules and rationale.
 
+Forward pointer: Owner Governance 2026-11-25 (second set, D7) later allows an optional free-text ward contact name at dispatch and receipt (Roadmap PR27); see `docs/DECISION_LOG.md`.
+
 ## References
 
 - `docs/HOSPITAL_DOMAIN_MODEL.md` — confirmed workflow, OPEN/CLOSED

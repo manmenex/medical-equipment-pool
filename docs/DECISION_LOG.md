@@ -9258,3 +9258,58 @@ opening-balance transactions are created.
 - **Source:** Owner decisions in chat, 2026-11-25. Docs-only Governance PR; no
   code change. Implementation follows in Roadmap PR26-PR30 (`docs/ROADMAP.md`).
 - **Status:** Approved; implementation not started.
+
+## 2026-11-25 (second set) — UX answers, shift grace attribution, ward contact name, non-blocking dispatch, monitor page
+
+- **Decision (Repository Owner, in chat, 2026-11-25):**
+  - **UX answers (resolve the pending D3/D4 questions):** (1) HN is one optional
+    field per equipment (mostly pneumatic pump, cryo cuff, mattress), not per
+    slip. (2) Receiving equipment dispatched to a different ward is accepted
+    with NO warning (equipment follows the patient); the system still records
+    only the first receiving ward and adds no transfer tracking. (3) The three
+    accessory checks default to checked/normal.
+  - **D6 Shift attribution grace window (amends PR16 Owner Decision #1 for
+    REPORTING ONLY):** a configurable +/-N minutes (default 60; 0 = strict
+    clock cut) around 08:00 and 20:00. An event inside a window is attributed
+    to the shift the operator (the Equipment Pool user who keyed it)
+    predominantly worked that business day, i.e. the shift containing most of
+    that operator's events outside the window. Ties, or an operator with no
+    other events, fall back to the clock rule. Stored timestamps never change;
+    the `business_date`/`shift` derivation used for list filters is unchanged.
+    The daily shift report (PR30) uses the attributed shift. Attribution is
+    computed at report time only (nothing stored); the business day for it is
+    the PR16 `business_date` (shift-start anchored,
+    `backend/app/core/reporting_time.py`).
+  - **D7 Ward-side contact name:** at dispatch and receipt the operator may
+    record a free-text name of the ward staff who received/sent the equipment
+    (one value per submission, applied to each equipment's transaction). Ward
+    staff remain non-users (no accounts, no login). Optional, never a patient
+    name; may appear in reports and the monitor page. Amends the PR7 decision
+    that removed `borrower_name` from entry. The sheet sync currently does not
+    import ward-side person names (`backend/app/services/legacy_sheet_sync/runner.py`);
+    PR27 will map the sheet's ward user column ("ผู้ส่งเครื่องยืม (User)"/
+    "ชื่อ (User)") into the ward contact name; until then the sync keeps
+    skipping it.
+  - **D8 Dispatch not blocked by equipment status (amends the dispatch rule
+    requiring `available_at_pool`):** the UI shows what is wrong; on
+    confirmation: (a) equipment already dispatched (open transaction): the
+    dispatch service atomically closes the previous open transaction with a
+    flag/reason "closed by re-dispatch, receipt not recorded" (audited) and
+    opens the new one; (b) `unavailable_defective`: dispatch allowed, the
+    transaction records that it was dispatched while marked defective
+    (audited); (c) `decommissioned`: still BLOCKED. Dispatch/receipt services
+    still own the lifecycle; exactly four states; no cleaning state.
+  - **D9 Monitor page:** list of dispatch and receipt submissions grouped by
+    date (slip/submission, ward, ward contact name, operator, time, equipment
+    count, drill-down), dispatch/receipt tabs, search, auto-refresh. Never
+    shows HN unmasked.
+- **Reason:** Fit the pool team's real practice (equipment follows patients,
+  re-dispatch without a recorded receipt, shift hand-over around 08:00/20:00).
+- **Amends:** `docs/BUSINESS_RULES.md` (dispatch availability, borrower/ward
+  contact, shift attribution note); the PR7 7b `borrower_name` removal; PR16
+  Owner Decision #1 (reporting attribution only); the D3/D4 "pending" notes of
+  the first 2026-11-25 entry. `AGENTS.md` guardrail lines are unchanged.
+- **Source:** Owner decisions in chat, 2026-11-25. Docs-only Governance PR; no
+  code change. Implementation: Roadmap PR27 (D7), PR30 (D6), PR31 (D8), PR32
+  (D9) in `docs/ROADMAP.md`.
+- **Status:** Approved; implementation not started.
