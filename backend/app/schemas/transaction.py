@@ -53,6 +53,12 @@ class BorrowRequest(BaseModel):
     pickup_location_id: str | None = None
     dropoff_location_id: str | None = None
     notes: str | None = None
+    # Roadmap PR31 (D8): operator confirmation of a status warning (equipment
+    # already dispatched, or marked defective). Without it the dispatch is
+    # rejected with 409 DISPATCH_STATUS_WARNING and a details object; with it
+    # the dispatch proceeds and is audited. Never lets a decommissioned item
+    # through. Offline sync operations carry it inside the same body.
+    acknowledge_status_warning: bool = False
 
     # Codex PR20 review round 1, MAJOR 1: the default Pydantic/FastAPI
     # behavior used elsewhere in this codebase (silently ignore unrecognized
@@ -188,6 +194,10 @@ class TransactionOut(BaseModel):
     legacy_condition_on_return: str | None
     status: str
     notes: str | None
+    # Roadmap PR31 (D8): see BorrowTransaction.close_reason /
+    # .dispatched_while_defective. Read-only.
+    close_reason: str | None = None
+    dispatched_while_defective: bool = False
     # Roadmap PR16 Slice 2 (docs/archive/design/PR16_REPORTING_FOUNDATION_PLAN.md
     # §9) -- read-only, computed, never accepted as request input.
     # dispatch_* is always present (every transaction has a `borrowed_at`);

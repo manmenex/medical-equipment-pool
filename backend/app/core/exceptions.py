@@ -25,6 +25,18 @@ class EquipmentNotAvailableError(DomainError):
     status_code = 409
 
 
+class DispatchStatusWarningError(EquipmentNotAvailableError):
+    """Roadmap PR31 (D8): dispatch of equipment that is already dispatched or
+    marked defective needs explicit operator confirmation
+    (``acknowledge_status_warning``). A subclass of EquipmentNotAvailableError
+    so the offline sync engine files an unacknowledged op under its existing
+    conflict/review path; ``details`` says what is wrong so the UI can warn.
+    Decommissioned equipment is never a warning: it raises the plain
+    EquipmentNotAvailableError."""
+
+    code = "DISPATCH_STATUS_WARNING"
+
+
 class TransactionNotFoundError(DomainError):
     code = "TRANSACTION_NOT_FOUND"
     status_code = 404

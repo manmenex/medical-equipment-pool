@@ -499,6 +499,12 @@ async def apply_now(
                 actor_user_id=resolver_id,
                 client_op=ctx,
                 borrowed_at=business_time,
+                # Roadmap PR31 (D8): only the operator's own acknowledgement
+                # carried by the op counts. "Apply now" never confirms a
+                # status warning on the operator's behalf; a conflicted op
+                # stays conflicted until the equipment is free (receipt) or
+                # is dismissed and re-dispatched online with confirmation.
+                acknowledge_status_warning=body.acknowledge_status_warning,
             )
         else:
             tx = await borrow_service.return_equipment(

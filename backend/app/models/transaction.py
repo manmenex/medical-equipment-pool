@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Enum, ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy import Boolean, Enum, ForeignKey, Index, Integer, String, Text, false, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.reporting_time import Shift, business_date_and_shift
@@ -237,6 +237,16 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     # migration. Mirrors app.models.equipment.Equipment.legacy_status
     # (Roadmap PR6 precedent).
     legacy_status: Mapped[str | None] = mapped_column(String(20))
+    # Roadmap PR31 (D8): set only when the dispatch service closed this
+    # transaction by re-dispatching the same equipment. The row is CLOSED with
+    # returned_at / condition_on_return / received_by_user_id all NULL -- no
+    # receipt is fabricated; receipt reports/exports key on those.
+    close_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Roadmap PR31 (D8): true when this transaction was opened while the
+    # equipment was UNAVAILABLE_DEFECTIVE (operator confirmed the warning).
+    dispatched_while_defective: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
 
     equipment: Mapped["Equipment"] = relationship()
     # Roadmap PR17 Slice 2 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md
@@ -347,6 +357,9 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
             return None
         _, shift = business_date_and_shift(self.returned_at)
         return shift
+
+
+CLOSE_REASON_REDISPATCH = "closed by re-dispatch, receipt not recorded"
 
 
 class TransactionAttachment(UUIDPKMixin, Base):

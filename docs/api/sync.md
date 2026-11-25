@@ -32,13 +32,16 @@ Response `200`: `{ "results": [ { "op_id", "result", "code", "transaction_id"?, 
 |---|---|---|
 | `applied` | `APPLIED` | Executed through the normal dispatch/receipt service; ledger row, business writes, audit entry, and exactly one export event committed atomically. |
 | `duplicate` | `DUPLICATE` | The `op_id` was already applied (or resolved) with identical content; `transaction_id` is the original. Nothing written. |
-| `conflict` | the domain code (`EQUIPMENT_NOT_AVAILABLE`, `EQUIPMENT_NOT_FOUND`, `INVALID_INPUT`, `TRANSACTION_ALREADY_RETURNED`, `RECEIPT_RACE_LOST`, `TRANSACTION_NOT_FOUND`) | Not applied; a `conflict` ledger row with the payload is stored for human review. Re-sending returns the same stored result without re-running. No business change, no export event. |
+| `conflict` | the domain code (`DISPATCH_STATUS_WARNING`, `EQUIPMENT_NOT_AVAILABLE`, `EQUIPMENT_NOT_FOUND`, `INVALID_INPUT`, `TRANSACTION_ALREADY_RETURNED`, `RECEIPT_RACE_LOST`, `TRANSACTION_NOT_FOUND`) | Not applied; a `conflict` ledger row with the payload is stored for human review. Re-sending returns the same stored result without re-running. No business change, no export event. |
 | `retry_later` | `DEPENDENCY_MISSING` | A receipt whose `transaction_id` is unknown, within 48 h of the server first seeing the `op_id`. A `pending` ledger row is kept (never a duplicate); retry later. After 48 h it becomes `conflict` / `TRANSACTION_NOT_FOUND`. |
+
 | `rejected` | `OP_USER_MISMATCH` | The token user is not the operation's user. Checked before anything else; the response never reveals whether the `op_id` exists, its stored result, or its `transaction_id`. Nothing is written. |
 | `rejected` | `OP_ID_REUSED` | The `op_id` exists with a different payload hash (client bug). |
 | `rejected` | `DEVICE_SEQ_REUSED` | The `(device_id, device_seq)` pair belongs to a different `op_id` (client bug). |
 
 Semantics worth knowing:
+
+* **Non-blocking dispatch (Roadmap PR31, D8):** an offline `dispatch` of equipment that is already dispatched or defective is applied only if the op's `dispatch` body carries `acknowledge_status_warning: true`. Without it the service raises `DISPATCH_STATUS_WARNING` and the op is stored as a `conflict` for the existing human review (it never silently closes another ward's open transaction on stale offline data); "apply now" in the review list does not confirm on the operator's behalf, so such an item stays a conflict until the equipment is free or it is dismissed and re-dispatched online with confirmation. Decommissioned equipment is a `conflict` (`EQUIPMENT_NOT_AVAILABLE`) either way. The current offline UI never sets the flag.
 
 * From Roadmap PR27 (Owner Governance 2026-11-25 second set, D7), the dispatch/receipt payloads of `/sync/operations` will carry the optional ward contact name.
 * Concurrent sends of the same `op_id` (two tabs, retry overlap) cannot double-apply: the loser receives `duplicate`, never a conflict. A `pending` operation retried concurrently applies exactly once.

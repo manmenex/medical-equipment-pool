@@ -1,6 +1,8 @@
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import (
@@ -37,6 +39,7 @@ from app.schemas.equipment import (
     EquipmentUpdate,
     QrResolveRequest,
 )
+from app.services import borrow_service
 from app.services.identifiers import normalize_bcm_code, normalize_item_no
 from app.services.qr_service import extract_item_no_from_qr
 from app.utils.parsing import parse_uuid
@@ -162,6 +165,45 @@ async def get_equipment(equipment_id: uuid.UUID, db: AsyncSession = Depends(get_
     if equipment is None:
         raise EquipmentNotFoundError("Equipment not found")
     return EquipmentOut.model_validate(_serialize(equipment))
+
+
+class DispatchCheckOut(BaseModel):
+    """Roadmap PR31 (D8) scan-time pre-check: read-only, writes nothing.
+    ``warning`` is null (plain dispatch), ``already_dispatched`` or
+    ``defective`` (dispatch allowed once the operator confirms with
+    ``acknowledge_status_warning``), or ``decommissioned`` (blocked)."""
+
+    equipment_id: str
+    status: EquipmentStatus
+    warning: str | None
+    dispatchable: bool
+    requires_acknowledgement: bool
+    current_ward_id: str | None = None
+    current_ward_name: str | None = None
+    dispatched_at: datetime | None = None
+    open_transaction_id: str | None = None
+    open_transaction_no: str | None = None
+
+
+@router.get("/{equipment_id}/dispatch-check", response_model=DispatchCheckOut)
+async def dispatch_check(equipment_id: uuid.UUID, db: AsyncSession = Depends(get_db), _user=Depends(get_current_user)):
+    equipment = await equipment_crud.get_by_id(db, equipment_id)
+    if equipment is None:
+        raise EquipmentNotFoundError("Equipment not found")
+    assessment = await borrow_service.assess_dispatch(db, equipment)
+    tx = assessment.open_transaction
+    return DispatchCheckOut(
+        equipment_id=str(equipment.id),
+        status=equipment.status,
+        warning=assessment.warning,
+        dispatchable=not assessment.blocked,
+        requires_acknowledgement=assessment.requires_acknowledgement,
+        current_ward_id=str(tx.ward_id) if tx is not None and tx.ward_id else None,
+        current_ward_name=assessment.ward_name,
+        dispatched_at=tx.borrowed_at if tx is not None else None,
+        open_transaction_id=str(tx.id) if tx is not None else None,
+        open_transaction_no=tx.transaction_no if tx is not None else None,
+    )
 
 
 @router.get("/{equipment_id}/history", response_model=list[EquipmentStatusHistoryOut])

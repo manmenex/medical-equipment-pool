@@ -69,11 +69,21 @@ EquipmentStatusType = Enum(
 # key in MANUAL_LIFECYCLE_TRANSITIONS below, so no manual caller can ever
 # originate a transition away from it, and AVAILABLE_AT_POOL -> ISSUED_TO_
 # WARD (dispatch) exists only here.
+#
+# Roadmap PR31 (Owner Governance 2026-11-25 D8): the dispatch service also
+# owns UNAVAILABLE_DEFECTIVE -> ISSUED_TO_WARD (dispatch while defective) and
+# ISSUED_TO_WARD -> ISSUED_TO_WARD (re-dispatch). Both stay out of
+# MANUAL_LIFECYCLE_TRANSITIONS. DECOMMISSIONED has no entry: never dispatchable.
 DISPATCH_RECEIPT_TRANSITIONS: dict["EquipmentStatus", frozenset["EquipmentStatus"]] = {
     EquipmentStatus.AVAILABLE_AT_POOL: frozenset({EquipmentStatus.ISSUED_TO_WARD}),
     EquipmentStatus.ISSUED_TO_WARD: frozenset(
-        {EquipmentStatus.AVAILABLE_AT_POOL, EquipmentStatus.UNAVAILABLE_DEFECTIVE}
+        {
+            EquipmentStatus.AVAILABLE_AT_POOL,
+            EquipmentStatus.UNAVAILABLE_DEFECTIVE,
+            EquipmentStatus.ISSUED_TO_WARD,
+        }
     ),
+    EquipmentStatus.UNAVAILABLE_DEFECTIVE: frozenset({EquipmentStatus.ISSUED_TO_WARD}),
 }
 
 # Manual, authorized maintenance-lifecycle transitions for the generic

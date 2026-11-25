@@ -8,7 +8,13 @@ from sqlalchemy.orm import selectinload
 
 from app.core.reporting_time import Shift, business_date_and_shift_sql
 from app.models.equipment import Equipment
-from app.models.transaction import BorrowTransaction, DispatchType, RoutineRound, TransactionStatus
+from app.models.transaction import (
+    CLOSE_REASON_REDISPATCH,
+    BorrowTransaction,
+    DispatchType,
+    RoutineRound,
+    TransactionStatus,
+)
 from app.utils.pagination import decode_cursor, encode_cursor
 
 # Roadmap PR4 (docs/archive/kickoffs/PR4-architecture-kickoff.md): the numeric
@@ -241,6 +247,31 @@ async def close(
         update(BorrowTransaction)
         .where(BorrowTransaction.id == tx.id, BorrowTransaction.status == TransactionStatus.OPEN)
         .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount == 1
+
+
+async def close_for_redispatch(db: AsyncSession, tx: BorrowTransaction) -> bool:
+    """Roadmap PR31 (D8): conditionally closes an OPEN transaction because the
+    same equipment is being dispatched again, and reports whether *this* call
+    did it. Same conditional-UPDATE guard as ``close()``:
+
+        UPDATE borrow_transactions
+           SET status = 'closed', close_reason = :reason
+         WHERE id = :id AND status = 'open'
+
+    ``returned_at``, ``condition_on_return`` and ``received_by_user_id`` are
+    deliberately left NULL: no receipt happened, so none is recorded (receipt
+    reports and the export API key on those columns). Returns False when a
+    concurrent receipt or re-dispatch already closed the row; the caller must
+    then roll back with no side effects. Like ``close()`` it bypasses the ORM
+    unit of work, so the caller refreshes ``tx`` after a True result.
+    """
+    result = await db.execute(
+        update(BorrowTransaction)
+        .where(BorrowTransaction.id == tx.id, BorrowTransaction.status == TransactionStatus.OPEN)
+        .values(status=TransactionStatus.CLOSED, close_reason=CLOSE_REASON_REDISPATCH)
         .execution_options(synchronize_session=False)
     )
     return result.rowcount == 1

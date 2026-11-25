@@ -26,6 +26,9 @@ export interface BorrowPayload {
   pickup_location_id?: string;
   dropoff_location_id?: string;
   notes?: string;
+  // Roadmap PR31 (D8): sent only after the operator confirmed a
+  // DISPATCH_STATUS_WARNING (already dispatched / defective).
+  acknowledge_status_warning?: boolean;
 }
 
 export async function createBorrow(payload: BorrowPayload): Promise<TransactionOut> {

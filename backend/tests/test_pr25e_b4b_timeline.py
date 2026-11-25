@@ -50,7 +50,7 @@ async def _scenario(client, ctx, db):
     op1 = dispatch_op(ctx["staff_id"], ctx["eq"], ctx["ward"], seq=1)
     assert (await _send(client, ctx["staff"], op1))[0]["result"] == "applied"
     op2 = dispatch_op(ctx["staff_id"], ctx["eq"], ctx["ward"], seq=1)
-    assert (await _send(client, ctx["staff"], op2))[0]["code"] == "EQUIPMENT_NOT_AVAILABLE"
+    assert (await _send(client, ctx["staff"], op2))[0]["code"] == "DISPATCH_STATUS_WARNING"
     op3 = receipt_op(ctx["staff_id"], op2["op_id"], seq=1)
     assert (await _send(client, ctx["staff"], op3))[0]["result"] == "retry_later"
     await _set(db, op3["op_id"], first_seen_at=datetime.now(timezone.utc) - timedelta(hours=49))
@@ -81,7 +81,7 @@ async def test_timeline_merges_and_orders(client, ctx, db_session):
     ops = [e for e in ev if e["source"] == "op"]
     assert [e["op_id"] for e in ops] == [op2["op_id"], op3["op_id"]]
     assert all(e["selectable"] for e in ops) and not any(e["selectable"] for e in ev if e["source"] == "transaction")
-    assert ops[0]["result_code"] == "EQUIPMENT_NOT_AVAILABLE"
+    assert ops[0]["result_code"] == "DISPATCH_STATUS_WARNING"
     assert ops[1]["kind"] == "receipt" and ops[1]["status"] == "pending"
     times = [e["at"] for e in ev]
     assert times == sorted(times)
@@ -224,7 +224,7 @@ async def test_stats_and_csv(client, ctx, db_session):
     assert st.status_code == 200, st.text
     body = st.json()
     assert body["total_conflicts"] == 2 and body["by_status"] == {"resolved": 2}
-    assert body["by_result_code"]["EQUIPMENT_NOT_AVAILABLE"] == 1
+    assert body["by_result_code"]["DISPATCH_STATUS_WARNING"] == 1
     g = body["groups"]
     assert g["equipment_with_multiple_conflicts"] == 1 and g["cross_device"] == 1
     assert g["by_outcome"]["same"] == 1 and g["agreement_rate"] == 1.0

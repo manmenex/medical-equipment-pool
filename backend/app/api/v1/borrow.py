@@ -48,6 +48,7 @@ async def create_borrow(
         notes=payload.notes,
         ip_address=ip,
         user_agent=ua,
+        acknowledge_status_warning=payload.acknowledge_status_warning,
     )
     return tx
 

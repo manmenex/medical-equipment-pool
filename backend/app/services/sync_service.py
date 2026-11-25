@@ -270,6 +270,13 @@ async def _execute(
             actor_user_id=user.id,
             client_op=ctx,
             borrowed_at=business_time,
+            # Roadmap PR31 (D8): an offline-queued dispatch of already-
+            # dispatched/defective equipment is applied only if the op itself
+            # carries the operator's acknowledgement; otherwise the service
+            # raises DispatchStatusWarningError and the op lands in the
+            # existing conflict/review path (never silently closes a ward's
+            # open transaction on stale offline data).
+            acknowledge_status_warning=d.acknowledge_status_warning,
         )
     r = op.receipt
     return await borrow_service.return_equipment(
