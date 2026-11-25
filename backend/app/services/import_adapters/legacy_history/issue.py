@@ -105,6 +105,16 @@ _LINE_GOVERNED_HEADERS: dict[str, str | None] = {
     "ชื่อ (User)": None,
 }
 
+
+def governed_columns(sheet_name: str) -> tuple[str, ...]:
+    """Public accessor: the governed header names of one of this module's
+    two canonical sheets (used by the host-side history preparation tool)."""
+    if sheet_name == HEADER_SHEET_NAME:
+        return tuple(_HEADER_GOVERNED_HEADERS)
+    if sheet_name == LINE_SHEET_NAME:
+        return tuple(_LINE_GOVERNED_HEADERS)
+    raise KeyError(sheet_name)
+
 # ---------------------------------------------------------------------------
 # §25: centralized, stable finding codes for this module. Every one of
 # §25's listed categories that genuinely applies to the Issue side is

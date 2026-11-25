@@ -7,11 +7,16 @@ result passes the "นำเข้าข้อมูลเดิม" upload guar
 
 Needs no database. Reads cached cell values only. Prints COUNTS only --
 never any cell value (the workbook is real hospital data).
+
+Only columns in each sheet's governed header schema are written; every other
+column (e.g. a patient HN column) is dropped without being read into the
+output. Dropped column NAMES (not values) and counts are printed.
 """
 from __future__ import annotations
 
 import argparse
 import io
+import os
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -70,7 +75,32 @@ def _col(header: tuple, name: str) -> int:
     raise ValueError("required column missing")
 
 
-def prepare(src, since: date, until: date | None, out: Workbook, stats: dict) -> None:
+def _governed(sheet_name: str) -> tuple[str, ...]:
+    for mod in (issue, receive):
+        try:
+            return mod.governed_columns(sheet_name)
+        except KeyError:
+            continue
+    raise KeyError(sheet_name)
+
+
+def _keep_indices(header: tuple, sheet_name: str, dropped: dict) -> list[int]:
+    governed = set(_governed(sheet_name))
+    keep, names, unnamed = [], [], 0
+    for i, h in enumerate(header):
+        if isinstance(h, str) and h.strip() in governed:
+            keep.append(i)
+        elif isinstance(h, str) and h.strip():
+            names.append(h.strip())
+        elif h is not None:
+            names.append(f"<non-text header #{i + 1}>")
+        else:
+            unnamed += 1
+    dropped[sheet_name] = (names, unnamed)
+    return keep
+
+
+def prepare(src, since: date, until: date | None, out: Workbook, stats: dict, dropped: dict) -> None:
     for hs, h_doc, ls, l_doc in _PAIRS:
         for name in (hs, ls):
             if name not in src.sheetnames:
@@ -95,10 +125,11 @@ def prepare(src, since: date, until: date | None, out: Workbook, stats: dict) ->
         stats[hs] = (len(h_kept), len(h_rows) - len(h_kept), 0)
 
         for name, header, rows in ((hs, h_header, h_kept), (ls, l_header, kept)):
+            keep = _keep_indices(header, name, dropped)
             ws = out.create_sheet(name)
-            ws.append(list(header))
+            ws.append([header[i] for i in keep])
             for r in rows:
-                ws.append(list(r))
+                ws.append([r[i] if i < len(r) else None for i in keep])
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -111,26 +142,32 @@ def main(argv: list[str] | None = None) -> int:
     if a.until and a.until < a.since:
         print("ERROR: --until is before --since", file=sys.stderr)
         return 2
+    tmp = a.output.with_name(a.output.name + ".tmp")
     try:
         src = load_workbook(a.input, read_only=True, data_only=True)
         out = Workbook()
         out.remove(out.active)
         stats: dict = {}
+        dropped: dict = {}
         try:
-            prepare(src, a.since, a.until, out, stats)
+            prepare(src, a.since, a.until, out, stats, dropped)
         finally:
             src.close()
         buf = io.BytesIO()
         out.save(buf)
         content = buf.getvalue()
-        a.output.write_bytes(content)
+        tmp.write_bytes(content)
         i_h, i_l = issue.parse_workbook(content)
         r_h, r_l = receive.parse_workbook(content)
+        os.replace(tmp, a.output)  # only after validation succeeded
     except Exception as exc:  # message only; must not echo cell data
+        tmp.unlink(missing_ok=True)
         print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
-    for name, (kept, dropped, unparse) in stats.items():
-        print(f"sheet[{name}] kept={kept} dropped={dropped} unparseable_date={unparse}")
+    for name, (kept, n_dropped, unparse) in stats.items():
+        print(f"sheet[{name}] kept={kept} dropped={n_dropped} unparseable_date={unparse}")
+    for name, (names, unnamed) in dropped.items():
+        print(f"sheet[{name}] dropped_columns={len(names) + unnamed} names={names} unnamed={unnamed}")
     print(
         f"validated issue_headers={len(i_h)} issue_lines={len(i_l)} "
         f"receive_headers={len(r_h)} receive_lines={len(r_l)}"

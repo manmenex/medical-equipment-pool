@@ -16,7 +16,7 @@ def _row(headers, **kw):
     return [kw.get(h) for h in headers]
 
 
-def _build(path):
+def _build(path, extra_cols=False):
     wb = Workbook()
     wb.remove(wb.active)
     for i in range(30):
@@ -28,8 +28,9 @@ def _build(path):
     for hs, hh, hd, ls, lh, ld, p in spec:
         h, l = wb.create_sheet(hs), wb.create_sheet(ls)
         h.append(hh)
-        l.append(lh)
-        l.append(_row(lh, **{"ลำดับ": "1", "วันที่": datetime(2026, 11, 24), ld: f"{p}1"}))
+        l.append(lh + (["HN คนไข้", "Unknown Col"] if extra_cols else []))
+        l.append(_row(lh, **{"ลำดับ": "1", "วันที่": datetime(2026, 11, 24), ld: f"{p}1"})
+                 + (["HN-SECRET-123", "UNKNOWN-VAL-9"] if extra_cols else []))
         l.append(_row(lh, **{"ลำดับ": "2", "วันที่": "24/Nov/2026", ld: f"{p}2"}))
         l.append(_row(lh, **{"ลำดับ": "3", "วันที่": "24/11/2569", ld: f"{p}3"}))  # BE
         l.append(_row(lh, **{"ลำดับ": "4", "วันที่": "2026-01-01", ld: f"{p}OLD"}))
@@ -40,9 +41,9 @@ def _build(path):
     wb.save(path)
 
 
-def _run(tmp_path, *extra):
+def _run(tmp_path, *extra, extra_cols=False):
     src, out = tmp_path / "in.xlsx", tmp_path / "out.xlsx"
-    _build(src)
+    _build(src, extra_cols)
     rc = prep.main(["--input", str(src), "--output", str(out), "--since", "2026-05-25", *extra])
     return rc, out
 
@@ -81,3 +82,31 @@ def test_missing_sheet_fails(tmp_path):
     wb.save(src)
     rc = prep.main(["--input", str(src), "--output", str(tmp_path / "o.xlsx"), "--since", "2026-05-25"])
     assert rc == 1
+
+
+def test_unknown_columns_dropped(tmp_path, capsys):
+    rc, out = _run(tmp_path, extra_cols=True)
+    assert rc == 0
+    wb = load_workbook(out)
+    for name, gov in ((issue.LINE_SHEET_NAME, I_LINE), (receive.LINE_SHEET_NAME, R_LINE)):
+        assert [c.value for c in wb[name][1]] == gov
+    for ws in wb.worksheets:
+        for row in ws.iter_rows(values_only=True):
+            assert not any(isinstance(v, str) and ("SECRET" in v or "UNKNOWN-VAL" in v) for v in row)
+    assert b"HN-SECRET-123" not in out.read_bytes() and b"UNKNOWN-VAL-9" not in out.read_bytes()
+    captured = capsys.readouterr()
+    text = captured.out + captured.err
+    assert "HN คนไข้" in text and "dropped_columns=2" in text
+    assert "HN-SECRET-123" not in text and "UNKNOWN-VAL-9" not in text
+    assert not (tmp_path / "out.xlsx.tmp").exists()
+
+
+def test_failed_validation_leaves_no_output(tmp_path):
+    src, out = tmp_path / "in.xlsx", tmp_path / "out.xlsx"
+    _build(src)
+    wb = load_workbook(src)
+    wb[issue.LINE_SHEET_NAME].delete_cols(I_LINE.index("ME.Code") + 1)  # fails in validation, not in prepare
+    wb.save(src)
+    rc = prep.main(["--input", str(src), "--output", str(out), "--since", "2026-05-25"])
+    assert rc == 1
+    assert not out.exists() and not (tmp_path / "out.xlsx.tmp").exists()
