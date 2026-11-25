@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 import io
 import os
-import re
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -33,50 +32,6 @@ _PAIRS = (
     (issue.HEADER_SHEET_NAME, "เลขที่ใบยืม", issue.LINE_SHEET_NAME, "เลขที่ใบส่ง"),
     (receive.HEADER_SHEET_NAME, "เลขที่ใบคืน", receive.LINE_SHEET_NAME, "เลขที่ใบรับเครื่อง"),
 )
-
-
-_DOC_KEY = re.compile(r"([A-Za-z]+)1(0*)(\d+)")
-
-
-def _doc_key(doc: str) -> tuple[str, int] | None:
-    """Padding-insensitive key: (alpha prefix, number after the leading 1 and zero padding)."""
-    m = _DOC_KEY.fullmatch(doc)
-    return (m.group(1), int(m.group(3))) if m else None
-
-
-def _reconcile(h_rows: list[tuple], hi: int, docs: set[str]) -> tuple[list[tuple], int]:
-    """Keep header rows whose doc is referenced by a kept line. A header with no exact
-    match is rewritten to the line's doc string only when its normalized key matches
-    exactly one kept line doc (without an exact header) and no other header doc shares
-    the key; any ambiguity drops it as before."""
-    def ref(r: tuple) -> str:
-        return _doc(r[hi] if hi < len(r) else None)
-
-    header_docs = {ref(r) for r in h_rows}
-    line_keys: dict[tuple[str, int], list[str]] = {}
-    for d in docs:
-        k = _doc_key(d)
-        if k is not None:
-            line_keys.setdefault(k, []).append(d)
-    header_keys: dict[tuple[str, int], set[str]] = {}
-    for d in header_docs:
-        k = _doc_key(d)
-        if k is not None:
-            header_keys.setdefault(k, set()).add(d)
-    out, n = [], 0
-    for r in h_rows:
-        d = ref(r)
-        if d in docs:
-            out.append(r)
-            continue
-        k = _doc_key(d)
-        cands = line_keys.get(k, []) if k is not None else []
-        if len(cands) == 1 and len(header_keys[k]) == 1 and cands[0] not in header_docs:
-            row = list(r)
-            row[hi] = cands[0]
-            out.append(tuple(row))
-            n += 1
-    return out, n
 
 
 def _to_date(value: object) -> date | None:
@@ -145,8 +100,7 @@ def _keep_indices(header: tuple, sheet_name: str, dropped: dict) -> list[int]:
     return keep
 
 
-def prepare(src, since: date, until: date | None, out: Workbook, stats: dict, dropped: dict,
-            reconciled: dict | None = None) -> None:
+def prepare(src, since: date, until: date | None, out: Workbook, stats: dict, dropped: dict) -> None:
     for hs, h_doc, ls, l_doc in _PAIRS:
         for name in (hs, ls):
             if name not in src.sheetnames:
@@ -167,9 +121,7 @@ def prepare(src, since: date, until: date | None, out: Workbook, stats: dict, dr
 
         h_header, h_rows = _read(src[hs])
         hi = _col(h_header, h_doc)
-        h_kept, n_rec = _reconcile(h_rows, hi, docs)
-        if reconciled is not None:
-            reconciled[hs] = n_rec
+        h_kept = [r for r in h_rows if _doc(r[hi] if hi < len(r) else None) in docs]
         stats[hs] = (len(h_kept), len(h_rows) - len(h_kept), 0)
 
         for name, header, rows in ((hs, h_header, h_kept), (ls, l_header, kept)):
@@ -197,9 +149,8 @@ def main(argv: list[str] | None = None) -> int:
         out.remove(out.active)
         stats: dict = {}
         dropped: dict = {}
-        reconciled: dict = {}
         try:
-            prepare(src, a.since, a.until, out, stats, dropped, reconciled)
+            prepare(src, a.since, a.until, out, stats, dropped)
         finally:
             src.close()
         buf = io.BytesIO()
@@ -215,8 +166,6 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     for name, (kept, n_dropped, unparse) in stats.items():
         print(f"sheet[{name}] kept={kept} dropped={n_dropped} unparseable_date={unparse}")
-    for name, n in reconciled.items():
-        print(f"sheet[{name}] doc_reconciled={n}")
     for name, (names, unnamed) in dropped.items():
         print(f"sheet[{name}] dropped_columns={len(names) + unnamed} names={names} unnamed={unnamed}")
     print(
