@@ -15,6 +15,7 @@ const EquipmentDetailPage = lazy(() =>
 const BorrowPage = lazy(() => import("@/pages/BorrowPage").then((m) => ({ default: m.BorrowPage })));
 const ReturnPage = lazy(() => import("@/pages/ReturnPage").then((m) => ({ default: m.ReturnPage })));
 const ScanPage = lazy(() => import("@/pages/ScanPage").then((m) => ({ default: m.ScanPage })));
+const MonitorPage = lazy(() => import("@/pages/MonitorPage").then((m) => ({ default: m.MonitorPage })));
 const ReportsPage = lazy(() => import("@/pages/ReportsPage").then((m) => ({ default: m.ReportsPage })));
 const ReceiveReportPage = lazy(() =>
   import("@/pages/ReceiveReportPage").then((m) => ({ default: m.ReceiveReportPage }))
@@ -94,6 +95,7 @@ export function App() {
           <Route path="/scan" element={<ScanPage />} />
           <Route path="/borrow" element={<BorrowPage />} />
           <Route path="/return" element={<ReturnPage />} />
+          <Route path="/monitor" element={<MonitorPage />} />
           <Route path="/reports" element={<ReportsPage />} />
           {/* Roadmap PR17 Slice 3: new sub-routes under the existing
               /reports route (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md
