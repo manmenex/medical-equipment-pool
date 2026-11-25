@@ -143,7 +143,15 @@ the roadmap entirely (`AGENTS.md`, Domain Guardrails).
 **Decision:** The system never stores patient identifiers (name, HN,
 MRN, bed number) and does not track patient movement.
 
-**Status:** Confirmed, implemented as a guardrail.
+**Amendment (Owner Governance 2026-11-25, D1):** the sentence above is
+narrowly amended. Equipment Pool staff MAY record an optional patient HN on a
+dispatch, only with the safeguards in `docs/DECISION_LOG.md` (2026-11-25):
+encrypted at rest at the application level, masked by default with an audited
+"แสดง HN" reveal, and never present in any report, export, API, log,
+notification, legacy sync/import, or offline queue/client storage in clear.
+Patient name, MRN, bed number and patient movement remain excluded.
+
+**Status:** Confirmed, implemented as a guardrail (amended by D1, above).
 
 **Rationale:** Out of scope by hospital confirmation; also a data-privacy
 boundary — conflating equipment dispatch records with patient data would
@@ -154,6 +162,8 @@ required or accepted (removed per Roadmap PR7). Ward-to-ward patient
 transfers are explicitly not tracked. Enforced as a standing guardrail in
 `AGENTS.md` and checked by the reviewer prompt
 (`docs/prompts/codex-pr-review.md`).
+
+**Amended by Owner Governance 2026-11-25, second set (D7):** an optional free-text ward contact name (the ward staff who received/sent the equipment) may be recorded at dispatch and receipt (Roadmap PR27). Ward staff remain non-users (no accounts, no login); the field is never a patient name and is not a borrower identity. See `docs/DECISION_LOG.md`.
 
 ---
 

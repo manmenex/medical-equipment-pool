@@ -15,7 +15,7 @@
 | Ward | First receiving destination recorded for a dispatch | Not current patient/equipment location | Current |
 | First receiving ward | Ward selected when equipment first leaves the pool | Do not update for later real-world transfers | Current |
 | Equipment | One physical device with internal UUID identity | Not a quantity/batch | Current |
-| BCM Code, Item No, Asset Number, ~~ME Code~~ | See [`../knowledge/glossary.md`](../knowledge/glossary.md) | "ME Code" is retired — do not use | See `knowledge/adr/ADR-002` |
+| BCM Code, Item No, Asset Number, ~~ME Code~~ | See [`../knowledge/glossary.md`](../knowledge/glossary.md) | "ME Code" is retired — do not use (sole exception: printed daily form label "ME.Code", D12, `docs/BUSINESS_RULES.md`) | See `knowledge/adr/ADR-002` |
 | Dispatch | Operator records equipment leaving pool for first receiving ward | Prefer over “borrow” in user-facing domain language | Roadmap target |
 | Receipt | One atomic operation closing an open dispatch with usable/defective outcome | Not cleaning completion | Roadmap target |
 | Issue | Physical/operational act of sending equipment to a ward | Prefer “dispatch” for system records | Contextual synonym |

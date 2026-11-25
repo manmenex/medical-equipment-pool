@@ -58,8 +58,24 @@ AVAILABLE_AT_POOL
 UNAVAILABLE_DEFECTIVE -> DECOMMISSIONED (terminal normal state)
 ```
 
+Dispatch transitions added by Owner Governance 2026-11-25, second set (D8). They are owned by the dispatch service only, never by manual status maintenance:
+
+```text
+UNAVAILABLE_DEFECTIVE
+    -> dispatch while defective (operator confirmation, audited,
+       flag recorded on the transaction)
+ISSUED_TO_WARD
+
+ISSUED_TO_WARD
+    -> re-dispatch (previous open transaction atomically closed with reason
+       "closed by re-dispatch, receipt not recorded"; new transaction opened)
+ISSUED_TO_WARD
+
+DECOMMISSIONED -> never dispatchable
+```
+
 - **Dispatch:** Equipment Pool operator records equipment leaving the pool for
-  the first receiving ward. No named borrower or patient is recorded.
+  the first receiving ward. No named borrower or patient is recorded (amended 2026-11-25 second set: an optional free-text ward contact name may be recorded, D7; dispatch is not blocked by equipment status, D8; see `docs/BUSINESS_RULES.md`).
 - **Receipt:** One atomic digital operation closes the dispatch and records a
   binary outcome: usable or defective. Receipt does not mean cleaning was
   completed and does not record cleaning.
@@ -76,7 +92,7 @@ name is implemented before those PRs merge.
 
 ## Explicit exclusions
 
-- No patient name, HN/MRN, bed number, named borrower, or current-patient location.
+- No patient name, MRN, bed number, named borrower (an optional free-text ward contact name is allowed per Owner Governance 2026-11-25 second set, D7), or current-patient location. The only patient datum is the governed optional patient HN on a dispatch (Owner Governance 2026-11-25, `docs/DECISION_LOG.md`), with its safeguards.
 - No ward-to-ward transfer tracking or live equipment-location claim.
 - No cleaning state, cleaning completion, or cleaning workflow.
 - No ward user entry; Equipment Pool operators record actions.

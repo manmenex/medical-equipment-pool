@@ -76,7 +76,7 @@ class LegacyHistoryDryRunPlanRowValuesOut(BaseModel):
     legacy_ward_text: str | None
     resolved_ward_id: UUIDStr | None
     legacy_bme_name: str | None
-    header_source_ref: LegacyHistoryDryRunPlanSourceRefOut
+    header_source_ref: LegacyHistoryDryRunPlanSourceRefOut | None
     line_source_ref: LegacyHistoryDryRunPlanSourceRefOut
 
 

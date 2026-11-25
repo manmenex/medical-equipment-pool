@@ -9,7 +9,7 @@
 
 ## `POST /api/v1/borrow` — create a dispatch
 
-Creates a new borrow transaction and moves the selected equipment from `available_at_pool` to `issued_to_ward`, atomically.
+Creates a new borrow transaction and moves the selected equipment from `available_at_pool` to `issued_to_ward`, atomically. (Amended by Owner Governance 2026-11-25 second set, D8: PR31 will allow dispatch of already-dispatched and `unavailable_defective` equipment on confirmation; `decommissioned` stays blocked. Current behavior below applies until then.)
 
 **Auth:** Bearer token required. Allowed roles (Roadmap PR10's confirmed 3-role model): `administrator`, `equipment_pool_staff` (`app.api.v1.deps.EQUIPMENT_POOL_OPERATION_ROLES`).
 
@@ -41,7 +41,7 @@ Creates a new borrow transaction and moves the selected equipment from `availabl
 
 **Deliberately absent fields** (Roadmap PR7b — do not send these; they are rejected, not silently ignored, because `BorrowRequest` uses `model_config = {"extra": "forbid"}`):
 
-- `borrower_name` — no longer accepted or required; historical values from before this change remain visible read-only in `TransactionOut.borrower_name`.
+- `borrower_name` — (amended by Owner Governance 2026-11-25 second set, D7: an optional ward contact name is planned for PR27; this paragraph describes the current API until then) no longer accepted or required; historical values from before this change remain visible read-only in `TransactionOut.borrower_name`.
 - `due_at` — removed from the write path entirely (`knowledge/adr/ADR-005-transaction-model.md` decision 3); historical values remain exportable via the reporting service, not through this API.
 - `quantity` — no longer accepted; defaults to `1` at the database level.
 

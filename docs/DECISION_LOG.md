@@ -9208,3 +9208,150 @@ opening-balance transactions are created.
   (amendment note added at section 15).
 - **Source:** Owner approval in chat, 2026-11-25. Docs-only; no change to
   business rules or guardrails. Code changes follow in a separate PR.
+
+## 2026-11-25 — Patient HN, shift-by-time dispatch, ward-first entry, accessory checks, daily shift report
+
+- **Decision (Repository Owner, in chat, 2026-11-25):**
+  - **D1 Patient HN** (narrowly amends the "No patient tracking" guardrail):
+    Equipment Pool staff MAY record a patient HN on a dispatch. Mandatory
+    safeguards: stored only in the database, encrypted at rest at the
+    application level (key from host `.env`, never in repo/logs/clear-text
+    backups); masked by default in every UI view, revealed only by an explicit
+    "แสดง HN" click by an authenticated user; every reveal audited (who/when/
+    which transaction, never the HN value); HN never appears in any printed
+    report, PDF, Excel export, CSV, read-only export API, logs, notifications,
+    or the legacy sheet sync/import (these keep dropping/skipping HN), and
+    offline queue/client storage (HN there must be encrypted and cleared after
+    sync, never logged); no
+    patient name or other patient field; no search by HN unless separately
+    approved; no patient-tracking workflow beyond this field. PDPA: the Owner
+    accepts responsibility; hospital legal/IT review is recommended; the
+    retention policy is TBD (future decision).
+  - **D2 Dispatch type and routine round:** remove `dispatch_type` and
+    `routine_round` from data entry (amends the Roadmap PR7 7b rule in
+    `docs/BUSINESS_RULES.md`). New dispatches no longer carry them (nullable;
+    historical values preserved read-only). Reporting groups by the existing
+    PR16 `business_date`/`shift` (Day/Night) derived from the event time.
+  - **D3 Entry flow:** select the ward first, then scan/enter one or more
+    equipment for that ward in one submission; each equipment remains its own
+    transaction and the dispatch/receipt services still own the lifecycle.
+    Receipt follows the same ward-first multi-equipment flow and stays atomic
+    usable/defective per equipment. The detailed entry process is pending
+    Owner confirmation of three UX questions: HN per equipment vs per slip;
+    receipt of equipment dispatched to a different ward (allow with warning
+    vs block); accessory checks default checked vs unchecked.
+  - **D4 Accessory/condition checks:** per equipment at dispatch and receipt,
+    three yes/no checks: screen not cracked (ตัวเครื่องหน้าจอไม่แตกร้าว),
+    charger cable OK (สายชาร์จไม่ขาด), pole clamp present/OK (Pole Clamp
+    ไม่แตกหัก). Recorded as condition facts; not a cleaning state; no new
+    equipment state. Default state of the checks (checked vs unchecked) is
+    pending Owner confirmation (see D3).
+  - **D5 Daily shift report:** add a daily report matching the pool team's
+    current Excel summary (by ward group, equipment type, operator; night vs
+    day shift; dispatch/receipt counts) and printable daily forms. HN never
+    appears.
+- **Reason:** Operational fit with the pool team's real daily process; HN
+  needed by the team at dispatch time, handled with strict privacy safeguards.
+- **Amends:** `AGENTS.md` (patient-tracking guardrail),
+  `docs/ARCHITECTURE_GUARDRAILS.md` (patient tracking), `docs/BUSINESS_RULES.md`
+  (Roadmap PR7 7b dispatch_type/routine_round rule).
+- **Source:** Owner decisions in chat, 2026-11-25. Docs-only Governance PR; no
+  code change. Implementation follows in Roadmap PR26-PR30 (`docs/ROADMAP.md`).
+- **Status:** Approved; implementation not started.
+
+## 2026-11-25 (second set) — UX answers, shift grace attribution, ward contact name, non-blocking dispatch, monitor page
+
+- **Decision (Repository Owner, in chat, 2026-11-25):**
+  - **UX answers (resolve the pending D3/D4 questions):** (1) HN is one optional
+    field per equipment (mostly pneumatic pump, cryo cuff, mattress), not per
+    slip. (2) Receiving equipment dispatched to a different ward is accepted
+    with NO warning (equipment follows the patient); the system still records
+    only the first receiving ward and adds no transfer tracking. (3) The three
+    accessory checks default to checked/normal.
+  - **D6 Shift attribution grace window (amends PR16 Owner Decision #1 for
+    REPORTING ONLY):** a configurable +/-N minutes (default 60; 0 = strict
+    clock cut) around 08:00 and 20:00. An event inside a window is attributed
+    to the shift the operator (the Equipment Pool user who keyed it)
+    predominantly worked that business day, i.e. the shift containing most of
+    that operator's events outside the window. Ties, or an operator with no
+    other events, fall back to the clock rule. Stored timestamps never change;
+    the `business_date`/`shift` derivation used for list filters is unchanged.
+    The daily shift report (PR30) uses the attributed shift. Attribution is
+    computed at report time only (nothing stored); the business day for it is
+    the PR16 `business_date` (shift-start anchored,
+    `backend/app/core/reporting_time.py`).
+  - **D7 Ward-side contact name:** at dispatch and receipt the operator may
+    record a free-text name of the ward staff who received/sent the equipment
+    (one value per submission, applied to each equipment's transaction). Ward
+    staff remain non-users (no accounts, no login). Optional, never a patient
+    name; may appear in reports and the monitor page. Amends the PR7 decision
+    that removed `borrower_name` from entry. The sheet sync currently does not
+    import ward-side person names (`backend/app/services/legacy_sheet_sync/runner.py`);
+    PR27 will map the sheet's ward user column ("ผู้ส่งเครื่องยืม (User)"/
+    "ชื่อ (User)") into the ward contact name; until then the sync keeps
+    skipping it.
+  - **D8 Dispatch not blocked by equipment status (amends the dispatch rule
+    requiring `available_at_pool`):** the UI shows what is wrong; on
+    confirmation: (a) equipment already dispatched (open transaction): the
+    dispatch service atomically closes the previous open transaction with a
+    flag/reason "closed by re-dispatch, receipt not recorded" (audited) and
+    opens the new one; (b) `unavailable_defective`: dispatch allowed, the
+    transaction records that it was dispatched while marked defective
+    (audited); (c) `decommissioned`: still BLOCKED. Dispatch/receipt services
+    still own the lifecycle; exactly four states; no cleaning state.
+  - **D9 Monitor page:** list of dispatch and receipt submissions grouped by
+    date (slip/submission, ward, ward contact name, operator, time, equipment
+    count, drill-down), dispatch/receipt tabs, search, auto-refresh. Never
+    shows HN unmasked.
+- **Reason:** Fit the pool team's real practice (equipment follows patients,
+  re-dispatch without a recorded receipt, shift hand-over around 08:00/20:00).
+- **Amends:** `docs/BUSINESS_RULES.md` (dispatch availability, borrower/ward
+  contact, shift attribution note); the PR7 7b `borrower_name` removal; PR16
+  Owner Decision #1 (reporting attribution only); the D3/D4 "pending" notes of
+  the first 2026-11-25 entry. `AGENTS.md` guardrail lines are unchanged.
+- **Source:** Owner decisions in chat, 2026-11-25. Docs-only Governance PR; no
+  code change. Implementation: Roadmap PR27 (D7), PR30 (D6), PR31 (D8), PR32
+  (D9) in `docs/ROADMAP.md`.
+- **Status:** Approved; implementation not started.
+
+## 2026-11-25 (third set) — Cryo-Cuff checklist, cuff tracking, verbatim daily form, staff access
+
+- **Decision (Repository Owner, in chat, 2026-11-25):**
+  - **D10 Cryo-Cuff checklist (amends D4 for this one equipment type only):**
+    Cryo-Cuff dispatch and receipt use a 6-item checklist exactly matching the
+    paper form "แบบบันทึกการรับรับ-ส่ง Cryo-Cuff": 1 ตัวเครื่อง x1 (ไม่แตกหัก
+    เสียหาย), 2 สายชาร์จ x1, 3 ฝาปิดตัวเครื่อง แบบมีสายชาร์จ x1, 4 ฝาปิดตัวเครื่อง
+    แบบไม่มีสายชาร์จ x1, 5 สายท่อน้ำและ O-Ring x1 (O-Ring บริเวณปลาย Hose
+    ทั้งสองข้าง), 6 Cuff (สภาพสมบูรณ์ ไม่มีฉีกขาด) with four types Back/Hip/Rib,
+    Knee, Shoulder, Ankle, each with a count; each item normal/abnormal. All
+    other equipment keeps the 3 checks. Reports map Cryo-Cuff items 1/2/3 into
+    the same three report columns as other equipment (screen/body, charger,
+    clamp); items 4-6 are stored but not in the daily report. The equipment
+    category that identifies Cryo-Cuff is decided in implementation from
+    existing master data. No Cryo-Cuff form printing from the system.
+  - **D11 Cuff tracking:** cuffs are counted per type (no individual IDs). At
+    receipt the operator may receive the device only (cuffs wet or not
+    returned); outstanding cuffs (type, count, ward = the transaction's first
+    ward) are tracked and shown on the Monitor page and in reports until
+    received. A later "receive cuffs" step (scan the same device, tick returned
+    cuffs) clears them. The device may be dispatched again while cuffs are
+    outstanding; they remain attributed to the earlier ward/transaction. Cuffs
+    are accessories, not equipment: no equipment state, not part of the four
+    states, no cleaning state.
+  - **D12 Printed daily form label:** the printed daily form must match the
+    company's official form exactly, including the column header "ME.Code"
+    (the column shows the BCM Code value). Narrow exception to the "ME Code is
+    retired" guardrail: only as a verbatim printed-form column label. ME Code
+    is NOT an identifier anywhere in the system, data model, API or other UI,
+    which keep "BCM Code". Revisit when the company changes the form.
+  - **D13 Access:** all Equipment Pool staff (normal operators) can use the
+    Monitor page and the "แสดง HN" reveal; every reveal is audited (D1).
+- **Reason:** Match the pool team's paper Cryo-Cuff form and the company's
+  official daily form; cuffs are frequently returned late.
+- **Amends:** `AGENTS.md` (ME Code guardrail line: pointer to the D12
+  exception), `docs/BUSINESS_RULES.md` (D4 for Cryo-Cuff, cuff tracking,
+  printed-form label exception), `docs/ROADMAP.md` (PR27/PR28/PR30/PR32 scope).
+  `docs/ARCHITECTURE_GUARDRAILS.md` has no ME Code rule and is unchanged.
+- **Source:** Owner decisions in chat, 2026-11-25. Docs-only Governance PR; no
+  code change.
+- **Status:** Approved; implementation not started.

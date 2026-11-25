@@ -43,13 +43,19 @@ Item No is the identifier encoded in the hospital's existing QR labels. It is us
 
 - Source: `knowledge/adr/ADR-002-identifier-model.md`; `knowledge/adr/ADR-004-hospital-item-no-qr.md`; `knowledge/architecture/api-information-boundaries.md`.
 
-**"ME Code" is retired.** It does not name any current or planned identifier; any document or task still using it means BCM Code or Item No and should be corrected.
+**"ME Code" is retired.** It does not name any current or planned identifier; any document or task still using it means BCM Code or Item No and should be corrected. **Sole exception (Owner Governance 2026-11-25, third set, D12):** see "Cryo-Cuff checklist, cuff tracking, printed-form label, access" below.
 
 ## Dispatch/Return owns transaction lifecycle
+
+**Amended by Owner Governance 2026-11-25, second set (D8):** dispatch no longer requires `available_at_pool`; the dispatch service gains two transitions, `UNAVAILABLE_DEFECTIVE -> ISSUED_TO_WARD` (dispatch while defective: operator confirmation, audited, flag recorded on the transaction; no separate return-to-service permission is needed for this path, which D8 explicitly amends) and `ISSUED_TO_WARD -> ISSUED_TO_WARD` (re-dispatch closes the previous open transaction with reason "closed by re-dispatch, receipt not recorded" and opens a new one); afterwards the equipment is `ISSUED_TO_WARD` and its later receipt is the normal atomic usable/defective receipt; `DECOMMISSIONED` is never dispatchable. See "Dispatch availability, ward contact name, shift attribution" below (re-dispatch closes the prior open transaction; defective dispatch allowed and flagged; decommissioned blocked).
 
 Dispatch and receipt (`backend/app/services/borrow_service.py`) are the only paths that move equipment through `ISSUED_TO_WARD`, and the only paths that open (`app.crud.transaction.create()`) or close (`app.crud.transaction.close()`) a transaction — administrative/manual equipment-status maintenance is a separate, narrower transition set that never originates or targets `ISSUED_TO_WARD` and never touches transaction status at all.
 
 `BorrowTransaction.status` is exactly two values, `TransactionStatus.OPEN` / `TransactionStatus.CLOSED` (`backend/app/models/transaction.py`; Roadmap PR7; `knowledge/adr/ADR-005-transaction-model.md`), matching `docs/HOSPITAL_DOMAIN_MODEL.md`'s confirmed `OPEN`/`CLOSED` workflow. An overdue (`due_at` passed) transaction remains `OPEN` — the approved MVP business model has no due-date/overdue workflow at all, not a status value and not a notification. The `due_at`-driven overdue notification job (`app.worker.scheduler.check_overdue_returns`) has been removed and is not registered with the scheduler (Codex PR7a review round 1, BLOCKER: the job re-notified on every hourly tick with no de-duplication) — see `knowledge/adr/ADR-005-transaction-model.md` decision 3.
+
+**Amended by Owner Governance 2026-11-25 (D2):** `dispatch_type` and `routine_round` are removed from data entry; new dispatches no longer carry them (the columns become nullable and historical values are preserved read-only, never erased or backfilled), so the requirement below that every dispatch carry them no longer applies to new dispatches. Reporting groups by the PR16 `business_date`/`shift` (Day/Night) derived from the event time. Source: `docs/DECISION_LOG.md` (2026-11-25).
+
+**Amended by Owner Governance 2026-11-25, second set (D7):** an optional free-text ward contact name may again be recorded at dispatch and receipt (see "Dispatch availability, ward contact name, shift attribution" below); the statements here that `borrower_name` is rejected describe the PR7 state until PR27 ships.
 
 **Roadmap PR7 (7b slice), merged (GitHub PR #20):** every new dispatch (`app.schemas.transaction.BorrowRequest`) must carry a `ward_id` and a `dispatch_type` (`routine_round` or `on_demand`, `backend/app/models/transaction.py`'s `DispatchType`); a `routine_round` (one of the four confirmed fixed times `06:00`/`11:00`/`15:00`/`21:00`, `RoutineRound`) is required exactly when `dispatch_type == routine_round` and forbidden for `on_demand`. `BorrowRequest` rejects any unrecognized field outright (`extra="forbid"`), so `borrower_name`, `due_at`, and `quantity` are not merely unaccepted but actively rejected with a 422; `due_at` is also removed from `TransactionOut`. Every existing historical value for all three fields is preserved as read-only history, never erased or backfilled — `borrower_name` remains visible in `TransactionOut`; `due_at`/`quantity` remain queryable via `app.services.report_service`'s export, which reads them directly from the ORM row. An existing row's `ward_id`/`dispatch_type`/`routine_round` are never fabricated for historical data — left `NULL`. `ward_id` is validated proactively (400 `INVALID_INPUT` if it does not reference an existing ward), distinct from the 409 concurrency response used when the same equipment is dispatched twice.
 
@@ -84,6 +90,40 @@ Authorization is `administrator` and `equipment_pool_staff` (`app.api.v1.deps.WA
 `AVAILABLE_AT_POOL` has no direct transition to `DECOMMISSIONED`. Equipment must first be marked `UNAVAILABLE_DEFECTIVE`; only `UNAVAILABLE_DEFECTIVE` may transition to `DECOMMISSIONED`. `DECOMMISSIONED` is terminal with no outgoing transition.
 
 - Source: `backend/app/models/equipment.py` (manual-maintenance transition table); confirmed as a review finding during Roadmap PR6 (see `docs/DECISION_LOG.md`).
+
+
+## Patient HN on dispatch (Owner Governance 2026-11-25)
+
+Equipment Pool staff MAY record a patient HN (hospital number) on a dispatch. This narrowly amends the former "no patient tracking" rule; no other patient field (name, bed, etc.) exists and there is no patient-tracking workflow. Mandatory safeguards: HN is stored only in the database, encrypted at rest at the application level (key from the host `.env`, never in the repo, logs, or clear-text backups); masked by default in every UI view and revealed only by an explicit "แสดง HN" click by an authenticated user; every reveal is audited (who/when/which transaction, never the HN value); HN never appears in any printed report, PDF, Excel export, CSV, read-only export API, log, notification, or the legacy sheet sync/import (which keep dropping/skipping HN); no search by HN unless separately approved. The Owner accepts PDPA responsibility; hospital legal/IT review is recommended; the retention policy is a future decision.
+
+- Source: `docs/DECISION_LOG.md` (2026-11-25).
+
+## Dispatch/receipt entry flow and accessory checks (Owner Governance 2026-11-25)
+
+- Ward first: select the ward, then scan/enter one or more equipment for that ward in one submission, for both dispatch and receipt. Each equipment is still its own transaction; dispatch/receipt services still own the lifecycle; receipt stays an atomic usable/defective outcome per equipment.
+- Per equipment, at dispatch and at receipt, three yes/no condition checks: screen not cracked (ตัวเครื่องหน้าจอไม่แตกร้าว), charger cable OK (สายชาร์จไม่ขาด), pole clamp present/OK (Pole Clamp ไม่แตกหัก). These are recorded condition facts only: not a cleaning state and not a new equipment state.
+- A daily shift report (by ward group, equipment type, operator; Day vs Night; dispatch/receipt counts) and printable daily forms are planned; HN never appears in them.
+
+- Source: `docs/DECISION_LOG.md` (2026-11-25).
+
+## Dispatch availability, ward contact name, shift attribution (Owner Governance 2026-11-25, second set)
+
+- **Dispatch is not blocked by equipment status (D8; amends the rule that dispatch requires `available_at_pool`):** the UI shows what is wrong and the operator confirms. (a) Equipment already dispatched: the dispatch service atomically closes the previous open transaction with a flag/reason "closed by re-dispatch, receipt not recorded" (audited) and opens the new one. (b) `unavailable_defective`: dispatch is allowed; the transaction records it was dispatched while marked defective (audited). (c) `decommissioned`: still blocked. Dispatch/receipt services still own the lifecycle; the four states are unchanged; no cleaning state.
+- **Ward contact name (D7; amends the PR7 removal of `borrower_name`; the sheet sync currently does not import ward-side person names, a rule that lives in `backend/app/services/legacy_sheet_sync/runner.py` and keeps applying until PR27, which will map the sheet's ward user column ("ผู้ส่งเครื่องยืม (User)"/"ชื่อ (User)") into the ward contact name):** at dispatch and receipt the operator may record an optional free-text name of the ward staff who received/sent the equipment, one value per submission applied to each equipment's transaction. Ward staff remain non-users (no accounts, no login). Never a patient name; may appear in reports and the monitor page.
+- **Receipt from a different ward (Owner UX answer):** accepted with no warning; only the first receiving ward is recorded and there is no transfer tracking. HN is one optional field per equipment; accessory checks default to checked/normal.
+- **Shift attribution for reporting (D6; amends PR16 Owner Decision #1 for REPORTING ONLY):** a configurable +/-N minutes (default 60; 0 = strict clock cut) around 08:00 and 20:00. Events in the window are attributed to the shift the keying Equipment Pool user predominantly worked that business day (the shift holding most of that user's events outside the window); ties or no other events fall back to the clock rule. Stored timestamps never change and the `business_date`/`shift` used for list filters is unchanged; the daily shift report (PR30) uses the attributed shift. Attribution is computed at report time only (nothing is stored), and the business day used for it is the PR16 `business_date` (shift-start anchored, `backend/app/core/reporting_time.py`).
+- **Monitor page (D9):** dispatch/receipt submissions grouped by date with drill-down; never shows HN unmasked.
+
+- Source: `docs/DECISION_LOG.md` (2026-11-25, second set).
+
+## Cryo-Cuff checklist, cuff tracking, printed-form label, access (Owner Governance 2026-11-25, third set)
+
+- **Cryo-Cuff checklist (D10; amends D4 for this one equipment type only):** Cryo-Cuff dispatch and receipt use a 6-item checklist exactly matching the paper form "แบบบันทึกการรับรับ-ส่ง Cryo-Cuff": (1) ตัวเครื่อง x1 (ไม่แตกหัก เสียหาย); (2) สายชาร์จ x1; (3) ฝาปิดตัวเครื่อง แบบมีสายชาร์จ x1; (4) ฝาปิดตัวเครื่อง แบบไม่มีสายชาร์จ x1; (5) สายท่อน้ำและ O-Ring x1 (O-Ring บริเวณปลาย Hose ทั้งสองข้าง); (6) Cuff (สภาพสมบูรณ์ ไม่มีฉีกขาด) in four types, Back/Hip/Rib, Knee, Shoulder, Ankle, each with a count. Each item is normal/abnormal. All other equipment keeps the three D4 checks. Reports map Cryo-Cuff items 1/2/3 into the same three report columns as other equipment (screen/body, charger, clamp); items 4-6 are stored but not in the daily report. How Cryo-Cuff equipment is identified (equipment category) is decided in implementation from existing master data. The system does not print the Cryo-Cuff form.
+- **Cuff tracking (D11):** cuffs are counted per type; there are no individual cuff IDs. At receipt the operator may receive the device only (cuffs wet or not returned). Outstanding cuffs (type, count, ward = the transaction's first ward) are tracked and shown on the Monitor page and in reports until received. A later "receive cuffs" step (scan the same device, tick the returned cuffs) clears them. The device may be dispatched again while its cuffs are outstanding; the outstanding cuffs stay attributed to the earlier ward/transaction. Cuffs are accessories, not equipment: no equipment state, not part of the four states, and no cleaning state.
+- **Printed daily form label (D12; narrow exception to "ME Code is retired"):** the printed daily form must match the company's official form exactly, including the column header "ME.Code", which shows the BCM Code value. This is allowed only as a verbatim printed-form column label. ME Code is NOT an identifier anywhere in the system, data model, API or other UI, which keep "BCM Code". Revisit when the company changes the form.
+- **Access (D13):** all Equipment Pool staff (normal operators) can use the Monitor page and the "แสดง HN" reveal; every reveal is audited per D1.
+
+- Source: `docs/DECISION_LOG.md` (2026-11-25, third set).
 
 ## Related documents
 

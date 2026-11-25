@@ -225,10 +225,14 @@ def _candidate_to_row_dict(candidate) -> dict[str, Any]:
             "legacy_ward_text": candidate.legacy_ward_text,
             "resolved_ward_id": str(candidate.resolved_ward_id) if candidate.resolved_ward_id else None,
             "legacy_bme_name": candidate.legacy_bme_name,
-            "header_source_ref": {
-                "sheet_name": candidate.header_source_ref.sheet_name,
-                "source_row_number": candidate.header_source_ref.source_row_number,
-            },
+            "header_source_ref": (
+                {
+                    "sheet_name": candidate.header_source_ref.sheet_name,
+                    "source_row_number": candidate.header_source_ref.source_row_number,
+                }
+                if candidate.header_source_ref is not None
+                else None
+            ),
             "line_source_ref": {
                 "sheet_name": candidate.line_source_ref.sheet_name,
                 "source_row_number": candidate.line_source_ref.source_row_number,
@@ -449,7 +453,8 @@ class LegacyTransactionHistoryAdapter(ImportAdapter):
             "rows": rows,
             "issue_events": len(issue_candidates),
             "receive_events": len(receive_candidates),
-            "warnings": 0,
+            "warnings": sum(1 for f in issue_findings if f.severity == "warning")
+            + sum(1 for f in receive_findings if f.severity == "warning"),
             "blocking_conflicts": 0,
             "migration_authority_id": str(authority.id),
         }

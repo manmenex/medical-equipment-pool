@@ -195,7 +195,7 @@ export interface LegacyHistoryDryRunPlanRowValuesOut {
   legacy_ward_text: string | null;
   resolved_ward_id: string | null;
   legacy_bme_name: string | null;
-  header_source_ref: LegacyHistoryDryRunPlanSourceRefOut;
+  header_source_ref: LegacyHistoryDryRunPlanSourceRefOut | null;
   line_source_ref: LegacyHistoryDryRunPlanSourceRefOut;
 }
 

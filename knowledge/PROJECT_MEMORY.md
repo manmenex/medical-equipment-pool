@@ -18,6 +18,26 @@ Sources: `AGENTS.md`, `docs/BUSINESS_RULES.md`,
 
 ## Stable domain rules
 
+- Owner Governance 2026-11-25: optional patient HN on dispatch (encrypted at
+  rest, masked, audited reveal, never in reports/exports/API/logs/sync);
+  `dispatch_type`/`routine_round` removed from data entry (shift from event
+  time); ward-first multi-equipment dispatch/receipt; three yes/no accessory
+  checks per equipment (not a state); daily shift report planned (Roadmap
+  PR26-PR30). Source: `docs/DECISION_LOG.md`.
+- Owner Governance 2026-11-25 (second set): HN per equipment; receipt from a
+  different ward accepted without warning; accessory checks default checked;
+  D6 shift grace-window attribution (reporting only, PR30); D7 optional
+  free-text ward contact name (PR27); D8 dispatch not blocked by status
+  except decommissioned (PR31); D9 monitor page (PR32). Source:
+  `docs/DECISION_LOG.md`.
+- Owner Governance 2026-11-25 (third set): D10 Cryo-Cuff 6-item checklist
+  (this equipment type only; items 1/2/3 map to the report columns); D11 cuffs
+  counted per type, outstanding cuffs tracked until a "receive cuffs" step (not
+  equipment, no state); D12 printed daily form shows the verbatim "ME.Code"
+  column label (BCM Code value; label-only exception, ME Code is still not an
+  identifier); D13 all pool staff may use Monitor and the HN reveal (audited).
+  Source: `docs/DECISION_LOG.md`.
+
 - Equipment states are exactly `AVAILABLE_AT_POOL`, `ISSUED_TO_WARD`,
   `UNAVAILABLE_DEFECTIVE`, and `DECOMMISSIONED`.
 - Cleaning is a physical activity, not a lifecycle state or workflow.
