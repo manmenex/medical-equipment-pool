@@ -49,6 +49,7 @@ async def create_borrow(
         ip_address=ip,
         user_agent=ua,
         acknowledge_status_warning=payload.acknowledge_status_warning,
+        expected_open_transaction_id=payload.expected_open_transaction_id,
     )
     return tx
 

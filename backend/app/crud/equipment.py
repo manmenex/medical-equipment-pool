@@ -6,7 +6,7 @@ from sqlalchemy import String, and_, case, cast, func, or_, select
 from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import InvalidInputError, InvalidStatusTransitionError
+from app.core.exceptions import EquipmentStatusChangedError, InvalidInputError, InvalidStatusTransitionError
 from app.models.equipment import (
     DISPATCH_RECEIPT_TRANSITIONS,
     MANUAL_LIFECYCLE_TRANSITIONS,
@@ -463,12 +463,28 @@ async def change_status(
         changed_by_user_id=changed_by_user_id,
         reason=reason,
     )
-    equipment.status = new_status
+    # Roadmap PR31 review: the write is conditional on the status this call
+    # validated the transition against (UPDATE ... WHERE id = :id AND status
+    # = :expected, decided by rowcount), so a concurrent change -- e.g. a
+    # manual decommission racing a dispatch of defective equipment -- can
+    # never be overwritten from a stale in-memory read. Applies to every
+    # caller (dispatch, receipt, manual lifecycle).
+    expected_status = equipment.status
+    result = await db.execute(
+        sa_update(Equipment)
+        .where(Equipment.id == equipment.id, Equipment.status == expected_status)
+        .values(status=new_status, version=Equipment.version + 1)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        raise EquipmentStatusChangedError(
+            "Equipment status changed while this request was processed. Refresh to see the current state."
+        )
     # Roadmap PR20B (docs/archive/design/PR20_EQUIPMENT_MASTER_IMPORT_PLAN.md §24):
     # every status transition through this function -- dispatch, receipt,
-    # or manual lifecycle -- is a mutation and must advance the
-    # optimistic-concurrency counter, same as any other equipment write.
-    equipment.version += 1
+    # or manual lifecycle -- is a mutation and advances the
+    # optimistic-concurrency counter (done in the UPDATE above).
+    await db.refresh(equipment, attribute_names=["status", "version", "updated_at"])
     db.add(history)
     await db.flush()
     return history

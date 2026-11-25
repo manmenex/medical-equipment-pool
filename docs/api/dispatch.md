@@ -80,6 +80,8 @@ Dispatch is no longer limited to `available_at_pool` equipment. The request acce
 - `unavailable_defective`: without the flag -> `409 DISPATCH_STATUS_WARNING`. With it the dispatch proceeds, the new transaction has `dispatched_while_defective = true` (also in its `borrow` audit row) and equipment becomes `issued_to_ward`.
 - `decommissioned`: always `409 EQUIPMENT_NOT_AVAILABLE`.
 
+Optional `expected_open_transaction_id` ties the acknowledgement to the open transaction the operator was shown (from `dispatch-check` / the warning `details`); if it is not the equipment's current open transaction the request fails `409 DISPATCH_WARNING_STALE`. The equipment status write is conditional on the status that was validated (`409 EQUIPMENT_STATUS_CHANGED` if it changed concurrently, e.g. a manual decommission; all writes roll back). A re-dispatch's business time is never earlier than the closed transaction's. Receiving a transaction closed by re-dispatch returns `409 TRANSACTION_CLOSED_BY_REDISPATCH`.
+
 `TransactionOut` gains read-only `close_reason` (nullable) and `dispatched_while_defective` (boolean).
 
 **Pre-check:** `GET /api/v1/equipment/{id}/dispatch-check` (any authenticated role, read-only) returns `{equipment_id, status, warning, dispatchable, requires_acknowledgement, current_ward_id, current_ward_name, dispatched_at, open_transaction_id, open_transaction_no}` so a client can show the warning at scan time. `warning` is `null`, `already_dispatched`, `defective` or `decommissioned`.

@@ -59,6 +59,12 @@ class BorrowRequest(BaseModel):
     # the dispatch proceeds and is audited. Never lets a decommissioned item
     # through. Offline sync operations carry it inside the same body.
     acknowledge_status_warning: bool = False
+    # Roadmap PR31 review: ties the acknowledgement to the open transaction
+    # the operator was shown (dispatch-check / DISPATCH_STATUS_WARNING
+    # details.open_transaction_id). If given and it is not the equipment's
+    # current open transaction the dispatch is refused 409
+    # DISPATCH_WARNING_STALE.
+    expected_open_transaction_id: str | None = None
 
     # Codex PR20 review round 1, MAJOR 1: the default Pydantic/FastAPI
     # behavior used elsewhere in this codebase (silently ignore unrecognized

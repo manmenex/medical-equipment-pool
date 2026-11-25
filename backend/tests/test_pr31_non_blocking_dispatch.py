@@ -156,7 +156,7 @@ async def test_receipt_of_the_new_transaction_after_redispatch_is_normal(client,
 
     # The closed-by-redispatch transaction can no longer be received.
     old = await client.post(f"/api/v1/return/{first['id']}", headers=ctx["staff"], json={"receipt_outcome": "usable"})
-    assert old.status_code == 409 and old.json()["code"] == "TRANSACTION_ALREADY_RETURNED"
+    assert old.status_code == 409 and old.json()["code"] == "TRANSACTION_CLOSED_BY_REDISPATCH"
 
     ok = await client.post(f"/api/v1/return/{new['id']}", headers=ctx["staff"], json={"receipt_outcome": "usable"})
     assert ok.status_code == 200
@@ -347,3 +347,118 @@ async def test_offline_dispatch_of_dispatched_equipment_without_ack_goes_to_conf
     resp2 = await client.post(URL, headers=ctx["staff"], json={"operations": [op2]})
     assert resp2.json()["results"][0]["result"] == "applied", resp2.text
     assert (await _tx(db_session, first["id"])).close_reason == CLOSE_REASON_REDISPATCH
+
+
+# --- review follow-ups -------------------------------------------------------
+
+
+async def test_decommission_racing_a_defective_dispatch_can_never_leave_decommissioned_issued(
+    client, ctx, db_session, monkeypatch
+):
+    """The equipment status write is conditional on the status the dispatch
+    validated; a manual decommission committed between the dispatch's read and
+    its write wins and the dispatch rolls back completely."""
+    from sqlalchemy import update
+
+    from app.services import borrow_service
+
+    eq = await _equipment(client, ctx["admin"], "race1")
+    await _set_status(client, ctx["admin"], eq, "unavailable_defective")
+
+    real_assess = borrow_service.assess_dispatch
+
+    async def assess_then_decommission(db, equipment):
+        assessment = await real_assess(db, equipment)
+        # "Another session" commits the manual decommission after our read.
+        await db.execute(
+            update(Equipment)
+            .where(Equipment.id == equipment.id)
+            .values(status=EquipmentStatus.DECOMMISSIONED)
+            .execution_options(synchronize_session=False)
+        )
+        await db.commit()
+        return assessment
+
+    monkeypatch.setattr(borrow_service, "assess_dispatch", assess_then_decommission)
+    resp = await client.post(
+        "/api/v1/borrow", headers=ctx["staff"], json=_payload(eq, ctx["ward_a"], acknowledge_status_warning=True)
+    )
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "EQUIPMENT_STATUS_CHANGED"
+    assert await _eq_status(db_session, eq) == EquipmentStatus.DECOMMISSIONED
+    n = (await db_session.execute(select(func.count()).select_from(BorrowTransaction))).scalar_one()
+    assert n == 0
+
+
+async def test_stale_expected_open_transaction_id_is_refused_and_matching_one_accepted(client, ctx, db_session):
+    eq = await _equipment(client, ctx["admin"], "st1")
+    first = (await client.post("/api/v1/borrow", headers=ctx["staff"], json=_payload(eq, ctx["ward_a"]))).json()
+
+    stale = await client.post(
+        "/api/v1/borrow",
+        headers=ctx["staff"],
+        json=_payload(eq, ctx["ward_b"], acknowledge_status_warning=True, expected_open_transaction_id=str(uuid.uuid4())),
+    )
+    assert stale.status_code == 409 and stale.json()["code"] == "DISPATCH_WARNING_STALE"
+    assert (await _tx(db_session, first["id"])).status == TransactionStatus.OPEN
+
+    ok = await client.post(
+        "/api/v1/borrow",
+        headers=ctx["staff"],
+        json=_payload(eq, ctx["ward_b"], acknowledge_status_warning=True, expected_open_transaction_id=first["id"]),
+    )
+    assert ok.status_code == 201, ok.text
+
+    # The warned transaction was meanwhile received: an id no longer matches anything open.
+    await client.post(f"/api/v1/return/{ok.json()['id']}", headers=ctx["staff"], json={"receipt_outcome": "usable"})
+    gone = await client.post(
+        "/api/v1/borrow",
+        headers=ctx["staff"],
+        json=_payload(eq, ctx["ward_a"], acknowledge_status_warning=True, expected_open_transaction_id=ok.json()["id"]),
+    )
+    assert gone.status_code == 409 and gone.json()["code"] == "DISPATCH_WARNING_STALE"
+
+
+async def test_redispatch_business_time_is_clamped_to_the_closed_transactions_dispatch_time(client, ctx, db_session):
+    from datetime import datetime, timedelta, timezone
+
+    from app.services import borrow_service
+
+    eq = await _equipment(client, ctx["admin"], "cl1")
+    first = (await client.post("/api/v1/borrow", headers=ctx["staff"], json=_payload(eq, ctx["ward_a"]))).json()
+    older = datetime.now(timezone.utc) - timedelta(days=2)
+    tx = await borrow_service.borrow(
+        db_session,
+        equipment_id=eq,
+        borrower_user_id=None,
+        ward_id=ctx["ward_b"],
+        dispatch_type=None,
+        routine_round=None,
+        department_id=None,
+        phone_number=None,
+        pickup_location_id=None,
+        dropoff_location_id=None,
+        notes=None,
+        ip_address=None,
+        user_agent=None,
+        borrowed_at=older,
+        acknowledge_status_warning=True,
+    )
+    new_id = str(tx.id)
+    prev_at = (await _tx(db_session, first["id"])).borrowed_at
+    new_at = (await _tx(db_session, new_id)).borrowed_at
+    assert new_at >= prev_at
+
+
+async def test_review_precondition_predicts_the_dispatch_warning(client, ctx, db_session):
+    from tests.test_pr25e_b2_sync_ops import URL, dispatch_op
+
+    me = (await client.get("/api/v1/auth/me", headers=ctx["staff"])).json()["id"]
+    eq = await _equipment(client, ctx["admin"], "pr1")
+    await client.post("/api/v1/borrow", headers=ctx["staff"], json=_payload(eq, ctx["ward_a"]))
+    op = dispatch_op(me, eq, ctx["ward_b"])
+    res = await client.post(URL, headers=ctx["staff"], json={"operations": [op]})
+    assert res.json()["results"][0]["result"] == "conflict"
+
+    detail = (await client.get(f"/api/v1/sync/conflicts/{op['op_id']}", headers=ctx["admin"])).json()
+    assert detail["apply_now_possible"] is False and detail["apply_now_blocker"] == "DISPATCH_STATUS_WARNING"

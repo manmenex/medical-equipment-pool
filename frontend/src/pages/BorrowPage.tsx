@@ -33,6 +33,7 @@ interface StatusWarning {
   kind: "already_dispatched" | "defective";
   wardName: string | null;
   dispatchedAt: string | null;
+  openTransactionId: string | null;
 }
 
 function warningText(w: StatusWarning): string {
@@ -141,7 +142,7 @@ export function BorrowPage() {
     await submitDispatch(false);
   };
 
-  const submitDispatch = async (acknowledge: boolean) => {
+  const submitDispatch = async (acknowledge: boolean, warningTxId?: string | null) => {
     if (!equipment || !wardId) return;
     setSubmitting(true);
     setError(null);
@@ -171,7 +172,12 @@ export function BorrowPage() {
         ward_id: wardId,
         phone_number: phone || undefined,
         notes: notes || undefined,
-        ...(acknowledge ? { acknowledge_status_warning: true } : {}),
+        ...(acknowledge
+          ? {
+              acknowledge_status_warning: true,
+              ...(warningTxId ? { expected_open_transaction_id: warningTxId } : {}),
+            }
+          : {}),
       });
       setLastWard(wardId || null);
       setSuccess(tx.transaction_no);
@@ -182,7 +188,10 @@ export function BorrowPage() {
           kind: d.warning === "defective" ? "defective" : "already_dispatched",
           wardName: typeof d.current_ward_name === "string" ? d.current_ward_name : null,
           dispatchedAt: typeof d.dispatched_at === "string" ? d.dispatched_at : null,
+          openTransactionId: typeof d.open_transaction_id === "string" ? d.open_transaction_id : null,
         });
+      } else if (apiErrorCode(err) === "DISPATCH_WARNING_STALE" || apiErrorCode(err) === "EQUIPMENT_STATUS_CHANGED") {
+        setError("สถานะเครื่องเปลี่ยนไปหลังแสดงคำเตือน กรุณากดยืนยันการเบิกอีกครั้งเพื่อตรวจสอบสถานะล่าสุด");
       } else {
         setError(apiErrorMessage(err, "เบิกเครื่องมือไม่สำเร็จ"));
       }
@@ -346,7 +355,7 @@ export function BorrowPage() {
               </p>
               <button
                 type="button"
-                onClick={() => void submitDispatch(true)}
+                onClick={() => void submitDispatch(true, warning.openTransactionId)}
                 disabled={submitting}
                 className="mt-2 rounded-lg bg-status-repair px-3 py-1.5 font-medium text-white disabled:opacity-60"
               >

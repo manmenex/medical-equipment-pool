@@ -37,6 +37,22 @@ class DispatchStatusWarningError(EquipmentNotAvailableError):
     code = "DISPATCH_STATUS_WARNING"
 
 
+class EquipmentStatusChangedError(EquipmentNotAvailableError):
+    """Roadmap PR31 review: the equipment's status changed (e.g. a manual
+    decommission) between this request's read and its conditional status
+    UPDATE. Nothing is written; the caller refreshes and decides again."""
+
+    code = "EQUIPMENT_STATUS_CHANGED"
+
+
+class DispatchWarningStaleError(EquipmentNotAvailableError):
+    """Roadmap PR31 review: the operator acknowledged a warning about a
+    specific open transaction (``expected_open_transaction_id``) that is no
+    longer the equipment's current open transaction (or no longer exists)."""
+
+    code = "DISPATCH_WARNING_STALE"
+
+
 class TransactionNotFoundError(DomainError):
     code = "TRANSACTION_NOT_FOUND"
     status_code = 404
@@ -52,6 +68,16 @@ class TransactionAlreadyReturnedError(DomainError):
 
     code = "TRANSACTION_ALREADY_RETURNED"
     status_code = 409
+
+
+class TransactionClosedByRedispatchError(TransactionAlreadyReturnedError):
+    """Roadmap PR31 review: a receipt was attempted on a transaction the
+    dispatch service closed by re-dispatching the equipment (no receipt was
+    ever recorded for it). Distinct code so the UI does not claim it was
+    "already returned"; still a TransactionAlreadyReturnedError for the
+    sync engine's conflict handling."""
+
+    code = "TRANSACTION_CLOSED_BY_REDISPATCH"
 
 
 class ReceiptRaceLostError(DomainError):

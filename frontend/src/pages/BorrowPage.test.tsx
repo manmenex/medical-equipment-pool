@@ -245,7 +245,7 @@ describe("BorrowPage non-blocking dispatch (Roadmap PR31, D8)", () => {
   it("shows the already-dispatched warning and resubmits with the acknowledgement on confirm", async () => {
     getEquipment.mockResolvedValue({ ...equipment, status: "issued_to_ward" });
     createBorrow.mockRejectedValueOnce(
-      warningError({ warning: "already_dispatched", current_ward_name: "Ward Z", dispatched_at: "2026-11-25T03:00:00Z" })
+      warningError({ warning: "already_dispatched", current_ward_name: "Ward Z", dispatched_at: "2026-11-25T03:00:00Z", open_transaction_id: "tx-old" })
     );
     const user = await submitWithWard();
 
@@ -255,7 +255,11 @@ describe("BorrowPage non-blocking dispatch (Roadmap PR31, D8)", () => {
 
     await user.click(screen.getByRole("button", { name: "ยืนยันเบิกต่อ" }));
     await waitFor(() => expect(createBorrow).toHaveBeenCalledTimes(2));
-    expect(createBorrow.mock.calls[1][0]).toMatchObject({ equipment_id: "eq-1", acknowledge_status_warning: true });
+    expect(createBorrow.mock.calls[1][0]).toMatchObject({
+      equipment_id: "eq-1",
+      acknowledge_status_warning: true,
+      expected_open_transaction_id: "tx-old",
+    });
     expect(await screen.findByText("เบิกสำเร็จ")).toBeInTheDocument();
   });
 

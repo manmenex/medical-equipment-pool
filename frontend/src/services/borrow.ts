@@ -29,6 +29,9 @@ export interface BorrowPayload {
   // Roadmap PR31 (D8): sent only after the operator confirmed a
   // DISPATCH_STATUS_WARNING (already dispatched / defective).
   acknowledge_status_warning?: boolean;
+  // Roadmap PR31 review: the open transaction the warning was about; the
+  // backend refuses a stale acknowledgement (DISPATCH_WARNING_STALE).
+  expected_open_transaction_id?: string;
 }
 
 export async function createBorrow(payload: BorrowPayload): Promise<TransactionOut> {

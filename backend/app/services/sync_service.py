@@ -277,6 +277,7 @@ async def _execute(
             # existing conflict/review path (never silently closes a ward's
             # open transaction on stale offline data).
             acknowledge_status_warning=d.acknowledge_status_warning,
+            expected_open_transaction_id=d.expected_open_transaction_id,
         )
     r = op.receipt
     return await borrow_service.return_equipment(

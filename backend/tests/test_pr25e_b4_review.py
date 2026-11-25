@@ -67,7 +67,7 @@ async def test_list_detail_and_information_boundary(client, ctx):
     for forbidden in ("AST-B2-1", "item_no", "asset_number", "email", "payload_hash"):
         assert forbidden not in text
     d = (await client.get(f"{C}/{op2['op_id']}", headers=ctx["admin"])).json()
-    assert d["apply_now_possible"] is False and d["apply_now_blocker"] == "EQUIPMENT_NOT_AVAILABLE"
+    assert d["apply_now_possible"] is False and d["apply_now_blocker"] == "DISPATCH_STATUS_WARNING"
     assert d["payload_summary"]["dispatch_type"] == "on_demand"
 
 

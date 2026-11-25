@@ -1,6 +1,6 @@
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import Request
 from sqlalchemy.exc import IntegrityError
@@ -10,6 +10,9 @@ from app.core.audit import AUDIT_ACTION_WARD_CORRECTION, AUDIT_ENTITY_BORROW_TRA
 from app.core.db_errors import IntegrityViolationKind, classify_integrity_error
 from app.core.exceptions import (
     DispatchStatusWarningError,
+    DispatchWarningStaleError,
+    EquipmentStatusChangedError,
+    TransactionClosedByRedispatchError,
     EquipmentNotAvailableError,
     EquipmentNotFoundError,
     InvalidInputError,
@@ -140,6 +143,7 @@ async def borrow(
     client_op: client_op_crud.ClientOpContext | None = None,
     borrowed_at: datetime | None = None,
     acknowledge_status_warning: bool = False,
+    expected_open_transaction_id: str | None = None,
 ) -> BorrowTransaction:
     # Roadmap PR25E slice B2b: ``borrowed_at`` is business time and is passed
     # only by the sync layer after the section 11 guards; online callers omit
@@ -174,6 +178,21 @@ async def borrow(
     if assessment.requires_acknowledgement and not acknowledge_status_warning:
         raise DispatchStatusWarningError(assessment.message(), details=assessment.details())
     redispatched_tx = assessment.open_transaction
+    if expected_open_transaction_id is not None and (
+        redispatched_tx is None or str(redispatched_tx.id) != expected_open_transaction_id
+    ):
+        raise DispatchWarningStaleError(
+            "The equipment's dispatch state changed since the warning was shown. Refresh and confirm again.",
+            details=assessment.details(),
+        )
+    if redispatched_tx is not None and borrowed_at is not None:
+        # The new dispatch never predates the one it closes (offline business
+        # time can be older than the transaction recorded meanwhile).
+        prev = redispatched_tx.borrowed_at
+        prev = prev.replace(tzinfo=timezone.utc) if prev.tzinfo is None else prev
+        at = borrowed_at.replace(tzinfo=timezone.utc) if borrowed_at.tzinfo is None else borrowed_at
+        if at < prev:
+            borrowed_at = prev
     dispatched_while_defective = assessment.warning == WARNING_DEFECTIVE
     previous_status = equipment.status
 
@@ -253,11 +272,18 @@ async def borrow(
             raise EquipmentNotAvailableError("Equipment was just borrowed by someone else") from exc
         raise InvalidInputError("This dispatch references data that is no longer valid.") from exc
 
-    await equipment_crud.change_status_for_dispatch_receipt(
-        db, equipment, new_status=EquipmentStatus.ISSUED_TO_WARD,
-        changed_by_user_id=actor_user_id,
-        reason="Re-dispatched" if redispatched_tx is not None else "Dispatched",
-    )
+    try:
+        await equipment_crud.change_status_for_dispatch_receipt(
+            db,
+            equipment,
+            new_status=EquipmentStatus.ISSUED_TO_WARD,
+            changed_by_user_id=actor_user_id,
+            reason="Re-dispatched" if redispatched_tx is not None else "Dispatched",
+        )
+    except EquipmentStatusChangedError:
+        # Includes the close/insert above: all or nothing.
+        await db.rollback()
+        raise
     audit_after = {"transaction_no": tx.transaction_no, "equipment_id": str(equipment.id)}
     if dispatched_while_defective:
         audit_after["dispatched_while_defective"] = True
@@ -342,6 +368,10 @@ async def return_equipment(
     # genuine duplicate/repeat submission, not a timing race with another
     # in-flight request.
     if tx.status != TransactionStatus.OPEN:
+        if tx.close_reason == CLOSE_REASON_REDISPATCH:
+            raise TransactionClosedByRedispatchError(
+                "This transaction was closed because the equipment was dispatched again; no receipt applies to it"
+            )
         raise TransactionAlreadyReturnedError("This transaction has already been returned")
 
     # Roadmap PR8B: receipt_outcome is a `ReceiptOutcome`, already validated

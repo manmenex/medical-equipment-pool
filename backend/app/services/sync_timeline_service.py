@@ -38,7 +38,7 @@ from app.models.client_operation import (
 )
 from app.models.equipment import Equipment, EquipmentStatus
 from app.models.master_data import Ward
-from app.models.transaction import BorrowTransaction, TransactionStatus
+from app.models.transaction import CLOSE_REASON_REDISPATCH, BorrowTransaction, TransactionStatus
 from app.models.user import User
 from app.services import sync_review_service as review
 
@@ -237,23 +237,35 @@ def _step(op_id, ok, code=None, message=None, **extra) -> dict:
 async def _simulate(db: AsyncSession, eq: Equipment, rows: list[ClientOperation]) -> tuple[list[dict], dict | None, list]:
     open_tx = await transaction_crud.get_open_transaction_for_equipment(db, eq.id)
     open_id = open_tx.id if open_tx else None
-    available = eq.status == EquipmentStatus.AVAILABLE_AT_POOL
+    status = eq.status
     steps: list[dict] = []
     for n, r in enumerate(rows):
         body = review._body(r)
         code = None
         if r.op_type == OP_TYPE_DISPATCH:
-            if not available:
+            if status == EquipmentStatus.DECOMMISSIONED:
                 code = "EQUIPMENT_NOT_AVAILABLE"
+            elif status != EquipmentStatus.AVAILABLE_AT_POOL and not body.get("acknowledge_status_warning"):
+                code = "DISPATCH_STATUS_WARNING"
             else:
-                open_id, available = r.op_id, False
+                open_id, status = r.op_id, EquipmentStatus.ISSUED_TO_WARD
         else:
             tx_id = review._uuid_or_none(body.get("transaction_id"))
             if tx_id is not None and tx_id == open_id:
-                open_id, available = None, body.get("receipt_outcome") == "usable"
+                open_id = None
+                status = (
+                    EquipmentStatus.AVAILABLE_AT_POOL
+                    if body.get("receipt_outcome") == "usable"
+                    else EquipmentStatus.UNAVAILABLE_DEFECTIVE
+                )
             else:
                 tx = await transaction_crud.get_by_id(db, tx_id) if tx_id else None
-                code = "TRANSACTION_ALREADY_RETURNED" if tx is not None else "TRANSACTION_NOT_FOUND"
+                if tx is None:
+                    code = "TRANSACTION_NOT_FOUND"
+                elif tx.close_reason == CLOSE_REASON_REDISPATCH:
+                    code = "TRANSACTION_CLOSED_BY_REDISPATCH"
+                else:
+                    code = "TRANSACTION_ALREADY_RETURNED"
         if code:
             failed = _step(r.op_id, False, code, "Would not hold at this position in the sequence.")
             return steps, failed, [x.op_id for x in rows[n + 1 :]]

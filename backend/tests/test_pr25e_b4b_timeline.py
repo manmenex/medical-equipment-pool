@@ -167,7 +167,7 @@ async def test_apply_sequence_stops_at_first_failure(client, ctx, db_session):
     await _send(client, ctx["staff"], receipt_op(ctx["staff_id"], op1["op_id"], seq=2, device_id=op1["device_id"]))
     exports = await _count(db_session, ExportEvent)
     dry = (await client.post(_seq(ctx["eq"]), headers=ctx["staff"], json={"op_ids": [a["op_id"], b["op_id"], c["op_id"]], "dry_run": True})).json()
-    assert dry["failed"]["op_id"] == b["op_id"] and dry["failed"]["code"] == "EQUIPMENT_NOT_AVAILABLE"
+    assert dry["failed"]["op_id"] == b["op_id"] and dry["failed"]["code"] == "DISPATCH_STATUS_WARNING"
     assert dry["remaining"] == [c["op_id"]] and len(dry["steps"]) == 1
     r = await client.post(_seq(ctx["eq"]), headers=ctx["staff"], json={"op_ids": [a["op_id"], b["op_id"], c["op_id"]]})
     assert r.status_code == 200, r.text
