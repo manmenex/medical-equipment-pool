@@ -134,16 +134,34 @@ async def _load_sync_user(db: AsyncSession, employee_code: str) -> User:
     return user
 
 
+@dataclass(frozen=True)
+class _WardSnap:
+    """Plain copy of a Ward. The resolver caches these, never ORM instances:
+    a rollback (and any commit on a session with expire_on_commit=True)
+    expires every instance in the session, and touching an expired attribute
+    from async code raises MissingGreenlet."""
+    id: uuid.UUID
+    name: str
+    code: str
+
+
+@dataclass(frozen=True)
+class _EqSnap:
+    id: uuid.UUID
+    bcm_code: str
+
+
 class _Resolver:
     def __init__(self, db: AsyncSession, wards: list[Ward]):
         self._db = db
-        self._by_name: dict[str, list[Ward]] = defaultdict(list)
+        self._by_name: dict[str, list[_WardSnap]] = defaultdict(list)
         for w in wards:
-            self._by_name[_ward_key(w.name)].append(w)
-            self._by_name[_ward_key(w.code)].append(w)
+            snap = _WardSnap(id=w.id, name=w.name, code=w.code)
+            self._by_name[_ward_key(snap.name)].append(snap)
+            self._by_name[_ward_key(snap.code)].append(snap)
         self._eq: dict[str, object] = {}
 
-    def ward(self, raw: str) -> tuple[Ward | None, str | None]:
+    def ward(self, raw: str) -> tuple[_WardSnap | None, str | None]:
         found = {w.id: w for w in self._by_name.get(_ward_key(raw), [])}
         if len(found) == 1:
             return next(iter(found.values())), None
@@ -154,7 +172,11 @@ class _Resolver:
         if key not in self._eq:
             cands = bcm_candidates(raw)
             hits = await equipment_crud.get_by_bcm_codes(self._db, cands)
-            self._eq[key] = next(iter(hits.values())) if len(hits) == 1 else (None if not hits else "ambiguous")
+            if len(hits) == 1:
+                e = next(iter(hits.values()))
+                self._eq[key] = _EqSnap(id=e.id, bcm_code=e.bcm_code)
+            else:
+                self._eq[key] = None if not hits else "ambiguous"
         val = self._eq[key]
         if val is None:
             return None, "unknown_bcm"
@@ -163,12 +185,12 @@ class _Resolver:
         return val, None
 
 
-def _envelope(row: LegacyRow, user: User, *, dispatch=None, receipt=None) -> SyncOperation:
+def _envelope(row: LegacyRow, user_id: uuid.UUID, *, dispatch=None, receipt=None) -> SyncOperation:
     return SyncOperation(
         op_id=op_id_for(row.kind, row.row_id),
         device_id=DEVICE_ID,
         device_seq=device_seq_for(row.kind, row),
-        user_id=user.id,
+        user_id=user_id,
         op_type=OP_TYPE_DISPATCH if row.kind == KIND_DISPATCH else OP_TYPE_RECEIPT,
         occurred_at_local=row.occurred_at,
         clock_offset_ms=0,
@@ -177,8 +199,11 @@ def _envelope(row: LegacyRow, user: User, *, dispatch=None, receipt=None) -> Syn
     )
 
 
-async def _submit(db: AsyncSession, op: SyncOperation, user: User, row: LegacyRow, report: RunReport) -> None:
+async def _submit(db: AsyncSession, op: SyncOperation, user_id: uuid.UUID, row: LegacyRow, report: RunReport) -> None:
     try:
+        # A previous row's rollback/commit may have expired the operator; an
+        # awaited get() refreshes an expired identity-map instance safely.
+        user = await db.get(User, user_id, populate_existing=True)
         res = await sync_service.process_operation(db, op, user, user_agent=USER_AGENT)
     except Exception as exc:  # one bad row must not stop the pass
         await db.rollback()
@@ -220,7 +245,11 @@ async def run_once(session_factory, reader: SheetReader, cfg: SyncConfig, *, dry
 
     skipped_dispatch_ids: set[str] = set()
     async with session_factory() as db:
-        user = await _load_sync_user(db, cfg.employee_code)
+        # process_operation reads ``tx.id`` after its commit; never let a
+        # commit expire instances here whatever the factory was built with.
+        # (A rollback still expires everything -- hence the snapshots below.)
+        db.sync_session.expire_on_commit = False
+        user_id = (await _load_sync_user(db, cfg.employee_code)).id
         wards = list((await db.execute(select(Ward))).scalars().all())
         resolver = _Resolver(db, wards)
         for row in events:
@@ -244,7 +273,7 @@ async def run_once(session_factory, reader: SheetReader, cfg: SyncConfig, *, dry
                     equipment_id=str(eq.id), ward_id=str(ward.id),
                     dispatch_type=DispatchType.ON_DEMAND, notes=build_note(row),
                 )
-                await _submit(db, _envelope(row, user, dispatch=body), user, row, report)
+                await _submit(db, _envelope(row, user_id, dispatch=body), user_id, row, report)
                 continue
             # receipt
             if eerr:
@@ -259,7 +288,7 @@ async def run_once(session_factory, reader: SheetReader, cfg: SyncConfig, *, dry
                 report.planned.append(f"receipt {row.row_id} {eq.bcm_code}")
                 continue
             body = SyncReceiptBody(transaction_id=tx_id, receipt_outcome=ReceiptOutcome.USABLE, notes=build_note(row))
-            await _submit(db, _envelope(row, user, receipt=body), user, row, report)
+            await _submit(db, _envelope(row, user_id, receipt=body), user_id, row, report)
     logger.info(report.summary())
     return report
 

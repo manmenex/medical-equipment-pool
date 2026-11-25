@@ -172,6 +172,34 @@ async def test_dispatch_applied_then_return_applied_against_it(world):
         assert WARD_SIDE_NAME not in json.dumps([o.payload for o in ops])
 
 
+async def test_run_once_survives_expiring_sessions_commit_and_rollback(db_engine, world, monkeypatch):
+    """Regression: with expire_on_commit=True (SQLAlchemy default) and a row
+    that errors (rollback), cached ORM objects used to be expired and the next
+    sync attribute access raised MissingGreenlet."""
+    expiring = async_sessionmaker(db_engine, class_=AsyncSession)  # expire_on_commit=True
+    bad_op = runner.op_id_for("dispatch", "0a1b2c3f")
+    real = runner.sync_service.process_operation
+
+    async def flaky(db, op, user, **kw):
+        if op.op_id == bad_op:
+            raise RuntimeError("boom")
+        return await real(db, op, user, **kw)
+
+    monkeypatch.setattr(runner.sync_service, "process_operation", flaky)
+    reader = FakeReader(
+        dispatch=[
+            drow("0a1b2c3d", 5, bcm="BCM01078"),
+            drow("0a1b2c3f", 4, bcm="BCM01079"),  # errors -> rollback
+            drow("0a1b2c40", 3, bcm="BCM01079"),  # good row after the rollback
+        ],
+        receipt=[rrow("0a1b2c3e", 1, bcm="BCM01078")],
+    )
+    rep = await runner.run_once(expiring, reader, make_cfg())
+    assert rep.counts["applied"] == 3 and rep.counts["error"] == 1
+    assert not any("MissingGreenlet" in r["reason"] for r in rep.skipped)
+    assert await count(world, BorrowTransaction) == 2
+
+
 async def test_rerun_is_idempotent(world):
     reader = FakeReader(dispatch=[drow("0a1b2c3d", 3)], receipt=[rrow("0a1b2c3e", 1)])
     await runner.run_once(world, reader, make_cfg())
