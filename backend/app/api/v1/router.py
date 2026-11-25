@@ -16,6 +16,7 @@ from app.api.v1 import (
     legacy_migration_authorities,
     legacy_reconciliation,
     master_data,
+    monitor,
     notifications,
     report_options,
     reports,
@@ -31,6 +32,7 @@ api_router.include_router(equipment.router)
 api_router.include_router(borrow.router)
 api_router.include_router(transactions.router)
 api_router.include_router(dashboard.router)
+api_router.include_router(monitor.router)
 api_router.include_router(reports.router)
 api_router.include_router(report_options.router)
 api_router.include_router(users.router)
