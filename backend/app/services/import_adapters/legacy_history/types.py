@@ -54,7 +54,7 @@ class LegacyIssueCandidate:
     migration_authority_id: uuid.UUID
     import_session_id: uuid.UUID
     import_source_id: uuid.UUID
-    header_source_ref: SourceCoordinate
+    header_source_ref: SourceCoordinate | None  # None for a header-less (orphan) line, Owner 2026-11-25
     line_source_ref: SourceCoordinate
 
 
@@ -101,7 +101,7 @@ class LegacyReceiveCandidate:
     migration_authority_id: uuid.UUID
     import_session_id: uuid.UUID
     import_source_id: uuid.UUID
-    header_source_ref: SourceCoordinate
+    header_source_ref: SourceCoordinate | None  # None for a header-less (orphan) line, Owner 2026-11-25
     line_source_ref: SourceCoordinate
 
 

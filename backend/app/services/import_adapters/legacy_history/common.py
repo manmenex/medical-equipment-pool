@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import io
 import uuid
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from openpyxl import load_workbook
@@ -210,6 +210,11 @@ def row_is_blank(values: tuple) -> bool:
     proceeds to normal validation, where a missing required value
     becomes its own finding."""
     return all(cell_text(v) is None for v in values)
+
+
+# Owner decision 2026-11-25: the line's date+time is authoritative; a header
+# timestamp differing by at most this much is accepted silently.
+HEADER_LINE_TIMESTAMP_TOLERANCE = timedelta(hours=24)
 
 
 def combine_bangkok_datetime(date_value: object, time_value: object) -> datetime | None:

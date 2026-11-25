@@ -114,7 +114,9 @@ def _row_out(row) -> LegacyHistoryDryRunPlanRowOut:
             legacy_ward_text=nv.get("legacy_ward_text"),
             resolved_ward_id=nv.get("resolved_ward_id"),
             legacy_bme_name=nv.get("legacy_bme_name"),
-            header_source_ref=LegacyHistoryDryRunPlanSourceRefOut(**nv["header_source_ref"]),
+            header_source_ref=(
+                LegacyHistoryDryRunPlanSourceRefOut(**nv["header_source_ref"]) if nv.get("header_source_ref") else None
+            ),
             line_source_ref=LegacyHistoryDryRunPlanSourceRefOut(**nv["line_source_ref"]),
         )
     return LegacyHistoryDryRunPlanRowOut(

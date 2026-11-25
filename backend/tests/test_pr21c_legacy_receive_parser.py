@@ -244,12 +244,25 @@ async def test_one_header_multiple_lines_succeeds(db_session: AsyncSession):
     assert candidates[0].line_source_ref.source_row_number != candidates[1].line_source_ref.source_row_number
 
 
-async def test_orphan_line_reference_errors(db_session: AsyncSession):
+async def test_orphan_line_reference_is_warning_and_builds_candidate(db_session: AsyncSession):
     await _seed_equipment(db_session)
+    ward = await _seed_ward(db_session, code="Ward 1")
     content = _build_workbook([_header_row(order_ref="RET-0001")], [_line_row(order_ref="RET-DOES-NOT-EXIST")])
     _, _, candidates, findings = await _run(db_session, content)
-    assert not candidates
     assert receive_module.CODE_ORPHAN_ORDER_REFERENCE in _codes(findings)
+    assert all(f.severity == "warning" for f in findings)
+    assert len(candidates) == 1
+    assert candidates[0].header_source_ref is None
+    assert candidates[0].resolved_ward_id == ward.id
+    assert candidates[0].legacy_ward_text == "Ward 1"
+
+
+async def test_orphan_line_without_ward_still_errors(db_session: AsyncSession):
+    await _seed_equipment(db_session)
+    content = _build_workbook([_header_row(order_ref="RET-0001")], [_line_row(order_ref="RET-DOES-NOT-EXIST", ward=None)])
+    _, _, candidates, findings = await _run(db_session, content)
+    assert not candidates
+    assert receive_module.CODE_WARD_NOT_FOUND in _codes(findings)
 
 
 async def test_duplicate_ambiguous_header_ref_errors(db_session: AsyncSession):
@@ -550,12 +563,25 @@ async def test_malformed_time_errors(db_session: AsyncSession):
     assert receive_module.CODE_INVALID_TIMESTAMP in _codes(findings)
 
 
-async def test_header_line_timestamp_conflict_errors(db_session: AsyncSession):
+async def test_header_line_timestamp_within_24h_passes_using_line_time(db_session: AsyncSession):
     await _seed_equipment(db_session)
     await _seed_ward(db_session, code="Ward 1")
     content = _build_workbook(
         [_header_row(d=date(2024, 1, 10), t=time(9, 0, 0))],
         [_line_row(d=date(2024, 1, 11), t=time(9, 0, 0))],
+    )
+    _, _, candidates, findings = await _run(db_session, content)
+    assert not findings
+    assert len(candidates) == 1
+    assert candidates[0].occurred_at.day == 11  # line time, 02:00 UTC
+
+
+async def test_header_line_timestamp_conflict_over_24h_errors(db_session: AsyncSession):
+    await _seed_equipment(db_session)
+    await _seed_ward(db_session, code="Ward 1")
+    content = _build_workbook(
+        [_header_row(d=date(2024, 1, 10), t=time(9, 0, 0))],
+        [_line_row(d=date(2024, 1, 11), t=time(9, 0, 1))],
     )
     _, _, candidates, findings = await _run(db_session, content)
     assert not candidates
