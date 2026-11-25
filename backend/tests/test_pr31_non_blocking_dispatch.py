@@ -352,6 +352,26 @@ async def test_offline_dispatch_of_dispatched_equipment_without_ack_goes_to_conf
 # --- review follow-ups -------------------------------------------------------
 
 
+async def test_monitor_events_show_close_reason_for_redispatch_closed_transaction(client, ctx):
+    eq = await _equipment(client, ctx["admin"], "mon1")
+    first = (await client.post("/api/v1/borrow", headers=ctx["staff"], json=_payload(eq, ctx["ward_a"]))).json()
+    new = (
+        await client.post(
+            "/api/v1/borrow", headers=ctx["staff"], json=_payload(eq, ctx["ward_b"], acknowledge_status_warning=True)
+        )
+    ).json()
+
+    disp = await client.get("/api/v1/monitor/events", headers=ctx["staff"], params={"kind": "dispatch"})
+    assert disp.status_code == 200, disp.text
+    by_id = {e["id"]: e for e in disp.json()["items"]}
+    assert by_id[first["id"]]["close_reason"] == CLOSE_REASON_REDISPATCH
+    assert by_id[new["id"]]["close_reason"] is None
+
+    # No receipt was recorded for the superseded transaction: not a receipt event.
+    rec = await client.get("/api/v1/monitor/events", headers=ctx["staff"], params={"kind": "receipt"})
+    assert rec.status_code == 200 and rec.json()["items"] == []
+
+
 async def test_decommission_racing_a_defective_dispatch_can_never_leave_decommissioned_issued(
     client, ctx, db_session, monkeypatch
 ):
