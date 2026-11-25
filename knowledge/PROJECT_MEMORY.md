@@ -23,7 +23,7 @@ Sources: `AGENTS.md`, `docs/BUSINESS_RULES.md`,
   `dispatch_type`/`routine_round` removed from data entry (shift from event
   time); ward-first multi-equipment dispatch/receipt; three yes/no accessory
   checks per equipment (not a state); daily shift report planned (Roadmap
-  PR25-PR29). Source: `docs/DECISION_LOG.md`.
+  PR26-PR30). Source: `docs/DECISION_LOG.md`.
 
 - Equipment states are exactly `AVAILABLE_AT_POOL`, `ISSUED_TO_WARD`,
   `UNAVAILABLE_DEFECTIVE`, and `DECOMMISSIONED`.

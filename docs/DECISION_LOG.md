@@ -9234,12 +9234,16 @@ opening-balance transactions are created.
     equipment for that ward in one submission; each equipment remains its own
     transaction and the dispatch/receipt services still own the lifecycle.
     Receipt follows the same ward-first multi-equipment flow and stays atomic
-    usable/defective per equipment.
+    usable/defective per equipment. The detailed entry process is pending
+    Owner confirmation of three UX questions: HN per equipment vs per slip;
+    receipt of equipment dispatched to a different ward (allow with warning
+    vs block); accessory checks default checked vs unchecked.
   - **D4 Accessory/condition checks:** per equipment at dispatch and receipt,
     three yes/no checks: screen not cracked (ตัวเครื่องหน้าจอไม่แตกร้าว),
     charger cable OK (สายชาร์จไม่ขาด), pole clamp present/OK (Pole Clamp
     ไม่แตกหัก). Recorded as condition facts; not a cleaning state; no new
-    equipment state.
+    equipment state. Default state of the checks (checked vs unchecked) is
+    pending Owner confirmation (see D3).
   - **D5 Daily shift report:** add a daily report matching the pool team's
     current Excel summary (by ward group, equipment type, operator; night vs
     day shift; dispatch/receipt counts) and printable daily forms. HN never
@@ -9250,5 +9254,5 @@ opening-balance transactions are created.
   `docs/ARCHITECTURE_GUARDRAILS.md` (patient tracking), `docs/BUSINESS_RULES.md`
   (Roadmap PR7 7b dispatch_type/routine_round rule).
 - **Source:** Owner decisions in chat, 2026-11-25. Docs-only Governance PR; no
-  code change. Implementation follows in Roadmap PR25-PR29 (`docs/ROADMAP.md`).
+  code change. Implementation follows in Roadmap PR26-PR30 (`docs/ROADMAP.md`).
 - **Status:** Approved; implementation not started.
