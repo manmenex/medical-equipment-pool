@@ -19,6 +19,7 @@ from app.db.session import get_db
 from app.models.equipment import Equipment
 from app.models.master_data import EquipmentCategory, Ward
 from app.models.transaction import BorrowTransaction, ReceiptOutcome
+from app.crud import cuff as cuff_crud
 from app.models.user import User
 from app.schemas.common import Page
 from app.schemas.monitor import MonitorEquipment, MonitorEvent, MonitorOperator, MonitorWard
@@ -72,7 +73,14 @@ async def list_events(
             filters.append(bd_expr <= business_date_to)
     if q and q.strip():
         like = f"%{q.strip().lower()}%"
-        filters.append(or_(func.lower(Equipment.bcm_code).like(like), func.lower(op.full_name).like(like)))
+        contact_col = tx.dispatch_contact_name if is_dispatch else tx.receipt_contact_name
+        filters.append(
+            or_(
+                func.lower(Equipment.bcm_code).like(like),
+                func.lower(op.full_name).like(like),
+                func.lower(contact_col).like(like),
+            )
+        )
 
     base = (
         select(tx, Equipment, EquipmentCategory.name, Ward.name, op)
@@ -101,6 +109,7 @@ async def list_events(
         last_at = last_tx.borrowed_at if is_dispatch else last_tx.returned_at
         next_cursor = encode_cursor(last_at, str(last_tx.id))
 
+    balances = await cuff_crud.balances_for_transactions(db, [r[0].id for r in rows])
     items = []
     for t, eq, cat_name, ward_name, operator in rows:
         at = t.borrowed_at if is_dispatch else t.returned_at
@@ -128,6 +137,12 @@ async def list_events(
                 receipt_outcome=outcome,
                 # PR31 (D8) may add this column; read defensively.
                 close_reason=getattr(t, "close_reason", None),
+                ward_contact_name=t.dispatch_contact_name if is_dispatch else t.receipt_contact_name,
+                checklist_kind=t.checklist_kind,
+                checks=t.dispatch_checks if is_dispatch else t.receipt_checks,
+                cuffs_outstanding=(
+                    cuff_crud.outstanding_counts(balances[t.id]) if t.id in balances else None
+                ),
             )
         )
     return Page(items=items, next_cursor=next_cursor, total=total)

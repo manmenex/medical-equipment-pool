@@ -50,6 +50,9 @@ async def create_borrow(
         user_agent=ua,
         acknowledge_status_warning=payload.acknowledge_status_warning,
         expected_open_transaction_id=payload.expected_open_transaction_id,
+        ward_contact_name=payload.ward_contact_name,
+        dispatch_checks=payload.dispatch_checks,
+        expected_status=payload.expected_status,
     )
     return tx
 
@@ -81,5 +84,8 @@ async def create_return(
         received_by_user_id=user.id,
         ip_address=ip,
         user_agent=ua,
+        ward_contact_name=payload.ward_contact_name,
+        receipt_checks=payload.receipt_checks,
+        cuffs_returned=payload.cuffs_returned,
     )
     return tx

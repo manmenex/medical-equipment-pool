@@ -46,10 +46,18 @@ async def list_categories(db: AsyncSession) -> list[EquipmentCategory]:
 
 
 async def create_category(
-    db: AsyncSession, *, name: str, default_pm_interval_days: int | None, default_cal_interval_days: int | None
+    db: AsyncSession,
+    *,
+    name: str,
+    default_pm_interval_days: int | None,
+    default_cal_interval_days: int | None,
+    checklist_kind: str | None = None,
 ) -> EquipmentCategory:
+    from app.services.checklist_service import default_kind_for_category_name
+
     obj = EquipmentCategory(
         name=name,
+        checklist_kind=checklist_kind or default_kind_for_category_name(name),
         default_pm_interval_days=default_pm_interval_days,
         default_cal_interval_days=default_cal_interval_days,
     )

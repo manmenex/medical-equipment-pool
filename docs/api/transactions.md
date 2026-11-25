@@ -173,3 +173,4 @@ committed ward rather than retrying blindly.
 
 - `docs/api/dispatch.md` — create a transaction (`POST /borrow`), list only open ones (`GET /borrow/active`)
 - `docs/api/receipt.md` — close a transaction (`POST /return/{transaction_id}`)
+- `docs/api/ward-first-entry.md` — Roadmap PR27/PR28: ward-first batch dispatch/receipt, `TransactionOut`'s contact-name/checklist fields, `POST /transactions/{id}/receive-cuffs`, `GET /cuffs/outstanding`

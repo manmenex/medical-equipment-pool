@@ -26,6 +26,8 @@ Body: `{ "operations": [ ... ] }`, 1 to 25 operations, each at most 8 KB seriali
 | `dispatch` | Exactly the `POST /borrow` body (`docs/api/dispatch.md`). |
 | `receipt` | The `POST /return` body (`docs/api/receipt.md`) plus `transaction_id`. |
 
+Roadmap PR27/PR28: both bodies also carry the optional `ward_contact_name`, `dispatch_checks`/`receipt_checks`, `expected_status` and `cuffs_returned` (see `docs/api/ward-first-entry.md` section 6); batches are queued as N single ops, and the new keys are omitted from the hashed payload when unset so older queued ops keep their hash.
+
 Response `200`: `{ "results": [ { "op_id", "result", "code", "transaction_id"?, "message" } ] }`, one per operation, in processing order (match by `op_id`). The batch is `200` even when individual operations conflict. Each operation runs in its own database transaction; an unexpected server error (`5xx`) leaves earlier operations committed and later ones untouched, and the client simply re-sends the whole batch (idempotent).
 
 | `result` | `code` | Meaning |

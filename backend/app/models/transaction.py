@@ -2,12 +2,17 @@ import enum
 import uuid
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Boolean, Enum, ForeignKey, Index, Integer, String, Text, false, text
+from sqlalchemy import Boolean, CheckConstraint, Enum, ForeignKey, Index, Integer, String, Text, false, text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.types import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.reporting_time import Shift, business_date_and_shift
 from app.db.base import Base
 from app.models.mixins import TimestampMixin, UTCDateTime, UUIDPKMixin
+
+
+JSONType = JSONB().with_variant(JSON(), "sqlite")
 
 
 class TransactionStatus(str, enum.Enum):
@@ -145,6 +150,10 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
             postgresql_where=text("status = 'open'"),
             sqlite_where=text("status = 'open'"),
         ),
+        CheckConstraint(
+            "checklist_kind IS NULL OR checklist_kind IN ('standard', 'cryo_cuff')",
+            name="ck_borrow_transactions_checklist_kind",
+        ),
     )
 
     transaction_no: Mapped[str] = mapped_column(String(30), unique=True, nullable=False, index=True)
@@ -247,6 +256,19 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     dispatched_while_defective: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()
     )
+    # Roadmap PR27 (D7): optional free-text name of the ward staff member who
+    # received (dispatch) / handed back (receipt) the equipment. Ward staff are
+    # not users; never a patient name. NULL = not recorded.
+    dispatch_contact_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    receipt_contact_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Roadmap PR28 (D4/D10): which checklist applies to this transaction
+    # ('standard' | 'cryo_cuff'), snapshotted from the equipment's category at
+    # dispatch so later category edits never reinterpret stored checks. NULL
+    # for historical rows. dispatch_checks/receipt_checks hold the validated
+    # checklist JSON (app.schemas.checklist); NULL = not recorded.
+    checklist_kind: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    dispatch_checks: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    receipt_checks: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
 
     equipment: Mapped["Equipment"] = relationship()
     # Roadmap PR17 Slice 2 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md

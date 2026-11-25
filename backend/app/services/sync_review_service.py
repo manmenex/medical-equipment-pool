@@ -510,6 +510,9 @@ async def apply_now(
                 # is dismissed and re-dispatched online with confirmation.
                 acknowledge_status_warning=body.acknowledge_status_warning,
                 expected_open_transaction_id=body.expected_open_transaction_id,
+                ward_contact_name=body.ward_contact_name,
+                dispatch_checks=body.dispatch_checks,
+                expected_status=body.expected_status,
             )
         else:
             tx = await borrow_service.return_equipment(
@@ -523,6 +526,9 @@ async def apply_now(
                 actor_user_id=resolver_id,
                 client_op=ctx,
                 returned_at=business_time,
+                ward_contact_name=body.ward_contact_name,
+                receipt_checks=body.receipt_checks,
+                cuffs_returned=body.cuffs_returned,
             )
     except (ClientOpAlreadyProcessedError, ClientOpLedgerConflictError) as exc:
         # The service rolled back: another resolver (or the client's retry)

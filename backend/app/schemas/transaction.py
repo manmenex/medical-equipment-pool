@@ -4,7 +4,9 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.core.reporting_time import Shift
+from app.models.equipment import EquipmentStatus
 from app.models.transaction import DispatchType, ReceiptOutcome, RoutineRound
+from app.schemas.checklist import Checks, ContactName, CuffCounts
 from app.schemas.common import UUIDStr
 
 # Roadmap PR9A: bounded, consistent with other free-text metadata fields in
@@ -65,6 +67,16 @@ class BorrowRequest(BaseModel):
     # current open transaction the dispatch is refused 409
     # DISPATCH_WARNING_STALE.
     expected_open_transaction_id: str | None = None
+    # Roadmap PR27/PR28 (D7, D4/D10, D3 review gap). `ward_contact_name` is
+    # stored as `dispatch_contact_name`; `dispatch_checks` must match the
+    # equipment's checklist kind (omitted = NULL, not recorded);
+    # `expected_status` is the equipment status the operator was shown -- if
+    # the equipment's status differs now, the dispatch is refused 409
+    # DISPATCH_WARNING_STALE (a warning confirmation must not apply to
+    # equipment whose status changed meanwhile).
+    ward_contact_name: ContactName = None
+    dispatch_checks: Checks | None = None
+    expected_status: EquipmentStatus | None = None
 
     # Codex PR20 review round 1, MAJOR 1: the default Pydantic/FastAPI
     # behavior used elsewhere in this codebase (silently ignore unrecognized
@@ -108,6 +120,15 @@ class ReturnRequest(BaseModel):
 
     receipt_outcome: ReceiptOutcome
     notes: str | None = None
+    # Roadmap PR27/PR28 (D7, D4/D10, D11). `ward_contact_name` is stored as
+    # `receipt_contact_name`. `receipt_checks` must match the transaction's
+    # checklist kind (omitted = NULL). `cuffs_returned` (Cryo-Cuff only) is
+    # the per-type count handed back with the device; when omitted, a
+    # cryo_cuff `receipt_checks.cuffs` is used; neither = device-only
+    # receipt. Never more than outstanding.
+    ward_contact_name: ContactName = None
+    receipt_checks: Checks | None = None
+    cuffs_returned: CuffCounts | None = None
 
     model_config = {"extra": "forbid"}
 
@@ -204,6 +225,13 @@ class TransactionOut(BaseModel):
     # .dispatched_while_defective. Read-only.
     close_reason: str | None = None
     dispatched_while_defective: bool = False
+    # Roadmap PR27/PR28: ward-side contact names (D7) and accessory checklists
+    # (D4/D10). All NULL for historical rows / when not recorded.
+    dispatch_contact_name: str | None = None
+    receipt_contact_name: str | None = None
+    checklist_kind: str | None = None
+    dispatch_checks: Checks | None = None
+    receipt_checks: Checks | None = None
     # Roadmap PR16 Slice 2 (docs/archive/design/PR16_REPORTING_FOUNDATION_PLAN.md
     # §9) -- read-only, computed, never accepted as request input.
     # dispatch_* is always present (every transaction has a `borrowed_at`);

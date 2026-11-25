@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 from pydantic import AfterValidator, BaseModel, Field
 
 from app.models.user import ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, ROLE_READ_ONLY
+from app.schemas.checklist import ChecklistKind
 from app.schemas.common import UUIDStr
 
 # Roadmap PR10: a closed, generated-OpenAPI-enum type for the 3 confirmed
@@ -129,6 +130,8 @@ class CategoryOut(BaseModel):
     name: str
     default_pm_interval_days: int | None
     default_cal_interval_days: int | None
+    # Roadmap PR28 (D4/D10): which accessory checklist applies.
+    checklist_kind: ChecklistKind = "standard"
 
     model_config = {"from_attributes": True}
 
@@ -137,6 +140,18 @@ class CategoryCreate(BaseModel):
     name: str
     default_pm_interval_days: int | None = None
     default_cal_interval_days: int | None = None
+    # Omitted: 'cryo_cuff' when the name contains "cryo" (case-insensitive),
+    # else 'standard'.
+    checklist_kind: ChecklistKind | None = None
+
+
+class CategoryUpdate(BaseModel):
+    """Roadmap PR28: edit which accessory checklist a category uses. Affects
+    new dispatches only (each transaction snapshots its kind)."""
+
+    checklist_kind: ChecklistKind
+
+    model_config = {"extra": "forbid"}
 
 
 class UserOut(BaseModel):

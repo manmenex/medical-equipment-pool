@@ -179,6 +179,8 @@ async def close(
     receipt_outcome: str,
     notes: str | None,
     returned_at: datetime | None = None,
+    receipt_contact_name: str | None = None,
+    receipt_checks: dict | None = None,
 ) -> bool:
     """Conditionally closes an OPEN transaction and reports whether *this*
     call is the one that closed it. The only path that may set
@@ -234,6 +236,12 @@ async def close(
         "condition_on_return": receipt_outcome,
         "received_by_user_id": received_by_user_id,
     }
+    # Roadmap PR27/PR28: only set when supplied; omitted stays SQL NULL
+    # ("not recorded"), never a JSON null.
+    if receipt_contact_name is not None:
+        values["receipt_contact_name"] = receipt_contact_name
+    if receipt_checks is not None:
+        values["receipt_checks"] = receipt_checks
     if notes:
         # Preserves the existing "[Return] ..." append behavior. ``tx.notes``
         # is the value read at SELECT time; only the winner uses this result,

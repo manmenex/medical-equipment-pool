@@ -4,6 +4,7 @@ from app.api.v1 import (
     audit,
     auth,
     borrow,
+    cuffs,
     cutover_readiness,
     dashboard,
     equipment,
@@ -31,6 +32,7 @@ api_router.include_router(auth.router)
 api_router.include_router(equipment.router)
 api_router.include_router(borrow.router)
 api_router.include_router(transactions.router)
+api_router.include_router(cuffs.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(monitor.router)
 api_router.include_router(reports.router)

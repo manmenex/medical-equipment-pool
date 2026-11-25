@@ -25,6 +25,11 @@ ALLOWED_KEYS = {
     "equipment",
     "receipt_outcome",
     "close_reason",
+    # Roadmap PR27/PR28 additions (contact name, checklist, outstanding cuffs).
+    "ward_contact_name",
+    "checklist_kind",
+    "checks",
+    "cuffs_outstanding",
 }
 
 

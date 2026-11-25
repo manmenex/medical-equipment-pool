@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -52,8 +52,21 @@ class Location(UUIDPKMixin, Base):
 
 class EquipmentCategory(UUIDPKMixin, Base):
     __tablename__ = "equipment_categories"
-    __table_args__ = (UniqueConstraint("name", name="uq_equipment_categories_name"),)
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_equipment_categories_name"),
+        CheckConstraint("checklist_kind IN ('standard', 'cryo_cuff')", name="ck_equipment_categories_checklist_kind"),
+    )
 
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Roadmap PR28 (D4/D10): which dispatch/receipt accessory checklist applies
+    # to equipment of this category -- 'standard' (3 checks) or 'cryo_cuff'
+    # (6-item Cryo-Cuff form + cuff counts). Explicit master data, not a runtime
+    # name match: migration 0031 backfills 'cryo_cuff' for categories whose name
+    # contains "cryo" (case-insensitive); POST /categories applies the same
+    # default when none is supplied; PATCH /categories/{id} edits it. Equipment
+    # without a category uses 'standard'.
+    checklist_kind: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="standard", server_default="standard"
+    )
     default_pm_interval_days: Mapped[int | None] = mapped_column(Integer)
     default_cal_interval_days: Mapped[int | None] = mapped_column(Integer)

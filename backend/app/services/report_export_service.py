@@ -180,6 +180,9 @@ _TRANSACTION_REPORT_COLUMNS = [
     ExportColumn(key="asset_number", label_th="รหัสครุภัณฑ์", value_type="string"),
     ExportColumn(key="equipment_name", label_th="เครื่องมือ", value_type="string"),
     ExportColumn(key="ward_name", label_th="หอผู้ป่วย", value_type="string"),
+    # Roadmap PR27 (D7): the ward-side contact name of the report's own event
+    # (dispatch side on the issue report, receipt side on the receive report).
+    ExportColumn(key="ward_contact_name", label_th="ผู้ใช้หอผู้ป่วย", value_type="string"),
     ExportColumn(key="dispatch_operator_display_name", label_th="เบิกโดย", value_type="string"),
     ExportColumn(key="dispatch_business_date", label_th="วันที่ทำการเบิก", value_type="date"),
     ExportColumn(key="dispatch_shift", label_th="กะที่เบิก", value_type="string"),
@@ -200,13 +203,17 @@ _EQUIPMENT_VERIFY_CHECKLIST_COLUMNS = [
 ]
 
 
-def _transaction_report_row(tx_out: ReportTransactionOut, *, ward_names: dict[str, str]) -> ExportRow:
+def _transaction_report_row(
+    tx_out: ReportTransactionOut, *, ward_names: dict[str, str], contact_side: str = "dispatch"
+) -> ExportRow:
+    contact_name = tx_out.receipt_contact_name if contact_side == "receipt" else tx_out.dispatch_contact_name
     return ExportRow(
         values={
             "transaction_no": tx_out.transaction_no,
             "asset_number": tx_out.equipment.asset_number,
             "equipment_name": tx_out.equipment.equipment_name,
             "ward_name": ward_names.get(tx_out.ward_id, "ไม่ทราบ") if tx_out.ward_id else "ไม่ทราบ",
+            "ward_contact_name": contact_name,
             "dispatch_operator_display_name": tx_out.dispatch_operator_display_name,
             "dispatch_business_date": tx_out.dispatch_business_date,
             "dispatch_shift": _SHIFT_LABELS_TH[tx_out.dispatch_shift.value],
@@ -391,7 +398,8 @@ async def build_receive_report_document(
     rows, _total = await _fetch_all_matching_rows(query_fn, row_limit=MAX_EXPORT_ROWS)
     ward_names = await _ward_name_lookup(db)
     export_rows = [
-        _transaction_report_row(ReportTransactionOut.model_validate(row), ward_names=ward_names) for row in rows
+        _transaction_report_row(ReportTransactionOut.model_validate(row), ward_names=ward_names, contact_side="receipt")
+        for row in rows
     ]
     # Roadmap PR18B review 4837529462 (PR18B-H2): category/operator/equipment
     # display names resolved only when the corresponding filter is actually

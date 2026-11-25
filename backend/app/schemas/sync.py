@@ -30,6 +30,14 @@ OP_TYPE_RECEIPT = "receipt"
 CURRENT_ENVELOPE_VERSION = 1
 MIN_SUPPORTED_ENVELOPE_VERSION = 1
 
+_ADDITIVE_BODY_KEYS = (
+    "ward_contact_name",
+    "dispatch_checks",
+    "receipt_checks",
+    "cuffs_returned",
+    "expected_status",
+)
+
 RESULT_APPLIED = "applied"
 RESULT_DUPLICATE = "duplicate"
 RESULT_CONFLICT = "conflict"
@@ -103,7 +111,14 @@ class SyncOperation(BaseModel):
     def business_payload(self) -> dict:
         """The canonical business payload that is hashed and stored."""
         body = self.dispatch if self.op_type == OP_TYPE_DISPATCH else self.receipt
-        return {"op_type": self.op_type, self.op_type: body.model_dump(mode="json")}
+        dumped = body.model_dump(mode="json")
+        # Roadmap PR27/PR28 fields are additive: omitted when unset so the
+        # payload hash of an op queued before they existed is unchanged
+        # (a retry must not look like OP_ID_REUSED).
+        for key in _ADDITIVE_BODY_KEYS:
+            if dumped.get(key) is None:
+                dumped.pop(key, None)
+        return {"op_type": self.op_type, self.op_type: dumped}
 
 
 class SyncBatchRequest(BaseModel):

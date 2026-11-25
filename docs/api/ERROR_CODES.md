@@ -75,6 +75,9 @@ A `422` validation error additionally includes an `errors` array:
 | `EQUIPMENT_NOT_FOUND` | 404 | `EquipmentNotFoundError` | Equipment ID doesn't resolve (`GET/PATCH/DELETE /equipment/{id}`, QR resolve, dispatch, receipt) |
 | `DISPATCH_STATUS_WARNING` | 409 | `DispatchStatusWarningError` (subclass of `EquipmentNotAvailableError`) | Roadmap PR31 (D8): dispatch of `issued_to_ward` or `unavailable_defective` equipment without `acknowledge_status_warning`; `details` describes the problem |
 | `DISPATCH_WARNING_STALE` | 409 | `DispatchWarningStaleError` | PR31: `expected_open_transaction_id` is not the current open transaction |
+| `CHECKLIST_KIND_MISMATCH` | 400 | `ChecklistKindMismatchError` (subclass of `InvalidInputError`) | Roadmap PR28: submitted checklist `kind` does not match the equipment's/transaction's checklist kind; `details` = `{expected_kind, received_kind}` (`docs/api/ward-first-entry.md`) |
+| `CUFF_RETURN_EXCEEDS_OUTSTANDING` | 409 | `CuffReturnExceedsOutstandingError` | Roadmap PR28 (D11): receipt `cuffs_returned` or `receive-cuffs` would return more cuffs of a type than are outstanding; `details.exceeded` lists type/requested/outstanding |
+| `CUFF_RECEIVE_NOT_ALLOWED` | 409 | `CuffReceiveNotAllowedError` | Roadmap PR28 (D11): `receive-cuffs` on a transaction whose device has not been received/closed |
 | `EQUIPMENT_STATUS_CHANGED` | 409 | `EquipmentStatusChangedError` | PR31: equipment status changed concurrently; conditional status write lost |
 | `TRANSACTION_CLOSED_BY_REDISPATCH` | 409 | `TransactionClosedByRedispatchError` | PR31: receipt attempted on a transaction closed by re-dispatch |
 | `EQUIPMENT_NOT_AVAILABLE` | 409 | `EquipmentNotAvailableError` | Dispatch attempted on `decommissioned` equipment, a concurrent dispatch won the unique-index race, or a re-dispatch lost the conditional close of the previous transaction |
