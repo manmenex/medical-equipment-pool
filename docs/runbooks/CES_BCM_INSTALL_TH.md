@@ -355,3 +355,15 @@ cd C:\MEP\medical-equipment-pool\deployment\local-staging
 ### 9.5 ยังไม่ได้ตรวจบนเครื่องจริง
 
 สคริปต์ยังไม่ได้ทดสอบกับ Tailscale/Funnel จริงบนเครื่อง CES-BCM (CI ตรวจเฉพาะ syntax)
+
+## 10. นำเข้าประวัติเก่า (ข้อมูลเดิม)
+
+ไฟล์ Google Sheet เต็มมีหลายชีตและรูปภาพ ระบบจึงรับตรง ๆ ไม่ได้ ให้ตัดเหลือเฉพาะ 4 ชีตและช่วงวันที่ที่ต้องการก่อน
+
+1. ดาวน์โหลด Google Sheet เป็น `.xlsx` เก็บที่ `C:\MEP\history\pool-export.xlsx`
+2. เปิด PowerShell 7 ในโฟลเดอร์ `deployment\local-staging` แล้วรัน
+   `.\prepare-legacy-history.ps1 -InputFile C:\MEP\history\pool-export.xlsx -Since 2026-05-25`
+   (ใส่ `-Until YYYY-MM-DD` ได้ถ้าต้องการจำกัดวันสิ้นสุด) สคริปต์จะแสดงเฉพาะจำนวนแถว ไม่แสดงข้อมูลในเซลล์
+3. ได้ไฟล์ `pool-export-import-2026-05-25.xlsx` ในโฟลเดอร์เดียวกัน นำไปอัปโหลดที่เมนู **นำเข้าข้อมูลเดิม**
+
+หมายเหตุ: เป็นการนำเข้าประวัติเท่านั้น **ไม่เปลี่ยนสถานะเครื่องมือปัจจุบัน** และห้ามนำไฟล์จริงเข้า git
