@@ -10,6 +10,10 @@ interface UiState {
   // Roadmap PR7b: borrower_name is no longer accepted by the dispatch
   // write path, so there is nothing to remember here anymore.
   setLastWard: (ward: string | null) => void;
+  // Roadmap PR27/PR28: per-ward use counts (local history only) for the
+  // "most used wards" chips on the dispatch/receipt screens.
+  wardUsage: Record<string, number>;
+  bumpWardUsage: (ward: string) => void;
 }
 
 export const useUiStore = create<UiState>()(
@@ -19,6 +23,8 @@ export const useUiStore = create<UiState>()(
       setTheme: (theme) => set({ theme }),
       lastWard: null,
       setLastWard: (ward) => set({ lastWard: ward }),
+      wardUsage: {},
+      bumpWardUsage: (ward) => set((s) => ({ wardUsage: { ...s.wardUsage, [ward]: (s.wardUsage[ward] ?? 0) + 1 } })),
     }),
     { name: "mep-ui" }
   )

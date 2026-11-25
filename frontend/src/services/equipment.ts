@@ -1,5 +1,24 @@
 import { api } from "@/services/api";
-import type { BcmSuggestion, Equipment, EquipmentStatusHistoryItem, Page } from "@/types";
+import type { BcmSuggestion, ChecklistKind, Equipment, EquipmentStatus, EquipmentStatusHistoryItem, Page } from "@/types";
+
+// Roadmap PR31/PR28: read-only scan-time pre-check (status warning + checklist kind).
+export interface DispatchCheck {
+  equipment_id: string;
+  status: EquipmentStatus;
+  warning: "already_dispatched" | "defective" | "decommissioned" | null;
+  dispatchable: boolean;
+  requires_acknowledgement: boolean;
+  current_ward_id: string | null;
+  current_ward_name: string | null;
+  dispatched_at: string | null;
+  open_transaction_id: string | null;
+  open_transaction_no: string | null;
+  checklist_kind: ChecklistKind;
+}
+
+export async function getDispatchCheck(id: string): Promise<DispatchCheck> {
+  return (await api.get<DispatchCheck>(`/equipment/${id}/dispatch-check`)).data;
+}
 
 export interface EquipmentSearchParams {
   q?: string;

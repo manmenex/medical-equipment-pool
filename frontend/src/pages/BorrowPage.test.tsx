@@ -1,365 +1,394 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BorrowPage } from "@/pages/BorrowPage";
+import type { DispatchCheck } from "@/services/equipment";
 import { useUiStore } from "@/store/uiStore";
-import type { Equipment, TransactionOut, Ward } from "@/types";
+import type { Equipment, Ward } from "@/types";
 
-// Roadmap PR11 review (PR11-M1): the dispatch form had no observable
-// component tests at all -- only ReturnPage.tsx's receipt side was covered.
-// This file exercises BorrowPage.tsx the same way ReturnPage.test.tsx
-// exercises the receipt side: the "เบิก" heading/action, the approved ward
-// label + non-real-time-tracking disclaimer (Workflow Audit §7.1), the
-// on-demand and routine_round payload shapes, and the absence of the
-// retired "ยืม" terminology anywhere BorrowPage renders.
-const equipment: Equipment = {
-  id: "eq-1",
-  asset_number: "AST-1",
-  serial_number: null,
-  equipment_name: "Infusion Pump",
-  category_id: null,
-  brand: null,
-  model: null,
-  department_owner_id: null,
-  current_location_id: null,
-  status: "available_at_pool",
-  bcm_code: null,
-  pm_due_date: null,
-  cal_due_date: null,
-  created_at: "2026-07-01T00:00:00Z",
-  updated_at: "2026-07-01T00:00:00Z",
+// Roadmap PR27/PR28 ward-first dispatch screen (docs/api/ward-first-entry.md).
+function equipment(id: string, bcm: string, name = "Infusion Pump"): Equipment {
+  return {
+    id,
+    asset_number: null,
+    serial_number: null,
+    equipment_name: name,
+    category_id: null,
+    brand: null,
+    model: null,
+    department_owner_id: null,
+    current_location_id: null,
+    status: "available_at_pool",
+    bcm_code: bcm,
+    pm_due_date: null,
+    cal_due_date: null,
+    created_at: "",
+    updated_at: "",
+  };
+}
+
+const EQ: Record<string, Equipment> = {
+  BCM001: equipment("e1", "BCM001"),
+  BCM002: equipment("e2", "BCM002", "Ventilator"),
+  BCM900: equipment("e9", "BCM900", "Old Pump"),
+  CRYO1: equipment("c1", "CRYO1", "Cryo-Cuff"),
 };
+let checkFor: Record<string, Partial<DispatchCheck>> = {};
+
+function plainCheck(id: string): DispatchCheck {
+  return {
+    equipment_id: id,
+    status: "available_at_pool",
+    warning: null,
+    dispatchable: true,
+    requires_acknowledgement: false,
+    current_ward_id: null,
+    current_ward_name: null,
+    dispatched_at: null,
+    open_transaction_id: null,
+    open_transaction_no: null,
+    checklist_kind: "standard",
+    ...checkFor[id],
+  };
+}
 
 const wards: Ward[] = [
-  { id: "ward-1", code: "W1", name: "Ward A", department_id: null },
-  { id: "ward-2", code: "W2", name: "Ward B", department_id: null },
+  { id: "ward-1", code: "W1", name: "Ward A", department_id: null, phone: "1111" },
+  { id: "ward-2", code: "W2", name: "Ward B", department_id: "d1", phone: null },
 ];
-
-const transaction: TransactionOut = {
-  id: "tx-1",
-  transaction_no: "TX-1",
-  equipment: { id: "eq-1", asset_number: "AST-1", equipment_name: "Infusion Pump", status: "issued_to_ward" },
-  quantity: 1,
-  borrowed_at: "2026-07-21T10:00:00Z",
-  returned_at: null,
-  borrower_name: null,
-  ward_id: "ward-1",
-  dispatch_type: "on_demand",
-  routine_round: null,
-  phone_number: null,
-  receipt_outcome: null,
-  legacy_condition_on_return: null,
-  status: "open",
-  notes: null,
-};
 
 const getEquipment = vi.fn();
 const resolveEquipmentByQr = vi.fn();
-const createBorrow = vi.fn();
-const listWards = vi.fn();
-const listDepartments = vi.fn();
+const searchBcmSuggestions = vi.fn();
+const getDispatchCheck = vi.fn();
+const dispatchBatch = vi.fn();
 
-// Same rationale as ReturnPage.test.tsx: the QR scanner and BCM search
-// inputs are unrelated dependencies (camera access, debounced network
-// search) that would otherwise make this a QRScanner/BcmSearchInput test,
-// not a BorrowPage dispatch-contract test. Equipment is loaded via the
-// equipment_id query param, the same preset path ReturnPage.test.tsx uses.
 vi.mock("@/services/equipment", () => ({
-  getEquipment: (...args: unknown[]) => getEquipment(...args),
-  resolveEquipmentByQr: (...args: unknown[]) => resolveEquipmentByQr(...args),
+  getEquipment: (...a: unknown[]) => getEquipment(...a),
+  resolveEquipmentByQr: (...a: unknown[]) => resolveEquipmentByQr(...a),
+  searchBcmSuggestions: (...a: unknown[]) => searchBcmSuggestions(...a),
+  getDispatchCheck: (...a: unknown[]) => getDispatchCheck(...a),
 }));
-vi.mock("@/services/borrow", () => ({
-  createBorrow: (...args: unknown[]) => createBorrow(...args),
-}));
+vi.mock("@/services/borrow", () => ({ dispatchBatch: (...a: unknown[]) => dispatchBatch(...a) }));
 vi.mock("@/services/masterData", () => ({
-  listWards: (...args: unknown[]) => listWards(...args),
-  listDepartments: (...args: unknown[]) => listDepartments(...args),
+  listWards: () => Promise.resolve(wards),
+  listDepartments: () => Promise.resolve([{ id: "d1", code: "D1", name: "Dept", phone: "2222" }]),
 }));
-vi.mock("@/components/QRScanner", () => ({ QRScanner: () => null }));
-vi.mock("@/components/BcmSearchInput", () => ({
-  BcmSearchInput: ({ onSelect }: { onSelect: (s: { id: string }) => void }) => (
-    <button type="button" onClick={() => onSelect({ id: "eq-1" })}>
-      pick-bcm
+vi.mock("@/components/QRScanner", () => ({
+  QRScanner: ({ onScan }: { onScan: (t: string) => void }) => (
+    <button type="button" onClick={() => onScan("QR-RAW-1")}>
+      fake-qr-frame
     </button>
   ),
 }));
 
 beforeEach(() => {
-  listWards.mockResolvedValue(wards);
-  listDepartments.mockResolvedValue([]);
-  getEquipment.mockResolvedValue(equipment);
-  createBorrow.mockResolvedValue(transaction);
-  // Roadmap PR7b: BorrowPage seeds its ward select from the persisted
-  // lastWard store on mount. Reset it per test so an earlier test's
-  // successful submission never leaks a preselected ward into a later
-  // test's "no selection" assertions.
-  useUiStore.setState({ lastWard: null });
+  checkFor = {};
+  getEquipment.mockImplementation(async (id: string) => Object.values(EQ).find((e) => e.id === id));
+  searchBcmSuggestions.mockImplementation(async (q: string) =>
+    Object.values(EQ)
+      .filter((e) => e.bcm_code!.toLowerCase().includes(q.toLowerCase()))
+      .map((e) => ({ id: e.id, bcm_code: e.bcm_code! })),
+  );
+  resolveEquipmentByQr.mockResolvedValue(EQ.BCM002);
+  getDispatchCheck.mockImplementation(async (id: string) => plainCheck(id));
+  dispatchBatch.mockImplementation(async (p: { items: unknown[] }) => ({
+    total: p.items.length,
+    succeeded: p.items.length,
+    failed: 0,
+    results: p.items.map((_, index) => ({
+      index, ok: true, equipment_id: null, transaction_id: `t${index}`, transaction_no: `TX-${index + 1}`,
+      cuffs_outstanding: null, error: null,
+    })),
+  }));
+  useUiStore.setState({ lastWard: null, wardUsage: {} });
 });
-
 afterEach(() => {
   vi.clearAllMocks();
   window.localStorage.clear();
 });
 
-function renderBorrowPage(initialEntry = "/borrow?equipment_id=eq-1") {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderPage(entry = "/borrow") {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={[initialEntry]}>
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={[entry]}>
         <BorrowPage />
       </MemoryRouter>
-    </QueryClientProvider>
+    </QueryClientProvider>,
   );
 }
 
-describe("BorrowPage scanning state (Roadmap PR11 terminology)", () => {
-  it("shows the เบิก heading and never the retired ยืม terminology", () => {
-    renderBorrowPage("/borrow");
+async function pickWard(user: ReturnType<typeof userEvent.setup>, query: string) {
+  await user.type(await screen.findByLabelText("ค้นหาหอผู้ป่วย"), query);
+  const box = await screen.findByRole("listbox");
+  await user.click(within(box).getByRole("button"));
+}
 
-    expect(screen.getByRole("heading", { name: "เบิกเครื่องมือ" })).toBeInTheDocument();
-    expect(screen.queryByText(/ยืม/)).not.toBeInTheDocument();
+async function addBcm(user: ReturnType<typeof userEvent.setup>, bcm: string) {
+  await user.type(screen.getByLabelText("รหัส BCM"), `${bcm}{Enter}`);
+}
+
+describe("dispatch screen layout", () => {
+  it("shows the 3 sections, shift chip, note input and no HN field", async () => {
+    renderPage();
+    expect(screen.getByRole("heading", { name: "หอผู้ป่วย" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "สแกนเครื่อง (0 เครื่อง)" })).toBeInTheDocument();
+    expect(screen.getByTestId("shift-chip")).toHaveTextContent(/^(Day|Night) · \d{2}:\d{2}$/);
+    expect(screen.getByLabelText("ชื่อผู้รับ (Ward)")).toBeInTheDocument();
+    expect(screen.getByLabelText("หมายเหตุ (ไม่บังคับ)")).toBeInTheDocument();
+    expect(screen.getByText("เวลาและกะบันทึกอัตโนมัติ")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "ยืนยันการเบิก (0 เครื่อง)" })).toBeDisabled();
+    expect(screen.queryByText(/HN/)).not.toBeInTheDocument();
+  });
+
+  it("prefills the phone from the ward (department fallback) and keeps it editable", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await pickWard(user, "Ward A");
+    expect(screen.getByLabelText("เบอร์โทร")).toHaveValue("1111");
+    await user.clear(screen.getByLabelText("เบอร์โทร"));
+    await user.type(screen.getByLabelText("เบอร์โทร"), "9999");
+    expect(screen.getByLabelText("เบอร์โทร")).toHaveValue("9999");
+    await user.clear(screen.getByLabelText("ค้นหาหอผู้ป่วย"));
+    await pickWard(user, "Ward B");
+    expect(screen.getByLabelText("เบอร์โทร")).toHaveValue("2222");
+  });
+
+  it("shows the most used wards as chips from local history", async () => {
+    useUiStore.setState({ wardUsage: { "ward-2": 5, "ward-1": 1 } });
+    renderPage();
+    const b = await screen.findByRole("button", { name: "Ward B" });
+    const a = screen.getByRole("button", { name: "Ward A" });
+    expect(b.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy(); // most used first
   });
 });
 
-describe("BorrowPage dispatch form (Roadmap PR11 terminology + PR7b payload contract)", () => {
-  it("shows the approved ward label and the non-real-time-tracking disclaimer (Workflow Audit §7.1)", async () => {
-    renderBorrowPage();
-
-    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
-
-    expect(screen.getByText("หอผู้ป่วยที่รับเครื่อง (บันทึก ณ วันที่เบิก) *")).toBeInTheDocument();
-    expect(
-      screen.getByText("ระบบบันทึกเฉพาะหอผู้ป่วยที่ส่งเครื่องไปครั้งแรก ไม่ได้ติดตามการเคลื่อนย้ายเครื่องมือในภายหลัง")
-    ).toBeInTheDocument();
-  });
-
-  it("never renders the retired ยืม terminology once equipment is loaded", async () => {
-    renderBorrowPage();
-
-    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
-
-    expect(screen.queryByText(/ยืม/)).not.toBeInTheDocument();
-  });
-
-  it("does not show dispatch type or routine round fields, and shows the auto shift read-only", async () => {
-    renderBorrowPage();
-
-    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
-
-    expect(screen.queryByLabelText(/ประเภทการเบิก/)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/รอบเวลา/)).not.toBeInTheDocument();
-    expect(screen.getByTestId("borrow-shift")).toHaveTextContent(/Day|Night/);
-  });
-
-  it("submits a dispatch without dispatch_type or routine_round", async () => {
+describe("scan flow", () => {
+  it("adds a compact row per scan (dispatch-check called), ignores duplicates", async () => {
     const user = userEvent.setup();
-    renderBorrowPage();
+    renderPage();
+    await addBcm(user, "BCM001");
+    const row = await screen.findByRole("button", { name: "แก้ไข BCM001" });
+    expect(row).toHaveTextContent("BCM001");
+    expect(row).toHaveTextContent("Infusion Pump");
+    expect(row).toHaveTextContent("✓✓✓");
+    expect(screen.getByRole("heading", { name: "สแกนเครื่อง (1 เครื่อง)" })).toBeInTheDocument();
 
-    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
-
-    await user.selectOptions(screen.getByLabelText(/หอผู้ป่วยที่รับเครื่อง/), "ward-1");
-    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก" }));
-
-    await waitFor(() => expect(createBorrow).toHaveBeenCalledTimes(1));
-    const payload = vi.mocked(createBorrow).mock.calls[0][0];
-    expect(payload).toEqual({ equipment_id: "eq-1", ward_id: "ward-1", phone_number: undefined, notes: undefined });
-    expect(payload).not.toHaveProperty("dispatch_type");
-    expect(payload).not.toHaveProperty("routine_round");
-    expect(screen.getByText("เบิกสำเร็จ")).toBeInTheDocument();
+    await addBcm(user, "BCM001");
+    await waitFor(() => expect(searchBcmSuggestions).toHaveBeenCalledTimes(2));
+    expect(screen.getAllByRole("button", { name: "แก้ไข BCM001" })).toHaveLength(1);
+    expect(getDispatchCheck).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the confirm action disabled while no ward is selected (empty/no-selection state)", async () => {
-    renderBorrowPage();
-
-    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
-
-    expect(screen.getByLabelText(/หอผู้ป่วยที่รับเครื่อง/)).toHaveValue("");
-    expect(screen.getByRole("button", { name: "ยืนยันการเบิก" })).toBeDisabled();
+  it("adds from a QR scan and drops repeated frames of the same code", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(screen.getByRole("button", { name: "สแกน QR" }));
+    await user.click(screen.getByRole("button", { name: "fake-qr-frame" }));
+    await user.click(screen.getByRole("button", { name: "fake-qr-frame" }));
+    expect(await screen.findByRole("button", { name: "แก้ไข BCM002" })).toBeInTheDocument();
+    expect(resolveEquipmentByQr).toHaveBeenCalledTimes(1);
   });
 
-  it("shows an error and never the success view when the dispatch API call fails", async () => {
-    createBorrow.mockRejectedValue({
-      isAxiosError: true,
-      response: { status: 500, data: { detail: "Dispatch failed" } },
+  it("shows a red notice for decommissioned and unknown equipment and does not add them", async () => {
+    checkFor.e9 = { status: "decommissioned", warning: "decommissioned", dispatchable: false };
+    const user = userEvent.setup();
+    renderPage();
+    await addBcm(user, "BCM900");
+    expect(await screen.findByRole("alert")).toHaveTextContent("⛔ BCM900 ปลดระวางแล้ว ไม่ถูกเพิ่ม");
+    await addBcm(user, "NOPE");
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("⛔ ไม่พบเครื่อง NOPE ไม่ถูกเพิ่ม"));
+    expect(screen.getByRole("heading", { name: "สแกนเครื่อง (0 เครื่อง)" })).toBeInTheDocument();
+  });
+});
+
+describe("status warnings (PR31) and acknowledgement payload", () => {
+  it("shows amber warning rows and sends acknowledge + expected_* from dispatch-check", async () => {
+    checkFor.e1 = {
+      status: "issued_to_ward", warning: "already_dispatched", requires_acknowledgement: true,
+      current_ward_name: "Ward Z", open_transaction_id: "tx-open", open_transaction_no: "TX-OLD",
+    };
+    checkFor.e2 = { status: "unavailable_defective", warning: "defective", requires_acknowledgement: true };
+    const user = userEvent.setup();
+    renderPage();
+    await pickWard(user, "Ward A");
+    await addBcm(user, "BCM001");
+    await addBcm(user, "BCM002");
+    expect(await screen.findByRole("button", { name: "แก้ไข BCM001" })).toHaveTextContent("⚠ ค้าง Ward Z");
+    expect(await screen.findByRole("button", { name: "แก้ไข BCM002" })).toHaveTextContent("⚠ เสีย");
+
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (2 เครื่อง)" }));
+    await waitFor(() => expect(dispatchBatch).toHaveBeenCalledTimes(1));
+    const std = { kind: "standard", screen_ok: true, charger_ok: true, clamp_ok: true };
+    expect(dispatchBatch.mock.calls[0][0].items).toEqual([
+      {
+        equipment_id: "e1", checks: std, acknowledge_status_warning: true,
+        expected_open_transaction_id: "tx-open", expected_status: "issued_to_ward",
+      },
+      {
+        equipment_id: "e2", checks: std, acknowledge_status_warning: true,
+        expected_open_transaction_id: null, expected_status: "unavailable_defective",
+      },
+    ]);
+  });
+
+  it("shows the warning text inside the edit panel", async () => {
+    checkFor.e1 = { status: "issued_to_ward", warning: "already_dispatched", current_ward_name: "Ward Z", open_transaction_id: "tx-open" };
+    const user = userEvent.setup();
+    renderPage();
+    await addBcm(user, "BCM001");
+    await user.click(await screen.findByRole("button", { name: "แก้ไข BCM001" }));
+    expect(screen.getByRole("group", { name: "แก้ไข BCM001" })).toHaveTextContent(/ถูกจ่ายไป Ward Z ยังไม่บันทึกรับคืน/);
+  });
+});
+
+describe("edit panel and checks", () => {
+  it("opens an inline panel with 3 default-checked boxes; unchecking one is sent and shown as ✗; done closes it", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await pickWard(user, "Ward A");
+    await user.type(screen.getByLabelText("ชื่อผู้รับ (Ward)"), "คุณสมศรี");
+    await user.type(screen.getByLabelText("หมายเหตุ (ไม่บังคับ)"), "ด่วน");
+    await addBcm(user, "BCM001");
+    await user.click(await screen.findByRole("button", { name: "แก้ไข BCM001" }));
+
+    const panel = screen.getByRole("group", { name: "แก้ไข BCM001" });
+    for (const label of ["หน้าจอไม่แตกร้าว", "สายชาร์จไม่ขาด", "Pole Clamp ไม่แตกหัก"]) {
+      expect(within(panel).getByLabelText(label)).toBeChecked();
+    }
+    expect(within(panel).getByRole("button", { name: "ลบออก" })).toBeInTheDocument();
+    await user.click(within(panel).getByLabelText("สายชาร์จไม่ขาด"));
+    await user.click(within(panel).getByRole("button", { name: "เสร็จ" }));
+    expect(screen.queryByRole("group", { name: "แก้ไข BCM001" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "แก้ไข BCM001" })).toHaveTextContent("✓✗✓");
+
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (1 เครื่อง)" }));
+    await waitFor(() => expect(dispatchBatch).toHaveBeenCalled());
+    expect(dispatchBatch.mock.calls[0][0]).toEqual({
+      ward_id: "ward-1",
+      ward_contact_name: "คุณสมศรี",
+      phone: "1111",
+      note: "ด่วน",
+      items: [{ equipment_id: "e1", checks: { kind: "standard", screen_ok: true, charger_ok: false, clamp_ok: true } }],
+    });
+  });
+
+  it("removes an item with ลบออก", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await addBcm(user, "BCM001");
+    await user.click(await screen.findByRole("button", { name: "แก้ไข BCM001" }));
+    await user.click(screen.getByRole("button", { name: "ลบออก" }));
+    expect(screen.queryByRole("button", { name: "แก้ไข BCM001" })).not.toBeInTheDocument();
+  });
+
+  it("renders the exact 6-item Cryo-Cuff form and sends the cryo payload with cuff counts", async () => {
+    checkFor.c1 = { checklist_kind: "cryo_cuff" };
+    const user = userEvent.setup();
+    renderPage();
+    await pickWard(user, "Ward A");
+    await addBcm(user, "CRYO1");
+    await user.click(await screen.findByRole("button", { name: "แก้ไข CRYO1" }));
+    const panel = screen.getByRole("group", { name: "แก้ไข CRYO1" });
+
+    expect(within(panel).getAllByRole("listitem")).toHaveLength(6);
+    for (const text of [
+      "1 ตัวเครื่อง ×1", "(ไม่แตกหัก เสียหาย)", "2 สายชาร์จ ×1", "3 ฝาปิดตัวเครื่อง แบบมีสายชาร์จ ×1",
+      "4 ฝาปิดตัวเครื่อง แบบไม่มีสายชาร์จ ×1", "5 สายท่อน้ำและ O-Ring ×1", "(O-Ring บริเวณปลาย Hose ทั้งสองข้าง)",
+      "6 Cuff", "(สภาพสมบูรณ์ ไม่มีฉีกขาด)",
+    ]) {
+      expect(within(panel).getByText(text)).toBeInTheDocument();
+    }
+    for (const t of ["Back/Hip/Rib", "Knee", "Shoulder", "Ankle"]) {
+      expect(within(panel).getByLabelText(t)).toBeInTheDocument();
+      expect(within(panel).getByLabelText(`จำนวน ${t}`)).toBeInTheDocument();
+    }
+    // each item defaults to ✓
+    expect(within(panel).getAllByRole("button", { pressed: true }).filter((b) => b.textContent === "✓")).toHaveLength(6);
+
+    await user.click(within(panel).getByRole("button", { name: "2 สายชาร์จ ×1 ไม่ปกติ" }));
+    await user.click(within(panel).getByLabelText("Knee"));
+    await user.clear(within(panel).getByLabelText("จำนวน Knee"));
+    await user.type(within(panel).getByLabelText("จำนวน Knee"), "2");
+    await user.click(within(panel).getByRole("button", { name: "เสร็จ" }));
+    expect(screen.getByRole("button", { name: "แก้ไข CRYO1" })).toHaveTextContent("✓✗✓✓✓✓");
+
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (1 เครื่อง)" }));
+    await waitFor(() => expect(dispatchBatch).toHaveBeenCalled());
+    expect(dispatchBatch.mock.calls[0][0].items[0]).toEqual({
+      equipment_id: "c1",
+      checks: {
+        kind: "cryo_cuff", body_ok: true, charger_ok: false, lid_with_charger_ok: true,
+        lid_without_charger_ok: true, hose_oring_ok: true, cuff_ok: true,
+        cuffs: { back_hip_rib: 0, knee: 2, shoulder: 0, ankle: 0 },
+      },
+    });
+  });
+});
+
+describe("submit results", () => {
+  it("shows per-item results: clears succeeded, keeps failed with a Thai message and retries only those", async () => {
+    dispatchBatch.mockResolvedValueOnce({
+      total: 2, succeeded: 1, failed: 1,
+      results: [
+        { index: 0, ok: true, equipment_id: "e1", transaction_id: "t1", transaction_no: "TX-77", cuffs_outstanding: null, error: null },
+        {
+          index: 1, ok: false, equipment_id: "e2", transaction_id: null, transaction_no: null, cuffs_outstanding: null,
+          error: { code: "EQUIPMENT_NOT_AVAILABLE", message: "x", status: 409 },
+        },
+      ],
     });
     const user = userEvent.setup();
-    renderBorrowPage();
+    renderPage();
+    await pickWard(user, "Ward A");
+    await addBcm(user, "BCM001");
+    await addBcm(user, "BCM002");
+    await screen.findByRole("button", { name: "แก้ไข BCM002" });
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (2 เครื่อง)" }));
 
-    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
-    await user.selectOptions(screen.getByLabelText(/หอผู้ป่วยที่รับเครื่อง/), "ward-1");
-    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก" }));
+    expect(await screen.findByText("✓ BCM001 (TX-77)")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "แก้ไข BCM001" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "แก้ไข BCM002" })).toBeInTheDocument();
+    expect(screen.getByText(/BCM002: เครื่องนี้ไม่พร้อมให้เบิก/)).toBeInTheDocument();
 
-    await waitFor(() => expect(screen.getByText("Dispatch failed")).toBeInTheDocument());
-    expect(screen.queryByText("เบิกสำเร็จ")).not.toBeInTheDocument();
-    // The form remains usable after a failed submission -- the operator is
-    // not stranded on a dead page and can retry.
-    expect(screen.getByRole("button", { name: "ยืนยันการเบิก" })).toBeInTheDocument();
-  });
-});
-
-describe("BorrowPage equipment-loading states (Roadmap PR11 review: loading + error state coverage)", () => {
-  it("shows the scanning view (no equipment card yet) while the preset equipment is still resolving", async () => {
-    let resolveEquipment!: (value: Equipment) => void;
-    getEquipment.mockReturnValue(new Promise<Equipment>((resolve) => (resolveEquipment = resolve)));
-
-    renderBorrowPage();
-
-    // Nothing about the equipment (name, ward field, confirm action) is
-    // rendered yet -- only the QR/BCM scanning entry point is available
-    // while the fetch is in flight.
-    expect(screen.queryByText("Infusion Pump")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "ยืนยันการเบิก" })).not.toBeInTheDocument();
-
-    resolveEquipment(equipment);
-    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (1 เครื่อง)" }));
+    await waitFor(() => expect(dispatchBatch).toHaveBeenCalledTimes(2));
+    expect(dispatchBatch.mock.calls[1][0].items.map((i: { equipment_id: string }) => i.equipment_id)).toEqual(["e2"]);
+    expect(useUiStore.getState().wardUsage["ward-1"]).toBe(2);
   });
 
-  it("shows an error when the preset equipment fails to resolve, and never renders the dispatch form", async () => {
-    getEquipment.mockRejectedValue({ isAxiosError: true, response: { status: 404, data: {} } });
-
-    renderBorrowPage();
-
-    await waitFor(() => expect(screen.getByText("ไม่พบเครื่องมือ")).toBeInTheDocument());
-    expect(screen.queryByRole("button", { name: "ยืนยันการเบิก" })).not.toBeInTheDocument();
-  });
-});
-
-describe("BorrowPage non-blocking dispatch (Roadmap PR31, D8)", () => {
-  const warningError = (details: Record<string, unknown>) => ({
-    isAxiosError: true,
-    response: { status: 409, data: { detail: "warn", code: "DISPATCH_STATUS_WARNING", status: 409, details } },
-  });
-
-  async function submitWithWard() {
-    const user = userEvent.setup();
-    renderBorrowPage();
-    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
-    await user.selectOptions(screen.getByLabelText(/หอผู้ป่วยที่รับเครื่อง/), "ward-1");
-    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก" }));
-    return user;
-  }
-
-  it("shows the already-dispatched warning and resubmits with the acknowledgement on confirm", async () => {
-    getEquipment.mockResolvedValue({ ...equipment, status: "issued_to_ward" });
-    createBorrow.mockRejectedValueOnce(
-      warningError({ warning: "already_dispatched", current_ward_name: "Ward Z", dispatched_at: "2026-11-25T03:00:00Z", open_transaction_id: "tx-old" })
-    );
-    const user = await submitWithWard();
-
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("เครื่องนี้ถูกจ่ายไป Ward Z เมื่อ 2026-11-25 10:00 ยังไม่บันทึกรับคืน");
-    expect(createBorrow.mock.calls[0][0]).not.toHaveProperty("acknowledge_status_warning");
-
-    await user.click(screen.getByRole("button", { name: "ยืนยันเบิกต่อ" }));
-    await waitFor(() => expect(createBorrow).toHaveBeenCalledTimes(2));
-    expect(createBorrow.mock.calls[1][0]).toMatchObject({
-      equipment_id: "eq-1",
-      acknowledge_status_warning: true,
-      expected_open_transaction_id: "tx-old",
+  it("re-checks the status of an item whose warning appeared after the scan", async () => {
+    dispatchBatch.mockResolvedValueOnce({
+      total: 1, succeeded: 0, failed: 1,
+      results: [{
+        index: 0, ok: false, equipment_id: "e1", transaction_id: null, transaction_no: null, cuffs_outstanding: null,
+        error: { code: "DISPATCH_STATUS_WARNING", message: "w", status: 409, details: { warning: "defective" } },
+      }],
     });
-    expect(await screen.findByText("เบิกสำเร็จ")).toBeInTheDocument();
-  });
-
-  it("shows the defective warning and resubmits with the acknowledgement on confirm", async () => {
-    getEquipment.mockResolvedValue({ ...equipment, status: "unavailable_defective" });
-    createBorrow.mockRejectedValueOnce(warningError({ warning: "defective" }));
-    const user = await submitWithWard();
-
-    expect(await screen.findByText("เครื่องนี้ถูกแจ้งเสีย")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "ยืนยันเบิกต่อ" }));
-    await waitFor(() => expect(createBorrow).toHaveBeenCalledTimes(2));
-    expect(createBorrow.mock.calls[1][0]).toMatchObject({ acknowledge_status_warning: true });
-  });
-
-  it("shows an error and no form for decommissioned equipment", async () => {
-    getEquipment.mockResolvedValue({ ...equipment, status: "decommissioned" });
-    renderBorrowPage();
-
-    expect(await screen.findByText("เครื่องนี้ปลดระวางแล้ว ไม่สามารถเบิกได้")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "ยืนยันการเบิก" })).not.toBeInTheDocument();
-  });
-});
-
-// Roadmap PR11 review checklist item "permission-based disabled or hidden
-// behavior": not applicable to BorrowPage itself. BorrowPage performs no
-// per-role conditional rendering of its own -- access to the /borrow route
-// is gated at the navigation layer (AppShell.tsx's
-// canDispatchOrReceiveEquipment), which is unchanged by PR11 and outside
-// this frontend-terminology PR's scope (no RBAC logic is introduced or
-// modified here). Adding a role-gating test to this file would duplicate
-// coverage that belongs to, and already exists for, that layer instead.
-
-describe("BorrowPage phone prefill (Roadmap PR25E S0)", () => {
-  const phoneWards: Ward[] = [
-    { id: "ward-1", code: "W1", name: "Ward A", department_id: "dep-1", phone: "1111" },
-    { id: "ward-2", code: "W2", name: "Ward B", department_id: "dep-1", phone: null },
-    { id: "ward-3", code: "W3", name: "Ward C", department_id: null, phone: null },
-  ];
-  beforeEach(() => {
-    listWards.mockResolvedValue(phoneWards);
-    listDepartments.mockResolvedValue([{ id: "dep-1", code: "D1", name: "Dep", phone: "9999" }]);
-  });
-
-  it("prefills from the ward, then falls back to the department phone, and stays editable", async () => {
     const user = userEvent.setup();
-    renderBorrowPage();
-    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
-    const ward = screen.getByLabelText(/หอผู้ป่วยที่รับเครื่อง/);
-    const phone = screen.getByLabelText("เบอร์โทร") as HTMLInputElement;
-
-    await user.selectOptions(ward, "ward-1");
-    await waitFor(() => expect(phone.value).toBe("1111"));
-    await user.selectOptions(ward, "ward-2");
-    await waitFor(() => expect(phone.value).toBe("9999"));
-    await user.selectOptions(ward, "ward-3");
-    await waitFor(() => expect(phone.value).toBe(""));
-
-    await user.selectOptions(ward, "ward-1");
-    await waitFor(() => expect(phone.value).toBe("1111"));
-    await user.clear(phone);
-    await user.type(phone, "5555");
-    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก" }));
-    await waitFor(() => expect(createBorrow).toHaveBeenCalledWith(expect.objectContaining({ phone_number: "5555" })));
+    renderPage();
+    await pickWard(user, "Ward A");
+    await addBcm(user, "BCM001");
+    await screen.findByRole("button", { name: "แก้ไข BCM001" });
+    checkFor.e1 = { status: "unavailable_defective", warning: "defective", requires_acknowledgement: true };
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (1 เครื่อง)" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "แก้ไข BCM001" })).toHaveTextContent("⚠ เสีย"));
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (1 เครื่อง)" }));
+    await waitFor(() => expect(dispatchBatch).toHaveBeenCalledTimes(2));
+    expect(dispatchBatch.mock.calls[1][0].items[0]).toMatchObject({
+      acknowledge_status_warning: true, expected_status: "unavailable_defective",
+    });
   });
 
-  it("does not overwrite a value the operator already typed when the ward changes", async () => {
+  it("requires a ward before confirming", async () => {
     const user = userEvent.setup();
-    renderBorrowPage();
-    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
-    const ward = screen.getByLabelText(/หอผู้ป่วยที่รับเครื่อง/);
-    const phone = screen.getByLabelText("เบอร์โทร") as HTMLInputElement;
-
-    await user.type(phone, "7777");
-    await user.selectOptions(ward, "ward-1");
-    await user.selectOptions(ward, "ward-2");
-    expect(phone.value).toBe("7777");
-  });
-
-  it("does not prefill for a ward with no phone and no department", async () => {
-    const user = userEvent.setup();
-    renderBorrowPage();
-    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
-    await user.selectOptions(screen.getByLabelText(/หอผู้ป่วยที่รับเครื่อง/), "ward-3");
-    expect((screen.getByLabelText("เบอร์โทร") as HTMLInputElement).value).toBe("");
-  });
-
-  it("prefills again after resetting for the next dispatch", async () => {
-    const user = userEvent.setup();
-    renderBorrowPage();
-    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
-    await user.selectOptions(screen.getByLabelText(/หอผู้ป่วยที่รับเครื่อง/), "ward-1");
-    const phone = screen.getByLabelText("เบอร์โทร") as HTMLInputElement;
-    await waitFor(() => expect(phone.value).toBe("1111"));
-    await user.clear(phone);
-    await user.type(phone, "5");
-    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก" }));
-    await user.click(await screen.findByRole("button", { name: "เบิกเครื่องถัดไป" }));
-    await user.click(await screen.findByRole("button", { name: "pick-bcm" }));
-    await waitFor(() =>
-      expect((screen.getByLabelText("เบอร์โทร") as HTMLInputElement).value).toBe("1111"),
-    );
+    renderPage();
+    await addBcm(user, "BCM001");
+    await screen.findByRole("button", { name: "แก้ไข BCM001" });
+    expect(screen.getByRole("button", { name: "ยืนยันการเบิก (1 เครื่อง)" })).toBeDisabled();
   });
 });

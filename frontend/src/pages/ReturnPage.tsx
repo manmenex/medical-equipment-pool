@@ -1,287 +1,452 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
-import { BcmSearchInput } from "@/components/BcmSearchInput";
-import { QRScanner } from "@/components/QRScanner";
-import { OfflineReceiptForm } from "@/components/OfflineReceiptForm";
-import { WardCorrectionAction } from "@/components/WardCorrectionAction";
-import { canCorrectTransactionWard, useAuth } from "@/hooks/useAuth";
+import { CuffsOutstandingPanel } from "@/components/CuffsOutstandingPanel";
+import { ChecksEditor } from "@/components/entry/ChecksEditor";
+import { CheckGlyphs, ItemEditPanel } from "@/components/entry/ItemEditPanel";
+import { resolveBcmText } from "@/components/entry/lookup";
+import { ScanBar } from "@/components/entry/ScanBar";
+import { useWardRefs } from "@/components/entry/useWardRefs";
+import { WardSection } from "@/components/entry/WardSection";
+import { OfflineStaleGate } from "@/components/OfflineStaleGate";
 import { useDirtyForm } from "@/hooks/useDirtyForm";
 import { useOfflineMode } from "@/hooks/useOfflineMode";
-import { apiErrorCode, apiErrorMessage } from "@/services/api";
-import { createReturn, listActiveBorrows } from "@/services/borrow";
-import { resolveEquipmentByQr } from "@/services/equipment";
-import { listWards } from "@/services/masterData";
-import type { BcmSuggestion, ReceiptOutcome, TransactionOut } from "@/types";
+import { effectiveCachedEquipment, enqueueOfflineReceipt, listReceiptCandidates, LocalOpError } from "@/offline/localOps";
+import { OfflineStoreError } from "@/offline/offlineStore";
+import { apiErrorMessage } from "@/services/api";
+import { listActiveBorrows, receiptBatch, type ReceiptBatchItem } from "@/services/borrow";
+import { batchErrorText, defaultChecks, hasAbnormal, totalCuffs } from "@/services/checks";
+import { getDispatchCheck, getEquipment, resolveEquipmentByQr } from "@/services/equipment";
+import { useUiStore } from "@/store/uiStore";
+import type { Checks, ChecklistKind, Cuffs, Equipment, ReceiptOutcome, TransactionOut } from "@/types";
 
-// Roadmap PR8B (knowledge/adr/ADR-006-receipt-outcome-contract.md): the
-// confirmed binary receipt outcome replaces the pre-PR8B four-option
-// condition radio group entirely -- a minimum functional change to the
-// option set only, per the same precedent Roadmap PR7b's dispatch-form
-// changes established (not the full terminology/workflow redesign
-// reserved for Roadmap PR11). Roadmap PR6 / owner-confirmed cleaning
-// retirement: no "cleaning" option here either, before or after this
-// change -- cleaning happens as part of collecting/receiving equipment
-// (AGENTS.md), never a distinct receipt outcome.
-//
-// Codex review round 1 (GitHub PR #29): the label and selected-state
-// styling must describe the *outcome the operator observed*, not the
-// *lifecycle state the backend will apply* -- conflating the two here
-// would misleadingly present a defective selection with the same green
-// "available" styling used elsewhere for AVAILABLE_AT_POOL, even though
-// choosing it causes UNAVAILABLE_DEFECTIVE. "ชำรุด" ("defective/damaged")
-// is the outcome-oriented term, distinct from StatusBadge.tsx's
-// lifecycle-state label ("ไม่พร้อมใช้งาน", "not available"). Each option's
-// selected-state styling below intentionally differs for the same
-// reason: usable uses the available/green treatment, defective uses the
-// repair/amber treatment (StatusBadge.tsx already colors
-// unavailable_defective with `status-repair`) -- this is presentational
-// only, no lifecycle-state value is read, stored, or submitted here.
-const RECEIPT_OUTCOMES: { value: ReceiptOutcome; label: string; selectedClass: string }[] = [
-  { value: "usable", label: "พร้อมใช้งาน", selectedClass: "border-status-available bg-status-available/10" },
-  { value: "defective", label: "ชำรุด", selectedClass: "border-status-repair bg-status-repair/10" },
+// Roadmap PR27/PR28 (D3/D4/D7/D10/D11): ward-first multi-equipment receipt.
+// Equipment may be received from ANY ward with no warning (only the first
+// dispatch ward is recorded). Each item carries receipt checks + outcome and,
+// for Cryo-Cuff, the cuffs handed back (default = issued; fewer = partial).
+// Roadmap PR8B/ADR-006: the outcome is the operator's explicit choice
+// (usable/defective); the checks only trigger a prompt, never an auto-change.
+export interface ReceiptItem {
+  equipmentId: string;
+  transactionId: string;
+  bcm: string;
+  name: string;
+  kind: ChecklistKind;
+  issuedCuffs: Cuffs | null;
+  checks: Checks;
+  outcome: ReceiptOutcome;
+  wardName?: string | null;
+  error?: string;
+}
+
+const OUTCOMES: { value: ReceiptOutcome; label: string; cls: string }[] = [
+  { value: "usable", label: "ใช้งานได้", cls: "border-status-available bg-status-available/10" },
+  { value: "defective", label: "เสีย", cls: "border-status-repair bg-status-repair/10" },
 ];
 
-// Roadmap PR8C (knowledge/adr/ADR-006-receipt-outcome-contract.md's "Not
-// decided here"; backend/app/core/exceptions.py): the receipt endpoint now
-// rejects a losing request with one of two distinguishable, stable
-// `code`s -- a genuine duplicate submission and a genuine timing race with
-// another concurrent request are different situations that call for
-// different operator guidance (a duplicate needs no action; a race means
-// another receipt request completed first and the operator should
-// refresh, not retry). Keyed by `code`, never by parsing `detail` text --
-// `detail` is a free-text, human-readable message, not a stable contract.
-//
-// Deliberately neutral wording: RECEIPT_RACE_LOST only proves another
-// receipt request committed first at the database level -- it does not
-// identify who or what sent that request. It could be a different staff
-// member, the same user double-clicking, a browser/network retry, or a
-// duplicate submission from the same session. Never attribute this to
-// "someone else"/another person -- the backend has no such evidence
-// (see app.services.borrow_service.return_equipment, which does not
-// compare received_by_user_id between the two requests).
-const RECEIPT_ERROR_MESSAGES: Record<string, string> = {
-  TRANSACTION_ALREADY_RETURNED: "รายการนี้ถูกรับคืนไปแล้ว",
-  TRANSACTION_CLOSED_BY_REDISPATCH: "รายการนี้ถูกปิดเพราะมีการจ่ายเครื่องใหม่แล้ว",
-  RECEIPT_RACE_LOST: "มีคำขอรับเครื่องอื่นดำเนินการสำเร็จก่อน กรุณารีเฟรชเพื่อดูข้อมูลล่าสุด",
-};
+function cuffsOf(c: Checks): Cuffs | null {
+  return c.kind === "cryo_cuff" ? c.cuffs : null;
+}
 
 export function ReturnPage() {
   const [searchParams] = useSearchParams();
   const presetEquipmentId = searchParams.get("equipment_id");
-  const { user } = useAuth();
-  const queryClient = useQueryClient();
   const offline = useOfflineMode();
-  const canCorrectWard = canCorrectTransactionWard(user);
+  const { wards, departments } = useWardRefs(offline);
+  const bumpWardUsage = useUiStore((s) => s.bumpWardUsage);
+  const setLastWard = useUiStore((s) => s.setLastWard);
 
-  const [scanning, setScanning] = useState(!presetEquipmentId);
-  const [transaction, setTransaction] = useState<TransactionOut | null>(null);
-  const [outcome, setOutcome] = useState<ReceiptOutcome>("usable");
-  const [notes, setNotes] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
-  useDirtyForm(transaction !== null && !success);
+  const [tab, setTab] = useState<"receive" | "cuffs">("receive");
+  const [wardId, setWardId] = useState("");
+  const [contact, setContact] = useState("");
+  const [phone, setPhone] = useState("");
+  const [note, setNote] = useState("");
+  const [items, setItems] = useState<ReceiptItem[]>([]);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [done, setDone] = useState<{ bcm: string; ref: string }[]>([]);
+  const [queuedCount, setQueuedCount] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [showOpen, setShowOpen] = useState(false);
+  const itemsRef = useRef<ReceiptItem[]>([]);
+  itemsRef.current = items;
+  useDirtyForm(items.length > 0);
 
-  // Roadmap PR9B: only fetched when the current user can even reach the
-  // correction action -- no need to load ward data for a role that will
-  // never see the button (see canCorrectTransactionWard). Read-only, for
-  // the "แผนกที่บันทึกไว้" display line below; shares the ["wards"] cache
-  // entry with WardCorrectionAction's own query (same key, deduped by
-  // React Query), so this is not a second network request.
-  const { data: wards } = useQuery({ queryKey: ["wards"], queryFn: listWards, enabled: canCorrectWard });
-  const [wardCorrectionNotice, setWardCorrectionNotice] = useState<string | null>(null);
+  const ward = wards.find((w) => w.id === wardId);
+  const { data: active, refetch: refetchActive } = useQuery({
+    queryKey: ["active-borrows"],
+    queryFn: listActiveBorrows,
+    enabled: !offline && !!wardId,
+  });
+  const wardOpen = (active ?? []).filter((t) => t.ward_id === wardId && !itemsRef.current.some((i) => i.transactionId === t.id));
 
-  const findActiveTransaction = useCallback(async (equipmentId: string) => {
-    const active = await listActiveBorrows();
-    const match = active.find((tx) => tx.equipment.id === equipmentId);
-    if (!match) {
-      throw new Error("ไม่พบรายการเบิกที่ยังไม่รับคืนสำหรับเครื่องนี้");
-    }
-    return match;
-  }, []);
+  const toItem = (
+    eq: Pick<Equipment, "id" | "bcm_code" | "asset_number" | "equipment_name">,
+    tx: { id: string; kind: ChecklistKind; issued: Cuffs | null; wardName?: string | null },
+  ): ReceiptItem => ({
+    equipmentId: eq.id,
+    transactionId: tx.id,
+    bcm: eq.bcm_code ?? eq.asset_number ?? eq.equipment_name,
+    name: eq.equipment_name,
+    kind: tx.kind,
+    issuedCuffs: tx.issued,
+    checks: defaultChecks(tx.kind, tx.issued ?? undefined),
+    outcome: "usable",
+    wardName: tx.wardName,
+  });
 
-  // Roadmap PR5 primary workflow: scan existing QR -> extract Item No
-  // (server-side) -> Equipment Master lookup -> active transaction.
-  const resolveByQr = useCallback(
-    async (rawValue: string) => {
-      setError(null);
-      try {
-        const eq = await resolveEquipmentByQr(rawValue);
-        const tx = await findActiveTransaction(eq.id);
-        setTransaction(tx);
-        setScanning(false);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : apiErrorMessage(err, "ไม่พบรายการเบิก"));
+  const addEquipment = useCallback(
+    async (eq: Pick<Equipment, "id" | "bcm_code" | "asset_number" | "equipment_name">) => {
+      const label = eq.bcm_code ?? eq.asset_number ?? eq.equipment_name;
+      if (itemsRef.current.some((i) => i.equipmentId === eq.id)) return; // duplicates ignored
+      let item: ReceiptItem | null = null;
+      if (offline) {
+        const cand = (await listReceiptCandidates()).find((c) => c.equipment_id === eq.id);
+        if (cand) item = toItem(eq, { id: cand.transaction_id, kind: "standard", issued: null, wardName: cand.ward_name });
+      } else {
+        const tx: TransactionOut | undefined = (await listActiveBorrows()).find((t) => t.equipment.id === eq.id);
+        if (tx) {
+          const kind: ChecklistKind = tx.checklist_kind ?? (await getDispatchCheck(eq.id)).checklist_kind;
+          const issued = tx.dispatch_checks?.kind === "cryo_cuff" ? tx.dispatch_checks.cuffs : null;
+          item = toItem(eq, { id: tx.id, kind, issued });
+        }
       }
+      if (!item) {
+        setNotice(`⛔ ${label} ไม่ได้ถูกจ่ายออกไป ไม่ถูกเพิ่ม`);
+        return;
+      }
+      setNotice(null);
+      setDone([]);
+      const add = item;
+      setItems((prev) => (prev.some((i) => i.equipmentId === eq.id) ? prev : [...prev, add]));
     },
-    [findActiveTransaction]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [offline],
   );
 
-  // Roadmap PR5 fallback workflow: BCM Code search -> select a suggestion
-  // -> active transaction for that equipment.
-  const handleBcmSelect = useCallback(
-    async (suggestion: BcmSuggestion) => {
-      setError(null);
+  const addById = useCallback(
+    async (id: string) => {
+      setAdding(true);
       try {
-        const tx = await findActiveTransaction(suggestion.id);
-        setTransaction(tx);
-        setScanning(false);
+        const eq = offline ? (await effectiveCachedEquipment(id)).equipment : await getEquipment(id);
+        await addEquipment(eq);
       } catch (err) {
-        setError(err instanceof Error ? err.message : apiErrorMessage(err, "ไม่พบรายการเบิก"));
+        setNotice(`⛔ ${err instanceof LocalOpError ? err.message : apiErrorMessage(err, "ไม่พบเครื่องมือ")} ไม่ถูกเพิ่ม`);
+      } finally {
+        setAdding(false);
       }
     },
-    [findActiveTransaction]
+    [offline, addEquipment],
+  );
+
+  const addByBcm = useCallback(
+    async (text: string) => {
+      setAdding(true);
+      try {
+        const s = await resolveBcmText(text, offline);
+        if (!s) {
+          setNotice(`⛔ ไม่พบเครื่อง ${text} ไม่ถูกเพิ่ม`);
+          return;
+        }
+        await addById(s.id);
+      } catch (err) {
+        setNotice(`⛔ ${apiErrorMessage(err, `ไม่พบเครื่อง ${text}`)} ไม่ถูกเพิ่ม`);
+      } finally {
+        setAdding(false);
+      }
+    },
+    [offline, addById],
+  );
+
+  const addByQr = useCallback(
+    async (raw: string) => {
+      try {
+        await addEquipment(await resolveEquipmentByQr(raw));
+      } catch (err) {
+        setNotice(`⛔ ${apiErrorMessage(err, "ไม่พบเครื่องมือจาก QR ที่สแกน")} ไม่ถูกเพิ่ม`);
+      }
+    },
+    [addEquipment],
   );
 
   useEffect(() => {
-    if (presetEquipmentId) {
-      findActiveTransaction(presetEquipmentId)
-        .then(setTransaction)
-        .catch((err) => setError(err instanceof Error ? err.message : "ไม่พบรายการเบิก"));
-    }
-  }, [presetEquipmentId, findActiveTransaction]);
+    if (presetEquipmentId) void addById(presetEquipmentId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presetEquipmentId]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!transaction) return;
+  const patch = (id: string, p: Partial<ReceiptItem>) =>
+    setItems((prev) => prev.map((i) => (i.transactionId === id ? { ...i, ...p } : i)));
+  const remove = (id: string) => {
+    setItems((prev) => prev.filter((i) => i.transactionId !== id));
+    setEditing(null);
+  };
+
+  const submit = async () => {
+    if (items.length === 0 || submitting) return;
     setSubmitting(true);
-    setError(null);
+    setNotice(null);
+    const sent = items;
+    const contactName = contact.trim() || null;
     try {
-      await createReturn(transaction.id, { receipt_outcome: outcome, notes: notes || undefined });
-      setSuccess(true);
+      if (offline) {
+        const failed: ReceiptItem[] = [];
+        let queued = 0;
+        for (const it of sent) {
+          try {
+            await enqueueOfflineReceipt({
+              transaction_id: it.transactionId,
+              receipt_outcome: it.outcome,
+              notes: note || undefined,
+              ward_contact_name: contactName ?? undefined,
+              receipt_checks: it.checks,
+              ...(cuffsOf(it.checks) ? { cuffs_returned: cuffsOf(it.checks)! } : {}),
+            });
+            queued += 1;
+          } catch (err) {
+            failed.push({
+              ...it,
+              error: err instanceof LocalOpError || err instanceof OfflineStoreError ? err.message : "บันทึกในเครื่องไม่สำเร็จ",
+            });
+          }
+        }
+        setItems(failed);
+        setQueuedCount((n) => n + queued);
+        return;
+      }
+      const payload: ReceiptBatchItem[] = sent.map((it) => ({
+        transaction_id: it.transactionId,
+        receipt_outcome: it.outcome,
+        checks: it.checks,
+        cuffs_returned: cuffsOf(it.checks),
+      }));
+      const resp = await receiptBatch({
+        ward_id: wardId || null,
+        ward_contact_name: contactName,
+        note: note.trim() || null,
+        items: payload,
+      });
+      const ok: { bcm: string; ref: string }[] = [];
+      const keep: ReceiptItem[] = [];
+      sent.forEach((it, i) => {
+        const r = resp.results.find((x) => x.index === i);
+        if (r?.ok) ok.push({ bcm: it.bcm, ref: r.transaction_no ?? "" });
+        else keep.push({ ...it, error: batchErrorText(r?.error?.code, r?.error?.message) });
+      });
+      if (ok.length > 0) {
+        if (wardId) {
+          setLastWard(wardId);
+          bumpWardUsage(wardId);
+        }
+        setNote("");
+        void refetchActive();
+      }
+      setDone(ok);
+      setItems(keep);
     } catch (err) {
-      const code = apiErrorCode(err);
-      const knownMessage = code ? RECEIPT_ERROR_MESSAGES[code] : undefined;
-      setError(knownMessage ?? apiErrorMessage(err, "รับคืนเครื่องมือไม่สำเร็จ"));
+      setNotice(apiErrorMessage(err, "รับคืนเครื่องมือไม่สำเร็จ"));
     } finally {
       setSubmitting(false);
     }
   };
 
-  // PR25E S4: server unreachable -> offline receipt from the cached snapshot.
-  // Online, this branch is never taken and the page is unchanged.
-  if (offline && !transaction && !success) return <OfflineReceiptForm />;
-
-  if (success) {
-    return (
-      <div className="surface mx-auto mt-8 max-w-sm rounded-xl border p-6 text-center">
-        <div className="mb-2 text-4xl">✅</div>
-        <h2 className="text-lg font-semibold">รับคืนเครื่องมือสำเร็จ</h2>
-        <button
-          onClick={() => {
-            setSuccess(false);
-            setTransaction(null);
-            setScanning(true);
-          }}
-          className="mt-4 rounded-lg bg-status-available px-4 py-2 text-sm font-medium text-white"
-        >
-          รับคืนเครื่องถัดไป
-        </button>
-      </div>
-    );
-  }
-
-  if (!transaction) {
-    return (
-      <div className="mx-auto flex max-w-sm flex-col gap-4">
-        <h1 className="text-lg font-semibold">รับคืนเครื่องมือ</h1>
-        <QRScanner active={scanning} onScan={resolveByQr} />
-        <p className="text-center text-sm text-[var(--text-muted)]">หรือค้นหาด้วยรหัส BCM</p>
-        <BcmSearchInput onSelect={handleBcmSelect} />
-        {error && <p className="text-sm text-status-repair">{error}</p>}
-      </div>
-    );
-  }
-
   return (
-    <div className="mx-auto flex max-w-sm flex-col gap-4">
-      <div className="surface rounded-xl border p-4">
-        <div className="font-medium">{transaction.equipment.equipment_name}</div>
-        <div className="text-sm text-[var(--text-muted)]">{transaction.equipment.asset_number ?? "-"}</div>
-        <div className="mt-1 text-sm text-[var(--text-muted)]">
-          {transaction.borrower_name ? `ผู้เบิก: ${transaction.borrower_name} · ` : ""}เบิกเมื่อ{" "}
-          {new Date(transaction.borrowed_at).toLocaleString("th-TH")}
-        </div>
-        {canCorrectWard && wards && (
-          // Workflow Audit §7.1: labeled as the ward recorded at dispatch
-          // time, never "current location" -- this is a one-time record,
-          // not a live tracker of the equipment's later movement.
-          <div className="mt-1 text-sm text-[var(--text-muted)]">
-            หอผู้ป่วยที่รับเครื่อง (บันทึก ณ วันที่เบิก): {wards.find((w) => w.id === transaction.ward_id)?.name ?? "ไม่ทราบ"}
-          </div>
-        )}
-        {canCorrectWard && (
-          <div className="mt-3">
-            <WardCorrectionAction
-              transaction={transaction}
-              onCorrected={(updated, message) => {
-                setTransaction(updated);
-                setWardCorrectionNotice(message);
-                // Roadmap PR9B: narrow, entity-scoped invalidation -- the
-                // corrected transaction's own display already updates
-                // directly from the server-confirmed response above (never
-                // optimistic). This additionally invalidates any
-                // current/future consumer of the transactions list/detail
-                // query-key namespace (e.g. GET /transactions), so a stale
-                // cached copy elsewhere in the app is never served after a
-                // correction. Equipment queries are deliberately not
-                // invalidated -- ward correction never changes equipment
-                // status or any equipment-detail field.
-                queryClient.invalidateQueries({ queryKey: ["transactions"] });
-              }}
-            />
-          </div>
-        )}
+    <div className="mx-auto flex max-w-md flex-col gap-3 pb-6">
+      {offline && <OfflineStaleGate />}
+      <h1 className="text-lg font-semibold">รับคืนเครื่องมือ</h1>
+
+      <div role="tablist" className="grid grid-cols-2 gap-2">
+        {(
+          [
+            ["receive", "รับคืนเครื่อง"],
+            ["cuffs", "รับ Cuff ค้าง"],
+          ] as const
+        ).map(([k, label]) => (
+          <button
+            key={k}
+            role="tab"
+            aria-selected={tab === k}
+            onClick={() => setTab(k)}
+            className={`rounded-lg px-3 py-2 text-sm font-medium ${tab === k ? "bg-status-borrowed/15 text-status-borrowed" : "surface"}`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
-      {wardCorrectionNotice && <p className="text-sm text-status-available">{wardCorrectionNotice}</p>}
-
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <div>
-          <label className="mb-1 block text-sm font-medium">สภาพเครื่องเมื่อรับคืน</label>
-          <div className="grid grid-cols-2 gap-2">
-            {RECEIPT_OUTCOMES.map((o) => (
-              <label
-                key={o.value}
-                className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
-                  outcome === o.value ? o.selectedClass : "border-[var(--border)]"
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="receipt_outcome"
-                  value={o.value}
-                  checked={outcome === o.value}
-                  onChange={() => setOutcome(o.value)}
-                />
-                {o.label}
-              </label>
-            ))}
-          </div>
-        </div>
-
-        <div>
-          <label className="mb-1 block text-sm font-medium">หมายเหตุ</label>
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            className="w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
-            rows={2}
+      {tab === "cuffs" ? (
+        <CuffsOutstandingPanel offline={offline} />
+      ) : (
+        <>
+          <WardSection
+            title="หอผู้ป่วยที่ส่งคืน"
+            contactLabel="ชื่อผู้ส่งคืน (Ward)"
+            wards={wards}
+            departments={departments}
+            wardId={wardId}
+            onWardChange={setWardId}
+            contact={contact}
+            onContact={setContact}
+            phone={phone}
+            onPhone={setPhone}
           />
-        </div>
 
-        {error && <p className="text-sm text-status-repair">{error}</p>}
+          {!offline && wardId && ward && (
+            <section className="surface rounded-xl border p-3">
+              <button
+                type="button"
+                aria-expanded={showOpen}
+                onClick={() => setShowOpen((o) => !o)}
+                className="flex w-full items-center justify-between text-sm font-medium"
+              >
+                <span>
+                  เครื่องที่ค้างอยู่ {ward.name} ({wardOpen.length})
+                </span>
+                <span aria-hidden="true">{showOpen ? "▾" : "▸"}</span>
+              </button>
+              {showOpen && (
+                <ul className="mt-2 flex flex-col gap-1.5">
+                  {wardOpen.length === 0 && <li className="text-xs text-[var(--text-muted)]">ไม่มีเครื่องค้าง</li>}
+                  {wardOpen.map((t) => (
+                    <li key={t.id}>
+                      <button
+                        type="button"
+                        aria-label={`เพิ่ม ${t.equipment.asset_number ?? t.equipment.equipment_name}`}
+                        onClick={() => void addById(t.equipment.id)}
+                        className="flex w-full items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-1.5 text-left text-sm"
+                      >
+                        <strong>{t.equipment.asset_number ?? t.equipment.equipment_name}</strong>
+                        <span className="min-w-0 flex-1 truncate text-xs text-[var(--text-muted)]">{t.equipment.equipment_name}</span>
+                        <span aria-hidden="true">＋</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
 
-        <button
-          type="submit"
-          disabled={submitting}
-          className="rounded-lg bg-status-available py-2.5 font-medium text-white disabled:opacity-60"
-        >
-          {submitting ? "กำลังบันทึก..." : "ยืนยันการรับคืน"}
-        </button>
-      </form>
+          <section className="surface rounded-xl border p-3" aria-label="สแกนเครื่อง">
+            <h2 className="mb-2 text-sm font-semibold">สแกนเครื่อง ({items.length} เครื่อง)</h2>
+            <ScanBar onBcm={(t) => void addByBcm(t)} onQr={(r) => void addByQr(r)} busy={adding} offline={offline} />
+            {notice && (
+              <p role="alert" className="mt-2 rounded-lg bg-status-repair/10 px-3 py-2 text-sm text-status-repair">
+                {notice}
+              </p>
+            )}
+            <ul className="mt-2 flex flex-col gap-1.5">
+              {items.map((it) => {
+                const open = editing === it.transactionId;
+                const cuffs = cuffsOf(it.checks);
+                const partial = !!cuffs && !!it.issuedCuffs && totalCuffs(cuffs) < totalCuffs(it.issuedCuffs);
+                return (
+                  <li key={it.transactionId} className="flex flex-col gap-1">
+                    {!open && (
+                      <button
+                        type="button"
+                        aria-label={`แก้ไข ${it.bcm}`}
+                        onClick={() => setEditing(it.transactionId)}
+                        className="flex w-full items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-left"
+                      >
+                        <strong className="text-sm">{it.bcm}</strong>
+                        <span className="min-w-0 flex-1 truncate text-xs text-[var(--text-muted)]">{it.name}</span>
+                        {partial && <span className="whitespace-nowrap text-xs text-amber-400">Cuff {totalCuffs(cuffs)}/{totalCuffs(it.issuedCuffs)}</span>}
+                        {it.outcome === "defective" && <span className="whitespace-nowrap text-xs font-medium text-status-repair">เสีย</span>}
+                        <CheckGlyphs checks={it.checks} />
+                        <span aria-hidden="true">›</span>
+                      </button>
+                    )}
+                    {open && (
+                      <ItemEditPanel
+                        bcm={it.bcm}
+                        name={it.name}
+                        statusLine={it.kind === "cryo_cuff" ? "Cryo-Cuff" : "ตรวจสภาพอุปกรณ์"}
+                        onRemove={() => remove(it.transactionId)}
+                        onDone={() => setEditing(null)}
+                      >
+                        <ChecksEditor
+                          checks={it.checks}
+                          issuedCuffs={it.kind === "cryo_cuff" ? (it.issuedCuffs ?? undefined) : undefined}
+                          onChange={(c) => patch(it.transactionId, { checks: c })}
+                        />
+                        <div>
+                          <p className="mb-1 text-xs text-[var(--text-muted)]">ผลการรับคืน</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            {OUTCOMES.map((o) => (
+                              <button
+                                key={o.value}
+                                type="button"
+                                aria-pressed={it.outcome === o.value}
+                                onClick={() => patch(it.transactionId, { outcome: o.value })}
+                                className={`rounded-lg border px-3 py-2 text-sm ${it.outcome === o.value ? o.cls : "border-[var(--border)]"}`}
+                              >
+                                {o.label}
+                              </button>
+                            ))}
+                          </div>
+                          {it.outcome === "usable" && hasAbnormal(it.checks) && (
+                            <div role="alert" className="mt-2 rounded-lg border border-amber-500/60 bg-amber-500/10 p-2 text-sm">
+                              <p>มีรายการไม่ปกติ – จะเปลี่ยนผลเป็น "เสีย" ไหม?</p>
+                              <button
+                                type="button"
+                                onClick={() => patch(it.transactionId, { outcome: "defective" })}
+                                className="mt-1 rounded-md bg-status-repair px-3 py-1 text-xs font-medium text-white"
+                              >
+                                เปลี่ยนเป็น "เสีย"
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </ItemEditPanel>
+                    )}
+                    {it.error && (
+                      <p role="alert" className="px-1 text-xs text-status-repair">
+                        ✗ {it.bcm}: {it.error}
+                      </p>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+
+          <input
+            aria-label="หมายเหตุ (ไม่บังคับ)"
+            placeholder="หมายเหตุ (ไม่บังคับ)"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            className="h-10 w-full rounded-lg border border-[var(--border)] bg-transparent px-3 text-sm"
+          />
+
+          {done.length > 0 && (
+            <ul aria-label="ผลการรับคืน" className="rounded-lg border border-status-available/40 bg-status-available/10 p-2 text-sm">
+              {done.map((d) => (
+                <li key={d.bcm} className="text-status-available">
+                  ✓ {d.bcm} {d.ref && `(${d.ref})`}
+                </li>
+              ))}
+            </ul>
+          )}
+          {queuedCount > 0 && (
+            <p role="status" className="rounded-lg border border-[var(--border)] p-2 text-sm">
+              🕓 บันทึกในเครื่องแล้ว {queuedCount} เครื่อง — ยังไม่ได้ส่งเข้าระบบ ระบบจะส่งอัตโนมัติเมื่อเชื่อมต่อได้
+            </p>
+          )}
+
+          <div className="flex flex-col items-center gap-1">
+            <button
+              type="button"
+              onClick={() => void submit()}
+              disabled={submitting || items.length === 0}
+              className="w-full rounded-xl bg-status-available py-3 text-base font-semibold text-white disabled:opacity-50"
+            >
+              {submitting ? "กำลังบันทึก..." : `ยืนยันการรับคืน (${items.length} เครื่อง)`}
+            </button>
+            <p className="text-xs text-[var(--text-muted)]">เวลาและกะบันทึกอัตโนมัติ</p>
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -106,25 +106,28 @@ export async function ackStaleIfShown(page: Page): Promise<void> {
 export async function dispatchByBcm(page: Page, code: string, ward: string = WARD_1): Promise<void> {
   await goTo(page, "เบิก");
   await ackStaleIfShown(page);
-  await page.getByPlaceholder("กรอกรหัส BCM").fill(code);
-  await page.getByRole("button", { name: code, exact: true }).click();
-  await ackStaleIfShown(page);
-  await page.getByLabel(/หอผู้ป่วยที่รับเครื่อง/).selectOption({ label: ward });
-  await page.getByRole("button", { name: /^(บันทึกการเบิก \(ในเครื่อง\)|ยืนยันการเบิก)$/ }).click();
+  await page.getByLabel("ค้นหาหอผู้ป่วย").fill(ward);
+  await page.getByRole("listbox").getByRole("button", { name: ward, exact: true }).click();
+  await page.getByLabel("รหัส BCM").fill(code);
+  await page.getByLabel("รหัส BCM").press("Enter");
+  await expect(page.getByRole("button", { name: `แก้ไข ${code}` })).toBeVisible();
+  await page.getByRole("button", { name: /^ยืนยันการเบิก \(1 เครื่อง\)$/ }).click();
 }
 
 export async function expectSavedLocally(page: Page): Promise<void> {
-  await expect(page.getByText("บันทึกในเครื่องแล้ว — ยังไม่ได้ส่งเข้าระบบ")).toBeVisible();
+  await expect(page.getByText(/บันทึกในเครื่องแล้ว \d+ เครื่อง — ยังไม่ได้ส่งเข้าระบบ/)).toBeVisible();
 }
 
 /** Offline receipt of an open transaction picked from the local list. */
 export async function receiveByBcm(page: Page, code: string, outcome: "usable" | "defective" = "usable"): Promise<void> {
   await goTo(page, "รับคืน");
   await ackStaleIfShown(page);
-  await page.getByLabel("ค้นหารหัส BCM").fill(code);
-  await page.getByRole("button", { name: new RegExp(code) }).click();
-  await page.getByLabel(outcome === "usable" ? "พร้อมใช้งาน" : "ชำรุด").check();
-  await page.getByRole("button", { name: "บันทึกการรับคืน (ในเครื่อง)" }).click();
+  await page.getByLabel("รหัส BCM").fill(code);
+  await page.getByLabel("รหัส BCM").press("Enter");
+  await page.getByRole("button", { name: `แก้ไข ${code}` }).click();
+  await page.getByRole("button", { name: outcome === "usable" ? "ใช้งานได้" : "เสีย", exact: true }).click();
+  await page.getByRole("button", { name: "เสร็จ" }).click();
+  await page.getByRole("button", { name: /^ยืนยันการรับคืน \(1 เครื่อง\)$/ }).click();
 }
 
 // ---------------------------------------------------------------------------

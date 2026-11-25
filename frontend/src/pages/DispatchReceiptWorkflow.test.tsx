@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BorrowPage } from "@/pages/BorrowPage";
 import { EquipmentDetailPage } from "@/pages/EquipmentDetailPage";
 import { ReturnPage } from "@/pages/ReturnPage";
-import type { BorrowPayload, ReturnPayload } from "@/services/borrow";
+import type { BatchResponse, DispatchBatchPayload, ReceiptBatchPayload } from "@/services/borrow";
 import type { Equipment, Page, TransactionOut, UserProfile, Ward } from "@/types";
 
 // Roadmap PR11 review (PR11-M1, and its follow-up PR11-M1R): docs/audits/
@@ -57,10 +57,11 @@ const wards: Ward[] = [{ id: "ward-1", code: "W1", name: "Ward A", department_id
 const getEquipment = vi.fn();
 const getEquipmentHistory = vi.fn();
 const resolveEquipmentByQr = vi.fn();
-const createBorrow = vi.fn();
+const dispatchBatch = vi.fn();
 const listActiveBorrows = vi.fn();
 const listTransactions = vi.fn();
-const createReturn = vi.fn();
+const receiptBatch = vi.fn();
+const getDispatchCheck = vi.fn();
 const correctTransactionWard = vi.fn();
 const getTransaction = vi.fn();
 const listWards = vi.fn();
@@ -69,12 +70,13 @@ vi.mock("@/services/equipment", () => ({
   getEquipment: (...args: unknown[]) => getEquipment(...args),
   getEquipmentHistory: (...args: unknown[]) => getEquipmentHistory(...args),
   resolveEquipmentByQr: (...args: unknown[]) => resolveEquipmentByQr(...args),
+  getDispatchCheck: (...args: unknown[]) => getDispatchCheck(...args),
 }));
 vi.mock("@/services/borrow", () => ({
-  createBorrow: (...args: unknown[]) => createBorrow(...args),
+  dispatchBatch: (...args: unknown[]) => dispatchBatch(...args),
   listActiveBorrows: (...args: unknown[]) => listActiveBorrows(...args),
   listTransactions: (...args: unknown[]) => listTransactions(...args),
-  createReturn: (...args: unknown[]) => createReturn(...args),
+  receiptBatch: (...args: unknown[]) => receiptBatch(...args),
   correctTransactionWard: (...args: unknown[]) => correctTransactionWard(...args),
   getTransaction: (...args: unknown[]) => getTransaction(...args),
   WARD_CORRECTION_REASON_MAX_LENGTH: 500,
@@ -84,7 +86,6 @@ vi.mock("@/services/masterData", () => ({
   listDepartments: () => Promise.resolve([]),
 }));
 vi.mock("@/components/QRScanner", () => ({ QRScanner: () => null }));
-vi.mock("@/components/BcmSearchInput", () => ({ BcmSearchInput: () => null }));
 
 let mockUser: UserProfile | null = null;
 vi.mock("@/hooks/useAuth", async () => {
@@ -116,7 +117,8 @@ beforeEach(() => {
 
   // The only place equipment moves to issued_to_ward and a transaction is
   // created -- exactly what a real POST /borrow does server-side.
-  createBorrow.mockImplementation(async (payload: BorrowPayload) => {
+  getDispatchCheck.mockResolvedValue({ checklist_kind: "standard", warning: null, dispatchable: true, status: "available_at_pool" });
+  dispatchBatch.mockImplementation(async (payload: DispatchBatchPayload): Promise<BatchResponse> => {
     const tx: TransactionOut = {
       id: `tx-workflow-${nextTransactionId++}`,
       transaction_no: "TX-WORKFLOW-1",
@@ -131,17 +133,22 @@ beforeEach(() => {
       returned_at: null,
       borrower_name: null,
       ward_id: payload.ward_id,
-      dispatch_type: payload.dispatch_type ?? null,
-      routine_round: payload.routine_round ?? null,
-      phone_number: payload.phone_number ?? null,
+      dispatch_type: null,
+      routine_round: null,
+      phone_number: payload.phone ?? null,
       receipt_outcome: null,
       legacy_condition_on_return: null,
       status: "open",
-      notes: payload.notes ?? null,
+      notes: payload.note ?? null,
     };
     store.equipment = { ...store.equipment, status: "issued_to_ward" };
     store.transactions = [...store.transactions, tx];
-    return tx;
+    return {
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      results: [{ index: 0, ok: true, equipment_id: tx.equipment.id, transaction_id: tx.id, transaction_no: tx.transaction_no, cuffs_outstanding: null, error: null }],
+    };
   });
 
   listActiveBorrows.mockImplementation(async () => store.transactions.filter((tx) => tx.status === "open"));
@@ -155,18 +162,24 @@ beforeEach(() => {
   // available_at_pool -- exactly what a real POST /return/{id} does
   // server-side. Rejects if the id doesn't match a real open transaction,
   // the same way the backend would.
-  createReturn.mockImplementation(async (transactionId: string, payload: ReturnPayload) => {
-    const existing = store.transactions.find((tx) => tx.id === transactionId);
-    if (!existing) throw new Error(`no such open transaction: ${transactionId}`);
+  receiptBatch.mockImplementation(async (payload: ReceiptBatchPayload): Promise<BatchResponse> => {
+    const [item] = payload.items;
+    const existing = store.transactions.find((tx) => tx.id === item.transaction_id);
+    if (!existing) throw new Error(`no such open transaction: ${item.transaction_id}`);
     const closed: TransactionOut = {
       ...existing,
       status: "closed",
       returned_at: "2026-07-26T10:00:00Z",
-      receipt_outcome: payload.receipt_outcome,
+      receipt_outcome: item.receipt_outcome,
     };
-    store.transactions = store.transactions.map((tx) => (tx.id === transactionId ? closed : tx));
+    store.transactions = store.transactions.map((tx) => (tx.id === existing.id ? closed : tx));
     store.equipment = { ...store.equipment, status: "available_at_pool" };
-    return closed;
+    return {
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      results: [{ index: 0, ok: true, equipment_id: closed.equipment.id, transaction_id: closed.id, transaction_no: closed.transaction_no, cuffs_outstanding: null, error: null }],
+    };
   });
 });
 
@@ -226,17 +239,18 @@ describe("Dispatch -> receipt workflow (Roadmap PR11 required end-to-end test, s
 
     // --- 2. User dispatches equipment to a ward (เบิก) ---
     const dispatchRender = renderBorrowPage();
-    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: "แก้ไข AST-1" })).toBeInTheDocument());
     expect(screen.queryByText(/ยืม/)).not.toBeInTheDocument();
 
-    await user.selectOptions(screen.getByLabelText(/หอผู้ป่วยที่รับเครื่อง/), "ward-1");
-    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก" }));
+    await user.type(screen.getByLabelText("ค้นหาหอผู้ป่วย"), "Ward A");
+    await user.click(within(await screen.findByRole("listbox")).getByRole("button"));
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (1 เครื่อง)" }));
 
-    await waitFor(() => expect(createBorrow).toHaveBeenCalledTimes(1));
-    expect(createBorrow).toHaveBeenCalledWith(
-      expect.objectContaining({ equipment_id: EQUIPMENT_ID, ward_id: "ward-1" })
+    await waitFor(() => expect(dispatchBatch).toHaveBeenCalledTimes(1));
+    expect(dispatchBatch).toHaveBeenCalledWith(
+      expect.objectContaining({ ward_id: "ward-1", items: [expect.objectContaining({ equipment_id: EQUIPMENT_ID })] })
     );
-    expect(screen.getByText("เบิกสำเร็จ")).toBeInTheDocument();
+    expect(await screen.findByText(/✓ AST-1/)).toBeInTheDocument();
     dispatchRender.unmount();
 
     // The dispatch action itself must have advanced the shared store --
@@ -256,17 +270,17 @@ describe("Dispatch -> receipt workflow (Roadmap PR11 required end-to-end test, s
     // the transaction via listActiveBorrows, which is itself derived from
     // the store -- not fed the dispatch step's transaction object directly. ---
     const returnRender = renderReturnPage();
-    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: "แก้ไข AST-1" })).toBeInTheDocument());
     expect(screen.queryByText(/ยืม/)).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "ยืนยันการรับคืน" }));
+    await user.click(screen.getByRole("button", { name: "ยืนยันการรับคืน (1 เครื่อง)" }));
 
-    await waitFor(() => expect(createReturn).toHaveBeenCalledTimes(1));
-    const [receivedTransactionId] = createReturn.mock.calls[0];
+    await waitFor(() => expect(receiptBatch).toHaveBeenCalledTimes(1));
+    const receivedTransactionId = receiptBatch.mock.calls[0][0].items[0].transaction_id;
     // Proves the receipt step closed the exact transaction the dispatch
     // step created, not an unrelated fixture or a different id.
     expect(receivedTransactionId).toBe(createdTransactionId);
-    expect(screen.getByText("รับคืนเครื่องมือสำเร็จ")).toBeInTheDocument();
+    expect(await screen.findByText(/✓ AST-1/)).toBeInTheDocument();
     expect(screen.queryByText(/ยืม/)).not.toBeInTheDocument();
     returnRender.unmount();
 
@@ -285,7 +299,9 @@ describe("Dispatch -> receipt workflow (Roadmap PR11 required end-to-end test, s
   });
 
   it("rejects a receipt attempt against a transaction id the dispatch step never created (sanity check on the stateful mock itself)", async () => {
-    await expect(createReturn("tx-does-not-exist", { receipt_outcome: "usable" })).rejects.toThrow(
+    await expect(
+      receiptBatch({ items: [{ transaction_id: "tx-does-not-exist", receipt_outcome: "usable", checks: null }] })
+    ).rejects.toThrow(
       /no such open transaction/
     );
   });

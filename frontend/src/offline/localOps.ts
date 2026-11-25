@@ -1,5 +1,5 @@
 import { useAuthStore } from "@/store/authStore";
-import type { BcmSuggestion, DispatchType, Equipment, EquipmentStatus, ReceiptOutcome, RoutineRound } from "@/types";
+import type { BcmSuggestion, Checks, Cuffs, DispatchType, Equipment, EquipmentStatus, ReceiptOutcome, RoutineRound } from "@/types";
 
 import {
   enqueueOperation,
@@ -200,6 +200,9 @@ export interface OfflineDispatchInput {
   routine_round?: RoutineRound;
   phone_number?: string;
   notes?: string;
+  // Roadmap PR27/PR28: shared ward contact name + accessory checklist per op.
+  ward_contact_name?: string;
+  dispatch_checks?: Checks;
 }
 
 export async function enqueueOfflineDispatch(input: OfflineDispatchInput): Promise<OutboxRecord> {
@@ -219,6 +222,8 @@ export async function enqueueOfflineDispatch(input: OfflineDispatchInput): Promi
   if (input.dispatch_type === "routine_round" && input.routine_round) dispatch.routine_round = input.routine_round;
   if (input.phone_number) dispatch.phone_number = input.phone_number;
   if (input.notes) dispatch.notes = input.notes;
+  if (input.ward_contact_name) dispatch.ward_contact_name = input.ward_contact_name;
+  if (input.dispatch_checks) dispatch.dispatch_checks = input.dispatch_checks;
   const rec = await enqueueOperation(userId, {
     body: { ...(await baseEnvelope(userId, "dispatch", now)), dispatch },
     local,
@@ -232,6 +237,9 @@ export interface OfflineReceiptInput {
   transaction_id: string;
   receipt_outcome: ReceiptOutcome;
   notes?: string;
+  ward_contact_name?: string;
+  receipt_checks?: Checks;
+  cuffs_returned?: Partial<Cuffs>;
 }
 
 export async function enqueueOfflineReceipt(input: OfflineReceiptInput): Promise<OutboxRecord> {
@@ -246,6 +254,9 @@ export async function enqueueOfflineReceipt(input: OfflineReceiptInput): Promise
     receipt_outcome: input.receipt_outcome,
   };
   if (input.notes) receipt.notes = input.notes;
+  if (input.ward_contact_name) receipt.ward_contact_name = input.ward_contact_name;
+  if (input.receipt_checks) receipt.receipt_checks = input.receipt_checks;
+  if (input.cuffs_returned) receipt.cuffs_returned = input.cuffs_returned;
   const rec = await enqueueOperation(userId, {
     body: { ...(await baseEnvelope(userId, "receipt", now)), receipt },
     local,
