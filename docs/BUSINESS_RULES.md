@@ -51,6 +51,8 @@ Dispatch and receipt (`backend/app/services/borrow_service.py`) are the only pat
 
 `BorrowTransaction.status` is exactly two values, `TransactionStatus.OPEN` / `TransactionStatus.CLOSED` (`backend/app/models/transaction.py`; Roadmap PR7; `knowledge/adr/ADR-005-transaction-model.md`), matching `docs/HOSPITAL_DOMAIN_MODEL.md`'s confirmed `OPEN`/`CLOSED` workflow. An overdue (`due_at` passed) transaction remains `OPEN` — the approved MVP business model has no due-date/overdue workflow at all, not a status value and not a notification. The `due_at`-driven overdue notification job (`app.worker.scheduler.check_overdue_returns`) has been removed and is not registered with the scheduler (Codex PR7a review round 1, BLOCKER: the job re-notified on every hourly tick with no de-duplication) — see `knowledge/adr/ADR-005-transaction-model.md` decision 3.
 
+**Amended by Owner Governance 2026-11-25 (D2):** `dispatch_type` and `routine_round` are removed from data entry; new dispatches no longer carry them (the columns become nullable and historical values are preserved read-only, never erased or backfilled), so the requirement below that every dispatch carry them no longer applies to new dispatches. Reporting groups by the PR16 `business_date`/`shift` (Day/Night) derived from the event time. Source: `docs/DECISION_LOG.md` (2026-11-25).
+
 **Roadmap PR7 (7b slice), merged (GitHub PR #20):** every new dispatch (`app.schemas.transaction.BorrowRequest`) must carry a `ward_id` and a `dispatch_type` (`routine_round` or `on_demand`, `backend/app/models/transaction.py`'s `DispatchType`); a `routine_round` (one of the four confirmed fixed times `06:00`/`11:00`/`15:00`/`21:00`, `RoutineRound`) is required exactly when `dispatch_type == routine_round` and forbidden for `on_demand`. `BorrowRequest` rejects any unrecognized field outright (`extra="forbid"`), so `borrower_name`, `due_at`, and `quantity` are not merely unaccepted but actively rejected with a 422; `due_at` is also removed from `TransactionOut`. Every existing historical value for all three fields is preserved as read-only history, never erased or backfilled — `borrower_name` remains visible in `TransactionOut`; `due_at`/`quantity` remain queryable via `app.services.report_service`'s export, which reads them directly from the ORM row. An existing row's `ward_id`/`dispatch_type`/`routine_round` are never fabricated for historical data — left `NULL`. `ward_id` is validated proactively (400 `INVALID_INPUT` if it does not reference an existing ward), distinct from the 409 concurrency response used when the same equipment is dispatched twice.
 
 - Source: `backend/app/models/transaction.py`; `backend/app/schemas/transaction.py`; `backend/app/services/borrow_service.py`; `backend/app/crud/transaction.py`; `backend/alembic/versions/0008_dispatch_fields.py`; `docs/HOSPITAL_DOMAIN_MODEL.md`; `knowledge/adr/ADR-005-transaction-model.md`; `docs/audits/04-consolidated-implementation-plan.md` Part D (PR7).
@@ -84,6 +86,21 @@ Authorization is `administrator` and `equipment_pool_staff` (`app.api.v1.deps.WA
 `AVAILABLE_AT_POOL` has no direct transition to `DECOMMISSIONED`. Equipment must first be marked `UNAVAILABLE_DEFECTIVE`; only `UNAVAILABLE_DEFECTIVE` may transition to `DECOMMISSIONED`. `DECOMMISSIONED` is terminal with no outgoing transition.
 
 - Source: `backend/app/models/equipment.py` (manual-maintenance transition table); confirmed as a review finding during Roadmap PR6 (see `docs/DECISION_LOG.md`).
+
+
+## Patient HN on dispatch (Owner Governance 2026-11-25)
+
+Equipment Pool staff MAY record a patient HN (hospital number) on a dispatch. This narrowly amends the former "no patient tracking" rule; no other patient field (name, bed, etc.) exists and there is no patient-tracking workflow. Mandatory safeguards: HN is stored only in the database, encrypted at rest at the application level (key from the host `.env`, never in the repo, logs, or clear-text backups); masked by default in every UI view and revealed only by an explicit "แสดง HN" click by an authenticated user; every reveal is audited (who/when/which transaction, never the HN value); HN never appears in any printed report, PDF, Excel export, CSV, read-only export API, log, notification, or the legacy sheet sync/import (which keep dropping/skipping HN); no search by HN unless separately approved. The Owner accepts PDPA responsibility; hospital legal/IT review is recommended; the retention policy is a future decision.
+
+- Source: `docs/DECISION_LOG.md` (2026-11-25).
+
+## Dispatch/receipt entry flow and accessory checks (Owner Governance 2026-11-25)
+
+- Ward first: select the ward, then scan/enter one or more equipment for that ward in one submission, for both dispatch and receipt. Each equipment is still its own transaction; dispatch/receipt services still own the lifecycle; receipt stays an atomic usable/defective outcome per equipment.
+- Per equipment, at dispatch and at receipt, three yes/no condition checks: screen not cracked (ตัวเครื่องหน้าจอไม่แตกร้าว), charger cable OK (สายชาร์จไม่ขาด), pole clamp present/OK (Pole Clamp ไม่แตกหัก). These are recorded condition facts only: not a cleaning state and not a new equipment state.
+- A daily shift report (by ward group, equipment type, operator; Day vs Night; dispatch/receipt counts) and printable daily forms are planned; HN never appears in them.
+
+- Source: `docs/DECISION_LOG.md` (2026-11-25).
 
 ## Related documents
 

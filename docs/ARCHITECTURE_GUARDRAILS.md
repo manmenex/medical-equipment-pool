@@ -19,8 +19,16 @@
   update, not an implementation PR.
 - Do not create missing Role CRUD, User delete, or master-data update/delete
   endpoints solely to obtain audit coverage.
-- Do not mix patient tracking into the Equipment Pool: no patient name, HN/MRN,
-  bed number, named borrower, or patient movement.
+- Do not mix patient tracking into the Equipment Pool: no patient name, MRN,
+  bed number, named borrower, or patient movement. The single exception is an
+  optional patient HN on a dispatch (Owner Governance 2026-11-25), which must:
+  be stored only in the database, encrypted at rest at the application level
+  with a key from the host `.env` (never in the repo, logs, or clear-text
+  backups); be masked by default in every UI view and revealed only by an
+  explicit "แสดง HN" click by an authenticated user, with every reveal audited
+  (who/when/which transaction, never the HN value); never appear in any printed
+  report, PDF, Excel/CSV export, read-only export API, log, notification, or
+  legacy sheet sync/import; and not be searchable unless separately approved.
 - Do not track inter-ward transfers. Record only the first receiving ward.
 - Do not treat ward staff/requestors as application users. Authenticated
   Equipment Pool operators record transactions.

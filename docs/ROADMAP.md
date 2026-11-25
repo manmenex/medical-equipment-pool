@@ -477,6 +477,18 @@ system of record. Excluded by the Owner, 2026-10-13.
 
 **GitHub PR #40 note:** GitHub PR #40 ("Dashboard & Equipment Status") is merged and recorded in the Completed table above as an unnumbered "— (frontend)" row. It did **not** implement Roadmap PR12 — its originating task description used "PR12" as an informal label, which conflicted with this file's Roadmap PR12 (Inventory Import). Governance PR #41 (see `docs/DECISION_LOG.md`, "Governance — GitHub PR #40 classification") resolved that conflict by classifying it as an unnumbered Post-PR11 Frontend Dashboard UX Follow-up. Roadmap PR12 was subsequently implemented and merged as GitHub PR #43 (see the PR12 note above), Roadmap PR13 as GitHub PR #45 (see the PR13 note above), Roadmap PR14's PR14A and PR14B slices as GitHub PR #46 and #48 respectively (see the PR14 note above), and Roadmap PR15's PR15A slice as GitHub PR #50 (see the PR15 note above). **Roadmap PR15's PR15B slice (Schema Hygiene) later merged as GitHub PR #54; broader Roadmap PR15 scope (metrics, tracing, dashboards, log aggregation, alerting) remains open pending future scheduling or an explicit governance decision.**
 
+## Planned: Owner decisions of 2026-11-25 (approved; not started)
+
+Approved by Owner Governance 2026-11-25 (`docs/DECISION_LOG.md`). Each is a separate small PR, in the intended order. None may be started ahead of its turn.
+
+| PR | Scope |
+|---|---|
+| PR25 | Dispatch type / routine round removed from data entry (D2): nullable columns, historical values kept read-only, reporting by `business_date`/`shift`. |
+| PR26 | Ward-first multi-equipment dispatch and receipt entry (D3); each equipment its own transaction. |
+| PR27 | Accessory/condition checks at dispatch and receipt (D4): three yes/no facts per equipment, no new state. |
+| PR28 | Patient HN on dispatch (D1): application-level encryption, masked by default, audited "แสดง HN" reveal, excluded from every report/export/API/log/sync. |
+| PR29 | Daily shift report and printable daily forms (D5), HN never present. |
+
 ## Confirmed future work (not scheduled to a Roadmap PR)
 
 - **Shift Sessions (superseded terminology)** — the approved PR16 direction is

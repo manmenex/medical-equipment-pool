@@ -9208,3 +9208,47 @@ opening-balance transactions are created.
   (amendment note added at section 15).
 - **Source:** Owner approval in chat, 2026-11-25. Docs-only; no change to
   business rules or guardrails. Code changes follow in a separate PR.
+
+## 2026-11-25 — Patient HN, shift-by-time dispatch, ward-first entry, accessory checks, daily shift report
+
+- **Decision (Repository Owner, in chat, 2026-11-25):**
+  - **D1 Patient HN** (narrowly amends the "No patient tracking" guardrail):
+    Equipment Pool staff MAY record a patient HN on a dispatch. Mandatory
+    safeguards: stored only in the database, encrypted at rest at the
+    application level (key from host `.env`, never in repo/logs/clear-text
+    backups); masked by default in every UI view, revealed only by an explicit
+    "แสดง HN" click by an authenticated user; every reveal audited (who/when/
+    which transaction, never the HN value); HN never appears in any printed
+    report, PDF, Excel export, CSV, read-only export API, logs, notifications,
+    or the legacy sheet sync/import (these keep dropping/skipping HN); no
+    patient name or other patient field; no search by HN unless separately
+    approved; no patient-tracking workflow beyond this field. PDPA: the Owner
+    accepts responsibility; hospital legal/IT review is recommended; the
+    retention policy is TBD (future decision).
+  - **D2 Dispatch type and routine round:** remove `dispatch_type` and
+    `routine_round` from data entry (amends the Roadmap PR7 7b rule in
+    `docs/BUSINESS_RULES.md`). New dispatches no longer carry them (nullable;
+    historical values preserved read-only). Reporting groups by the existing
+    PR16 `business_date`/`shift` (Day/Night) derived from the event time.
+  - **D3 Entry flow:** select the ward first, then scan/enter one or more
+    equipment for that ward in one submission; each equipment remains its own
+    transaction and the dispatch/receipt services still own the lifecycle.
+    Receipt follows the same ward-first multi-equipment flow and stays atomic
+    usable/defective per equipment.
+  - **D4 Accessory/condition checks:** per equipment at dispatch and receipt,
+    three yes/no checks: screen not cracked (ตัวเครื่องหน้าจอไม่แตกร้าว),
+    charger cable OK (สายชาร์จไม่ขาด), pole clamp present/OK (Pole Clamp
+    ไม่แตกหัก). Recorded as condition facts; not a cleaning state; no new
+    equipment state.
+  - **D5 Daily shift report:** add a daily report matching the pool team's
+    current Excel summary (by ward group, equipment type, operator; night vs
+    day shift; dispatch/receipt counts) and printable daily forms. HN never
+    appears.
+- **Reason:** Operational fit with the pool team's real daily process; HN
+  needed by the team at dispatch time, handled with strict privacy safeguards.
+- **Amends:** `AGENTS.md` (patient-tracking guardrail),
+  `docs/ARCHITECTURE_GUARDRAILS.md` (patient tracking), `docs/BUSINESS_RULES.md`
+  (Roadmap PR7 7b dispatch_type/routine_round rule).
+- **Source:** Owner decisions in chat, 2026-11-25. Docs-only Governance PR; no
+  code change. Implementation follows in Roadmap PR25-PR29 (`docs/ROADMAP.md`).
+- **Status:** Approved; implementation not started.
