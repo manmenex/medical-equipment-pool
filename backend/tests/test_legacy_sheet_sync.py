@@ -27,6 +27,8 @@ from app.services.legacy_sheet_sync.sheet_parser import (
     KIND_DISPATCH,
     KIND_RECEIPT,
     HeaderError,
+    _parse_date,
+    _parse_time,
     parse_tab,
 )
 from app.services.legacy_sheet_sync.sheets_client import GoogleSheetsReader, SheetsError
@@ -363,3 +365,49 @@ def test_cli_error_output_has_no_key_path(monkeypatch, capsys, tmp_path):
     assert cli.main(["--once", "--dry-run"]) == 1
     out = capsys.readouterr()
     assert "super-secret" not in out.out + out.err and "ERROR" in out.err
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("24/Nov/2026", (2026, 11, 24)),
+        ("25-nov-2026", (2026, 11, 25)),
+        ("1/SEPT/2026", (2026, 9, 1)),
+        ("3/September/2026", (2026, 9, 3)),
+        ("5/Jan/2569", (2026, 1, 5)),
+        ("24/พ.ย./2569", (2026, 11, 24)),
+        ("24 พ. ย. 2569", (2026, 11, 24)),
+        ("2/ม.ค./2026", (2026, 1, 2)),
+        ("24/11/2026", (2026, 11, 24)),
+        ("2026-11-24", (2026, 11, 24)),
+    ],
+)
+def test_parse_date_formats(text, expected):
+    assert _parse_date(text).timetuple()[:3] == expected
+
+
+@pytest.mark.parametrize("text", ["24/Foo/2026", "24/Nove/2026", "24/Nov/", "Nov/2026", ""])
+def test_parse_date_rejects_invalid(text):
+    with pytest.raises(ValueError):
+        _parse_date(text)
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("22:07:30", (22, 7, 30)),
+        ("7:42:11", (7, 42, 11)),
+        ("7:42 PM", (19, 42, 0)),
+        ("12:05:00 am", (0, 5, 0)),
+        ("12:05 PM", (12, 5, 0)),
+        ("08.30 น.", (8, 30, 0)),
+    ],
+)
+def test_parse_time_formats(text, expected):
+    t = _parse_time(text)
+    assert (t.hour, t.minute, t.second) == expected
+
+
+def test_parse_time_rejects_bad_ampm_hour():
+    with pytest.raises(ValueError):
+        _parse_time("13:00 PM")
