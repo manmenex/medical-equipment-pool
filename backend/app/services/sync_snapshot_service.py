@@ -26,11 +26,11 @@ MAX_LIMIT = 500
 
 # The allow-lists are the contract; tests assert responses match them exactly.
 SECTION_FIELDS: dict[str, tuple[str, ...]] = {
-    "equipment": ("id", "bcm_code", "equipment_name", "category_id", "category_name", "status"),
+    "equipment": ("id", "bcm_code", "equipment_name", "category_id", "category_name", "checklist_kind", "status"),
     "wards": ("id", "code", "name", "department_id", "phone"),
     "departments": ("id", "code", "name", "phone"),
     "locations": ("id", "name", "type"),
-    "open_transactions": ("id", "equipment_id", "ward_id", "borrowed_at"),
+    "open_transactions": ("id", "equipment_id", "ward_id", "borrowed_at", "checklist_kind", "cuffs_issued"),
 }
 SECTIONS = tuple(SECTION_FIELDS)
 
@@ -77,7 +77,7 @@ async def get_page(db: AsyncSession, section: str, cursor: str | None, limit: in
     if section == "equipment":
         model, ts_col = Equipment, Equipment.updated_at
         stmt = (
-            select(Equipment, EquipmentCategory.name)
+            select(Equipment, EquipmentCategory.name, EquipmentCategory.checklist_kind)
             .outerjoin(EquipmentCategory, EquipmentCategory.id == Equipment.category_id)
             .where(Equipment.deleted_at.is_(None))
         )
@@ -102,13 +102,14 @@ async def get_page(db: AsyncSession, section: str, cursor: str | None, limit: in
     last = None
     for row in rows:
         if section == "equipment":
-            obj, category_name = row
+            obj, category_name, category_kind = row
             item = {
                 "id": str(obj.id),
                 "bcm_code": obj.bcm_code,
                 "equipment_name": obj.equipment_name,
                 "category_id": str(obj.category_id) if obj.category_id else None,
                 "category_name": category_name,
+                "checklist_kind": category_kind or "standard",
                 "status": obj.status.value,
             }
         else:
@@ -119,6 +120,14 @@ async def get_page(db: AsyncSession, section: str, cursor: str | None, limit: in
                     "equipment_id": str(obj.equipment_id),
                     "ward_id": str(obj.ward_id) if obj.ward_id else None,
                     "borrowed_at": _iso(obj.borrowed_at),
+                    # Roadmap PR28: lets the offline receipt form show the Cryo-Cuff
+                    # checklist and cap cuffs returned at the issued counts.
+                    "checklist_kind": obj.checklist_kind,
+                    "cuffs_issued": (
+                        obj.dispatch_checks.get("cuffs")
+                        if isinstance(obj.dispatch_checks, dict) and obj.dispatch_checks.get("kind") == "cryo_cuff"
+                        else None
+                    ),
                 }
             elif section == "wards":
                 item = {

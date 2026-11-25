@@ -204,3 +204,29 @@ async def test_stats_range_validation(client, ctx):
     assert wide.status_code == 400
     empty = await client.get(SN, headers=ctx["admin"])
     assert empty.json()["volume"]["total_ops"] == 0 and empty.json()["volume"]["conflicts_per_1000_ops"] is None
+
+
+async def test_snapshot_exposes_checklist_kind_and_issued_cuffs(client, ctx):
+    """Roadmap PR28: offline Cryo-Cuff needs the kind and issued cuff counts in the snapshot."""
+    cat = await client.post("/api/v1/categories", headers=ctx["admin"], json={"name": "Cryo-Cuff Snap"})
+    assert cat.status_code == 201, cat.text
+    assert cat.json()["checklist_kind"] == "cryo_cuff"
+    eq = await client.post(
+        "/api/v1/equipment", headers=ctx["admin"],
+        json={"equipment_name": "Cryo", "bcm_code": "BCM-CRYO", "category_id": cat.json()["id"]},
+    )
+    assert eq.status_code == 201, eq.text
+    checks = {"kind": "cryo_cuff", "cuffs": {"knee": 2, "ankle": 1}}
+    b = await client.post(
+        "/api/v1/borrow", headers=ctx["staff"],
+        json={"equipment_id": eq.json()["id"], "ward_id": ctx["ward"], "dispatch_checks": checks},
+    )
+    assert b.status_code == 201, b.text
+    items = (await client.get(S, headers=ctx["staff"], params={"section": "equipment"})).json()["items"]
+    by_bcm = {i["bcm_code"]: i for i in items}
+    assert by_bcm["BCM-CRYO"]["checklist_kind"] == "cryo_cuff"
+    assert all(i["checklist_kind"] in ("standard", "cryo_cuff") for i in items)
+    tx = (await client.get(S, headers=ctx["staff"], params={"section": "open_transactions"})).json()["items"]
+    cryo = next(t for t in tx if t["equipment_id"] == eq.json()["id"])
+    assert cryo["checklist_kind"] == "cryo_cuff"
+    assert cryo["cuffs_issued"] == {"back_hip_rib": 0, "knee": 2, "shoulder": 0, "ankle": 1}

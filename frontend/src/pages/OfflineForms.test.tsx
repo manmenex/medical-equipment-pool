@@ -1,7 +1,7 @@
 import "fake-indexeddb/auto";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { IDBFactory } from "fake-indexeddb";
 import { MemoryRouter } from "react-router-dom";
@@ -19,21 +19,23 @@ import { useUiStore } from "@/store/uiStore";
 const requestSync = vi.fn();
 vi.mock("@/offline/syncWorker", () => ({ requestSync: () => requestSync() }));
 
-const createBorrow = vi.fn();
-const createReturn = vi.fn();
+const dispatchBatch = vi.fn();
+const receiptBatch = vi.fn();
 const listActiveBorrows = vi.fn();
 const getEquipment = vi.fn();
+const getDispatchCheck = vi.fn();
 const searchBcmSuggestions = vi.fn();
 const listWards = vi.fn();
 const listDepartments = vi.fn();
 vi.mock("@/services/borrow", () => ({
-  createBorrow: (...a: unknown[]) => createBorrow(...a),
-  createReturn: (...a: unknown[]) => createReturn(...a),
+  dispatchBatch: (...a: unknown[]) => dispatchBatch(...a),
+  receiptBatch: (...a: unknown[]) => receiptBatch(...a),
   listActiveBorrows: (...a: unknown[]) => listActiveBorrows(...a),
 }));
 vi.mock("@/services/equipment", () => ({
   getEquipment: (...a: unknown[]) => getEquipment(...a),
   resolveEquipmentByQr: vi.fn(),
+  getDispatchCheck: (...a: unknown[]) => getDispatchCheck(...a),
   searchBcmSuggestions: (...a: unknown[]) => searchBcmSuggestions(...a),
 }));
 vi.mock("@/services/masterData", () => ({
@@ -75,7 +77,7 @@ beforeEach(() => {
   resetServerTimeState();
   resetStaleAcknowledgement();
   vi.clearAllMocks();
-  useUiStore.setState({ lastWard: null });
+  useUiStore.setState({ lastWard: null, wardUsage: {} });
   useAuthStore.setState({ accessToken: "t", user: { id: "u1" } as never });
   listWards.mockResolvedValue([]);
   listDepartments.mockResolvedValue([]);
@@ -86,59 +88,71 @@ afterEach(async () => {
   useAuthStore.setState({ accessToken: null, user: null });
 });
 
-describe("offline dispatch form", () => {
-  it("searches the cache by BCM, prefills the phone from cached ward/department, enqueues, shows pending state", async () => {
+async function pickWard(user: ReturnType<typeof userEvent.setup>, query: string) {
+  await user.type(await screen.findByLabelText("ค้นหาหอผู้ป่วย"), query);
+  await user.click(within(await screen.findByRole("listbox")).getByRole("button"));
+}
+const addBcm = (user: ReturnType<typeof userEvent.setup>, bcm: string) =>
+  user.type(screen.getByLabelText("รหัส BCM"), `${bcm}{Enter}`);
+
+describe("offline dispatch (Roadmap PR27/PR28)", () => {
+  it("adds from the cache with an offline note, then queues one single dispatch op per item with contact name and checks", async () => {
     await seed();
+    await replaceRefs("ref_equipment", [
+      { id: "e1", bcm_code: "BCM001", equipment_name: "Infusion Pump", status: "available_at_pool" },
+      { id: "e2", bcm_code: "BCM002", equipment_name: "Ventilator", status: "available_at_pool" },
+    ]);
     setMarkedOffline(true);
     const user = userEvent.setup();
     renderPage(<BorrowPage />, "/borrow");
 
-    expect(screen.queryByTestId("qr-scanner")).not.toBeInTheDocument(); // QR is online only
-    expect(screen.getByText(/สแกน QR ใช้ได้เฉพาะตอนออนไลน์/)).toBeInTheDocument();
-
-    await user.type(screen.getByPlaceholderText("กรอกรหัส BCM"), "001");
-    await user.click(await screen.findByRole("button", { name: "BCM001" }));
-    await screen.findByText("Infusion Pump");
-
-    await user.selectOptions(await screen.findByLabelText(/หอผู้ป่วยที่รับเครื่อง/), "w1");
-    // ward has no phone -> department fallback from the cached snapshot
-    await waitFor(() => expect(screen.getByLabelText("เบอร์โทร")).toHaveValue("0111"));
-    await user.selectOptions(screen.getByLabelText(/หอผู้ป่วยที่รับเครื่อง/), "w2");
-    // operator has not typed their own value yet -> ward phone refills
+    expect(screen.queryByRole("button", { name: "สแกน QR" })).not.toBeInTheDocument(); // QR is online only
+    await pickWard(user, "Ward B");
     await waitFor(() => expect(screen.getByLabelText("เบอร์โทร")).toHaveValue("0222"));
+    await user.type(screen.getByLabelText("ชื่อผู้รับ (Ward)"), "คุณสมศรี");
+    await addBcm(user, "BCM001");
+    await addBcm(user, "BCM002");
+    expect(await screen.findByRole("button", { name: "แก้ไข BCM002" })).toBeInTheDocument();
+    expect(screen.getAllByText("ตรวจสอบสถานะไม่ได้ (ออฟไลน์)")).toHaveLength(2);
+    expect(getDispatchCheck).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("button", { name: "บันทึกการเบิก (ในเครื่อง)" }));
-
-    expect(await screen.findByText(/บันทึกในเครื่องแล้ว — ยังไม่ได้ส่งเข้าระบบ/)).toBeInTheDocument();
-    expect(screen.queryByText("เบิกสำเร็จ")).not.toBeInTheDocument();
-    expect(createBorrow).not.toHaveBeenCalled();
-    expect(getEquipment).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (2 เครื่อง)" }));
+    expect(await screen.findByText(/บันทึกในเครื่องแล้ว 2 เครื่อง — ยังไม่ได้ส่งเข้าระบบ/)).toBeInTheDocument();
+    expect(dispatchBatch).not.toHaveBeenCalled();
     expect(searchBcmSuggestions).not.toHaveBeenCalled();
-    const [rec] = await listOutbox("u1");
-    expect(rec.envelope).toMatchObject({
-      user_id: "u1",
-      op_type: "dispatch",
-      dispatch: { equipment_id: "e1", ward_id: "w2", phone_number: "0222" },
-    });
-    expect(requestSync).toHaveBeenCalledTimes(1);
+    const recs = await listOutbox("u1");
+    expect(recs).toHaveLength(2);
+    for (const rec of recs) {
+      expect(rec.envelope).toMatchObject({
+        user_id: "u1",
+        op_type: "dispatch",
+        dispatch: {
+          ward_id: "w2",
+          phone_number: "0222",
+          ward_contact_name: "คุณสมศรี",
+          dispatch_checks: { kind: "standard", screen_ok: true, charger_ok: true, clamp_ok: true },
+        },
+      });
+    }
+    expect(recs.map((r) => (r.envelope as unknown as { dispatch: { equipment_id: string } }).dispatch.equipment_id).sort()).toEqual(["e1", "e2"]);
+    expect(requestSync).toHaveBeenCalledTimes(2);
   });
 
-  it("blocks a second offline dispatch of the same equipment with the generic message", async () => {
+  it("keeps an item that cannot be queued (already dispatched locally) with the generic message", async () => {
     await seed();
     setMarkedOffline(true);
     const user = userEvent.setup();
     renderPage(<BorrowPage />, "/borrow");
-    for (let i = 0; i < 2; i++) {
-      await user.type(screen.getByPlaceholderText("กรอกรหัส BCM"), "001");
-      await user.click(await screen.findByRole("button", { name: "BCM001" }));
-      await screen.findByText("Infusion Pump");
-      if (i === 1) break;
-      await user.selectOptions(await screen.findByLabelText(/หอผู้ป่วยที่รับเครื่อง/), "w2");
-      await user.click(screen.getByRole("button", { name: "บันทึกการเบิก (ในเครื่อง)" }));
-      await user.click(await screen.findByRole("button", { name: "เบิกเครื่องถัดไป" }));
-    }
-    // second time the cache already treats it as dispatched (not yet synced)
-    expect(await screen.findByText(/ไม่พร้อมให้เบิก/)).toBeInTheDocument();
+    await pickWard(user, "Ward B");
+    await addBcm(user, "BCM001");
+    await screen.findByRole("button", { name: "แก้ไข BCM001" });
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (1 เครื่อง)" }));
+    await screen.findByText(/บันทึกในเครื่องแล้ว 1 เครื่อง/);
+
+    await addBcm(user, "BCM001");
+    await screen.findByRole("button", { name: "แก้ไข BCM001" });
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (1 เครื่อง)" }));
+    expect(await screen.findByText(/ไม่สามารถบันทึกซ้ำได้|ไม่พร้อมให้เบิก/)).toBeInTheDocument();
     expect(await listOutbox("u1")).toHaveLength(1);
   });
 
@@ -153,88 +167,156 @@ describe("offline dispatch form", () => {
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(/ไม่ได้ซิงค์/);
 
-    await user.type(screen.getByPlaceholderText("กรอกรหัส BCM"), "001");
-    await user.click(await screen.findByRole("button", { name: "BCM001" }));
-    await user.selectOptions(await screen.findByLabelText(/หอผู้ป่วยที่รับเครื่อง/), "w2");
-    await user.click(screen.getByRole("button", { name: "บันทึกการเบิก (ในเครื่อง)" }));
+    await pickWard(user, "Ward B");
+    await addBcm(user, "BCM001");
+    await screen.findByRole("button", { name: "แก้ไข BCM001" });
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (1 เครื่อง)" }));
     await screen.findByText(/บันทึกในเครื่องแล้ว/);
     expect((await listOutbox("u1"))[0].stale_context).toBe(true);
   });
 });
 
-describe("offline receipt form", () => {
-  it("lists cached open transactions plus local dispatches and enqueues a receipt by transaction_id", async () => {
+describe("offline receipt (Roadmap PR27/PR28)", () => {
+  it("finds the open transaction in the snapshot and queues a receipt op addressed by transaction_id with the new fields", async () => {
     await seed();
     setMarkedOffline(true);
     const user = userEvent.setup();
     renderPage(<ReturnPage />, "/return");
 
-    expect(screen.queryByTestId("qr-scanner")).not.toBeInTheDocument();
-    await user.click(await screen.findByRole("button", { name: /BCM777/ }));
-    await user.click(screen.getByLabelText("ชำรุด"));
-    await user.type(screen.getByLabelText("หมายเหตุ"), "cracked");
-    await user.click(screen.getByRole("button", { name: "บันทึกการรับคืน (ในเครื่อง)" }));
+    await user.type(await screen.findByLabelText("ชื่อผู้ส่งคืน (Ward)"), "คุณมาลี");
+    await addBcm(user, "BCM777");
+    await user.click(await screen.findByRole("button", { name: "แก้ไข BCM777" }));
+    await user.click(screen.getByRole("button", { name: "เสีย" }));
+    await user.click(screen.getByRole("button", { name: "เสร็จ" }));
+    await user.click(screen.getByRole("button", { name: "ยืนยันการรับคืน (1 เครื่อง)" }));
 
-    expect(await screen.findByText(/บันทึกในเครื่องแล้ว — ยังไม่ได้ส่งเข้าระบบ/)).toBeInTheDocument();
-    expect(createReturn).not.toHaveBeenCalled();
+    expect(await screen.findByText(/บันทึกในเครื่องแล้ว 1 เครื่อง/)).toBeInTheDocument();
+    expect(receiptBatch).not.toHaveBeenCalled();
     expect(listActiveBorrows).not.toHaveBeenCalled();
     const [rec] = await listOutbox("u1");
     expect(rec.envelope).toMatchObject({
       user_id: "u1",
       op_type: "receipt",
-      receipt: { transaction_id: "t3", receipt_outcome: "defective", notes: "cracked" },
+      receipt: {
+        transaction_id: "t3",
+        receipt_outcome: "defective",
+        ward_contact_name: "คุณมาลี",
+        receipt_checks: { kind: "standard", screen_ok: true, charger_ok: true, clamp_ok: true },
+      },
     });
     expect(requestSync).toHaveBeenCalledTimes(1);
-    // the received transaction no longer appears in the list
-    await user.click(screen.getByRole("button", { name: "รับคืนเครื่องถัดไป" }));
-    await screen.findByText(/ไม่พบรายการเบิกที่ค้างอยู่/);
   });
 
-  it("includes this user's own offline dispatch in the receipt list", async () => {
+  it("includes this user's own offline dispatch as a receivable transaction", async () => {
     await seed();
     setMarkedOffline(true);
     const user = userEvent.setup();
     const { unmount } = renderPage(<BorrowPage />, "/borrow");
-    await user.type(screen.getByPlaceholderText("กรอกรหัส BCM"), "001");
-    await user.click(await screen.findByRole("button", { name: "BCM001" }));
-    await user.selectOptions(await screen.findByLabelText(/หอผู้ป่วยที่รับเครื่อง/), "w2");
-    await user.click(screen.getByRole("button", { name: "บันทึกการเบิก (ในเครื่อง)" }));
+    await pickWard(user, "Ward B");
+    await addBcm(user, "BCM001");
+    await screen.findByRole("button", { name: "แก้ไข BCM001" });
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (1 เครื่อง)" }));
     await screen.findByText(/บันทึกในเครื่องแล้ว/);
     unmount();
 
     renderPage(<ReturnPage />, "/return");
-    expect(await screen.findByRole("button", { name: /BCM001/ })).toHaveTextContent(/เบิกในเครื่องนี้/);
-    expect(screen.getByRole("button", { name: /BCM777/ })).toBeInTheDocument();
+    await addBcm(user, "BCM001");
+    expect(await screen.findByRole("button", { name: "แก้ไข BCM001" })).toBeInTheDocument();
+  });
+
+  it("shows the red not-dispatched notice for equipment with no open transaction", async () => {
+    await seed();
+    setMarkedOffline(true);
+    const user = userEvent.setup();
+    renderPage(<ReturnPage />, "/return");
+    await addBcm(user, "BCM001");
+    expect(await screen.findByRole("alert")).toHaveTextContent("⛔ BCM001 ไม่ได้ถูกจ่ายออกไป ไม่ถูกเพิ่ม");
   });
 });
 
-describe("online path unchanged", () => {
-  it("dispatch uses POST /borrow via createBorrow and writes nothing to the outbox", async () => {
+describe("online path", () => {
+  it("dispatch uses dispatch-batch and writes nothing to the outbox", async () => {
     await seed();
     getEquipment.mockResolvedValue({
       id: "e1", asset_number: "AST-1", serial_number: null, equipment_name: "Infusion Pump", category_id: null,
       brand: null, model: null, department_owner_id: null, current_location_id: null, status: "available_at_pool",
       bcm_code: "BCM001", pm_due_date: null, cal_due_date: null, created_at: "", updated_at: "",
     });
+    getDispatchCheck.mockResolvedValue({
+      equipment_id: "e1", status: "available_at_pool", warning: null, dispatchable: true, requires_acknowledgement: false,
+      current_ward_id: null, current_ward_name: null, dispatched_at: null, open_transaction_id: null,
+      open_transaction_no: null, checklist_kind: "standard",
+    });
     listWards.mockResolvedValue([{ id: "w1", code: "W1", name: "Ward A", department_id: null }]);
-    createBorrow.mockResolvedValue({ transaction_no: "TX-9" });
+    dispatchBatch.mockResolvedValue({
+      total: 1, succeeded: 1, failed: 0,
+      results: [{ index: 0, ok: true, equipment_id: "e1", transaction_id: "t", transaction_no: "TX-9", cuffs_outstanding: null, error: null }],
+    });
     const user = userEvent.setup();
     renderPage(<BorrowPage />, "/borrow?equipment_id=e1");
 
-    await screen.findByText("AST-1");
-    await user.selectOptions(await screen.findByLabelText(/หอผู้ป่วยที่รับเครื่อง/), "w1");
-    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก" }));
+    await screen.findByRole("button", { name: "แก้ไข BCM001" });
+    await pickWard(user, "Ward A");
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (1 เครื่อง)" }));
 
-    expect(await screen.findByText("เบิกสำเร็จ")).toBeInTheDocument();
-    expect(createBorrow).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("✓ BCM001 (TX-9)")).toBeInTheDocument();
+    expect(dispatchBatch).toHaveBeenCalledTimes(1);
     expect(await listOutbox("u1")).toEqual([]);
     expect(requestSync).not.toHaveBeenCalled();
   });
 
-  it("receipt shows the QR scanner and never the offline list", async () => {
+  it("receipt shows the QR button", async () => {
     await seed();
     renderPage(<ReturnPage />, "/return");
-    expect(screen.getByTestId("qr-scanner")).toBeInTheDocument();
-    expect(screen.queryByText(/สแกน QR ใช้ได้เฉพาะตอนออนไลน์/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "สแกน QR" })).toBeInTheDocument();
+  });
+});
+
+describe("offline Cryo-Cuff (Roadmap PR28)", () => {
+  it("receipt: uses the cached kind and issued cuffs; the queued op carries cryo checks and the cuffs returned", async () => {
+    await seed();
+    await replaceRefs("ref_equipment", [
+      { id: "c1", bcm_code: "CRYO1", equipment_name: "Cryo", category_name: "Cryo-Cuff", checklist_kind: "cryo_cuff", status: "issued_to_ward" },
+    ]);
+    await replaceRefs("ref_open_tx", [
+      { id: "tc", equipment_id: "c1", ward_id: "w2", borrowed_at: "2026-10-13T01:00:00Z", checklist_kind: "cryo_cuff", cuffs_issued: { back_hip_rib: 0, knee: 2, shoulder: 0, ankle: 1 } },
+    ]);
+    setMarkedOffline(true);
+    const user = userEvent.setup();
+    renderPage(<ReturnPage />, "/return");
+    await addBcm(user, "CRYO1");
+    await user.click(await screen.findByRole("button", { name: "แก้ไข CRYO1" }));
+    expect(within(screen.getByRole("group", { name: "แก้ไข CRYO1" })).getAllByRole("listitem")).toHaveLength(6);
+    expect(screen.getByLabelText("จำนวน Knee")).toHaveValue(2);
+    await user.click(screen.getByRole("button", { name: "เสร็จ" }));
+    await user.click(screen.getByRole("button", { name: "ยืนยันการรับคืน (1 เครื่อง)" }));
+    await screen.findByText(/บันทึกในเครื่องแล้ว 1 เครื่อง/);
+    const [rec] = await listOutbox("u1");
+    expect(rec.envelope).toMatchObject({
+      receipt: {
+        transaction_id: "tc",
+        receipt_checks: { kind: "cryo_cuff", cuffs: { back_hip_rib: 0, knee: 2, shoulder: 0, ankle: 1 } },
+        cuffs_returned: { back_hip_rib: 0, knee: 2, shoulder: 0, ankle: 1 },
+      },
+    });
+  });
+
+  it("dispatch: an old cache without checklist_kind falls back to the category name (cryo)", async () => {
+    await seed();
+    await replaceRefs("ref_equipment", [
+      { id: "c1", bcm_code: "CRYO1", equipment_name: "Cryo", category_name: "CRYO CUFF", status: "available_at_pool" },
+    ]);
+    setMarkedOffline(true);
+    const user = userEvent.setup();
+    renderPage(<BorrowPage />, "/borrow");
+    await pickWard(user, "Ward B");
+    await addBcm(user, "CRYO1");
+    await user.click(await screen.findByRole("button", { name: "แก้ไข CRYO1" }));
+    expect(within(screen.getByRole("group", { name: "แก้ไข CRYO1" })).getAllByRole("listitem")).toHaveLength(6);
+    await user.click(screen.getByRole("button", { name: "เสร็จ" }));
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (1 เครื่อง)" }));
+    await screen.findByText(/บันทึกในเครื่องแล้ว 1 เครื่อง/);
+    const [rec] = await listOutbox("u1");
+    expect(rec.envelope).toMatchObject({ dispatch: { dispatch_checks: { kind: "cryo_cuff" } } });
   });
 });

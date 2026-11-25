@@ -205,7 +205,7 @@ describe("offline receipt", () => {
   it("candidates carry no Asset Number / Item No", async () => {
     await seed();
     const keys = Object.keys((await listReceiptCandidates())[0]).sort();
-    expect(keys).toEqual(["borrowed_at", "bcm_code", "equipment_id", "equipment_name", "source", "transaction_id", "ward_id", "ward_name"].sort());
+    expect(keys).toEqual(["borrowed_at", "bcm_code", "checklist_kind", "cuffs_issued", "equipment_id", "equipment_name", "source", "transaction_id", "ward_id", "ward_name"].sort());
   });
 });
 

@@ -12,6 +12,16 @@ const listWards = vi.fn();
 vi.mock("@/services/monitor", () => ({
   fetchMonitorEvents: (...a: unknown[]) => fetchMonitorEvents(...a),
 }));
+vi.mock("@/services/cuffs", () => ({
+  getOutstandingCuffs: () =>
+    Promise.resolve({
+      total_outstanding: 1,
+      items: [{
+        ward_id: "w1", ward_name: "ICU", cuffs: { back_hip_rib: 0, knee: 1, shoulder: 0, ankle: 0 }, total: 1,
+        transactions: [{ transaction_id: "t1", transaction_no: "TX-1", equipment_id: "e1", bcm_code: "BCM-C1", equipment_name: "Cryo", dispatched_at: "", device_received: true, cuffs: { back_hip_rib: 0, knee: 1, shoulder: 0, ankle: 0 } }],
+      }],
+    }),
+}));
 vi.mock("@/services/masterData", () => ({ listWards: (...a: unknown[]) => listWards(...a) }));
 
 function ev(id: string, over: Partial<MonitorEvent> = {}): MonitorEvent {
@@ -120,5 +130,41 @@ describe("MonitorPage", () => {
     setup();
     await waitFor(() => expect(screen.getByTestId("monitor-updated").textContent).toMatch(/อัปเดตล่าสุด \d{2}:\d{2}:\d{2}/));
     expect(screen.queryByText(/HN/)).not.toBeInTheDocument();
+  });
+
+  it("shows the ward contact name (ผู้รับ/ผู้ส่ง) and a Cuff ค้าง indicator in group rows", async () => {
+    fetchMonitorEvents.mockImplementation(async ({ kind }: { kind: string }) => {
+      if (kind === "receipt") {
+        const items = [ev("R1", { kind: "receipt", receipt_outcome: "usable", ward_contact_name: "คุณมาลี" })];
+        return { items, next_cursor: null, total: 1 };
+      }
+      const items = [
+        ev("1", { ward_contact_name: "คุณสมศรี", cuffs_outstanding: { back_hip_rib: 0, knee: 1, shoulder: 0, ankle: 0 } }),
+        ev("2", { ward_contact_name: "คุณสมศรี" }),
+      ];
+      return { items, next_cursor: null, total: 2 };
+    });
+    listWards.mockResolvedValue([]);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MonitorPage />
+      </QueryClientProvider>,
+    );
+    const row = await screen.findByRole("button", { name: /ICU/ });
+    expect(row).toHaveTextContent("ผู้รับ: คุณสมศรี");
+    expect(row).toHaveTextContent("Cuff ค้าง");
+    await userEvent.click(row);
+    expect(screen.getByText("Cuff ค้าง (Knee 1)")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: /^รับ \(/ }));
+    expect(await screen.findByRole("button", { name: /ผู้ส่ง: คุณมาลี/ })).toBeInTheDocument();
+  });
+
+  it("lists outstanding cuffs by ward in the Cuff ค้าง tab", async () => {
+    setup();
+    await userEvent.click(await screen.findByRole("tab", { name: "Cuff ค้าง" }));
+    expect(await screen.findByRole("heading", { name: /ICU/ })).toHaveTextContent("Knee 1");
+    expect(screen.getByText("BCM-C1")).toBeInTheDocument();
   });
 });

@@ -1,4 +1,5 @@
 import { api } from "@/services/api";
+import type { Checks, ChecklistKind, Cuffs } from "@/types";
 
 // Roadmap PR32 (D9): read-only Monitor feed. No HN field exists in this contract.
 export type MonitorKind = "dispatch" | "receipt";
@@ -14,6 +15,11 @@ export interface MonitorEvent {
   equipment: { id: string; bcm_code: string | null; name: string; category: string | null };
   receipt_outcome: "usable" | "defective" | null;
   close_reason: string | null;
+  // Roadmap PR27/PR28: event-side contact name, checklist and outstanding cuffs.
+  ward_contact_name?: string | null;
+  checklist_kind?: ChecklistKind | null;
+  checks?: Checks | null;
+  cuffs_outstanding?: Cuffs | null;
 }
 
 export interface MonitorPageResult {

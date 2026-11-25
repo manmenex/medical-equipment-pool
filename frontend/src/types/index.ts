@@ -132,7 +132,35 @@ export interface TransactionOut {
   // made while the equipment was marked defective.
   close_reason?: string | null;
   dispatched_while_defective?: boolean;
+  // Roadmap PR27/PR28: ward contact names, checklist snapshot (docs/api/ward-first-entry.md).
+  dispatch_contact_name?: string | null;
+  receipt_contact_name?: string | null;
+  checklist_kind?: ChecklistKind | null;
+  dispatch_checks?: Checks | null;
+  receipt_checks?: Checks | null;
 }
+
+// Roadmap PR28 (D4/D10): accessory / Cryo-Cuff checklists (docs/api/ward-first-entry.md 2.2).
+export type ChecklistKind = "standard" | "cryo_cuff";
+export type CuffType = "back_hip_rib" | "knee" | "shoulder" | "ankle";
+export type Cuffs = Record<CuffType, number>;
+export interface StandardChecks {
+  kind: "standard";
+  screen_ok: boolean;
+  charger_ok: boolean;
+  clamp_ok: boolean;
+}
+export interface CryoCuffChecks {
+  kind: "cryo_cuff";
+  body_ok: boolean;
+  charger_ok: boolean;
+  lid_with_charger_ok: boolean;
+  lid_without_charger_ok: boolean;
+  hose_oring_ok: boolean;
+  cuff_ok: boolean;
+  cuffs: Cuffs;
+}
+export type Checks = StandardChecks | CryoCuffChecks;
 
 export interface Page<T> {
   items: T[];

@@ -1,6 +1,9 @@
 import { api } from "@/services/api";
 import type {
+  Checks,
+  Cuffs,
   DispatchType,
+  EquipmentStatus,
   Page,
   ReceiptOutcome,
   RoutineRound,
@@ -32,6 +35,10 @@ export interface BorrowPayload {
   // Roadmap PR31 review: the open transaction the warning was about; the
   // backend refuses a stale acknowledgement (DISPATCH_WARNING_STALE).
   expected_open_transaction_id?: string;
+  // Roadmap PR27/PR28: ward contact name, accessory checklist, stale-status guard.
+  ward_contact_name?: string;
+  dispatch_checks?: Checks;
+  expected_status?: EquipmentStatus;
 }
 
 export async function createBorrow(payload: BorrowPayload): Promise<TransactionOut> {
@@ -52,6 +59,74 @@ export async function listActiveBorrows(): Promise<TransactionOut[]> {
 export interface ReturnPayload {
   receipt_outcome: ReceiptOutcome;
   notes?: string;
+  ward_contact_name?: string;
+  receipt_checks?: Checks;
+  cuffs_returned?: Partial<Cuffs>;
+}
+
+// Roadmap PR27/PR28 (docs/api/ward-first-entry.md section 5): ward-first batch.
+export interface BatchItemError {
+  code: string;
+  message: string;
+  status: number;
+  details?: Record<string, unknown> | null;
+}
+
+export interface BatchItemResult {
+  index: number;
+  ok: boolean;
+  equipment_id: string | null;
+  transaction_id: string | null;
+  transaction_no: string | null;
+  cuffs_outstanding: Cuffs | null;
+  error: BatchItemError | null;
+}
+
+export interface BatchResponse {
+  total: number;
+  succeeded: number;
+  failed: number;
+  results: BatchItemResult[];
+}
+
+export interface DispatchBatchItem {
+  equipment_id: string;
+  checks: Checks | null;
+  acknowledge_status_warning?: boolean;
+  expected_open_transaction_id?: string | null;
+  expected_status?: EquipmentStatus | null;
+  // Roadmap PR29 adds the optional patient HN here (not part of this PR).
+}
+
+export interface DispatchBatchPayload {
+  ward_id: string;
+  ward_contact_name?: string | null;
+  phone?: string | null;
+  note?: string | null;
+  items: DispatchBatchItem[];
+}
+
+export interface ReceiptBatchItem {
+  transaction_id?: string;
+  equipment_id?: string;
+  receipt_outcome: ReceiptOutcome;
+  checks: Checks | null;
+  cuffs_returned?: Partial<Cuffs> | null;
+}
+
+export interface ReceiptBatchPayload {
+  ward_id?: string | null;
+  ward_contact_name?: string | null;
+  note?: string | null;
+  items: ReceiptBatchItem[];
+}
+
+export async function dispatchBatch(payload: DispatchBatchPayload): Promise<BatchResponse> {
+  return (await api.post<BatchResponse>("/transactions/dispatch-batch", payload)).data;
+}
+
+export async function receiptBatch(payload: ReceiptBatchPayload): Promise<BatchResponse> {
+  return (await api.post<BatchResponse>("/transactions/receipt-batch", payload)).data;
 }
 
 export async function createReturn(transactionId: string, payload: ReturnPayload): Promise<TransactionOut> {
