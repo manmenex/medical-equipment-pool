@@ -147,6 +147,8 @@ AUDIT_ENTITY_EQUIPMENT = "equipment"
 AUDIT_ENTITY_USER = "user"
 AUDIT_ENTITY_DEPARTMENT = "department"
 AUDIT_ENTITY_WARD = "ward"
+# Roadmap PR30: daily-report ward -> report-row mapping override.
+AUDIT_ENTITY_REPORT_WARD_ROW = "report_ward_row"
 AUDIT_ENTITY_LOCATION = "location"
 AUDIT_ENTITY_CATEGORY = "category"
 AUDIT_ENTITY_AUTH = "auth"

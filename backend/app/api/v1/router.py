@@ -6,6 +6,7 @@ from app.api.v1 import (
     borrow,
     cuffs,
     cutover_readiness,
+    daily_reports,
     dashboard,
     equipment,
     export,
@@ -35,6 +36,7 @@ api_router.include_router(transactions.router)
 api_router.include_router(cuffs.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(monitor.router)
+api_router.include_router(daily_reports.router)
 api_router.include_router(reports.router)
 api_router.include_router(report_options.router)
 api_router.include_router(users.router)

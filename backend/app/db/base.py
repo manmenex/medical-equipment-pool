@@ -19,6 +19,7 @@ from app.models import (  # noqa: E402,F401
     legacy_reconciliation,
     master_data,
     notification,
+    report_mapping,
     transaction,
     user,
 )
