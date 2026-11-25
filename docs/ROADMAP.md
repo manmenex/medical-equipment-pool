@@ -486,7 +486,7 @@ Approved by Owner Governance 2026-11-25 (`docs/DECISION_LOG.md`). Each is a sepa
 | PR26 | Dispatch type / routine round removed from data entry (D2): nullable columns, historical values kept read-only, reporting by `business_date`/`shift`. |
 | PR27 | Ward-first multi-equipment dispatch and receipt entry (D3); each equipment its own transaction. |
 | PR28 | Accessory/condition checks at dispatch and receipt (D4): three yes/no facts per equipment, no new state. |
-| PR29 | Patient HN on dispatch (D1): application-level encryption, masked by default, audited "แสดง HN" reveal, excluded from every report/export/API/log/sync. |
+| PR29 | Patient HN on dispatch (D1): application-level encryption, masked by default, audited "แสดง HN" reveal, excluded from every report/export/API/log/sync. Must also: update the stale "no HN exists" statements in historical design docs and code comments (e.g. `sync_timeline_service.py`, `docs/api/sync.md`); keep the sheet-sync HN skip and the legacy-import HN column drop; treat the offline queue payload (PR25D client storage) as an HN surface (encrypt, clear after sync, never log). |
 | PR30 | Daily shift report and printable daily forms (D5), HN never present. |
 
 **Pending Owner confirmation (D3/D4):** the detailed entry process for PR27 and PR28 awaits the Owner's answers to three UX questions: (1) HN recorded per equipment or per slip; (2) receipt of equipment dispatched to a different ward: allow with a warning or block; (3) accessory checks default checked or unchecked. Do not start PR27/PR28 detailed design until answered.

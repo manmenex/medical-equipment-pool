@@ -76,7 +76,7 @@ name is implemented before those PRs merge.
 
 ## Explicit exclusions
 
-- No patient name, HN/MRN, bed number, named borrower, or current-patient location.
+- No patient name, MRN, bed number, named borrower, or current-patient location. The only patient datum is the governed optional patient HN on a dispatch (Owner Governance 2026-11-25, `docs/DECISION_LOG.md`), with its safeguards.
 - No ward-to-ward transfer tracking or live equipment-location claim.
 - No cleaning state, cleaning completion, or cleaning workflow.
 - No ward user entry; Equipment Pool operators record actions.

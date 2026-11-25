@@ -34,7 +34,7 @@ The full confirmed requirements are the input to this task and are not reproduce
 
 | Area | Confirmed decision |
 |---|---|
-| Scope | Equipment Pool only (primarily infusion pumps + select shared equipment). No MEMS, patient tracking, HN/MRN, bed tracking, ward-to-ward transfer tracking, PM, calibration, recall, cleaning-workflow tracking, or hospital-wide asset lifecycle. |
+| Scope | **Amended 2026-11-25 (Owner Governance, `docs/DECISION_LOG.md`): optional patient HN on dispatch is allowed under D1 safeguards, and `dispatch_type`/`routine_round` are removed from data entry (D2); the rest of this row stands.** Equipment Pool only (primarily infusion pumps + select shared equipment). No MEMS, patient tracking, HN/MRN, bed tracking, ward-to-ward transfer tracking, PM, calibration, recall, cleaning-workflow tracking, or hospital-wide asset lifecycle. |
 | Primary identifier | BCM Code (= source `ID CODE`, e.g. `BCM02719`), confirmed — not an assumption. Unique, the only manual-search identifier, canonical form defined in `knowledge/architecture/identifiers.md` (case-insensitive identity, leading zeros preserved). Distinct from the internal UUID PK, Item No (the separate hospital-QR-only identifier), Asset Number, and Serial Number — see `knowledge/adr/ADR-002-identifier-model.md`. |
 | Roles | Exactly 3: Administrator, Equipment Pool Staff, Read-Only/Supervisor. No ward users, no named borrowers. |
 | Dispatch types | Exactly 2: `ROUTINE_ROUND` (06:00/11:00/15:00/21:00) and `ON_DEMAND`. This fixed-round design is confirmed for MVP (PR7); flexible DAY/NIGHT Shift Sessions are a confirmed future direction, not yet scheduled to a PR — see `AGENTS.md` and `docs/ROADMAP_STATUS.md`. |

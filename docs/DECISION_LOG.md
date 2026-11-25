@@ -9220,7 +9220,9 @@ opening-balance transactions are created.
     "แสดง HN" click by an authenticated user; every reveal audited (who/when/
     which transaction, never the HN value); HN never appears in any printed
     report, PDF, Excel export, CSV, read-only export API, logs, notifications,
-    or the legacy sheet sync/import (these keep dropping/skipping HN); no
+    or the legacy sheet sync/import (these keep dropping/skipping HN), and
+    offline queue/client storage (HN there must be encrypted and cleared after
+    sync, never logged); no
     patient name or other patient field; no search by HN unless separately
     approved; no patient-tracking workflow beyond this field. PDPA: the Owner
     accepts responsibility; hospital legal/IT review is recommended; the

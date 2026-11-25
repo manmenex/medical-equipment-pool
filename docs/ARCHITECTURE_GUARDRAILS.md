@@ -28,7 +28,9 @@
   explicit "แสดง HN" click by an authenticated user, with every reveal audited
   (who/when/which transaction, never the HN value); never appear in any printed
   report, PDF, Excel/CSV export, read-only export API, log, notification, or
-  legacy sheet sync/import; and not be searchable unless separately approved.
+  legacy sheet sync/import; treat the offline queue/client storage as an HN
+  surface (encrypted, cleared after sync, never logged); and not be
+  searchable unless separately approved.
 - Do not track inter-ward transfers. Record only the first receiving ward.
 - Do not treat ward staff/requestors as application users. Authenticated
   Equipment Pool operators record transactions.
