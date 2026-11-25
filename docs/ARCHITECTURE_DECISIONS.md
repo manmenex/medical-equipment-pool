@@ -163,6 +163,8 @@ transfers are explicitly not tracked. Enforced as a standing guardrail in
 `AGENTS.md` and checked by the reviewer prompt
 (`docs/prompts/codex-pr-review.md`).
 
+**Amended by Owner Governance 2026-11-25, second set (D7):** an optional free-text ward contact name (the ward staff who received/sent the equipment) may be recorded at dispatch and receipt (Roadmap PR27). Ward staff remain non-users (no accounts, no login); the field is never a patient name and is not a borrower identity. See `docs/DECISION_LOG.md`.
+
 ---
 
 ## No cleaning workflow

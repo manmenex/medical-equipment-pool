@@ -9276,14 +9276,20 @@ opening-balance transactions are created.
     that operator's events outside the window. Ties, or an operator with no
     other events, fall back to the clock rule. Stored timestamps never change;
     the `business_date`/`shift` derivation used for list filters is unchanged.
-    The daily shift report (PR30) uses the attributed shift.
+    The daily shift report (PR30) uses the attributed shift. Attribution is
+    computed at report time only (nothing stored); the business day for it is
+    the PR16 `business_date` (shift-start anchored,
+    `backend/app/core/reporting_time.py`).
   - **D7 Ward-side contact name:** at dispatch and receipt the operator may
     record a free-text name of the ward staff who received/sent the equipment
     (one value per submission, applied to each equipment's transaction). Ward
     staff remain non-users (no accounts, no login). Optional, never a patient
     name; may appear in reports and the monitor page. Amends the PR7 decision
-    that removed `borrower_name` from entry, and the sheet sync's "do not store
-    ward user name".
+    that removed `borrower_name` from entry. The sheet sync currently does not
+    import ward-side person names (`backend/app/services/legacy_sheet_sync/runner.py`);
+    PR27 will map the sheet's ward user column ("ผู้ส่งเครื่องยืม (User)"/
+    "ชื่อ (User)") into the ward contact name; until then the sync keeps
+    skipping it.
   - **D8 Dispatch not blocked by equipment status (amends the dispatch rule
     requiring `available_at_pool`):** the UI shows what is wrong; on
     confirmation: (a) equipment already dispatched (open transaction): the
