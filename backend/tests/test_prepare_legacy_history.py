@@ -110,3 +110,51 @@ def test_failed_validation_leaves_no_output(tmp_path):
     rc = prep.main(["--input", str(src), "--output", str(out), "--since", "2026-05-25"])
     assert rc == 1
     assert not out.exists() and not (tmp_path / "out.xlsx.tmp").exists()
+
+
+def _padding_workbook(path):
+    wb = Workbook()
+    wb.remove(wb.active)
+    for hs, hh, hd, ls, lh, ld in (
+        (issue.HEADER_SHEET_NAME, I_HEAD, "เลขที่ใบยืม", issue.LINE_SHEET_NAME, I_LINE, "เลขที่ใบส่ง"),
+        (receive.HEADER_SHEET_NAME, R_HEAD, "เลขที่ใบคืน", receive.LINE_SHEET_NAME, R_LINE, "เลขที่ใบรับเครื่อง"),
+    ):
+        h, l = wb.create_sheet(hs), wb.create_sheet(ls)
+        h.append(hh)
+        l.append(lh)
+        day = datetime(2026, 11, 24)
+        # (header doc, line doc): exact, padding mismatch, ambiguous (two headers one key)
+        lines = ["Return1000000000001", "Return1000000009769", "Return1000000000005",
+                 "Return1000000000007", "Return1000000000008"]
+        for i, ld_v in enumerate(lines, 1):
+            l.append(_row(lh, **{"ลำดับ": str(i), "วันที่": day, ld: ld_v}))
+        for hd_v in ("Return1000000000001",      # exact: untouched
+                     "Return100000009769",       # one zero short: reconciled
+                     "Return10000005", "Return1000000005",  # two headers, one key: ambiguous
+                     "Return100000007",          # key matches line ..07 but ..07 below
+                     ):
+            h.append(_row(hh, **{"วันที่": day, hd: hd_v}))
+        # line ..08 has an exact header, and a short header also maps to it: not rewritten
+        h.append(_row(hh, **{"วันที่": day, hd: "Return1000000000008"}))
+        h.append(_row(hh, **{"วันที่": day, hd: "Return100000008"}))
+    wb.save(path)
+
+
+def test_doc_padding_reconciled(tmp_path, capsys):
+    src, out = tmp_path / "in.xlsx", tmp_path / "out.xlsx"
+    _padding_workbook(src)
+    rc = prep.main(["--input", str(src), "--output", str(out), "--since", "2026-05-25"])
+    assert rc == 0
+    wb = load_workbook(out)
+    for name, col in ((issue.HEADER_SHEET_NAME, I_HEAD.index("เลขที่ใบยืม")),
+                      (receive.HEADER_SHEET_NAME, R_HEAD.index("เลขที่ใบคืน"))):
+        refs = [r[col] for r in wb[name].iter_rows(min_row=2, values_only=True)]
+        assert refs.count("Return1000000000001") == 1       # exact untouched
+        assert "Return1000000009769" in refs                # reconciled
+        assert "Return100000009769" not in refs
+        assert "Return1000000000007" in refs                # unique short header rewritten
+        assert "Return1000000000005" not in refs            # ambiguous: dropped
+        assert not any(r in ("Return10000005", "Return1000000005") for r in refs)
+        assert refs.count("Return1000000000008") == 1       # exact kept, short one dropped
+    printed = capsys.readouterr().out
+    assert printed.count("doc_reconciled=2") == 2
