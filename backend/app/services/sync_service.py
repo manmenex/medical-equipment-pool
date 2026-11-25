@@ -284,6 +284,7 @@ async def _execute(
             ward_contact_name=d.ward_contact_name,
             dispatch_checks=d.dispatch_checks,
             expected_status=d.expected_status,
+            hn=d.hn,
         )
     r = op.receipt
     return await borrow_service.return_equipment(

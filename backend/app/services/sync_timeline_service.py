@@ -459,7 +459,8 @@ CSV_COLUMNS = (
 
 
 async def export_csv(db: AsyncSession, range_from: datetime | None, range_to: datetime | None) -> str:
-    """No payload bodies, no notes, no patient data (none exists): BCM code,
+    """No payload bodies, no notes, no patient data (the optional HN is encrypted
+    at rest, never in the ledger payload and never listed here): BCM code,
     ward, operator, times and codes only."""
     start, end = _range(range_from, range_to)
     rows, _ = await _conflict_rows(db, start, end)

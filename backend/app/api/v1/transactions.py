@@ -2,7 +2,7 @@ import uuid
 from datetime import date
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,7 +21,7 @@ from app.schemas.batch import BatchResponse, DispatchBatchRequest, ReceiptBatchR
 from app.schemas.checklist import ContactName, CuffCounts
 from app.schemas.common import Page
 from app.schemas.transaction import TransactionOut, WardCorrectionRequest
-from app.services import batch_service, borrow_service, cuff_service
+from app.services import batch_service, borrow_service, cuff_service, hn_service
 from app.utils.parsing import parse_uuid
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
@@ -135,6 +135,26 @@ async def get_transaction(
     if tx is None:
         raise TransactionNotFoundError("Transaction not found")
     return tx
+
+
+class HnRevealOut(BaseModel):
+    hn: str
+
+
+@router.post("/{transaction_id}/reveal-hn", response_model=HnRevealOut)
+async def reveal_hn(
+    transaction_id: uuid.UUID,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_roles(*EQUIPMENT_POOL_OPERATION_ROLES)),
+):
+    """Roadmap PR29 (D1/D13): the ONLY place an HN leaves the server. Equipment
+    Pool staff and administrators; every successful reveal writes an audit row
+    (actor, transaction id, time -- never the value) in the same commit."""
+    hn = await hn_service.reveal_hn(db, transaction_id=transaction_id, actor_user_id=user.id, request=request)
+    response.headers["Cache-Control"] = "no-store"
+    return HnRevealOut(hn=hn)
 
 
 @router.post("/{transaction_id}/receive-cuffs", response_model=CuffReceiveOut)

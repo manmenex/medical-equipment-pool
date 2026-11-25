@@ -1,7 +1,8 @@
 import { api } from "@/services/api";
 import type { Checks, ChecklistKind, Cuffs } from "@/types";
 
-// Roadmap PR32 (D9): read-only Monitor feed. No HN field exists in this contract.
+// Roadmap PR32 (D9): read-only Monitor feed. Roadmap PR29: only `has_hn` (an indicator);
+// the HN is revealed per transaction through revealHn(), never listed here.
 export type MonitorKind = "dispatch" | "receipt";
 
 export interface MonitorEvent {
@@ -20,6 +21,8 @@ export interface MonitorEvent {
   checklist_kind?: ChecklistKind | null;
   checks?: Checks | null;
   cuffs_outstanding?: Cuffs | null;
+  // Roadmap PR29 (D1): `id` (the transaction) has a patient HN recorded.
+  has_hn?: boolean;
 }
 
 export interface MonitorPageResult {

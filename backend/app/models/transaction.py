@@ -269,6 +269,13 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     checklist_kind: Mapped[str | None] = mapped_column(String(20), nullable=True)
     dispatch_checks: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     receipt_checks: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    # Roadmap PR29 (D1): optional patient HN. ONLY the Fernet token is stored
+    # (app.core.hn_crypto); `has_hn` lets every list/detail/report show an
+    # indicator without touching the ciphertext. Neither is in any response
+    # schema except `has_hn`; the plaintext leaves the server only through
+    # the audited POST /transactions/{id}/reveal-hn.
+    hn_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True, deferred=True)
+    has_hn: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
 
     equipment: Mapped["Equipment"] = relationship()
     # Roadmap PR17 Slice 2 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md

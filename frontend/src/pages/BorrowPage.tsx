@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 
 import { CheckGlyphs, ItemEditPanel } from "@/components/entry/ItemEditPanel";
 import { ChecksEditor } from "@/components/entry/ChecksEditor";
+import { HnField, HnIndicator } from "@/components/entry/HnField";
 import { resolveBcmText } from "@/components/entry/lookup";
 import { ScanBar } from "@/components/entry/ScanBar";
 import { useWardRefs } from "@/components/entry/useWardRefs";
@@ -32,6 +33,8 @@ export interface DispatchItem {
   check: DispatchCheck | null;
   kind: ChecklistKind;
   checks: Checks;
+  /** Roadmap PR29: optional patient HN, kept in memory only until submitted/queued. */
+  hn: string;
   error?: string;
 }
 
@@ -45,7 +48,12 @@ function rowSummary(it: DispatchItem) {
   if (c?.warning === "defective") {
     return <span className="whitespace-nowrap text-xs font-medium text-amber-400">⚠ เสีย</span>;
   }
-  return <CheckGlyphs checks={it.checks} />;
+  return (
+    <span className="flex items-center gap-1.5">
+      <CheckGlyphs checks={it.checks} />
+      <HnIndicator hn={it.hn} />
+    </span>
+  );
 }
 
 export function BorrowPage() {
@@ -93,7 +101,7 @@ export function BorrowPage() {
       setItems((prev) =>
         prev.some((i) => i.equipmentId === eq.id)
           ? prev
-          : [...prev, { equipmentId: eq.id, bcm: label, name: eq.equipment_name, check, kind, checks: defaultChecks(kind) }],
+          : [...prev, { equipmentId: eq.id, bcm: label, name: eq.equipment_name, check, kind, checks: defaultChecks(kind), hn: "" }],
       );
     },
     [offline],
@@ -178,6 +186,7 @@ export function BorrowPage() {
               notes: note || undefined,
               ward_contact_name: contact.trim() || undefined,
               dispatch_checks: it.checks,
+              hn: it.hn.trim() || undefined,
             });
             queued += 1;
           } catch (err) {
@@ -196,6 +205,7 @@ export function BorrowPage() {
 
       const payloadItems: DispatchBatchItem[] = sent.map((it) => {
         const base: DispatchBatchItem = { equipment_id: it.equipmentId, checks: it.checks };
+        if (it.hn.trim()) base.hn = it.hn.trim();
         if (isWarning(it.check)) {
           return {
             ...base,
@@ -329,8 +339,7 @@ export function BorrowPage() {
                     }
                     onRemove={() => remove(it.equipmentId)}
                     onDone={() => setEditing(null)}
-                    // PR29: patient HN field goes into extraSlot here (not built yet).
-                    extraSlot={null}
+                    extraSlot={<HnField value={it.hn} onChange={(hn) => patch(it.equipmentId, { hn })} />}
                   >
                     <ChecksEditor checks={it.checks} onChange={(c) => patch(it.equipmentId, { checks: c })} />
                   </ItemEditPanel>

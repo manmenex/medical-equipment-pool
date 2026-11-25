@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.router import api_router
+from app.core import hn_crypto
 from app.core.config import InsecureConfigurationError, settings, validate_production_secrets
 from app.core.exceptions import DomainError
 from app.core.log_context import correlation_id_var, request_id_var
@@ -109,6 +110,7 @@ def _log_context(request: Request) -> dict:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    hn_crypto.warn_if_key_malformed()
     start_scheduler()
     yield
     stop_scheduler()

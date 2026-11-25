@@ -2,8 +2,8 @@
 
 One submission = one ward + N equipment; every item is still its own
 transaction processed by the ordinary dispatch/receipt services, so one failing
-item never rolls back the others. HN is Roadmap PR29 and deliberately absent:
-the item schemas are ``extra="forbid"``, so an ``hn`` field is a 422.
+item never rolls back the others. Roadmap PR29 (D1): a dispatch item may carry
+an optional write-only ``hn`` (encrypted at rest, never returned).
 """
 from uuid import UUID
 
@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, model_validator
 from app.models.equipment import EquipmentStatus
 from app.models.transaction import ReceiptOutcome
 from app.schemas.checklist import Checks, ContactName, CuffCounts
+from app.schemas.hn import HN_FIELD, HnInput
 
 MAX_BATCH_ITEMS = 50
 
@@ -22,6 +23,7 @@ class DispatchBatchItem(BaseModel):
     acknowledge_status_warning: bool = False
     expected_open_transaction_id: str | None = None
     expected_status: EquipmentStatus | None = None
+    hn: HnInput = HN_FIELD
 
     model_config = {"extra": "forbid"}
 

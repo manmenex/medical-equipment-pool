@@ -453,6 +453,10 @@ function Invoke-WithMocks {
         }
         function Invoke-DockerComposeConfigOnly { return 0 }
         function New-LocalStagingEnvFile { param($AllowedOrigins, $HttpPort) $script:EnvGenerated = $true }
+        # Roadmap PR29: the real function edits the real .env; the mock only
+        # records that install/update asked for the HN key to be ensured.
+        $script:HnKeyEnsured = 0
+        function Initialize-HnEncryptionKey { $script:HnKeyEnsured++; return $false }
         function Test-MepInstallCompleted { return $ctx.InstallCompleted }
         function Get-InstallMetadata { if ($ctx.InstallCompleted) { return [pscustomobject]@{ InstallCompleted = $true } } return $null }
         function Set-InstallMetadata {
@@ -638,6 +642,23 @@ Test-Case 'install: bootstrap is skipped when the installation already completed
         return @($script:RecordedCalls | ForEach-Object { $_.Args })
     }
     Assert-True (-not ($calls -match 'bootstrap_admin')) 'no bootstrap attempt on an already-completed installation'
+}
+
+Test-Case 'install: an existing .env without HN key gets one ensured (PR29), a fresh install generates it with the file' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
+    $n = Invoke-WithMocks -Context $ctx -Body {
+        Invoke-MepInstall -AdminCredentialCallback { throw 'not needed' } `
+            -ConfigCallback { throw 'config callback must not be invoked when .env exists' } -SkipPrerequisites | Out-Null
+        return $script:HnKeyEnsured
+    }
+    Assert-Equal 1 $n 'existing .env: Initialize-HnEncryptionKey is called once'
+    $ctx2 = New-MockContext
+    $n2 = Invoke-WithMocks -Context $ctx2 -Body {
+        Invoke-MepInstall -AdminCredentialCallback { @{ EmployeeCode = 'A1'; Email = 'a@b.c'; FullName = 'A B' } } `
+            -ConfigCallback { @{ AllowedOrigins = 'http://192.0.2.1'; HttpPort = 80 } } -SkipPrerequisites | Out-Null
+        return $script:HnKeyEnsured
+    }
+    Assert-Equal 0 $n2 'fresh install: New-LocalStagingEnvFile writes the key itself, nothing to ensure'
 }
 
 Test-Case 'install: successful first install writes completed metadata exactly once, last' {

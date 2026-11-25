@@ -126,6 +126,24 @@ describe("MonitorPage", () => {
     expect(screen.queryByRole("button", { name: "โหลดเพิ่ม" })).not.toBeInTheDocument();
   });
 
+  it("shows 🔒HN with a mask (never the value) for an event whose transaction has an HN", async () => {
+    fetchMonitorEvents.mockImplementation(async ({ kind }: { kind: string }) => {
+      const items = kind === "dispatch" ? [ev("1", { has_hn: true }), ev("2")] : [];
+      return { items, next_cursor: null, total: items.length };
+    });
+    listWards.mockResolvedValue([]);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MonitorPage />
+      </QueryClientProvider>,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: /ICU/ }));
+    expect(screen.getAllByText("🔒HN")).toHaveLength(1); // only the transaction that has an HN
+    expect(screen.getByTestId("hn-masked")).toHaveTextContent("●●●");
+    expect(screen.getByRole("button", { name: "แสดง HN" })).toBeInTheDocument();
+  });
+
   it("renders the last-updated label and never renders HN", async () => {
     setup();
     await waitFor(() => expect(screen.getByTestId("monitor-updated").textContent).toMatch(/อัปเดตล่าสุด \d{2}:\d{2}:\d{2}/));

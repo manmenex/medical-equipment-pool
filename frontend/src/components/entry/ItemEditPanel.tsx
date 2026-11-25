@@ -25,9 +25,8 @@ interface ItemEditPanelProps {
   onDone: () => void;
   children: ReactNode;
   /**
-   * Roadmap PR29 slot: the optional patient HN field is added here by PR29
-   * (dispatch only). Intentionally empty in PR27/PR28 -- do not add an HN
-   * input before PR29 and its Governance safeguards (masking, encryption).
+   * Roadmap PR29 slot: the optional patient HN field (components/entry/HnField)
+   * goes here on the dispatch screen only; the receipt screen leaves it empty.
    */
   extraSlot?: ReactNode;
 }

@@ -10,6 +10,7 @@ import {
   updateOutbox,
   type OutboxRecord,
 } from "./offlineStore";
+import { envelopeForSend } from "./hnVault";
 import { dependencyKeys } from "./syncWorker";
 
 // PR25E S5b (design 8.3, Owner decision D4): explicit adoption of ops that
@@ -155,7 +156,7 @@ export async function adoptOps(
     let results: SyncOperationResult[];
     try {
       results = await postOperations(
-        batch.map((r) => ({ ...r.envelope, adopt: true, original_user_id: r.user_id })),
+        await Promise.all(batch.map(async (r) => ({ ...(await envelopeForSend(r)), adopt: true, original_user_id: r.user_id }))),
       );
     } catch (e) {
       const status = (e as { response?: { status?: number } } | null)?.response?.status;

@@ -462,7 +462,7 @@ Backups are hourly. If the server PC dies, the restored database misses up to ab
 ### 12.1 Data at rest on personal phones
 
 - What is stored: UUIDs, BCM Codes, equipment names, ward names, `op` payloads (ward, round, notes), the logged-in user's profile and token (already persisted today in `localStorage`). No patient data exists in the system, and the Owner accepted the equipment-data-only risk profile (Decision Log 2026-10-13).
-- Notes are free text. The offline form shows the same hint as the online form: do not enter patient names or HN. A length cap (the existing `notes` bound) applies.
+- Notes are free text. The offline form shows the same hint as the online form: do not enter patient names (an HN goes only in the dedicated HN field, Roadmap PR29; never in notes). A length cap (the existing `notes` bound) applies.
 - Minimum data: the snapshot contains only fields already in operator-facing responses (section 3.2), no Item No, no Asset Number, no user list.
 - No app-level encryption in v1: a key cannot be derived without a password check that offline mode deliberately lacks. Protection relies on the OS screen lock and the browser sandbox. Recommend (operational, not code) that personal phones used for this app keep a screen lock; this is a hospital IT policy item for the Owner (D6).
 - The access token in `localStorage` is existing behaviour. Moving to memory-only is a separate hardening item; this design records it and does not depend on it.
@@ -666,7 +666,7 @@ What was built differs from this document in these places. The code and `docs/ap
 - No new equipment state, no new transaction state, no cleaning state, no change to the four identifiers (guardrails).
 - No offline administrative or master-data operations; no offline reports.
 - No automatic conflict resolution, no last-writer-wins, no timestamp-based arbitration, no CRDTs.
-- No ward-to-ward transfer tracking, no patient data, no HN, no MEMS/N Smart call or dependency.
+- No ward-to-ward transfer tracking, no patient data, no MEMS/N Smart call or dependency. (HN: this design predates Owner Governance 2026-11-25 D1; the optional patient HN is now allowed, with the offline-queue rules of Roadmap PR29 -- encrypted client-side, cleared after the server acknowledges, never logged, absent from the ledger payload; see `docs/api/sync.md`.)
 - No offline login or password check; no app-level encryption or PIN in v1.
 - No multi-device real-time sync or peer-to-peer sync between devices.
 - No Item No or Asset Number on devices (D1).

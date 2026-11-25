@@ -138,6 +138,7 @@ async def list_events(
                 # PR31 (D8) may add this column; read defensively.
                 close_reason=getattr(t, "close_reason", None),
                 ward_contact_name=t.dispatch_contact_name if is_dispatch else t.receipt_contact_name,
+                has_hn=bool(t.has_hn),
                 checklist_kind=t.checklist_kind,
                 checks=t.dispatch_checks if is_dispatch else t.receipt_checks,
                 cuffs_outstanding=(

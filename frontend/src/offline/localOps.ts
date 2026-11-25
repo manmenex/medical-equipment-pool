@@ -9,6 +9,7 @@ import {
   rememberUserName,
   type OutboxRecord,
 } from "./offlineStore";
+import { encryptHn, HnVaultError } from "./hnVault";
 import { getClockOffset } from "./serverTime";
 import { getStaleness, isStaleAcknowledged } from "./staleness";
 import { requestSync } from "./syncWorker";
@@ -23,7 +24,9 @@ export type LocalOpErrorCode =
   | "DUPLICATE_LOCAL"
   | "NOT_AVAILABLE"
   | "NOT_FOUND"
-  | "STALE_NOT_ACKNOWLEDGED";
+  | "STALE_NOT_ACKNOWLEDGED"
+  // Roadmap PR29: this device cannot keep an HN encrypted at rest.
+  | "HN_UNAVAILABLE";
 
 export class LocalOpError extends Error {
   readonly code: LocalOpErrorCode;
@@ -212,7 +215,15 @@ export interface OfflineDispatchInput {
   // Roadmap PR27/PR28: shared ward contact name + accessory checklist per op.
   ward_contact_name?: string;
   dispatch_checks?: Checks;
+  /**
+   * Roadmap PR29 (D1): optional patient HN. Encrypted with the per-device key
+   * before it is written; it is never part of the stored envelope.
+   */
+  hn?: string;
 }
+
+export const HN_OFFLINE_UNAVAILABLE_MESSAGE =
+  "เครื่องนี้เก็บ HN แบบเข้ารหัสในโหมดออฟไลน์ไม่ได้ ลบ HN ออกแล้วบันทึกใหม่ หรือรอเชื่อมต่อเครือข่าย";
 
 export async function enqueueOfflineDispatch(input: OfflineDispatchInput): Promise<OutboxRecord> {
   const userId = currentUserId();
@@ -233,9 +244,19 @@ export async function enqueueOfflineDispatch(input: OfflineDispatchInput): Promi
   if (input.notes) dispatch.notes = input.notes;
   if (input.ward_contact_name) dispatch.ward_contact_name = input.ward_contact_name;
   if (input.dispatch_checks) dispatch.dispatch_checks = input.dispatch_checks;
+  let hn_enc;
+  if (input.hn && input.hn.trim()) {
+    try {
+      hn_enc = await encryptHn(input.hn.trim());
+    } catch (e) {
+      if (e instanceof HnVaultError) throw new LocalOpError("HN_UNAVAILABLE", HN_OFFLINE_UNAVAILABLE_MESSAGE);
+      throw e;
+    }
+  }
   const rec = await enqueueOperation(userId, {
     body: { ...(await baseEnvelope(userId, "dispatch", now)), dispatch },
     local,
+    ...(hn_enc ? { hn_enc } : {}),
   });
   rememberCurrentName();
   requestSync();

@@ -110,7 +110,13 @@ export function ReturnPage() {
       } else {
         // Cached open-transaction list (shared with the ward list): one fetch, not one per scan.
         const open = await queryClient.fetchQuery({ queryKey: ["active-borrows"], queryFn: listActiveBorrows, staleTime: 30_000 });
-        const tx: TransactionOut | undefined = open.find((t) => t.equipment.id === eq.id);
+        let tx: TransactionOut | undefined = open.find((t) => t.equipment.id === eq.id);
+        if (!tx) {
+          // The cached list can predate a dispatch made moments ago (another
+          // device, or this one): refetch ONCE before declaring "not dispatched".
+          const fresh = await queryClient.fetchQuery({ queryKey: ["active-borrows"], queryFn: listActiveBorrows, staleTime: 0 });
+          tx = fresh.find((t) => t.equipment.id === eq.id);
+        }
         if (tx) {
           const kind: ChecklistKind = tx.checklist_kind ?? (await getDispatchCheck(eq.id)).checklist_kind;
           const issued = tx.dispatch_checks?.kind === "cryo_cuff" ? tx.dispatch_checks.cuffs : null;

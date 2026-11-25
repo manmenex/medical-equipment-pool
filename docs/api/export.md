@@ -5,7 +5,7 @@
 **Update trigger:** The event shape, cursor semantics, key handling, or limits change.
 **Maintainer:** Repository Owner
 
-> **Boundary.** This system never calls N Smart or the consumer. The consumer polls this API and keys into N Smart itself (Governance 2026-10-13, `docs/DECISION_LOG.md`). The payload contains no patient data and no HN — none exists in this system.
+> **Boundary.** This system never calls N Smart or the consumer. The consumer polls this API and keys into N Smart itself (Governance 2026-10-13, `docs/DECISION_LOG.md`). The payload contains no patient data and no HN: an HN may be recorded on a dispatch (Roadmap PR29, encrypted at rest) but is never part of this API (explicit allow-list; not even a `has_hn` flag).
 
 ## Authentication
 
