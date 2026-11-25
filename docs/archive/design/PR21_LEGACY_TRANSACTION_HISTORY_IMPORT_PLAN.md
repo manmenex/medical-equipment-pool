@@ -372,7 +372,11 @@ for this conclusion:
   specifies, not a structural problem. On the Receive side, all 6,141
   distinct `เลขที่ใบรับเครื่อง` reference values resolve against
   `Orders คืนเครื่อง`'s distinct `เลขที่ใบคืน` values — zero orphans
-  measured. **This distinct-reference-resolution metric is unrelated
+  measured. *(Superseded by the 2026-11-25 amendment at §15: that
+  measurement was of the original Jan–Jul 2026 export. In the Owner's
+  current Nov 2026 export the "Orders คืนเครื่อง" sheet carries a different
+  numbering series, so most receive lines have no matching header; such
+  lines are now a WARNING, not an ERROR.)* **This distinct-reference-resolution metric is unrelated
   to, and must not be confused with, the `ลำดับ` row-key uniqueness
   figures in §24** (a different basis: uniqueness within one sheet, not
   resolution against a different sheet).
@@ -1219,9 +1223,10 @@ explicit acceptance of the Administrator-ownership policy.
 ## 15. Validation model (H2) — all-or-nothing gate and severity taxonomy
 
 > **Amendment 2026-11-25 (Owner decision, `docs/DECISION_LOG.md`).** The
-> strict header-to-line contract in this design (including §4's orphan
-> `ERROR` and the header/line timestamp conflict `ERROR`) is relaxed because
-> the real AppSheet data does not fit it. (1) The line item is authoritative
+> strict header-to-line contract in this design (the order-reference orphan
+> `ERROR` described in §6 and §15, and the header/line timestamp conflict
+> `ERROR`) is relaxed because the real AppSheet data does not fit it. The
+> equipment-identifier orphan of §4 (no matching Equipment) is NOT relaxed. (1) The line item is authoritative
 > for `occurred_at` (its own date+time), equipment and ward. (2) A
 > header-to-line timestamp difference of 24 hours or less is not a finding;
 > the line time is used; more than 24 hours remains an `ERROR`
@@ -1230,7 +1235,8 @@ explicit acceptance of the Administrator-ownership policy.
 > from line fields alone. (4) A header-to-line ward conflict remains an
 > `ERROR`. (5) Unchanged: the all-or-nothing gate on errors, provenance,
 > history-only (never changes current equipment state), no patient
-> identifiers. Where this note conflicts with earlier text, this note wins.
+> identifiers, and an unresolved or ambiguous equipment identifier remains a
+> blocking `ERROR`. Where this note conflicts with earlier text, this note wins.
 
 **Current PR19 runtime behavior is authoritative and is not modified by
 PR21:** if validation contains a blocking `ERROR`, the session becomes

@@ -9188,13 +9188,21 @@ opening-balance transactions are created.
   order reference) becomes a WARNING, not an ERROR, and imports from line
   fields alone. (4) A header-to-line ward conflict remains an ERROR.
   (5) Unchanged: all-or-nothing gate on errors, provenance, history-only
-  (never changes current equipment state), no patient identifiers.
+  (never changes current equipment state), no patient identifiers, and an
+  unresolved or ambiguous equipment identifier remains an ERROR.
 - **Reason:** The real AppSheet data does not fit the original strict
   header-to-line contract (counts only): on the issue side header and line
   times differ by seconds to minutes for nearly all of about 17.7k lines; on
   the receive side most of about 17.5k lines have no header with the same
   document number because the "Orders คืนเครื่อง" sheet uses a different
   numbering series. A dry-run reported 35,318 of 45,927 records invalid.
+  This supersedes the plan's earlier zero-orphan measurement: in the original
+  Jan–Jul 2026 export 100% of receive line doc numbers matched "Orders
+  คืนเครื่อง" headers in every month, but in the Owner's current (Nov 2026)
+  export none of the 6,158 old header numbers exist any more (the sheet now
+  carries a different series, mostly 12 digits after the prefix vs 13 on
+  lines) and only 220 lines (Nov 2026) match a header. The source sheet's
+  receive header numbering changed after the original measurement.
 - **Supersedes:** the strict timestamp-conflict and orphan-reference ERROR
   rules in `docs/archive/design/PR21_LEGACY_TRANSACTION_HISTORY_IMPORT_PLAN.md`
   (amendment note added at section 15).
