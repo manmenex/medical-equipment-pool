@@ -9355,3 +9355,27 @@ opening-balance transactions are created.
 - **Source:** Owner decisions in chat, 2026-11-25. Docs-only Governance PR; no
   code change.
 - **Status:** Approved; implementation not started.
+
+## 2026-11-25 (implementation note) — Roadmap PR30 daily shift report and forms
+
+- **Implemented (no governance change):** `GET /reports/daily-summary.xlsx`
+  (sheets "รายงาน", "ชนิดเครื่อง", "ผู้คีย์", "รายการ") and
+  `GET /reports/daily-forms.pdf` (dispatch/receipt/both), Equipment Pool staff
+  and Administrator, reusing the PR18 PDF/Excel admission control and the PR18E
+  formula-injection guard. Read-only; no HN or patient field is read.
+  Report date `D` = Night shift started 20:00 on `D-1` + Day shift `D`.
+- **D6 interpretation:** the grace window is `[B-N, B+N)` around 08:00/20:00
+  (N = `grace_minutes`, default 60, 0 = strict, max 240). A window event is
+  attributed to whichever of the two shift instances meeting at that boundary
+  the keying operator has more events in, counting only that operator's events
+  outside every window; ties or no other events use the clock rule. Computed at
+  report time only; nothing stored.
+- **Ward -> report row mapping:** new table `report_ward_rows` (migration
+  0032, no seed rows): optional per-ward override of row label, treatment type,
+  dispense mode and sort order. Default row = ward name, treatment type =
+  department name. Admin API: `GET /reports/ward-rows`,
+  `PUT|DELETE /reports/ward-rows/{ward_id}` (audited).
+- **Known gap:** the "Stand By" column of sheet "รายงาน" is printed empty
+  because the system has no standby data (Standby Snapshots remain future work).
+- **D12:** printed form column header "ME.Code" shows the BCM Code; no other
+  surface uses "ME Code".

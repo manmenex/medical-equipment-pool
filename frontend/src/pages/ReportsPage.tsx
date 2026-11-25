@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 
+import { DailyReportPanel } from "@/components/DailyReportPanel";
 import { api } from "@/services/api";
 import { fetchBorrowTrend } from "@/services/dashboard";
 import { BarChart, Bar, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -78,6 +79,9 @@ export function ReportsPage() {
           รายการตรวจสอบเครื่องมือ
         </Link>
       </div>
+
+      {/* Roadmap PR30: daily shift summary workbook and printable daily forms. */}
+      <DailyReportPanel />
 
       <div className="surface rounded-xl border p-4">
         <div className="mb-3 text-sm font-medium">ความถี่การเบิก</div>

@@ -7547,7 +7547,9 @@ async def test_migration_0013_fresh_database_all_foreign_keys_are_restrict():
                 # + 1 added by migration 0031 (Roadmap PR28):
                 # transaction_cuffs.transaction_id -> borrow_transactions (1).
                 # 87 + 1 = 88.
-                assert len(rows) == 88, f"expected exactly 88 foreign keys, found {len(rows)}: {rows}"
+                # + 1 added by migration 0032 (Roadmap PR30):
+                # report_ward_rows.ward_id -> wards (1). 88 + 1 = 89.
+                assert len(rows) == 89, f"expected exactly 89 foreign keys, found {len(rows)}: {rows}"
                 for conname, confdeltype in rows:
                     assert confdeltype == "r", f"{conname} has confdeltype={confdeltype!r}, expected 'r' (RESTRICT)"
         finally:

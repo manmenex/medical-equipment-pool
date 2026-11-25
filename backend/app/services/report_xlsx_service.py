@@ -309,7 +309,13 @@ def _render_timeout_error() -> XlsxRenderTimeoutError:
     )
 
 
-async def build_workbook_bounded(document: ExportDocument) -> bytes:
+async def run_bounded(func, *args) -> bytes:
+    """PR30: generic admission-controlled runner (same semaphore/deadline model);
+    `build_workbook_bounded` and the PR30 daily-report builders call this."""
+    return await _run_bounded_impl(func, *args)
+
+
+async def _run_bounded_impl(func, *args) -> bytes:
     """Roadmap PR18E review round 1 (H2): the one, single call site that
     enforces design §18's time and concurrency bounds around
     `build_workbook_sync` -- `build_workbook_sync` itself stays a plain,
@@ -368,7 +374,7 @@ async def build_workbook_bounded(document: ExportDocument) -> bytes:
         raise _render_timeout_error()
 
     try:
-        render_task: "asyncio.Task[bytes]" = asyncio.ensure_future(asyncio.to_thread(build_workbook_sync, document))
+        render_task: "asyncio.Task[bytes]" = asyncio.ensure_future(asyncio.to_thread(func, *args))
     except BaseException:
         # Task creation itself failed before any generation work could
         # start -- nothing for the done-callback to ever fire for, so
@@ -381,3 +387,7 @@ async def build_workbook_bounded(document: ExportDocument) -> bytes:
         return await asyncio.wait_for(asyncio.shield(render_task), timeout=remaining)
     except asyncio.TimeoutError as exc:
         raise _render_timeout_error() from exc
+
+
+async def build_workbook_bounded(document: ExportDocument) -> bytes:
+    return await run_bounded(build_workbook_sync, document)
