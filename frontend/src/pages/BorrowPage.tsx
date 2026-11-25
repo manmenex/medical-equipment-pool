@@ -21,13 +21,8 @@ import { getEquipment, resolveEquipmentByQr } from "@/services/equipment";
 import { listDepartments, listWards } from "@/services/masterData";
 import { useUiStore } from "@/store/uiStore";
 import { resolveWardPhone } from "@/utils/wardPhone";
-import type { BcmSuggestion, Department, DispatchType, Equipment, RoutineRound, Ward } from "@/types";
-
-// Roadmap PR7b confirmed fixed four-round MVP schedule (docs/audits/
-// 04-consolidated-implementation-plan.md's confirmed-requirements table) --
-// no named label for any round is confirmed anywhere, so none is invented
-// here; the option value/label is the literal clock time itself.
-const ROUTINE_ROUNDS: RoutineRound[] = ["06:00", "11:00", "15:00", "21:00"];
+import { currentShift, SHIFT_LABELS } from "@/utils/shift";
+import type { BcmSuggestion, Department, Equipment, Ward } from "@/types";
 
 export function BorrowPage() {
   const [searchParams] = useSearchParams();
@@ -46,8 +41,9 @@ export function BorrowPage() {
   const setLastWard = useUiStore((s) => s.setLastWard);
 
   const [wardId, setWardId] = useState(lastWard ?? "");
-  const [dispatchType, setDispatchType] = useState<DispatchType>("on_demand");
-  const [routineRound, setRoutineRound] = useState<RoutineRound | "">("");
+  // Roadmap PR26: shift is derived from the current time (read-only info);
+  // no dispatch type / routine round is collected or sent.
+  const shift = currentShift(new Date());
   const [phone, setPhone] = useState("");
   const [notes, setNotes] = useState("");
   useDirtyForm(equipment !== null && !success && !pendingSync);
@@ -132,8 +128,6 @@ export function BorrowPage() {
         await enqueueOfflineDispatch({
           equipment_id: equipment.id,
           ward_id: wardId,
-          dispatch_type: dispatchType,
-          routine_round: dispatchType === "routine_round" ? (routineRound as RoutineRound) : undefined,
           phone_number: phone || undefined,
           notes: notes || undefined,
         });
@@ -152,8 +146,6 @@ export function BorrowPage() {
       const tx = await createBorrow({
         equipment_id: equipment.id,
         ward_id: wardId,
-        dispatch_type: dispatchType,
-        routine_round: dispatchType === "routine_round" ? (routineRound as RoutineRound) : undefined,
         phone_number: phone || undefined,
         notes: notes || undefined,
       });
@@ -274,45 +266,12 @@ export function BorrowPage() {
             </p>
           </div>
           <div>
-            <label htmlFor="borrow-dispatch-type" className="mb-1 block text-sm font-medium">
-              ประเภทการเบิก *
-            </label>
-            <select
-              id="borrow-dispatch-type"
-              required
-              value={dispatchType}
-              onChange={(e) => {
-                const next = e.target.value as DispatchType;
-                setDispatchType(next);
-                if (next === "on_demand") setRoutineRound("");
-              }}
-              className="w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
-            >
-              <option value="on_demand">เบิกตามคำขอ (On-Demand)</option>
-              <option value="routine_round">รอบเวลาปกติ (Routine Round)</option>
-            </select>
+            <p className="mb-1 text-sm font-medium">กะ (Shift)</p>
+            <p data-testid="borrow-shift" className="text-sm">
+              {SHIFT_LABELS[shift].label}{" "}
+              <span className="text-xs text-[var(--text-muted)]">({SHIFT_LABELS[shift].hours}, ตามเวลาปัจจุบัน)</span>
+            </p>
           </div>
-          {dispatchType === "routine_round" && (
-            <div>
-              <label htmlFor="borrow-routine-round" className="mb-1 block text-sm font-medium">
-                รอบเวลา *
-              </label>
-              <select
-                id="borrow-routine-round"
-                required
-                value={routineRound}
-                onChange={(e) => setRoutineRound(e.target.value as RoutineRound)}
-                className="w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
-              >
-                <option value="">- เลือก -</option>
-                {ROUTINE_ROUNDS.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
           <div>
             <label htmlFor="borrow-phone" className="mb-1 block text-sm font-medium">
               เบอร์โทร
@@ -344,7 +303,7 @@ export function BorrowPage() {
 
           <button
             type="submit"
-            disabled={submitting || !wardId || (dispatchType === "routine_round" && !routineRound)}
+            disabled={submitting || !wardId}
             className="rounded-lg bg-status-borrowed py-2.5 font-medium text-white disabled:opacity-60"
           >
             {submitting ? "กำลังบันทึก..." : offline ? "บันทึกการเบิก (ในเครื่อง)" : "ยืนยันการเบิก"}

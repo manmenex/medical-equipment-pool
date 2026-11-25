@@ -17,7 +17,9 @@ import type {
 export interface BorrowPayload {
   equipment_id: string;
   ward_id: string;
-  dispatch_type: DispatchType;
+  // Roadmap PR26: no longer collected by the dispatch form; kept optional
+  // for backward compatibility with queued offline operations.
+  dispatch_type?: DispatchType;
   routine_round?: RoutineRound;
   department_id?: string;
   phone_number?: string;

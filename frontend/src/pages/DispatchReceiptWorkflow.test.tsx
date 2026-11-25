@@ -131,7 +131,7 @@ beforeEach(() => {
       returned_at: null,
       borrower_name: null,
       ward_id: payload.ward_id,
-      dispatch_type: payload.dispatch_type,
+      dispatch_type: payload.dispatch_type ?? null,
       routine_round: payload.routine_round ?? null,
       phone_number: payload.phone_number ?? null,
       receipt_outcome: null,
@@ -234,7 +234,7 @@ describe("Dispatch -> receipt workflow (Roadmap PR11 required end-to-end test, s
 
     await waitFor(() => expect(createBorrow).toHaveBeenCalledTimes(1));
     expect(createBorrow).toHaveBeenCalledWith(
-      expect.objectContaining({ equipment_id: EQUIPMENT_ID, ward_id: "ward-1", dispatch_type: "on_demand" })
+      expect.objectContaining({ equipment_id: EQUIPMENT_ID, ward_id: "ward-1" })
     );
     expect(screen.getByText("เบิกสำเร็จ")).toBeInTheDocument();
     dispatchRender.unmount();

@@ -265,3 +265,27 @@ async def test_key_is_hashed_at_rest_and_shown_once(client, ctx, db_session):
     assert "last_used_at" in listed[0]
     used = next(i for i in listed if i["id"] == body["id"])
     assert used["last_used_at"] is None
+
+
+async def test_pr26_null_dispatch_type_flows_through_exports_and_reports(client, ctx):
+    eq = await _equipment(client, ctx["admin"], 26)
+    resp = await client.post("/api/v1/borrow", headers=ctx["staff"], json={"equipment_id": eq["id"], "ward_id": ctx["ward"]})
+    assert resp.status_code == 201, resp.text
+    tx = resp.json()
+    assert tx["dispatch_type"] is None and tx["routine_round"] is None
+    await _receive(client, ctx["staff"], tx["id"])
+
+    page = await _poll(client, ctx["key"])
+    d = page["events"][0]
+    assert d["dispatch_type"] is None and d["routine_round"] is None
+
+    for fmt in ("csv", "xlsx"):
+        r = await client.get("/api/v1/reports/export", headers=ctx["admin"], params={"format": fmt})
+        assert r.status_code == 200, r.text
+    for path in ("/api/v1/reports/receive", "/api/v1/reports/issue", "/api/v1/transactions"):
+        r = await client.get(path, headers=ctx["admin"])
+        assert r.status_code == 200, r.text
+    for rid in ("receive-report", "issue-report"):
+        for suffix in ("print-data", "pdf", "xlsx"):
+            r = await client.get(f"/api/v1/reports/{rid}/{suffix}", headers=ctx["admin"])
+            assert r.status_code == 200, (rid, suffix, r.text)

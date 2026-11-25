@@ -52,7 +52,7 @@ async def borrow(
     equipment_id: str,
     borrower_user_id: uuid.UUID | None,
     ward_id: str,
-    dispatch_type: DispatchType,
+    dispatch_type: DispatchType | None,
     routine_round: RoutineRound | None,
     department_id: str | None,
     phone_number: str | None,

@@ -107,6 +107,12 @@ describe("offline dispatch", () => {
     expect((rec.envelope as { dispatch: object }).dispatch).toEqual({ equipment_id: "e1", ward_id: "w1", dispatch_type: "on_demand" });
   });
 
+  it("PR26: a dispatch without dispatch_type/routine_round queues none of them", async () => {
+    await seed();
+    const rec = await enqueueOfflineDispatch({ equipment_id: "e1", ward_id: "w1" });
+    expect((rec.envelope as { dispatch: object }).dispatch).toEqual({ equipment_id: "e1", ward_id: "w1" });
+  });
+
   it("uses the signed-in user, and refuses without one", async () => {
     await seed();
     login("u2");

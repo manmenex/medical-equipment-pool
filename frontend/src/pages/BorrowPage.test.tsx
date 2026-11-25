@@ -144,65 +144,31 @@ describe("BorrowPage dispatch form (Roadmap PR11 terminology + PR7b payload cont
     expect(screen.queryByText(/ยืม/)).not.toBeInTheDocument();
   });
 
-  it("submits an on-demand dispatch with dispatch_type 'on_demand' and no routine_round, using the เบิก confirm action", async () => {
-    const user = userEvent.setup();
+  it("does not show dispatch type or routine round fields, and shows the auto shift read-only", async () => {
     renderBorrowPage();
 
     await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
 
-    await user.selectOptions(screen.getByLabelText(/หอผู้ป่วยที่รับเครื่อง/), "ward-1");
-    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก" }));
-
-    await waitFor(() => expect(createBorrow).toHaveBeenCalledTimes(1));
-    expect(createBorrow).toHaveBeenCalledWith({
-      equipment_id: "eq-1",
-      ward_id: "ward-1",
-      dispatch_type: "on_demand",
-      routine_round: undefined,
-      phone_number: undefined,
-      notes: undefined,
-    });
-    expect(screen.getByText("เบิกสำเร็จ")).toBeInTheDocument();
-  });
-
-  it("reveals the routine-round field only for a routine_round dispatch, and includes it in the submitted payload", async () => {
-    const user = userEvent.setup();
-    renderBorrowPage();
-
-    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
-
+    expect(screen.queryByLabelText(/ประเภทการเบิก/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/รอบเวลา/)).not.toBeInTheDocument();
-
-    await user.selectOptions(screen.getByLabelText(/ประเภทการเบิก/), "routine_round");
-    expect(screen.getByLabelText(/รอบเวลา/)).toBeInTheDocument();
-
-    await user.selectOptions(screen.getByLabelText(/หอผู้ป่วยที่รับเครื่อง/), "ward-2");
-    await user.selectOptions(screen.getByLabelText(/รอบเวลา/), "11:00");
-    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก" }));
-
-    await waitFor(() => expect(createBorrow).toHaveBeenCalledTimes(1));
-    expect(createBorrow).toHaveBeenCalledWith({
-      equipment_id: "eq-1",
-      ward_id: "ward-2",
-      dispatch_type: "routine_round",
-      routine_round: "11:00",
-      phone_number: undefined,
-      notes: undefined,
-    });
+    expect(screen.getByTestId("borrow-shift")).toHaveTextContent(/Day|Night/);
   });
 
-  it("disables the confirm action until a routine_round dispatch also has a round selected", async () => {
+  it("submits a dispatch without dispatch_type or routine_round", async () => {
     const user = userEvent.setup();
     renderBorrowPage();
 
     await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
+
     await user.selectOptions(screen.getByLabelText(/หอผู้ป่วยที่รับเครื่อง/), "ward-1");
-    await user.selectOptions(screen.getByLabelText(/ประเภทการเบิก/), "routine_round");
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก" }));
 
-    expect(screen.getByRole("button", { name: "ยืนยันการเบิก" })).toBeDisabled();
-
-    await user.selectOptions(screen.getByLabelText(/รอบเวลา/), "06:00");
-    expect(screen.getByRole("button", { name: "ยืนยันการเบิก" })).not.toBeDisabled();
+    await waitFor(() => expect(createBorrow).toHaveBeenCalledTimes(1));
+    const payload = vi.mocked(createBorrow).mock.calls[0][0];
+    expect(payload).toEqual({ equipment_id: "eq-1", ward_id: "ward-1", phone_number: undefined, notes: undefined });
+    expect(payload).not.toHaveProperty("dispatch_type");
+    expect(payload).not.toHaveProperty("routine_round");
+    expect(screen.getByText("เบิกสำเร็จ")).toBeInTheDocument();
   });
 
   it("keeps the confirm action disabled while no ward is selected (empty/no-selection state)", async () => {

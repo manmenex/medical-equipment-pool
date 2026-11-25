@@ -61,6 +61,12 @@ def dispatch_op(user_id, equipment_id, ward_id, *, seq=1, op_id=None, device_id=
     }
 
 
+def dispatch_op_no_type(user_id, equipment_id, ward_id, *, seq=1):
+    op = dispatch_op(user_id, equipment_id, ward_id, seq=seq)
+    del op["dispatch"]["dispatch_type"]
+    return op
+
+
 def receipt_op(user_id, tx_id, *, seq=2, op_id=None, device_id=None, outcome="usable"):
     return {
         "op_id": op_id or str(uuid.uuid4()),
@@ -407,3 +413,9 @@ async def test_s6_envelope_version_compat(client, ctx, db_session):
     good = dispatch_op(ctx["staff_id"], eq3, ctx["ward"], seq=1)
     await _send(client, ctx["staff"], good, future, expect=400)
     assert await _count(db_session, ClientOperation) == count_after_ok
+
+
+async def test_pr26_sync_dispatch_without_type_or_round_applies(client, ctx):
+    op = dispatch_op_no_type(ctx["staff_id"], ctx["eq"], ctx["ward"])
+    (res,) = await _send(client, ctx["staff"], op)
+    assert res["result"] == "applied", res
