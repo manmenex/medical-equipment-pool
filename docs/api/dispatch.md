@@ -19,8 +19,6 @@ Creates a new borrow transaction and moves the selected equipment from `availabl
 {
   "equipment_id": "3f2b6b9e-...-uuid",
   "ward_id": "8a1c...-uuid",
-  "dispatch_type": "on_demand",
-  "routine_round": null,
   "department_id": null,
   "phone_number": null,
   "pickup_location_id": null,
@@ -33,8 +31,8 @@ Creates a new borrow transaction and moves the selected equipment from `availabl
 |---|---|---|---|
 | `equipment_id` | string (UUID) | Yes | Internal equipment ID, already resolved client-side (QR scan or BCM Code search) — this endpoint never accepts a raw scanned/typed identifier. |
 | `ward_id` | string (UUID), min length 1 | Yes | Receiving ward. Required for every dispatch (Roadmap PR7b). |
-| `dispatch_type` | `"routine_round"` \| `"on_demand"` | Yes | See `DispatchType` (`backend/app/models/transaction.py`). |
-| `routine_round` | `"06:00"` \| `"11:00"` \| `"15:00"` \| `"21:00"` \| `null` | Conditional | **Required** when `dispatch_type == "routine_round"`; **must be omitted/null** when `dispatch_type == "on_demand"` — enforced by a `model_validator`, not just documentation. Fixed four-round MVP schedule (`RoutineRound`); see `docs/HOSPITAL_DOMAIN_MODEL.md` for why this isn't a free-form time. |
+| `dispatch_type` | `"routine_round"` \| `"on_demand"` \| `null` | No | **Optional since Roadmap PR26** (2026-11-25 D2 amendment): new dispatches omit it and it is stored `NULL`; the shift is derived from the dispatch time instead. Still accepted/validated for backward compatibility with queued offline operations. See `DispatchType` (`backend/app/models/transaction.py`). |
+| `routine_round` | `"06:00"` \| `"11:00"` \| `"15:00"` \| `"21:00"` \| `null` | No | Optional since PR26. If supplied it is only valid with `dispatch_type == "routine_round"` (**required** with that type; **rejected** with `"on_demand"` or when `dispatch_type` is omitted) — enforced by a `model_validator`, not just documentation. Fixed four-round MVP schedule (`RoutineRound`); see `docs/HOSPITAL_DOMAIN_MODEL.md` for why this isn't a free-form time. |
 | `department_id` | string (UUID) or `null` | No | |
 | `phone_number` | string or `null` | No | |
 | `pickup_location_id` | string (UUID) or `null` | No | |
@@ -81,7 +79,7 @@ Creates a new borrow transaction and moves the selected equipment from `availabl
 | `400` | `INVALID_INPUT` | `equipment_id` or `ward_id` is not a valid UUID; `ward_id` doesn't reference an existing ward (validated proactively, before any equipment-availability check); or (rare) a foreign key stopped existing in the narrow window between that check and the write |
 | `404` | `EQUIPMENT_NOT_FOUND` | `equipment_id` doesn't resolve to an equipment row |
 | `409` | `EQUIPMENT_NOT_AVAILABLE` | Equipment's current status is not `available_at_pool`, or a concurrent dispatch of the same equipment won the race (unique-index collision on `idx_tx_one_active_borrow`) |
-| `422` | `VALIDATION_ERROR` | Missing required field, wrong type, an unrecognized field (`borrower_name`/`due_at`/`quantity`/anything else not in the schema), or `routine_round` present/absent inconsistently with `dispatch_type` |
+| `422` | `VALIDATION_ERROR` | Missing required field, wrong type, an unrecognized field (`borrower_name`/`due_at`/`quantity`/anything else not in the schema), or a legacy `routine_round` supplied inconsistently with `dispatch_type` |
 | `401` / `403` | `NOT_AUTHENTICATED` / `FORBIDDEN` | Missing/invalid token, or caller's role isn't `administrator`/`equipment_pool_staff` |
 
 A bad `ward_id` reference is deliberately a `400 INVALID_INPUT`, not the `409 EQUIPMENT_NOT_AVAILABLE` conflict response — a missing ward is a client input error, not an equipment-availability conflict (see the comment in `borrow_service.borrow` referencing this repository's PR20 review round 1, finding MAJOR 3).

@@ -43,7 +43,10 @@ class BorrowRequest(BaseModel):
     # accept a raw QR/identifier value itself.
     equipment_id: str
     ward_id: str = Field(min_length=1)
-    dispatch_type: DispatchType
+    # Roadmap PR26 (BUSINESS_RULES 7b, 2026-11-25 D2 amendment): both are now
+    # optional; new dispatches omit them (stored NULL). Still accepted and
+    # validated for backward compatibility with queued offline operations.
+    dispatch_type: DispatchType | None = None
     routine_round: RoutineRound | None = None
     department_id: str | None = None
     phone_number: str | None = None
@@ -71,6 +74,8 @@ class BorrowRequest(BaseModel):
             raise ValueError("routine_round is required when dispatch_type is 'routine_round'")
         if self.dispatch_type == DispatchType.ON_DEMAND and self.routine_round is not None:
             raise ValueError("routine_round must not be supplied when dispatch_type is 'on_demand'")
+        if self.dispatch_type is None and self.routine_round is not None:
+            raise ValueError("routine_round requires dispatch_type 'routine_round'")
         return self
 
 

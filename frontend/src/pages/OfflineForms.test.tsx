@@ -118,7 +118,7 @@ describe("offline dispatch form", () => {
     expect(rec.envelope).toMatchObject({
       user_id: "u1",
       op_type: "dispatch",
-      dispatch: { equipment_id: "e1", ward_id: "w2", dispatch_type: "on_demand", phone_number: "0222" },
+      dispatch: { equipment_id: "e1", ward_id: "w2", phone_number: "0222" },
     });
     expect(requestSync).toHaveBeenCalledTimes(1);
   });

@@ -581,13 +581,34 @@ async def test_borrow_request_missing_ward_id_is_rejected():
         BorrowRequest(equipment_id=str(uuid.uuid4()), dispatch_type="on_demand")
 
 
-async def test_borrow_request_missing_dispatch_type_is_rejected():
+async def test_borrow_request_without_dispatch_type_or_round_is_valid():
+    # Roadmap PR26: both fields are optional for new dispatches.
+    from app.schemas.transaction import BorrowRequest
+
+    req = BorrowRequest(equipment_id=str(uuid.uuid4()), ward_id=str(uuid.uuid4()))
+    assert req.dispatch_type is None
+    assert req.routine_round is None
+
+
+async def test_borrow_request_routine_round_without_type_is_rejected():
     from pydantic import ValidationError
 
     from app.schemas.transaction import BorrowRequest
 
     with pytest.raises(ValidationError):
-        BorrowRequest(equipment_id=str(uuid.uuid4()), ward_id=str(uuid.uuid4()))
+        BorrowRequest(equipment_id=str(uuid.uuid4()), ward_id=str(uuid.uuid4()), routine_round="06:00")
+
+
+async def test_dispatch_without_type_round_succeeds_and_stores_null(client, seeded_users):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    ward = await _create_ward(client, admin, "W-P26")
+    eq = await _create_equipment(client, admin)
+    r = await client.post("/api/v1/borrow", headers=admin, json={"equipment_id": eq["id"], "ward_id": ward})
+    assert r.status_code == 201, r.text
+    assert r.json()["dispatch_type"] is None
+    assert r.json()["routine_round"] is None
+    tx = await client.get("/api/v1/transactions", headers=admin)
+    assert tx.status_code == 200
 
 
 async def test_borrow_request_has_no_borrower_name_field():
@@ -769,7 +790,7 @@ async def test_dispatch_without_ward_id_is_rejected_by_the_api(client, seeded_us
     assert resp.status_code == 422, resp.text
 
 
-async def test_dispatch_without_dispatch_type_is_rejected_by_the_api(client, seeded_users):
+async def test_dispatch_without_dispatch_type_is_accepted_pr26(client, seeded_users):
     admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-PR7B-0005")
     ward_id = await _create_ward(client, admin_headers, code="W-PR7B-0005")
@@ -777,7 +798,7 @@ async def test_dispatch_without_dispatch_type_is_rejected_by_the_api(client, see
     resp = await client.post(
         "/api/v1/borrow", headers=admin_headers, json={"equipment_id": equipment["id"], "ward_id": ward_id}
     )
-    assert resp.status_code == 422, resp.text
+    assert resp.status_code == 201, resp.text
 
 
 async def test_dispatch_type_and_routine_round_are_persisted_as_approved_lowercase_values(client, seeded_users):

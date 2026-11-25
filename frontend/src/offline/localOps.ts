@@ -195,7 +195,8 @@ async function staleLocal(now: number): Promise<{ stale_context: boolean; snapsh
 export interface OfflineDispatchInput {
   equipment_id: string;
   ward_id: string;
-  dispatch_type: DispatchType;
+  // Roadmap PR26: optional legacy values; the dispatch form no longer sends them.
+  dispatch_type?: DispatchType;
   routine_round?: RoutineRound;
   phone_number?: string;
   notes?: string;
@@ -213,8 +214,8 @@ export async function enqueueOfflineDispatch(input: OfflineDispatchInput): Promi
   const dispatch: Record<string, unknown> = {
     equipment_id: input.equipment_id,
     ward_id: input.ward_id,
-    dispatch_type: input.dispatch_type,
   };
+  if (input.dispatch_type) dispatch.dispatch_type = input.dispatch_type;
   if (input.dispatch_type === "routine_round" && input.routine_round) dispatch.routine_round = input.routine_round;
   if (input.phone_number) dispatch.phone_number = input.phone_number;
   if (input.notes) dispatch.notes = input.notes;
