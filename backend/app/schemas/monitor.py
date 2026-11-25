@@ -9,6 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from app.schemas.checklist import Checks, CuffCounts
 from app.schemas.common import UUIDStr
 
 
@@ -40,3 +41,14 @@ class MonitorEvent(BaseModel):
     equipment: MonitorEquipment
     receipt_outcome: Literal["usable", "defective"] | None = None
     close_reason: str | None = None
+    # Roadmap PR27 (D7): the ward-side contact name recorded on this event's
+    # side (dispatch_contact_name for dispatch events, receipt_contact_name for
+    # receipt events). Never a patient name.
+    ward_contact_name: str | None = None
+    # Roadmap PR28 (D4/D10): the checklist recorded on this event's side;
+    # checklist_kind is the transaction's snapshot.
+    checklist_kind: str | None = None
+    checks: Checks | None = None
+    # Roadmap PR28 (D11): cuffs of this transaction still outstanding (null
+    # when it never issued cuffs).
+    cuffs_outstanding: CuffCounts | None = None

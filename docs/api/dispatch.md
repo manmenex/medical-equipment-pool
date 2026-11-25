@@ -84,12 +84,17 @@ Optional `expected_open_transaction_id` ties the acknowledgement to the open tra
 
 `TransactionOut` gains read-only `close_reason` (nullable) and `dispatched_while_defective` (boolean).
 
-**Pre-check:** `GET /api/v1/equipment/{id}/dispatch-check` (any authenticated role, read-only) returns `{equipment_id, status, warning, dispatchable, requires_acknowledgement, current_ward_id, current_ward_name, dispatched_at, open_transaction_id, open_transaction_no}` so a client can show the warning at scan time. `warning` is `null`, `already_dispatched`, `defective` or `decommissioned`.
+**Pre-check:** `GET /api/v1/equipment/{id}/dispatch-check` (any authenticated role, read-only) returns `{equipment_id, status, warning, dispatchable, requires_acknowledgement, current_ward_id, current_ward_name, dispatched_at, open_transaction_id, open_transaction_no, checklist_kind}` (`checklist_kind` since PR28: `standard` | `cryo_cuff`) so a client can show the warning at scan time. `warning` is `null`, `already_dispatched`, `defective` or `decommissioned`.
+
+### Ward contact name, checklist and expected status (Roadmap PR27/PR28)
+
+`BorrowRequest` also accepts optional `ward_contact_name` (D7), `dispatch_checks` (D4/D10 accessory or Cryo-Cuff checklist, whose `cuffs` counts become outstanding cuffs, D11) and `expected_status` (a confirmation for a status that has since changed fails `409 DISPATCH_WARNING_STALE`). `TransactionOut` gains `dispatch_contact_name`, `receipt_contact_name`, `checklist_kind`, `dispatch_checks`, `receipt_checks`. Full contract, the ward-first batch endpoint (`POST /transactions/dispatch-batch`) and cuff tracking: `docs/api/ward-first-entry.md`.
 
 ### Errors
 
 | Status | Code | Cause |
 |---|---|---|
+| `400` | `CHECKLIST_KIND_MISMATCH` | PR28: `dispatch_checks.kind` differs from the equipment's category checklist kind |
 | `400` | `INVALID_INPUT` | `equipment_id` or `ward_id` is not a valid UUID; `ward_id` doesn't reference an existing ward (validated proactively, before any equipment-availability check); or (rare) a foreign key stopped existing in the narrow window between that check and the write |
 | `404` | `EQUIPMENT_NOT_FOUND` | `equipment_id` doesn't resolve to an equipment row |
 | `409` | `DISPATCH_STATUS_WARNING` | Roadmap PR31 (D8): equipment is `issued_to_ward` (already dispatched, receipt not recorded) or `unavailable_defective` and the request did not carry `acknowledge_status_warning: true`. `details` holds `warning` (`already_dispatched` / `defective`), `equipment_status`, `current_ward_id`, `current_ward_name`, `dispatched_at`, `open_transaction_id`, `open_transaction_no` so the UI can warn; nothing is written |

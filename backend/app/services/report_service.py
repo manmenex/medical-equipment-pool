@@ -13,6 +13,8 @@ REPORT_COLUMNS = [
     "asset_number",
     "equipment_name",
     "borrower_name",
+    "dispatch_contact_name",
+    "receipt_contact_name",
     "borrowed_at",
     "due_at",
     "returned_at",
@@ -37,6 +39,9 @@ async def _fetch_rows(db: AsyncSession) -> list[list[str]]:
                 tx.equipment.asset_number if tx.equipment else "",
                 tx.equipment.equipment_name if tx.equipment else "",
                 tx.borrower_name,
+                # Roadmap PR27 (D7): ward-side contact names.
+                tx.dispatch_contact_name or "",
+                tx.receipt_contact_name or "",
                 tx.borrowed_at.isoformat() if tx.borrowed_at else "",
                 tx.due_at.isoformat() if tx.due_at else "",
                 tx.returned_at.isoformat() if tx.returned_at else "",

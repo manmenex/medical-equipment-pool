@@ -112,6 +112,29 @@ class InvalidInputError(DomainError):
     status_code = 400
 
 
+class ChecklistKindMismatchError(InvalidInputError):
+    """Roadmap PR28 (D4/D10): the submitted checklist ``kind`` does not match
+    the equipment's checklist kind (``equipment_categories.checklist_kind``)."""
+
+    code = "CHECKLIST_KIND_MISMATCH"
+
+
+class CuffReturnExceedsOutstandingError(DomainError):
+    """Roadmap PR28 (D11): more cuffs of a type would be returned than are
+    outstanding for the transaction (outstanding never goes negative)."""
+
+    code = "CUFF_RETURN_EXCEEDS_OUTSTANDING"
+    status_code = 409
+
+
+class CuffReceiveNotAllowedError(DomainError):
+    """Roadmap PR28 (D11): cuffs can be received separately only after the
+    device receipt (or after the transaction was closed by re-dispatch)."""
+
+    code = "CUFF_RECEIVE_NOT_ALLOWED"
+    status_code = 409
+
+
 class MalformedQrCodeError(DomainError):
     """Raised when a scanned QR payload cannot be read as a valid Item No.
 

@@ -17,12 +17,13 @@ from app.core.db_errors import translate_integrity_error
 from app.core.references import ensure_referenced_row_exists
 from app.crud import master_data as md_crud
 from app.db.session import get_db
-from app.models.master_data import Department, Ward
+from app.models.master_data import Department, EquipmentCategory, Ward
 from sqlalchemy import select
 from app.models.user import ROLE_ADMINISTRATOR
 from app.schemas.master_data import (
     CategoryCreate,
     CategoryOut,
+    CategoryUpdate,
     DepartmentCreate,
     DepartmentOut,
     LocationCreate,
@@ -272,6 +273,7 @@ async def create_category(
             name=payload.name,
             default_pm_interval_days=payload.default_pm_interval_days,
             default_cal_interval_days=payload.default_cal_interval_days,
+            checklist_kind=payload.checklist_kind,
         )
     await record_audit_event(
         db,
@@ -279,7 +281,36 @@ async def create_category(
         action=AUDIT_ACTION_CREATE,
         entity_type=AUDIT_ENTITY_CATEGORY,
         entity_id=obj.id,
-        after=payload.model_dump(),
+        after={**payload.model_dump(), "checklist_kind": obj.checklist_kind},
+        request=request,
+    )
+    await db.commit()
+    return obj
+
+
+@router.patch("/categories/{category_id}", response_model=CategoryOut)
+async def update_category(
+    category_id: str,
+    payload: CategoryUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    actor=Depends(require_roles(ROLE_ADMINISTRATOR)),
+):
+    """Roadmap PR28: set which accessory checklist ('standard' | 'cryo_cuff')
+    applies to a category. Audited; affects new dispatches only."""
+    obj = await db.get(EquipmentCategory, parse_uuid(category_id, "category_id"))
+    if obj is None:
+        raise ResourceNotFoundError("Category not found")
+    before = {"checklist_kind": obj.checklist_kind}
+    obj.checklist_kind = payload.checklist_kind
+    await record_audit_event(
+        db,
+        actor_user_id=actor.id,
+        action=AUDIT_ACTION_UPDATE,
+        entity_type=AUDIT_ENTITY_CATEGORY,
+        entity_id=obj.id,
+        before=before,
+        after={"checklist_kind": payload.checklist_kind},
         request=request,
     )
     await db.commit()

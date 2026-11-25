@@ -26,6 +26,7 @@ from app.core.redis import cache_delete_prefix
 from app.core.references import ensure_referenced_row_exists
 from app.crud import audit as audit_crud
 from app.crud import client_operation as client_op_crud
+from app.crud import cuff as cuff_crud
 from app.crud import equipment as equipment_crud
 from app.crud import transaction as transaction_crud
 from app.models.equipment import EquipmentStatus
@@ -39,7 +40,8 @@ from app.models.transaction import (
     RoutineRound,
     TransactionStatus,
 )
-from app.services import export_service
+from app.schemas.checklist import CuffCounts, CryoCuffChecks, StandardChecks
+from app.services import checklist_service, cuff_service, export_service
 from app.utils.parsing import parse_uuid
 
 # Roadmap PR8B (knowledge/adr/ADR-006-receipt-outcome-contract.md): the
@@ -144,6 +146,9 @@ async def borrow(
     borrowed_at: datetime | None = None,
     acknowledge_status_warning: bool = False,
     expected_open_transaction_id: str | None = None,
+    ward_contact_name: str | None = None,
+    dispatch_checks: StandardChecks | CryoCuffChecks | None = None,
+    expected_status: EquipmentStatus | None = None,
 ) -> BorrowTransaction:
     # Roadmap PR25E slice B2b: ``borrowed_at`` is business time and is passed
     # only by the sync layer after the section 11 guards; online callers omit
@@ -172,9 +177,21 @@ async def borrow(
     # named explicitly (assess_dispatch); DECOMMISSIONED is still rejected,
     # and an already-dispatched or defective item needs the operator's
     # explicit acknowledgement (409 DISPATCH_STATUS_WARNING + details).
+    # Roadmap PR28 (D4/D10): the checklist shape must match the equipment's
+    # category-driven kind; rejected before any write.
+    checklist_kind = await checklist_service.kind_for_equipment(db, equipment)
+    checklist_service.ensure_kind_matches(dispatch_checks, checklist_kind)
+
     assessment = await assess_dispatch(db, equipment)
     if assessment.blocked:
         raise EquipmentNotAvailableError(assessment.message())
+    if expected_status is not None and equipment.status != expected_status:
+        # Roadmap PR27 review gap: a confirmation given for one status must
+        # not apply after the status changed (e.g. defective -> available).
+        raise DispatchWarningStaleError(
+            "The equipment's status changed since it was shown. Refresh and confirm again.",
+            details={**assessment.details(), "expected_status": expected_status.value},
+        )
     if assessment.requires_acknowledgement and not acknowledge_status_warning:
         raise DispatchStatusWarningError(assessment.message(), details=assessment.details())
     redispatched_tx = assessment.open_transaction
@@ -255,6 +272,10 @@ async def borrow(
                 "dropoff_location_id": parse_uuid(dropoff_location_id, "dropoff_location_id"),
                 "notes": notes,
                 "dispatched_while_defective": dispatched_while_defective,
+                "dispatch_contact_name": ward_contact_name,
+                "checklist_kind": checklist_kind,
+                # Omitted (None) stays SQL NULL = "not recorded".
+                **({"dispatch_checks": dispatch_checks.model_dump(mode="json")} if dispatch_checks is not None else {}),
             },
         )
     except IntegrityError as exc:
@@ -285,6 +306,8 @@ async def borrow(
         await db.rollback()
         raise
     audit_after = {"transaction_no": tx.transaction_no, "equipment_id": str(equipment.id)}
+    if dispatch_checks is not None:
+        audit_after["checklist_kind"] = checklist_kind
     if dispatched_while_defective:
         audit_after["dispatched_while_defective"] = True
         audit_after["previous_equipment_status"] = previous_status.value
@@ -318,6 +341,18 @@ async def borrow(
         ip_address=ip_address,
         user_agent=user_agent,
     )
+    if isinstance(dispatch_checks, CryoCuffChecks) and dispatch_checks.cuffs.total() > 0:
+        # Roadmap PR28 (D11): cuffs issued with the device, attributed to this
+        # transaction (and so its ward) until returned.
+        await cuff_crud.create_issued(db, transaction_id=tx.id, counts=dispatch_checks.cuffs)
+        await cuff_service.audit_issue(
+            db,
+            actor_user_id=actor_user_id,
+            transaction_id=tx.id,
+            counts=dispatch_checks.cuffs,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
     if client_op is not None:
         # Section 6.3 step 2: ledger row after the business writes and audit,
         # BEFORE record_event (which must stay the last write).
@@ -346,6 +381,9 @@ async def return_equipment(
     actor_user_id: uuid.UUID | None = None,
     client_op: client_op_crud.ClientOpContext | None = None,
     returned_at: datetime | None = None,
+    ward_contact_name: str | None = None,
+    receipt_checks: StandardChecks | CryoCuffChecks | None = None,
+    cuffs_returned: CuffCounts | None = None,
 ) -> BorrowTransaction:
     # See borrow(): ``received_by_user_id`` is the recorded operator,
     # ``actor_user_id`` (default: the operator) the audit/status-history actor.
@@ -381,6 +419,19 @@ async def return_equipment(
     # pre-PR8B free-form `condition` string, which needed one).
     new_status = RECEIPT_OUTCOME_TO_STATUS[receipt_outcome]
 
+    # Roadmap PR28 (D4/D10/D11), validated before any write: the checklist must
+    # match the transaction's kind (historical rows fall back to the equipment's
+    # category), and cuffs returned can never exceed what is outstanding.
+    checklist_kind = tx.checklist_kind or await checklist_service.kind_for_equipment(db, tx.equipment)
+    checklist_service.ensure_kind_matches(receipt_checks, checklist_kind)
+    returned_cuffs = cuff_service.resolve_returned(receipt_checks, cuffs_returned)
+    if returned_cuffs.total() > 0:
+        await cuff_service.validate_returnable(db, tx.id, returned_cuffs)
+    if isinstance(receipt_checks, CryoCuffChecks):
+        # The stored checklist always carries the counts actually applied.
+        receipt_checks = receipt_checks.model_copy(update={"cuffs": returned_cuffs})
+    transaction_id = tx.id
+
     # Roadmap PR8A -- the sole concurrency guard for the receipt race: a
     # conditional close (UPDATE ... WHERE status = 'open') decided by affected
     # -row count. Exactly one of N concurrent receipts for this transaction
@@ -388,6 +439,8 @@ async def return_equipment(
     won = await transaction_crud.close(
         db, tx, received_by_user_id=received_by_user_id,
         receipt_outcome=receipt_outcome.value, notes=notes, returned_at=returned_at,
+        receipt_contact_name=ward_contact_name,
+        receipt_checks=receipt_checks.model_dump(mode="json") if receipt_checks is not None else None,
     )
     if not won:
         # Roadmap PR8A Case B -- lost a concurrent race. Another request
@@ -422,7 +475,15 @@ async def return_equipment(
     # not-yet-committed, winning UPDATE.
     await db.refresh(
         tx,
-        attribute_names=["status", "returned_at", "condition_on_return", "received_by_user_id", "notes"],
+        attribute_names=[
+            "status",
+            "returned_at",
+            "condition_on_return",
+            "received_by_user_id",
+            "notes",
+            "receipt_contact_name",
+            "receipt_checks",
+        ],
     )
 
     equipment = await equipment_crud.get_by_id(db, tx.equipment_id)
@@ -437,6 +498,15 @@ async def return_equipment(
         reason=f"Returned as {receipt_outcome.value}",
     )
     audit_after = {"receipt_outcome": receipt_outcome.value}
+    if receipt_checks is not None:
+        audit_after["checklist_kind"] = checklist_kind
+    if returned_cuffs.total() > 0:
+        try:
+            await cuff_service.apply_return(db, tx.id, returned_cuffs)
+        except Exception:
+            # Includes the close above: all or nothing.
+            await db.rollback()
+            raise
     if client_op is not None:
         audit_after.update(client_op.audit_fields())
     await audit_crud.create(
@@ -449,6 +519,17 @@ async def return_equipment(
         ip_address=ip_address,
         user_agent=user_agent,
     )
+    if returned_cuffs.total() > 0:
+        await cuff_service.audit_return(
+            db,
+            actor_user_id=actor_user_id,
+            transaction_id=transaction_id,
+            counts=returned_cuffs,
+            source="receipt",
+            ward_contact_name=ward_contact_name,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
     if client_op is not None:
         # Before record_event, which stays the last write (section 6.3).
         await client_op_crud.write_applied(db, client_op, transaction_id=tx.id, occurred_at=tx.returned_at)

@@ -39,7 +39,7 @@ from app.schemas.equipment import (
     EquipmentUpdate,
     QrResolveRequest,
 )
-from app.services import borrow_service
+from app.services import borrow_service, checklist_service
 from app.services.identifiers import normalize_bcm_code, normalize_item_no
 from app.services.qr_service import extract_item_no_from_qr
 from app.utils.parsing import parse_uuid
@@ -183,6 +183,9 @@ class DispatchCheckOut(BaseModel):
     dispatched_at: datetime | None = None
     open_transaction_id: str | None = None
     open_transaction_no: str | None = None
+    # Roadmap PR28: which accessory checklist ('standard' | 'cryo_cuff') the
+    # dispatch/receipt UI must show for this equipment.
+    checklist_kind: str = "standard"
 
 
 @router.get("/{equipment_id}/dispatch-check", response_model=DispatchCheckOut)
@@ -203,6 +206,7 @@ async def dispatch_check(equipment_id: uuid.UUID, db: AsyncSession = Depends(get
         dispatched_at=tx.borrowed_at if tx is not None else None,
         open_transaction_id=str(tx.id) if tx is not None else None,
         open_transaction_no=tx.transaction_no if tx is not None else None,
+        checklist_kind=await checklist_service.kind_for_equipment(db, equipment),
     )
 
 

@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import (
+    CuffReturnExceedsOutstandingError,
     DomainError,
     EquipmentNotAvailableError,
     EquipmentNotFoundError,
@@ -100,6 +101,8 @@ _CONFLICT_ERRORS = (
     InvalidInputError,
     EquipmentNotFoundError,
     TransactionNotFoundError,
+    # Roadmap PR28: depends on current cuff balances, so it needs review.
+    CuffReturnExceedsOutstandingError,
 )
 
 _MESSAGES = {
@@ -278,6 +281,9 @@ async def _execute(
             # open transaction on stale offline data).
             acknowledge_status_warning=d.acknowledge_status_warning,
             expected_open_transaction_id=d.expected_open_transaction_id,
+            ward_contact_name=d.ward_contact_name,
+            dispatch_checks=d.dispatch_checks,
+            expected_status=d.expected_status,
         )
     r = op.receipt
     return await borrow_service.return_equipment(
@@ -291,6 +297,9 @@ async def _execute(
         actor_user_id=user.id,
         client_op=ctx,
         returned_at=business_time,
+        ward_contact_name=r.ward_contact_name,
+        receipt_checks=r.receipt_checks,
+        cuffs_returned=r.cuffs_returned,
     )
 
 

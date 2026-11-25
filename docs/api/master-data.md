@@ -56,3 +56,7 @@ Operator procedure:
 2. Call with the default `dry_run=true`; review every row, fixing `unknown_ward`, `invalid_phone`, `duplicate_ward_name` and `ambiguous_ward` rows.
 3. Decide on `overwrite` (leave it off unless existing phones are known to be wrong).
 4. Repeat the same request with `dry_run=false` and check `applied` and `counts`.
+
+## Category checklist kind (Roadmap PR28)
+
+`GET /categories` / `POST /categories` return `checklist_kind` (`standard` | `cryo_cuff`). `POST` accepts an optional `checklist_kind`; omitted, categories whose name contains "cryo" (case-insensitive) default to `cryo_cuff`. `PATCH /categories/{id}` `{ "checklist_kind": ... }` (administrator, audited) edits it; only new dispatches are affected. See `docs/api/ward-first-entry.md`.

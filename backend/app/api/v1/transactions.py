@@ -3,20 +3,49 @@ from datetime import date
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.deps import WARD_CORRECTION_ROLES, get_current_user, require_roles
+from app.api.v1.deps import (
+    EQUIPMENT_POOL_OPERATION_ROLES,
+    WARD_CORRECTION_ROLES,
+    get_current_user,
+    require_roles,
+)
 from app.core.exceptions import InvalidInputError, TransactionNotFoundError
 from app.core.reporting_time import Shift
 from app.crud import transaction as transaction_crud
 from app.db.session import get_db
 from app.models.transaction import DispatchType, RoutineRound
+from app.schemas.batch import BatchResponse, DispatchBatchRequest, ReceiptBatchRequest
+from app.schemas.checklist import ContactName, CuffCounts
 from app.schemas.common import Page
 from app.schemas.transaction import TransactionOut, WardCorrectionRequest
-from app.services import borrow_service
+from app.services import batch_service, borrow_service, cuff_service
 from app.utils.parsing import parse_uuid
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
+
+
+class CuffReceiveRequest(BaseModel):
+    """Roadmap PR28 (D11): cuffs handed back after the device was received."""
+
+    cuffs: CuffCounts
+    ward_contact_name: ContactName = None
+
+    model_config = {"extra": "forbid"}
+
+
+class CuffReceiveOut(BaseModel):
+    transaction_id: str
+    transaction_no: str
+    cuffs_issued: CuffCounts
+    cuffs_returned: CuffCounts
+    cuffs_outstanding: CuffCounts
+
+
+def _client_meta(request: Request) -> tuple[str | None, str | None]:
+    return (request.client.host if request.client else None), request.headers.get("user-agent")
 
 
 @router.get("", response_model=Page[TransactionOut])
@@ -72,6 +101,32 @@ async def list_transactions(
     return Page(items=rows, next_cursor=next_cursor, total=total)
 
 
+@router.post("/dispatch-batch", response_model=BatchResponse)
+async def dispatch_batch(
+    payload: DispatchBatchRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_roles(*EQUIPMENT_POOL_OPERATION_ROLES)),
+):
+    """Roadmap PR27 (D3): ward-first multi-equipment dispatch. Always 200 with a
+    per-item result; each item is its own transaction (see batch_service)."""
+    ip, ua = _client_meta(request)
+    return await batch_service.dispatch_batch(db, payload, user_id=user.id, ip_address=ip, user_agent=ua)
+
+
+@router.post("/receipt-batch", response_model=BatchResponse)
+async def receipt_batch(
+    payload: ReceiptBatchRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_roles(*EQUIPMENT_POOL_OPERATION_ROLES)),
+):
+    """Roadmap PR27 (D3): ward-first multi-equipment receipt (usable/defective
+    per item). Always 200 with a per-item result."""
+    ip, ua = _client_meta(request)
+    return await batch_service.receipt_batch(db, payload, user_id=user.id, ip_address=ip, user_agent=ua)
+
+
 @router.get("/{transaction_id}", response_model=TransactionOut)
 async def get_transaction(
     transaction_id: uuid.UUID, db: AsyncSession = Depends(get_db), _user=Depends(get_current_user)
@@ -80,6 +135,28 @@ async def get_transaction(
     if tx is None:
         raise TransactionNotFoundError("Transaction not found")
     return tx
+
+
+@router.post("/{transaction_id}/receive-cuffs", response_model=CuffReceiveOut)
+async def receive_cuffs(
+    transaction_id: uuid.UUID,
+    payload: CuffReceiveRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_roles(*EQUIPMENT_POOL_OPERATION_ROLES)),
+):
+    """Roadmap PR28 (D11): receive outstanding cuffs of an already-received (or
+    re-dispatch-closed) transaction. Never exceeds outstanding; audited."""
+    ip, ua = _client_meta(request)
+    return await cuff_service.receive_cuffs(
+        db,
+        transaction_id=transaction_id,
+        counts=payload.cuffs,
+        ward_contact_name=payload.ward_contact_name,
+        actor_user_id=user.id,
+        ip_address=ip,
+        user_agent=ua,
+    )
 
 
 @router.post("/{transaction_id}/correct-ward", response_model=TransactionOut)

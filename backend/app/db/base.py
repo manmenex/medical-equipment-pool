@@ -10,6 +10,7 @@ class Base(DeclarativeBase):
 from app.models import (  # noqa: E402,F401
     audit,
     client_operation,
+    cuff,
     cutover_readiness,
     equipment,
     export,
