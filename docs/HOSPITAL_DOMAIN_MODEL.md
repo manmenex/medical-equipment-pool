@@ -59,7 +59,7 @@ UNAVAILABLE_DEFECTIVE -> DECOMMISSIONED (terminal normal state)
 ```
 
 - **Dispatch:** Equipment Pool operator records equipment leaving the pool for
-  the first receiving ward. No named borrower or patient is recorded.
+  the first receiving ward. No named borrower or patient is recorded (amended 2026-11-25 second set: an optional free-text ward contact name may be recorded, D7; dispatch is not blocked by equipment status, D8; see `docs/BUSINESS_RULES.md`).
 - **Receipt:** One atomic digital operation closes the dispatch and records a
   binary outcome: usable or defective. Receipt does not mean cleaning was
   completed and does not record cleaning.

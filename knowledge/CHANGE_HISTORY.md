@@ -11,6 +11,10 @@ This file tracks *what changed in the shared mental model* over time, one line o
 
 "No patient tracking" is narrowly amended: staff may record an optional patient HN on a dispatch, encrypted at rest, masked by default, reveal audited, and never present in any report, export, API, log, notification or legacy sync. `dispatch_type`/`routine_round` leave data entry (historical values kept; shift derives from event time). Dispatch and receipt become ward-first multi-equipment, with three yes/no accessory checks per equipment (not a state), and a daily shift report is planned. See `docs/DECISION_LOG.md` (2026-11-25).
 
+## Shift grace attribution, ward contact name, non-blocking dispatch, monitor page (Owner 2026-11-25, second set)
+
+UX questions answered (HN per equipment, no warning on cross-ward receipt, accessory checks default checked). Reporting attributes events near 08:00/20:00 to the operator's predominant shift (D6, PR30); an optional free-text ward contact name returns at dispatch/receipt (D7, PR27); dispatch is no longer blocked by status except decommissioned, with audited re-dispatch closure (D8, PR31); a monitor page is planned (D9, PR32). See `docs/DECISION_LOG.md`.
+
 ## Legacy history import validation becomes line-authoritative (Owner 2026-11-25)
 
 For the PR21 legacy Receive/Issue history import, the line item is authoritative for time, equipment and ward. A header/line time gap of 24 hours or less is not a finding, an orphan order reference is a warning, and a ward conflict or a gap over 24 hours stays an error. The all-or-nothing gate and history-only rule are unchanged. See `docs/DECISION_LOG.md`.
