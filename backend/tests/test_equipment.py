@@ -1120,7 +1120,7 @@ async def test_item_no_absent_from_borrow_and_return_manual_selection_responses(
 # ---------------------------------------------------------------------------
 
 
-async def test_dispatch_rejected_when_equipment_unavailable_defective(client, seeded_users):
+async def test_dispatch_of_unavailable_defective_equipment_requires_acknowledgement_pr31(client, seeded_users):
     headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     nurse_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
     equipment = await _create_equipment_with_bcm(client, headers, "AST-PR6-0001")
@@ -1135,7 +1135,7 @@ async def test_dispatch_rejected_when_equipment_unavailable_defective(client, se
     payload = await _on_demand_borrow_payload(client, headers, equipment["id"], ward_code="W-PR6-0001")
     borrow_resp = await client.post("/api/v1/borrow", headers=nurse_headers, json=payload)
     assert borrow_resp.status_code == 409
-    assert borrow_resp.json()["code"] == "EQUIPMENT_NOT_AVAILABLE"
+    assert borrow_resp.json()["code"] == "DISPATCH_STATUS_WARNING"
 
 
 async def test_dispatch_rejected_when_equipment_decommissioned(client, seeded_users):

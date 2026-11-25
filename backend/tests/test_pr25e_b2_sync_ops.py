@@ -198,7 +198,7 @@ async def test_dispatch_conflict_row_and_no_export(client, ctx, db_session):
     await _send(client, ctx["staff"], dispatch_op(ctx["staff_id"], ctx["eq"], ctx["ward"]))
     loser = dispatch_op(ctx["staff_id"], ctx["eq"], ctx["ward"], seq=2)
     [res] = await _send(client, ctx["staff"], loser)
-    assert res["result"] == "conflict" and res["code"] == "EQUIPMENT_NOT_AVAILABLE"
+    assert res["result"] == "conflict" and res["code"] == "DISPATCH_STATUS_WARNING"
     row = await client_op_crud.get(db_session, uuid.UUID(loser["op_id"]))
     assert row.status == "conflict" and row.payload["dispatch"]["equipment_id"] == ctx["eq"]
     assert await _count(db_session, BorrowTransaction) == 1

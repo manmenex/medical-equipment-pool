@@ -43,7 +43,10 @@ async def test_borrow_then_return_flow(client, seeded_users):
     assert check_resp2.json()["status"] == "available_at_pool"
 
 
-async def test_cannot_borrow_unavailable_equipment(client, seeded_users):
+async def test_redispatch_without_acknowledgement_is_a_warning_conflict(client, seeded_users):
+    # Roadmap PR31 (D8): replaces the pre-PR31 hard EQUIPMENT_NOT_AVAILABLE
+    # for an already-dispatched item (see tests/test_pr31_non_blocking_dispatch.py
+    # for the full matrix).
     admin_headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
     nurse_headers = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
     equipment = await _create_equipment(client, admin_headers, asset_number="AST-1002")
@@ -54,7 +57,7 @@ async def test_cannot_borrow_unavailable_equipment(client, seeded_users):
 
     second = await client.post("/api/v1/borrow", headers=nurse_headers, json=payload)
     assert second.status_code == 409
-    assert second.json()["code"] == "EQUIPMENT_NOT_AVAILABLE"
+    assert second.json()["code"] == "DISPATCH_STATUS_WARNING"
 
 
 async def test_unique_active_borrow_db_constraint(db_session):

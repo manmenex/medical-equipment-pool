@@ -132,6 +132,16 @@ export function apiErrorMessage(error: unknown, fallback = "เกิดข้�
 // TRANSACTION_ALREADY_RETURNED) must read this, never `detail` -- `detail`
 // is a human-readable, free-text message not intended as a stable contract
 // for behavior branching.
+// Roadmap PR31: machine-readable extras of an error response (e.g. the
+// DISPATCH_STATUS_WARNING details); undefined when the error carries none.
+export function apiErrorDetails(error: unknown): Record<string, unknown> | undefined {
+  if (axios.isAxiosError(error)) {
+    const data = error.response?.data as ApiError | undefined;
+    return data?.details;
+  }
+  return undefined;
+}
+
 export function apiErrorCode(error: unknown): string | undefined {
   if (axios.isAxiosError(error)) {
     const data = error.response?.data as ApiError | undefined;

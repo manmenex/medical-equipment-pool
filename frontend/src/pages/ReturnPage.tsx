@@ -63,6 +63,7 @@ const RECEIPT_OUTCOMES: { value: ReceiptOutcome; label: string; selectedClass: s
 // compare received_by_user_id between the two requests).
 const RECEIPT_ERROR_MESSAGES: Record<string, string> = {
   TRANSACTION_ALREADY_RETURNED: "รายการนี้ถูกรับคืนไปแล้ว",
+  TRANSACTION_CLOSED_BY_REDISPATCH: "รายการนี้ถูกปิดเพราะมีการจ่ายเครื่องใหม่แล้ว",
   RECEIPT_RACE_LOST: "มีคำขอรับเครื่องอื่นดำเนินการสำเร็จก่อน กรุณารีเฟรชเพื่อดูข้อมูลล่าสุด",
 };
 

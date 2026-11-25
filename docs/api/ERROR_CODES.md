@@ -73,7 +73,11 @@ A `422` validation error additionally includes an `errors` array:
 | Code | Status | Class | Raised when |
 |---|---|---|---|
 | `EQUIPMENT_NOT_FOUND` | 404 | `EquipmentNotFoundError` | Equipment ID doesn't resolve (`GET/PATCH/DELETE /equipment/{id}`, QR resolve, dispatch, receipt) |
-| `EQUIPMENT_NOT_AVAILABLE` | 409 | `EquipmentNotAvailableError` | Dispatch attempted on equipment not in `available_at_pool` status, or a concurrent dispatch won the unique-index race |
+| `DISPATCH_STATUS_WARNING` | 409 | `DispatchStatusWarningError` (subclass of `EquipmentNotAvailableError`) | Roadmap PR31 (D8): dispatch of `issued_to_ward` or `unavailable_defective` equipment without `acknowledge_status_warning`; `details` describes the problem |
+| `DISPATCH_WARNING_STALE` | 409 | `DispatchWarningStaleError` | PR31: `expected_open_transaction_id` is not the current open transaction |
+| `EQUIPMENT_STATUS_CHANGED` | 409 | `EquipmentStatusChangedError` | PR31: equipment status changed concurrently; conditional status write lost |
+| `TRANSACTION_CLOSED_BY_REDISPATCH` | 409 | `TransactionClosedByRedispatchError` | PR31: receipt attempted on a transaction closed by re-dispatch |
+| `EQUIPMENT_NOT_AVAILABLE` | 409 | `EquipmentNotAvailableError` | Dispatch attempted on `decommissioned` equipment, a concurrent dispatch won the unique-index race, or a re-dispatch lost the conditional close of the previous transaction |
 | `TRANSACTION_NOT_FOUND` | 404 | `TransactionNotFoundError` | Transaction ID doesn't resolve (`GET /transactions/{id}`, receipt) |
 | `TRANSACTION_ALREADY_RETURNED` | 409 | `TransactionAlreadyReturnedError` | Genuine sequential repeat receipt (Case A) — the transaction's `status` was already not `OPEN` *before* this request even read it (e.g. a reload/re-submit after a receipt that already completed) |
 | `RECEIPT_RACE_LOST` | 409 | `ReceiptRaceLostError` | Roadmap PR8C: this request read the transaction as `OPEN` (Case A did not trigger), but a concurrent request won Roadmap PR8A's conditional `UPDATE` race and closed it first (Case B). Distinct code from `TRANSACTION_ALREADY_RETURNED` — same HTTP status, but the requester did nothing wrong here, so "already returned" would misdescribe the cause (`knowledge/adr/ADR-006-receipt-outcome-contract.md`) |

@@ -154,7 +154,8 @@ async def test_different_ops_same_equipment_one_wins(maker, world):
     results = await asyncio.gather(*[_run(maker, world, o) for o in ops])
     assert sorted(r.result for r in results) == ["applied", "conflict"]
     loser = next(r for r in results if r.result == "conflict")
-    assert loser.code == "EQUIPMENT_NOT_AVAILABLE"
+    # Either the loser read the winner's committed state (warning) or lost the unique-index race.
+    assert loser.code in ("DISPATCH_STATUS_WARNING", "EQUIPMENT_NOT_AVAILABLE")
     assert await _count(maker, BorrowTransaction) == 1 and await _count(maker, ExportEvent) == 1
     async with maker() as db:
         row = await client_op_crud.get(db, loser.op_id)

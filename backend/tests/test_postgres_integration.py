@@ -3805,6 +3805,7 @@ async def test_migration_0008_downgrade_round_trip_and_fresh_upgraded_schema_con
         _run_alembic("upgrade", "head")
         columns = await _borrow_transactions_columns()
         assert {"dispatch_type", "routine_round"} <= columns
+        fresh_head_columns = set(columns)
         constraints = await _borrow_transactions_check_constraint_names()
         assert {
             "ck_borrow_transactions_dispatch_type",
@@ -3828,7 +3829,9 @@ async def test_migration_0008_downgrade_round_trip_and_fresh_upgraded_schema_con
         # documents).
         _run_alembic("upgrade", "head")
         columns_after_reupgrade = await _borrow_transactions_columns()
-        assert columns_after_reupgrade == columns | {"dispatch_type", "routine_round"}
+        # Later migrations (e.g. 0030) are also undone by the downgrade to 0007
+        # and re-applied by the re-upgrade, so compare against the fresh head schema.
+        assert columns_after_reupgrade == fresh_head_columns
         constraints_after_reupgrade = await _borrow_transactions_check_constraint_names()
         assert {
             "ck_borrow_transactions_dispatch_type",

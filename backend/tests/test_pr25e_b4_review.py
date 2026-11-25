@@ -44,7 +44,7 @@ async def _conflict(client, ctx, seq=2):
     op1 = dispatch_op(ctx["staff_id"], ctx["eq"], ctx["ward"], seq=1)
     assert (await _send(client, ctx["staff"], op1))[0]["result"] == "applied"
     op2 = dispatch_op(ctx["staff_id"], ctx["eq"], ctx["ward"], seq=seq)
-    assert (await _send(client, ctx["staff"], op2))[0]["code"] == "EQUIPMENT_NOT_AVAILABLE"
+    assert (await _send(client, ctx["staff"], op2))[0]["code"] == "DISPATCH_STATUS_WARNING"
     return op1, op2
 
 
@@ -60,14 +60,14 @@ async def test_list_detail_and_information_boundary(client, ctx):
     body = r.json()
     assert body["total"] == 1 and body["items"][0]["op_id"] == op2["op_id"]
     it = body["items"][0]
-    assert it["result_code"] == "EQUIPMENT_NOT_AVAILABLE" and it["operator"]["id"] == ctx["staff_id"]
+    assert it["result_code"] == "DISPATCH_STATUS_WARNING" and it["operator"]["id"] == ctx["staff_id"]
     assert it["equipment"]["status"] == "issued_to_ward" and it["ward_name"] == "W-B2"
     assert "payload" not in it
     text = r.text + (await client.get(f"{C}/{op2['op_id']}", headers=ctx["staff"])).text
     for forbidden in ("AST-B2-1", "item_no", "asset_number", "email", "payload_hash"):
         assert forbidden not in text
     d = (await client.get(f"{C}/{op2['op_id']}", headers=ctx["admin"])).json()
-    assert d["apply_now_possible"] is False and d["apply_now_blocker"] == "EQUIPMENT_NOT_AVAILABLE"
+    assert d["apply_now_possible"] is False and d["apply_now_blocker"] == "DISPATCH_STATUS_WARNING"
     assert d["payload_summary"]["dispatch_type"] == "on_demand"
 
 
@@ -212,7 +212,7 @@ async def test_apply_now_still_conflicting_stays_conflict(client, ctx, db_sessio
     assert r.status_code == 409 and r.json()["code"] == "SYNC_APPLY_FAILED"
     row = (await db_session.execute(select(ClientOperation).where(ClientOperation.op_id == uuid.UUID(op2["op_id"])))).scalar_one()
     await db_session.refresh(row)
-    assert row.status == "conflict" and row.resolved_by is None and row.resolution_note == "apply_failed:EQUIPMENT_NOT_AVAILABLE"
+    assert row.status == "conflict" and row.resolved_by is None and row.resolution_note == "apply_failed:DISPATCH_STATUS_WARNING"
     assert await _count(db_session, ExportEvent) == exports and await _count(db_session, BorrowTransaction) == txs
     assert await _count(db_session, AuditLog, AuditLog.action == "sync_conflict_resolved") == 0
     # the reason is refreshed when the cause changes (ward vanished from payload)

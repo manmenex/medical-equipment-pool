@@ -55,7 +55,7 @@ from app.models.client_operation import (
 )
 from app.models.equipment import Equipment, EquipmentStatus
 from app.models.master_data import Ward
-from app.models.transaction import BorrowTransaction, TransactionStatus
+from app.models.transaction import CLOSE_REASON_REDISPATCH, BorrowTransaction, TransactionStatus
 from app.models.user import ROLE_ADMINISTRATOR, Role, User
 from app.schemas.sync import SyncReceiptBody
 from app.schemas.transaction import BorrowRequest
@@ -310,8 +310,10 @@ async def _precondition(db: AsyncSession, row: ClientOperation) -> str | None:
         eq = await db.get(Equipment, eq_id) if eq_id else None
         if eq is None:
             return "EQUIPMENT_NOT_FOUND"
-        if eq.status != EquipmentStatus.AVAILABLE_AT_POOL:
+        if eq.status == EquipmentStatus.DECOMMISSIONED:
             return "EQUIPMENT_NOT_AVAILABLE"
+        if eq.status != EquipmentStatus.AVAILABLE_AT_POOL and not body.get("acknowledge_status_warning"):
+            return "DISPATCH_STATUS_WARNING"
         if ward_id is None or await db.get(Ward, ward_id) is None:
             return "INVALID_INPUT"
         return None
@@ -320,6 +322,8 @@ async def _precondition(db: AsyncSession, row: ClientOperation) -> str | None:
     if tx is None:
         return "TRANSACTION_NOT_FOUND"
     if tx.status != TransactionStatus.OPEN:
+        if tx.close_reason == CLOSE_REASON_REDISPATCH:
+            return "TRANSACTION_CLOSED_BY_REDISPATCH"
         return "TRANSACTION_ALREADY_RETURNED"
     return None
 
@@ -499,6 +503,13 @@ async def apply_now(
                 actor_user_id=resolver_id,
                 client_op=ctx,
                 borrowed_at=business_time,
+                # Roadmap PR31 (D8): only the operator's own acknowledgement
+                # carried by the op counts. "Apply now" never confirms a
+                # status warning on the operator's behalf; a conflicted op
+                # stays conflicted until the equipment is free (receipt) or
+                # is dismissed and re-dispatched online with confirmation.
+                acknowledge_status_warning=body.acknowledge_status_warning,
+                expected_open_transaction_id=body.expected_open_transaction_id,
             )
         else:
             tx = await borrow_service.return_equipment(

@@ -15,14 +15,32 @@ import {
   searchCachedBcm,
 } from "@/offline/localOps";
 import { listRefs, OfflineStoreError } from "@/offline/offlineStore";
-import { apiErrorMessage } from "@/services/api";
+import { apiErrorCode, apiErrorDetails, apiErrorMessage } from "@/services/api";
 import { createBorrow } from "@/services/borrow";
 import { getEquipment, resolveEquipmentByQr } from "@/services/equipment";
 import { listDepartments, listWards } from "@/services/masterData";
 import { useUiStore } from "@/store/uiStore";
 import { resolveWardPhone } from "@/utils/wardPhone";
+import { formatDateTimeInTimezone } from "@/utils/printFormat";
 import { currentShift, SHIFT_LABELS } from "@/utils/shift";
 import type { BcmSuggestion, Department, Equipment, Ward } from "@/types";
+
+// Roadmap PR31 (D8): dispatch is not blocked by equipment status. The backend
+// answers 409 DISPATCH_STATUS_WARNING (with details) for an already-dispatched
+// or defective item; the operator confirms and the request is re-sent with
+// acknowledge_status_warning. Decommissioned equipment is never dispatchable.
+interface StatusWarning {
+  kind: "already_dispatched" | "defective";
+  wardName: string | null;
+  dispatchedAt: string | null;
+  openTransactionId: string | null;
+}
+
+function warningText(w: StatusWarning): string {
+  if (w.kind === "defective") return "เครื่องนี้ถูกแจ้งเสีย";
+  const when = w.dispatchedAt ? formatDateTimeInTimezone(w.dispatchedAt, "Asia/Bangkok") : "-";
+  return `เครื่องนี้ถูกจ่ายไป ${w.wardName ?? "-"} เมื่อ ${when} ยังไม่บันทึกรับคืน`;
+}
 
 export function BorrowPage() {
   const [searchParams] = useSearchParams();
@@ -36,6 +54,7 @@ export function BorrowPage() {
   const [pendingSync, setPendingSync] = useState(false);
   const offline = useOfflineMode();
   const [submitting, setSubmitting] = useState(false);
+  const [warning, setWarning] = useState<StatusWarning | null>(null);
 
   const lastWard = useUiStore((s) => s.lastWard);
   const setLastWard = useUiStore((s) => s.setLastWard);
@@ -120,9 +139,14 @@ export function BorrowPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    await submitDispatch(false);
+  };
+
+  const submitDispatch = async (acknowledge: boolean, warningTxId?: string | null) => {
     if (!equipment || !wardId) return;
     setSubmitting(true);
     setError(null);
+    setWarning(null);
     if (offline) {
       try {
         await enqueueOfflineDispatch({
@@ -148,11 +172,29 @@ export function BorrowPage() {
         ward_id: wardId,
         phone_number: phone || undefined,
         notes: notes || undefined,
+        ...(acknowledge
+          ? {
+              acknowledge_status_warning: true,
+              ...(warningTxId ? { expected_open_transaction_id: warningTxId } : {}),
+            }
+          : {}),
       });
       setLastWard(wardId || null);
       setSuccess(tx.transaction_no);
     } catch (err) {
-      setError(apiErrorMessage(err, "เบิกเครื่องมือไม่สำเร็จ"));
+      if (apiErrorCode(err) === "DISPATCH_STATUS_WARNING") {
+        const d = apiErrorDetails(err) ?? {};
+        setWarning({
+          kind: d.warning === "defective" ? "defective" : "already_dispatched",
+          wardName: typeof d.current_ward_name === "string" ? d.current_ward_name : null,
+          dispatchedAt: typeof d.dispatched_at === "string" ? d.dispatched_at : null,
+          openTransactionId: typeof d.open_transaction_id === "string" ? d.open_transaction_id : null,
+        });
+      } else if (apiErrorCode(err) === "DISPATCH_WARNING_STALE" || apiErrorCode(err) === "EQUIPMENT_STATUS_CHANGED") {
+        setError("สถานะเครื่องเปลี่ยนไปหลังแสดงคำเตือน กรุณากดยืนยันการเบิกอีกครั้งเพื่อตรวจสอบสถานะล่าสุด");
+      } else {
+        setError(apiErrorMessage(err, "เบิกเครื่องมือไม่สำเร็จ"));
+      }
     } finally {
       setSubmitting(false);
     }
@@ -234,9 +276,11 @@ export function BorrowPage() {
         </div>
       </div>
 
-      {equipment.status !== "available_at_pool" ? (
-        <p className="rounded-lg bg-status-repair/10 p-3 text-sm text-status-repair">
-          เครื่องนี้ไม่พร้อมให้เบิก (สถานะปัจจุบัน: {equipment.status})
+      {equipment.status === "decommissioned" || (offline && equipment.status !== "available_at_pool") ? (
+        <p role="alert" className="rounded-lg bg-status-repair/10 p-3 text-sm text-status-repair">
+          {equipment.status === "decommissioned"
+            ? "เครื่องนี้ปลดระวางแล้ว ไม่สามารถเบิกได้"
+            : `เครื่องนี้ไม่พร้อมให้เบิกขณะออฟไลน์ (สถานะปัจจุบัน: ${equipment.status})`}
         </p>
       ) : (
         <>
@@ -300,6 +344,25 @@ export function BorrowPage() {
           </div>
 
           {error && <p className="text-sm text-status-repair">{error}</p>}
+
+          {warning && (
+            <div role="alert" className="rounded-lg border border-status-repair bg-status-repair/10 p-3 text-sm">
+              <p className="font-medium text-status-repair">{warningText(warning)}</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">
+                {warning.kind === "defective"
+                  ? "ยืนยันเพื่อเบิกต่อ ระบบจะบันทึกว่าเบิกขณะเครื่องถูกแจ้งเสีย"
+                  : "ยืนยันเพื่อเบิกซ้ำ ระบบจะปิดรายการเดิมโดยไม่บันทึกการรับคืน"}
+              </p>
+              <button
+                type="button"
+                onClick={() => void submitDispatch(true, warning.openTransactionId)}
+                disabled={submitting}
+                className="mt-2 rounded-lg bg-status-repair px-3 py-1.5 font-medium text-white disabled:opacity-60"
+              >
+                ยืนยันเบิกต่อ
+              </button>
+            </div>
+          )}
 
           <button
             type="submit"

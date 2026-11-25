@@ -127,6 +127,11 @@ export interface TransactionOut {
   legacy_condition_on_return: string | null;
   status: "open" | "closed";
   notes: string | null;
+  // Roadmap PR31 (D8): read-only. close_reason is set only on a transaction
+  // closed by re-dispatch (no receipt recorded); the flag marks a dispatch
+  // made while the equipment was marked defective.
+  close_reason?: string | null;
+  dispatched_while_defective?: boolean;
 }
 
 export interface Page<T> {

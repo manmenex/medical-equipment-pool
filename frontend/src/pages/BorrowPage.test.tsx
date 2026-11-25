@@ -227,6 +227,62 @@ describe("BorrowPage equipment-loading states (Roadmap PR11 review: loading + er
   });
 });
 
+describe("BorrowPage non-blocking dispatch (Roadmap PR31, D8)", () => {
+  const warningError = (details: Record<string, unknown>) => ({
+    isAxiosError: true,
+    response: { status: 409, data: { detail: "warn", code: "DISPATCH_STATUS_WARNING", status: 409, details } },
+  });
+
+  async function submitWithWard() {
+    const user = userEvent.setup();
+    renderBorrowPage();
+    await waitFor(() => expect(screen.getByText("Infusion Pump")).toBeInTheDocument());
+    await user.selectOptions(screen.getByLabelText(/หอผู้ป่วยที่รับเครื่อง/), "ward-1");
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก" }));
+    return user;
+  }
+
+  it("shows the already-dispatched warning and resubmits with the acknowledgement on confirm", async () => {
+    getEquipment.mockResolvedValue({ ...equipment, status: "issued_to_ward" });
+    createBorrow.mockRejectedValueOnce(
+      warningError({ warning: "already_dispatched", current_ward_name: "Ward Z", dispatched_at: "2026-11-25T03:00:00Z", open_transaction_id: "tx-old" })
+    );
+    const user = await submitWithWard();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("เครื่องนี้ถูกจ่ายไป Ward Z เมื่อ 2026-11-25 10:00 ยังไม่บันทึกรับคืน");
+    expect(createBorrow.mock.calls[0][0]).not.toHaveProperty("acknowledge_status_warning");
+
+    await user.click(screen.getByRole("button", { name: "ยืนยันเบิกต่อ" }));
+    await waitFor(() => expect(createBorrow).toHaveBeenCalledTimes(2));
+    expect(createBorrow.mock.calls[1][0]).toMatchObject({
+      equipment_id: "eq-1",
+      acknowledge_status_warning: true,
+      expected_open_transaction_id: "tx-old",
+    });
+    expect(await screen.findByText("เบิกสำเร็จ")).toBeInTheDocument();
+  });
+
+  it("shows the defective warning and resubmits with the acknowledgement on confirm", async () => {
+    getEquipment.mockResolvedValue({ ...equipment, status: "unavailable_defective" });
+    createBorrow.mockRejectedValueOnce(warningError({ warning: "defective" }));
+    const user = await submitWithWard();
+
+    expect(await screen.findByText("เครื่องนี้ถูกแจ้งเสีย")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "ยืนยันเบิกต่อ" }));
+    await waitFor(() => expect(createBorrow).toHaveBeenCalledTimes(2));
+    expect(createBorrow.mock.calls[1][0]).toMatchObject({ acknowledge_status_warning: true });
+  });
+
+  it("shows an error and no form for decommissioned equipment", async () => {
+    getEquipment.mockResolvedValue({ ...equipment, status: "decommissioned" });
+    renderBorrowPage();
+
+    expect(await screen.findByText("เครื่องนี้ปลดระวางแล้ว ไม่สามารถเบิกได้")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "ยืนยันการเบิก" })).not.toBeInTheDocument();
+  });
+});
+
 // Roadmap PR11 review checklist item "permission-based disabled or hidden
 // behavior": not applicable to BorrowPage itself. BorrowPage performs no
 // per-role conditional rendering of its own -- access to the /borrow route

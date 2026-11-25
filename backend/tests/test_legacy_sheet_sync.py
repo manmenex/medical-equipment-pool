@@ -235,7 +235,7 @@ async def test_dispatch_of_already_issued_item_lands_in_review(world):
     reader = FakeReader(dispatch=[drow("0a1b2c3d", 4), drow("0a1b2c3e", 3, ward="Ward 5A")])
     rep = await runner.run_once(world, reader, make_cfg())
     assert rep.counts["applied"] == 1 and rep.counts["conflict"] == 1
-    assert rep.review == [{"tab": "dispatch", "row_id": "0a1b2c3e", "result": "conflict", "code": "EQUIPMENT_NOT_AVAILABLE"}]
+    assert rep.review == [{"tab": "dispatch", "row_id": "0a1b2c3e", "result": "conflict", "code": "DISPATCH_STATUS_WARNING"}]
     async with world() as db:
         row = await db.get(ClientOperation, runner.op_id_for("dispatch", "0a1b2c3e"))
         assert row.status == "conflict"  # existing review list reads this

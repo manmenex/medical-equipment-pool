@@ -1,5 +1,6 @@
 import uuid
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from fastapi import Request
 from sqlalchemy.exc import IntegrityError
@@ -8,6 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit import AUDIT_ACTION_WARD_CORRECTION, AUDIT_ENTITY_BORROW_TRANSACTION, record_audit_event
 from app.core.db_errors import IntegrityViolationKind, classify_integrity_error
 from app.core.exceptions import (
+    DispatchStatusWarningError,
+    DispatchWarningStaleError,
+    EquipmentStatusChangedError,
+    TransactionClosedByRedispatchError,
     EquipmentNotAvailableError,
     EquipmentNotFoundError,
     InvalidInputError,
@@ -26,7 +31,14 @@ from app.crud import transaction as transaction_crud
 from app.models.equipment import EquipmentStatus
 from app.models.export import EVENT_TYPE_DISPATCH, EVENT_TYPE_RECEIPT
 from app.models.master_data import Ward
-from app.models.transaction import BorrowTransaction, DispatchType, ReceiptOutcome, RoutineRound, TransactionStatus
+from app.models.transaction import (
+    CLOSE_REASON_REDISPATCH,
+    BorrowTransaction,
+    DispatchType,
+    ReceiptOutcome,
+    RoutineRound,
+    TransactionStatus,
+)
 from app.services import export_service
 from app.utils.parsing import parse_uuid
 
@@ -44,6 +56,72 @@ RECEIPT_OUTCOME_TO_STATUS = {
     ReceiptOutcome.USABLE: EquipmentStatus.AVAILABLE_AT_POOL,
     ReceiptOutcome.DEFECTIVE: EquipmentStatus.UNAVAILABLE_DEFECTIVE,
 }
+
+
+# Roadmap PR31 (Owner Governance 2026-11-25 D8): warning kinds returned by
+# assess_dispatch() and surfaced in DispatchStatusWarningError.details.
+WARNING_ALREADY_DISPATCHED = "already_dispatched"
+WARNING_DEFECTIVE = "defective"
+WARNING_DECOMMISSIONED = "decommissioned"
+
+
+@dataclass
+class DispatchAssessment:
+    """What dispatching this equipment right now would mean (D8). ``warning``
+    is None for ``available_at_pool`` (plain dispatch), a warning kind that
+    needs operator confirmation, or WARNING_DECOMMISSIONED (blocked, never
+    confirmable)."""
+
+    equipment: "object"
+    warning: str | None
+    open_transaction: BorrowTransaction | None = None
+    ward_name: str | None = None
+
+    @property
+    def blocked(self) -> bool:
+        return self.warning == WARNING_DECOMMISSIONED
+
+    @property
+    def requires_acknowledgement(self) -> bool:
+        return self.warning in (WARNING_ALREADY_DISPATCHED, WARNING_DEFECTIVE)
+
+    def details(self) -> dict:
+        tx = self.open_transaction
+        return {
+            "warning": self.warning,
+            "equipment_status": self.equipment.status.value,
+            "current_ward_id": str(tx.ward_id) if tx is not None and tx.ward_id else None,
+            "current_ward_name": self.ward_name,
+            "dispatched_at": tx.borrowed_at.isoformat() if tx is not None else None,
+            "open_transaction_id": str(tx.id) if tx is not None else None,
+            "open_transaction_no": tx.transaction_no if tx is not None else None,
+        }
+
+    def message(self) -> str:
+        if self.warning == WARNING_ALREADY_DISPATCHED:
+            return "Equipment is already dispatched and its receipt has not been recorded"
+        if self.warning == WARNING_DEFECTIVE:
+            return "Equipment is marked defective"
+        return f"Equipment is currently in status '{self.equipment.status.value}'"
+
+
+async def assess_dispatch(db: AsyncSession, equipment) -> DispatchAssessment:
+    """Shared by borrow() and the GET /equipment/{id}/dispatch-check
+    pre-check so the scan-time warning and the dispatch guard cannot drift.
+    Exact-equality dispatch: every status is named, never a negative check."""
+    status = equipment.status
+    if status == EquipmentStatus.AVAILABLE_AT_POOL:
+        return DispatchAssessment(equipment, None)
+    if status == EquipmentStatus.UNAVAILABLE_DEFECTIVE:
+        return DispatchAssessment(equipment, WARNING_DEFECTIVE)
+    if status == EquipmentStatus.ISSUED_TO_WARD:
+        open_tx = await transaction_crud.get_open_transaction_for_equipment(db, equipment.id)
+        ward_name = None
+        if open_tx is not None and open_tx.ward_id is not None:
+            ward = await db.get(Ward, open_tx.ward_id)
+            ward_name = ward.name if ward is not None else None
+        return DispatchAssessment(equipment, WARNING_ALREADY_DISPATCHED, open_tx, ward_name)
+    return DispatchAssessment(equipment, WARNING_DECOMMISSIONED)
 
 
 async def borrow(
@@ -64,6 +142,8 @@ async def borrow(
     actor_user_id: uuid.UUID | None = None,
     client_op: client_op_crud.ClientOpContext | None = None,
     borrowed_at: datetime | None = None,
+    acknowledge_status_warning: bool = False,
+    expected_open_transaction_id: str | None = None,
 ) -> BorrowTransaction:
     # Roadmap PR25E slice B2b: ``borrowed_at`` is business time and is passed
     # only by the sync layer after the section 11 guards; online callers omit
@@ -87,12 +167,34 @@ async def borrow(
     if equipment is None:
         raise EquipmentNotFoundError("Equipment not found")
 
-    # Roadmap PR6: dispatch eligibility is exactly this equality, never a
-    # negative check like `!= ISSUED_TO_WARD` -- a broad negative check
-    # would accidentally allow UNAVAILABLE_DEFECTIVE or DECOMMISSIONED
-    # equipment to dispatch.
-    if equipment.status != EquipmentStatus.AVAILABLE_AT_POOL:
-        raise EquipmentNotAvailableError(f"Equipment is currently in status '{equipment.status.value}'")
+    # Roadmap PR31 (D8) replaces the PR6 `status == AVAILABLE_AT_POOL` gate:
+    # dispatch is no longer blocked by equipment status. Every status is
+    # named explicitly (assess_dispatch); DECOMMISSIONED is still rejected,
+    # and an already-dispatched or defective item needs the operator's
+    # explicit acknowledgement (409 DISPATCH_STATUS_WARNING + details).
+    assessment = await assess_dispatch(db, equipment)
+    if assessment.blocked:
+        raise EquipmentNotAvailableError(assessment.message())
+    if assessment.requires_acknowledgement and not acknowledge_status_warning:
+        raise DispatchStatusWarningError(assessment.message(), details=assessment.details())
+    redispatched_tx = assessment.open_transaction
+    if expected_open_transaction_id is not None and (
+        redispatched_tx is None or str(redispatched_tx.id) != expected_open_transaction_id
+    ):
+        raise DispatchWarningStaleError(
+            "The equipment's dispatch state changed since the warning was shown. Refresh and confirm again.",
+            details=assessment.details(),
+        )
+    if redispatched_tx is not None and borrowed_at is not None:
+        # The new dispatch never predates the one it closes (offline business
+        # time can be older than the transaction recorded meanwhile).
+        prev = redispatched_tx.borrowed_at
+        prev = prev.replace(tzinfo=timezone.utc) if prev.tzinfo is None else prev
+        at = borrowed_at.replace(tzinfo=timezone.utc) if borrowed_at.tzinfo is None else borrowed_at
+        if at < prev:
+            borrowed_at = prev
+    dispatched_while_defective = assessment.warning == WARNING_DEFECTIVE
+    previous_status = equipment.status
 
     # Codex PR20 review round 1, MAJOR 3: ward_id is required (Roadmap
     # PR7b), so an invalid reference here is a genuine, common client input
@@ -118,6 +220,19 @@ async def borrow(
     # longer accepted here at all -- quantity and borrower_name rely on
     # their column defaults (1 and NULL respectively); due_at is never set
     # by a new dispatch (ADR-005 decision 3).
+    if redispatched_tx is not None:
+        # D8 (a): close the previous open transaction in the SAME database
+        # transaction as the new dispatch below. The conditional UPDATE
+        # (WHERE status = 'open', decided by rowcount) is the concurrency
+        # guard: of two concurrent re-dispatches (or a re-dispatch racing a
+        # receipt) exactly one closes it; the loser writes nothing.
+        closed = await transaction_crud.close_for_redispatch(db, redispatched_tx)
+        if not closed:
+            await db.rollback()
+            raise EquipmentNotAvailableError(
+                "Equipment was just received or dispatched by someone else. Refresh to see the current state."
+            )
+
     try:
         tx = await transaction_crud.create(
             db,
@@ -139,6 +254,7 @@ async def borrow(
                 "pickup_location_id": parse_uuid(pickup_location_id, "pickup_location_id"),
                 "dropoff_location_id": parse_uuid(dropoff_location_id, "dropoff_location_id"),
                 "notes": notes,
+                "dispatched_while_defective": dispatched_while_defective,
             },
         )
     except IntegrityError as exc:
@@ -156,10 +272,40 @@ async def borrow(
             raise EquipmentNotAvailableError("Equipment was just borrowed by someone else") from exc
         raise InvalidInputError("This dispatch references data that is no longer valid.") from exc
 
-    await equipment_crud.change_status_for_dispatch_receipt(
-        db, equipment, new_status=EquipmentStatus.ISSUED_TO_WARD, changed_by_user_id=actor_user_id, reason="Dispatched"
-    )
+    try:
+        await equipment_crud.change_status_for_dispatch_receipt(
+            db,
+            equipment,
+            new_status=EquipmentStatus.ISSUED_TO_WARD,
+            changed_by_user_id=actor_user_id,
+            reason="Re-dispatched" if redispatched_tx is not None else "Dispatched",
+        )
+    except EquipmentStatusChangedError:
+        # Includes the close/insert above: all or nothing.
+        await db.rollback()
+        raise
     audit_after = {"transaction_no": tx.transaction_no, "equipment_id": str(equipment.id)}
+    if dispatched_while_defective:
+        audit_after["dispatched_while_defective"] = True
+        audit_after["previous_equipment_status"] = previous_status.value
+    if redispatched_tx is not None:
+        audit_after["redispatch_closed_transaction_id"] = str(redispatched_tx.id)
+        await audit_crud.create(
+            db,
+            user_id=actor_user_id,
+            action="redispatch_close",
+            entity_type="borrow_transaction",
+            entity_id=redispatched_tx.id,
+            before_data={"status": TransactionStatus.OPEN.value},
+            after_data={
+                "status": TransactionStatus.CLOSED.value,
+                "close_reason": CLOSE_REASON_REDISPATCH,
+                "closed_by_transaction_id": str(tx.id),
+                "closed_by_transaction_no": tx.transaction_no,
+            },
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
     if client_op is not None:
         audit_after.update(client_op.audit_fields())
     await audit_crud.create(
@@ -222,6 +368,10 @@ async def return_equipment(
     # genuine duplicate/repeat submission, not a timing race with another
     # in-flight request.
     if tx.status != TransactionStatus.OPEN:
+        if tx.close_reason == CLOSE_REASON_REDISPATCH:
+            raise TransactionClosedByRedispatchError(
+                "This transaction was closed because the equipment was dispatched again; no receipt applies to it"
+            )
         raise TransactionAlreadyReturnedError("This transaction has already been returned")
 
     # Roadmap PR8B: receipt_outcome is a `ReceiptOutcome`, already validated
