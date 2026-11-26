@@ -77,7 +77,14 @@ export async function logoutViaUi(page: Page): Promise<void> {
 
 /** Client-side navigation (works offline: the app shell is already loaded). */
 export async function goTo(page: Page, label: string): Promise<void> {
-  await page.locator("aside").getByRole("link", { name: label, exact: false }).first().click();
+  const direct = page.locator("aside").getByRole("link", { name: label, exact: false });
+  if ((await direct.count()) > 0) {
+    await direct.first().click();
+    return;
+  }
+  // Data-management pages live in the Settings hub, not the sidebar.
+  await page.locator("aside").getByRole("link", { name: "ตั้งค่า", exact: false }).first().click();
+  await page.locator("main").getByRole("link", { name: label, exact: false }).first().click();
 }
 
 export async function goOffline(context: BrowserContext, page: Page): Promise<void> {
