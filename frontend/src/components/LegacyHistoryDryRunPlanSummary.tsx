@@ -31,8 +31,8 @@ export function LegacyHistoryDryRunPlanSummary({
 
   const cards = [
     { label: "ทั้งหมด", value: summary.total_rows, accentClassName: "text-[var(--text-primary,inherit)]" },
-    { label: "ส่งเครื่อง (Issue)", value: summary.issue_events, accentClassName: "text-status-borrowed" },
-    { label: "รับเครื่อง (Receive)", value: summary.receive_events, accentClassName: "text-status-available" },
+    { label: "ส่งเครื่อง", value: summary.issue_events, accentClassName: "text-status-borrowed" },
+    { label: "รับเครื่อง", value: summary.receive_events, accentClassName: "text-status-available" },
     { label: "คำเตือน", value: summary.warnings, accentClassName: "text-status-pm" },
     { label: "รายการที่ปิดกั้น", value: summary.blocking_conflicts, accentClassName: "text-status-repair" },
   ];

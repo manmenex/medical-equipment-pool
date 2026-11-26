@@ -103,7 +103,7 @@ test("b: two devices dispatch the same equipment offline -> one applied, one con
 
   // Device 2 arrives second: a conflict is recorded, never a second dispatch.
   await goOnline(ctx2);
-  await expect(dev2.getByText("รอเจ้าหน้าที่ตรวจสอบ 1 รายการ")).toBeVisible({ timeout: 60_000 });
+  await expect(dev2.getByText("รอตรวจสอบ 1 รายการ")).toBeVisible({ timeout: 60_000 });
   expect(await transactionsFor(api, adminToken, code)).toHaveLength(1);
 
   // Reviewer resolves it on the review page.
@@ -140,7 +140,7 @@ test("c: offline dispatch then offline receipt -> sync order respected, both app
 
   await goOnline(context);
   await expect(page.getByText(PENDING)).toHaveCount(0, { timeout: 60_000 });
-  await expect(page.getByText(/รอเจ้าหน้าที่ตรวจสอบ/)).toHaveCount(0);
+  await expect(page.getByText(/รอตรวจสอบ/)).toHaveCount(0);
 
   expect(await equipmentStatus(api, adminToken, code)).toBe("available_at_pool");
   const txs = await transactionsFor(api, adminToken, code);
@@ -169,7 +169,7 @@ test("d: dispatch older than 7 days -> OP_TOO_OLD in review -> apply now", async
   await backdateOutbox(page, rec.op_id, 8);
 
   await goOnline(context);
-  await expect(page.getByText("รอเจ้าหน้าที่ตรวจสอบ 1 รายการ")).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByText("รอตรวจสอบ 1 รายการ")).toBeVisible({ timeout: 60_000 });
   expect(await equipmentStatus(api, adminToken, code)).toBe("available_at_pool");
 
   const ctx2 = await browser.newContext();

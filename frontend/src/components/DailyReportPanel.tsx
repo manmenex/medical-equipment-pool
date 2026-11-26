@@ -55,7 +55,7 @@ export function DailyReportPanel() {
         รายงานประจำวัน
       </h2>
       <p className="mb-3 text-xs text-[var(--text-muted,inherit)]">
-        รอบเวรกลางคืนที่ผ่านมา (เริ่ม 20:00 ของวันก่อนหน้า) รวมกับรอบเวร Day 08:00-20:00 ของวันที่เลือก
+        กะกลางคืนก่อนหน้า (20:00) + กะกลางวัน 08:00-20:00
       </p>
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 text-xs">
@@ -68,7 +68,7 @@ export function DailyReportPanel() {
           />
         </label>
         <label className="flex flex-col gap-1 text-xs">
-          ช่วงเวลายืดหยุ่นรอบเวร (นาที)
+          เผื่อเวลา (นาที)
           <input
             type="number"
             min={0}
@@ -101,12 +101,12 @@ export function DailyReportPanel() {
           พิมพ์ฟอร์มรับ
         </button>
         <button className={buttonClass} disabled={!canRun} onClick={() => run("summary", summary)}>
-          สรุปรวมยอด (PDF กะกลางวัน + Excel)
+          สรุปรวมยอด
         </button>
       </div>
       {!graceValid && (
         <p role="alert" className="mt-2 text-xs text-red-600">
-          ช่วงเวลายืดหยุ่นต้องเป็นจำนวนเต็ม 0-{MAX_GRACE_MINUTES} นาที (0 = ตัดตามนาฬิกาเคร่งครัด)
+          เผื่อเวลาต้องเป็นจำนวนเต็ม 0-{MAX_GRACE_MINUTES} นาที
         </p>
       )}
       {error && (

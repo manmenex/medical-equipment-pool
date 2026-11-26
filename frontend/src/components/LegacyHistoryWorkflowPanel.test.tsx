@@ -180,7 +180,7 @@ describe("LegacyHistoryWorkflowPanel", () => {
     await user.click(await screen.findByRole("button", { name: "ทดลองนำเข้า" }));
     await waitFor(() => expect(dryRunLegacyHistorySession).toHaveBeenCalledWith(SESSION_ID));
 
-    expect(await screen.findByText("ส่งเครื่อง (Issue)")).toBeInTheDocument();
+    expect((await screen.findAllByText("ส่งเครื่อง")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("ส่งเครื่อง").length).toBeGreaterThan(0); // row event-type badge (desktop + mobile)
 
     await user.click(screen.getByRole("button", { name: "ยืนยันแผนการนำเข้า" }));

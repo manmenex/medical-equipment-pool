@@ -112,7 +112,7 @@ export function SyncReviewPage() {
         await refresh();
       } else if (code === "SYNC_APPLY_FAILED") {
         setMessageKind("warning");
-        setMessage("ไม่สามารถบันทึกรายการได้ เงื่อนไขของอุปกรณ์เปลี่ยนไปแล้ว รายการยังรอการตรวจสอบ");
+        setMessage("บันทึกไม่ได้ สถานะเครื่องเปลี่ยนไปแล้ว รายการยังรอตรวจสอบ");
         close();
         await refresh();
       } else {
@@ -189,7 +189,7 @@ export function SyncReviewPage() {
                 <dd>{item.operator?.full_name ?? "-"}</dd>
                 <dt>เวลาที่เกิดเหตุการณ์</dt>
                 <dd>{fmt(item.occurred_at)}</dd>
-                <dt>อุปกรณ์ (device)</dt>
+                <dt>อุปกรณ์</dt>
                 <dd>{item.device_id ?? "-"}</dd>
               </dl>
               <div className="mt-3 flex gap-2">
@@ -232,8 +232,7 @@ export function SyncReviewPage() {
           <div className="surface w-full max-w-md space-y-3 rounded-xl border p-4 text-sm">
             <h2 className="font-semibold">ปิดรายการจาก Sheet Sync ทั้งหมด ({sheetCount.data ?? 0})</h2>
             <p>
-              ระบบจะปิดรายการที่ค้างจาก Sheet Sync ทั้งหมดโดยไม่บันทึกข้อมูลใด ๆ (ไม่มีการส่งหรือรับเครื่องเกิดขึ้น)
-              และบันทึกการปิดแต่ละรายการไว้ในประวัติการใช้งาน
+              ปิดรายการค้างจาก Sheet Sync ทั้งหมดโดยไม่บันทึกเบิก/รับคืน
             </p>
             {error && (
               <p role="alert" className="text-status-repair">

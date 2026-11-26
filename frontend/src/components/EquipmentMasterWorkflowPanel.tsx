@@ -351,7 +351,7 @@ export function EquipmentMasterWorkflowPanel({ sessionId }: { sessionId: string 
         </div>
         {findingsBlockProgression && DRY_RUN_ADMISSIBLE_STATUSES.has(session.status) && (
           <p className="mt-2 text-xs text-status-repair">
-            ต้องโหลดรายการที่ต้องตรวจสอบให้สำเร็จก่อนจึงจะทดลองนำเข้าต่อได้ (ดูด้านล่าง)
+            โหลดรายการที่ต้องตรวจสอบให้สำเร็จก่อน (ดูด้านล่าง)
           </p>
         )}
         {POLLING_STATUSES.has(session.status) && (
@@ -413,7 +413,7 @@ export function EquipmentMasterWorkflowPanel({ sessionId }: { sessionId: string 
           </div>
           {(session.warning_rows ?? 0) > 0 && (
             <p className="mt-2 text-xs text-[var(--text-muted)]">
-              คำเตือนไม่ปิดกั้นการดำเนินการต่อ — สามารถทดลองนำเข้าโดยไม่บันทึกต่อได้แม้มีคำเตือน
+              คำเตือนไม่ขวางการทดลองนำเข้า
             </p>
           )}
         </div>
@@ -476,7 +476,7 @@ export function EquipmentMasterWorkflowPanel({ sessionId }: { sessionId: string 
         <div role="alert" className="surface rounded-xl border border-status-repair/40 bg-status-repair/5 p-4">
           <p className="text-sm font-medium text-status-repair">แผนการนำเข้ามีการเปลี่ยนแปลงระหว่างโหลดรายละเอียด</p>
           <p className="mt-1 text-sm text-[var(--text-muted)]">
-            ระบบจะไม่รวมข้อมูลจากคนละแผน กรุณาโหลดแผนปัจจุบันใหม่ก่อนตรวจสอบและยืนยัน
+            กรุณาโหลดแผนปัจจุบันใหม่ก่อนยืนยัน
           </p>
           <button
             type="button"

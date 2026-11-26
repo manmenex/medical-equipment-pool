@@ -47,7 +47,7 @@ export function EquipmentVerifyChecklistPage() {
         <div>
           <h1 className="text-lg font-semibold">รายการตรวจสอบเครื่องมือ</h1>
           <p className="text-sm text-[var(--text-muted)]">
-            รายการเครื่องมือและสถานะปัจจุบันในระบบ ตามตัวกรองที่เลือก
+            เครื่องมือและสถานะปัจจุบัน
           </p>
         </div>
         {/* Roadmap PR18C: opens the dedicated print view in a new tab,

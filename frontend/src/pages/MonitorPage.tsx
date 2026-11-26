@@ -152,6 +152,7 @@ export function MonitorPage() {
   const [wardId, setWardId] = useState<string | null>(null);
   const [wardText, setWardText] = useState("");
   const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("");
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const q = useDebounce(search.trim(), 300);
 
@@ -198,9 +199,17 @@ export function MonitorPage() {
   };
 
   const updatedAt = active.dataUpdatedAt;
-  const loadedItems = useMemo(
+  const allItems = useMemo(
     () => active.data?.pages.flatMap((p) => p.items) ?? [],
     [active.data],
+  );
+  const categoryOptions = useMemo(
+    () => Array.from(new Set(allItems.map((i) => i.equipment.category).filter((c): c is string => !!c))).sort(),
+    [allItems],
+  );
+  const loadedItems = useMemo(
+    () => (category ? allItems.filter((i) => i.equipment.category === category) : allItems),
+    [allItems, category],
   );
   const groups = useMemo(() => groupEvents(loadedItems), [loadedItems]);
   const partial = !!active.hasNextPage;
@@ -310,6 +319,19 @@ export function MonitorPage() {
               onChange={(e) => setSearch(e.target.value)}
               className="surface rounded-lg border px-3 py-2 text-sm"
             />
+            <select
+              aria-label="ชนิดเครื่อง"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="surface rounded-lg border px-3 py-2 text-sm"
+            >
+              <option value="">ทุกชนิด</option>
+              {categoryOptions.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
           </div>
 
           <p

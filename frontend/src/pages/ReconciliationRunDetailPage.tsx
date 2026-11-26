@@ -291,7 +291,7 @@ export function ReconciliationRunDetailPage() {
               ลงนามยืนยันแล้ว
             </span>
             <p className="text-[var(--text-muted)]">
-              ยืนยันผลการตรวจสอบของรอบนี้เสร็จสมบูรณ์ ไม่ได้หมายความว่าข้อมูลเดิมทั้งหมดถูกต้องสมบูรณ์แบบ
+              ยืนยันผลของรอบนี้ ไม่ได้รับรองว่าข้อมูลเดิมถูกต้องทั้งหมด
             </p>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <div>

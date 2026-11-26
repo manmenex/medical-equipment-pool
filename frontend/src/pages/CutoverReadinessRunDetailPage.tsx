@@ -172,7 +172,7 @@ export function CutoverReadinessRunDetailPage() {
           <div className="font-medium">{formatDateTimeInTimezone(run.created_at, "Asia/Bangkok")}</div>
         </div>
         <div>
-          <div className="text-xs text-[var(--text-muted)]">รหัสรุ่นระบบ (Application Baseline SHA)</div>
+          <div className="text-xs text-[var(--text-muted)]">รหัสรุ่นระบบ</div>
           <div className="break-all font-mono font-medium">{run.application_baseline_sha}</div>
         </div>
         <div>
@@ -221,7 +221,7 @@ export function CutoverReadinessRunDetailPage() {
       )}
       {run.status !== "completed" && (
         <section className="surface rounded-xl border p-4 text-sm text-[var(--text-muted)]">
-          รอบนี้ยังไม่บันทึกหลักฐานครบถ้วน จึงยังไม่สามารถตรวจสอบ Gate A-F หรือบันทึกผล GO/NO-GO ได้
+          หลักฐานยังไม่ครบ ตรวจสอบ Gate และบันทึกผลไม่ได้
         </section>
       )}
 
@@ -260,7 +260,7 @@ export function CutoverReadinessRunDetailPage() {
                       <p>{item.message}</p>
                       {item.manual_attestation_required && (
                         <p className="mt-1 text-xs text-[var(--text-muted)]">
-                          รายการนี้ระบบไม่สามารถตรวจสอบอัตโนมัติได้ ต้องตรวจสอบโดยผู้รับผิดชอบ
+                          ต้องตรวจสอบด้วยตนเอง
                         </p>
                       )}
                     </li>
@@ -321,7 +321,7 @@ export function CutoverReadinessRunDetailPage() {
                   <p className="rounded-lg border border-[var(--border)] px-3 py-2 text-xs">{existingDecision.no_go_reason}</p>
                 </div>
               )}
-              <p className="text-xs text-[var(--text-muted)]">ผลการอนุมัตินี้เป็นข้อมูลถาวร ไม่สามารถแก้ไขหรือบันทึกซ้ำได้</p>
+              <p className="text-xs text-[var(--text-muted)]">ผลนี้แก้ไขไม่ได้</p>
             </div>
           )}
           {decisionQuery.isSuccess && !existingDecision && (
@@ -359,7 +359,7 @@ export function CutoverReadinessRunDetailPage() {
         <summary className="cursor-pointer text-sm font-semibold">รายละเอียดหลักฐานเชิงเทคนิค</summary>
         <dl className="mt-3 flex flex-col gap-1.5">
           {[
-            ["รหัสรุ่นฐานข้อมูล (Database Migration Head)", run.database_migration_head],
+            ["รหัสรุ่นฐานข้อมูล", run.database_migration_head],
             ["รหัสแหล่งข้อมูลทะเบียนเครื่องมือ", run.equipment_master_import_source_id],
             ["รหัสสิทธิ์อนุมัติข้อมูลเดิม", run.legacy_migration_authority_id],
             ["รหัสขอบเขตข้อมูลเดิม", run.legacy_coverage_id],

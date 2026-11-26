@@ -113,7 +113,7 @@ function BaselineDialog({ summary, onClose }: { summary: StandbySummary; onClose
         ตั้งค่าเริ่มต้น สายชาร์จ / Clamp
       </h3>
       <p className="mb-3 text-xs text-[var(--text-muted)]">
-        กรอกจำนวนที่คลังจริง ณ ตอนนี้ ระบบจะบวก/ลบจากรายการเช็กสายชาร์จและ Clamp ตอนส่ง-รับ นับจากเวลาที่บันทึก
+        กรอกจำนวนที่คลังตอนนี้
         {base.set_at ? ` (ตั้งไว้ล่าสุด ${new Date(base.set_at).toLocaleString("th-TH")})` : ""}
       </p>
       <div className="flex flex-wrap items-end gap-3">
@@ -205,7 +205,7 @@ export function StandbySummaryPage() {
     return (
       <section className="p-4">
         <h1 className="text-lg font-semibold">สรุป Stand By</h1>
-        <p className="mt-2 text-sm text-[var(--text-muted)]">หน้านี้สำหรับเจ้าหน้าที่ศูนย์เครื่องมือและผู้ดูแลระบบ</p>
+        <p className="mt-2 text-sm text-[var(--text-muted)]">สำหรับเจ้าหน้าที่ศูนย์เครื่องมือเท่านั้น</p>
       </section>
     );
   }
@@ -282,7 +282,7 @@ export function StandbySummaryPage() {
               Infusion pump standby
             </h2>
             <p className="mb-3 text-xs text-[var(--text-muted)]">
-              จำนวนเครื่องที่ส่งไปแล้วและยังไม่มี HN ณ เวลาสรุป แยกตามหอผู้ป่วย (ชื่อย่อตามรายงานประจำวัน)
+              เครื่องที่ส่งแล้วและยังไม่มี HN แยกตาม Ward
             </p>
             <table className="w-full text-left">
               <thead>
@@ -341,7 +341,7 @@ export function StandbySummaryPage() {
                 ตั้งค่าเริ่มต้น สายชาร์จ/Clamp
               </button>
               {data.infusion.baseline.set_at === null && (
-                <span className="text-xs text-amber-500">ยังไม่ได้ตั้งค่าเริ่มต้น ระบบจึงยังคำนวณสายชาร์จ/Clamp ไม่ได้</span>
+                <span className="text-xs text-amber-500">ยังไม่ได้ตั้งค่าเริ่มต้น</span>
               )}
             </div>
             {showBaseline && <BaselineDialog summary={data} onClose={() => setShowBaseline(false)} />}
@@ -373,7 +373,7 @@ export function StandbySummaryPage() {
 
       <section className="surface rounded-xl border p-4" aria-labelledby="text-title">
         <h2 id="text-title" className="mb-2 text-sm font-medium">
-          ข้อความสำหรับส่ง LINE
+          ข้อความ LINE
         </h2>
         <pre
           data-testid="standby-text"
@@ -401,13 +401,10 @@ export function StandbySummaryPage() {
           {copied === "ok" && <span role="status" className="text-xs">คัดลอกแล้ว</span>}
           {copied === "fail" && (
             <span role="alert" className="text-xs text-red-600">
-              คัดลอกไม่สำเร็จ กรุณาเลือกข้อความด้านบนแล้วคัดลอกเอง
+              คัดลอกไม่สำเร็จ กรุณาคัดลอกเอง
             </span>
           )}
         </div>
-        <p className="mt-2 text-xs text-[var(--text-muted)]">
-          Excel คือรายงานประจำวันของวันที่เลือก คอลัมน์ Stand By ใช้ค่าของรอบสรุป Day (20:00)
-        </p>
         {downloadError && (
           <p role="alert" className="mt-2 text-xs text-red-600">
             {downloadError}

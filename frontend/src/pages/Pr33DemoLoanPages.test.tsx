@@ -41,7 +41,7 @@ vi.mock("@/services/borrow", () => ({
 }));
 vi.mock("@/services/masterData", () => ({
   listWards: () => Promise.resolve([]),
-  listCategories: () => Promise.resolve([]),
+  listCategories: () => Promise.resolve([{ id: "cat-1", name: "Infusion Pump" }]),
   listDepartments: () => Promise.resolve([]),
   listLocations: () => Promise.resolve([]),
   updateWardPhone: vi.fn(),
@@ -137,6 +137,14 @@ describe("equipment list", () => {
     expect(screen.getAllByTestId("source-badge")).toHaveLength(1);
     expect(screen.getByText(/SN SN-100/)).toBeInTheDocument();
     expect(screen.getByText("AST-1")).toBeInTheDocument();
+  });
+
+  it("filters by equipment category (ชนิดเครื่อง) separately from source", async () => {
+    wrap(<EquipmentListPage />);
+    await waitFor(() => expect(searchEquipment).toHaveBeenCalled());
+    await screen.findByRole("option", { name: "Infusion Pump" });
+    await userEvent.selectOptions(screen.getByLabelText("ชนิดเครื่อง"), "cat-1");
+    await waitFor(() => expect(searchEquipment).toHaveBeenLastCalledWith(expect.objectContaining({ category_id: "cat-1" })));
   });
 
   it("filters by source and can include returned devices", async () => {

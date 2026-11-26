@@ -122,7 +122,7 @@ export async function dispatchByBcm(page: Page, code: string, ward: string = WAR
 }
 
 export async function expectSavedLocally(page: Page): Promise<void> {
-  await expect(page.getByText(/บันทึกในเครื่องแล้ว \d+ เครื่อง — ยังไม่ได้ส่งเข้าระบบ/)).toBeVisible();
+  await expect(page.getByText(/บันทึกในเครื่องแล้ว \d+ เครื่อง — รอส่งเมื่อออนไลน์/)).toBeVisible();
 }
 
 /** Offline receipt of an open transaction picked from the local list. */

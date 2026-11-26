@@ -30,7 +30,7 @@ describe("DailyReportPanel", () => {
     const user = userEvent.setup();
 
     expect(screen.getByLabelText("วันที่รายงาน")).toHaveValue("2026-11-24");
-    expect(screen.getByLabelText(/ช่วงเวลายืดหยุ่นรอบเวร/)).toHaveValue(60);
+    expect(screen.getByLabelText(/เผื่อเวลา/)).toHaveValue(60);
 
     await user.click(screen.getByRole("button", { name: "ดาวน์โหลด Excel" }));
     expect(downloadDailySummary).toHaveBeenCalledWith("2026-11-24", 60);
@@ -60,7 +60,7 @@ describe("DailyReportPanel", () => {
     downloadDailySummary.mockResolvedValue(undefined);
     render(<DailyReportPanel />);
     const user = userEvent.setup();
-    const grace = screen.getByLabelText(/ช่วงเวลายืดหยุ่นรอบเวร/);
+    const grace = screen.getByLabelText(/เผื่อเวลา/);
 
     await user.clear(grace);
     await user.type(grace, "0");

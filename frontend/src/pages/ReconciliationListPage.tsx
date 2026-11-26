@@ -38,7 +38,7 @@ export function ReconciliationListPage() {
       <div>
         <h1 className="text-lg font-semibold">ตรวจสอบข้อมูลย้อนหลัง</h1>
         <p className="text-sm text-[var(--text-muted)]">
-          รายการรอบการตรวจสอบข้อมูลเดิม (Legacy Data Reconciliation) และผลการตรวจสอบ
+          รอบตรวจสอบและผลการตรวจสอบ
         </p>
       </div>
 

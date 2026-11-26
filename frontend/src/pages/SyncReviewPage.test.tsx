@@ -128,7 +128,7 @@ describe("SyncReviewPage", () => {
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "บันทึกทันที" }));
     fireEvent.click(screen.getByRole("button", { name: "ยืนยัน" }));
-    const box = await screen.findByText(/เงื่อนไขของอุปกรณ์เปลี่ยนไปแล้ว/);
+    const box = await screen.findByText(/สถานะเครื่องเปลี่ยนไปแล้ว/);
     expect(box).toHaveClass("text-status-repair");
     expect(box).not.toHaveClass("bg-status-available/15");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -178,7 +178,7 @@ describe("SyncReviewPage", () => {
     renderPage();
     const btn = await screen.findByRole("button", { name: "ปิดรายการจาก Sheet Sync ทั้งหมด (3)" });
     fireEvent.click(btn);
-    expect(screen.getByRole("dialog")).toHaveTextContent("ไม่บันทึกข้อมูลใด ๆ");
+    expect(screen.getByRole("dialog")).toHaveTextContent("ไม่บันทึกเบิก/รับคืน");
     expect(dismissAllSheetSyncConflicts).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "ยืนยัน" }));
     await waitFor(() => expect(dismissAllSheetSyncConflicts).toHaveBeenCalledTimes(1));

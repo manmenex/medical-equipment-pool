@@ -167,7 +167,7 @@ describe("CutoverReadinessRunDetailPage -- read UX", () => {
     renderPage();
     await waitFor(() => expect(screen.getByText("รอดำเนินการ")).toBeInTheDocument());
     expect(fetchCutoverGateEvaluation).not.toHaveBeenCalled();
-    expect(screen.getByText(/รอบนี้ยังไม่บันทึกหลักฐานครบถ้วน/)).toBeInTheDocument();
+    expect(screen.getByText(/หลักฐานยังไม่ครบ/)).toBeInTheDocument();
   });
 
   it("is visible for every authenticated role (mirrors backend VIEW_AND_REPORT_ROLES)", async () => {
@@ -198,7 +198,7 @@ describe("CutoverReadinessRunDetailPage -- gate presentation", () => {
     renderPage();
     await waitFor(() => expect(screen.getByText("ไม่มีรายการที่เป็นตัวบล็อก แต่ยังมีรายการที่ต้องรับทราบ")).toBeInTheDocument());
     expect(screen.getByText("ต้องยืนยันการฝึกอบรม")).toBeInTheDocument();
-    expect(screen.getByText(/รายการนี้ระบบไม่สามารถตรวจสอบอัตโนมัติได้ ต้องตรวจสอบโดยผู้รับผิดชอบ/)).toBeInTheDocument();
+    expect(screen.getByText(/ต้องตรวจสอบด้วยตนเอง/)).toBeInTheDocument();
   });
 
   it("shows the all-clear summary and info items when neither blockers nor warnings exist", async () => {
@@ -269,7 +269,7 @@ describe("CutoverReadinessRunDetailPage -- fail-closed decision action visibilit
     renderPage();
     await waitFor(() => expect(screen.getByText("อนุมัติเปลี่ยนระบบ (GO)")).toBeInTheDocument());
     expect(screen.getByText("GATE_F_STAFF_TRAINING_NOT_AUTOMATED")).toBeInTheDocument();
-    expect(screen.getByText(/ผลการอนุมัตินี้เป็นข้อมูลถาวร/)).toBeInTheDocument();
+    expect(screen.getByText(/ผลนี้แก้ไขไม่ได้/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "อนุมัติ GO" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "ไม่อนุมัติ NO-GO" })).not.toBeInTheDocument();
   });

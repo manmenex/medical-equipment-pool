@@ -85,8 +85,7 @@ export function WardPhoneImportPanel() {
   return (
     <div className="surface flex max-w-2xl flex-col gap-3 rounded-xl border p-4">
       <p className="text-sm text-[var(--text-muted)]">
-        วางหรืออัปโหลด CSV ที่มีคอลัมน์ ward_name,phone (สูงสุด {MAX_PHONE_IMPORT_ROWS} แถว;
-        คอลัมน์อื่น เช่น nsmart_department จะถูกข้าม)
+        CSV คอลัมน์ ward_name,phone (สูงสุด {MAX_PHONE_IMPORT_ROWS} แถว)
       </p>
       <input
         type="file"
@@ -124,7 +123,7 @@ export function WardPhoneImportPanel() {
         onClick={() => void run(true)}
         className="w-fit rounded-lg bg-status-borrowed px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
       >
-        ตรวจสอบก่อนนำเข้า (Dry-run)
+        ตรวจสอบก่อนนำเข้า
       </button>
 
       {error && <p className="text-sm text-status-repair">{error}</p>}

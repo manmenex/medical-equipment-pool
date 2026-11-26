@@ -73,7 +73,7 @@ export function ReportPrintPage() {
   return (
     <div>
       <div className="no-print sticky top-0 z-10 flex items-center justify-between border-b border-[#e2e8f0] bg-white p-3">
-        <p className="text-sm text-[#64748b]">ตัวอย่างก่อนพิมพ์ -- โปรดตรวจสอบเนื้อหาก่อนพิมพ์จริง</p>
+        <p className="text-sm text-[#64748b]">ตัวอย่างก่อนพิมพ์</p>
         <div className="flex gap-2">
           <button
             type="button"
@@ -127,7 +127,7 @@ export function ReportPrintPage() {
       {!isLoading && !isError && printDocument && fontsStatus === "unsupported" && (
         <div className="no-print flex flex-col items-start gap-2 p-6">
           <p className="text-sm text-red-600">
-            เบราว์เซอร์นี้ไม่รองรับการตรวจสอบฟอนต์สำหรับพิมพ์ จึงไม่สามารถแสดงตัวอย่างก่อนพิมพ์ได้อย่างปลอดภัย
+            เบราว์เซอร์นี้ตรวจสอบฟอนต์สำหรับพิมพ์ไม่ได้ กรุณาใช้เบราว์เซอร์อื่น
           </p>
         </div>
       )}

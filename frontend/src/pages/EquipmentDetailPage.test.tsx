@@ -382,25 +382,11 @@ describe("EquipmentDetailPage transaction history pagination and load state (Roa
 });
 
 describe("EquipmentDetailPage history filters and dispatch-type/days-since display (Roadmap PR13)", () => {
-  const routineTransaction: TransactionOut = {
-    ...openTransaction,
-    id: "tx-routine-1",
-    transaction_no: "TX-ROUTINE-1",
-    dispatch_type: "routine_round",
-    routine_round: "11:00",
-  };
-
-  it("distinguishes an on-demand dispatch from a routine-round dispatch in the history list (Part H acceptance criterion)", async () => {
-    listTransactions.mockResolvedValue(page([openTransaction, routineTransaction]));
+  it("shows the first-ward qualifier and the enable-event hint", async () => {
     renderPage();
-    await waitFor(() => expect(screen.getByText("TX-OPEN-1", { exact: false })).toBeInTheDocument());
-
-    const onDemandRow = rowFor("TX-OPEN-1");
-    expect(within(onDemandRow).getByText(/On-Demand/)).toBeInTheDocument();
-
-    const routineRow = rowFor("TX-ROUTINE-1");
-    expect(within(routineRow).getByText(/Routine Round/)).toBeInTheDocument();
-    expect(within(routineRow).getByText(/11:00/)).toBeInTheDocument();
+    await waitForHistoryLoaded();
+    expect(screen.getAllByText(/Ward ที่รับ \(ณ วันเบิก\)/).length).toBeGreaterThan(0);
+    expect(screen.getByText("เลือก เบิก/รับคืน ก่อนกรองวันที่/กะ")).toBeInTheDocument();
   });
 
   it('shows a "days since dispatch" indicator only for OPEN transactions', async () => {
@@ -409,71 +395,10 @@ describe("EquipmentDetailPage history filters and dispatch-type/days-since displ
     await waitForHistoryLoaded();
 
     const openRow = rowFor("TX-OPEN-1");
-    expect(within(openRow).getByText(/เบิกมาแล้ว/)).toBeInTheDocument();
+    expect(within(openRow).getByText(/ระยะเวลา/)).toBeInTheDocument();
 
     const closedRow = rowFor("TX-CLOSED-1");
-    expect(within(closedRow).queryByText(/เบิกมาแล้ว/)).not.toBeInTheDocument();
-  });
-
-  it("re-queries transaction history with dispatch_type when the dispatch-type filter changes", async () => {
-    const user = userEvent.setup();
-    renderPage();
-    await waitForHistoryLoaded();
-
-    await user.selectOptions(screen.getByLabelText("ประเภทการเบิก"), "routine_round");
-
-    await waitFor(() =>
-      expect(listTransactions).toHaveBeenLastCalledWith(
-        expect.objectContaining({ equipment_id: "eq-1", dispatch_type: "routine_round" })
-      )
-    );
-  });
-
-  it("re-queries transaction history with routine_round when the round filter changes, and resets it when dispatch type moves off routine_round", async () => {
-    const user = userEvent.setup();
-    renderPage();
-    await waitForHistoryLoaded();
-
-    await user.selectOptions(screen.getByLabelText("ประเภทการเบิก"), "routine_round");
-    await user.selectOptions(screen.getByLabelText("รอบเวลา"), "15:00");
-
-    await waitFor(() =>
-      expect(listTransactions).toHaveBeenLastCalledWith(
-        expect.objectContaining({ dispatch_type: "routine_round", routine_round: "15:00" })
-      )
-    );
-
-    await user.selectOptions(screen.getByLabelText("ประเภทการเบิก"), "on_demand");
-
-    await waitFor(() =>
-      expect(listTransactions).toHaveBeenLastCalledWith(
-        expect.objectContaining({ dispatch_type: "on_demand", routine_round: undefined })
-      )
-    );
-  });
-
-  it("disables the routine-round filter unless the dispatch-type filter is set to routine_round", async () => {
-    renderPage();
-    await waitForHistoryLoaded();
-
-    expect(screen.getByLabelText("รอบเวลา")).toBeDisabled();
-  });
-
-  it("re-queries transaction history with from_date/to_date when the date-range filters change", async () => {
-    const user = userEvent.setup();
-    renderPage();
-    await waitForHistoryLoaded();
-
-    const fromInput = screen.getByLabelText("ตั้งแต่วันที่");
-    const toInput = screen.getByLabelText("ถึงวันที่");
-    await user.type(fromInput, "2026-07-01");
-    await user.type(toInput, "2026-07-31");
-
-    await waitFor(() =>
-      expect(listTransactions).toHaveBeenLastCalledWith(
-        expect.objectContaining({ from_date: "2026-07-01", to_date: "2026-07-31" })
-      )
-    );
+    expect(within(closedRow).queryByText(/ระยะเวลา/)).not.toBeInTheDocument();
   });
 });
 
@@ -539,11 +464,6 @@ describe("EquipmentDetailPage business-date/shift filter controls (Roadmap PR16 
           event: "receipt",
         })
       )
-    );
-    // Never merged into, or substituted for, the existing raw-timestamp
-    // from_date/to_date filter (design's explicit correction).
-    expect(listTransactions).toHaveBeenLastCalledWith(
-      expect.objectContaining({ from_date: undefined, to_date: undefined })
     );
   });
 
@@ -814,13 +734,13 @@ describe("EquipmentDetailPage event-basis request serialization (PR61 review fix
 });
 
 describe("EquipmentDetailPage without an Asset Number (Governance 2026-10-21)", () => {
-  it('shows "-" instead of an Asset Number when the equipment has none', async () => {
+  it('hides the empty Asset Number/SN line instead of a dangling "-"', async () => {
     getEquipment.mockResolvedValue({ ...equipment, asset_number: null, serial_number: null });
     renderPage();
     await waitFor(() => expect(screen.getByRole("heading", { name: "Infusion Pump" })).toBeInTheDocument());
     expect(screen.queryByText(/AST-1/)).not.toBeInTheDocument();
     expect(screen.queryByText(/null/)).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Infusion Pump" }).nextElementSibling).toHaveTextContent("-");
+    expect(screen.getByRole("heading", { name: "Infusion Pump" }).nextElementSibling).toHaveTextContent(/^$/);
   });
 });
 

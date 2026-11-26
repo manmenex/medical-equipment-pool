@@ -131,7 +131,7 @@ function EquipmentForm() {
   return (
     <form onSubmit={handleSubmit} className="surface flex max-w-md flex-col gap-3 rounded-xl border p-4">
       <input
-        placeholder="เลขครุภัณฑ์ (Asset Number) - ไม่บังคับ"
+        placeholder="เลขครุภัณฑ์ (ไม่บังคับ)"
         value={assetNumber}
         onChange={(e) => setAssetNumber(e.target.value)}
         className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
@@ -450,9 +450,7 @@ function InventoryImportPanel() {
         className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
       />
       <p className="text-sm text-[var(--text-muted)]">
-        ระบบจะอัปเดตข้อมูลเฉพาะเครื่องมือที่มีอยู่แล้วในระบบ โดยจับคู่ด้วยรหัส BCM เท่านั้น
-        หากไม่พบรหัส BCM ที่ตรงกัน แถวนั้นจะไม่ถูกบันทึกและจะไม่มีการสร้างรายการครุภัณฑ์ใหม่ —
-        กรุณาสร้างรายการครุภัณฑ์ผ่านเมนู &quot;เพิ่มเครื่องมือ&quot; ก่อน แล้วจึงนำเข้าไฟล์นี้อีกครั้งเพื่ออัปเดต
+        อัปเดตเฉพาะเครื่องที่มีอยู่แล้ว จับคู่ด้วย BCM แถวที่ไม่พบ BCM จะไม่ถูกบันทึก
       </p>
       {error && <p className="text-sm text-status-repair">{error}</p>}
       <button

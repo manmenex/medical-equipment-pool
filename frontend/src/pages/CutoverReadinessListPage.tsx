@@ -34,7 +34,7 @@ export function CutoverReadinessListPage() {
       <div>
         <h1 className="text-lg font-semibold">ความพร้อมก่อนเปลี่ยนระบบ</h1>
         <p className="text-sm text-[var(--text-muted)]">
-          รายการรอบตรวจสอบความพร้อมก่อนเปลี่ยนระบบ (Cutover Readiness) และผลการอนุมัติ
+          รอบตรวจสอบและผลการอนุมัติ
         </p>
       </div>
 

@@ -85,8 +85,7 @@ export function OtherUsersOutboxPanel() {
       <h2 className="font-semibold">รายการค้างของผู้ใช้อื่น</h2>
       {groups.length > 0 && (
         <p className="text-[var(--text-muted)]">
-          เครื่องนี้มีรายการที่ผู้ใช้อื่นบันทึกไว้แต่ยังไม่ได้ส่ง คุณสามารถส่งแทนได้ ผู้บันทึกเดิมยังคงเป็นผู้บันทึกรายการ
-          และชื่อของคุณจะถูกบันทึกเป็นผู้ส่ง
+          รายการของผู้ใช้อื่นที่ยังไม่ได้ส่ง คุณส่งแทนได้ (บันทึกชื่อคุณเป็นผู้ส่ง)
         </p>
       )}
       <ul className="space-y-2">
@@ -137,8 +136,7 @@ export function OtherUsersOutboxPanel() {
           <div className="surface w-full max-w-md space-y-3 rounded-xl border p-4">
             <h3 className="font-semibold">ส่งแทน</h3>
             <p>
-              คุณกำลังส่ง {target.count} รายการที่บันทึกโดย {target.name ?? "ผู้ใช้ไม่ทราบชื่อ"} รายการจะยังบันทึกในชื่อผู้บันทึกเดิม
-              และชื่อของคุณจะถูกบันทึกเป็นผู้ส่ง
+              ส่งแทน {target.count} รายการของ {target.name ?? "ผู้ใช้ไม่ทราบชื่อ"} (บันทึกชื่อคุณเป็นผู้ส่ง)
             </p>
             <label className="block">
               ยืนยันรหัสผ่านของคุณ

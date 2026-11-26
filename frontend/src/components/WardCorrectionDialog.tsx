@@ -247,8 +247,7 @@ export function WardCorrectionDialog({ transaction, wards, onClose, onUpdated, t
           </div>
 
           <div id="ward-correction-warning" className="rounded-lg border border-[var(--border)] bg-[var(--border)]/10 p-3 text-sm">
-            การดำเนินการนี้จะแก้ไขแผนกรับเครื่องที่บันทึกไว้เดิม และจะถูกบันทึกในประวัติการตรวจสอบ
-            ไม่ใช่การบันทึกการย้ายเครื่องระหว่างแผนก
+            แก้ไข Ward ที่บันทึกไว้เดิม (ไม่ใช่การย้ายเครื่อง) และบันทึกในประวัติ
           </div>
 
           {error && (

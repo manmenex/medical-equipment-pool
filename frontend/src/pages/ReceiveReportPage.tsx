@@ -46,7 +46,7 @@ export function ReceiveReportPage() {
         <div>
           <h1 className="text-lg font-semibold">รายงานการรับคืน</h1>
           <p className="text-sm text-[var(--text-muted)]">
-            รายการเครื่องมือที่รับคืนเข้า Pool แล้ว ตามช่วงวันที่ทำการและตัวกรองที่เลือก
+            เครื่องที่รับคืนเข้า Pool
           </p>
         </div>
         {/* Roadmap PR18C: opens the dedicated print view in a new tab,
