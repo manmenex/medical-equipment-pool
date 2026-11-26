@@ -363,11 +363,12 @@ async def process_operation(
     # not the moment of this attempt, so a retried op is judged consistently.
     received_at = _utc(first_seen) if first_seen is not None else datetime.now(timezone.utc)
     business_time, time_flag = await compute_business_time(db, op, received_at)
-    ctx = replace(ctx, time_flag=time_flag)
+    # Always carry the business time so a conflict/pending ledger row also
+    # shows when the event happened (review list / timeline showed "-").
+    ctx = replace(ctx, time_flag=time_flag, occurred_at=business_time)
     if time_flag == FLAG_TOO_OLD:
         # Owner decision D9: no business change, no export event; a human
         # decides in the review list (B4 applies using the stored occurred_at).
-        ctx = replace(ctx, occurred_at=business_time)
         await client_op_crud.record_outcome(
             db, ctx, status=OP_STATUS_CONFLICT, result_code=CODE_OP_TOO_OLD, existing_pending=existing_pending
         )
