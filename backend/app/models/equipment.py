@@ -2,9 +2,9 @@ import enum
 import uuid
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Date, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy import text
+from sqlalchemy import text, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
@@ -12,6 +12,15 @@ from app.db.base import Base
 from app.models.mixins import SoftDeleteMixin, TimestampMixin, UTCDateTime, UUIDPKMixin
 
 JSONType = JSONB().with_variant(JSON(), "sqlite")
+
+# Roadmap PR33 (Owner Governance 2026-11-26, D14): where a device comes from.
+# Plain strings (not a DB enum) so a future source needs no type migration;
+# the CHECK constraint in migration 0034 pins the allowed set.
+EQUIPMENT_SOURCE_POOL = "pool"
+EQUIPMENT_SOURCE_DEMO = "demo"
+EQUIPMENT_SOURCE_LOAN = "loan"
+EQUIPMENT_SOURCES = (EQUIPMENT_SOURCE_POOL, EQUIPMENT_SOURCE_DEMO, EQUIPMENT_SOURCE_LOAN)
+DEMO_LOAN_SOURCES = (EQUIPMENT_SOURCE_DEMO, EQUIPMENT_SOURCE_LOAN)
 
 
 class EquipmentStatus(str, enum.Enum):
@@ -224,6 +233,24 @@ class Equipment(UUIDPKMixin, TimestampMixin, SoftDeleteMixin, Base):
     # path's CAS UPDATE (not implemented by this slice) -- see migration
     # 0017 for the physical column definition and backfill behavior.
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default=text("1"))
+
+    # Roadmap PR33 (D14). For demo/loan devices ONLY, bcm_code holds the
+    # manufacturer Serial Number (narrow amendment to ADR-002; identifier
+    # count and roles unchanged). Pool devices keep real BCM Codes.
+    equipment_source: Mapped[str] = mapped_column(
+        String(10), nullable=False, default=EQUIPMENT_SOURCE_POOL, server_default=text("'pool'"), index=True
+    )
+    owner_company: Mapped[str | None] = mapped_column(String(255))
+    due_back_date: Mapped[date | None] = mapped_column(Date)
+    has_charger: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=true())
+    has_clamp: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=true())
+    # "Return to owner" flag (D14): NOT a fifth status. Settable only while
+    # AVAILABLE_AT_POOL; the device then leaves active lists/counts/pickers
+    # and cannot be dispatched. History is kept.
+    returned_to_owner_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    returned_to_owner_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
 
     category: Mapped["EquipmentCategory | None"] = relationship()
     department_owner: Mapped["Department | None"] = relationship()

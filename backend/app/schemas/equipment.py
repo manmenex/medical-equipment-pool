@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -96,8 +97,82 @@ class EquipmentOut(EquipmentBase):
     # EquipmentCreate/EquipmentUpdate/EquipmentStatusChange, and not itself
     # a client-driven CAS mechanism in this slice.
     version: int
+    # Roadmap PR33 (D14): demo/loan metadata. For demo/loan devices `bcm_code`
+    # holds the manufacturer serial number.
+    equipment_source: str = "pool"
+    owner_company: str | None = None
+    due_back_date: date | None = None
+    has_charger: bool = True
+    has_clamp: bool = True
+    returned_to_owner_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+
+class DemoLoanShared(BaseModel):
+    """Roadmap PR33 (D14): fields shared by every row of a demo/loan batch."""
+
+    category_id: str
+    brand: str | None = Field(default=None, max_length=100)
+    model: str | None = Field(default=None, max_length=100)
+    equipment_name: str | None = Field(default=None, max_length=255)
+    equipment_source: Literal["demo", "loan"]
+    owner_company: str = Field(min_length=1, max_length=255)
+    due_back_date: date | None = None
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("owner_company", mode="before")
+    @classmethod
+    def _trim_owner(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("brand", "model", "equipment_name", mode="before")
+    @classmethod
+    def _blank_is_none(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+
+class DemoLoanItem(BaseModel):
+    serial_number: str = Field(max_length=200)
+    has_charger: bool = True
+    has_clamp: bool = True
+
+    model_config = {"extra": "forbid"}
+
+
+DEMO_LOAN_BATCH_MAX_ITEMS = 200
+
+
+class DemoLoanBatchRequest(BaseModel):
+    shared: DemoLoanShared
+    items: list[DemoLoanItem] = Field(min_length=1, max_length=DEMO_LOAN_BATCH_MAX_ITEMS)
+    # Validate-only mode: nothing is written. Commit mode (default) is
+    # all-or-nothing.
+    dry_run: bool = False
+
+    model_config = {"extra": "forbid"}
+
+
+class DemoLoanRowResult(BaseModel):
+    index: int
+    serial_number: str
+    # Machine-readable codes: blank | invalid_serial | duplicate_in_batch | duplicate_in_db
+    errors: list[str] = []
+    messages: list[str] = []
+
+
+class DemoLoanBatchOut(BaseModel):
+    dry_run: bool
+    valid: bool
+    committed: bool
+    total: int
+    created_count: int
+    rows: list[DemoLoanRowResult]
+    created: list[EquipmentOut] = []
 
 
 class EquipmentStatusHistoryOut(BaseModel):

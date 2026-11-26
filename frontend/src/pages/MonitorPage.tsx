@@ -6,6 +6,7 @@ import {
   cuffSummary,
 } from "@/components/CuffsOutstandingPanel";
 import { HnReveal } from "@/components/entry/HnField";
+import { SourceBadge } from "@/components/SourceBadge";
 import { useDebounce } from "@/hooks/useDebounce";
 import { listWards } from "@/services/masterData";
 import {
@@ -346,6 +347,7 @@ export function MonitorPage() {
                         {s.events.map((e) => (
                           <li key={e.id}>
                             {e.equipment.bcm_code ?? e.equipment.name}
+                            <SourceBadge source={e.equipment.equipment_source} />
                             {e.has_hn && (
                               <span className="ml-2">
                                 <HnReveal transactionId={e.id} compact />

@@ -14,6 +14,7 @@ import html
 import weasyprint
 
 from app.services import report_pdf_service
+from app.services.equipment_badge import with_badge
 from app.services.daily_report_service import FORM_ROWS_PER_PAGE, DailyEvent, DailyReport, format_date
 
 FORM_TITLE = "แบบบันทึกการเบิก-จ่าย Equipment Pool"
@@ -52,7 +53,7 @@ def _row_html(e: DailyEvent | None, kind: str) -> str:
         f"<td class='c'>{_check_cell(e.checks.get(k))}</td>" for k in ("screen", "charger", "clamp")
     )
     return (
-        f"<tr><td class='code'>{_e(e.bcm_code)}</td>{checks}"
+        f"<tr><td class='code'>{_e(with_badge(e.bcm_code, e.source))}</td>{checks}"
         f"<td>{_e(e.contact_name)}</td><td>{_e(e.ward_name)}</td><td>{_e(e.operator_name)}</td>"
         f"<td class='c'>{e.local.strftime('%H:%M')}</td><td>{_e(e.notes)}</td></tr>"
     )

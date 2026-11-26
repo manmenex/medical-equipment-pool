@@ -184,6 +184,10 @@ class EquipmentSummary(BaseModel):
     asset_number: str | None
     equipment_name: str
     status: str
+    # Roadmap PR33 (D14): demo/loan have no asset number; their serial number
+    # is the bcm_code. equipment_source drives the DEMO/ยืม badge.
+    bcm_code: str | None = None
+    equipment_source: str = "pool"
 
     model_config = {"from_attributes": True}
 

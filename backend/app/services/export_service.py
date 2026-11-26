@@ -50,7 +50,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.models.equipment import Equipment
+from app.models.equipment import EQUIPMENT_SOURCE_POOL, Equipment
 from app.models.export import (
     EVENT_TYPE_DISPATCH,
     EVENT_TYPE_RECEIPT,
@@ -98,10 +98,23 @@ async def _next_seq(db: AsyncSession) -> int:
 
 async def record_event(
     db: AsyncSession, *, transaction_id: uuid.UUID, event_type: str, event_at: datetime
-) -> ExportEvent:
+) -> ExportEvent | None:
     """Append one event. Must be the last write before the caller commits and
     must run in the same database transaction as the business change, so the
-    event exists if and only if the dispatch/receipt does."""
+    event exists if and only if the dispatch/receipt does.
+
+    Roadmap PR33 (D14): demo/loan equipment is EXCLUDED from this API -- no
+    event is recorded (returns None) and so no seq is consumed. The source
+    is checked before the counter row lock is taken."""
+    source = (
+        await db.execute(
+            select(Equipment.equipment_source)
+            .join(BorrowTransaction, BorrowTransaction.equipment_id == Equipment.id)
+            .where(BorrowTransaction.id == transaction_id)
+        )
+    ).scalar_one_or_none()
+    if source is not None and source != EQUIPMENT_SOURCE_POOL:
+        return None
     seq = await _next_seq(db)
     event = ExportEvent(
         seq=seq,
@@ -147,7 +160,7 @@ async def query_events(db: AsyncSession, *, after: int, limit: int) -> tuple[lis
         .outerjoin(Ward, Ward.id == BorrowTransaction.ward_id)
         .outerjoin(dispatcher, dispatcher.id == BorrowTransaction.borrower_user_id)
         .outerjoin(receiver, receiver.id == BorrowTransaction.received_by_user_id)
-        .where(ExportEvent.seq > after)
+        .where(ExportEvent.seq > after, Equipment.equipment_source == EQUIPMENT_SOURCE_POOL)
         .order_by(ExportEvent.seq)
         .limit(limit + 1)
     )

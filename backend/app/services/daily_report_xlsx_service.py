@@ -16,6 +16,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from app.services import report_xlsx_service
+from app.services.equipment_badge import with_badge
 from app.services.daily_report_service import Counts, DailyReport, _THAI_SHIFT, format_date
 from app.services.report_xlsx_service import _write_cell
 
@@ -151,7 +152,7 @@ def _events_sheet(ws: Worksheet, report: DailyReport) -> None:
             format_date(e.local.date()),
             e.local.strftime("%H:%M:%S"),
             "ส่ง" if e.kind == "dispatch" else "รับ",
-            e.bcm_code,
+            with_badge(e.bcm_code, e.source),
             e.category_name,
             e.ward_name,
             e.row_label,

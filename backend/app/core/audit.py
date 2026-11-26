@@ -54,6 +54,8 @@ AUDIT_ACTION_WARD_CORRECTION = "ward_correction"
 # Roadmap PR29 (D1): one row per explicit "แสดง HN" reveal -- who, when, which
 # transaction. The HN value is NEVER part of the row.
 AUDIT_ACTION_HN_REVEAL = "hn_reveal"
+# Roadmap PR33 (D14): administrator "คืนผู้ให้ยืม" of a demo/loan device.
+AUDIT_ACTION_RETURN_TO_OWNER = "return_to_owner"
 # Roadmap PR12 (docs/audits/04-consolidated-implementation-plan.md Part F.1
 # step 7): one audit_logs entry per import commit batch (who ran it, when,
 # filename, aggregate row counts) -- deliberately not one entry per

@@ -27,6 +27,10 @@ export interface UserProfile {
   must_change_password: boolean;
 }
 
+// Roadmap PR33 (D14): where a device comes from. For demo/loan devices the
+// `bcm_code` field holds the manufacturer serial number.
+export type EquipmentSource = "pool" | "demo" | "loan";
+
 export interface Equipment {
   id: string;
   asset_number: string | null;
@@ -48,6 +52,13 @@ export interface Equipment {
   cal_due_date: string | null;
   created_at: string;
   updated_at: string;
+  // Roadmap PR33 (D14): optional so cached/legacy rows without them read as pool.
+  equipment_source?: EquipmentSource;
+  owner_company?: string | null;
+  due_back_date?: string | null;
+  has_charger?: boolean;
+  has_clamp?: boolean;
+  returned_to_owner_at?: string | null;
 }
 
 // Roadmap PR5: the minimum data the BCM manual-search suggestion list

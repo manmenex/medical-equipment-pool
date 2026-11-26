@@ -29,6 +29,8 @@ class MonitorEquipment(BaseModel):
     bcm_code: str | None = None
     name: str
     category: str | None = None
+    # Roadmap PR33 (D14): source badge ("pool" | "demo" | "loan").
+    equipment_source: str = "pool"
 
 
 class MonitorEvent(BaseModel):

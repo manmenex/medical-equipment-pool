@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -15,23 +15,36 @@ from app.api.v1.deps import (
 from app.core.audit import (
     AUDIT_ACTION_CREATE,
     AUDIT_ACTION_DELETE,
+    AUDIT_ACTION_RETURN_TO_OWNER,
     AUDIT_ACTION_STATUS_CHANGE,
     AUDIT_ACTION_UPDATE,
     AUDIT_ENTITY_EQUIPMENT,
     record_audit_event,
 )
 from app.core.db_errors import translate_integrity_error
-from app.core.exceptions import EquipmentNotFoundError, MalformedQrCodeError
+from app.core.exceptions import (
+    EquipmentNotFoundError,
+    InvalidInputError,
+    InvalidStatusTransitionError,
+    MalformedQrCodeError,
+)
 from app.core.redis import cache_delete_prefix
 from app.core.references import ensure_referenced_row_exists
 from app.crud import equipment as equipment_crud
 from app.db.session import get_db
-from app.models.equipment import EquipmentStatus
+from app.models.equipment import (
+    DEMO_LOAN_SOURCES,
+    EQUIPMENT_SOURCE_POOL,
+    EquipmentStatus,
+)
 from app.models.master_data import Department, EquipmentCategory, Location
 from app.models.user import ROLE_ADMINISTRATOR
 from app.schemas.common import Page
 from app.schemas.equipment import (
     BcmSuggestion,
+    DemoLoanBatchOut,
+    DemoLoanBatchRequest,
+    DemoLoanRowResult,
     EquipmentCreate,
     EquipmentOut,
     EquipmentStatusChange,
@@ -39,8 +52,8 @@ from app.schemas.equipment import (
     EquipmentUpdate,
     QrResolveRequest,
 )
-from app.services import borrow_service, checklist_service
-from app.services.identifiers import normalize_bcm_code, normalize_item_no
+from app.services import borrow_service, checklist_service, demo_loan_service
+from app.services.identifiers import normalize_bcm_code, normalize_item_no, normalize_serial_as_bcm_code
 from app.services.qr_service import extract_item_no_from_qr
 from app.utils.parsing import parse_uuid
 
@@ -69,6 +82,10 @@ async def list_equipment(
     status: EquipmentStatus | None = None,
     department_id: str | None = None,
     category_id: str | None = None,
+    # Roadmap PR33 (D14): filter by source; returned-to-owner devices are
+    # hidden unless include_returned=true (equipment management).
+    source: str | None = Query(default=None, pattern="^(pool|demo|loan)$"),
+    include_returned: bool = False,
     limit: int = Query(default=25, le=200),
     cursor: str | None = None,
     db: AsyncSession = Depends(get_db),
@@ -80,6 +97,8 @@ async def list_equipment(
         status=status,
         department_id=parse_uuid(department_id, "department_id"),
         category_id=parse_uuid(category_id, "category_id"),
+        source=source,
+        include_returned=include_returned,
         limit=limit,
         cursor=cursor,
     )
@@ -116,7 +135,117 @@ def _serialize(equipment) -> dict:
         "created_at": equipment.created_at,
         "updated_at": equipment.updated_at,
         "version": equipment.version,
+        "equipment_source": equipment.equipment_source,
+        "owner_company": equipment.owner_company,
+        "due_back_date": equipment.due_back_date,
+        "has_charger": equipment.has_charger,
+        "has_clamp": equipment.has_clamp,
+        "returned_to_owner_at": equipment.returned_to_owner_at,
     }
+
+
+@router.post("/demo-loan-batch", response_model=DemoLoanBatchOut)
+async def register_demo_loan_batch(
+    payload: DemoLoanBatchRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
+):
+    """Roadmap PR33 (D14): Administrator-only batch registration of demo/loan
+    devices (shared fields + one row per serial number). ``dry_run=true``
+    validates only and writes nothing; otherwise the batch is committed
+    all-or-nothing -- any row error returns ``valid=false, committed=false``
+    with per-row errors and nothing is written."""
+    rows = await demo_loan_service.validate_batch(db, payload)
+    valid = demo_loan_service.batch_is_valid(rows)
+    row_out = [
+        DemoLoanRowResult(index=r.index, serial_number=r.serial_number, errors=r.errors, messages=r.messages)
+        for r in rows
+    ]
+    if payload.dry_run or not valid:
+        return DemoLoanBatchOut(
+            dry_run=payload.dry_run, valid=valid, committed=False, total=len(rows), created_count=0, rows=row_out
+        )
+    async with translate_integrity_error(db, resource="equipment"):
+        created = await demo_loan_service.build_equipment(db, payload, rows)
+        for equipment in created:
+            await record_audit_event(
+                db,
+                actor_user_id=user.id,
+                action=AUDIT_ACTION_CREATE,
+                entity_type=AUDIT_ENTITY_EQUIPMENT,
+                entity_id=equipment.id,
+                after={
+                    "bcm_code": equipment.bcm_code,
+                    "equipment_source": equipment.equipment_source,
+                    "owner_company": equipment.owner_company,
+                    "due_back_date": equipment.due_back_date.isoformat() if equipment.due_back_date else None,
+                    "has_charger": equipment.has_charger,
+                    "has_clamp": equipment.has_clamp,
+                    "equipment_name": equipment.equipment_name,
+                    "batch": True,
+                },
+                request=request,
+            )
+        await db.commit()
+    await cache_delete_prefix("equipment:search:")
+    await cache_delete_prefix("dashboard:")
+    return DemoLoanBatchOut(
+        dry_run=False,
+        valid=True,
+        committed=True,
+        total=len(rows),
+        created_count=len(created),
+        rows=row_out,
+        created=[EquipmentOut.model_validate(_serialize(e)) for e in created],
+    )
+
+
+@router.post("/{equipment_id}/return-to-owner", response_model=EquipmentOut)
+async def return_to_owner(
+    equipment_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
+):
+    """Roadmap PR33 (D14) "คืนผู้ให้ยืม": Administrator action in equipment
+    management (not dispatch/receipt). Only a demo/loan device that is
+    currently AVAILABLE_AT_POOL; sets the returned-to-owner flag (not a fifth
+    status), audited. The device then leaves active lists/counts/pickers and
+    cannot be dispatched; history is kept."""
+    equipment = await equipment_crud.get_by_id(db, equipment_id)
+    if equipment is None:
+        raise EquipmentNotFoundError("Equipment not found")
+    # Serialize against a concurrent dispatch of the same device.
+    await db.refresh(equipment, with_for_update=True)
+    if equipment.equipment_source not in DEMO_LOAN_SOURCES:
+        raise InvalidInputError("Only demo/loan equipment can be returned to its owner.")
+    if equipment.returned_to_owner_at is not None:
+        raise InvalidStatusTransitionError("This equipment was already returned to its owner.")
+    if equipment.status != EquipmentStatus.AVAILABLE_AT_POOL:
+        raise InvalidStatusTransitionError(
+            "Equipment can be returned to its owner only while it is available at the pool."
+        )
+    await equipment_crud.mark_returned_to_owner(db, equipment, user_id=user.id)
+    await record_audit_event(
+        db,
+        actor_user_id=user.id,
+        action=AUDIT_ACTION_RETURN_TO_OWNER,
+        entity_type=AUDIT_ENTITY_EQUIPMENT,
+        entity_id=equipment.id,
+        before={"returned_to_owner_at": None},
+        after={
+            "returned_to_owner_at": equipment.returned_to_owner_at.isoformat(),
+            "equipment_source": equipment.equipment_source,
+            "owner_company": equipment.owner_company,
+            "bcm_code": equipment.bcm_code,
+        },
+        request=request,
+    )
+    await db.commit()
+    await cache_delete_prefix("equipment:search:")
+    await cache_delete_prefix("dashboard:")
+    return EquipmentOut.model_validate(_serialize(equipment))
 
 
 @router.post("/resolve-qr", response_model=EquipmentOut)
@@ -186,6 +315,15 @@ class DispatchCheckOut(BaseModel):
     # Roadmap PR28: which accessory checklist ('standard' | 'cryo_cuff') the
     # dispatch/receipt UI must show for this equipment.
     checklist_kind: str = "standard"
+    # Roadmap PR33 (D14): demo/loan context for the scan row badge. ``warning``
+    # is "returned_to_owner" (blocked, code EQUIPMENT_RETURNED_TO_OWNER) for a
+    # device returned to its owner.
+    equipment_source: str = "pool"
+    owner_company: str | None = None
+    due_back_date: date | None = None
+    has_charger: bool = True
+    has_clamp: bool = True
+    returned_to_owner_at: datetime | None = None
 
 
 @router.get("/{equipment_id}/dispatch-check", response_model=DispatchCheckOut)
@@ -207,6 +345,12 @@ async def dispatch_check(equipment_id: uuid.UUID, db: AsyncSession = Depends(get
         open_transaction_id=str(tx.id) if tx is not None else None,
         open_transaction_no=tx.transaction_no if tx is not None else None,
         checklist_kind=await checklist_service.kind_for_equipment(db, equipment),
+        equipment_source=equipment.equipment_source,
+        owner_company=equipment.owner_company,
+        due_back_date=equipment.due_back_date,
+        has_charger=equipment.has_charger,
+        has_clamp=equipment.has_clamp,
+        returned_to_owner_at=equipment.returned_to_owner_at,
     )
 
 
@@ -303,7 +447,13 @@ async def update_equipment(
     # Same canonicalization as create (See ADR-002) -- update uses an
     # identical normalization rule, never a looser one.
     if update_data.get("bcm_code") is not None:
-        update_data["bcm_code"] = normalize_bcm_code(update_data["bcm_code"])
+        # Roadmap PR33 (D14): a demo/loan device's bcm_code is its serial number.
+        normalizer = (
+            normalize_bcm_code
+            if equipment.equipment_source == EQUIPMENT_SOURCE_POOL
+            else normalize_serial_as_bcm_code
+        )
+        update_data["bcm_code"] = normalizer(update_data["bcm_code"])
     if update_data.get("item_no") is not None:
         update_data["item_no"] = normalize_item_no(update_data["item_no"])
     for key in ("category_id", "department_owner_id", "current_location_id"):

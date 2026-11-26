@@ -79,3 +79,26 @@ def normalize_item_no(raw: str) -> str:
     if len(token) > IDENTIFIER_MAX_LENGTH:
         raise InvalidInputError(f"Item No exceeds the maximum length of {IDENTIFIER_MAX_LENGTH} characters.")
     return token
+
+
+# Roadmap PR33 (Owner Governance 2026-11-26, D14): for demo/loan devices ONLY
+# the BCM Code field holds the manufacturer Serial Number. The identifier
+# count and roles are unchanged; only the value semantics differ. Pool BCM
+# rules (normalize_bcm_code above) are untouched.
+_SERIAL_ALLOWED = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./")
+
+
+def normalize_serial_as_bcm_code(raw: str) -> str:
+    """Canonical persisted form of a demo/loan serial number stored in
+    ``bcm_code``: trimmed and uppercased (so "sn-1" and "SN-1" are one
+    device). Allowed characters: letters, digits, ``-``, ``_``, ``.``, ``/``.
+    No whitespace, no "BCM" prefix handling, maximum IDENTIFIER_MAX_LENGTH.
+    """
+    token = (raw or "").strip().upper()
+    if not token:
+        raise InvalidInputError("Serial number cannot be empty.")
+    if len(token) > IDENTIFIER_MAX_LENGTH:
+        raise InvalidInputError(f"Serial number exceeds the maximum length of {IDENTIFIER_MAX_LENGTH} characters.")
+    if any(ch not in _SERIAL_ALLOWED for ch in token):
+        raise InvalidInputError("Serial number may contain only letters, digits and - _ . / (no spaces).")
+    return token

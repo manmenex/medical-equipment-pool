@@ -133,6 +133,8 @@ class DailyEvent:
     contact_name: str | None
     checks: dict[str, bool | None]
     notes: str | None
+    # Roadmap PR33 (D14): "pool" | "demo" | "loan"; shown as a text badge.
+    source: str = "pool"
     clock_shift: Shift = Shift.DAY
     instance: datetime = field(default_factory=datetime.now)
     shift: Shift = Shift.DAY
@@ -283,7 +285,7 @@ async def _load_events(db: AsyncSession, start: datetime, end: datetime) -> list
         at_col = tx.borrowed_at if kind == "dispatch" else tx.returned_at
         op_col = tx.borrower_user_id if kind == "dispatch" else tx.received_by_user_id
         stmt = (
-            select(tx, Equipment.bcm_code, EquipmentCategory.name, Ward.name, op.full_name)
+            select(tx, Equipment.bcm_code, EquipmentCategory.name, Ward.name, op.full_name, Equipment.equipment_source)
             .join(Equipment, Equipment.id == tx.equipment_id)
             .outerjoin(EquipmentCategory, EquipmentCategory.id == Equipment.category_id)
             .outerjoin(Ward, Ward.id == tx.ward_id)
@@ -293,7 +295,7 @@ async def _load_events(db: AsyncSession, start: datetime, end: datetime) -> list
             .limit(MAX_EXPORT_ROWS + 1)
         )
         rows = (await db.execute(stmt)).all()
-        for t, bcm, cat_name, ward_name, op_name in rows:
+        for t, bcm, cat_name, ward_name, op_name, source in rows:
             at = t.borrowed_at if kind == "dispatch" else t.returned_at
             try:
                 checks = report_columns(t.dispatch_checks if kind == "dispatch" else t.receipt_checks)
@@ -308,6 +310,7 @@ async def _load_events(db: AsyncSession, start: datetime, end: datetime) -> list
                     operator_name=op_name or UNSPECIFIED_LABEL,
                     transaction_id=t.id,
                     bcm_code=bcm or "",
+                    source=source or "pool",
                     category_name=cat_name or UNSPECIFIED_LABEL,
                     ward_id=t.ward_id,
                     ward_name=ward_name or "",

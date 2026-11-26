@@ -85,6 +85,8 @@ async def search_bcm(db: AsyncSession, *, q: str, limit: int = 10) -> list[Equip
         select(Equipment)
         .where(
             Equipment.deleted_at.is_(None),
+            # Roadmap PR33 (D14): a device returned to its owner leaves the pickers.
+            Equipment.returned_to_owner_at.is_(None),
             Equipment.bcm_code.isnot(None),
             Equipment.bcm_code.ilike(like, escape="\\"),
         )
@@ -190,10 +192,17 @@ async def search(
     status: EquipmentStatus | None = None,
     department_id: uuid.UUID | None = None,
     category_id: uuid.UUID | None = None,
+    source: str | None = None,
+    include_returned: bool = False,
     limit: int = 25,
     cursor: str | None = None,
 ) -> tuple[list[Equipment], str | None, int]:
     base_filters = [Equipment.deleted_at.is_(None)]
+    # Roadmap PR33 (D14): returned-to-owner devices are hidden unless asked for.
+    if not include_returned:
+        base_filters.append(Equipment.returned_to_owner_at.is_(None))
+    if source is not None:
+        base_filters.append(Equipment.equipment_source == source)
     if status is not None:
         base_filters.append(Equipment.status == status)
     if department_id is not None:
@@ -255,7 +264,7 @@ async def list_for_verify_checklist(
     in this module, so a checklist row's position is stable across pages
     exactly like every other equipment list.
     """
-    base_filters = [Equipment.deleted_at.is_(None)]
+    base_filters = [Equipment.deleted_at.is_(None), Equipment.returned_to_owner_at.is_(None)]
     if category_id is not None:
         base_filters.append(Equipment.category_id == category_id)
     if status is not None:
@@ -314,6 +323,28 @@ async def list_for_verify_checklist(
         rows = rows[:limit]
 
     return rows, next_cursor, total
+
+
+async def get_existing_bcm_codes(db: AsyncSession, values: Sequence[str]) -> set[str]:
+    """Which of ``values`` already exist as a bcm_code on ANY equipment row,
+    including soft-deleted ones (the unique index covers them too)."""
+    if not values:
+        return set()
+    result = await db.execute(select(Equipment.bcm_code).where(Equipment.bcm_code.in_(list(values))))
+    return {row[0] for row in result.all()}
+
+
+async def mark_returned_to_owner(
+    db: AsyncSession, equipment: Equipment, *, user_id: uuid.UUID, at: datetime | None = None
+) -> Equipment:
+    """Roadmap PR33 (D14): set the returned-to-owner flag (not a status).
+    Callers must already have verified the device is AVAILABLE_AT_POOL and
+    demo/loan; bumps the optimistic-concurrency version like every mutation."""
+    equipment.returned_to_owner_at = at or datetime.now(timezone.utc)
+    equipment.returned_to_owner_by_user_id = user_id
+    equipment.version += 1
+    await db.flush()
+    return equipment
 
 
 async def create(db: AsyncSession, *, data: dict) -> Equipment:

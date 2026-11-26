@@ -1,5 +1,5 @@
 import { useAuthStore } from "@/store/authStore";
-import type { BcmSuggestion, Checks, ChecklistKind, Cuffs, DispatchType, Equipment, EquipmentStatus, ReceiptOutcome, RoutineRound } from "@/types";
+import type { BcmSuggestion, Checks, ChecklistKind, Cuffs, DispatchType, Equipment, EquipmentSource, EquipmentStatus, ReceiptOutcome, RoutineRound } from "@/types";
 
 import {
   enqueueOperation,
@@ -68,6 +68,9 @@ interface CachedEquipment {
   // Roadmap PR28: absent in a snapshot cached before this field existed.
   checklist_kind?: ChecklistKind | null;
   status?: EquipmentStatus;
+  // Roadmap PR33 (D14): absent in a snapshot cached before these fields existed.
+  equipment_source?: EquipmentSource;
+  returned_to_owner?: boolean;
 }
 
 /**
@@ -91,7 +94,12 @@ export function rankBcmMatches<T extends { bcm_code?: string | null }>(rows: T[]
 
 export async function searchCachedBcm(q: string, limit = 10): Promise<BcmSuggestion[]> {
   const rows = (await listRefs("ref_equipment")) as CachedEquipment[];
-  return rankBcmMatches(rows, q, limit).map((r) => ({ id: r.id, bcm_code: r.bcm_code as string }));
+  // A device returned to its owner leaves the pickers (D14).
+  return rankBcmMatches(
+    rows.filter((r) => !r.returned_to_owner),
+    q,
+    limit,
+  ).map((r) => ({ id: r.id, bcm_code: r.bcm_code as string }));
 }
 
 // ---- local state on top of the snapshot ----------------------------------
@@ -168,6 +176,9 @@ export async function effectiveCachedEquipment(
     cal_due_date: null,
     created_at: "",
     updated_at: "",
+    equipment_source: cached.equipment_source ?? "pool",
+    // The snapshot carries only a flag, not the timestamp.
+    returned_to_owner_at: cached.returned_to_owner ? "returned" : null,
   };
   return { equipment, locallyDispatched };
 }

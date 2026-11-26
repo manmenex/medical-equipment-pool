@@ -1,8 +1,13 @@
 import { api } from "@/services/api";
 import type { BorrowTrendPoint, DashboardSummary, TopBorrowedItem } from "@/types";
 
-export async function fetchSummary(): Promise<DashboardSummary> {
-  const resp = await api.get<DashboardSummary>("/dashboard/summary");
+// Roadmap PR33 (D14): source filter (all/pool/demo/loan), default all.
+export type DashboardSource = "all" | "pool" | "demo" | "loan";
+
+export async function fetchSummary(source: DashboardSource = "all"): Promise<DashboardSummary> {
+  const resp = await api.get<DashboardSummary>("/dashboard/summary", {
+    params: source === "all" ? undefined : { source },
+  });
   return resp.data;
 }
 

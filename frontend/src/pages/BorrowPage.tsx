@@ -9,6 +9,7 @@ import { ScanBar } from "@/components/entry/ScanBar";
 import { useWardRefs } from "@/components/entry/useWardRefs";
 import { WardSection } from "@/components/entry/WardSection";
 import { OfflineStaleGate } from "@/components/OfflineStaleGate";
+import { SourceBadge } from "@/components/SourceBadge";
 import { useDirtyForm } from "@/hooks/useDirtyForm";
 import { useOfflineMode } from "@/hooks/useOfflineMode";
 import { cachedChecklistKind, effectiveCachedEquipment, enqueueOfflineDispatch, LocalOpError } from "@/offline/localOps";
@@ -18,7 +19,7 @@ import { dispatchBatch, type DispatchBatchItem } from "@/services/borrow";
 import { batchErrorText, defaultChecks } from "@/services/checks";
 import { getDispatchCheck, getEquipment, resolveEquipmentByQr, type DispatchCheck } from "@/services/equipment";
 import { useUiStore } from "@/store/uiStore";
-import type { Checks, ChecklistKind, Equipment } from "@/types";
+import type { Checks, ChecklistKind, Equipment, EquipmentSource } from "@/types";
 
 // Roadmap PR27/PR28 (D3/D4/D7/D10): ward-first multi-equipment dispatch. One
 // ward + N scanned items; each item carries its own accessory/Cryo-Cuff check
@@ -35,6 +36,8 @@ export interface DispatchItem {
   checks: Checks;
   /** Roadmap PR29: optional patient HN, kept in memory only until submitted/queued. */
   hn: string;
+  /** Roadmap PR33 (D14): source badge (DEMO / ยืม). */
+  source?: EquipmentSource;
   error?: string;
 }
 
@@ -81,16 +84,23 @@ export function BorrowPage() {
   useDirtyForm(items.length > 0);
 
   const addEquipment = useCallback(
-    async (eq: Pick<Equipment, "id" | "bcm_code" | "equipment_name" | "status" | "asset_number">) => {
+    async (eq: Pick<Equipment, "id" | "bcm_code" | "equipment_name" | "status" | "asset_number" | "equipment_source" | "returned_to_owner_at">) => {
       const label = eq.bcm_code ?? eq.asset_number ?? eq.equipment_name;
       if (itemsRef.current.some((i) => i.equipmentId === eq.id)) return; // duplicates ignored
       let check: DispatchCheck | null = null;
       if (!offline) {
         check = await getDispatchCheck(eq.id);
+        if (check.warning === "returned_to_owner") {
+          setNotice(`⛔ ${label} คืนผู้ให้ยืมแล้ว ไม่ถูกเพิ่ม`);
+          return;
+        }
         if (check.warning === "decommissioned" || !check.dispatchable) {
           setNotice(`⛔ ${label} ปลดระวางแล้ว ไม่ถูกเพิ่ม`);
           return;
         }
+      } else if (eq.returned_to_owner_at) {
+        setNotice(`⛔ ${label} คืนผู้ให้ยืมแล้ว ไม่ถูกเพิ่ม`);
+        return;
       } else if (eq.status === "decommissioned") {
         setNotice(`⛔ ${label} ปลดระวางแล้ว ไม่ถูกเพิ่ม`);
         return;
@@ -101,7 +111,19 @@ export function BorrowPage() {
       setItems((prev) =>
         prev.some((i) => i.equipmentId === eq.id)
           ? prev
-          : [...prev, { equipmentId: eq.id, bcm: label, name: eq.equipment_name, check, kind, checks: defaultChecks(kind), hn: "" }],
+          : [
+              ...prev,
+              {
+                equipmentId: eq.id,
+                bcm: label,
+                name: eq.equipment_name,
+                check,
+                kind,
+                checks: defaultChecks(kind),
+                hn: "",
+                source: check?.equipment_source ?? eq.equipment_source,
+              },
+            ],
       );
     },
     [offline],
@@ -314,6 +336,7 @@ export function BorrowPage() {
                     }`}
                   >
                     <strong className="text-sm">{it.bcm}</strong>
+                    <SourceBadge source={it.source} />
                     <span className="min-w-0 flex-1 truncate text-xs text-[var(--text-muted)]">{it.name}</span>
                     {rowSummary(it)}
                     <span aria-hidden="true">›</span>

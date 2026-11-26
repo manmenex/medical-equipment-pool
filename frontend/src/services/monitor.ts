@@ -1,5 +1,5 @@
 import { api } from "@/services/api";
-import type { Checks, ChecklistKind, Cuffs } from "@/types";
+import type { Checks, ChecklistKind, Cuffs, EquipmentSource } from "@/types";
 
 // Roadmap PR32 (D9): read-only Monitor feed. Roadmap PR29: only `has_hn` (an indicator);
 // the HN is revealed per transaction through revealHn(), never listed here.
@@ -13,7 +13,14 @@ export interface MonitorEvent {
   shift: "day" | "night";
   ward: { id: string | null; name: string | null };
   operator: { id: string | null; full_name: string | null };
-  equipment: { id: string; bcm_code: string | null; name: string; category: string | null };
+  equipment: {
+    id: string;
+    bcm_code: string | null;
+    name: string;
+    category: string | null;
+    // Roadmap PR33 (D14): source badge (DEMO / ยืม); absent = pool.
+    equipment_source?: EquipmentSource;
+  };
   receipt_outcome: "usable" | "defective" | null;
   close_reason: string | null;
   // Roadmap PR27/PR28: event-side contact name, checklist and outstanding cuffs.

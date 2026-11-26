@@ -26,7 +26,19 @@ MAX_LIMIT = 500
 
 # The allow-lists are the contract; tests assert responses match them exactly.
 SECTION_FIELDS: dict[str, tuple[str, ...]] = {
-    "equipment": ("id", "bcm_code", "equipment_name", "category_id", "category_name", "checklist_kind", "status"),
+    "equipment": (
+        "id",
+        "bcm_code",
+        "equipment_name",
+        "category_id",
+        "category_name",
+        "checklist_kind",
+        "status",
+        # Roadmap PR33 (D14): source badge + returned-to-owner flag so the
+        # offline picker can badge demo/loan and drop returned devices.
+        "equipment_source",
+        "returned_to_owner",
+    ),
     "wards": ("id", "code", "name", "department_id", "phone"),
     "departments": ("id", "code", "name", "phone"),
     "locations": ("id", "name", "type"),
@@ -111,6 +123,8 @@ async def get_page(db: AsyncSession, section: str, cursor: str | None, limit: in
                 "category_name": category_name,
                 "checklist_kind": category_kind or "standard",
                 "status": obj.status.value,
+                "equipment_source": obj.equipment_source,
+                "returned_to_owner": obj.returned_to_owner_at is not None,
             }
         else:
             obj = row[0]
