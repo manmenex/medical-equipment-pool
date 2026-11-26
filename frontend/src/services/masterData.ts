@@ -46,3 +46,16 @@ export async function importWardPhones(
     )
   ).data;
 }
+
+export async function createDepartment(body: { code: string; name: string; phone: string | null }): Promise<Department> {
+  return (await api.post<Department>("/departments", body)).data;
+}
+
+export async function createWard(body: {
+  code: string;
+  name: string;
+  phone: string | null;
+  department_id: string | null;
+}): Promise<Ward> {
+  return (await api.post<Ward>("/wards", body)).data;
+}

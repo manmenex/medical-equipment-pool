@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 
 import { StatCard } from "@/components/StatCard";
 import { STATUS_LABELS } from "@/components/StatusBadge";
-import { canDispatchOrReceiveEquipment, useAuth } from "@/hooks/useAuth";
+import { canDispatchOrReceiveEquipment, canManageEquipmentMasterData, useAuth } from "@/hooks/useAuth";
 import { fetchSummary, type DashboardSource } from "@/services/dashboard";
 
 // Dashboard & Equipment Status (unnumbered Post-PR11 frontend follow-up):
@@ -43,6 +43,8 @@ const DISPATCH_QUICK_ACTIONS: QuickAction[] = [
   { to: "/return", icon: "📥", label: "รับเครื่อง" },
 ];
 
+const DEMO_LOAN_LINK = "/admin?tab=demoLoan";
+
 function QuickActionLink({ to, icon, label }: QuickAction) {
   return (
     <Link
@@ -69,6 +71,8 @@ export function DashboardPage() {
   const { user } = useAuth();
   const [source, setSource] = useState<DashboardSource>("all");
   const canDispatchOrReceive = canDispatchOrReceiveEquipment(user);
+  // Same gate AdminPage uses for its demo/loan tab (usability only).
+  const canAddDemoLoan = canManageEquipmentMasterData(user);
 
   const {
     data: summary,
@@ -118,7 +122,16 @@ export function DashboardPage() {
         </div>
       )}
 
-      {isEmpty && <p className="text-sm text-[var(--text-muted)]">ยังไม่มีข้อมูลเครื่องมือในระบบ</p>}
+      {isEmpty && (
+        <div className="flex flex-col items-start gap-2">
+          <p className="text-sm text-[var(--text-muted)]">ยังไม่มีข้อมูลเครื่องมือในระบบ</p>
+          {canAddDemoLoan && (source === "demo" || source === "loan") && (
+            <Link to={DEMO_LOAN_LINK} className="rounded-lg bg-status-borrowed px-4 py-2 text-sm font-medium text-white">
+              เพิ่มเครื่อง Demo/ยืม
+            </Link>
+          )}
+        </div>
+      )}
 
       {!isLoading && !isError && !isEmpty && (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-8">
@@ -155,6 +168,7 @@ export function DashboardPage() {
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {canDispatchOrReceive && <QuickActionLink {...DISPATCH_QUICK_ACTIONS[0]} />}
           {canDispatchOrReceive && <QuickActionLink {...DISPATCH_QUICK_ACTIONS[1]} />}
+          {canAddDemoLoan && <QuickActionLink to={DEMO_LOAN_LINK} icon="➕" label="เพิ่มเครื่อง Demo/ยืม" />}
           {QUICK_ACTIONS.map((action) => (
             <QuickActionLink key={action.to} {...action} />
           ))}

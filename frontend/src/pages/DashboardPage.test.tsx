@@ -228,3 +228,29 @@ describe("DashboardPage quick actions", () => {
     expect(screen.getByRole("link", { name: /ดูรายการเครื่อง/ })).toHaveAttribute("href", "/equipment");
   });
 });
+
+describe("demo/loan add shortcut", () => {
+  it("shows the quick action to administrators, linking to the demoLoan tab", async () => {
+    fetchSummary.mockResolvedValue(summary);
+    renderDashboard();
+    const link = await screen.findByRole("link", { name: /เพิ่มเครื่อง Demo\/ยืม/ });
+    expect(link).toHaveAttribute("href", "/admin?tab=demoLoan");
+  });
+
+  it("hides it from non-administrators", async () => {
+    mockUser = makeUser("equipment_pool_staff");
+    fetchSummary.mockResolvedValue(summary);
+    renderDashboard();
+    await waitFor(() => expect(screen.getByText("42")).toBeInTheDocument());
+    expect(screen.queryByRole("link", { name: /เพิ่มเครื่อง Demo/ })).not.toBeInTheDocument();
+  });
+
+  it("shows the inline button in the empty Demo filter, not in the All filter", async () => {
+    fetchSummary.mockResolvedValue(emptySummary);
+    renderDashboard();
+    await screen.findByText("ยังไม่มีข้อมูลเครื่องมือในระบบ");
+    expect(screen.getAllByRole("link", { name: /เพิ่มเครื่อง Demo/ })).toHaveLength(1);
+    await userEvent.click(screen.getByRole("button", { name: "Demo" }));
+    await waitFor(() => expect(screen.getAllByRole("link", { name: /เพิ่มเครื่อง Demo/ })).toHaveLength(2));
+  });
+});
