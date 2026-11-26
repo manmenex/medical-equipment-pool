@@ -2171,6 +2171,59 @@ Test-Case 'schedule: a task that keeps failing is reported as a failure, not as 
     Assert-True ($output -match 'not backup coverage') 'the operator must be told what a failing schedule means'
 }
 
+Test-Case 'schedule: last result running (0x41301) is classified correctly' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true `
+        -ScheduleRegistered $true -ScheduleLastResult 267009
+    $output = Invoke-WithMocks -Context $ctx -Body {
+        return (Show-MepBackupScheduleStatus 6>&1 | Out-String)
+    }
+    Assert-True ($output -match 'RUNNING') 'expected status text for code 267009'
+    Assert-True ($output -notmatch 'FAILED') 'an informational code must not be reported as FAILED'
+    Assert-True ($output -notmatch 'not backup coverage') 'no failure warning for an informational code'
+}
+
+Test-Case 'schedule: last result not run yet (0x41303) is classified correctly' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true `
+        -ScheduleRegistered $true -ScheduleLastResult 267011
+    $output = Invoke-WithMocks -Context $ctx -Body {
+        return (Show-MepBackupScheduleStatus 6>&1 | Out-String)
+    }
+    Assert-True ($output -match 'NOT RUN YET') 'expected status text for code 267011'
+    Assert-True ($output -notmatch 'FAILED') 'an informational code must not be reported as FAILED'
+    Assert-True ($output -notmatch 'not backup coverage') 'no failure warning for an informational code'
+}
+
+Test-Case 'schedule: last result ready (0x41300) is classified correctly' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true `
+        -ScheduleRegistered $true -ScheduleLastResult 267008
+    $output = Invoke-WithMocks -Context $ctx -Body {
+        return (Show-MepBackupScheduleStatus 6>&1 | Out-String)
+    }
+    Assert-True ($output -match 'READY') 'expected status text for code 267008'
+    Assert-True ($output -notmatch 'FAILED') 'an informational code must not be reported as FAILED'
+    Assert-True ($output -notmatch 'not backup coverage') 'no failure warning for an informational code'
+}
+
+Test-Case 'schedule: last result terminated (0x41306) is classified correctly' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true `
+        -ScheduleRegistered $true -ScheduleLastResult 267014
+    $output = Invoke-WithMocks -Context $ctx -Body {
+        return (Show-MepBackupScheduleStatus 6>&1 | Out-String)
+    }
+    Assert-True ($output -match 'FAILED') 'expected status text for code 267014'
+    Assert-True ($output -match 'not backup coverage') 'a failure must carry the coverage warning'
+}
+
+Test-Case 'schedule: last result an unknown code is classified correctly' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true `
+        -ScheduleRegistered $true -ScheduleLastResult 12345
+    $output = Invoke-WithMocks -Context $ctx -Body {
+        return (Show-MepBackupScheduleStatus 6>&1 | Out-String)
+    }
+    Assert-True ($output -match 'FAILED \(code 12345\)') 'expected status text for code 12345'
+    Assert-True ($output -match 'not backup coverage') 'a failure must carry the coverage warning'
+}
+
 Test-Case 'schedule: pwsh resolution does not throw when ProgramFiles is unset and never returns a WindowsApps path' {
     $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
     $path = Invoke-WithMocks -Context $ctx -Body {

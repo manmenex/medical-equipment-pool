@@ -232,13 +232,24 @@ function Show-MepBackupScheduleStatus {
     if ($info) {
         Write-Host "  Last run:  $($info.LastRunTime)"
         Write-Host "  Next run:  $($info.NextRunTime)"
-        # 0 = success; 267011 is "task has not yet run", which is not a failure.
-        $result = $info.LastTaskResult
+        # Task Scheduler informational codes are not failures: 0x41301 means
+        # the task is running right now, 0x41303 that it has never run.
+        $result = [int64]$info.LastTaskResult
         if ($result -eq 0) {
             Write-Host "  Last result: SUCCESS" -ForegroundColor Green
         }
+        elseif ($result -eq 267009) {
+            Write-Host "  Last result: RUNNING (กำลังรันอยู่)" -ForegroundColor Cyan
+        }
         elseif ($result -eq 267011) {
-            Write-Host "  Last result: has not run yet"
+            Write-Host "  Last result: NOT RUN YET" -ForegroundColor Yellow
+        }
+        elseif ($result -eq 267008) {
+            Write-Host "  Last result: READY (SCHED_S_TASK_READY, not a failure)"
+        }
+        elseif ($result -eq 267014) {
+            Write-Host "  Last result: FAILED (terminated, code $result)" -ForegroundColor Red
+            Write-Host '  A registered schedule that fails is not backup coverage. Check logs/install-operations.log.' -ForegroundColor Yellow
         }
         else {
             Write-Host "  Last result: FAILED (code $result)" -ForegroundColor Red
