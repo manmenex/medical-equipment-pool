@@ -2171,6 +2171,37 @@ Test-Case 'schedule: a task that keeps failing is reported as a failure, not as 
     Assert-True ($output -match 'not backup coverage') 'the operator must be told what a failing schedule means'
 }
 
+Test-Case 'schedule: pwsh resolution does not throw when ProgramFiles is unset and never returns a WindowsApps path' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
+    $path = Invoke-WithMocks -Context $ctx -Body {
+        $savedPf = $env:ProgramFiles; $savedW6432 = ${env:ProgramW6432}
+        try {
+            $env:ProgramFiles = $null; ${env:ProgramW6432} = $null
+            return (Get-MepPwshPath)
+        }
+        finally {
+            $env:ProgramFiles = $savedPf; ${env:ProgramW6432} = $savedW6432
+        }
+    }
+    Assert-True ($path -and (($path -replace '/', '\') -notlike '*\WindowsApps\*')) "the resolved pwsh must not be a Store path: '$path'"
+}
+
+Test-Case 'schedule: status warns when the registered action is a Store (WindowsApps) pwsh' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -ScheduleRegistered $true
+    $output = Invoke-WithMocks -Context $ctx -Body {
+        function Get-ScheduledTask {
+            param([string]$TaskName, [string]$ErrorAction)
+            return [pscustomobject]@{
+                TaskName = $TaskName; State = 'Ready'
+                Actions = @([pscustomobject]@{ Execute = 'C:\Program Files\WindowsApps\Microsoft.PowerShell_7.5.0.0_x64__8wekyb3d8bbwe\pwsh.exe' })
+            }
+        }
+        return (Show-MepBackupScheduleStatus 6>&1 | Out-String)
+    }
+    Assert-True ($output -match 'WARNING') 'a Store pwsh action must produce a warning'
+    Assert-True ($output -match 'winget install --id Microsoft.PowerShell --source winget') 'the warning must carry the ACTION'
+}
+
 Test-Case 'schedule: no schedule is reported plainly, with the RPO consequence stated' {
     $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -ScheduleRegistered $false
     $output = Invoke-WithMocks -Context $ctx -Body {
