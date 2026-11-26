@@ -82,6 +82,38 @@ def category_role(name: str | None) -> str | None:
     return None
 
 
+# Department / ward layout of sheet "รายงาน": (dispense mode, [(treatment type,
+# fill colour, [report-row labels])]). Wards map onto these labels through the
+# admin ward -> report-row mapping (migration 0032); labels not listed here
+# fall into an "อื่น ๆ" block so no count is lost.
+WARD_LAYOUT: list[tuple[str, list[tuple[str, str, list[str]]]]] = [
+    (
+        "Standby support",
+        [
+            ("IPD ตึก A", "92D050", ["Ward 5", "Ward 6", "Ward 7", "Ward 8", "Ward 9", "Ward 10", "Ward 11"]),
+            ("IPD ตึก B", "FFCCFF", ["W4B", "W5B", "W6B", "ICU3", "ICU4"]),
+            ("Clinical Care", "FFFF00", ["RR", "OR", "ICU1", "ICU2  CCU", "ER"]),
+        ],
+    ),
+    (
+        "After request",
+        [
+            (
+                "OPD",
+                "F8CBAD",
+                [
+                    "Pediatrics Clinic", "OB", "Oncology Clinic", "Cath Lab", "Internal Medicine Clinic",
+                    "Hemodialysis Clinic", "Gastroenterology Clinic", "Pre Surgery", "Surgery +Ortho", "X-Ray",
+                    "Training", "LR", "Nursery", "Heart Clinic", "Skin", "Eye", "ENT", "Wellness", "Neuro", "ARI",
+                ],
+            ),
+        ],
+    ),
+]
+# Rows the Owner's file shades grey across the count columns.
+SHADED_ROWS = {"Ward 6", "Ward 11", "OR", "ICU1", "ICU2  CCU"}
+
+
 # Short "ชนิดเครื่อง" sheet names and the form "หมายเหตุ" labels (Owner's tool).
 ROLE_SHORT_NAMES = {
     ROLE_INFUSION: "Infusion Pump",
@@ -94,6 +126,7 @@ ROLE_SHORT_NAMES = {
     ROLE_RESPIRATOR: "Respirator",
 }
 ROLE_ORDER = tuple(ROLE_SHORT_NAMES)
+OTHER_LABEL = "อื่น ๆ"
 FORM_NOTE_LABELS = {ROLE_BED: "Bed Alarms", ROLE_PNEUMATIC: "PNEUMATIC PUMP"}
 
 

@@ -287,20 +287,26 @@ export function StandbySummaryPage() {
             <table className="w-full text-left">
               <thead>
                 <tr className="text-xs text-[var(--text-muted)]">
-                  <th className={cell}>หอผู้ป่วย</th>
+                  <th className={cell}>รูปแบบการจ่ายเครื่อง</th>
+                  <th className={cell}>ประเภทการรักษา</th>
+                  <th className={cell}>แผนก</th>
                   <th className={cell}>จำนวน (เครื่อง)</th>
                 </tr>
               </thead>
               <tbody>
                 {data.infusion.wards.length === 0 && (
                   <tr>
-                    <td className={cell} colSpan={2}>
+                    <td className={cell} colSpan={4}>
                       ไม่มีเครื่อง Stand By ที่หอผู้ป่วย
                     </td>
                   </tr>
                 )}
-                {data.infusion.wards.map((w) => (
+                {data.infusion.wards.map((w, i, all) => (
                   <tr key={w.key} className="border-t border-[var(--border)]">
+                    <td className={cell}>{i > 0 && all[i - 1].mode === w.mode ? "" : (w.mode ?? "")}</td>
+                    <td className={cell}>
+                      {i > 0 && all[i - 1].mode === w.mode && all[i - 1].treatment === w.treatment ? "" : (w.treatment ?? "")}
+                    </td>
                     <th scope="row" className={`${cell} font-normal`}>
                       {w.label}
                     </th>

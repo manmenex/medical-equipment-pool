@@ -34,6 +34,8 @@ from app.services.daily_report_service import (
     ROLE_INFUSION,
     ROLE_ORDER,
     ROLE_SHORT_NAMES,
+    SHADED_ROWS,
+    WARD_LAYOUT,
     Counts,
     DailyReport,
     _THAI_SHIFT,
@@ -49,37 +51,6 @@ SHEET_OPERATOR = "ผู้คีย์"
 SHEET_EVENTS = "รายการ"
 
 OTHER_LABEL = "อื่น ๆ"
-
-# Department / ward layout of sheet "รายงาน": (dispense mode, [(treatment type,
-# fill colour, [report-row labels])]). Wards map onto these labels through the
-# admin ward -> report-row mapping (migration 0032); labels not listed here
-# fall into an "อื่น ๆ" block so no count is lost.
-WARD_LAYOUT: list[tuple[str, list[tuple[str, str, list[str]]]]] = [
-    (
-        "Standby support",
-        [
-            ("IPD ตึก A", "92D050", ["Ward 5", "Ward 6", "Ward 7", "Ward 8", "Ward 9", "Ward 10", "Ward 11"]),
-            ("IPD ตึก B", "FFCCFF", ["W4B", "W5B", "W6B", "ICU3", "ICU4"]),
-            ("Clinical Care", "FFFF00", ["RR", "OR", "ICU1", "ICU2  CCU", "ER"]),
-        ],
-    ),
-    (
-        "After request",
-        [
-            (
-                "OPD",
-                "F8CBAD",
-                [
-                    "Pediatrics Clinic", "OB", "Oncology Clinic", "Cath Lab", "Internal Medicine Clinic",
-                    "Hemodialysis Clinic", "Gastroenterology Clinic", "Pre Surgery", "Surgery +Ortho", "X-Ray",
-                    "Training", "LR", "Nursery", "Heart Clinic", "Skin", "Eye", "ENT", "Wellness", "Neuro", "ARI",
-                ],
-            ),
-        ],
-    ),
-]
-# Rows the Owner's file shades grey across the count columns.
-SHADED_ROWS = {"Ward 6", "Ward 11", "OR", "ICU1", "ICU2  CCU"}
 
 # "สรุปจำนวนการใช้งานเครื่องมือกลุ่ม Pool" rows (role -> label on the form).
 POOL_LABELS = [

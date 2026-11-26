@@ -29,6 +29,8 @@ class FieldOut(BaseModel):
     system_value: int | None
     override_value: int | None
     effective_value: int | None
+    mode: str | None = None
+    treatment: str | None = None
 
 
 class BaselineOut(BaseModel):
@@ -70,6 +72,8 @@ def _field(f: svc.FieldValue) -> FieldOut:
         system_value=f.system_value,
         override_value=f.override_value,
         effective_value=f.effective_value,
+        mode=f.mode,
+        treatment=f.treatment,
     )
 
 
