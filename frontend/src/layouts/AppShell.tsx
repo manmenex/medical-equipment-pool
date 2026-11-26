@@ -126,7 +126,7 @@ export function AppShell() {
         </nav>
       </aside>
 
-      <div className="flex min-h-screen flex-1 flex-col">
+      <div className="flex min-h-screen min-w-0 flex-1 flex-col">
         <UpdateNotice />
         <header className="surface flex items-center justify-between border-b px-4 py-3">
           <div className="text-sm font-medium md:hidden">Medical Equipment Pool</div>

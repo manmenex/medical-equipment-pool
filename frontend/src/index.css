@@ -74,10 +74,12 @@ textarea {
   border-radius: 0.5rem;
   min-height: 44px;
   font-size: 1rem;
+  min-width: 0;
+  max-width: 100%;
 }
 /* Input embedded in a bordered wrapper (e.g. password + toggle): the wrapper
    draws the frame, so the input itself stays borderless. */
-div.border > input {
+.field-group > input {
   background-color: transparent;
   border: 0;
   border-radius: 0;
@@ -102,7 +104,7 @@ a:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
-div.border:has(> input):focus-within {
+.field-group:focus-within {
   outline: 2px solid var(--focus);
   outline-offset: 1px;
 }
@@ -132,15 +134,16 @@ button:disabled {
 }
 
 /* Tables / list rows: visible dividers and header separation */
-thead th {
+/* Not applied to print views: .print-root stays black-on-white in any theme. */
+table:not(.print-table) thead th {
   font-weight: 700;
   color: var(--text);
   border-bottom: 2px solid var(--border);
 }
-tbody tr {
+table:not(.print-table) tbody tr {
   border-bottom: 1px solid var(--divider);
 }
-tbody tr:hover {
+table:not(.print-table) tbody tr:hover {
   background-color: rgba(127, 140, 161, 0.12);
 }
 .divide-y > * + * {
@@ -168,4 +171,9 @@ tbody tr:hover {
 .bg-status-repair\/15,
 .bg-status-out_of_service\/15 {
   border: 1px solid currentColor;
+}
+
+header a,
+header button {
+  white-space: nowrap;
 }
