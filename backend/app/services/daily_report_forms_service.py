@@ -14,8 +14,13 @@ Check columns show a tick/cross drawn as inline SVG (so no glyph depends on
 the font) from the stored checks (Cryo-Cuff items 1/2/3 mapped per D10); a
 NULL/unrecorded check prints blank. No HN or patient field is read.
 
-Not printed: the trailing "Equipment Verify Checklist" (FI-CES-BCM-PO-001/2),
-whose "Cleaner" column would assert cleaning data this system never records.
+D17 (Owner Governance 2026-11-26): each shift's forms end with the paper form
+"Equipment Verify Checklist" (FI-CES-BCM-PO-001/2), reproduced in form and
+layout, one row per device RECEIVED in that shift (one page group per date).
+It is a printed paper form only: every check cell (Cleaner, Function Test,
+Run Test, Battery Check, Pass, Fail) and the sign column print BLANK for hand
+completion; the system records, stores and derives no cleaning/check result
+from it. Only the date, the BCM Code and the equipment type are printed.
 """
 
 import base64
@@ -30,6 +35,7 @@ from app.services import report_pdf_service
 from app.services.daily_report_service import (
     FORM_NOTE_LABELS,
     FORM_ROWS_PER_PAGE,
+    ROLE_SHORT_NAMES,
     DailyEvent,
     DailyReport,
     category_role,
@@ -50,6 +56,17 @@ COL_NOTES = "หมายเหตุ"
 FOOTER_LEFT = "FI-CES-BCM-PO-001/1 แก้ไขครั้งที่ 04"
 FOOTER_RIGHT = "วันที่บังคับใช้ 25/06/2569"
 SHIFT_FILTERS = ("day", "night", "both")
+
+# D17 Equipment Verify Checklist (FI-CES-BCM-PO-001/2): measurements of the
+# paper form (pt). The 10-column sheet is scaled to the printable width.
+CHECK_TITLE = "Equipment Verify Checklist"
+CHECK_COLUMNS = (75.0, 75.0, 75.0, 75.0, 75.0, 75.0, 75.0, 75.0, 91.5, 91.5)
+CHECK_ROW_H = 15.75
+CHECK_TITLE_H = 17.25
+CHECK_HEAD = ("Date", "ME.Code", "Performance Check", "Status", "Remark")
+CHECK_SUB = ("Cleaner", "Function Test", "Run Test", "Battery Check", "Pass", "Fail")
+CHECK_FOOTER_LEFT = "FI-CES-BCM-PO-001/2 แก้ไขครั้งที่ 04"
+PAGE_W, PAGE_H, MARGIN_X, MARGIN_Y = 595.28, 841.89, 18.0, 54.0
 
 # Measurements of the paper form (pt): column widths, header row heights.
 COLUMN_WIDTHS = {
@@ -145,6 +162,70 @@ def _page_html(events: list[DailyEvent], kind: str, form_date: date) -> str:
     )
 
 
+def _check_scale() -> float:
+    return (PAGE_W - 2 * MARGIN_X) / sum(CHECK_COLUMNS)
+
+
+def checklist_rows_per_page() -> int:
+    """Rows that fit under the title + 3 logo rows + 3 header rows (58 on A4)."""
+    scale = _check_scale()
+    head = (CHECK_TITLE_H + CHECK_ROW_H * 6) * scale
+    room = PAGE_H - 2 * MARGIN_Y - head
+    return max(1, int(room / (CHECK_ROW_H * scale)))
+
+
+def _check_remark(e: DailyEvent) -> str:
+    """Equipment type label (as the form's Remark column); never the free-text note."""
+    role = category_role(e.category_name)
+    return FORM_NOTE_LABELS.get(role or "") or ROLE_SHORT_NAMES.get(role or "") or e.category_name
+
+
+def _check_page_html(rows: list[DailyEvent], form_date: date) -> str:
+    cells = lambda n: "<td><div class='c'></div></td>" * n  # noqa: E731
+    scale = _check_scale()
+    per_page = checklist_rows_per_page()
+    cols = "".join(f"<col style='width:{w}pt'>" for w in CHECK_COLUMNS)
+    body = []
+    for e in rows:
+        code, remark = with_badge(e.bcm_code, e.source), _check_remark(e)
+        # Check cells (Cleaner .. Fail) and the sign column are always blank (D17).
+        body.append(
+            f"<tr><td><div class='c'>{_e(format_date(form_date))}</div></td>"
+            f"<td><div class='c'>{_e(code)}</div></td>{cells(6)}"
+            f"<td><div class='c'><span{_fit(remark, CHECK_COLUMNS[8], 10)}>{_e(remark)}</span></div></td>{cells(1)}</tr>"
+        )
+    body.extend(f"<tr>{cells(10)}</tr>" for _ in range(per_page - len(rows)))
+    h3 = CHECK_ROW_H * 3 - 0.75
+    head = (
+        f"<tr><td colspan='9'><div class='c t'>{CHECK_TITLE}</div></td><td><div class='c t'></div></td></tr>"
+        + f"<tr>{cells(10)}</tr>" * 3
+        + f"<tr><td rowspan='3'><div class='c' style='height:{h3}pt'>{CHECK_HEAD[0]}</div></td>"
+        f"<td rowspan='3'><div class='c' style='height:{h3}pt'>{CHECK_HEAD[1]}</div></td>"
+        f"<td colspan='4'><div class='c'>{CHECK_HEAD[2]}</div></td><td colspan='2'><div class='c'>{CHECK_HEAD[3]}</div></td>"
+        f"<td rowspan='3'><div class='c' style='height:{h3}pt'>{CHECK_HEAD[4]}</div></td>"
+        f"<td rowspan='3'><div class='c' style='height:{h3}pt'></div></td></tr>"
+        f"<tr>{''.join(f'<td><div class=c>{t}</div></td>' for t in CHECK_SUB)}</tr>"
+        f"<tr>{cells(6)}</tr>"
+    )
+    return (
+        "<section class='page check'>"
+        f"<div class='sheet' style='transform:scale({scale:.4f})'><img class='logo' src='{_logo_uri()}'>"
+        f"<table style='width:{sum(CHECK_COLUMNS)}pt'><colgroup>{cols}</colgroup><tbody>{head}{''.join(body)}</tbody></table></div>"
+        f"<div class='footer left'>{CHECK_FOOTER_LEFT}</div><div class='footer right'>{FOOTER_RIGHT}</div>"
+        "</section>"
+    )
+
+
+def _checklist_pages(report: DailyReport, shift: Shift) -> list[str]:
+    """D17: one page group per form date that has receipts in this shift."""
+    per_page = checklist_rows_per_page()
+    pages: list[str] = []
+    for form_date, group in _form_groups(report, shift):
+        received = [e for e in group if e.kind == "receipt"]
+        pages.extend(_check_page_html(received[i : i + per_page], form_date) for i in range(0, len(received), per_page))
+    return pages
+
+
 def _form_groups(report: DailyReport, shift: Shift) -> list[tuple[date, list[DailyEvent]]]:
     """(form date, that form's events). Day = one form dated the report date;
     Night = one form per calendar date, the earlier one first, always both."""
@@ -174,6 +255,8 @@ def render_forms_html(report: DailyReport, kind: str, shift: str = "both") -> st
                 events = [e for e in group if e.kind == k]
                 chunks = [events[i : i + FORM_ROWS_PER_PAGE] for i in range(0, len(events), FORM_ROWS_PER_PAGE)] or [[]]
                 sections.extend(_page_html(chunk, k, form_date) for chunk in chunks)
+        if "receipt" in kinds:
+            sections.extend(_checklist_pages(report, sh))
     return f"""<!DOCTYPE html>
 <html lang="th"><head><meta charset="utf-8"><style>
 {report_pdf_service._FONT_FACE_CSS}
@@ -198,6 +281,12 @@ tbody tr {{ height: {ROW_H}pt; }}
 .c.code {{ justify-content: flex-start; padding-left: 2pt; }}
 .c.note {{ line-height: 1.05; }}
 .chk {{ vertical-align: middle; }}
+.sheet {{ position: absolute; left: {MARGIN_X}pt; top: {MARGIN_Y}pt; transform-origin: 0 0; }}
+.sheet .logo {{ position: absolute; left: 3pt; top: {CHECK_TITLE_H + 6}pt; width: 110.25pt; height: 33pt; }}
+.sheet table {{ width: auto; }}
+.sheet tbody tr {{ height: {CHECK_ROW_H}pt; }}
+.sheet .c {{ height: {CHECK_ROW_H - 0.75}pt; font-size: 10pt; padding: 0 2pt; }}
+.sheet .c.t {{ height: {CHECK_TITLE_H - 0.75}pt; font-size: 12pt; }}
 .footer {{ position: absolute; bottom: 21.6pt; font-size: 10pt; }}
 .footer.left {{ left: 18pt; }}
 .footer.right {{ right: 18pt; }}

@@ -142,6 +142,9 @@ class FieldValue:
     # Ward rows only: the Owner's report layout grouping (รูปแบบการจ่ายเครื่อง / ประเภทการรักษา).
     mode: str | None = None
     treatment: str | None = None
+    # Ward rows only: shown in the LINE copy text (admin-mapped, standby or edited).
+    in_text: bool = True
+    text_order: int = 10**6
 
     @property
     def effective_value(self) -> int | None:
@@ -352,48 +355,38 @@ async def build_summary(db: AsyncSession, summary_date: date, cutoff: str) -> St
     open_equipment_ids = {t.equipment_id for t in open_txs}
     mappings = await daily_report_service.load_ward_mappings(db)
 
-    standby_by_label: dict[str, int] = {}
+    # D18: one row per ward (never merged), grouped/ordered by the Owner's report
+    # layout; wards outside the layout are listed only when admin-mapped, on
+    # standby, or carrying a stored edit.
+    standby_by_ward: dict[uuid.UUID | None, int] = {}
     for t in open_txs:
-        if not _no_hn_at(t, cutoff_at):
-            continue
-        m = mappings.get(t.ward_id) if t.ward_id else None
-        label = m.report_row_label if m else daily_report_service.UNSPECIFIED_LABEL
-        standby_by_label[label] = standby_by_label.get(label, 0) + 1
-
-    # Rows: the Owner's report layout in its fixed order (same rows, order and
-    # grouping as the Stand By column of the daily Excel), then any other row
-    # that is explicitly mapped, has standby, or has a stored edit.
-    layout = [
-        (mode, treatment, label)
-        for mode, groups in daily_report_service.WARD_LAYOUT
-        for treatment, _color, labels in groups
-        for label in labels
-    ]
-    known = {label for _, _, label in layout}
-    order: dict[str, int] = {}
-    for m in mappings.values():
-        if m.is_override and m.report_row_label not in known:
-            order[m.report_row_label] = min(order.get(m.report_row_label, 10**6), m.sort_order)
-    for label in standby_by_label:
-        if label not in known:
-            mapped = [m.sort_order for m in mappings.values() if m.report_row_label == label]
-            order.setdefault(label, min(mapped) if mapped else 10**6)
-    for key in overrides:
-        if key.startswith(WARD_KEY_PREFIX) and key[len(WARD_KEY_PREFIX):] not in known:
-            order.setdefault(key[len(WARD_KEY_PREFIX):], 10**6 + 1)
-    other = daily_report_service.OTHER_LABEL
-    rows = layout + [(other, other, label) for label, _ in sorted(order.items(), key=lambda kv: (kv[1], kv[0]))]
-    wards = [
-        FieldValue(
-            key=ward_key(label),
-            label=label,
-            system_value=standby_by_label.get(label, 0),
-            override_value=overrides.get(ward_key(label)),
-            mode=mode,
-            treatment=treatment,
+        if _no_hn_at(t, cutoff_at):
+            key = t.ward_id if t.ward_id in mappings else None
+            standby_by_ward[key] = standby_by_ward.get(key, 0) + 1
+    extra = [daily_report_service.UNSPECIFIED_LABEL] if None in standby_by_ward else []
+    extra += sorted(
+        k[len(WARD_KEY_PREFIX):] for k in overrides if k.startswith(WARD_KEY_PREFIX) and k[len(WARD_KEY_PREFIX):]
+    )
+    ward_rows = daily_report_service.build_ward_rows(mappings, {w for w in standby_by_ward if w}, extra)
+    wards = []
+    for r in ward_rows:
+        override = overrides.get(ward_key(r.label))
+        system = standby_by_ward.get(r.ward_id, 0) if r.ward_id else (
+            standby_by_ward.get(None, 0) if r.label == daily_report_service.UNSPECIFIED_LABEL else 0
         )
-        for mode, treatment, label in rows
-    ]
+        wards.append(
+            FieldValue(
+                key=ward_key(r.label),
+                label=r.label,
+                system_value=system,
+                override_value=override,
+                mode=r.mode,
+                treatment=r.treatment,
+                # LINE text: every admin-mapped ward (even at zero), plus any with standby or an edit.
+                text_order=r.sort_order,
+                in_text=(r.ward_id is not None and r.listed) or bool(system) or override is not None,
+            )
+        )
 
     created_ok = [e for e in equipment if e.created_at is None or e.created_at <= cutoff_at]
     devices = sum(
@@ -484,10 +477,12 @@ def _num(v: int | None) -> str:
 def render_text(summary: StandbySummary) -> str:
     d = summary.summary_date
     lines = ["Infusion pump standby", f"{d.day:02d}/{d.month:02d}/{d.year}"]
-    for w in summary.wards:
+    # LINE text keeps the admin sort_order (stable: layout order breaks ties).
+    for w in sorted(summary.wards, key=lambda w: w.text_order):
         v = w.effective_value
-        # Layout rows with nothing recorded are left out of the LINE text (as before).
-        if w.mode != daily_report_service.OTHER_LABEL and not w.system_value and w.override_value is None:
+        # Same rows as before D18: every admin-mapped ward (zero shows "-"), plus any
+        # row with standby or an edit; empty layout placeholder rows stay out.
+        if not w.in_text:
             continue
         lines.append(f"{w.label} = -" if not v else f"{w.label} = {v} เครื่อง")
     lines += [

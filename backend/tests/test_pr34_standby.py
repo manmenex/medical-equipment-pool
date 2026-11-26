@@ -80,7 +80,7 @@ async def _world(db) -> W:
     db.add(dept)
     await db.flush()
     w.w5a = Ward(code="W5A", name="Ward 5A", department_id=dept.id)
-    w.w5b = Ward(code="X5B", name="Ward 5B", department_id=dept.id)
+    w.w5b = Ward(code="W5B", name="Ward 5B", department_id=dept.id)
     db.add_all([w.w5a, w.w5b])
     w.infusion = EquipmentCategory(name="Infusion Pump")
     w.pneu = EquipmentCategory(name="Pneumatic Pump")
@@ -91,7 +91,7 @@ async def _world(db) -> W:
     db.add_all(
         [
             ReportWardRow(ward_id=w.w5a.id, report_row_label="W5A", sort_order=1),
-            ReportWardRow(ward_id=w.w5b.id, report_row_label="X5B", sort_order=2),
+            ReportWardRow(ward_id=w.w5b.id, report_row_label="W5B", sort_order=2),
         ]
     )
     w.n = 0
@@ -171,8 +171,7 @@ async def _get(client, headers, cutoff, path=""):
 
 
 def _wards(body):
-    """Rows outside the Owner's fixed layout (the test wards); layout rows are covered separately."""
-    return {w["label"]: w for w in body["infusion"]["wards"] if w["mode"] == "อื่น ๆ"}
+    return {w["label"]: w for w in body["infusion"]["wards"]}
 
 
 # ------------------------------------------------------------------ counting
@@ -191,8 +190,8 @@ async def test_night_cutoff_standby_stock_and_pneumatic(client, seeded_users, db
     wards = _wards(body)
     # e1 (no HN) + e4 (HN added after the cut-off => still Standby at 08:00); e2 has an HN.
     assert wards["W5A"]["system_value"] == 2
-    assert wards["X5B"]["system_value"] == 0  # e3 dispatched after 08:00
-    assert [w["label"] for w in inf["wards"] if w["mode"] == "อื่น ๆ"] == ["W5A", "X5B"]  # PR30 sort order after the layout rows
+    assert wards["W5B"]["system_value"] == 0  # e3 dispatched after 08:00
+    assert [w["label"] for w in inf["wards"] if w["label"] in ("W5A", "W5B")] == ["W5A", "W5B"]  # each ward is its own row inside its layout group
     # Devices at pool: e5 (received 07:00), e6, e3 (not yet out at 08:00); e7 defective excluded; e1/e2/e4 out.
     assert inf["bme_devices"]["system_value"] == 3
     # Chargers: baseline 10; dispatches e1(no charger) 0, e2(NULL) -1, e4 -1, e5 -1; receipt e5 +1 => 8.
@@ -215,7 +214,7 @@ async def test_day_cutoff_moves_counts(client, seeded_users, db_session):
     assert body["cutoff_at"].startswith("2026-07-28T13:00:00")
     wards = _wards(body)
     assert wards["W5A"]["system_value"] == 1  # e4's HN was added at 10:00 -> in use by 20:00
-    assert wards["X5B"]["system_value"] == 1  # e3 dispatched 09:00, no HN
+    assert wards["W5B"]["system_value"] == 1  # e3 dispatched 09:00, no HN
     inf = body["infusion"]
     assert inf["bme_devices"]["system_value"] == 2  # e5, e6 (e3 now out)
     assert inf["chargers"]["system_value"] == 7  # 8 - e3 (NULL checks count as present)
@@ -380,7 +379,7 @@ async def test_copy_text_exact_format_uses_effective_values(client, seeded_users
         "Infusion pump standby\n"
         "28/07/2026\n"
         "W5A = 2 เครื่อง\n"
-        "X5B = -\n"
+        "W5B = -\n"
         "BME = เครื่องใหม่ 3 เครื่อง\n"
         "🟢พร้อมใช้งาน 3 เครื่อง\n"
         "สายชาร์จ = 8  Clamp = 4\n"
@@ -391,7 +390,7 @@ async def test_copy_text_exact_format_uses_effective_values(client, seeded_users
     await client.put(
         "/api/v1/standby-summary/overrides",
         headers=staff,
-        json={"date": "2026-07-28", "cutoff": "night", "field_key": "ward:X5B", "value": 4},
+        json={"date": "2026-07-28", "cutoff": "night", "field_key": "ward:W5B", "value": 4},
     )
     await client.put(
         "/api/v1/standby-summary/overrides",
@@ -399,7 +398,7 @@ async def test_copy_text_exact_format_uses_effective_values(client, seeded_users
         json={"date": "2026-07-28", "cutoff": "night", "field_key": "ward:W5A", "value": 0},
     )
     text = (await _get(client, staff, "night", "/text")).text
-    assert "W5A = -\nX5B = 4 เครื่อง\n" in text
+    assert "W5A = -\nW5B = 4 เครื่อง\n" in text
 
 
 # ------------------------------------------------------------------ layout
@@ -418,19 +417,36 @@ async def test_ward_rows_follow_report_layout_and_excel_column(client, seeded_us
     )
     body = (await _get(client, staff, "day")).json()
     wards = body["infusion"]["wards"]
-    layout = [(m, t, label) for m, groups in drs.WARD_LAYOUT for t, _c, labels in groups for label in labels]
-    assert [(w["mode"], w["treatment"], w["label"]) for w in wards[: len(layout)]] == layout  # same rows/order/grouping
-    assert wards[0]["mode"] == "Standby support" and wards[0]["treatment"] == "IPD ตึก A" and wards[0]["label"] == "Ward 5"
-    assert all(w["mode"] == "อื่น ๆ" for w in wards[len(layout):])
+    # D18: each ward is its own row inside its layout slot (W5A -> slot "Ward 5"); empty slots stay as placeholders.
+    layout = [
+        (m, t, {"Ward 5": "W5A"}.get(label, label))
+        for m, groups in drs.WARD_LAYOUT
+        for t, _c, labels in groups
+        for label in labels
+    ]
+    assert [(w["mode"], w["treatment"], w["label"]) for w in wards[: len(layout)]] == layout
+    assert wards[0]["mode"] == "Standby support" and wards[0]["treatment"] == "IPD ตึก A" and wards[0]["label"] == "W5A"
     # Zero rows still show "-" in the LINE text.
     text = (await _get(client, staff, "day", "/text")).text
-    assert "Ward 7 = 3 เครื่อง" in text and "Ward 5 =" not in text  # empty layout rows stay out of the LINE text
+    assert "Ward 7 = 3 เครื่อง" in text
     # The same numbers land in column H of the matching rows of the Excel.
     r = await client.get("/api/v1/reports/daily-summary.xlsx", headers=staff, params={"date": "2026-07-28"})
     ws = load_workbook(io.BytesIO(r.content))["รายงาน"]
     by_row = {ws.cell(i, 3).value: ws.cell(i, 8).value for i in range(5, 5 + len(layout))}
     assert [ws.cell(5 + i, 3).value for i in range(len(layout))] == [lbl for *_, lbl in layout]
-    assert by_row["Ward 7"] == 3 and by_row["Ward 5"] is None
+    assert by_row["Ward 7"] == 3
+
+
+async def test_line_text_lists_layout_label_ward_at_zero_in_admin_order(client, seeded_users, db_session):
+    """A ward mapped to a layout label still appears as "-" at zero, in admin sort_order
+    (regression: PR #221 dropped such rows from the LINE text)."""
+    await _scenario(db_session)
+    await db_session.commit()
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    text = (await _get(client, staff, "night", "/text")).text
+    lines = text.split("\n")
+    assert lines[2:4] == ["W5A = 2 เครื่อง", "W5B = -"]  # W5B is a layout-slot ward with zero standby
+    assert "Ward 5 =" not in text  # an unmatched empty layout slot is not a ward
 
 
 # ------------------------------------------------------------------ Excel
@@ -454,17 +470,17 @@ async def test_daily_excel_stand_by_column_uses_day_cutoff_effective_values(clie
     r = await client.get("/api/v1/reports/daily-summary.xlsx", headers=staff, params={"date": "2026-07-28"})
     assert r.status_code == 200, r.text
     col = standby_col(r.content)
-    assert col["W5A"] == 1 and col["X5B"] == 1  # day (20:00) cut-off system values
+    assert col["W5A"] == 1 and col["W5B"] == 1  # day (20:00) cut-off system values
 
     # Night-cutoff edits do not leak in; a day-cutoff edit does; 0 renders blank.
-    for cutoff, key, value in (("night", "ward:W5A", 9), ("day", "ward:W5A", 5), ("day", "ward:X5B", 0)):
+    for cutoff, key, value in (("night", "ward:W5A", 9), ("day", "ward:W5A", 5), ("day", "ward:W5B", 0)):
         await client.put(
             "/api/v1/standby-summary/overrides",
             headers=staff,
             json={"date": "2026-07-28", "cutoff": cutoff, "field_key": key, "value": value},
         )
     col = standby_col((await client.get("/api/v1/reports/daily-summary.xlsx", headers=staff, params={"date": "2026-07-28"})).content)
-    assert col["W5A"] == 5 and col["X5B"] is None
+    assert col["W5A"] == 5 and col["W5B"] is None
 
 
 # ------------------------------------------------------------------ roles
@@ -630,7 +646,7 @@ async def test_copy_text_shows_dash_for_every_zero_or_blank(client, seeded_users
         assert r.status_code == 200, r.text
     text = (await _get(client, staff, "night", "/text")).text
     assert text == (
-        "Infusion pump standby\n28/07/2026\nW5A = -\nX5B = -\n"
+        "Infusion pump standby\n28/07/2026\nW5A = -\nW5B = -\n"
         "BME = เครื่องใหม่ - เครื่อง\n🟢พร้อมใช้งาน - เครื่อง\nสายชาร์จ = -  Clamp = -\n"
         "🟡 Pneumatic PUMP🟡\nเครื่องที่ใช้งานอยู่ ⏩ : -\nรับคืนเครื่องวันนี้ ⏩ : -"
     )
@@ -648,9 +664,9 @@ async def test_redispatch_closed_transaction_open_state_at_cutoff(client, seeded
     night = _wards((await _get(client, staff, "night")).json())
     day = _wards((await _get(client, staff, "day")).json())
     # Night 08:00: B not yet dispatched -> A still open at W5A.
-    assert (night["W5A"]["system_value"], night["X5B"]["system_value"]) == (1, 0)
-    # Day 20:00: B at X5B, A closed.
-    assert (day["W5A"]["system_value"], day["X5B"]["system_value"]) == (0, 1)
+    assert (night["W5A"]["system_value"], night["W5B"]["system_value"]) == (1, 0)
+    # Day 20:00: B at W5B, A closed.
+    assert (day["W5A"]["system_value"], day["W5B"]["system_value"]) == (0, 1)
 
 
 async def test_override_insert_race_retries_instead_of_500(client, seeded_users, db_session, monkeypatch):

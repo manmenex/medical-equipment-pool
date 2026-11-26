@@ -249,12 +249,12 @@ async def test_workbook_sheets_headers_and_counts(client, seeded_users, db_sessi
     assert ws["H3"].value == "Stand By" and ws["I3"].value == "Total per DAY"
     assert [ws.cell(4, c).value for c in (4, 5, 6, 7, 9, 10)] == ["ส่ง", "รับ", "ส่ง", "รับ", "ส่งเครื่อง", "รับคืน"]
     merged = {str(m) for m in ws.merged_cells.ranges}
-    assert {"A3:A4", "B3:B4", "C3:C4", "D3:E3", "F3:G3", "H3:H4", "I3:J3", "A5:A21", "B5:B11", "B12:B16",
-            "B17:B21", "A22:A41", "B22:B41"} <= merged
-    assert ws["A5"].value == "Standby support" and ws["B5"].value == "IPD ตึก A" and ws["A22"].value == "After request"
+    assert {"A3:A4", "B3:B4", "C3:C4", "D3:E3", "F3:G3", "H3:H4", "I3:J3", "A5:A22", "B5:B12", "B13:B17",
+            "B18:B22", "A23:A42", "B23:B42"} <= merged
+    assert ws["A5"].value == "Standby support" and ws["B5"].value == "IPD ตึก A" and ws["A23"].value == "After request"
     assert ws.freeze_panes == "D5" and ws.row_dimensions[3].height == 36
     assert [ws.column_dimensions[c].width for c in "ABCDEFGHIJ"] == [15, 14, 24, 8, 8, 8, 8, 8, 11, 11]
-    assert ws["H5"].fill.start_color.rgb.endswith("FFFF00") and ws["D6"].fill.start_color.rgb.endswith("DDD9C4")
+    assert ws["H5"].fill.start_color.rgb.endswith("FFFF00") and ws["D7"].fill.start_color.rgb.endswith("DDD9C4")
     assert ws["D5"].border.left.style == "thin"
 
     # Ward table counts Infusion Pump only; zero cells are blank; unknown labels -> "อื่น ๆ" block.
@@ -363,13 +363,13 @@ async def test_ward_mapping_rollup_and_admin_api(client, seeded_users, db_sessio
     wb = load_workbook(io.BytesIO((await _get_xlsx(client, staff, date="2026-07-28")).content))
     ws = wb["รายงาน"]
     body, _ = _ward_table(ws)
-    assert "Ward 5A" not in body and "Ward 5B" not in body  # rolled up into the layout row "Ward 5"
-    assert body["Ward 5"] == [3, 1, None, 1, 3, 2]
+    assert "Ward 5" not in body  # D18: never merged -- 5A and 5B stay separate rows inside the "Ward 5" slot
+    assert body["Ward 5A"] == [2, 1, None, 1, 2, 2] and body["Ward 5B"] == [1, None, None, None, 1, None]
     assert body["Ward 6"] == [None, None, 1, None, 1, None]  # Ward 6's own row (unmapped ward name matches the layout)
-    assert ws["A5"].value == "Standby support" and ws["C5"].value == "Ward 5"
+    assert ws["A5"].value == "Standby support" and [ws["C5"].value, ws["C6"].value] == ["Ward 5A", "Ward 5B"]
     assert body[svc.UNSPECIFIED_LABEL] == [None, None, 1, None, 1, None]  # unmapped -> "อื่น ๆ" block
     ev = _rows(wb["รายการ"])
-    assert {r[7] for r in ev[1:] if r[6] in ("Ward 5A", "Ward 5B")} == {"Ward 5"}  # Ward (ในฟอร์ม) keeps the real ward
+    assert {r[7] for r in ev[1:] if r[6] in ("Ward 5A", "Ward 5B")} == {"Ward 5A", "Ward 5B"}
 
     # Reset reverts to default; unknown ward 404.
     assert (await client.delete(f"/api/v1/reports/ward-rows/{w.w5a.id}", headers=admin)).status_code == 204
@@ -520,18 +520,18 @@ async def test_forms_pdf_renders_paginated_with_thai_font(client, seeded_users, 
                   received=at(28, 15) if i == 0 else None, op_r=w.bme_a if i == 0 else None)
     await db_session.commit()
     report = await svc.build_daily_report(db_session, D, 60)
-    assert [e.form_position for e in report.events if e.kind == "dispatch"][33] == "แบบบันทึกส่งเครื่อง แถว 34"
+    assert [e.form_position for e in report.events if e.kind == "dispatch"][33] == "แบบบันทึกส่งเครื่อง หน้า 2 แถว 1"
 
     html_doc = forms.render_forms_html(report, "both", "day")
-    assert html_doc.count("<section class='page'>") == 3
+    assert html_doc.count("<section class='page'>") == 3  # + 1 verify-checklist page (D17) for the one receipt
     document = weasyprint.HTML(string=html_doc).render()
-    assert len(document.pages) == 3  # fixed rows keep each form page to one A4 page
+    assert len(document.pages) == 4  # fixed rows keep each form page to one A4 page
     assert abs(float(document.pages[0].width) - 794) < 2  # A4 portrait (CSS px)
 
     staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
     # Day: dispatch 2 pages + receipt 1; Night forms are always one page per calendar date.
-    for kind, shift, pages in (("dispatch", "day", 2), ("receipt", "day", 1), ("both", "day", 3),
-                               ("dispatch", "night", 2), ("both", "night", 4), ("both", "both", 7)):
+    for kind, shift, pages in (("dispatch", "day", 2), ("receipt", "day", 2), ("both", "day", 4),
+                               ("dispatch", "night", 2), ("both", "night", 4), ("both", "both", 8)):
         resp = await client.get("/api/v1/reports/daily-forms.pdf", headers=staff,
                                 params={"date": "2026-07-28", "kind": kind, "shift": shift})
         assert resp.status_code == 200 and resp.headers["content-type"] == "application/pdf"
@@ -556,3 +556,72 @@ async def test_empty_day_workbook(client, seeded_users, db_session):
     wb = load_workbook(io.BytesIO(resp.content))
     assert _ward_table(wb["รายงาน"])[1] == [0, 0, 0, 0, 0, 0]
     assert len(_rows(wb["รายการ"])) == 1
+
+
+@pytest.mark.asyncio
+async def test_form_positions_count_per_shift_form_and_page(db_session, seeded_users):
+    w = await _world(db_session, seeded_users)
+    # Night 01:30 dispatch (Night form dated 28) must not take row 1 of the Day form.
+    await _tx(db_session, w, ward=w.w6, category=w.pump, dispatched=at(28, 1, 30), op_d=w.bme_a)
+    for i in range(34):
+        await _tx(db_session, w, ward=w.w6, category=w.pump, dispatched=at(28, 9, i), op_d=w.bme_b)
+    await db_session.commit()
+    report = await svc.build_daily_report(db_session, D, 60)
+    disp = [e for e in report.events if e.kind == "dispatch"]
+    assert disp[0].shift == Shift.NIGHT and disp[0].form_position == "แบบบันทึกส่งเครื่อง แถว 1"
+    day = [e for e in disp if e.shift == Shift.DAY]
+    assert day[0].form_position == "แบบบันทึกส่งเครื่อง หน้า 1 แถว 1"
+    assert day[32].form_position.endswith("หน้า 1 แถว 33") and day[33].form_position.endswith("หน้า 2 แถว 1")
+
+
+@pytest.mark.asyncio
+async def test_each_ward_is_its_own_row_in_layout_order(db_session, seeded_users):
+    w = await _world(db_session, seeded_users)
+    w7a = Ward(code="W7A", name="Ward 7A", department_id=w.dept_a.id)
+    w7b = Ward(code="W7B", name="Ward 7B", department_id=w.dept_a.id)
+    odd = Ward(code="LAB", name="Lab Annex", department_id=w.dept_b.id)
+    db_session.add_all([w7a, w7b, odd])
+    await db_session.flush()
+    await _tx(db_session, w, ward=w7a, category=w.pump, dispatched=at(28, 9), op_d=w.bme_a)
+    await _tx(db_session, w, ward=w7b, category=w.pump, dispatched=at(28, 10), op_d=w.bme_a)
+    await _tx(db_session, w, ward=odd, category=w.pump, dispatched=at(28, 11), op_d=w.bme_a)
+    await db_session.commit()
+    report = await svc.build_daily_report(db_session, D, 60)
+    labels = [r.label for r in report.ward_rows]
+    assert "Ward 7" not in labels
+    assert labels.index("Ward 6") < labels.index("Ward 7A") < labels.index("Ward 7B") < labels.index("Ward 8")
+    rows = {r.label: r for r in report.ward_rows}
+    assert rows["Ward 7A"].mode == "Standby support" and rows["Ward 7A"].treatment == "IPD ตึก A"
+    assert rows["Lab Annex"].mode == "อื่น ๆ"
+    counted = {e.row_label for e in report.events}
+    assert {"Ward 7A", "Ward 7B", "Lab Annex"} <= counted  # lossless: every event has its own row
+
+
+@pytest.mark.asyncio
+async def test_verify_checklist_pages_blank_checks_one_row_per_receipt(db_session, seeded_users):
+    w = await _world(db_session, seeded_users)
+    bed = EquipmentCategory(name="ALARMS, OCCUPANCY, BED")
+    db_session.add(bed)
+    await db_session.flush()
+    for i in range(60):  # 60 Day receipts -> 58 rows/page -> 2 checklist pages
+        await _tx(db_session, w, ward=w.w6, category=w.pump, dispatched=at(27, 9), received=at(28, 9, i % 50),
+                  op_d=w.bme_a, op_r=w.bme_a, checks_r=STD_OK, notes="free text", bcm=f"SYN-{i:03d}")
+    await _tx(db_session, w, ward=w.w6, category=bed, dispatched=at(27, 9), received=at(28, 12), op_r=w.bme_a, bcm="SYN-BED")
+    await db_session.commit()
+    report = await svc.build_daily_report(db_session, D, 60)
+    html_doc = forms.render_forms_html(report, "both", "day")
+    assert forms.checklist_rows_per_page() == 58
+    checks = html_doc.split("<section class='page check'>")[1:]
+    assert len(checks) == 2
+    first = checks[0]
+    for text in ("Equipment Verify Checklist", "Performance Check", "Cleaner", "Function Test", "Run Test",
+                 "Battery Check", "Pass", "Fail", "Remark", "FI-CES-BCM-PO-001/2 แก้ไขครั้งที่ 04", "28/Jul/2026"):
+        assert text in first, text
+    assert first.count("SYN-") == 58 and checks[1].count("SYN-") == 3  # 61 receipts, one row each
+    assert "Bed Alarms" in checks[1] or "Bed Alarms" in first
+    # Nothing is ticked on the checklist, and no free text / HN-like data is printed.
+    assert "chk-ok" not in first and "chk-bad" not in first and "free text" not in first
+    # Dispatch-only output has no checklist; the receipt-bearing outputs do.
+    assert "page check" not in forms.render_forms_html(report, "dispatch", "day")
+    pages = len(weasyprint.HTML(string=html_doc).render().pages)
+    assert pages == 1 + 2 + 2  # blank dispatch form + receipt form (33+28 rows) + 2 checklist pages

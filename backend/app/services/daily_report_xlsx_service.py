@@ -1,13 +1,3 @@
-"""Roadmap PR30 (D5): the daily summary workbook "รายงานรับ-ส่งเครื่อง".
-
-Four sheets matching the pool team's current Excel file: "รายงาน" (ward
-groups), "ชนิดเครื่อง", "ผู้คีย์" and "รายการ". Every string goes through the
-PR18E centralized formula-injection guard (`report_xlsx_service._write_cell`),
-and generation runs through the PR18 admission control
-(`report_xlsx_service.run_bounded`). No HN or any patient field exists in the
-input, so none can be emitted.
-"""
-
 """Roadmap PR30 (D5): the daily summary workbook, laid out exactly like the
 pool team's own report (Owner request 2026-11-26).
 
@@ -34,8 +24,8 @@ from app.services.daily_report_service import (
     ROLE_INFUSION,
     ROLE_ORDER,
     ROLE_SHORT_NAMES,
-    SHADED_ROWS,
-    WARD_LAYOUT,
+    OTHER_COLOR,
+    WardRow,
     Counts,
     DailyReport,
     _THAI_SHIFT,
@@ -138,12 +128,24 @@ def _widths(ws: Worksheet, widths: list[float]) -> None:
         ws.column_dimensions[get_column_letter(i)].width = w
 
 
-def _ward_blocks(report: DailyReport, standby: dict[str, int] | None = None) -> list[tuple[str, list[tuple[str, str, list[str]]]]]:
-    known = {w for _, groups in WARD_LAYOUT for _, _, ws_ in groups for w in ws_}
-    extra = sorted(({r.label for r in report.ward_rows} | set(standby or {})) - known)
-    blocks = list(WARD_LAYOUT)
-    if extra:
-        blocks.append((OTHER_LABEL, [(OTHER_LABEL, "D9D9D9", extra)]))
+def _ward_blocks(
+    report: DailyReport, standby: dict[str, int] | None = None
+) -> list[tuple[str, list[tuple[str, str, list[WardRow]]]]]:
+    """D18: the report's per-ward rows nested as mode -> treatment group -> rows.
+    A Stand By label the report has no row for (stored edit, standby-only ward)
+    is appended to the "อื่น ๆ" group so no number is lost."""
+    rows = list(report.ward_rows)
+    known = {r.label for r in rows}
+    for label in sorted(set(standby or {}) - known):
+        rows.append(WardRow(label, OTHER_LABEL, OTHER_LABEL, OTHER_COLOR))
+    blocks: list[tuple[str, list[tuple[str, str, list[WardRow]]]]] = []
+    for r in rows:
+        if not blocks or blocks[-1][0] != r.mode:
+            blocks.append((r.mode, []))
+        groups = blocks[-1][1]
+        if not groups or groups[-1][0] != r.treatment:
+            groups.append((r.treatment, r.color, []))
+        groups[-1][2].append(r)
     return blocks
 
 
@@ -176,13 +178,14 @@ def _summary_sheet(ws: Worksheet, report: DailyReport, standby: dict[str, int] |
     tot = Counts()
     for mode, groups in _ward_blocks(report, standby):
         mode_start = row
-        for treatment, color, labels in groups:
+        for treatment, color, rows in groups:
             group_start = row
-            for label in labels:
+            for ward_row in rows:
+                label = ward_row.label
                 c = counts.get(label, Counts())
                 for f in ("night_dispatch", "night_receipt", "day_dispatch", "day_receipt"):
                     setattr(tot, f, getattr(tot, f) + getattr(c, f))
-                grey = label in SHADED_ROWS
+                grey = ward_row.shaded
                 _put(ws, row, 3, label, align=_CENTER)
                 values = [c.night_dispatch, c.night_receipt, c.day_dispatch, c.day_receipt]
                 for col, v in zip((4, 5, 6, 7), values):
@@ -347,7 +350,7 @@ def _category_sheet(ws: Worksheet, report: DailyReport) -> None:
         for i, (name, role) in enumerate(active):
             if (role and category_role(e.category_name) == role) or (role is None and e.category_name == name):
                 per_ward.setdefault(e.row_label, {}).setdefault(i, Counts()).add(e)
-    order = [w for _, groups in _ward_blocks(report) for _, _, labels in groups for w in labels]
+    order = [r.label for _, groups in _ward_blocks(report) for _, _, rows in groups for r in rows]
     total_cols = [0] * (2 * len(active) + 2)
     for label in order:
         cells = per_ward.get(label)
