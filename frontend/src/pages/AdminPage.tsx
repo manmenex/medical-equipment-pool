@@ -13,10 +13,12 @@ import {
   canManageWardPhones,
   useAuth,
 } from "@/hooks/useAuth";
+import axios from "axios";
+
 import { apiErrorMessage } from "@/services/api";
 import { createEquipment } from "@/services/equipment";
 import { commitImport, previewImport } from "@/services/import";
-import { listCategories, listDepartments, listLocations, listWards, updateDepartmentPhone, updateWardPhone } from "@/services/masterData";
+import { listCategories, listDepartments, listLocations, listWards, createDepartment, createWard, updateDepartmentPhone, updateWardPhone } from "@/services/masterData";
 import type { ImportCommitResponse, ImportPreviewResponse, ImportRowResult, ImportRowStatus } from "@/types";
 
 type Tab = "equipment" | "demoLoan" | "departments" | "wards" | "locations" | "categories" | "import" | "wardPhones" | "users";
@@ -49,7 +51,7 @@ export function AdminPage() {
   const [searchParams] = useSearchParams();
   const requestedTab = searchParams.get("tab");
   // Deep link from the Settings hub (?tab=users etc.); unknown values fall back.
-  const [tab, setTab] = useState<Tab>(
+  const [selectedTab, setTab] = useState<Tab>(
     ALL_TAB_KEYS.includes(requestedTab as Tab) ? (requestedTab as Tab) : "equipment",
   );
   const { user } = useAuth();
@@ -61,6 +63,8 @@ export function AdminPage() {
     ...(canManageWardPhones(user) ? [WARD_PHONES_TAB] : []),
     ...(canManageUsers(user) ? [USERS_TAB] : []),
   ];
+  // A deep-linked tab the user may not see (e.g. ?tab=import) falls back.
+  const tab: Tab = tabs.some((t) => t.key === selectedTab) ? selectedTab : "equipment";
 
   return (
     <div className="flex flex-col gap-4">
@@ -85,7 +89,7 @@ export function AdminPage() {
       {tab === "wards" && <WardsList />}
       {tab === "locations" && <LocationsList />}
       {tab === "categories" && <CategoriesList />}
-      {tab === "import" && <InventoryImportPanel />}
+      {tab === "import" && canImportInventory(user) && <InventoryImportPanel />}
       {tab === "users" && canManageUsers(user) && <UsersPanel currentUserId={user?.id} />}
       {tab === "wardPhones" && canManageWardPhones(user) && <WardPhoneImportPanel />}
     </div>
@@ -168,12 +172,116 @@ function EquipmentForm() {
   );
 }
 
+function masterDataError(err: unknown, noun: string): string {
+  if (axios.isAxiosError(err)) {
+    const status = err.response?.status;
+    if (status === 409) return `รหัสหรือชื่อ${noun}นี้มีอยู่ในระบบแล้ว`;
+    if (status === 422) return "ข้อมูลไม่ถูกต้อง กรุณาตรวจสอบรหัส ชื่อ และเบอร์โทร";
+    if (status === 403) return `คุณไม่มีสิทธิ์เพิ่ม${noun}`;
+  }
+  return apiErrorMessage(err, `เพิ่ม${noun}ไม่สำเร็จ`);
+}
+
+const INPUT_CLASS = "rounded-lg border border-[var(--border)] bg-transparent px-3 py-2";
+
+function AddMasterDataForm({
+  noun,
+  addLabel,
+  showDepartment,
+  onCreate,
+}: {
+  noun: string;
+  addLabel: string;
+  showDepartment: boolean;
+  onCreate: (v: { code: string; name: string; phone: string | null; departmentId: string | null }) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [code, setCode] = useState("");
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [departmentId, setDepartmentId] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const { data: departments } = useQuery({ queryKey: ["departments"], queryFn: listDepartments, enabled: showDepartment && open });
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="self-start rounded-lg bg-status-borrowed px-4 py-2 text-sm font-medium text-white">
+        {addLabel}
+      </button>
+    );
+  }
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (!code.trim() || !name.trim()) {
+      setError("กรุณากรอกรหัสและชื่อ");
+      return;
+    }
+    setBusy(true);
+    try {
+      await onCreate({ code: code.trim(), name: name.trim(), phone: phone.trim() || null, departmentId: departmentId || null });
+      setCode("");
+      setName("");
+      setPhone("");
+      setDepartmentId("");
+      setOpen(false);
+    } catch (err) {
+      setError(masterDataError(err, noun));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <form onSubmit={submit} className="surface flex max-w-md flex-col gap-3 rounded-xl border p-4">
+      <input aria-label={`รหัส${noun}`} placeholder={`รหัส${noun}`} value={code} onChange={(e) => setCode(e.target.value)} className={INPUT_CLASS} />
+      <input aria-label={`ชื่อ${noun}`} placeholder={`ชื่อ${noun}`} value={name} onChange={(e) => setName(e.target.value)} className={INPUT_CLASS} />
+      <input aria-label="เบอร์โทร" placeholder="เบอร์โทร (ไม่บังคับ)" value={phone} onChange={(e) => setPhone(e.target.value)} className={INPUT_CLASS} />
+      {showDepartment && (
+        <select aria-label="แผนก" value={departmentId} onChange={(e) => setDepartmentId(e.target.value)} className={INPUT_CLASS}>
+          <option value="">ไม่ระบุแผนก</option>
+          {(departments ?? []).map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.code} — {d.name}
+            </option>
+          ))}
+        </select>
+      )}
+      {error && (
+        <p role="alert" className="text-sm text-status-repair">
+          {error}
+        </p>
+      )}
+      <div className="flex gap-2">
+        <button type="submit" disabled={busy} className="rounded-lg bg-status-borrowed px-4 py-2 text-sm font-medium text-white">
+          บันทึก
+        </button>
+        <button type="button" onClick={() => setOpen(false)} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm">
+          ยกเลิก
+        </button>
+      </div>
+    </form>
+  );
+}
+
 function DepartmentsList() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const { data } = useQuery({ queryKey: ["departments"], queryFn: listDepartments });
   return (
-    <ul className="surface divide-y rounded-xl border">
+    <div className="flex flex-col gap-3">
+      {canManageEquipmentMasterData(user) && (
+        <AddMasterDataForm
+          noun="แผนก"
+          addLabel="เพิ่มแผนก"
+          showDepartment={false}
+          onCreate={async (v) => {
+            await createDepartment({ code: v.code, name: v.name, phone: v.phone });
+            await queryClient.invalidateQueries({ queryKey: ["departments"] });
+          }}
+        />
+      )}
+      <ul className="surface divide-y rounded-xl border">
       {(data ?? []).map((d) => (
         <PhoneEditRow
           key={d.id}
@@ -187,6 +295,7 @@ function DepartmentsList() {
         />
       ))}
     </ul>
+    </div>
   );
 }
 
@@ -195,7 +304,19 @@ function WardsList() {
   const queryClient = useQueryClient();
   const { data } = useQuery({ queryKey: ["wards"], queryFn: listWards });
   return (
-    <ul className="surface divide-y rounded-xl border">
+    <div className="flex flex-col gap-3">
+      {canManageEquipmentMasterData(user) && (
+        <AddMasterDataForm
+          noun="หอผู้ป่วย"
+          addLabel="เพิ่มหอผู้ป่วย"
+          showDepartment
+          onCreate={async (v) => {
+            await createWard({ code: v.code, name: v.name, phone: v.phone, department_id: v.departmentId });
+            await queryClient.invalidateQueries({ queryKey: ["wards"] });
+          }}
+        />
+      )}
+      <ul className="surface divide-y rounded-xl border">
       {(data ?? []).map((w) => (
         <PhoneEditRow
           key={w.id}
@@ -209,6 +330,7 @@ function WardsList() {
         />
       ))}
     </ul>
+    </div>
   );
 }
 
