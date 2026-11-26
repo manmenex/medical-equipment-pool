@@ -52,3 +52,13 @@ export async function dismissSyncConflict(opId: string, reason: DismissReason, n
 export async function applySyncConflictNow(opId: string): Promise<void> {
   await api.post(`/sync/conflicts/${opId}/apply-now`);
 }
+
+export async function fetchSheetSyncOpenCount(): Promise<number> {
+  const resp = await api.get<{ count: number }>("/sync/conflicts/sheet-sync-count");
+  return resp.data.count;
+}
+
+export async function dismissAllSheetSyncConflicts(): Promise<{ dismissed: number; skipped: number }> {
+  const resp = await api.post<{ dismissed: number; skipped: number }>("/sync/conflicts/dismiss-sheet-sync", {});
+  return resp.data;
+}

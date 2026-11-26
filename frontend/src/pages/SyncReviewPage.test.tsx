@@ -9,10 +9,14 @@ import type { UserProfile } from "@/types";
 const fetchSyncConflicts = vi.fn();
 const dismissSyncConflict = vi.fn();
 const applySyncConflictNow = vi.fn();
+const fetchSheetSyncOpenCount = vi.fn();
+const dismissAllSheetSyncConflicts = vi.fn();
 vi.mock("@/services/syncReview", () => ({
   fetchSyncConflicts: (...a: unknown[]) => fetchSyncConflicts(...a),
   dismissSyncConflict: (...a: unknown[]) => dismissSyncConflict(...a),
   applySyncConflictNow: (...a: unknown[]) => applySyncConflictNow(...a),
+  fetchSheetSyncOpenCount: (...a: unknown[]) => fetchSheetSyncOpenCount(...a),
+  dismissAllSheetSyncConflicts: (...a: unknown[]) => dismissAllSheetSyncConflicts(...a),
 }));
 
 let mockUser: UserProfile | null = null;
@@ -68,6 +72,8 @@ beforeEach(() => {
   mockUser = makeUser("equipment_pool_staff");
   fetchSyncConflicts.mockReset().mockResolvedValue(page([item()]));
   dismissSyncConflict.mockReset().mockResolvedValue(undefined);
+  fetchSheetSyncOpenCount.mockReset().mockResolvedValue(3);
+  dismissAllSheetSyncConflicts.mockReset().mockResolvedValue({ dismissed: 3, skipped: 0 });
   applySyncConflictNow.mockReset().mockResolvedValue(undefined);
 });
 afterEach(() => vi.clearAllMocks());
@@ -159,5 +165,24 @@ describe("SyncReviewPage", () => {
     fetchSyncConflicts.mockResolvedValue(page([item({ admin_only: true, result_code: "FORBIDDEN" })]));
     renderPage();
     expect(await screen.findByRole("button", { name: "ปิดรายการ" })).toBeDisabled();
+  });
+
+  it("D20: bulk dismiss button is admin-only and confirms before dismissing", async () => {
+    mockUser = makeUser("equipment_pool_staff");
+    const { unmount } = renderPage();
+    await screen.findByText("BCM123");
+    expect(screen.queryByText(/ปิดรายการจาก Sheet Sync ทั้งหมด/)).toBeNull();
+    unmount();
+
+    mockUser = makeUser("administrator");
+    renderPage();
+    const btn = await screen.findByRole("button", { name: "ปิดรายการจาก Sheet Sync ทั้งหมด (3)" });
+    fireEvent.click(btn);
+    expect(screen.getByRole("dialog")).toHaveTextContent("ไม่บันทึกข้อมูลใด ๆ");
+    expect(dismissAllSheetSyncConflicts).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "ยืนยัน" }));
+    await waitFor(() => expect(dismissAllSheetSyncConflicts).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(fetchSheetSyncOpenCount.mock.calls.length).toBeGreaterThan(1));
+    expect(await screen.findByTestId("sync-review-message")).toHaveTextContent("3 รายการ");
   });
 });

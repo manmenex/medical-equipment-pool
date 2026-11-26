@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import func, select, update
 
 from app.models.audit import AuditLog
+from app.crud.client_operation import AUDIT_ACTION_SYNC_CONFLICT_RESOLVED
 from app.services.sync_review_service import OP_TOO_OLD_CODE
 from app.models.client_operation import ClientOperation
 from app.models.equipment import Equipment, EquipmentStatus, EquipmentStatusHistory
@@ -319,3 +320,39 @@ async def test_real_op_too_old_listed_dismissed_and_applied(client, ctx, db_sess
     eq = await db_session.get(Equipment, uuid.UUID(ctx["eq"]))
     await db_session.refresh(eq)
     assert eq.status == EquipmentStatus.ISSUED_TO_WARD
+
+
+# ---- D20: bulk dismiss of Legacy Sheet Sync conflicts
+
+BULK = f"{C}/dismiss-sheet-sync"
+
+
+async def test_bulk_dismiss_sheet_sync_only_that_device_audited_individually(client, ctx, db_session):
+    from app.services.legacy_sheet_sync.runner import DEVICE_ID
+
+    await _send(client, ctx["staff"], dispatch_op(ctx["staff_id"], ctx["eq"], ctx["ward"], seq=1))
+    sheet = [dispatch_op(ctx["staff_id"], ctx["eq"], ctx["ward"], seq=s) for s in (2, 3)]
+    for o in sheet:
+        await _send(client, ctx["staff"], o)
+    other = dispatch_op(ctx["staff_id"], ctx["eq"], ctx["ward"], seq=4)
+    await _send(client, ctx["staff"], other)
+    await db_session.execute(
+        update(ClientOperation).where(ClientOperation.op_id.in_([uuid.UUID(o["op_id"]) for o in sheet]))
+        .values(device_id=DEVICE_ID)
+    )
+    await db_session.commit()
+    assert (await client.post(BULK, headers=ctx["staff"], json={})).status_code == 403
+    assert (await client.get(f"{C}/sheet-sync-count", headers=ctx["staff"])).status_code == 403
+    assert (await client.get(f"{C}/sheet-sync-count", headers=ctx["admin"])).json() == {"count": 2}
+    assert (await client.post(BULK, headers=ctx["admin"], json={"result_code": "NOPE"})).json()["dismissed"] == 0
+    txs_before = await _count(db_session, BorrowTransaction)
+    r = await client.post(BULK, headers=ctx["admin"], json={})
+    assert r.status_code == 200 and r.json()["dismissed"] == 2
+    assert await _count(db_session, BorrowTransaction) == txs_before  # nothing applied
+    db_session.expire_all()
+    rows = (await db_session.execute(select(ClientOperation).where(ClientOperation.status == "resolved"))).scalars().all()
+    assert {str(x.op_id) for x in rows} == {o["op_id"] for o in sheet}
+    assert await _count(db_session, AuditLog, AuditLog.action == AUDIT_ACTION_SYNC_CONFLICT_RESOLVED) == 2
+    assert (await client.get(f"{C}/sheet-sync-count", headers=ctx["admin"])).json() == {"count": 0}
+    left = (await client.get(C, headers=ctx["staff"])).json()
+    assert [i["op_id"] for i in left["items"]] == [other["op_id"]]

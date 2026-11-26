@@ -8,7 +8,9 @@ import { canReviewSyncConflicts, useAuth } from "@/hooks/useAuth";
 import { apiErrorCode, apiErrorMessage } from "@/services/api";
 import {
   applySyncConflictNow,
+  dismissAllSheetSyncConflicts,
   dismissSyncConflict,
+  fetchSheetSyncOpenCount,
   fetchSyncConflicts,
   type DismissReason,
   type SyncConflictItem,
@@ -34,6 +36,13 @@ export function SyncReviewPage() {
     queryFn: () => fetchSyncConflicts({ limit: 100 }),
     enabled: allowed,
   });
+  const isAdmin = user?.role === "administrator";
+  const sheetCount = useQuery({
+    queryKey: ["sync-conflicts-sheet-count"],
+    queryFn: fetchSheetSyncOpenCount,
+    enabled: allowed && isAdmin,
+  });
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [pending, setPending] = useState<Pending>(null);
   const [reason, setReason] = useState<DismissReason | "">("");
   const [note, setNote] = useState("");
@@ -57,6 +66,24 @@ export function SyncReviewPage() {
   const refresh = async () => {
     await qc.invalidateQueries({ queryKey: SYNC_CONFLICTS_KEY });
     await qc.invalidateQueries({ queryKey: ["sync-conflicts-count"] });
+    await qc.invalidateQueries({ queryKey: ["sync-conflicts-sheet-count"] });
+  };
+
+  const submitBulk = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await dismissAllSheetSyncConflicts();
+      setMessageKind("success");
+      setMessage(`ปิดรายการจาก Sheet Sync แล้ว ${res.dismissed} รายการ`);
+      setBulkOpen(false);
+      await refresh();
+    } catch (e) {
+      setError(apiErrorMessage(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const submit = async () => {
@@ -114,6 +141,17 @@ export function SyncReviewPage() {
         </p>
       )}
       {user?.role === "administrator" && <SyncStatsPanel />}
+      {isAdmin && (sheetCount.data ?? 0) > 0 && (
+        <button
+          className="rounded-lg border px-3 py-1 text-sm"
+          onClick={() => {
+            setError(null);
+            setBulkOpen(true);
+          }}
+        >
+          ปิดรายการจาก Sheet Sync ทั้งหมด ({sheetCount.data})
+        </button>
+      )}
       {timelineFor && (
         <SyncTimelinePanel equipmentId={timelineFor} onClose={() => setTimelineFor(null)} onChanged={refresh} />
       )}
@@ -183,6 +221,40 @@ export function SyncReviewPage() {
           );
         })}
       </ul>
+
+      {bulkOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="ยืนยันการปิดรายการจาก Sheet Sync ทั้งหมด"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+        >
+          <div className="surface w-full max-w-md space-y-3 rounded-xl border p-4 text-sm">
+            <h2 className="font-semibold">ปิดรายการจาก Sheet Sync ทั้งหมด ({sheetCount.data ?? 0})</h2>
+            <p>
+              ระบบจะปิดรายการที่ค้างจาก Sheet Sync ทั้งหมดโดยไม่บันทึกข้อมูลใด ๆ (ไม่มีการส่งหรือรับเครื่องเกิดขึ้น)
+              และบันทึกการปิดแต่ละรายการไว้ในประวัติการใช้งาน
+            </p>
+            {error && (
+              <p role="alert" className="text-status-repair">
+                {error}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button className="rounded-lg border px-3 py-1" disabled={busy} onClick={() => setBulkOpen(false)}>
+                ยกเลิก
+              </button>
+              <button
+                className="rounded-lg bg-status-borrowed px-3 py-1 text-white"
+                disabled={busy}
+                onClick={() => void submitBulk()}
+              >
+                {busy ? "กำลังดำเนินการ..." : "ยืนยัน"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {pending && (
         <div

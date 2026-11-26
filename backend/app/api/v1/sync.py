@@ -28,6 +28,9 @@ from app.schemas.sync_read import (
 )
 from app.schemas.sync_review import (
     ApplyNowRequest,
+    BulkDismissSheetSyncRequest,
+    BulkDismissSheetSyncResponse,
+    SheetSyncOpenCount,
     DismissRequest,
     ReviewDetail,
     ReviewList,
@@ -165,6 +168,31 @@ async def list_conflicts(
         db, is_admin=is_admin, status=status, result_code=result_code, op_type=op_type,
         operator_id=operator_id, stale_context=stale_context, device_id=device_id,
         received_from=received_from, received_to=received_to, limit=limit, offset=offset,
+    )
+
+
+@router.get("/conflicts/sheet-sync-count", response_model=SheetSyncOpenCount)
+async def sheet_sync_open_count(
+    result_code: str | None = Query(default=None, max_length=64),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
+):
+    return {"count": await sync_review_service.count_open_sheet_sync(db, result_code=result_code)}
+
+
+@router.post("/conflicts/dismiss-sheet-sync", response_model=BulkDismissSheetSyncResponse)
+async def dismiss_sheet_sync_conflicts(
+    request: Request,
+    payload: BulkDismissSheetSyncRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_roles(*ADMINISTRATOR_ONLY_ROLES)),
+):
+    """D20: administrator-only bulk dismiss of open Legacy Sheet Sync conflicts."""
+    payload = payload or BulkDismissSheetSyncRequest()
+    ip, ua = _client(request)
+    return await sync_review_service.dismiss_sheet_sync(
+        db, user.id, result_code=payload.result_code, reason=payload.reason, note=payload.note,
+        ip_address=ip, user_agent=ua,
     )
 
 

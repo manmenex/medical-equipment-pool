@@ -19,10 +19,12 @@ ENV_SPREADSHEET_ID = "LEGACY_SHEET_SYNC_SPREADSHEET_ID"
 ENV_INTERVAL = "LEGACY_SHEET_SYNC_INTERVAL_SECONDS"
 ENV_START = "LEGACY_SHEET_SYNC_START_DATE"
 ENV_EMPLOYEE_CODE = "LEGACY_SHEET_SYNC_EMPLOYEE_CODE"
+ENV_DEDUPE_HOURS = "LEGACY_SHEET_SYNC_RECEIPT_DEDUPE_HOURS"
 
 DEFAULT_INTERVAL_SECONDS = 300
 MIN_INTERVAL_SECONDS = 60
 DEFAULT_EMPLOYEE_CODE = "LEGACY-SYNC"
+DEFAULT_DEDUPE_HOURS = 12.0  # D19 duplicate-receipt window
 DEFAULT_BACKFILL_DAYS = 7  # the ledger's OP_TOO_OLD window
 
 # Thailand has no daylight saving; a fixed offset avoids needing tzdata in
@@ -48,6 +50,7 @@ class SyncConfig:
     interval_seconds: int
     start_override: datetime | None  # UTC; None = rolling now-7d
     employee_code: str
+    receipt_dedupe_window_hours: float = DEFAULT_DEDUPE_HOURS
 
     def backfill_start(self, now: datetime | None = None) -> datetime:
         """Rows that occurred before this instant (UTC) are not imported.
@@ -85,6 +88,10 @@ def load_config(env: dict[str, str] | None = None) -> SyncConfig:
         interval = int(env.get(ENV_INTERVAL, "") or DEFAULT_INTERVAL_SECONDS)
     except ValueError:
         raise SyncConfigError(f"{ENV_INTERVAL} must be an integer.") from None
+    try:
+        dedupe = float(env.get(ENV_DEDUPE_HOURS, "") or DEFAULT_DEDUPE_HOURS)
+    except ValueError:
+        raise SyncConfigError(f"{ENV_DEDUPE_HOURS} must be a number.") from None
     start_raw = (env.get(ENV_START) or "").strip()
     return SyncConfig(
         enabled=(env.get(ENV_ENABLED) or "").strip().lower() in _TRUE,
@@ -93,4 +100,5 @@ def load_config(env: dict[str, str] | None = None) -> SyncConfig:
         interval_seconds=max(interval, MIN_INTERVAL_SECONDS),
         start_override=_parse_start(start_raw) if start_raw else None,
         employee_code=(env.get(ENV_EMPLOYEE_CODE) or "").strip() or DEFAULT_EMPLOYEE_CODE,
+        receipt_dedupe_window_hours=max(dedupe, 0.0),
     )

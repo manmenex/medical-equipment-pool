@@ -18,7 +18,7 @@ import unicodedata
 import uuid
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,7 +28,7 @@ from app.crud import equipment as equipment_crud
 from app.crud import transaction as transaction_crud
 from app.models.client_operation import OP_STATUS_APPLIED, OP_STATUS_PENDING, OP_STATUS_RESOLVED
 from app.models.master_data import Ward
-from app.models.transaction import DispatchType, ReceiptOutcome
+from app.models.transaction import BorrowTransaction, DispatchType, ReceiptOutcome, TransactionStatus
 from app.models.user import ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, Role, User
 from app.schemas.sync import OP_TYPE_DISPATCH, OP_TYPE_RECEIPT, SyncOperation, SyncReceiptBody
 from app.schemas.transaction import BorrowRequest
@@ -282,7 +282,15 @@ async def run_once(session_factory, reader: SheetReader, cfg: SyncConfig, *, dry
             if eerr:
                 report.skip(row.kind, row.row_id, f"{eerr}: {row.bcm_raw[:40]}")
                 continue
-            tx_id, why = await _receipt_target(db, row, eq, dispatches_by_eq, skipped_dispatch_ids, dry_run, start)
+            tx_id, why = await _receipt_target(
+                db, row, eq, dispatches_by_eq, skipped_dispatch_ids, dry_run, start,
+                ward=ward, window=timedelta(hours=cfg.receipt_dedupe_window_hours),
+            )
+            if why == ALREADY_RECEIVED:
+                # D19: duplicate of a receipt already recorded; acknowledged,
+                # not a conflict and not a "skipped" problem row.
+                report.counts["already_received"] += 1
+                continue
             if why:
                 report.skip(row.kind, row.row_id, why)
                 continue
@@ -300,7 +308,28 @@ def _record_parse_skip(report: RunReport, s: SkippedRow) -> None:
     report.skip(s.kind, s.row_id, s.reason)
 
 
-async def _receipt_target(db, row, eq, dispatches_by_eq, skipped_dispatch_ids, dry_run, start):
+ALREADY_RECEIVED = "already_received"
+
+
+async def _is_duplicate_receipt(db, tx_id, row, ward, window) -> bool:
+    """D19: the target transaction is closed by a RECEIPT (returned_at set and
+    no re-dispatch close_reason), for the same ward, with a business time
+    within ``window`` of this row's time."""
+    tx = await transaction_crud.get_by_id(db, tx_id)
+    return _tx_is_duplicate(tx, row, ward, window)
+
+
+def _tx_is_duplicate(tx, row, ward, window) -> bool:
+    if tx is None or ward is None or tx.status != TransactionStatus.CLOSED:
+        return False
+    if tx.close_reason is not None or tx.returned_at is None or tx.ward_id != ward.id:
+        return False
+    returned = tx.returned_at if tx.returned_at.tzinfo else tx.returned_at.replace(tzinfo=timezone.utc)
+    return abs(returned - row.occurred_at) <= window
+
+
+async def _receipt_target(db, row, eq, dispatches_by_eq, skipped_dispatch_ids, dry_run, start,
+                          ward=None, window=timedelta(hours=12)):
     """Which transaction does this return close? Returns (tx_id, skip_reason).
 
     1. The latest sheet dispatch for the same equipment at or before the
@@ -318,11 +347,21 @@ async def _receipt_target(db, row, eq, dispatches_by_eq, skipped_dispatch_ids, d
         led = await client_op_crud.get(db, op_id_for(KIND_DISPATCH, matched.row_id))
         if led is not None:
             if led.status in (OP_STATUS_APPLIED, OP_STATUS_RESOLVED) and led.transaction_id:
+                if await _is_duplicate_receipt(db, led.transaction_id, row, ward, window):
+                    return None, ALREADY_RECEIVED
                 return led.transaction_id, None
             return None, "matching_dispatch_in_review"
         if dry_run and matched.occurred_at >= start:
             return op_id_for(KIND_DISPATCH, matched.row_id), None  # would exist after the dispatch applies
     open_tx = await transaction_crud.get_open_transaction_for_equipment(db, eq.id)
     if open_tx is None:
+        last = (await db.execute(
+            select(BorrowTransaction)
+            .where(BorrowTransaction.equipment_id == eq.id, BorrowTransaction.status == TransactionStatus.CLOSED,
+                   BorrowTransaction.returned_at.is_not(None), BorrowTransaction.close_reason.is_(None))
+            .order_by(BorrowTransaction.returned_at.desc()).limit(1)
+        )).scalar_one_or_none()
+        if _tx_is_duplicate(last, row, ward, window):
+            return None, ALREADY_RECEIVED
         return None, "no_open_transaction"
     return open_tx.id, None
