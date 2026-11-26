@@ -56,6 +56,9 @@ AUDIT_ACTION_WARD_CORRECTION = "ward_correction"
 AUDIT_ACTION_HN_REVEAL = "hn_reveal"
 # Roadmap PR33 (D14): administrator "คืนผู้ให้ยืม" of a demo/loan device.
 AUDIT_ACTION_RETURN_TO_OWNER = "return_to_owner"
+# Roadmap PR34 (D15): an HN added later to an existing open dispatch. Never
+# carries the value (only has_hn / transaction id).
+AUDIT_ACTION_HN_ADD = "hn_add"
 # Roadmap PR12 (docs/audits/04-consolidated-implementation-plan.md Part F.1
 # step 7): one audit_logs entry per import commit batch (who ran it, when,
 # filename, aggregate row counts) -- deliberately not one entry per
@@ -154,6 +157,9 @@ AUDIT_ENTITY_DEPARTMENT = "department"
 AUDIT_ENTITY_WARD = "ward"
 # Roadmap PR30: daily-report ward -> report-row mapping override.
 AUDIT_ENTITY_REPORT_WARD_ROW = "report_ward_row"
+# Roadmap PR34 (D16): standby summary edited values and charger/clamp baseline.
+AUDIT_ENTITY_STANDBY_OVERRIDE = "standby_summary_override"
+AUDIT_ENTITY_STANDBY_CONFIG = "standby_summary_config"
 AUDIT_ENTITY_LOCATION = "location"
 AUDIT_ENTITY_CATEGORY = "category"
 AUDIT_ENTITY_AUTH = "auth"

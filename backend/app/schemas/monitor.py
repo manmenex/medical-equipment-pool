@@ -57,3 +57,6 @@ class MonitorEvent(BaseModel):
     cuffs_outstanding: CuffCounts | None = None
     # Roadmap PR29 (D1): the transaction (``id``) has a patient HN recorded.
     has_hn: bool = False
+    # Roadmap PR34 (D15): a dispatch event whose transaction is still open, so the
+    # UI can offer "add HN" (open and no HN = Standby). Always False for receipts.
+    is_open: bool = False

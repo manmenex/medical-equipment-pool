@@ -276,6 +276,11 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     # the audited POST /transactions/{id}/reveal-hn.
     hn_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True, deferred=True)
     has_hn: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
+    # Roadmap PR34 (D15): set ONLY when the HN was added after the dispatch
+    # (POST /transactions/{id}/hn); NULL when the HN was recorded at dispatch
+    # or there is none. Lets the standby summary tell that a dispatch was
+    # still Standby at an earlier cut-off.
+    hn_added_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
     equipment: Mapped["Equipment"] = relationship()
     # Roadmap PR17 Slice 2 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md

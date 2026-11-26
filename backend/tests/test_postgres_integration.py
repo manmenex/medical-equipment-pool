@@ -7549,7 +7549,14 @@ async def test_migration_0013_fresh_database_all_foreign_keys_are_restrict():
                 # 87 + 1 = 88.
                 # + 1 added by migration 0032 (Roadmap PR30):
                 # report_ward_rows.ward_id -> wards (1). 88 + 1 = 89.
-                assert len(rows) == 90, f"expected exactly 90 foreign keys, found {len(rows)}: {rows}"
+                # + 1 added by migration 0034 (Roadmap PR33):
+                # equipment.returned_to_owner_by_user_id -> users (1). 89 + 1 = 90.
+                # + 3 added by migration 0035 (Roadmap PR34):
+                # standby_summary_overrides.edited_by_user_id -> users,
+                # standby_summary_config.category_id -> equipment_categories,
+                # standby_summary_config.baseline_set_by_user_id -> users (3).
+                # 90 + 3 = 93.
+                assert len(rows) == 93, f"expected exactly 93 foreign keys, found {len(rows)}: {rows}"
                 for conname, confdeltype in rows:
                     assert confdeltype == "r", f"{conname} has confdeltype={confdeltype!r}, expected 'r' (RESTRICT)"
         finally:

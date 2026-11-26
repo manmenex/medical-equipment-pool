@@ -24,7 +24,13 @@ from app.core.reporting_time import business_date_and_shift
 from app.db.session import get_db
 from app.models.master_data import Department, Ward
 from app.models.report_mapping import ReportWardRow
-from app.services import daily_report_forms_service, daily_report_service, daily_report_xlsx_service, report_export_service
+from app.services import (
+    daily_report_forms_service,
+    daily_report_service,
+    daily_report_xlsx_service,
+    report_export_service,
+    standby_summary_service,
+)
 from app.utils.parsing import parse_uuid
 
 router = APIRouter(prefix="/reports", tags=["daily-reports"])
@@ -56,7 +62,8 @@ async def get_daily_summary_xlsx(
     outcome = "error"
     try:
         report = await _build(db, report_date, grace_minutes)
-        content = await daily_report_xlsx_service.build_daily_workbook_bounded(report)
+        standby = await standby_summary_service.standby_by_label(db, report.report_date)
+        content = await daily_report_xlsx_service.build_daily_workbook_bounded(report, standby)
     except ExportTooLargeError:
         outcome = "row_limit_exceeded"
         raise

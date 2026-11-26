@@ -38,6 +38,8 @@ const DISPATCH_NAV_ITEMS = [
   { to: "/return", label: "รับคืน", icon: "↩️" },
   // Roadmap PR32 (D9/D13): read-only Monitor, Equipment Pool staff + admin.
   { to: "/monitor", label: "Monitor การจ่าย/รับ", icon: "🖥️" },
+  // Roadmap PR34 (D16): standby summary, Equipment Pool staff + admin.
+  { to: "/standby-summary", label: "สรุป Stand By", icon: "📋" },
 ];
 
 export function AppShell() {

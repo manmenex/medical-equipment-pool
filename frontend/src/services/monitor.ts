@@ -30,6 +30,8 @@ export interface MonitorEvent {
   cuffs_outstanding?: Cuffs | null;
   // Roadmap PR29 (D1): `id` (the transaction) has a patient HN recorded.
   has_hn?: boolean;
+  // Roadmap PR34 (D15): an open dispatch (HN can still be added if has_hn is false).
+  is_open?: boolean;
 }
 
 export interface MonitorPageResult {

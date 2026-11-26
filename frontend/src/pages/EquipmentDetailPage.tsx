@@ -6,7 +6,9 @@ import { SourceBadge } from "@/components/SourceBadge";
 import { StatusBadge } from "@/components/StatusBadge";
 import { WardCorrectionAction } from "@/components/WardCorrectionAction";
 import { apiErrorMessage } from "@/services/api";
+import { AddHnAction } from "@/components/entry/AddHnAction";
 import { HnReveal } from "@/components/entry/HnField";
+import { canDispatchOrReceiveEquipment, useAuth } from "@/hooks/useAuth";
 import { listTransactions } from "@/services/borrow";
 import { canManageEquipmentMasterData, useAuth } from "@/hooks/useAuth";
 import { getEquipment, getEquipmentHistory, returnToOwner } from "@/services/equipment";
@@ -561,6 +563,18 @@ export function EquipmentDetailPage() {
                     <div className="text-xs text-[var(--text-muted)]">เบิกมาแล้ว {daysSinceDispatch(tx.borrowed_at)} วัน</div>
                   )}
                   {tx.has_hn && <HnReveal transactionId={tx.id} />}
+                  {/* Roadmap PR34 (D15): an open dispatch without HN is Standby; staff may add one. */}
+                  {tx.status === "open" && !tx.has_hn && canDispatchOrReceiveEquipment(user) && (
+                    <div>
+                      <AddHnAction
+                        transactionId={tx.id}
+                        onAdded={() => {
+                          void refetchTransactions();
+                          void queryClient.invalidateQueries({ queryKey: ["standby-summary"] });
+                        }}
+                      />
+                    </div>
+                  )}
                   <div className="mt-1">
                     <WardCorrectionAction
                       transaction={tx}

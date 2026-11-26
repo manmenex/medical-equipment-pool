@@ -3,7 +3,7 @@ from datetime import date
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import (
@@ -20,6 +20,7 @@ from app.models.transaction import DispatchType, RoutineRound
 from app.schemas.batch import BatchResponse, DispatchBatchRequest, ReceiptBatchRequest
 from app.schemas.checklist import ContactName, CuffCounts
 from app.schemas.common import Page
+from app.schemas.hn import HnInput
 from app.schemas.transaction import TransactionOut, WardCorrectionRequest
 from app.services import batch_service, borrow_service, cuff_service, hn_service
 from app.utils.parsing import parse_uuid
@@ -155,6 +156,40 @@ async def reveal_hn(
     hn = await hn_service.reveal_hn(db, transaction_id=transaction_id, actor_user_id=user.id, request=request)
     response.headers["Cache-Control"] = "no-store"
     return HnRevealOut(hn=hn)
+
+
+class HnAddRequest(BaseModel):
+    """Roadmap PR34 (D15). The value is never echoed in a validation error
+    (the app's 422 handler drops ``input``) and is excluded from repr."""
+
+    hn: HnInput = Field(repr=False)
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("hn")
+    @classmethod
+    def _required(cls, v):
+        if v is None:
+            raise ValueError("HN is required")
+        return v
+
+
+@router.post("/{transaction_id}/hn", response_model=TransactionOut)
+async def add_hn(
+    transaction_id: uuid.UUID,
+    payload: HnAddRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_roles(*EQUIPMENT_POOL_OPERATION_ROLES)),
+):
+    """Roadmap PR34 (D15): add an HN to an OPEN dispatch that has none
+    (Standby becomes in use). 409 when the dispatch is not open or already has
+    an HN. Online only. Audited without the value; response carries has_hn only."""
+    response.headers["Cache-Control"] = "no-store"
+    return await hn_service.add_hn(
+        db, transaction_id=transaction_id, hn=payload.hn, actor_user_id=user.id, request=request
+    )
 
 
 @router.post("/{transaction_id}/receive-cuffs", response_model=CuffReceiveOut)

@@ -18,7 +18,7 @@ from app.core.reporting_time import business_date_and_shift, business_date_and_s
 from app.db.session import get_db
 from app.models.equipment import Equipment
 from app.models.master_data import EquipmentCategory, Ward
-from app.models.transaction import BorrowTransaction, ReceiptOutcome
+from app.models.transaction import BorrowTransaction, ReceiptOutcome, TransactionStatus
 from app.crud import cuff as cuff_crud
 from app.models.user import User
 from app.schemas.common import Page
@@ -143,6 +143,7 @@ async def list_events(
                 close_reason=getattr(t, "close_reason", None),
                 ward_contact_name=t.dispatch_contact_name if is_dispatch else t.receipt_contact_name,
                 has_hn=bool(t.has_hn),
+                is_open=is_dispatch and t.status == TransactionStatus.OPEN,
                 checklist_kind=t.checklist_kind,
                 checks=t.dispatch_checks if is_dispatch else t.receipt_checks,
                 cuffs_outstanding=(
