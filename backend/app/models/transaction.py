@@ -261,6 +261,10 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     # not users; never a patient name. NULL = not recorded.
     dispatch_contact_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     receipt_contact_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Governance D22: display-only free-text label of the pool staff member who keyed the
+    # row in the legacy sheet ("ชื่อ BME"). Never a user or actor; NULL = use the user's name.
+    dispatch_keyer_label: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    receipt_keyer_label: Mapped[str | None] = mapped_column(String(100), nullable=True)
     # Roadmap PR28 (D4/D10): which checklist applies to this transaction
     # ('standard' | 'cryo_cuff'), snapshotted from the equipment's category at
     # dispatch so later category edits never reinterpret stored checks. NULL

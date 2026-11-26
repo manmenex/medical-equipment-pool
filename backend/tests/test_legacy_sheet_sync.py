@@ -179,6 +179,8 @@ async def test_dispatch_applied_then_return_applied_against_it(world):
         assert tx.id == runner.op_id_for("dispatch", "0a1b2c3d")  # dispatch tx id == op_id
         assert "BME Somchai" in tx.notes and "สายชาร์จ ✗" in tx.notes and WARD_SIDE_NAME not in tx.notes
         assert tx.dispatch_contact_name == WARD_SIDE_NAME  # D7: the sheet's "ชื่อ (User)"
+        assert tx.dispatch_keyer_label == "Somchai"  # D22: display-only BME label
+        assert tx.borrower_user_id is not None  # the actor stays the sync service user
         assert is_system_note(tx.notes) and operator_note(tx.notes) is None  # never printed
         assert tx.status.value == "open"
     reader.tabs["ข้อมูลรับเครื่องมือ"].append(rrow("0a1b2c3e", 1))
@@ -188,6 +190,7 @@ async def test_dispatch_applied_then_return_applied_against_it(world):
         tx = (await db.execute(select(BorrowTransaction))).scalar_one()
         assert tx.status.value == "closed"
         assert tx.receipt_contact_name == WARD_SIDE_NAME
+        assert tx.receipt_keyer_label == "Somchai" and tx.dispatch_keyer_label == "Somchai"
         ops = (await db.execute(select(ClientOperation))).scalars().all()
         assert {o.status for o in ops} == {"applied"} and {o.device_id for o in ops} == {runner.DEVICE_ID}
         for o in ops:  # the name travels only as the contact name, never inside a note

@@ -215,8 +215,29 @@ async def _submit(db: AsyncSession, op: SyncOperation, user_id: uuid.UUID, row: 
         logger.warning("legacy_sheet_sync row error tab=%s row=%s type=%s", row.kind, row.row_id, type(exc).__name__)
         return
     report.counts[res.result] += 1
+    if res.result == "applied" and row.bme_name:
+        await _store_keyer_label(db, op, row)
     if res.result in ("conflict", "rejected", "retry_later"):
         report.review.append({"tab": row.kind, "row_id": row.row_id, "result": res.result, "code": res.code})
+
+
+async def _store_keyer_label(db: AsyncSession, op: SyncOperation, row: LegacyRow) -> None:
+    """D22: record the sheet's BME name as a display-only label on the transaction
+    the operation just created/closed. Not an actor, not a user; failure is non-fatal."""
+    try:
+        tx_id = op.op_id if row.kind == KIND_DISPATCH else uuid.UUID(str(op.receipt.transaction_id))
+        tx = await db.get(BorrowTransaction, tx_id, populate_existing=True)
+        if tx is None:
+            return
+        label = row.bme_name.strip()[:100]
+        if row.kind == KIND_DISPATCH:
+            tx.dispatch_keyer_label = label
+        else:
+            tx.receipt_keyer_label = label
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.warning("legacy_sheet_sync keyer label not stored tab=%s row=%s", row.kind, row.row_id)
 
 
 async def run_once(session_factory, reader: SheetReader, cfg: SyncConfig, *, dry_run: bool = False,

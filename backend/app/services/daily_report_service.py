@@ -504,7 +504,7 @@ async def _load_events(db: AsyncSession, start: datetime, end: datetime) -> list
                     at=at,
                     local=at.astimezone(_BKK).replace(tzinfo=None),
                     operator_id=t.borrower_user_id if kind == "dispatch" else t.received_by_user_id,
-                    operator_name=op_name or UNSPECIFIED_LABEL,
+                    operator_name=(t.dispatch_keyer_label if kind == "dispatch" else t.receipt_keyer_label) or op_name or UNSPECIFIED_LABEL,
                     transaction_id=t.id,
                     bcm_code=bcm or "",
                     source=source or "pool",

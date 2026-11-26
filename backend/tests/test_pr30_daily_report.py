@@ -539,6 +539,24 @@ async def test_system_notes_never_printed_but_operator_notes_are(db_session, see
     assert any("ฝาครอบร้าว" in c for c in cells)
 
 
+@pytest.mark.asyncio
+async def test_keyer_label_replaces_user_name_in_bme_column(db_session, seeded_users):
+    w = await _world(db_session, seeded_users)
+    await _tx(db_session, w, ward=w.w6, category=w.pump, dispatched=at(28, 10), op_d=w.bme_a, bcm="BCM-LBL")
+    await _tx(db_session, w, ward=w.w6, category=w.pump, dispatched=at(28, 11), op_d=w.bme_a, bcm="BCM-NOLBL")
+    from sqlalchemy import update
+    await db_session.execute(
+        update(BorrowTransaction).where(BorrowTransaction.transaction_no == "T-1").values(dispatch_keyer_label="LabelOnly")
+    )
+    await db_session.commit()
+    report = await svc.build_daily_report(db_session, D, 60)
+    by_code = {e.bcm_code: e for e in report.events}
+    assert by_code["BCM-LBL"].operator_name == "LabelOnly"
+    assert by_code["BCM-NOLBL"].operator_name != "LabelOnly" and by_code["BCM-NOLBL"].operator_id is not None
+    assert by_code["BCM-LBL"].operator_id == by_code["BCM-NOLBL"].operator_id  # actor unchanged
+    assert "LabelOnly" in forms.render_forms_html(report, "dispatch", "day")
+
+
 def test_form_font_is_bundled_ofl_serif_and_fits_only_when_overflowing():
     css = forms._font_css()
     assert "Trirong Form" in css and css.count("@font-face") == 2
