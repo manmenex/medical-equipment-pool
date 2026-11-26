@@ -40,8 +40,12 @@ function Get-MepPwshPath {
     # which changes on every Store update and cannot be launched from such a
     # session (task result 0x80070002, file not found). So: MSI path first,
     # then anything that is not under WindowsApps.
-    $msi = Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe'
-    if (Test-Path -LiteralPath $msi) { return $msi }
+    $pf = $env:ProgramFiles
+    if (-not $pf) { $pf = ${env:ProgramW6432} }
+    if ($pf) {
+        $msi = Join-Path $pf 'PowerShell\7\pwsh.exe'
+        if (Test-Path -LiteralPath $msi) { return $msi }
+    }
 
     $current = (Get-Process -Id $PID -ErrorAction SilentlyContinue).Path
     if ($current -and (Split-Path -Leaf $current) -in @('pwsh', 'pwsh.exe') -and -not (Test-MepStorePwshPath $current)) {
@@ -56,7 +60,7 @@ function Get-MepPwshPath {
 
 function Test-MepStorePwshPath {
     param([string]$Path)
-    return [bool]($Path -and $Path -like '*\WindowsApps\*')
+    return [bool]($Path -and (($Path -replace '/', '\') -like '*\WindowsApps\*'))
 }
 
 function Get-MepStorePwshAction {
