@@ -88,10 +88,10 @@ export function AppShell() {
               to={item.to}
               end={item.to === "/"}
               className={({ isActive }) =>
-                `rounded-lg px-3 py-2 text-sm font-medium transition ${
+                `flex min-h-[44px] items-center rounded-lg px-3 py-2 text-sm font-medium transition ${
                   isActive
-                    ? "bg-status-borrowed/15 text-status-borrowed"
-                    : "text-[var(--text-muted)] hover:bg-black/5 dark:hover:bg-white/5"
+                    ? "bg-status-borrowed font-semibold text-white"
+                    : "text-[var(--text)] hover:bg-black/10 dark:hover:bg-white/10"
                 }`
               }
             >
@@ -105,10 +105,10 @@ export function AppShell() {
           <NavLink
             to="/settings"
             className={({ isActive }) =>
-              `rounded-lg px-3 py-2 text-sm font-medium transition ${
+              `flex min-h-[44px] items-center rounded-lg px-3 py-2 text-sm font-medium transition ${
                 isActive
-                  ? "bg-status-borrowed/15 text-status-borrowed"
-                  : "text-[var(--text-muted)] hover:bg-black/5 dark:hover:bg-white/5"
+                  ? "bg-status-borrowed font-semibold text-white"
+                  : "text-[var(--text)] hover:bg-black/10 dark:hover:bg-white/10"
               }`
             }
           >
@@ -126,7 +126,7 @@ export function AppShell() {
         </nav>
       </aside>
 
-      <div className="flex min-h-screen flex-1 flex-col">
+      <div className="flex min-h-screen min-w-0 flex-1 flex-col">
         <UpdateNotice />
         <header className="surface flex items-center justify-between border-b px-4 py-3">
           <div className="text-sm font-medium md:hidden">Medical Equipment Pool</div>

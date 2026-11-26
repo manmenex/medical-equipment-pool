@@ -2,20 +2,36 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Contrast pass (owner feedback 2026-11): text tokens are >= WCAG AA against
+   --bg/--surface/--field, and field/card borders are >= 3:1. */
 :root {
-  --bg: #f5f7fb;
+  --bg: #e8edf4;
   --surface: #ffffff;
-  --text: #0f172a;
-  --text-muted: #64748b;
-  --border: #e2e8f0;
+  --field: #ffffff;
+  --text: #0b1220;
+  --text-muted: #475569;
+  --placeholder: #64748b;
+  --border: #7f8ca1;
+  --divider: #cbd5e1;
+  --focus: #1d4ed8;
+  --shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
 }
 
 .dark {
-  --bg: #0b1220;
-  --surface: #111a2c;
-  --text: #e5eaf3;
-  --text-muted: #94a3b8;
-  --border: #1f2b42;
+  --bg: #080d18;
+  --surface: #121c30;
+  --field: #1d2b45;
+  --text: #f1f5f9;
+  --text-muted: #b8c4d6;
+  --placeholder: #94a3b8;
+  --border: #7083a0;
+  --divider: #2f3f5c;
+  --focus: #7cb4ff;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+html {
+  font-size: 16px;
 }
 
 html,
@@ -27,9 +43,137 @@ body,
 body {
   background-color: var(--bg);
   color: var(--text);
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+h1,
+h2 {
+  font-weight: 700;
+}
+h3,
+h4 {
+  font-weight: 600;
 }
 
 .surface {
   background-color: var(--surface);
   border-color: var(--border);
+  box-shadow: var(--shadow);
+}
+
+/* Fields: visible border, lighter background than the page, >=44px target,
+   16px text (prevents iOS zoom). Specificity beats the per-page utility
+   classes (bg-transparent, border-[var(--border)]) on purpose. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]),
+select,
+textarea {
+  background-color: var(--field);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  min-height: 44px;
+  font-size: 1rem;
+  min-width: 0;
+  max-width: 100%;
+}
+/* Input embedded in a bordered wrapper (e.g. password + toggle): the wrapper
+   draws the frame, so the input itself stays borderless. */
+.field-group > input {
+  background-color: transparent;
+  border: 0;
+  border-radius: 0;
+  min-height: 42px;
+}
+input[type="checkbox"],
+input[type="radio"] {
+  width: 1.15rem;
+  height: 1.15rem;
+  accent-color: var(--focus);
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--placeholder);
+  opacity: 1;
+}
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.field-group:focus-within {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+input:disabled,
+select:disabled,
+textarea:disabled {
+  background-color: var(--divider);
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+/* Buttons */
+button.rounded-lg,
+button.rounded-xl {
+  min-height: 44px;
+  font-weight: 600;
+}
+button.border {
+  border-color: var(--border);
+  border-width: 1.5px;
+  color: var(--text);
+}
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Tables / list rows: visible dividers and header separation */
+/* Not applied to print views: .print-root stays black-on-white in any theme. */
+table:not(.print-table) thead th {
+  font-weight: 700;
+  color: var(--text);
+  border-bottom: 2px solid var(--border);
+}
+table:not(.print-table) tbody tr {
+  border-bottom: 1px solid var(--divider);
+}
+table:not(.print-table) tbody tr:hover {
+  background-color: rgba(127, 140, 161, 0.12);
+}
+.divide-y > * + * {
+  border-color: var(--divider);
+}
+
+/* Status colors: tailwind tokens are the darker shades (AA on white and under
+   white button text); on the dark theme text uses lighter variants. */
+.dark .text-status-available { color: #4ade80; }
+.dark .text-status-borrowed { color: #7cb4ff; }
+.dark .text-status-pm { color: #facc15; }
+.dark .text-status-calibration { color: #c4b5fd; }
+.dark .text-status-repair { color: #fb923c; }
+.dark .text-status-out_of_service { color: #cbd5e1; }
+.dark .text-red-600 { color: #f87171; }
+.dark .text-green-700 { color: #4ade80; }
+:root:not(.dark) .text-amber-400,
+:root:not(.dark) .text-amber-500 { color: #b45309; }
+:root:not(.dark) .text-orange-400 { color: #c2410c; }
+:root:not(.dark) .text-purple-400 { color: #6d28d9; }
+:root:not(.dark) .text-red-400 { color: #b91c1c; }
+/* Tinted status chips get an outline so they read as chips */
+.bg-status-available\/15,
+.bg-status-borrowed\/15,
+.bg-status-repair\/15,
+.bg-status-out_of_service\/15 {
+  border: 1px solid currentColor;
+}
+
+header a,
+header button {
+  white-space: nowrap;
 }
