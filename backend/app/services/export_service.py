@@ -113,7 +113,7 @@ async def record_event(
             .where(BorrowTransaction.id == transaction_id)
         )
     ).scalar_one_or_none()
-    if source is not None and source != EQUIPMENT_SOURCE_POOL:
+    if source != EQUIPMENT_SOURCE_POOL:  # demo/loan, or the equipment lookup found nothing
         return None
     seq = await _next_seq(db)
     event = ExportEvent(

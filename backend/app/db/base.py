@@ -20,6 +20,7 @@ from app.models import (  # noqa: E402,F401
     master_data,
     notification,
     report_mapping,
+    standby_summary,
     transaction,
     user,
 )

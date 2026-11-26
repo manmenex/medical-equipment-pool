@@ -143,6 +143,15 @@ export async function revealHn(transactionId: string): Promise<string> {
   return resp.data.hn;
 }
 
+/**
+ * Roadmap PR34 (D15): add an HN to an OPEN dispatch that has none (Standby ->
+ * in use). Online only. The response carries `has_hn` only, never the value.
+ */
+export async function addHn(transactionId: string, hn: string): Promise<TransactionOut> {
+  const resp = await api.post<TransactionOut>(`/transactions/${transactionId}/hn`, { hn });
+  return resp.data;
+}
+
 export async function createReturn(transactionId: string, payload: ReturnPayload): Promise<TransactionOut> {
   const resp = await api.post<TransactionOut>(`/return/${transactionId}`, payload);
   return resp.data;

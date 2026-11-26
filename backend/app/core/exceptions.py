@@ -73,6 +73,20 @@ class HnNotRecordedError(DomainError):
     status_code = 404
 
 
+class HnAlreadyRecordedError(DomainError):
+    """Roadmap PR34 (D15): an HN can be added only once; replacing is refused."""
+
+    code = "HN_ALREADY_RECORDED"
+    status_code = 409
+
+
+class TransactionNotOpenError(DomainError):
+    """Roadmap PR34 (D15): an HN can be added only to an OPEN dispatch."""
+
+    code = "TRANSACTION_NOT_OPEN"
+    status_code = 409
+
+
 class TransactionNotFoundError(DomainError):
     code = "TRANSACTION_NOT_FOUND"
     status_code = 404

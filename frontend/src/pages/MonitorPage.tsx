@@ -5,6 +5,7 @@ import {
   CuffsOutstandingPanel,
   cuffSummary,
 } from "@/components/CuffsOutstandingPanel";
+import { AddHnAction } from "@/components/entry/AddHnAction";
 import { HnReveal } from "@/components/entry/HnField";
 import { SourceBadge } from "@/components/SourceBadge";
 import { useDebounce } from "@/hooks/useDebounce";
@@ -351,6 +352,12 @@ export function MonitorPage() {
                             {e.has_hn && (
                               <span className="ml-2">
                                 <HnReveal transactionId={e.id} compact />
+                              </span>
+                            )}
+                            {/* Roadmap PR34 (D15): open dispatch without HN = Standby. */}
+                            {e.kind === "dispatch" && e.is_open && !e.has_hn && (
+                              <span className="ml-2">
+                                <AddHnAction transactionId={e.id} onAdded={() => void active.refetch()} />
                               </span>
                             )}
                             {e.cuffs_outstanding &&

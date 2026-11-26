@@ -73,7 +73,7 @@ def _widths(ws: Worksheet, widths: list[int]) -> None:
         ws.column_dimensions[get_column_letter(i)].width = w
 
 
-def _summary_sheet(ws: Worksheet, report: DailyReport) -> None:
+def _summary_sheet(ws: Worksheet, report: DailyReport, standby: dict[str, int] | None = None) -> None:
     ws.title = SHEET_SUMMARY
     _two_row_header(ws, SUMMARY_HEADERS_TOP, SUMMARY_HEADERS_SUB, merges=[(4, 5), (6, 7), (9, 10)])
     row = 3
@@ -87,7 +87,7 @@ def _summary_sheet(ws: Worksheet, report: DailyReport) -> None:
             c.night_receipt,
             c.day_dispatch,
             c.day_receipt,
-            None,  # Stand By: no data source in this system (Standby Snapshots are future work)
+            (standby or {}).get(r.label) or None,  # Stand By: day cut-off standby summary (PR34, D16)
             c.total_dispatch,
             c.total_receipt,
         ]
@@ -167,9 +167,9 @@ def _events_sheet(ws: Worksheet, report: DailyReport) -> None:
     _widths(ws, [10, 13, 10, 6, 16, 24, 20, 18, 24, 30, 16])
 
 
-def build_daily_workbook_sync(report: DailyReport) -> bytes:
+def build_daily_workbook_sync(report: DailyReport, standby: dict[str, int] | None = None) -> bytes:
     wb = Workbook()
-    _summary_sheet(wb.active, report)
+    _summary_sheet(wb.active, report, standby)
     _category_sheet(wb.create_sheet(), report)
     _operator_sheet(wb.create_sheet(), report)
     _events_sheet(wb.create_sheet(), report)
@@ -178,7 +178,7 @@ def build_daily_workbook_sync(report: DailyReport) -> bytes:
     return buffer.getvalue()
 
 
-async def build_daily_workbook_bounded(report: DailyReport) -> bytes:
+async def build_daily_workbook_bounded(report: DailyReport, standby: dict[str, int] | None = None) -> bytes:
     """PR18 admission control: same semaphore, total deadline and
     renderer-lifetime accounting as the PR18E Excel exports."""
-    return await report_xlsx_service.run_bounded(build_daily_workbook_sync, report)
+    return await report_xlsx_service.run_bounded(build_daily_workbook_sync, report, standby)

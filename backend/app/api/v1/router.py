@@ -22,6 +22,7 @@ from app.api.v1 import (
     notifications,
     report_options,
     reports,
+    standby_summary,
     sync,
     transactions,
     users,
@@ -37,6 +38,7 @@ api_router.include_router(cuffs.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(monitor.router)
 api_router.include_router(daily_reports.router)
+api_router.include_router(standby_summary.router)
 api_router.include_router(reports.router)
 api_router.include_router(report_options.router)
 api_router.include_router(users.router)
