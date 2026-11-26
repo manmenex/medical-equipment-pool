@@ -1208,6 +1208,27 @@ def test_schedule_never_launches_windows_powershell_51():
     )
 
 
+def test_schedule_pwsh_path_avoids_store_windowsapps_build():
+    """The Store/MSIX pwsh path is versioned and not launchable by Task
+    Scheduler non-interactively (0x80070002); a persisted path must avoid it."""
+    code = _strip_comments_and_docstrings(_lib("Schedule.ps1"))
+    resolver = _ps_function_body(code, "Get-MepPwshPath")
+    assert "PowerShell\\7\\pwsh.exe" in resolver, "prefer the stable MSI install path"
+    assert resolver.index("PowerShell\\7\\pwsh.exe") < resolver.index("Get-Process"), (
+        "the MSI path must be tried before the current process path"
+    )
+    assert "Test-MepStorePwshPath" in resolver
+    assert "-All" in resolver
+    assert "WindowsApps" in code
+    action = _ps_function_body(code, "Get-MepStorePwshAction")
+    assert "winget install --id Microsoft.PowerShell --source winget" in action
+    assert "schedule-backup.ps1 -Install" in action
+    status = _ps_function_body(code, "Show-MepBackupScheduleStatus")
+    assert "Test-MepStorePwshPath" in status and "Test-Path" in status, (
+        "status must warn when the registered action path is Store-based or missing"
+    )
+
+
 def test_retention_is_tiered_for_an_hourly_cadence():
     """A flat 30-day window keeps 720 archives once a backup runs hourly."""
     prune = (REPO_ROOT / "backend" / "scripts" / "prune_backups.py").read_text()
