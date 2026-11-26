@@ -56,6 +56,25 @@ async def test_search_equipment_by_name(client, seeded_users):
     assert any(i["asset_number"] == "AST-0003" for i in items)
 
 
+async def test_search_equipment_by_bcm_code_and_item_no(client, seeded_users):
+    headers = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    created = await client.post(
+        "/api/v1/equipment",
+        headers=headers,
+        json={
+            "asset_number": "AST-0099",
+            "equipment_name": "Pump X",
+            "bcm_code": "BCM99224",
+            "item_no": "ITEM-7781",
+        },
+    )
+    assert created.status_code == 201, created.text
+    for q in ("BCM99224", "99224", "bcm99224", "ITEM-7781"):
+        resp = await client.get("/api/v1/equipment", headers=headers, params={"q": q})
+        assert resp.status_code == 200
+        assert any(i["asset_number"] == "AST-0099" for i in resp.json()["items"]), q
+
+
 async def test_legacy_by_qr_route_removed(client, seeded_users):
     """ADR-004: the legacy exact-match-on-qr_code_value route is retired,
     not merely redirected — it must not exist at all."""

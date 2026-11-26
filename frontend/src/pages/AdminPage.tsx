@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 import { DemoLoanBatchPanel } from "@/components/DemoLoanBatchPanel";
 import { PhoneEditRow } from "@/components/PhoneEditRow";
@@ -19,6 +20,8 @@ import { listCategories, listDepartments, listLocations, listWards, updateDepart
 import type { ImportCommitResponse, ImportPreviewResponse, ImportRowResult, ImportRowStatus } from "@/types";
 
 type Tab = "equipment" | "demoLoan" | "departments" | "wards" | "locations" | "categories" | "import" | "wardPhones" | "users";
+
+const ALL_TAB_KEYS: Tab[] = ["equipment", "demoLoan", "departments", "wards", "locations", "categories", "import", "wardPhones", "users"];
 
 const BASE_TABS: { key: Tab; label: string }[] = [
   { key: "equipment", label: "เพิ่มเครื่องมือ" },
@@ -43,7 +46,12 @@ const USERS_TAB: { key: Tab; label: string } = { key: "users", label: "ผู้
 const DEMO_LOAN_TAB: { key: Tab; label: string } = { key: "demoLoan", label: "เพิ่มเครื่อง Demo/ยืม" };
 
 export function AdminPage() {
-  const [tab, setTab] = useState<Tab>("equipment");
+  const [searchParams] = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  // Deep link from the Settings hub (?tab=users etc.); unknown values fall back.
+  const [tab, setTab] = useState<Tab>(
+    ALL_TAB_KEYS.includes(requestedTab as Tab) ? (requestedTab as Tab) : "equipment",
+  );
   const { user } = useAuth();
   const tabs = [
     BASE_TABS[0],

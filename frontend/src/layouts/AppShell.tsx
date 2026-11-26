@@ -6,10 +6,6 @@ import { UpdateNotice } from "@/components/UpdateNotice";
 import { OfflineStatusChip } from "@/components/OfflineStatusChip";
 import {
   canDispatchOrReceiveEquipment,
-  canManageEquipmentMasterData,
-  canManageLegacyImport,
-  canReviewCutoverReadiness,
-  canReviewReconciliation,
   canReviewSyncConflicts,
   roleLabel,
   useAuth,
@@ -103,112 +99,30 @@ export function AppShell() {
               {item.label}
             </NavLink>
           ))}
-          {canManageEquipmentMasterData(user) && (
-            <NavLink
-              to="/admin"
-              className={({ isActive }) =>
-                `rounded-lg px-3 py-2 text-sm font-medium transition ${
-                  isActive
-                    ? "bg-status-borrowed/15 text-status-borrowed"
-                    : "text-[var(--text-muted)] hover:bg-black/5 dark:hover:bg-white/5"
-                }`
-              }
-            >
-              <span className="mr-2">⚙️</span>
-              จัดการระบบ
-            </NavLink>
-          )}
-          {/* Roadmap PR19B: usability-only visibility gate, mirroring the
-              /admin link above -- see hooks/useAuth.ts's
-              canManageLegacyImport note. The real PR19A
-              /import-sessions endpoints are Administrator-only
-              (ADMINISTRATOR_ONLY_ROLES); this link is a usability mirror
-              of that RBAC rule, not the enforcement boundary itself. */}
-          {canManageLegacyImport(user) && (
-            <NavLink
-              to="/imports"
-              className={({ isActive }) =>
-                `rounded-lg px-3 py-2 text-sm font-medium transition ${
-                  isActive
-                    ? "bg-status-borrowed/15 text-status-borrowed"
-                    : "text-[var(--text-muted)] hover:bg-black/5 dark:hover:bg-white/5"
-                }`
-              }
-            >
-              <span className="mr-2">📥</span>
-              นำเข้าข้อมูลเดิม
-            </NavLink>
-          )}
-          {/* Roadmap PR22F (§7/§37 of the task): a review/administrative
-              workflow, not part of the primary daily dispatch flow, so it
-              lives here in the desktop sidebar only -- deliberately NOT
-              added to the mobile bottom nav below, to avoid crowding out
-              ค้นหา/เบิก/รับคืน/รายงาน on a small screen. Visible to every
-              authenticated role (mirrors backend VIEW_AND_REPORT_ROLES,
-              see hooks/useAuth.ts's canReviewReconciliation), unlike
-              /admin and /imports above which are Administrator-only.
-              Mobile users reach this via the header link instead (see
-              below) -- an existing "secondary surface" already visible
-              at every breakpoint, per the task's own §7 guidance. */}
-          {canReviewReconciliation(user) && (
-            <NavLink
-              to="/reconciliation"
-              className={({ isActive }) =>
-                `rounded-lg px-3 py-2 text-sm font-medium transition ${
-                  isActive
-                    ? "bg-status-borrowed/15 text-status-borrowed"
-                    : "text-[var(--text-muted)] hover:bg-black/5 dark:hover:bg-white/5"
-                }`
-              }
-            >
-              <span className="mr-2">🔎</span>
-              ตรวจสอบข้อมูลย้อนหลัง
-            </NavLink>
-          )}
-          {/* Roadmap PR23E: another review/administrative workflow, same
-              placement rationale as /reconciliation directly above --
-              desktop sidebar only, reached on mobile via the header link
-              below, visible to every authenticated role (mirrors backend
-              VIEW_AND_REPORT_ROLES, see hooks/useAuth.ts's
-              canReviewCutoverReadiness). */}
-          {canReviewCutoverReadiness(user) && (
-            <NavLink
-              to="/cutover-readiness"
-              className={({ isActive }) =>
-                `rounded-lg px-3 py-2 text-sm font-medium transition ${
-                  isActive
-                    ? "bg-status-borrowed/15 text-status-borrowed"
-                    : "text-[var(--text-muted)] hover:bg-black/5 dark:hover:bg-white/5"
-                }`
-              }
-            >
-              <span className="mr-2">🚦</span>
-              ความพร้อมก่อนเปลี่ยนระบบ
-            </NavLink>
-          )}
-          {reviewAllowed && (
-            <NavLink
-              to="/sync-review"
-              className={({ isActive }) =>
-                `rounded-lg px-3 py-2 text-sm font-medium transition ${
-                  isActive
-                    ? "bg-status-borrowed/15 text-status-borrowed"
-                    : "text-[var(--text-muted)] hover:bg-black/5 dark:hover:bg-white/5"
-                }`
-              }
-            >
-              <span className="mr-2">📨</span>
-              ตรวจสอบรายการออฟไลน์
-              {reviewCount ? (
-                <span
-                  aria-label={`รอตรวจสอบ ${reviewCount} รายการ`}
-                  className="ml-2 rounded-full bg-status-repair px-2 py-0.5 text-xs text-white"
-                >
-                  {reviewCount}
-                </span>
-              ) : null}
-            </NavLink>
-          )}
+          {/* Data-management and migration entries live in the Settings hub
+              (pages/SettingsPage.tsx); the sidebar keeps daily work plus a
+              Settings entry that carries the offline-review count badge. */}
+          <NavLink
+            to="/settings"
+            className={({ isActive }) =>
+              `rounded-lg px-3 py-2 text-sm font-medium transition ${
+                isActive
+                  ? "bg-status-borrowed/15 text-status-borrowed"
+                  : "text-[var(--text-muted)] hover:bg-black/5 dark:hover:bg-white/5"
+              }`
+            }
+          >
+            <span className="mr-2">⚙️</span>
+            ตั้งค่า
+            {reviewAllowed && reviewCount ? (
+              <span
+                aria-label={`รอตรวจสอบ ${reviewCount} รายการ`}
+                className="ml-2 rounded-full bg-status-repair px-2 py-0.5 text-xs text-white"
+              >
+                {reviewCount}
+              </span>
+            ) : null}
+          </NavLink>
         </nav>
       </aside>
 
@@ -228,26 +142,6 @@ export function AppShell() {
             >
               {theme === "dark" ? "☀️" : "🌙"}
             </button>
-            {/* Roadmap PR22F: the header row renders at every breakpoint
-                (unlike the sidebar, hidden below md), so this is the
-                actual mobile access point for reconciliation review --
-                deliberately not added to the mobile bottom nav (see the
-                sidebar entry's own note above). */}
-            {reviewAllowed && (
-              <NavLink to="/sync-review" className="text-sm text-[var(--text-muted)] hover:underline md:hidden">
-                ตรวจสอบรายการออฟไลน์{reviewCount ? ` (${reviewCount})` : ""}
-              </NavLink>
-            )}
-            {canReviewReconciliation(user) && (
-              <NavLink to="/reconciliation" className="text-sm text-[var(--text-muted)] hover:underline md:hidden">
-                ตรวจสอบข้อมูลย้อนหลัง
-              </NavLink>
-            )}
-            {canReviewCutoverReadiness(user) && (
-              <NavLink to="/cutover-readiness" className="text-sm text-[var(--text-muted)] hover:underline md:hidden">
-                ความพร้อมก่อนเปลี่ยนระบบ
-              </NavLink>
-            )}
             <NavLink to="/settings" className="text-sm text-[var(--text-muted)] hover:underline">
               ตั้งค่า
             </NavLink>
@@ -277,26 +171,6 @@ export function AppShell() {
               {item.label}
             </NavLink>
           ))}
-          {/* Roadmap PR19B: reuses the same mobile bottom-nav mechanism as
-              every other item above (not a separate/invented nav pattern),
-              gated by the same canManageLegacyImport capability check as
-              the desktop sidebar's "นำเข้าข้อมูลเดิม" link -- see
-              hooks/useAuth.ts's canManageLegacyImport note. Direct
-              navigation to /imports remains guarded by
-              LegacyImportAccessGate regardless of nav visibility. */}
-          {canManageLegacyImport(user) && (
-            <NavLink
-              to="/imports"
-              className={({ isActive }) =>
-                `flex flex-1 flex-col items-center gap-0.5 py-2 text-xs ${
-                  isActive ? "text-status-borrowed" : "text-[var(--text-muted)]"
-                }`
-              }
-            >
-              <span className="text-lg">📥</span>
-              นำเข้าข้อมูลเดิม
-            </NavLink>
-          )}
         </nav>
       </div>
     </div>
