@@ -535,3 +535,46 @@ async def test_d19_closed_by_redispatch_is_not_a_receipt(world):
     rep = await runner.run_once(world, reader, make_cfg())
     assert "already_received" not in rep.counts
     assert rep.review and rep.review[0]["code"] == "TRANSACTION_CLOSED_BY_REDISPATCH"
+
+
+# ---------------------------------------------------------------- sheet checks (D4/D10)
+
+def test_parser_maps_check_marks():
+    r = parse_tab(KIND_DISPATCH, [DISPATCH_HEADER, drow("0a1b2c3d", 1, marks=("✓", "✗", ""))]).rows[0]
+    assert r.check_marks == {"screen": True, "charger": False, "clamp": None}
+    odd = [h if h != "ขาจับเสา" else "อื่นๆ" for h in DISPATCH_HEADER]
+    assert parse_tab(KIND_DISPATCH, [odd, drow("0a1b2c3d", 1)]).rows[0].check_marks == {}  # no clean mapping
+
+
+async def _only_tx(world):
+    async with world() as db:
+        return (await db.execute(select(BorrowTransaction))).scalar_one()
+
+
+async def test_standard_checks_written_for_check_and_cross(world):
+    reader = FakeReader(dispatch=[drow("0a1b2c3d", 3, marks=("✓", "✗", "✓"))], receipt=[rrow("0a1b2c3e", 1, marks=("✓", "✓", "✗"))])
+    await runner.run_once(world, reader, make_cfg())
+    tx = await _only_tx(world)
+    assert tx.dispatch_checks == {"kind": "standard", "screen_ok": True, "charger_ok": False, "clamp_ok": True}
+    assert tx.receipt_checks == {"kind": "standard", "screen_ok": True, "charger_ok": True, "clamp_ok": False}
+
+
+async def test_blank_mark_leaves_checks_null(world):
+    reader = FakeReader(dispatch=[drow("0a1b2c3d", 3, marks=("✓", "", "✓"))])
+    await runner.run_once(world, reader, make_cfg())
+    assert (await _only_tx(world)).dispatch_checks is None
+
+
+async def test_cryo_cuff_category_leaves_checks_null(world):
+    from app.models.master_data import EquipmentCategory
+    async with world() as db:
+        cat = EquipmentCategory(name="Cryo Cuff", checklist_kind="cryo_cuff")
+        db.add(cat)
+        await db.flush()
+        eq = (await db.execute(select(Equipment).where(Equipment.bcm_code == "BCM01078"))).scalar_one()
+        eq.category_id = cat.id
+        await db.commit()
+    reader = FakeReader(dispatch=[drow("0a1b2c3d", 3, marks=("✓", "✗", "✓"))])
+    rep = await runner.run_once(world, reader, make_cfg())
+    assert rep.counts["applied"] == 1
+    assert (await _only_tx(world)).dispatch_checks is None

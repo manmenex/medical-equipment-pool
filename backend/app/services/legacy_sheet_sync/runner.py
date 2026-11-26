@@ -31,6 +31,8 @@ from app.crud import transaction as transaction_crud
 from app.models.client_operation import OP_STATUS_APPLIED, OP_STATUS_PENDING, OP_STATUS_RESOLVED
 from app.models.master_data import Ward
 from app.services.system_notes import SYSTEM_NOTE_PREFIX
+from app.schemas.checklist import CHECKLIST_STANDARD, StandardChecks
+from app.services import checklist_service
 from app.models.transaction import BorrowTransaction, DispatchType, ReceiptOutcome, TransactionStatus
 from app.models.user import ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, Role, User
 from app.schemas.sync import OP_TYPE_DISPATCH, OP_TYPE_RECEIPT, SyncOperation, SyncReceiptBody
@@ -107,6 +109,20 @@ def build_note(row: LegacyRow) -> str:
     return "; ".join(parts)[:NOTE_MAX]
 
 
+def standard_checks_for(row: LegacyRow, checklist_kind: str) -> StandardChecks | None:
+    """D4 checks from the sheet's ✓/✗ marks, or None (NULL, printed as ✓).
+
+    Only for the 'standard' checklist and only when all three marks are
+    recognised; a blank/unknown cell, an unmapped column layout or a Cryo-Cuff
+    item yields None -- never a guess."""
+    if checklist_kind != CHECKLIST_STANDARD:
+        return None
+    m = row.check_marks
+    if set(m) != {"screen", "charger", "clamp"} or any(v is None for v in m.values()):
+        return None
+    return StandardChecks(kind="standard", screen_ok=m["screen"], charger_ok=m["charger"], clamp_ok=m["clamp"])
+
+
 @dataclass
 class RunReport:
     dry_run: bool = False
@@ -152,6 +168,7 @@ class _WardSnap:
 class _EqSnap:
     id: uuid.UUID
     bcm_code: str
+    checklist_kind: str = CHECKLIST_STANDARD
 
 
 class _Resolver:
@@ -177,7 +194,8 @@ class _Resolver:
             hits = await equipment_crud.get_by_bcm_codes(self._db, cands)
             if len(hits) == 1:
                 e = next(iter(hits.values()))
-                self._eq[key] = _EqSnap(id=e.id, bcm_code=e.bcm_code)
+                kind = await checklist_service.kind_for_equipment(self._db, e)
+                self._eq[key] = _EqSnap(id=e.id, bcm_code=e.bcm_code, checklist_kind=kind)
             else:
                 self._eq[key] = None if not hits else "ambiguous"
         val = self._eq[key]
@@ -297,6 +315,7 @@ async def run_once(session_factory, reader: SheetReader, cfg: SyncConfig, *, dry
                     equipment_id=str(eq.id), ward_id=str(ward.id),
                     dispatch_type=DispatchType.ON_DEMAND, notes=build_note(row),
                     ward_contact_name=row.user_name or None,
+                    dispatch_checks=standard_checks_for(row, eq.checklist_kind),
                     # D8 (PR31): re-dispatch of an out/defective item is not
                     # blocked; the sheet row is the operator's confirmation.
                     acknowledge_status_warning=True,
@@ -326,6 +345,7 @@ async def run_once(session_factory, reader: SheetReader, cfg: SyncConfig, *, dry
             body = SyncReceiptBody(
                 transaction_id=tx_id, receipt_outcome=ReceiptOutcome.USABLE, notes=build_note(row),
                 ward_contact_name=row.user_name or None,
+                receipt_checks=standard_checks_for(row, eq.checklist_kind),
             )
             await _submit(db, _envelope(row, user_id, receipt=body), user_id, row, report)
     logger.info(report.summary())
