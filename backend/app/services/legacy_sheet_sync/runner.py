@@ -8,8 +8,10 @@ lifecycle conflict lands in the existing review page. This module never
 touches equipment or transaction state directly and never writes to the
 sheet.
 
-Not imported: free-text notes, ward-side person names, anything that looks
-like a patient number (see ``sheet_parser``).
+Not imported: free-text notes, anything that looks like a patient number (see
+``sheet_parser``). The ward-side person ("ชื่อ (User)") is carried only into
+the D7 ward contact name. The trace note stored here is internal
+(``system_notes``) and is never printed.
 """
 import hashlib
 import logging
@@ -28,6 +30,7 @@ from app.crud import equipment as equipment_crud
 from app.crud import transaction as transaction_crud
 from app.models.client_operation import OP_STATUS_APPLIED, OP_STATUS_PENDING, OP_STATUS_RESOLVED
 from app.models.master_data import Ward
+from app.services.system_notes import SYSTEM_NOTE_PREFIX
 from app.models.transaction import BorrowTransaction, DispatchType, ReceiptOutcome, TransactionStatus
 from app.models.user import ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, Role, User
 from app.schemas.sync import OP_TYPE_DISPATCH, OP_TYPE_RECEIPT, SyncOperation, SyncReceiptBody
@@ -94,7 +97,7 @@ def _eq_key(raw: str) -> str:
 
 
 def build_note(row: LegacyRow) -> str:
-    parts = [f"legacy sheet {row.kind} row {row.row_id}"]
+    parts = [f"{SYSTEM_NOTE_PREFIX}{row.kind} row {row.row_id}"]
     if row.doc_no:
         parts.append(row.doc_no)
     if row.bme_name:
@@ -212,8 +215,29 @@ async def _submit(db: AsyncSession, op: SyncOperation, user_id: uuid.UUID, row: 
         logger.warning("legacy_sheet_sync row error tab=%s row=%s type=%s", row.kind, row.row_id, type(exc).__name__)
         return
     report.counts[res.result] += 1
+    if res.result == "applied" and row.bme_name:
+        await _store_keyer_label(db, op, row)
     if res.result in ("conflict", "rejected", "retry_later"):
         report.review.append({"tab": row.kind, "row_id": row.row_id, "result": res.result, "code": res.code})
+
+
+async def _store_keyer_label(db: AsyncSession, op: SyncOperation, row: LegacyRow) -> None:
+    """D22: record the sheet's BME name as a display-only label on the transaction
+    the operation just created/closed. Not an actor, not a user; failure is non-fatal."""
+    try:
+        tx_id = op.op_id if row.kind == KIND_DISPATCH else uuid.UUID(str(op.receipt.transaction_id))
+        tx = await db.get(BorrowTransaction, tx_id, populate_existing=True)
+        if tx is None:
+            return
+        label = row.bme_name.strip()[:100]
+        if row.kind == KIND_DISPATCH:
+            tx.dispatch_keyer_label = label
+        else:
+            tx.receipt_keyer_label = label
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.warning("legacy_sheet_sync keyer label not stored tab=%s row=%s", row.kind, row.row_id)
 
 
 async def run_once(session_factory, reader: SheetReader, cfg: SyncConfig, *, dry_run: bool = False,
@@ -272,6 +296,7 @@ async def run_once(session_factory, reader: SheetReader, cfg: SyncConfig, *, dry
                 body = BorrowRequest(
                     equipment_id=str(eq.id), ward_id=str(ward.id),
                     dispatch_type=DispatchType.ON_DEMAND, notes=build_note(row),
+                    ward_contact_name=row.user_name or None,
                     # D8 (PR31): re-dispatch of an out/defective item is not
                     # blocked; the sheet row is the operator's confirmation.
                     acknowledge_status_warning=True,
@@ -298,7 +323,10 @@ async def run_once(session_factory, reader: SheetReader, cfg: SyncConfig, *, dry
                 report.counts["would_apply"] += 1
                 report.planned.append(f"receipt {row.row_id} {eq.bcm_code}")
                 continue
-            body = SyncReceiptBody(transaction_id=tx_id, receipt_outcome=ReceiptOutcome.USABLE, notes=build_note(row))
+            body = SyncReceiptBody(
+                transaction_id=tx_id, receipt_outcome=ReceiptOutcome.USABLE, notes=build_note(row),
+                ward_contact_name=row.user_name or None,
+            )
             await _submit(db, _envelope(row, user_id, receipt=body), user_id, row, report)
     logger.info(report.summary())
     return report

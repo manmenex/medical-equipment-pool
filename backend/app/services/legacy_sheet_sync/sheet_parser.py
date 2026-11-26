@@ -9,7 +9,10 @@ Privacy rules (Governance 2026-10-21):
   is skipped, and the report never echoes the offending cell.
 * Free-text notes are NOT read into the result. Only the accessory check-mark
   columns are summarised (which ones show a failure mark).
-* The ward-side person column ("ชื่อ (User)") is never read.
+* The ward-side person column ("ชื่อ (User)") is read ONLY into the D7 ward
+  contact name (optional column; Owner Governance 2026-11-25 D7 / PR27 maps
+  it, amending the 2026-10-21 "never stored" rule). It is still HN-screened
+  like every other cell, and it is never a user/account.
 """
 import re
 import unicodedata
@@ -69,6 +72,7 @@ class LegacyRow:
     bcm_raw: str
     ward_raw: str
     bme_name: str
+    user_name: str = ""  # ward-side person ("ชื่อ (User)") -> D7 contact name
     failed_accessories: tuple[str, ...] = ()
 
 
@@ -116,6 +120,9 @@ def detect_columns(kind: str, header: list[str]) -> Columns:
             f"Tab '{tab_title(kind)}': required header(s) not found: {', '.join(sorted(missing))}. "
             "The sheet layout may have changed."
         )
+    user_col = find("ชื่อ(user)")
+    if user_col is not None:
+        index["user"] = user_col  # optional: older sheets may lack it
     scan = find("scancode")
     ignored = {index[k] for k in ("row_id", "date", "time", "doc_no")}
     if scan is not None:
@@ -158,6 +165,11 @@ for _i, _names in enumerate(
 def _month_from_name(token: str) -> int | None:
     # Case-insensitive; Thai abbreviations may contain spaces ("ม. ค.").
     return _MONTHS.get(re.sub(r"\s+", "", token).lower())
+
+
+def _clean_person(text: str) -> str:
+    """Display-only person name: no control characters, at most 100 chars."""
+    return "".join(ch for ch in (text or "") if ord(ch) >= 32 and ord(ch) != 127).strip()[:100]
 
 
 def _parse_date(text: str) -> date:
@@ -257,6 +269,7 @@ def parse_tab(kind: str, values: list[list[str]]) -> ParsedTab:
                 bcm_raw=cell("bcm"),
                 ward_raw=cell("ward"),
                 bme_name=cell("bme")[:40],
+                user_name=_clean_person(cell("user") if "user" in cols.index else ""),
                 failed_accessories=failed,
             )
         )

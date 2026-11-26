@@ -10,9 +10,15 @@ column widths/row heights follow that tool's measurements of the paper form.
 
 D12: the first column header is the company form's own "ME.Code" label and
 shows the equipment's BCM Code; this is a printed-label exception only.
-Check columns show a tick/cross drawn as inline SVG (so no glyph depends on
-the font) from the stored checks (Cryo-Cuff items 1/2/3 mapped per D10); a
-NULL/unrecorded check prints blank. No HN or patient field is read.
+Check columns show a green tick / red cross drawn as inline SVG (so no glyph
+depends on the font), like the Owner's tool: a tick for a true OR unrecorded
+(NULL) check -- D4 defaults to checked and legacy-sheet rows carry no checks --
+and a cross only for an explicit false (Cryo-Cuff items 1/2/3 mapped per D10).
+The remark column prints only the operator-entered note or the Bed Alarms /
+PNEUMATIC PUMP label; system notes (``system_notes``) are never printed.
+Fonts: the Owner's tool prints in Angsana New (proprietary, not bundled); this
+renderer uses the OFL "Trirong" Thai serif at the legacy sizes scaled by
+``FONT_SCALE`` (Angsana is a much narrower face). No HN or patient field is read.
 
 D17 (Owner Governance 2026-11-26): each shift's forms end with the paper form
 "Equipment Verify Checklist" (FI-CES-BCM-PO-001/2), reproduced in form and
@@ -29,6 +35,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import weasyprint
+from fontTools.ttLib import TTFont
 
 from app.core.reporting_time import Shift
 from app.services import report_pdf_service
@@ -42,6 +49,7 @@ from app.services.daily_report_service import (
     format_date,
 )
 from app.services.equipment_badge import with_badge
+from app.services.system_notes import operator_note
 
 FORM_TITLE = "แบบบันทึกการเบิก-จ่าย Equipment Pool"
 KIND_TITLES = {"dispatch": "ส่งเครื่อง", "receipt": "รับเครื่อง"}
@@ -79,14 +87,57 @@ LOGO_PATH = Path(__file__).resolve().parent.parent / "assets" / "form_logo.jpg"
 
 _LOGO_URI: str | None = None
 
+# Green tick / red cross with a thin black outline, like the Segoe UI Emoji
+# glyphs the Owner's tool prints (about 12pt x 10pt and 9pt x 9pt).
 _TICK = (
-    '<svg class="chk chk-ok" viewBox="0 0 12 12" width="13" height="13"><title>✔</title>'
-    '<path d="M1.5 6.5 L4.8 9.8 L10.5 2.5" fill="none" stroke="#2e7d32" stroke-width="1.8"/></svg>'
+    '<svg class="chk chk-ok" viewBox="0 0 24 19" width="12pt" height="9.5pt"><title>&#10004;</title>'
+    '<path d="M1 10 L4.3 6.8 L8.6 10.8 L19.7 1 L23 4.3 L8.8 17.6 Z" fill="#22cc22" stroke="#000" '
+    'stroke-width="0.9" stroke-linejoin="round"/></svg>'
 )
 _CROSS = (
-    '<svg class="chk chk-bad" viewBox="0 0 12 12" width="13" height="13"><title>✘</title>'
-    '<path d="M2 2 L10 10 M10 2 L2 10" fill="none" stroke="#d32f2f" stroke-width="1.8"/></svg>'
+    '<svg class="chk chk-bad" viewBox="0 0 20 20" width="9.5pt" height="9.5pt"><title>&#10008;</title>'
+    '<path d="M2 5.5 L5.5 2 L10 6.5 L14.5 2 L18 5.5 L13.5 10 L18 14.5 L14.5 18 L10 13.5 L5.5 18 L2 14.5 L6.5 10 Z" '
+    'fill="#e02020" stroke="#000" stroke-width="0.9" stroke-linejoin="round"/></svg>'
 )
+
+# Legacy (Angsana New) sizes in pt, scaled for the wider OFL Thai serif.
+FONT_SCALE = 0.78
+FS_TITLE, FS_DATE, FS_FORM, FS_HEAD, FS_HEAD_SMALL, FS_DATA, FS_NOTE, FS_MIN = (
+    round(x * FONT_SCALE, 1) for x in (18.0, 15.0, 15.0, 15.0, 13.0, 14.0, 10.0, 7.0)
+)
+_FONTS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+_METRICS: tuple[dict[int, str], dict[str, int], int] | None = None
+_FONT_CSS: str | None = None
+
+
+def _font_css() -> str:
+    """@font-face rules for the Trirong form font (single merged TTF per
+    weight, base64 inline: WeasyPrint cannot resolve split unicode-range files)."""
+    global _FONT_CSS
+    if _FONT_CSS is None:
+        faces = []
+        for weight, name in ((400, "Trirong-Regular.ttf"), (700, "Trirong-Bold.ttf")):
+            uri = "data:font/ttf;base64," + base64.b64encode((_FONTS_DIR / name).read_bytes()).decode("ascii")
+            faces.append(
+                f'@font-face {{ font-family: "Trirong Form"; font-weight: {weight}; font-style: normal; '
+                f'src: url("{uri}") format("truetype"); }}'
+            )
+        _FONT_CSS = "\n".join(faces)
+    return _FONT_CSS
+
+
+def _text_width_em(text: str) -> float:
+    """Advance width of ``text`` in em using the bundled font (combining Thai
+    marks advance 0)."""
+    global _METRICS
+    if _METRICS is None:
+        font = TTFont(_FONTS_DIR / "Trirong-Regular.ttf")
+        cmap = font.getBestCmap()
+        hmtx = font["hmtx"]
+        upm = font["head"].unitsPerEm
+        _METRICS = (cmap, {g: hmtx[g][0] for g in hmtx.metrics}, upm)
+    cmap, adv, upm = _METRICS
+    return sum(adv.get(cmap.get(ord(c), ".notdef"), upm // 2) for c in text) / upm
 
 
 def _e(value: str | None) -> str:
@@ -101,18 +152,26 @@ def _logo_uri() -> str:
 
 
 def _check_cell(value: bool | None) -> str:
-    return "" if value is None else (_TICK if value else _CROSS)
+    """Tick unless explicitly false: unrecorded (NULL) prints the D4 default."""
+    return _CROSS if value is False else _TICK
 
 
-def _fit(text: str, width_pt: float, base: float = 10.0) -> str:
-    """Shrink long text (e.g. long ward names) so it stays inside its cell."""
-    size = min(base, (width_pt - 3) / (max(len(text), 1) * 0.68))
-    return "" if size >= base else f" style='font-size:{max(size, 4.5):.1f}pt'"
+def _fit(text: str, width_pt: float, base: float = FS_DATA, bold: bool = False) -> str:
+    """Legacy rule: the text keeps its full size and only shrinks when it
+    truly overflows the cell (room = width - 5pt), down to ``FS_MIN``."""
+    room = width_pt - 5
+    need = _text_width_em(text) * base * (1.1 if bold else 1.0)
+    if need <= room:
+        return ""
+    return f" style='font-size:{max(base * room / need, FS_MIN):.1f}pt'"
 
 
 def _note(e: DailyEvent) -> str:
-    if e.notes:
-        return e.notes
+    """Operator-entered remark, else the form's equipment label. System notes
+    (legacy-sheet trace text) are never printed."""
+    note = operator_note(e.notes)
+    if note:
+        return note
     return FORM_NOTE_LABELS.get(category_role(e.category_name) or "", "")
 
 
@@ -128,8 +187,8 @@ def _row_html(e: DailyEvent | None, kind: str) -> str:
         f"<td><div class='c'><span{_fit(user, W[4])}>{_e(user)}</span></div></td>"
         f"<td><div class='c'><span{_fit(ward, W[5])}>{_e(ward)}</span></div></td>"
         f"<td><div class='c'><span{_fit(bme, W[6])}>{_e(bme)}</span></div></td>"
-        f"<td><div class='c'>{e.local.strftime('%H:%M:%S')}</div></td>"
-        f"<td><div class='c note'><span{_fit(note, W[8], 8)}>{_e(note)}</span></div></td></tr>"
+        f"<td><div class='c'><span{_fit(e.local.strftime('%H:%M:%S'), W[7])}>{e.local.strftime('%H:%M:%S')}</span></div></td>"
+        f"<td><div class='c note'><span{_fit(note, W[8], FS_NOTE)}>{_e(note)}</span></div></td></tr>"
     )
 
 
@@ -139,14 +198,20 @@ def _page_html(events: list[DailyEvent], kind: str, form_date: date) -> str:
     user_head, bme_head = PERSON_HEAD[kind]
     cols = "".join(f"<col style='width:{w}pt'>" for w in COLUMN_WIDTHS[kind])
     width = sum(COLUMN_WIDTHS[kind])
+    W = COLUMN_WIDTHS[kind]
+
+    def hc(text: str, i: int, base: float) -> str:  # header text, shrunk only if it overflows
+        return f"<span{_fit(text, W[i], base, True)}>{text}</span>"
+
     head = (
-        f"<thead><tr style='height:{h1}pt'><th rowspan='3'>{COL_ME_CODE}</th>"
+        f"<thead><tr style='height:{h1}pt'><th rowspan='3'>{hc(COL_ME_CODE, 0, FS_HEAD)}</th>"
         f"<th colspan='3'>{COL_PRIMARY_CHECK}</th>"
-        f"<th rowspan='2'>{user_head}</th><th rowspan='3'>{COL_WARD}</th><th rowspan='2'>{bme_head}</th>"
-        f"<th rowspan='3'>{COL_TIME}</th><th rowspan='3'>{COL_NOTES}</th></tr>"
-        f"<tr style='height:{h2}pt'>{''.join(f'<th class=sub>{a}</th>' for a, _ in COL_CHECKS)}</tr>"
-        f"<tr style='height:{h3}pt'>{''.join(f'<th class=small>{b}</th>' for _, b in COL_CHECKS)}"
-        "<th class=small>( User )</th><th class=small>( BME )</th></tr></thead>"
+        f"<th rowspan='2'>{hc(user_head, 4, FS_HEAD)}</th><th rowspan='3'>{hc(COL_WARD, 5, FS_HEAD)}</th>"
+        f"<th rowspan='2'>{hc(bme_head, 6, FS_HEAD)}</th>"
+        f"<th rowspan='3'>{hc(COL_TIME, 7, FS_HEAD)}</th><th rowspan='3'>{hc(COL_NOTES, 8, FS_HEAD)}</th></tr>"
+        f"<tr style='height:{h2}pt'>{''.join(f'<th class=sub>{hc(a, i, FS_HEAD)}</th>' for i, (a, _) in enumerate(COL_CHECKS, 1))}</tr>"
+        f"<tr style='height:{h3}pt'>{''.join(f'<th class=small>{hc(b, i, FS_HEAD_SMALL)}</th>' for i, (_, b) in enumerate(COL_CHECKS, 1))}"
+        f"<th class=small>{hc('( User )', 4, FS_HEAD_SMALL)}</th><th class=small>{hc('( BME )', 6, FS_HEAD_SMALL)}</th></tr></thead>"
     )
     body = "".join(_row_html(e, kind) for e in padded)
     return (
@@ -260,24 +325,25 @@ def render_forms_html(report: DailyReport, kind: str, shift: str = "both") -> st
     return f"""<!DOCTYPE html>
 <html lang="th"><head><meta charset="utf-8"><style>
 {report_pdf_service._FONT_FACE_CSS}
+{_font_css()}
 @page {{ size: 595.28pt 841.89pt; margin: 0; }}
 * {{ box-sizing: border-box; }}
 html, body {{ margin: 0; padding: 0; }}
-body {{ font-family: "Noto Sans Thai PDF", sans-serif; font-size: 10pt; color: #000; }}
+body {{ font-family: "Trirong Form", serif; font-size: {FS_DATA}pt; color: #000; }}
 .page {{ position: relative; width: 595.28pt; height: 841pt; overflow: hidden; page-break-after: always; }}
 .page:last-child {{ page-break-after: auto; }}
 .logo {{ position: absolute; left: 18pt; top: 21.6pt; width: 110.25pt; height: 33pt; }}
 .body {{ position: absolute; left: 18pt; top: 54pt; }}
-.r1 {{ height: 22.5pt; line-height: 22.5pt; text-align: center; font-size: 14pt; font-weight: 700; }}
-.r2 {{ height: 23.25pt; line-height: 23.25pt; text-align: right; font-size: 11pt; }}
-.r3 {{ height: 22.5pt; line-height: 22.5pt; text-align: center; font-size: 11pt; font-weight: 700; border-bottom: 1px solid #000; }}
+.r1 {{ height: 22.5pt; line-height: 22.5pt; text-align: center; font-size: {FS_TITLE}pt; font-weight: 700; }}
+.r2 {{ height: 23.25pt; line-height: 23.25pt; text-align: right; font-size: {FS_DATE}pt; }}
+.r3 {{ height: 22.5pt; line-height: 22.5pt; text-align: center; font-size: {FS_FORM}pt; font-weight: 700; border-bottom: 1px solid #000; }}
 table {{ border-collapse: collapse; table-layout: fixed; width: 100%; }}
 th, td {{ border: 0.75pt solid #000; padding: 0 1pt; font-weight: 400; }}
-th {{ font-weight: 700; text-align: center; font-size: 10pt; line-height: 1.1; }}
-th.sub {{ font-size: 10pt; }}
-th.small {{ font-size: 8pt; }}
+th {{ font-weight: 700; text-align: center; font-size: {FS_HEAD}pt; line-height: 1.1; white-space: nowrap; }}
+th.sub {{ font-size: {FS_HEAD}pt; }}
+th.small {{ font-size: {FS_HEAD_SMALL}pt; }}
 tbody tr {{ height: {ROW_H}pt; }}
-.c {{ height: {ROW_H - 0.75}pt; display: flex; align-items: center; justify-content: center; text-align: center; overflow: hidden; white-space: nowrap; font-size: 10pt; }}
+.c {{ height: {ROW_H - 0.75}pt; display: flex; align-items: center; justify-content: center; text-align: center; overflow: hidden; white-space: nowrap; font-size: {FS_DATA}pt; }}
 .c.code {{ justify-content: flex-start; padding-left: 2pt; }}
 .c.note {{ line-height: 1.05; }}
 .chk {{ vertical-align: middle; }}
@@ -285,9 +351,10 @@ tbody tr {{ height: {ROW_H}pt; }}
 .sheet .logo {{ position: absolute; left: 3pt; top: {CHECK_TITLE_H + 6}pt; width: 110.25pt; height: 33pt; }}
 .sheet table {{ width: auto; }}
 .sheet tbody tr {{ height: {CHECK_ROW_H}pt; }}
+.sheet {{ font-family: "Noto Sans Thai PDF", sans-serif; }}
 .sheet .c {{ height: {CHECK_ROW_H - 0.75}pt; font-size: 10pt; padding: 0 2pt; }}
 .sheet .c.t {{ height: {CHECK_TITLE_H - 0.75}pt; font-size: 12pt; }}
-.footer {{ position: absolute; bottom: 21.6pt; font-size: 10pt; }}
+.footer {{ position: absolute; bottom: 21.6pt; font-size: 10pt; font-family: "Noto Sans Thai PDF", sans-serif; }}
 .footer.left {{ left: 18pt; }}
 .footer.right {{ right: 18pt; }}
 </style></head><body>{"".join(sections)}</body></html>"""
