@@ -460,3 +460,52 @@ def test_parse_time_formats(text, expected):
 def test_parse_time_rejects_bad_ampm_hour():
     with pytest.raises(ValueError):
         _parse_time("13:00 PM")
+
+
+# ---------------------------------------------------------------- D19 duplicate receipts
+
+async def _dup_setup(world, ward="ICU3", receipt_hours=1):
+    reader = FakeReader(dispatch=[drow("0a1b2c3d", 60, ward=ward)], receipt=[rrow("0a1b2c3e", receipt_hours, ward=ward)])
+    rep = await runner.run_once(world, reader, make_cfg())
+    assert rep.counts["applied"] == 2
+    return reader
+
+
+async def test_d19_duplicate_receipt_same_ward_within_window_is_skipped(world):
+    reader = await _dup_setup(world)
+    reader.tabs["ข้อมูลรับเครื่องมือ"].append(rrow("0a1b2c3f", 0.5))
+    rep = await runner.run_once(world, reader, make_cfg())
+    assert rep.counts["already_received"] == 1 and not rep.review and not rep.counts["conflict"]
+    assert await count(world, ClientOperation) == 2  # nothing filed for the duplicate
+
+
+async def test_d19_receipt_outside_window_still_conflicts(world):
+    reader = await _dup_setup(world, receipt_hours=40)
+    reader.tabs["ข้อมูลรับเครื่องมือ"].append(rrow("0a1b2c3f", 0.5))
+    rep = await runner.run_once(world, reader, make_cfg())
+    assert "already_received" not in rep.counts
+    assert rep.review and rep.review[0]["code"] == "TRANSACTION_ALREADY_RETURNED"
+
+
+async def test_d19_window_is_configurable(world):
+    reader = await _dup_setup(world, receipt_hours=4)
+    reader.tabs["ข้อมูลรับเครื่องมือ"].append(rrow("0a1b2c3f", 0.5))
+    rep = await runner.run_once(world, reader, make_cfg(receipt_dedupe_window_hours=1))
+    assert "already_received" not in rep.counts and rep.review
+
+
+async def test_d19_different_ward_still_conflicts(world):
+    reader = await _dup_setup(world)
+    reader.tabs["ข้อมูลรับเครื่องมือ"].append(rrow("0a1b2c3f", 0.5, ward="Ward 5A"))
+    rep = await runner.run_once(world, reader, make_cfg())
+    assert "already_received" not in rep.counts
+    assert rep.review and rep.review[0]["code"] == "TRANSACTION_ALREADY_RETURNED"
+
+
+async def test_d19_closed_by_redispatch_is_not_a_receipt(world):
+    reader = FakeReader(dispatch=[drow("0a1b2c3d", 5), drow("0a1b2c3e", 4, ward="Ward 5A")])
+    await runner.run_once(world, reader, make_cfg())  # first tx closed by re-dispatch
+    reader.tabs["ข้อมูลรับเครื่องมือ"].append(rrow("0a1b2c3f", 4.5, ward="ICU3"))
+    rep = await runner.run_once(world, reader, make_cfg())
+    assert "already_received" not in rep.counts
+    assert rep.review and rep.review[0]["code"] == "TRANSACTION_CLOSED_BY_REDISPATCH"

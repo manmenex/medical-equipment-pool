@@ -71,6 +71,24 @@ class DismissRequest(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class BulkDismissSheetSyncRequest(BaseModel):
+    """D20: bulk dismiss of open Legacy Sheet Sync conflicts."""
+    result_code: str | None = Field(default=None, max_length=64)
+    reason: DismissReason = "already_recorded"
+    note: str | None = Field(default=None, max_length=500)
+
+    model_config = {"extra": "forbid"}
+
+
+class BulkDismissSheetSyncResponse(BaseModel):
+    dismissed: int
+    skipped: int = 0
+
+
+class SheetSyncOpenCount(BaseModel):
+    count: int
+
+
 class ApplyNowRequest(BaseModel):
     model_config = {"extra": "forbid"}
 

@@ -428,6 +428,46 @@ async def dismiss(
     return {"op_id": op_id, "status": OP_STATUS_RESOLVED, "resolution": RESOLUTION_DISMISSED, "resolved_by": resolver_id, "resolved_at": now}
 
 
+def _sheet_sync_clause(now: datetime, result_code: str | None):
+    from app.services.legacy_sheet_sync.runner import DEVICE_ID
+
+    conds = [reviewable_clause(_cutoff(now)), ClientOperation.device_id == DEVICE_ID]
+    if result_code:
+        conds.append(ClientOperation.result_code == result_code)
+    return conds
+
+
+async def count_open_sheet_sync(db: AsyncSession, *, result_code: str | None = None) -> int:
+    conds = _sheet_sync_clause(_now(), result_code)
+    return (await db.execute(select(func.count()).select_from(ClientOperation).where(*conds))).scalar_one()
+
+
+async def dismiss_sheet_sync(
+    db: AsyncSession,
+    resolver_id: uuid.UUID,
+    *,
+    result_code: str | None,
+    reason: str,
+    note: str | None,
+    ip_address: str | None = None,
+    user_agent: str | None = None,
+) -> dict:
+    """D20: dismiss every open conflict of the Legacy Sheet Sync device, one
+    ``dismiss()`` call each so each is audited individually. Nothing is
+    applied or replayed. Administrator-only (enforced by the caller)."""
+    conds = _sheet_sync_clause(_now(), result_code)
+    ids = list((await db.execute(select(ClientOperation.op_id).where(*conds).order_by(ClientOperation.received_at))).scalars())
+    dismissed = skipped = 0
+    for op_id in ids:
+        try:
+            await dismiss(db, op_id, resolver_id, is_admin=True, reason=reason, note=note,
+                          ip_address=ip_address, user_agent=user_agent)
+            dismissed += 1
+        except (SyncOpNotResolvableError, ResourceNotFoundError):
+            skipped += 1  # resolved concurrently by someone else
+    return {"dismissed": dismissed, "skipped": skipped}
+
+
 async def apply_now(
     db: AsyncSession,
     op_id: uuid.UUID,
