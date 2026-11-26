@@ -108,7 +108,7 @@ export function EquipmentDetailPage() {
     const to = eventIsScoped ? draftBusinessDateTo : "";
     const shift = eventIsScoped ? draftShift : "";
     if (from && to && from > to) {
-      setBusinessDateRangeError('"ตั้งแต่" ต้องไม่มาหลัง "ถึง"');
+      setBusinessDateRangeError('"วันที่ทำการ ตั้งแต่" ต้องไม่มาหลัง "วันที่ทำการ ถึง"');
       return;
     }
     setBusinessDateRangeError(null);
@@ -299,7 +299,7 @@ export function EquipmentDetailPage() {
         <div className="mb-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
           <div>
             <label htmlFor="tx-filter-business-date-from" className="mb-1 block text-xs text-[var(--text-muted)]">
-              ตั้งแต่
+              วันที่ทำการ ตั้งแต่
             </label>
             <input
               id="tx-filter-business-date-from"
@@ -312,7 +312,7 @@ export function EquipmentDetailPage() {
           </div>
           <div>
             <label htmlFor="tx-filter-business-date-to" className="mb-1 block text-xs text-[var(--text-muted)]">
-              ถึง
+              วันที่ทำการ ถึง
             </label>
             <input
               id="tx-filter-business-date-to"
@@ -365,6 +365,9 @@ export function EquipmentDetailPage() {
             </select>
           </div>
         </div>
+        {draftEvent === "" && (
+          <p className="mb-2 text-xs text-[var(--text-muted)]">เลือก เบิก/รับคืน ก่อนกรองวันที่/กะ</p>
+        )}
         {businessDateRangeError && <p className="mb-2 text-xs text-status-repair">{businessDateRangeError}</p>}
         <div className="mb-3 flex gap-2">
           <button
@@ -409,7 +412,9 @@ export function EquipmentDetailPage() {
                     {tx.transaction_no} ·{" "}
                     <strong>{tx.status === "open" ? "อยู่ระหว่างเบิก" : "รับคืนแล้ว"}</strong>
                   </div>
-                  <div className="text-[var(--text-muted)]">Ward: {wardName(tx.ward_id)}</div>
+                  {/* Dispatch type/routine round are intentionally not shown: removed by Owner Governance D2
+                      (DECISION_LOG 2026-11-25), superseding the PR13 on-demand/routine criterion. */}
+                  <div className="text-[var(--text-muted)]">Ward ที่รับ (ณ วันเบิก): {wardName(tx.ward_id)}</div>
                   <div className="text-xs text-[var(--text-muted)]">
                     เบิก {new Date(tx.borrowed_at).toLocaleString("th-TH")}
                     {tx.returned_at ? ` · รับคืน ${new Date(tx.returned_at).toLocaleString("th-TH")}` : ""}

@@ -289,7 +289,7 @@ describe("ReportPrintPage", () => {
     await screen.findByText("รายงานการรับคืน");
 
     expect(
-      await screen.findByText("เบราว์เซอร์นี้ไม่รองรับการพิมพ์ กรุณาใช้เบราว์เซอร์อื่น")
+      await screen.findByText("เบราว์เซอร์นี้ตรวจสอบฟอนต์สำหรับพิมพ์ไม่ได้ กรุณาใช้เบราว์เซอร์อื่น")
     ).toBeInTheDocument();
     const printButton = screen.getByRole("button", { name: "พิมพ์" });
     expect(printButton).toBeDisabled();

@@ -127,7 +127,7 @@ export function ReportPrintPage() {
       {!isLoading && !isError && printDocument && fontsStatus === "unsupported" && (
         <div className="no-print flex flex-col items-start gap-2 p-6">
           <p className="text-sm text-red-600">
-            เบราว์เซอร์นี้ไม่รองรับการพิมพ์ กรุณาใช้เบราว์เซอร์อื่น
+            เบราว์เซอร์นี้ตรวจสอบฟอนต์สำหรับพิมพ์ไม่ได้ กรุณาใช้เบราว์เซอร์อื่น
           </p>
         </div>
       )}
