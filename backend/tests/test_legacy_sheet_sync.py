@@ -16,9 +16,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.client_operation import ClientOperation
-from app.models.equipment import Equipment
+from app.models.equipment import Equipment, EquipmentStatus
 from app.models.master_data import Ward
-from app.models.transaction import BorrowTransaction
+from app.models.transaction import CLOSE_REASON_REDISPATCH, BorrowTransaction
 from app.models.user import ROLE_EQUIPMENT_POOL_STAFF, Role, User
 from app.services.legacy_sheet_sync import __main__ as cli
 from app.services.legacy_sheet_sync import runner
@@ -231,16 +231,37 @@ async def test_unknown_ward_and_bcm_skipped_and_reported(world):
     assert any(s["reason"].startswith("matching_dispatch_skipped") for s in rep.skipped)
 
 
-async def test_dispatch_of_already_issued_item_lands_in_review(world):
+async def test_dispatch_of_already_issued_item_redispatches_per_d8(world):
+    """D8 applies to the sheet path: a dispatch row for an item still out is
+    applied (previous open transaction closed by re-dispatch), not a conflict."""
     reader = FakeReader(dispatch=[drow("0a1b2c3d", 4), drow("0a1b2c3e", 3, ward="Ward 5A")])
     rep = await runner.run_once(world, reader, make_cfg())
-    assert rep.counts["applied"] == 1 and rep.counts["conflict"] == 1
-    assert rep.review == [{"tab": "dispatch", "row_id": "0a1b2c3e", "result": "conflict", "code": "DISPATCH_STATUS_WARNING"}]
+    assert rep.counts["applied"] == 2 and not rep.counts["conflict"] and not rep.review
     async with world() as db:
-        row = await db.get(ClientOperation, runner.op_id_for("dispatch", "0a1b2c3e"))
-        assert row.status == "conflict"  # existing review list reads this
-    rep = await runner.run_once(world, reader, make_cfg())  # not resubmitted
-    assert rep.counts["already_conflict"] == 1 and await count(world, BorrowTransaction) == 1
+        first = await db.get(BorrowTransaction, runner.op_id_for("dispatch", "0a1b2c3d"))
+        second = await db.get(BorrowTransaction, runner.op_id_for("dispatch", "0a1b2c3e"))
+        assert first.status.value == "closed" and first.close_reason == CLOSE_REASON_REDISPATCH
+        assert second.status.value == "open"
+        for key in ("0a1b2c3d", "0a1b2c3e"):
+            row = await db.get(ClientOperation, runner.op_id_for("dispatch", key))
+            assert row.status == "applied" and row.occurred_at is not None
+    # a later sheet receipt closes the NEW transaction
+    reader.tabs["ข้อมูลรับเครื่องมือ"].append(rrow("0a1b2c3f", 1, ward="Ward 5A"))
+    rep = await runner.run_once(world, reader, make_cfg())
+    assert rep.counts["applied"] == 1
+
+
+async def test_conflict_row_records_occurred_at_and_decommissioned_still_blocked(world):
+    async with world() as db:
+        eq = (await db.execute(select(Equipment).where(Equipment.bcm_code == "BCM01078"))).scalar_one()
+        eq.status = EquipmentStatus.DECOMMISSIONED
+        await db.commit()
+    rep = await runner.run_once(world, FakeReader(dispatch=[drow("0a1b2c3d", 3)]), make_cfg())
+    assert rep.review == [{"tab": "dispatch", "row_id": "0a1b2c3d", "result": "conflict", "code": "EQUIPMENT_NOT_AVAILABLE"}]
+    async with world() as db:
+        row = await db.get(ClientOperation, runner.op_id_for("dispatch", "0a1b2c3d"))
+        assert row.status == "conflict" and row.occurred_at is not None
+        assert abs((row.occurred_at.replace(tzinfo=timezone.utc) - when(3)).total_seconds()) < 1
 
 
 async def test_dry_run_writes_nothing_and_backfill_start_applies(world):

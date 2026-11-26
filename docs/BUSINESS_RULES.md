@@ -17,6 +17,7 @@ Equipment has exactly four states: `AVAILABLE_AT_POOL`, `ISSUED_TO_WARD`, `UNAVA
 
 Cleaning is a physical operational activity, not a digital one. It may occur before or after the receipt record is entered — the system does not require or assume any particular order. Cleaning is not represented as an equipment state and does not require a separate cleaning workflow: there is no cleaning state, cleaning-complete action, or cleaning-status field. Equipment receipt is one atomic digital operation with a binary outcome — a usable receipt ends at `AVAILABLE_AT_POOL`; a defective receipt ends at `UNAVAILABLE_DEFECTIVE`.
 
+- Printed form exception (D17, Owner Governance 2026-11-26): the daily printed forms end with the verbatim paper "Equipment Verify Checklist" (FI-CES-BCM-PO-001/2) listing devices received in the shift, with every check cell (Cleaner included) printed blank for hand completion. The system records nothing from it.
 - Source: `docs/ARCHITECTURE_DECISIONS.md` ("No cleaning workflow"); `AGENTS.md` (Domain Guardrails); `docs/audits/04-consolidated-implementation-plan.md` Part B.1. The binary outcome itself is now the request/response contract's own `receipt_outcome` field (Roadmap PR8B, `knowledge/adr/ADR-006-receipt-outcome-contract.md`), not only an internal mapping.
 
 ## UUID is relational identity
@@ -154,3 +155,9 @@ Equipment Pool staff MAY record a patient HN (hospital number) on a dispatch. Th
 | Transaction lifecycle decision | `knowledge/adr/ADR-005-transaction-model.md` |
 | Domain entity structural reference | `docs/DOMAIN_MODEL.md` |
 | Preferred terminology | `docs/GLOSSARY.md`, `knowledge/glossary.md` |
+
+## Daily report rows, sheet-sync duplicates and bulk dismiss (Owner Governance 2026-11-26, D18-D20)
+
+- **Per-ward rows (D18):** the daily Excel and the Standby summary show one row per ward (Ward 7A and Ward 7B are separate), grouped and ordered by the Owner's layout. Wards are never merged.
+- **Sheet-sync duplicate receipts (D19):** on the Legacy Sheet Sync path only, a receipt row whose transaction is already closed by a receipt for the same equipment and ward within a short business-time window is skipped as already received, not filed as a conflict. App clients keep `TRANSACTION_ALREADY_RETURNED`.
+- **Bulk dismiss (D20):** an administrator may dismiss all open sync conflicts from the Legacy Sheet Sync device in one action; each dismissal is individually audited through the existing dismiss service; nothing is applied.

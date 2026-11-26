@@ -272,6 +272,9 @@ async def run_once(session_factory, reader: SheetReader, cfg: SyncConfig, *, dry
                 body = BorrowRequest(
                     equipment_id=str(eq.id), ward_id=str(ward.id),
                     dispatch_type=DispatchType.ON_DEMAND, notes=build_note(row),
+                    # D8 (PR31): re-dispatch of an out/defective item is not
+                    # blocked; the sheet row is the operator's confirmation.
+                    acknowledge_status_warning=True,
                 )
                 await _submit(db, _envelope(row, user_id, dispatch=body), user_id, row, report)
                 continue

@@ -9453,3 +9453,42 @@ opening-balance transactions are created.
 - **Source:** Owner decisions in chat, 2026-11-26. Docs-only Governance PR; no
   code change.
 - **Status:** Approved; implementation not started (Roadmap PR33, PR34).
+
+## 2026-11-26 (second set) — Printed verify checklist, per-ward report rows, sheet-sync duplicates, bulk dismiss
+
+- **Decision (Owner, in chat, 2026-11-26):**
+  - **D17 Printed Equipment Verify Checklist:** the daily printed forms
+    (`/reports/daily-forms.pdf`) end with the pool team's paper form
+    "Equipment Verify Checklist" (FI-CES-BCM-PO-001/2), reproduced verbatim in
+    form and layout (Owner: "this form only, this format only"). It lists the
+    devices received in that shift. All check cells, including the Cleaner
+    column, are printed blank for hand completion. This is a printed paper form
+    only: the system does not record, store or derive any cleaning or check
+    result from it. "Cleaning is never tracked" and the four equipment states
+    are unchanged; there is no cleaning state, field or workflow.
+  - **D18 Daily report ward rows are per ward:** the daily Excel and the
+    Standby summary list each ward as its own row (for example Ward 7A and
+    Ward 7B are separate rows), grouped and ordered by the Owner's layout
+    (รูปแบบการจ่ายเครื่อง / ประเภทการรักษา / แผนก). Wards are never merged into
+    a combined row.
+  - **D19 Sheet-sync duplicate receipts:** for the Legacy Sheet Sync path only,
+    a receipt row whose target transaction is already closed by a receipt for
+    the same equipment and the same ward, at a business time within a short
+    window, is acknowledged as already received and skipped (counted in the
+    run report, not filed as a sync conflict). Every other case still raises
+    `TRANSACTION_ALREADY_RETURNED` as before (PR8A/PR8C unchanged for app
+    clients).
+  - **D20 Bulk dismiss of sheet-sync conflicts:** an administrator may dismiss,
+    in one action, the open sync conflicts created by the Legacy Sheet Sync
+    device. Each dismissal goes through the existing dismiss service and is
+    audited individually. Nothing is applied or replayed by this action.
+- **Reason:** match the pool team's existing paper process and reports, and
+  clear duplicate conflicts caused by the legacy history import overlapping
+  the live sheet sync.
+- **Amends:** `docs/BUSINESS_RULES.md` (cleaning section: printed-form note;
+  daily report: per-ward rows; sync review: D19/D20), `AGENTS.md` (cleaning
+  guardrail line: pointer to D17). Not changed: four states, no cleaning
+  state/field/workflow, HN safeguards (HN never on any printed form), no MEMS
+  integration.
+- **Source:** Owner decisions in chat, 2026-11-26. Docs-only Governance PR.
+- **Status:** Approved; implementation follows in the report and sync PRs.
