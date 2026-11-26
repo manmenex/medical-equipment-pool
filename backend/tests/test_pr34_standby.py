@@ -411,9 +411,13 @@ async def test_daily_excel_stand_by_column_uses_day_cutoff_effective_values(clie
 
     def standby_col(content):
         ws = load_workbook(io.BytesIO(content))["รายงาน"]
-        header = [c.value for c in ws[1]]
-        assert header[7] == "Stand By"
-        return {row[2].value: row[7].value for row in ws.iter_rows(min_row=3, max_row=ws.max_row - 1)}
+        assert ws["H3"].value == "Stand By"
+        out = {}
+        for r in range(5, ws.max_row + 1):
+            if ws.cell(r, 3).value == "รวม":
+                break
+            out[ws.cell(r, 3).value] = ws.cell(r, 8).value
+        return out
 
     r = await client.get("/api/v1/reports/daily-summary.xlsx", headers=staff, params={"date": "2026-07-28"})
     assert r.status_code == 200, r.text

@@ -9,6 +9,7 @@ import { AddHnAction } from "@/components/entry/AddHnAction";
 import { HnReveal } from "@/components/entry/HnField";
 import { SourceBadge } from "@/components/SourceBadge";
 import { useDebounce } from "@/hooks/useDebounce";
+import { CRYO_ITEMS, STANDARD_ITEMS, totalCuffs } from "@/services/checks";
 import { listWards } from "@/services/masterData";
 import {
   fetchMonitorEvents,
@@ -109,6 +110,40 @@ export function groupEvents(events: MonitorEvent[]): Group[] {
     g.equipmentCount += 1;
   }
   return [...groups.values()];
+}
+
+const mark = (ok: boolean | undefined) => (ok ? "✓" : "✗");
+
+/** Accessory check results for one device row ("-" when none recorded,
+ *  e.g. rows synced from the legacy sheet). */
+export function ChecksSummary({ e }: { e: MonitorEvent }) {
+  const c = e.checks;
+  if (!c) {
+    return <span className="text-xs text-[var(--text-muted)]">ตรวจ: -</span>;
+  }
+  if (c.kind === "cryo_cuff") {
+    const bad = CRYO_ITEMS.filter((i) => !c[i.key]);
+    return (
+      <span className="text-xs" data-testid="checks-cryo">
+        ตรวจ Cryo-Cuff 6 รายการ:{" "}
+        {bad.length === 0
+          ? "ปกติทั้งหมด ✓"
+          : `ผิดปกติ ${bad.map((i) => `${i.no} ✗`).join(", ")}`}
+        {totalCuffs(c.cuffs) > 0 && <> · Cuff {cuffSummary(c.cuffs)}</>}
+      </span>
+    );
+  }
+  return (
+    <span className="text-xs" data-testid="checks-standard">
+      ตรวจ:{" "}
+      {STANDARD_ITEMS.map((i, n) => (
+        <span key={i.key} className={c[i.key] ? "" : "text-red-400"}>
+          {n > 0 && " "}
+          {["หน้าจอ", "สายชาร์จ", "Pole Clamp"][n]} {mark(c[i.key])}
+        </span>
+      ))}
+    </span>
+  );
 }
 
 export function MonitorPage() {
@@ -322,17 +357,10 @@ export function MonitorPage() {
                     >
                       <span>
                         <strong>{s.ward}</strong>
-                        {s.contact && (
-                          <>
-                            {" "}
-                            ·{" "}
-                            {s.events[0].kind === "dispatch"
-                              ? "ผู้รับ"
-                              : "ผู้ส่ง"}
-                            : {s.contact}
-                          </>
-                        )}{" "}
-                        · {s.operator}
+                        {" "}
+                        ·{" "}
+                        {s.events[0].kind === "dispatch" ? "ผู้รับ" : "ผู้ส่งคืน"}
+                        : {s.contact ?? "-"} · ผู้คีย์: {s.operator}
                         {s.cuffsOutstanding && (
                           <span className="ml-2 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-400">
                             Cuff ค้าง
@@ -349,6 +377,9 @@ export function MonitorPage() {
                           <li key={e.id}>
                             {e.equipment.bcm_code ?? e.equipment.name}
                             <SourceBadge source={e.equipment.equipment_source} />
+                            <span className="ml-2">
+                              <ChecksSummary e={e} />
+                            </span>
                             {e.has_hn && (
                               <span className="ml-2">
                                 <HnReveal transactionId={e.id} compact />

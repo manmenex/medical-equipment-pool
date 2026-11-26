@@ -17,12 +17,13 @@ the clock rule. "That business day" is read as the two shift instances that
 meet at B (the only ones the boundary can move an event between).
 """
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -48,9 +49,52 @@ _NIGHT_START = time(20, 0)
 _THAI_SHIFT = {Shift.NIGHT: "กะดึก", Shift.DAY: "กะเช้า"}
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
-# Rows per printed page of the daily form; also drives the "position in form"
-# column so the workbook can point at the exact printed row.
-FORM_ROWS_PER_PAGE = 25
+# Rows per printed page of the daily form (the company form has 33 data rows).
+FORM_ROWS_PER_PAGE = 33
+
+# Equipment roles used by the Owner's report layout. Categories are free-text
+# master data, so a role is recognised by name; anything else keeps its own
+# name as an extra row.
+ROLE_INFUSION = "infusion"
+ROLE_PCA = "pca"
+ROLE_SYRINGE = "syringe"
+ROLE_MATTRESS = "mattress"
+ROLE_CRYO = "cryo"
+ROLE_BED = "bed"
+ROLE_PNEUMATIC = "pneumatic"
+ROLE_RESPIRATOR = "respirator"
+_ROLE_PATTERNS = (
+    (ROLE_PCA, re.compile(r"\bpca\b", re.I)),
+    (ROLE_SYRINGE, re.compile(r"syringe", re.I)),
+    (ROLE_INFUSION, re.compile(r"infusion", re.I)),
+    (ROLE_MATTRESS, re.compile(r"mattress", re.I)),
+    (ROLE_CRYO, re.compile(r"cryo", re.I)),
+    (ROLE_BED, re.compile(r"bed\s*(exit|alarm|alrm)|occupancy", re.I)),
+    (ROLE_PNEUMATIC, re.compile(r"pneumatic", re.I)),
+    (ROLE_RESPIRATOR, re.compile(r"respirator|ventilator", re.I)),
+)
+
+
+def category_role(name: str | None) -> str | None:
+    for role, pattern in _ROLE_PATTERNS:
+        if pattern.search(name or ""):
+            return role
+    return None
+
+
+# Short "ชนิดเครื่อง" sheet names and the form "หมายเหตุ" labels (Owner's tool).
+ROLE_SHORT_NAMES = {
+    ROLE_INFUSION: "Infusion Pump",
+    ROLE_PCA: "PCA",
+    ROLE_SYRINGE: "Syringe Pump",
+    ROLE_MATTRESS: "Air Mattress",
+    ROLE_CRYO: "Cryo cuff",
+    ROLE_BED: "Bed Alarm",
+    ROLE_PNEUMATIC: "Pneumatic Pump",
+    ROLE_RESPIRATOR: "Respirator",
+}
+ROLE_ORDER = tuple(ROLE_SHORT_NAMES)
+FORM_NOTE_LABELS = {ROLE_BED: "Bed Alarms", ROLE_PNEUMATIC: "PNEUMATIC PUMP"}
 
 
 def format_date(d: date) -> str:
@@ -269,12 +313,20 @@ class DailyReport:
     categories: list[tuple[str, Counts]]
     operators: list[tuple[str, Counts]]
     totals: Counts
+    # Equipment in the pool per role (e.g. Cryo cuff total shown on the sheet).
+    pool_counts: dict[str, int] = field(default_factory=dict)
 
 
-def _stamp_form_positions(events: list[DailyEvent]) -> None:
+def _stamp_form_positions(events: list[DailyEvent], report_date: date) -> None:
+    """Owner's wording: "แบบบันทึกส่งเครื่อง[เมื่อวาน] แถว N" -- N counts the
+    rows of that kind on the printed form of the event's own date (a Night
+    shift prints one form per calendar date; the earlier one is "เมื่อวาน")."""
     for kind in ("dispatch", "receipt"):
-        for i, e in enumerate([x for x in events if x.kind == kind]):
-            e.form_position = f"หน้า {i // FORM_ROWS_PER_PAGE + 1} แถว {i % FORM_ROWS_PER_PAGE + 1}"
+        seen: dict[date, int] = {}
+        for e in (x for x in events if x.kind == kind):
+            n = seen[e.local.date()] = seen.get(e.local.date(), 0) + 1
+            yesterday = "เมื่อวาน" if e.local.date() < report_date else ""
+            e.form_position = f"แบบบันทึก{'ส่ง' if kind == 'dispatch' else 'รับ'}เครื่อง{yesterday} แถว {n}"
 
 
 async def _load_events(db: AsyncSession, start: datetime, end: datetime) -> list[DailyEvent]:
@@ -325,6 +377,22 @@ async def _load_events(db: AsyncSession, start: datetime, end: datetime) -> list
     return events
 
 
+async def _pool_counts(db: AsyncSession) -> dict[str, int]:
+    rows = (
+        await db.execute(
+            select(EquipmentCategory.name, func.count(Equipment.id))
+            .join(Equipment, Equipment.category_id == EquipmentCategory.id)
+            .group_by(EquipmentCategory.name)
+        )
+    ).all()
+    counts: dict[str, int] = {}
+    for name, n in rows:
+        role = category_role(name)
+        if role:
+            counts[role] = counts.get(role, 0) + n
+    return counts
+
+
 async def build_daily_report(db: AsyncSession, report_date: date, grace_minutes: int) -> DailyReport:
     grace_minutes = validate_grace(grace_minutes)
     start, end = fetch_window_utc(report_date)
@@ -356,7 +424,8 @@ async def build_daily_report(db: AsyncSession, report_date: date, grace_minutes:
         categories.setdefault(e.category_name, Counts()).add(e)
         operators.setdefault(e.operator_name, Counts()).add(e)
         totals.add(e)
-    _stamp_form_positions(events)
+    _stamp_form_positions(events, report_date)
+    pool_counts = await _pool_counts(db)
 
     return DailyReport(
         report_date=report_date,
@@ -368,4 +437,5 @@ async def build_daily_report(db: AsyncSession, report_date: date, grace_minutes:
         categories=sorted(categories.items(), key=lambda kv: kv[0]),
         operators=sorted(operators.items(), key=lambda kv: kv[0]),
         totals=totals,
+        pool_counts=pool_counts,
     )

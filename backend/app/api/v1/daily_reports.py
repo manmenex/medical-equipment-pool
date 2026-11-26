@@ -89,6 +89,7 @@ async def get_daily_summary_xlsx(
 async def get_daily_forms_pdf(
     report_date: date | None = Query(default=None, alias="date"),
     kind: Literal["dispatch", "receipt", "both"] = "both",
+    shift: Literal["day", "night", "both"] = "both",
     grace_minutes: int = Query(default=daily_report_service.DEFAULT_GRACE_MINUTES),
     db: AsyncSession = Depends(get_db),
     actor=Depends(require_roles(*EQUIPMENT_POOL_OPERATION_ROLES)),
@@ -98,7 +99,7 @@ async def get_daily_forms_pdf(
     outcome = "error"
     try:
         report = await _build(db, report_date, grace_minutes)
-        content = await daily_report_forms_service.render_forms_pdf_bounded(report, kind)
+        content = await daily_report_forms_service.render_forms_pdf_bounded(report, kind, shift)
     except ExportTooLargeError:
         outcome = "row_limit_exceeded"
         raise
@@ -116,7 +117,7 @@ async def get_daily_forms_pdf(
             row_count=len(report.events) if report else None,
             duration_ms=timing.elapsed_ms(),
         )
-    filename = f"daily-forms-{report.report_date.isoformat()}-{kind}.pdf"
+    filename = f"daily-forms-{report.report_date.isoformat()}-{shift}-{kind}.pdf"
     return Response(
         content=content, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )

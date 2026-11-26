@@ -215,6 +215,20 @@ def _rows(ws):
 # ------------------------------------------------------------------ workbook
 
 
+def _ward_table(ws):
+    """label (col C) -> [night disp, night rcpt, day disp, day rcpt, total disp, total rcpt]
+    for the ward table (rows 5 .. the "รวม" row)."""
+    out, total = {}, None
+    for r in range(5, ws.max_row + 1):
+        label = ws.cell(r, 3).value
+        vals = [ws.cell(r, c).value for c in (4, 5, 6, 7, 9, 10)]
+        if label == "รวม":
+            total = vals
+            break
+        out[label] = vals
+    return out, total
+
+
 @pytest.mark.asyncio
 async def test_workbook_sheets_headers_and_counts(client, seeded_users, db_session):
     await _scenario(db_session, seeded_users)
@@ -225,57 +239,90 @@ async def test_workbook_sheets_headers_and_counts(client, seeded_users, db_sessi
     wb = load_workbook(io.BytesIO(resp.content))
     assert wb.sheetnames == ["รายงาน", "ชนิดเครื่อง", "ผู้คีย์", "รายการ"]
 
-    # Sheet 1: verbatim headers; default mapping (row = ward name, treatment = department).
+    # Sheet 1 layout (Owner's file): title, 2-row header, merged groups, panes, widths.
     ws = wb["รายงาน"]
-    rows = _rows(ws)
-    assert rows[0] == ["รูปแบบการจ่ายเครื่อง", "ประเภทการรักษา", "แผนก", "Night", None, "Day", None, "Stand By", "Total per DAY", None]
-    assert rows[1] == [None, None, None, "ส่ง", "รับ", "ส่ง", "รับ", None, "ส่งเครื่อง", "รับคืน"]
-    body = {r[2]: r for r in rows[2:-1]}
-    # Night (clock) dispatches: 5A(21:00, 21:30), 5B(01:30), 6(02:00); receipt 08:20 attributed to Night by D6.
-    assert body["Ward 5A"][1] == "IPD ตึก A"
-    assert body["Ward 5A"][3:7] == [2, 1, 0, 1]  # night disp 2 / night rcpt 1 (D6) / day disp 0 / day rcpt 1 (11:00)
-    assert body["Ward 5A"][8:10] == [2, 2]
-    assert body["Ward 5B"][3:7] == [1, 0, 0, 0]
-    assert body["Ward 6"][3:7] == [1, 0, 1, 0]
-    assert body[svc.UNSPECIFIED_LABEL][3:7] == [0, 0, 1, 0]
-    total = rows[-1]
-    assert total[0] == "รวม"
-    assert total[3:7] == [4, 1, 2, 1] and total[8:10] == [6, 2]
+    window = "(กะดึก 27/07 20:00 - กะเช้า 28/07 20:00)"
+    assert ws["A1"].value == f"รายงานรับ-ส่งเครื่อง Infusion Pump  รวม 2 กะ วันที่ 28/Jul/2026  {window}"
+    assert ws["A3"].value == "รูปแบบการจ่าย\nเครื่อง" and ws["B3"].value == "ประเภท\nการรักษา" and ws["C3"].value == "แผนก"
+    assert ws["D3"].value == "รอบเวรกลางคืนที่ผ่านมา\nเวลา 27/07 20:00 - 28/07 08:00"
+    assert ws["F3"].value == "รอบเวร Day สรุป\nเวลา 28/07 08:00 - 28/07 20:00"
+    assert ws["H3"].value == "Stand By" and ws["I3"].value == "Total per DAY"
+    assert [ws.cell(4, c).value for c in (4, 5, 6, 7, 9, 10)] == ["ส่ง", "รับ", "ส่ง", "รับ", "ส่งเครื่อง", "รับคืน"]
+    merged = {str(m) for m in ws.merged_cells.ranges}
+    assert {"A3:A4", "B3:B4", "C3:C4", "D3:E3", "F3:G3", "H3:H4", "I3:J3", "A5:A21", "B5:B11", "B12:B16",
+            "B17:B21", "A22:A41", "B22:B41"} <= merged
+    assert ws["A5"].value == "Standby support" and ws["B5"].value == "IPD ตึก A" and ws["A22"].value == "After request"
+    assert ws.freeze_panes == "D5" and ws.row_dimensions[3].height == 36
+    assert [ws.column_dimensions[c].width for c in "ABCDEFGHIJ"] == [15, 14, 24, 8, 8, 8, 8, 8, 11, 11]
+    assert ws["H5"].fill.start_color.rgb.endswith("FFFF00") and ws["D6"].fill.start_color.rgb.endswith("DDD9C4")
+    assert ws["D5"].border.left.style == "thin"
 
-    # Sheet 2: equipment type.
-    cat = _rows(wb["ชนิดเครื่อง"])
-    assert cat[0] == ["ชนิดเครื่อง", "Night", None, "Day", None, "Total per DAY", None, "รวม"]
-    assert cat[1] == [None, "ส่ง", "รับ", "ส่ง", "รับ", "ส่งเครื่อง", "รับคืน", None]
-    by_cat = {r[0]: r for r in cat[2:-1]}
-    assert by_cat["Infusion Pump"][1:] == [3, 1, 2, 1, 5, 2, 7]
-    assert by_cat["Cryo-Cuff"][1:] == [1, 0, 0, 0, 1, 0, 1]
-    assert cat[-1] == ["รวม", 4, 1, 2, 1, 6, 2, 8]
+    # Ward table counts Infusion Pump only; zero cells are blank; unknown labels -> "อื่น ๆ" block.
+    body, total = _ward_table(ws)
+    assert body["Ward 5A"] == [2, 1, None, 1, 2, 2]
+    assert body["Ward 5B"] == [1, None, None, None, 1, None]
+    assert body["Ward 6"] == [None, None, 1, None, 1, None]  # the Cryo-Cuff dispatch is not in this table
+    assert body[svc.UNSPECIFIED_LABEL] == [None, None, 1, None, 1, None]
+    assert total == [3, 1, 2, 1, 5, 2]
+    assert any(ws.cell(r, 1).value == "อื่น ๆ" for r in range(5, ws.max_row))
+    total_row = next(r for r in range(5, ws.max_row) if ws.cell(r, 3).value == "รวม")
+    assert ws.cell(total_row, 8).value == f"=SUM(H5:H{total_row - 1})"
+
+    # Pool table: every equipment type, per shift, with turnover = dispatch + receipt.
+    start = next(r for r in range(1, ws.max_row) if ws.cell(r, 1).value == "ลำดับ")
+    assert ws.cell(start - 2, 1).value.startswith("สรุปจำนวนการใช้งานเครื่องมือกลุ่ม Pool")
+    assert ws.cell(start, 2).value == "ชนิดเครื่องมือ Equipment Pool" and ws.cell(start, 10).value == "อัตราการหมุนเวียน\nรวมต่อชนิดเครื่อง"
+    assert [ws.cell(start + 1, c).value for c in range(4, 10)] == ["จ่าย", "รับคืน"] * 3
+    pool = {ws.cell(r, 2).value: [ws.cell(r, c).value for c in range(4, 11)] for r in range(start + 2, start + 9)}
+    assert list(pool)[0] == "INFUSION PUMP" and "CRYO CUFF (ทั้งหมดมีในระบบ 1 รายการ)" in pool
+    assert pool["INFUSION PUMP"] == [3, 1, 2, 1, 5, 2, 7]
+    assert pool["CRYO CUFF (ทั้งหมดมีในระบบ 1 รายการ)"] == [1, None, None, None, 1, None, 1]
+    assert [ws.cell(start + 9, c).value for c in range(4, 11)] == [4, 1, 2, 1, 6, 2, 8]
+    footer = [ws.cell(r, 1).value for r in range(start + 10, ws.max_row + 1) if ws.cell(r, 1).value]
+    assert footer[0].startswith("ช่วงเปลี่ยนกะ ±60 นาที") and footer[1] == "ตารางแผนกนับเฉพาะ Infusion Pump"
+
+    # Sheet 2: equipment type (fixed types in the Owner's order, then per-ward x type).
+    cs = wb["ชนิดเครื่อง"]
+    assert cs["A1"].value == f"แยกตามชนิดเครื่อง  รวม 2 กะ วันที่ 28/Jul/2026  {window}"
+    assert cs["A3"].value == "ชนิดเครื่อง" and cs["H3"].value == "รวม" and cs.freeze_panes == "B5"
+    assert {"A3:A4", "B3:C3", "D3:E3", "F3:G3", "H3:H4"} <= {str(m) for m in cs.merged_cells.ranges}
+    names = [cs.cell(r, 1).value for r in range(5, 13)]
+    assert names == ["Infusion Pump", "PCA", "Syringe Pump", "Air Mattress", "Cryo cuff", "Bed Alarm", "Pneumatic Pump", "Respirator"]
+    assert [cs.cell(5, c).value for c in range(2, 9)] == [3, 1, 2, 1, 5, 2, 7]
+    assert [cs.cell(9, c).value for c in range(2, 9)] == [1, None, None, None, 1, None, 1]
+    assert [cs.cell(13, c).value for c in range(1, 9)] == ["รวม", 4, 1, 2, 1, 6, 2, 8]
+    assert cs["A15"].value == "แยกตามแผนก x ชนิดเครื่อง (รวม 2 กะ)" and cs.row_dimensions[16].height == 30
+    assert cs["A16"].value == "แผนก" and cs["B16"].value == "Infusion Pump" and cs["D16"].value == "Cryo cuff"
+    assert cs.cell(16, 6).value == "รวม"
+    assert cs["B13"].fill.start_color.rgb.endswith("FFFF00")
 
     # Sheet 3: operators.
     op = _rows(wb["ผู้คีย์"])
-    assert op[0][0] == "รวม 2 กะ วันที่ 28/Jul/2026"
-    assert op[1] == ["ผู้คีย์", "กะดึก ส่ง", "กะดึก รับ", "กะเช้า ส่ง", "กะเช้า รับ", "รวม ส่ง", "รวม รับ", "รวมทั้งหมด"]
+    assert op[0][0] == f"รวม 2 กะ วันที่ 28/Jul/2026  {window}"
+    assert op[1] == ["ผู้คีย์ (BME)", "กะดึก ส่ง", "กะดึก รับ", "กะเช้า ส่ง", "กะเช้า รับ", "รวม ส่ง", "รวม รับ", "รวมทั้งหมด"]
     by_op = {r[0]: r for r in op[2:-1]}
     assert by_op["BME Alpha"][1:] == [4, 1, 0, 0, 4, 1, 5]
     assert by_op["BME Beta"][1:] == [0, 0, 2, 1, 2, 1, 3]
     assert op[-1] == ["รวม", 4, 1, 2, 1, 6, 2, 8]
-    # Operator totals reconcile with the ward-group totals.
-    assert sum(r[7] for r in op[2:-1]) == total[8] + total[9]
+    assert wb["ผู้คีย์"].column_dimensions["A"].width == 20
 
-    # Sheet 4: every event, verbatim headers, formats.
-    ev = _rows(wb["รายการ"])
-    assert ev[0] == ["กะ", "วันที่", "เวลา", "งาน", "ID CODE (BCM)", "ชนิดเครื่อง", "Ward (ในฟอร์ม)", "แถวในรายงาน",
+    # Sheet 4: every event, verbatim headers, widths, "ตำแหน่งในฟอร์ม" wording.
+    es = wb["รายการ"]
+    ev = _rows(es)
+    assert ev[0] == ["กะ", "วันที่", "เวลา", "งาน", "ID CODE", "ชนิดเครื่อง", "Ward (ในฟอร์ม)", "แถวในรายงาน",
                      "ผู้คีย์ (BME)", "หมายเหตุ", "ตำแหน่งในฟอร์ม"]
+    assert [es.column_dimensions[c].width for c in "ABCDEFGHIJK"] == [8, 12, 10, 6, 12, 16, 26, 18, 16, 14, 20]
+    assert es.freeze_panes == "A2" and es.auto_filter.ref in (None, "")
     assert len(ev) - 1 == 8
     first = ev[1]
     assert first[0] == "กะดึก" and first[1] == "27/Jul/2026" and first[2] == "21:00:00" and first[3] == "ส่ง"
     assert first[4].startswith("BCM-") and first[6] == "Ward 5A" and first[7] == "Ward 5A" and first[8] == "BME Alpha"
-    assert first[10] == "หน้า 1 แถว 1"
+    assert first[10] == "แบบบันทึกส่งเครื่องเมื่อวาน แถว 1"
+    after_midnight = next(r for r in ev[1:] if r[2] == "01:30:00")
+    assert after_midnight[10] == "แบบบันทึกส่งเครื่อง แถว 1"
     receipt_0820 = next(r for r in ev[1:] if r[2] == "08:20:00")
     assert receipt_0820[0] == "กะดึก" and receipt_0820[3] == "รับ" and receipt_0820[9] == "ok"
-    # Times are time-ordered.
-    keys = [(r[1][-4:], r[1][3:6], r[1][:2], r[2]) for r in ev[1:]]
-    assert len(keys) == len(ev) - 1
+    assert receipt_0820[10] == "แบบบันทึกรับเครื่อง แถว 1"
 
 
 @pytest.mark.asyncio
@@ -287,8 +334,8 @@ async def test_strict_grace_changes_attribution(client, seeded_users, db_session
     ev = _rows(wb["รายการ"])
     receipt_0820 = next(r for r in ev[1:] if r[2] == "08:20:00")
     assert receipt_0820[0] == "กะเช้า"
-    body = {r[2]: r for r in _rows(wb["รายงาน"])[2:-1]}
-    assert body["Ward 5A"][3:7] == [2, 0, 0, 2]
+    body, _ = _ward_table(wb["รายงาน"])
+    assert body["Ward 5A"][0:4] == [2, None, None, 2]
 
 
 @pytest.mark.asyncio
@@ -314,13 +361,13 @@ async def test_ward_mapping_rollup_and_admin_api(client, seeded_users, db_sessio
         assert r.json()["report_row_label"] == "Ward 5" and r.json()["is_override"] is True
 
     wb = load_workbook(io.BytesIO((await _get_xlsx(client, staff, date="2026-07-28")).content))
-    rows = _rows(wb["รายงาน"])[2:-1]
-    labels = [r[2] for r in rows]
-    assert labels == ["Ward 6", "Ward 5", svc.UNSPECIFIED_LABEL]  # by sort_order; unmapped last
-    assert "Ward 5A" not in labels and "Ward 5B" not in labels
-    ward5 = next(r for r in rows if r[2] == "Ward 5")
-    assert ward5[0] == "Standby support"
-    assert ward5[3:7] == [3, 1, 0, 1]
+    ws = wb["รายงาน"]
+    body, _ = _ward_table(ws)
+    assert "Ward 5A" not in body and "Ward 5B" not in body  # rolled up into the layout row "Ward 5"
+    assert body["Ward 5"] == [3, 1, None, 1, 3, 2]
+    assert body["Ward 6"] == [None, None, 1, None, 1, None]  # Ward 6's own row (unmapped ward name matches the layout)
+    assert ws["A5"].value == "Standby support" and ws["C5"].value == "Ward 5"
+    assert body[svc.UNSPECIFIED_LABEL] == [None, None, 1, None, 1, None]  # unmapped -> "อื่น ๆ" block
     ev = _rows(wb["รายการ"])
     assert {r[7] for r in ev[1:] if r[6] in ("Ward 5A", "Ward 5B")} == {"Ward 5"}  # Ward (ในฟอร์ม) keeps the real ward
 
@@ -348,7 +395,7 @@ async def test_formula_injection_is_neutralised(client, seeded_users, db_session
     for ws in wb.worksheets:
         for row in ws.iter_rows():
             for cell in row:
-                if isinstance(cell.value, str):
+                if isinstance(cell.value, str) and not re.fullmatch(r"=SUM\(H5:H\d+\)", cell.value):  # the one generated formula
                     assert not cell.value.startswith(("=", "@", "+")), (ws.title, cell.coordinate, cell.value)
     assert any(c.value == "'@SUM(1)" for row in wb["รายการ"].iter_rows() for c in row)
 
@@ -397,33 +444,61 @@ async def test_forms_html_columns_checks_and_labels(db_session, seeded_users):
     await _scenario(db_session, seeded_users)
     report = await svc.build_daily_report(db_session, D, 60)
 
-    dispatch_html = forms.render_forms_html(report, "dispatch")
+    dispatch_html = forms.render_forms_html(report, "dispatch", "night")
     for label in (
         "แบบบันทึกการเบิก-จ่าย Equipment Pool",
-        "วันที่ 28/Jul/2026",
+        "วันที่ 27/Jul/2026",
+        "วันที่ 28/Jul/2026",  # the Night form is split by calendar date
         "ME.Code",
         "Primary Check",
-        "ตัวเครื่อง (หน้าจอไม่แตกร้าว)",
-        "สายชาร์จ (สายไม่ขาด)",
-        "Pole Clamp (ไม่แตกหัก,ไม่งอ)",
-        "ผู้รับเครื่อง ( User )",
+        "ตัวเครื่อง",
+        "(หน้าจอไม่แตกร้าว)",
+        "(สายไม่ขาด)",
+        "(ไม่แตกหัก,ไม่งอ)",
+        "Pole Clamp",
+        "ผู้รับเครื่อง",
+        "( User )",
+        "( BME )",
         "Ward",
-        "ผู้ส่งเครื่อง ( BME )",
+        "ผู้ส่งเครื่อง",
         "เวลา",
         "หมายเหตุ",
+        "FI-CES-BCM-PO-001/1 แก้ไขครั้งที่ 04",
+        "วันที่บังคับใช้ 25/06/2569",
+        "data:image/jpeg;base64,",  # form logo
     ):
         assert label in dispatch_html, label
-    assert "ผู้ส่งเครื่อง ( User )" not in dispatch_html
+    # Dispatch form: User = ผู้รับเครื่อง, BME = ผู้ส่งเครื่อง (in that column order).
+    assert dispatch_html.index("ผู้รับเครื่อง") < dispatch_html.index("ผู้ส่งเครื่อง")
     assert "BCM-001" in dispatch_html  # ME.Code column shows the BCM code
-    assert "Nurse Som" in dispatch_html  # ward_contact_name
+    assert "Nurse Som" in dispatch_html  # ward contact name in the User column
+    assert "21:00:00" in dispatch_html  # time prints seconds
+    assert "BME Alpha" in dispatch_html
     assert dispatch_html.count("chk-ok") >= 3 and dispatch_html.count("chk-bad") >= 2
-    # Charger unchecked on the second standard dispatch -> exactly one standard cross there;
-    # cryo-cuff maps body/charger/lid_with_charger: charger bad -> a second cross; its lid_without is ignored.
     assert dispatch_html.count("chk-bad") == 2
+    # blank rows pad every page to 33 data rows
+    assert dispatch_html.count("<tr><td><div class='c code'>") + dispatch_html.count("<tr><td><div class='c'></div></td>") == 33 * 2
 
-    receipt_html = forms.render_forms_html(report, "receipt")
-    assert "ผู้ส่งเครื่อง ( User )" in receipt_html and "ผู้รับเครื่อง ( User )" not in receipt_html
-    assert "Nurse Malee" in receipt_html
+    receipt_html = forms.render_forms_html(report, "receipt", "night")
+    assert receipt_html.index("ผู้ส่งเครื่อง") < receipt_html.index("ผู้รับเครื่อง")  # swapped for the receipt form
+    assert "Nurse Malee" in receipt_html and "รับเครื่อง" in receipt_html
+
+    day_html = forms.render_forms_html(report, "dispatch", "day")
+    assert "BME Beta" in day_html and "BME Alpha" not in day_html  # Day form = Day shift rows only
+    assert day_html.count("<section class='page'>") == 1 and "วันที่ 27/Jul/2026" not in day_html
+    assert svc.FORM_ROWS_PER_PAGE == 33
+
+
+@pytest.mark.asyncio
+async def test_form_notes_label_non_infusion_equipment(db_session, seeded_users):
+    w = await _world(db_session, seeded_users)
+    bed = EquipmentCategory(name="ALARMS, OCCUPANCY, BED")
+    db_session.add(bed)
+    await db_session.flush()
+    await _tx(db_session, w, ward=w.w6, category=bed, dispatched=at(28, 10), op_d=w.bme_a)
+    await db_session.commit()
+    report = await svc.build_daily_report(db_session, D, 60)
+    assert "Bed Alarms" in forms.render_forms_html(report, "dispatch", "day")
 
 
 @pytest.mark.asyncio
@@ -432,7 +507,7 @@ async def test_null_checks_print_blank(db_session, seeded_users):
     await _tx(db_session, w, ward=w.w6, category=w.pump, dispatched=at(28, 10), op_d=w.bme_a, bcm="BCM-NULL")
     await db_session.commit()
     report = await svc.build_daily_report(db_session, D, 60)
-    html_doc = forms.render_forms_html(report, "dispatch")
+    html_doc = forms.render_forms_html(report, "dispatch", "day")
     assert "BCM-NULL" in html_doc
     assert "chk-ok" not in html_doc.split("<tbody>", 1)[1] and "chk-bad" not in html_doc.split("<tbody>", 1)[1]
 
@@ -440,31 +515,38 @@ async def test_null_checks_print_blank(db_session, seeded_users):
 @pytest.mark.asyncio
 async def test_forms_pdf_renders_paginated_with_thai_font(client, seeded_users, db_session):
     w = await _world(db_session, seeded_users)
-    for i in range(30):  # 30 dispatches -> 2 pages of 25 rows; 1 receipt -> 1 page
+    for i in range(40):  # 40 Day dispatches -> 2 pages of 33 rows; 1 receipt -> 1 page
         await _tx(db_session, w, ward=w.w6, category=w.pump, dispatched=at(28, 9, i), op_d=w.bme_a, checks_d=STD_OK,
                   received=at(28, 15) if i == 0 else None, op_r=w.bme_a if i == 0 else None)
     await db_session.commit()
     report = await svc.build_daily_report(db_session, D, 60)
-    assert [e.form_position for e in report.events if e.kind == "dispatch"][25] == "หน้า 2 แถว 1"
+    assert [e.form_position for e in report.events if e.kind == "dispatch"][33] == "แบบบันทึกส่งเครื่อง แถว 34"
 
-    html_doc = forms.render_forms_html(report, "both")
+    html_doc = forms.render_forms_html(report, "both", "day")
     assert html_doc.count("<section class='page'>") == 3
     document = weasyprint.HTML(string=html_doc).render()
     assert len(document.pages) == 3  # fixed rows keep each form page to one A4 page
+    assert abs(float(document.pages[0].width) - 794) < 2  # A4 portrait (CSS px)
 
     staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
-    for kind, pages in (("dispatch", 2), ("receipt", 1), ("both", 3)):
-        resp = await client.get("/api/v1/reports/daily-forms.pdf", headers=staff, params={"date": "2026-07-28", "kind": kind})
+    # Day: dispatch 2 pages + receipt 1; Night forms are always one page per calendar date.
+    for kind, shift, pages in (("dispatch", "day", 2), ("receipt", "day", 1), ("both", "day", 3),
+                               ("dispatch", "night", 2), ("both", "night", 4), ("both", "both", 7)):
+        resp = await client.get("/api/v1/reports/daily-forms.pdf", headers=staff,
+                                params={"date": "2026-07-28", "kind": kind, "shift": shift})
         assert resp.status_code == 200 and resp.headers["content-type"] == "application/pdf"
         assert resp.content.startswith(b"%PDF")
-        assert len(weasyprint.HTML(string=forms.render_forms_html(report, kind)).render().pages) == pages
+        assert len(weasyprint.HTML(string=forms.render_forms_html(report, kind, shift)).render().pages) == pages
         assert len(resp.content) > 5000  # real rendered document (Thai font embedded), not an empty shell
 
-    # Default kind is both; an empty day still produces one blank form page per kind.
+    # Default kind/shift is both/both; an empty day still produces blank forms.
     empty = await client.get("/api/v1/reports/daily-forms.pdf", headers=staff, params={"date": "2020-01-01"})
     assert empty.status_code == 200 and empty.content.startswith(b"%PDF")
     blank = await svc.build_daily_report(db_session, date(2020, 1, 1), 60)
-    assert len(weasyprint.HTML(string=forms.render_forms_html(blank, "both")).render().pages) == 2
+    assert len(weasyprint.HTML(string=forms.render_forms_html(blank, "both", "day")).render().pages) == 2
+    assert len(weasyprint.HTML(string=forms.render_forms_html(blank, "both", "both")).render().pages) == 6
+    bad = await client.get("/api/v1/reports/daily-forms.pdf", headers=staff, params={"date": "2026-07-28", "shift": "x"})
+    assert bad.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -472,5 +554,5 @@ async def test_empty_day_workbook(client, seeded_users, db_session):
     staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
     resp = await _get_xlsx(client, staff, date="2020-01-01")
     wb = load_workbook(io.BytesIO(resp.content))
-    assert _rows(wb["รายงาน"])[-1][:1] == ["รวม"]
+    assert _ward_table(wb["รายงาน"])[1] == [0, 0, 0, 0, 0, 0]
     assert len(_rows(wb["รายการ"])) == 1
