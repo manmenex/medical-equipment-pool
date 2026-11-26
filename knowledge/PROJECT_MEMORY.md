@@ -37,6 +37,12 @@ Sources: `AGENTS.md`, `docs/BUSINESS_RULES.md`,
   column label (BCM Code value; label-only exception, ME Code is still not an
   identifier); D13 all pool staff may use Monitor and the HN reveal (audited).
   Source: `docs/DECISION_LOG.md`.
+- Owner Governance 2026-11-26: D14 demo/loan equipment (`equipment_source`;
+  BCM Code field holds the serial for demo/loan only; excluded from the export
+  API; admin return-to-owner flag, no fifth state; PR33); D15 open dispatch
+  without HN = Standby, HN may be added later; D16 Standby summary page with
+  editable audited numbers and "Copy text" (PR34). Source:
+  `docs/DECISION_LOG.md`.
 
 - Equipment states are exactly `AVAILABLE_AT_POOL`, `ISSUED_TO_WARD`,
   `UNAVAILABLE_DEFECTIVE`, and `DECOMMISSIONED`.

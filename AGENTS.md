@@ -47,13 +47,14 @@ serve.
 # Domain Guardrails (compact — see `docs/BUSINESS_RULES.md` and `docs/ARCHITECTURE_GUARDRAILS.md` for full rationale)
 
 - Only Equipment Pool staff record transactions; ward staff are not application users.
-- Exactly four equipment identifiers (UUID, BCM Code, Item No, Asset Number), each with one fixed role. "ME Code" is retired and must not be used (sole exception: the verbatim printed-daily-form column label "ME.Code", which shows the BCM Code value; see `docs/BUSINESS_RULES.md`, D12).
+- Exactly four equipment identifiers (UUID, BCM Code, Item No, Asset Number), each with one fixed role. "ME Code" is retired and must not be used (sole exception: the verbatim printed-daily-form column label "ME.Code", which shows the BCM Code value; see `docs/BUSINESS_RULES.md`, D12). Narrow exception (Owner Governance 2026-11-26, D14): for demo/loan equipment only, the BCM Code field holds the manufacturer Serial Number; identifier count and roles unchanged, see `docs/BUSINESS_RULES.md`).
 - Exactly four equipment states; no cleaning state exists or may be added.
 - Equipment receipt is one atomic usable/defective operation; cleaning is never tracked.
 - Dispatch/receipt services own the transaction lifecycle; do not bypass them via manual status maintenance.
 - Only the first receiving ward is recorded — no ward-to-ward transfer tracking.
 - No patient tracking beyond one optional dispatch field: Equipment Pool staff
-  MAY record a patient HN on a dispatch, under the mandatory safeguards below
+  MAY record a patient HN on a dispatch, or add it later to an open dispatch
+  (Owner Governance 2026-11-26, D15), under the mandatory safeguards below
   (Owner Governance 2026-11-25, `docs/DECISION_LOG.md`). No patient name, no
   other patient field, no HN search unless separately approved. HN is stored
   only in the database, encrypted at rest at the application level; masked by

@@ -73,6 +73,15 @@ Asset Number. No identifier is shared across equipment records. (Amended
   superseded by this ADR and must not be treated as an active
   requirement.
 
+## Amendment 2026-11-26 (Owner Governance, D14)
+
+For equipment whose `equipment_source` is `demo` or `loan` ONLY, the BCM Code
+field holds the manufacturer Serial Number. The model still has exactly four
+identifiers with one fixed role each; only the value semantics of the BCM Code
+field differ for those sources. Pool equipment keeps real BCM Codes. See
+`docs/BUSINESS_RULES.md` ("Demo/loan equipment") and `docs/DECISION_LOG.md`
+(2026-11-26).
+
 ## References
 
 - [ADR-001](ADR-001-equipment-pool-scope.md) — equipment identity's role
