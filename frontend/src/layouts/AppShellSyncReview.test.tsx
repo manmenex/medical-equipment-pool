@@ -34,22 +34,30 @@ function renderShell() {
   );
 }
 
-describe("AppShell sync review nav", () => {
+describe("AppShell sync review badge on ตั้งค่า", () => {
   beforeEach(() => {
     fetchSyncConflicts.mockReset().mockResolvedValue({ total: 3, limit: 1, offset: 0, items: [] });
   });
 
-  it("shows the link and pending count for pool staff", async () => {
+  it("shows the pending count on the ตั้งค่า sidebar item for pool staff", async () => {
     mockUser = makeUser("equipment_pool_staff");
     renderShell();
     expect(await screen.findByLabelText("รอตรวจสอบ 3 รายการ")).toBeInTheDocument();
-    expect(screen.getAllByRole("link", { name: /ตรวจสอบรายการออฟไลน์/ }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("link", { name: /ตรวจสอบรายการออฟไลน์/ })).not.toBeInTheDocument();
   });
 
-  it("hides the link and makes no request for read-only users", () => {
+  it("hides the badge when the count is zero", async () => {
+    fetchSyncConflicts.mockResolvedValue({ total: 0, limit: 1, offset: 0, items: [] });
+    mockUser = makeUser("equipment_pool_staff");
+    renderShell();
+    await vi.waitFor(() => expect(fetchSyncConflicts).toHaveBeenCalled());
+    expect(screen.queryByLabelText(/รอตรวจสอบ/)).not.toBeInTheDocument();
+  });
+
+  it("makes no request and shows no badge for read-only users", () => {
     mockUser = makeUser("read_only");
     renderShell();
-    expect(screen.queryByRole("link", { name: /ตรวจสอบรายการออฟไลน์/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/รอตรวจสอบ/)).not.toBeInTheDocument();
     expect(fetchSyncConflicts).not.toHaveBeenCalled();
   });
 });
