@@ -528,8 +528,7 @@ Write-Host ''
 Write-Host 'PR24D-L2 installer orchestration tests (POWERSHELL UNIT/MOCK)' -ForegroundColor Cyan
 Write-Host ''
 
-# ====================================================================}
-
+# ===========================================================================
 # A. Build failure blocks migration and success metadata (P1-A)
 # ===========================================================================
 
@@ -2223,7 +2222,8 @@ Test-Case 'schedule: last result an unknown code is classified correctly' {
     }
     Assert-True ($output -match 'FAILED \(code 12345\)') 'expected status text for code 12345'
     Assert-True ($output -match 'not backup coverage') 'a failure must carry the coverage warning'
-=======
+}
+
 Test-Case 'schedule: pwsh resolution does not throw when ProgramFiles is unset and never returns a WindowsApps path' {
     $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
     $path = Invoke-WithMocks -Context $ctx -Body {
