@@ -21,8 +21,7 @@ const listWards = vi.fn();
 vi.mock("@/services/masterData", () => ({
   listDepartments: () => listDepartments(),
   listWards: () => listWards(),
-  listLocations: async () => [],
-  listCategories: async () => [],
+  listCategories: async () => [{ id: "c1", name: "เครื่องช่วยหายใจ", default_pm_interval_days: 90, default_cal_interval_days: 365 }],
   createDepartment: (...a: unknown[]) => createDepartment(...a),
   createWard: (...a: unknown[]) => createWard(...a),
   updateDepartmentPhone: vi.fn(),
@@ -78,6 +77,20 @@ describe("AdminPage ?tab= deep link", () => {
   it("opens demoLoan for an administrator", () => {
     renderAt("/admin?tab=demoLoan");
     expect(screen.queryByPlaceholderText("ชื่อเครื่องมือ")).not.toBeInTheDocument();
+  });
+});
+
+describe("categories and locations tabs", () => {
+  it("shows only the category name, without PM/CAL text", async () => {
+    renderAt("/admin?tab=categories");
+    expect(await screen.findByText("เครื่องช่วยหายใจ")).toBeInTheDocument();
+    expect(screen.queryByText(/PM ทุก|CAL ทุก/)).not.toBeInTheDocument();
+  });
+
+  it("has no locations tab and ignores ?tab=locations", () => {
+    renderAt("/admin?tab=locations");
+    expect(screen.queryByRole("button", { name: "สถานที่" })).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("ชื่อเครื่องมือ")).toBeInTheDocument();
   });
 });
 

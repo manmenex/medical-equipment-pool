@@ -18,18 +18,17 @@ import axios from "axios";
 import { apiErrorMessage } from "@/services/api";
 import { createEquipment } from "@/services/equipment";
 import { commitImport, previewImport } from "@/services/import";
-import { listCategories, listDepartments, listLocations, listWards, createDepartment, createWard, updateDepartmentPhone, updateWardPhone } from "@/services/masterData";
+import { listCategories, listDepartments, listWards, createDepartment, createWard, updateDepartmentPhone, updateWardPhone } from "@/services/masterData";
 import type { ImportCommitResponse, ImportPreviewResponse, ImportRowResult, ImportRowStatus } from "@/types";
 
-type Tab = "equipment" | "demoLoan" | "departments" | "wards" | "locations" | "categories" | "import" | "wardPhones" | "users";
+type Tab = "equipment" | "demoLoan" | "departments" | "wards" | "categories" | "import" | "wardPhones" | "users";
 
-const ALL_TAB_KEYS: Tab[] = ["equipment", "demoLoan", "departments", "wards", "locations", "categories", "import", "wardPhones", "users"];
+const ALL_TAB_KEYS: Tab[] = ["equipment", "demoLoan", "departments", "wards", "categories", "import", "wardPhones", "users"];
 
 const BASE_TABS: { key: Tab; label: string }[] = [
   { key: "equipment", label: "เพิ่มเครื่องมือ" },
   { key: "departments", label: "แผนก" },
   { key: "wards", label: "หอผู้ป่วย" },
-  { key: "locations", label: "สถานที่" },
   { key: "categories", label: "หมวดหมู่" },
 ];
 
@@ -87,7 +86,6 @@ export function AdminPage() {
       {tab === "demoLoan" && canManageEquipmentMasterData(user) && <DemoLoanBatchPanel />}
       {tab === "departments" && <DepartmentsList />}
       {tab === "wards" && <WardsList />}
-      {tab === "locations" && <LocationsList />}
       {tab === "categories" && <CategoriesList />}
       {tab === "import" && canImportInventory(user) && <InventoryImportPanel />}
       {tab === "users" && canManageUsers(user) && <UsersPanel currentUserId={user?.id} />}
@@ -334,26 +332,13 @@ function WardsList() {
   );
 }
 
-function LocationsList() {
-  const { data } = useQuery({ queryKey: ["locations"], queryFn: listLocations });
-  return (
-    <ul className="surface divide-y rounded-xl border">
-      {(data ?? []).map((l) => (
-        <li key={l.id} className="px-4 py-2 text-sm">
-          {l.name} {l.type ? `(${l.type})` : ""}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 function CategoriesList() {
   const { data } = useQuery({ queryKey: ["categories"], queryFn: listCategories });
   return (
     <ul className="surface divide-y rounded-xl border">
       {(data ?? []).map((c) => (
         <li key={c.id} className="px-4 py-2 text-sm">
-          {c.name} — PM ทุก {c.default_pm_interval_days ?? "-"} วัน / CAL ทุก {c.default_cal_interval_days ?? "-"} วัน
+          {c.name}
         </li>
       ))}
     </ul>
