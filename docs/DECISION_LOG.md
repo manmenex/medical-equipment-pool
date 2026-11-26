@@ -9384,3 +9384,72 @@ opening-balance transactions are created.
 
 - **D6 interpretation confirmed.** An event in the ±N-minute grace window around 08:00 or 20:00 is attributed to whichever of the two shifts meeting at that boundary the operator worked more events in (counting only that operator's events outside every grace window); ties or no other events fall back to the clock rule. Example confirmed by the Owner: an operator who keyed most events in the preceding Night shift and keys an event at 08:30 has that event counted as Night. This settles the interpretation recorded in the PR30 note above.
 - **"Stand By" column stays blank by design.** The Owner fills the Stand By counts (equipment placed on standby per ward) by hand in the exported workbook. The system does not derive them: standby stock includes demo and loaned devices that have no BCM Code and are not tracked in this system. No Standby Snapshot feature is introduced (still separate future work per ROADMAP).
+
+
+## 2026-11-26 — Demo/loan equipment, standby rule, standby summary
+
+- **Decision:** Owner decisions confirmed in chat 2026-11-26 (D14-D16).
+  - **D14 Demo and loaned equipment:** Administrators may register demo/loaned
+    devices (same models/categories as pool devices) with `equipment_source`
+    = `demo` | `loan` (pool devices = `pool`), owner company (vendor) name,
+    optional due-back date, and per-device accessory presence (has charger,
+    has clamp). Batch registration: shared fields plus one row per serial
+    number (paste from Excel supported). **Narrow amendment to the
+    four-identifier rule:** for demo/loan devices ONLY, the BCM Code field
+    holds the manufacturer Serial Number. The identifier count is unchanged
+    (still exactly four, one fixed role each); only the value semantics of the
+    BCM Code field differ for `equipment_source` demo/loan. Pool devices keep
+    real BCM Codes. Demo/loan devices use the normal dispatch/receipt flows and
+    checklists (no special UI text). They are EXCLUDED from the read-only
+    export API consumed by the external N Smart tool. Dashboard counts include
+    them with a source filter (all/pool/demo/loan). Badges "DEMO"/"ยืม" are
+    shown in scan rows, the Monitor page and reports. **Return to owner
+    ("คืนผู้ให้ยืม")** is an administrator action in equipment management, not
+    part of dispatch/receipt. Mapping decided here: a `returned_to_owner` flag
+    (with timestamp, actor, audited) on the equipment record, settable only
+    while the device is `AVAILABLE_AT_POOL`; a returned device leaves all
+    active lists/counts/pickers and is blocked from dispatch (like
+    `DECOMMISSIONED`), and its history is kept. No fifth equipment state is
+    added: exactly four states remain. The DECOMMISSIONED path is not used,
+    because it would require marking the device defective first.
+    Return to owner has no reversal defined: it is irreversible unless
+    separately approved. The dispatch block is enforced in the dispatch
+    service. BCM Code uniqueness applies across pool and demo/loan devices
+    alike, so a serial cannot collide with a real BCM Code.
+  - **D15 Standby rule:** an open dispatch WITHOUT HN = Standby at that ward; an
+    open dispatch WITH HN = in use for a patient. Pool staff may add an HN
+    later to an existing open dispatch (audited; every D1 safeguard applies:
+    encrypted at rest, masked, audited reveal, never in reports/exports/API/
+    logs/sync), converting it from Standby to in use. Dispatch is never blocked
+    for an incomplete set (device + charger + clamp): Owner choice "no action".
+  - **D16 Standby summary page** (brings "Standby Snapshots" forward,
+    narrowly): selectable cut-off, Night summary at 08:00 or Day summary at
+    20:00. Only two equipment types are shown. Infusion pump section: Standby
+    per ward (open dispatches without HN at the cut-off; ward short labels from
+    the PR30 report-row mapping); BME stock: devices at pool, chargers at pool,
+    clamps at pool (computed from dispatch/receipt accessory checks against an
+    admin/staff-entered baseline); Ready (พร้อมใช้งาน) = min(devices, chargers,
+    clamps), i.e. complete sets. Pneumatic pump section: in use = all devices
+    currently out (open dispatches), returned today. Every number is editable
+    by pool staff; the system value and the edited value are both stored and
+    edits are audited. A "Copy text" output reproduces the Owner's LINE message
+    pattern. The PR30 daily Excel "Stand By" column is filled from this
+    summary. Charger/clamp stock counts are approximate (manual correction
+    expected).
+- **Reason:** Demo/loaned devices circulate through the pool and wards without
+  BCM Codes; the Owner's daily LINE standby message needs system support.
+- **Amends:** `AGENTS.md` (identifier line: pointer to the D14 exception; HN
+  line: HN may be added later to an open dispatch under the same safeguards),
+  `AGENTS.md` ("Confirmed Future Workflow Direction": D16 carve-out),
+  `docs/HOSPITAL_DOMAIN_MODEL.md` ("Future Standby Snapshots": D16 pointer),
+  `docs/BUSINESS_RULES.md`, `docs/GLOSSARY.md`, `docs/ROADMAP.md` (new PR33,
+  PR34; Standby Snapshots partially brought forward), `knowledge/adr/ADR-002-identifier-model.md`
+  (amendment), knowledge memory files. Supersedes the 2026-11-25 note that the
+  "Stand By" column stays blank by design: once PR34 ships it is filled from
+  the D16 summary (the earlier note's reason, that standby stock includes
+  demo/loan devices without BCM Codes, is addressed by D14). Not changed: no
+  MEMS integration (demo/loan are excluded from the export API), four states,
+  no cleaning, HN safeguards. `docs/ARCHITECTURE_GUARDRAILS.md` is unchanged.
+- **Source:** Owner decisions in chat, 2026-11-26. Docs-only Governance PR; no
+  code change.
+- **Status:** Approved; implementation not started (Roadmap PR33, PR34).

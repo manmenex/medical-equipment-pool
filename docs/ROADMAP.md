@@ -491,6 +491,15 @@ Approved by Owner Governance 2026-11-25, both sets (`docs/DECISION_LOG.md`). Eac
 | PR31 | Non-blocking dispatch (D8): re-dispatch of an already-dispatched equipment atomically closes the prior open transaction ("closed by re-dispatch, receipt not recorded", audited); dispatch of `unavailable_defective` equipment allowed and flagged on the transaction (audited); `decommissioned` stays blocked; UI shows the problem and asks confirmation. |
 | PR32 | Monitor page (D9): dispatch/receipt submissions grouped by date (slip, ward, ward contact name, operator, time, equipment count, drill-down), dispatch/receipt tabs, search, auto-refresh; HN never shown unmasked. Also shows outstanding cuffs (type, count, ward) until received (D11). Available to all Equipment Pool staff, as is the "แสดง HN" reveal (D13). |
 
+## Planned: Owner decisions of 2026-11-26 (approved; not started)
+
+Approved by Owner Governance 2026-11-26 (`docs/DECISION_LOG.md`, D14-D16). Each is a separate small PR, after PR32.
+
+| PR | Scope |
+|---|---|
+| PR33 | Demo/loan equipment (D14): `equipment_source` pool/demo/loan, vendor name, optional due-back date, has-charger/has-clamp; admin batch registration (shared fields + one row per serial, Excel paste); BCM Code field holds the serial for demo/loan only; excluded from the read-only export API; dashboard source filter; "DEMO"/"ยืม" badges; admin "คืนผู้ให้ยืม" (`returned_to_owner` flag, no fifth state). |
+| PR34 | Standby rule (D15: open dispatch without HN = Standby; add HN later to an open dispatch, audited under D1 safeguards; no blocking for incomplete sets) and Standby summary page (D16: Night 08:00 / Day 20:00 cut-off, infusion-pump and pneumatic-pump sections, editable audited numbers with system and edited values stored, "Copy text", fills the PR30 "Stand By" Excel column). |
+
 **UX questions resolved (Owner 2026-11-25, second set):** HN is one optional field per equipment; receipt from a different ward is accepted with no warning; accessory checks default checked. Detailed design of PR27/PR28 may proceed in order. See `docs/DECISION_LOG.md` (2026-11-25, second set).
 
 ## Confirmed future work (not scheduled to a Roadmap PR)
@@ -499,7 +508,7 @@ Approved by Owner Governance 2026-11-25, both sets (`docs/DECISION_LOG.md`). Eac
   transaction reporting metadata (`business_date` and `shift`) in one model,
   not separate Day/Night tables or a new equipment lifecycle state. Any future
   session workflow would require its own approval and must not contradict PR16.
-- **Standby Snapshots** — Day/Night department-level equipment-count reports.
+- **Standby Snapshots** — Day/Night department-level equipment-count reports. Partially brought forward by Owner Governance 2026-11-26 (D16) as the narrow Standby summary page in PR34; the broader snapshot concept remains unscheduled.
 - **Managed deployment** — superseded for Production hosting by Governance 2026-10-13 (department host); the system must stay managed-platform portable.
 - **Create-from-import** — Roadmap PR12 (Inventory Import, GitHub PR #43) shipped update-only; creating new equipment from an imported spreadsheet row was deferred, not permanently prohibited, pending a dedicated design for real hospital Asset Number assignment (hospital-assigned values, a nullable-provisional-record model, or another authoritative approach) and, if the identifier model itself needs to change, a governing ADR update. See `docs/ROADMAP.md`'s PR12 note and `docs/DECISION_LOG.md` ("Roadmap PR12").
 

@@ -43,6 +43,8 @@ Item No is the identifier encoded in the hospital's existing QR labels. It is us
 
 - Source: `knowledge/adr/ADR-002-identifier-model.md`; `knowledge/adr/ADR-004-hospital-item-no-qr.md`; `knowledge/architecture/api-information-boundaries.md`.
 
+**Demo/loan exception (Owner Governance 2026-11-26, D14):** for `equipment_source` demo/loan devices only, the BCM Code field holds the manufacturer Serial Number; see "Demo/loan equipment" below. The identifier count and roles are unchanged.
+
 **"ME Code" is retired.** It does not name any current or planned identifier; any document or task still using it means BCM Code or Item No and should be corrected. **Sole exception (Owner Governance 2026-11-25, third set, D12):** see "Cryo-Cuff checklist, cuff tracking, printed-form label, access" below.
 
 ## Dispatch/Return owns transaction lifecycle
@@ -94,7 +96,7 @@ Authorization is `administrator` and `equipment_pool_staff` (`app.api.v1.deps.WA
 
 ## Patient HN on dispatch (Owner Governance 2026-11-25)
 
-Equipment Pool staff MAY record a patient HN (hospital number) on a dispatch. This narrowly amends the former "no patient tracking" rule; no other patient field (name, bed, etc.) exists and there is no patient-tracking workflow. Mandatory safeguards: HN is stored only in the database, encrypted at rest at the application level (key from the host `.env`, never in the repo, logs, or clear-text backups); masked by default in every UI view and revealed only by an explicit "แสดง HN" click by an authenticated user; every reveal is audited (who/when/which transaction, never the HN value); HN never appears in any printed report, PDF, Excel export, CSV, read-only export API, log, notification, or the legacy sheet sync/import (which keep dropping/skipping HN); no search by HN unless separately approved. The Owner accepts PDPA responsibility; hospital legal/IT review is recommended; the retention policy is a future decision.
+Equipment Pool staff MAY record a patient HN (hospital number) on a dispatch. This narrowly amends the former "no patient tracking" rule; no other patient field (name, bed, etc.) exists and there is no patient-tracking workflow. Mandatory safeguards: HN is stored only in the database, encrypted at rest at the application level (key from the host `.env`, never in the repo, logs, or clear-text backups); masked by default in every UI view and revealed only by an explicit "แสดง HN" click by an authenticated user; every reveal is audited (who/when/which transaction, never the HN value); HN never appears in any printed report, PDF, Excel export, CSV, read-only export API, log, notification, or the legacy sheet sync/import (which keep dropping/skipping HN); no search by HN unless separately approved. **Add later (Owner Governance 2026-11-26, D15):** an HN may also be added afterwards to an existing open dispatch, audited, under every safeguard in this section. The Owner accepts PDPA responsibility; hospital legal/IT review is recommended; the retention policy is a future decision.
 
 - Source: `docs/DECISION_LOG.md` (2026-11-25).
 
@@ -124,6 +126,22 @@ Equipment Pool staff MAY record a patient HN (hospital number) on a dispatch. Th
 - **Access (D13):** all Equipment Pool staff (normal operators) can use the Monitor page and the "แสดง HN" reveal; every reveal is audited per D1.
 
 - Source: `docs/DECISION_LOG.md` (2026-11-25, third set).
+
+## Demo/loan equipment (Owner Governance 2026-11-26, D14)
+
+- Administrators may register demo/loaned devices (same models/categories as pool devices) with `equipment_source` = `demo` | `loan` (pool devices = `pool`), owner company (vendor) name, optional due-back date, and per-device accessory presence (has charger, has clamp). Batch registration: shared fields plus one row per serial number (paste from Excel supported).
+- **Identifier amendment (narrow):** for `demo`/`loan` devices ONLY, the BCM Code field holds the manufacturer Serial Number. The four-identifier model is unchanged (identifier count and roles unchanged); only the value semantics of the BCM Code field differ for these sources. Pool devices keep real BCM Codes. BCM Code uniqueness applies across pool and demo/loan devices alike, so a serial cannot collide with a real BCM Code.
+- Demo/loan devices use the normal dispatch/receipt flows and checklists, with no special UI text. They are EXCLUDED from the read-only export API consumed by the external N Smart tool (no MEMS integration change). Dashboard counts include them with a source filter (all/pool/demo/loan). Badges "DEMO"/"ยืม" appear in scan rows, the Monitor page and reports.
+- **Return to owner ("คืนผู้ให้ยืม")** is an administrator action in equipment management, not in dispatch/receipt. Implemented as a `returned_to_owner` flag (timestamp, actor, audited) settable only while the device is `AVAILABLE_AT_POOL`; the device leaves active lists/counts/pickers and cannot be dispatched (block enforced in the dispatch service); history is kept. No reversal is defined: return to owner is irreversible unless separately approved. No fifth equipment state: exactly four states remain, and there is no cleaning state.
+
+- Source: `docs/DECISION_LOG.md` (2026-11-26); `knowledge/adr/ADR-002-identifier-model.md` (amended 2026-11-26).
+
+## Standby rule, add HN later, standby summary (Owner Governance 2026-11-26, D15, D16)
+
+- **Standby (D15):** an open dispatch without HN is Standby at that ward; with HN it is in use for a patient. Pool staff may add an HN later to an existing open dispatch (audited; every HN safeguard above applies), converting it from Standby to in use. Dispatch is never blocked for an incomplete set (device + charger + clamp).
+- **Standby summary page (D16; brings "Standby Snapshots" forward, narrowly):** selectable cut-off, Night summary at 08:00 or Day summary at 20:00; only infusion pump and pneumatic pump are shown. Infusion pump: Standby per ward (open dispatches without HN at the cut-off, using PR30 ward short labels); BME stock = devices, chargers and clamps at pool (computed from dispatch/receipt accessory checks against a staff-entered baseline); Ready (พร้อมใช้งาน) = min(devices, chargers, clamps). Pneumatic pump: in use = all devices currently out (open dispatches), plus returned today. Every number is editable by pool staff; system and edited values are both stored and edits audited. A "Copy text" output reproduces the Owner's LINE message; the PR30 daily Excel "Stand By" column is filled from this summary. Charger/clamp stock counts are approximate (manual correction expected). HN is never shown in the summary beyond the has-HN/no-HN distinction.
+
+- Source: `docs/DECISION_LOG.md` (2026-11-26).
 
 ## Related documents
 
