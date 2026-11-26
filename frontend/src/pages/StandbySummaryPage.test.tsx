@@ -95,6 +95,13 @@ describe("StandbySummaryPage", () => {
     expect(screen.getByRole("button", { name: "สรุปกะ Day (20:00)" })).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("groups ward rows by dispense mode / treatment type like the Excel", async () => {
+    setup();
+    expect(await screen.findByText("รูปแบบการจ่ายเครื่อง")).toBeInTheDocument();
+    expect(screen.getByText("ประเภทการรักษา")).toBeInTheDocument();
+    expect(screen.getByText("แผนก")).toBeInTheDocument();
+  });
+
   it("shows all editable fields", async () => {
     setup();
     for (const name of ["Stand By W5B", "เครื่องใหม่ (เครื่อง)", "สายชาร์จ", "Clamp", "พร้อมใช้งาน (เครื่อง)", "เครื่องที่ใช้งานอยู่", "รับคืนเครื่องวันนี้"]) {

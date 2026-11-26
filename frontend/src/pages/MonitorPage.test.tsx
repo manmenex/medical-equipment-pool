@@ -176,7 +176,7 @@ describe("MonitorPage", () => {
     expect(screen.getByText("Cuff ค้าง (Knee 1)")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("tab", { name: /^รับ \(/ }));
-    expect(await screen.findByRole("button", { name: /ผู้ส่ง: คุณมาลี/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /ผู้ส่งคืน: คุณมาลี/ })).toBeInTheDocument();
   });
 
   it("lists outstanding cuffs by ward in the Cuff ค้าง tab", async () => {
@@ -184,5 +184,55 @@ describe("MonitorPage", () => {
     await userEvent.click(await screen.findByRole("tab", { name: "Cuff ค้าง" }));
     expect(await screen.findByRole("heading", { name: /ICU/ })).toHaveTextContent("Knee 1");
     expect(screen.getByText("BCM-C1")).toBeInTheDocument();
+  });
+});
+
+describe("MonitorPage expanded slip details", () => {
+  const renderPage = () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <MonitorPage />
+      </QueryClientProvider>,
+    );
+  };
+
+  it("shows contact, keyer and per-device check results, and '-' for legacy rows", async () => {
+    listWards.mockResolvedValue([]);
+    fetchMonitorEvents.mockResolvedValue({
+      items: [
+        ev("1", {
+          ward_contact_name: "Nurse A",
+          checklist_kind: "standard",
+          checks: { kind: "standard", screen_ok: true, charger_ok: false, clamp_ok: true },
+        }),
+        ev("2", {
+          ward: { id: "w2", name: "ER" },
+          ward_contact_name: null,
+          checks: null,
+        }),
+        ev("3", {
+          ward: { id: "w3", name: "OR" },
+          checklist_kind: "cryo_cuff",
+          checks: {
+            kind: "cryo_cuff", body_ok: true, charger_ok: true, lid_with_charger_ok: false,
+            lid_without_charger_ok: true, hose_oring_ok: true, cuff_ok: true,
+            cuffs: { back_hip_rib: 0, knee: 2, shoulder: 0, ankle: 0 },
+          },
+        }),
+      ],
+      next_cursor: null,
+      total: 3,
+    });
+    renderPage();
+    const user = userEvent.setup();
+    const slips = await screen.findAllByRole("button", { expanded: false });
+    for (const b of slips.filter((x) => /ICU|ER|OR/.test(x.textContent ?? ""))) await user.click(b);
+    expect(screen.getAllByText(/ผู้รับ: Nurse A · ผู้คีย์: Somchai/).length).toBe(1);
+    expect(screen.getAllByText(/ผู้รับ: - · ผู้คีย์: Somchai/).length).toBe(2);
+    expect(screen.getByTestId("checks-standard")).toHaveTextContent("หน้าจอ ✓ สายชาร์จ ✗ Pole Clamp ✓");
+    expect(screen.getByText("ตรวจ: -")).toBeInTheDocument();
+    expect(screen.getByTestId("checks-cryo")).toHaveTextContent("ผิดปกติ 3 ✗");
+    expect(screen.getByTestId("checks-cryo")).toHaveTextContent("Cuff");
   });
 });

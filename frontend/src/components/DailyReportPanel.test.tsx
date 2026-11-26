@@ -35,9 +35,25 @@ describe("DailyReportPanel", () => {
     await user.click(screen.getByRole("button", { name: "ดาวน์โหลด Excel" }));
     expect(downloadDailySummary).toHaveBeenCalledWith("2026-11-24", 60);
     await user.click(screen.getByRole("button", { name: "พิมพ์ฟอร์มส่ง" }));
-    expect(printDailyForm).toHaveBeenLastCalledWith("2026-11-24", "dispatch", 60);
+    expect(printDailyForm).toHaveBeenLastCalledWith("2026-11-24", "dispatch", 60, "day");
     await user.click(screen.getByRole("button", { name: "พิมพ์ฟอร์มรับ" }));
-    expect(printDailyForm).toHaveBeenLastCalledWith("2026-11-24", "receipt", 60);
+    expect(printDailyForm).toHaveBeenLastCalledWith("2026-11-24", "receipt", 60, "day");
+  });
+
+  it("prints forms for the chosen shift and offers the combined summary", async () => {
+    downloadDailySummary.mockResolvedValue(undefined);
+    printDailyForm.mockResolvedValue(undefined);
+    render(<DailyReportPanel />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("radio", { name: "กะกลางคืน" }));
+    await user.click(screen.getByRole("button", { name: "พิมพ์ฟอร์มส่ง" }));
+    expect(printDailyForm).toHaveBeenLastCalledWith(expect.any(String), "dispatch", 60, "night");
+    await user.click(screen.getByRole("radio", { name: "ทั้งสองกะ" }));
+    await user.click(screen.getByRole("button", { name: "พิมพ์ฟอร์มรับ" }));
+    expect(printDailyForm).toHaveBeenLastCalledWith(expect.any(String), "receipt", 60, "both");
+    await user.click(screen.getByRole("button", { name: /สรุปรวมยอด/ }));
+    await waitFor(() => expect(printDailyForm).toHaveBeenLastCalledWith(expect.any(String), "both", 60, "day"));
+    expect(downloadDailySummary).toHaveBeenCalledTimes(1);
   });
 
   it("sends a changed date and grace, allows 0 (strict), and blocks invalid grace", async () => {

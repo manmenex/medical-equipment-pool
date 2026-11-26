@@ -11,6 +11,8 @@ export interface StandbyField {
   system_value: number | null;
   override_value: number | null;
   effective_value: number | null;
+  mode?: string | null;
+  treatment?: string | null;
 }
 
 export interface StandbyBaseline {

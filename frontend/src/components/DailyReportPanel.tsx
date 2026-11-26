@@ -6,6 +6,7 @@ import {
   downloadDailySummary,
   printDailyForm,
   type DailyFormKind,
+  type DailyFormShift,
 } from "@/services/dailyReport";
 import { currentBusinessDate } from "@/utils/shift";
 
@@ -14,6 +15,7 @@ import { currentBusinessDate } from "@/utils/shift";
 export function DailyReportPanel() {
   const [date, setDate] = useState(() => currentBusinessDate(new Date()));
   const [grace, setGrace] = useState(String(DEFAULT_GRACE_MINUTES));
+  const [shift, setShift] = useState<DailyFormShift>("day");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,7 +36,17 @@ export function DailyReportPanel() {
     }
   };
 
-  const form = (kind: DailyFormKind) => () => printDailyForm(date, kind, graceNumber);
+  const form = (kind: DailyFormKind) => () => printDailyForm(date, kind, graceNumber, shift);
+  // "สรุปรวมยอด": the Day-shift forms plus the 2-shift workbook (as the pool's old tool).
+  const summary = async () => {
+    await downloadDailySummary(date, graceNumber);
+    await printDailyForm(date, "both", graceNumber, "day");
+  };
+  const shiftOptions: [DailyFormShift, string][] = [
+    ["day", "กะกลางวัน"],
+    ["night", "กะกลางคืน"],
+    ["both", "ทั้งสองกะ"],
+  ];
   const buttonClass = "rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium disabled:opacity-50";
 
   return (
@@ -71,11 +83,25 @@ export function DailyReportPanel() {
         <button className={buttonClass} disabled={!canRun} onClick={() => run("xlsx", () => downloadDailySummary(date, graceNumber))}>
           ดาวน์โหลด Excel
         </button>
+        <fieldset className="flex flex-col gap-1 text-xs">
+          <legend className="mb-1">ฟอร์มที่พิมพ์ (กะ)</legend>
+          <div className="flex gap-3">
+            {shiftOptions.map(([value, label]) => (
+              <label key={value} className="flex items-center gap-1 text-sm">
+                <input type="radio" name="daily-form-shift" value={value} checked={shift === value} onChange={() => setShift(value)} />
+                {label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
         <button className={buttonClass} disabled={!canRun} onClick={() => run("dispatch", form("dispatch"))}>
           พิมพ์ฟอร์มส่ง
         </button>
         <button className={buttonClass} disabled={!canRun} onClick={() => run("receipt", form("receipt"))}>
           พิมพ์ฟอร์มรับ
+        </button>
+        <button className={buttonClass} disabled={!canRun} onClick={() => run("summary", summary)}>
+          สรุปรวมยอด (PDF กะกลางวัน + Excel)
         </button>
       </div>
       {!graceValid && (

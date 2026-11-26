@@ -4,6 +4,7 @@ import { api } from "@/services/api";
 // forms. Both endpoints are read-only; `grace_minutes` is the D6 attribution
 // window (default 60, 0 = strict clock cut).
 export type DailyFormKind = "dispatch" | "receipt" | "both";
+export type DailyFormShift = "day" | "night" | "both";
 
 export const DEFAULT_GRACE_MINUTES = 60;
 export const MAX_GRACE_MINUTES = 240;
@@ -27,16 +28,19 @@ export async function downloadDailySummary(date: string, graceMinutes: number): 
 
 // Opens the PDF in a new tab so the operator can print it; falls back to a
 // download when the browser blocks the pop-up.
-export async function printDailyForm(date: string, kind: DailyFormKind, graceMinutes: number): Promise<void> {
+export async function printDailyForm(date: string, kind: DailyFormKind,
+  graceMinutes: number,
+  shift: DailyFormShift = "both",
+): Promise<void> {
   const resp = await api.get("/reports/daily-forms.pdf", {
-    params: { date, kind, grace_minutes: graceMinutes },
+    params: { date, kind, shift, grace_minutes: graceMinutes },
     responseType: "blob",
   });
   const blob = new Blob([resp.data as Blob], { type: "application/pdf" });
   const url = URL.createObjectURL(blob);
   const win = window.open(url, "_blank");
   if (!win) {
-    save(blob, `แบบบันทึกการเบิก-จ่าย-${date}-${kind}.pdf`);
+    save(blob, `แบบบันทึกการเบิก-จ่าย-${date}-${shift}-${kind}.pdf`);
   }
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }

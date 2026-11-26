@@ -191,7 +191,7 @@ async def test_night_cutoff_standby_stock_and_pneumatic(client, seeded_users, db
     # e1 (no HN) + e4 (HN added after the cut-off => still Standby at 08:00); e2 has an HN.
     assert wards["W5A"]["system_value"] == 2
     assert wards["W5B"]["system_value"] == 0  # e3 dispatched after 08:00
-    assert [w["label"] for w in inf["wards"]] == ["W5A", "W5B"]  # PR30 sort order
+    assert [w["label"] for w in inf["wards"] if w["label"] in ("W5A", "W5B")] == ["W5A", "W5B"]  # each ward is its own row inside its layout group
     # Devices at pool: e5 (received 07:00), e6, e3 (not yet out at 08:00); e7 defective excluded; e1/e2/e4 out.
     assert inf["bme_devices"]["system_value"] == 3
     # Chargers: baseline 10; dispatches e1(no charger) 0, e2(NULL) -1, e4 -1, e5 -1; receipt e5 +1 => 8.
@@ -401,6 +401,54 @@ async def test_copy_text_exact_format_uses_effective_values(client, seeded_users
     assert "W5A = -\nW5B = 4 เครื่อง\n" in text
 
 
+# ------------------------------------------------------------------ layout
+
+
+async def test_ward_rows_follow_report_layout_and_excel_column(client, seeded_users, db_session):
+    from app.services import daily_report_service as drs
+
+    await _scenario(db_session)
+    await db_session.commit()
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    await client.put(
+        "/api/v1/standby-summary/overrides",
+        headers=staff,
+        json={"date": "2026-07-28", "cutoff": "day", "field_key": "ward:Ward 7", "value": 3},
+    )
+    body = (await _get(client, staff, "day")).json()
+    wards = body["infusion"]["wards"]
+    # D18: each ward is its own row inside its layout slot (W5A -> slot "Ward 5"); empty slots stay as placeholders.
+    layout = [
+        (m, t, {"Ward 5": "W5A"}.get(label, label))
+        for m, groups in drs.WARD_LAYOUT
+        for t, _c, labels in groups
+        for label in labels
+    ]
+    assert [(w["mode"], w["treatment"], w["label"]) for w in wards[: len(layout)]] == layout
+    assert wards[0]["mode"] == "Standby support" and wards[0]["treatment"] == "IPD ตึก A" and wards[0]["label"] == "W5A"
+    # Zero rows still show "-" in the LINE text.
+    text = (await _get(client, staff, "day", "/text")).text
+    assert "Ward 7 = 3 เครื่อง" in text
+    # The same numbers land in column H of the matching rows of the Excel.
+    r = await client.get("/api/v1/reports/daily-summary.xlsx", headers=staff, params={"date": "2026-07-28"})
+    ws = load_workbook(io.BytesIO(r.content))["รายงาน"]
+    by_row = {ws.cell(i, 3).value: ws.cell(i, 8).value for i in range(5, 5 + len(layout))}
+    assert [ws.cell(5 + i, 3).value for i in range(len(layout))] == [lbl for *_, lbl in layout]
+    assert by_row["Ward 7"] == 3
+
+
+async def test_line_text_lists_layout_label_ward_at_zero_in_admin_order(client, seeded_users, db_session):
+    """A ward mapped to a layout label still appears as "-" at zero, in admin sort_order
+    (regression: PR #221 dropped such rows from the LINE text)."""
+    await _scenario(db_session)
+    await db_session.commit()
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    text = (await _get(client, staff, "night", "/text")).text
+    lines = text.split("\n")
+    assert lines[2:4] == ["W5A = 2 เครื่อง", "W5B = -"]  # W5B is a layout-slot ward with zero standby
+    assert "Ward 5 =" not in text  # an unmatched empty layout slot is not a ward
+
+
 # ------------------------------------------------------------------ Excel
 
 
@@ -411,9 +459,13 @@ async def test_daily_excel_stand_by_column_uses_day_cutoff_effective_values(clie
 
     def standby_col(content):
         ws = load_workbook(io.BytesIO(content))["รายงาน"]
-        header = [c.value for c in ws[1]]
-        assert header[7] == "Stand By"
-        return {row[2].value: row[7].value for row in ws.iter_rows(min_row=3, max_row=ws.max_row - 1)}
+        assert ws["H3"].value == "Stand By"
+        out = {}
+        for r in range(5, ws.max_row + 1):
+            if ws.cell(r, 3).value == "รวม":
+                break
+            out[ws.cell(r, 3).value] = ws.cell(r, 8).value
+        return out
 
     r = await client.get("/api/v1/reports/daily-summary.xlsx", headers=staff, params={"date": "2026-07-28"})
     assert r.status_code == 200, r.text
@@ -561,10 +613,10 @@ async def test_adding_hn_converts_standby_to_in_use_in_summary(client, seeded_us
     tomorrow = datetime.now(BKK).date() + timedelta(days=1)
     params = {"date": tomorrow.isoformat(), "cutoff": "day"}  # cut-off safely after "now"
     before = (await client.get("/api/v1/standby-summary", headers=staff, params=params)).json()
-    assert [w["system_value"] for w in before["infusion"]["wards"]] == [1]
+    assert [w["system_value"] for w in before["infusion"]["wards"] if w["system_value"]] == [1]
     await client.post(f"/api/v1/transactions/{b.json()['id']}/hn", headers=staff, json={"hn": HN})
     after = (await client.get("/api/v1/standby-summary", headers=staff, params=params)).json()
-    assert after["infusion"]["wards"] == []  # default-mapped ward with nothing on standby is omitted
+    assert [w for w in after["infusion"]["wards"] if w["system_value"]] == []  # default-mapped ward with nothing on standby is omitted
     assert HN not in json.dumps(after)
 
 

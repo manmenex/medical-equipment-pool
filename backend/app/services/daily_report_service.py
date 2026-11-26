@@ -17,12 +17,13 @@ the clock rule. "That business day" is read as the two shift instances that
 meet at B (the only ones the boundary can move an event between).
 """
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -48,9 +49,87 @@ _NIGHT_START = time(20, 0)
 _THAI_SHIFT = {Shift.NIGHT: "กะดึก", Shift.DAY: "กะเช้า"}
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
-# Rows per printed page of the daily form; also drives the "position in form"
-# column so the workbook can point at the exact printed row.
-FORM_ROWS_PER_PAGE = 25
+# Rows per printed page of the daily form (the company form has 33 data rows).
+FORM_ROWS_PER_PAGE = 33
+
+# Equipment roles used by the Owner's report layout. Categories are free-text
+# master data, so a role is recognised by name; anything else keeps its own
+# name as an extra row.
+ROLE_INFUSION = "infusion"
+ROLE_PCA = "pca"
+ROLE_SYRINGE = "syringe"
+ROLE_MATTRESS = "mattress"
+ROLE_CRYO = "cryo"
+ROLE_BED = "bed"
+ROLE_PNEUMATIC = "pneumatic"
+ROLE_RESPIRATOR = "respirator"
+_ROLE_PATTERNS = (
+    (ROLE_PCA, re.compile(r"\bpca\b", re.I)),
+    (ROLE_SYRINGE, re.compile(r"syringe", re.I)),
+    (ROLE_INFUSION, re.compile(r"infusion", re.I)),
+    (ROLE_MATTRESS, re.compile(r"mattress", re.I)),
+    (ROLE_CRYO, re.compile(r"cryo", re.I)),
+    (ROLE_BED, re.compile(r"bed\s*(exit|alarm|alrm)|occupancy", re.I)),
+    (ROLE_PNEUMATIC, re.compile(r"pneumatic", re.I)),
+    (ROLE_RESPIRATOR, re.compile(r"respirator|ventilator", re.I)),
+)
+
+
+def category_role(name: str | None) -> str | None:
+    for role, pattern in _ROLE_PATTERNS:
+        if pattern.search(name or ""):
+            return role
+    return None
+
+
+# Department / ward layout of sheet "รายงาน": (dispense mode, [(treatment type,
+# fill colour, [layout slot labels])]). Each real ward is matched to a slot
+# (admin short label, ward name or name prefix) and printed as its OWN row
+# inside the slot (D18: never merged); wards outside the layout go to an
+# "อื่น ๆ" block so no count is lost.
+WARD_LAYOUT: list[tuple[str, list[tuple[str, str, list[str]]]]] = [
+    (
+        "Standby support",
+        [
+            ("IPD ตึก A", "92D050", ["Ward 5", "Ward 6", "Ward 7", "Ward 8", "Ward 9", "Ward 10", "Ward 11"]),
+            ("IPD ตึก B", "FFCCFF", ["W4B", "W5B", "W6B", "ICU3", "ICU4"]),
+            ("Clinical Care", "FFFF00", ["RR", "OR", "ICU1", "ICU2  CCU", "ER"]),
+        ],
+    ),
+    (
+        "After request",
+        [
+            (
+                "OPD",
+                "F8CBAD",
+                [
+                    "Pediatrics Clinic", "OB", "Oncology Clinic", "Cath Lab", "Internal Medicine Clinic",
+                    "Hemodialysis Clinic", "Gastroenterology Clinic", "Pre Surgery", "Surgery +Ortho", "X-Ray",
+                    "Training", "LR", "Nursery", "Heart Clinic", "Skin", "Eye", "ENT", "Wellness", "Neuro", "ARI",
+                ],
+            ),
+        ],
+    ),
+]
+# Rows the Owner's file shades grey across the count columns.
+SHADED_ROWS = {"Ward 6", "Ward 11", "OR", "ICU1", "ICU2  CCU"}
+
+
+# Short "ชนิดเครื่อง" sheet names and the form "หมายเหตุ" labels (Owner's tool).
+ROLE_SHORT_NAMES = {
+    ROLE_INFUSION: "Infusion Pump",
+    ROLE_PCA: "PCA",
+    ROLE_SYRINGE: "Syringe Pump",
+    ROLE_MATTRESS: "Air Mattress",
+    ROLE_CRYO: "Cryo cuff",
+    ROLE_BED: "Bed Alarm",
+    ROLE_PNEUMATIC: "Pneumatic Pump",
+    ROLE_RESPIRATOR: "Respirator",
+}
+ROLE_ORDER = tuple(ROLE_SHORT_NAMES)
+OTHER_LABEL = "อื่น ๆ"
+OTHER_COLOR = "D9D9D9"
+FORM_NOTE_LABELS = {ROLE_BED: "Bed Alarms", ROLE_PNEUMATIC: "PNEUMATIC PUMP"}
 
 
 def format_date(d: date) -> str:
@@ -219,7 +298,119 @@ async def load_ward_mappings(db: AsyncSession) -> dict[uuid.UUID, WardMapping]:
     return {w.id: effective_mapping(w, d, o) for w, d, o in rows}
 
 
-_UNMAPPED = WardMapping(None, UNSPECIFIED_LABEL, None, UNSPECIFIED_LABEL, "", "", 10**6, False)
+
+# --------------------------------------------------------------------------
+# D18: one report row per ward, grouped/ordered by the Owner's layout
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class WardRow:
+    """One row of the Excel ward table / Standby summary. ``ward_id`` is None
+    for a layout slot that no ward maps to yet, for "(ไม่ระบุ)" and for a
+    stored-edit label whose ward no longer exists."""
+
+    label: str
+    mode: str
+    treatment: str
+    color: str
+    ward_id: uuid.UUID | None = None
+    shaded: bool = False
+    # Admin-mapped, or otherwise worth listing in the LINE text even at zero.
+    listed: bool = False
+    sort_order: int = 10**6
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"\s+", " ", text or "").strip().casefold()
+
+
+def _layout_slots() -> list[tuple[str, str, str, str]]:
+    return [
+        (mode, treatment, color, label)
+        for mode, groups in WARD_LAYOUT
+        for treatment, color, labels in groups
+        for label in labels
+    ]
+
+
+def _match_slot(m: WardMapping, slots: list[tuple[str, str, str, str]]) -> int | None:
+    """Layout slot of a ward: the admin-mapped short label, else the ward name,
+    each by exact (case/space-insensitive) match first, then by label prefix
+    ("Ward 7A" -> slot "Ward 7"; never when a digit follows: "Ward 70")."""
+    candidates = [_norm(m.report_row_label), _norm(m.ward_name)]
+    norms = [_norm(s[3]) for s in slots]
+    for cand in candidates:
+        if cand in norms:
+            return norms.index(cand)
+    for cand in candidates:
+        best: int | None = None
+        for i, n in enumerate(norms):
+            if cand.startswith(n) and not cand[len(n) : len(n) + 1].isdigit():
+                if best is None or len(n) > len(norms[best]):
+                    best = i
+        if best is not None:
+            return best
+    return None
+
+
+def ward_row_labels(mappings: dict[uuid.UUID, WardMapping]) -> dict[uuid.UUID, str]:
+    """Unique display label per ward: the admin short label when only this ward
+    uses it, otherwise the ward's own name (so 7A and 7B never share "Ward 7")."""
+    ordered = sorted(mappings.values(), key=lambda m: (m.sort_order, m.ward_name, str(m.ward_id)))
+    use: dict[str, int] = {}
+    for m in ordered:
+        use[_norm(m.report_row_label)] = use.get(_norm(m.report_row_label), 0) + 1
+    labels: dict[uuid.UUID, str] = {}
+    taken: set[str] = set()
+    for m in ordered:
+        base = m.report_row_label if use[_norm(m.report_row_label)] == 1 else m.ward_name
+        label, n = base, 2
+        while _norm(label) in taken:
+            label = f"{base} ({n})"
+            n += 1
+        taken.add(_norm(label))
+        labels[m.ward_id] = label
+    return labels
+
+
+def build_ward_rows(
+    mappings: dict[uuid.UUID, WardMapping],
+    relevant_ward_ids: set[uuid.UUID],
+    extra_labels: list[str] | tuple[str, ...] = (),
+) -> list[WardRow]:
+    """Rows in layout order. Every ward matching a layout slot is its own row
+    inside that slot (a slot no ward matches stays as an empty placeholder row).
+    Wards outside the layout go to "อื่น ๆ" only when admin-mapped or listed in
+    ``relevant_ward_ids`` (activity / standby); ``extra_labels`` appends ward-less
+    rows (e.g. unspecified, stored edits). Counts stay lossless: callers put every
+    event's ward in ``relevant_ward_ids``."""
+    slots = _layout_slots()
+    labels = ward_row_labels(mappings)
+    by_slot: dict[int, list[WardMapping]] = {}
+    others: list[WardMapping] = []
+    for m in mappings.values():
+        idx = _match_slot(m, slots)
+        if idx is not None:
+            by_slot.setdefault(idx, []).append(m)
+        elif m.is_override or m.ward_id in relevant_ward_ids:
+            others.append(m)
+    rows: list[WardRow] = []
+    for i, (mode, treatment, color, slot_label) in enumerate(slots):
+        shaded = slot_label in SHADED_ROWS
+        wards = sorted(by_slot.get(i, []), key=lambda m: (m.sort_order, m.ward_name, str(m.ward_id)))
+        if not wards:
+            rows.append(WardRow(slot_label, mode, treatment, color, None, shaded, False))
+        for m in wards:
+            rows.append(WardRow(labels[m.ward_id], mode, treatment, color, m.ward_id, shaded, m.is_override, m.sort_order))
+    for m in sorted(others, key=lambda m: (m.sort_order, labels[m.ward_id], str(m.ward_id))):
+        rows.append(WardRow(labels[m.ward_id], OTHER_LABEL, OTHER_LABEL, OTHER_COLOR, m.ward_id, False, m.is_override, m.sort_order))
+    seen = {_norm(r.label) for r in rows}
+    for label in extra_labels:
+        if _norm(label) not in seen:
+            seen.add(_norm(label))
+            rows.append(WardRow(label, OTHER_LABEL, OTHER_LABEL, OTHER_COLOR, None, False, True))
+    return rows
 
 
 # --------------------------------------------------------------------------
@@ -252,29 +443,34 @@ class Counts:
 
 
 @dataclass
-class WardRowSummary:
-    dispense_mode: str
-    treatment_type: str
-    label: str
-    sort_order: int
-    counts: Counts = field(default_factory=Counts)
-
-
-@dataclass
 class DailyReport:
     report_date: date
     grace_minutes: int
     events: list[DailyEvent]  # in-report events, time-ordered
-    ward_rows: list[WardRowSummary]
+    ward_rows: list["WardRow"]  # D18: one row per ward, in the Owner's layout order
     categories: list[tuple[str, Counts]]
     operators: list[tuple[str, Counts]]
     totals: Counts
+    # Equipment in the pool per role (e.g. Cryo cuff total shown on the sheet).
+    pool_counts: dict[str, int] = field(default_factory=dict)
 
 
-def _stamp_form_positions(events: list[DailyEvent]) -> None:
-    for kind in ("dispatch", "receipt"):
-        for i, e in enumerate([x for x in events if x.kind == kind]):
-            e.form_position = f"หน้า {i // FORM_ROWS_PER_PAGE + 1} แถว {i % FORM_ROWS_PER_PAGE + 1}"
+def _stamp_form_positions(events: list[DailyEvent], report_date: date) -> None:
+    """Owner's wording: "แบบบันทึกส่งเครื่อง[เมื่อวาน] แถว N" -- N counts the rows
+    of that kind on the printed form the event lands on. Forms are per (shift,
+    form date, kind) exactly as `daily_report_forms_service._form_groups` splits
+    them, FORM_ROWS_PER_PAGE rows per page; a form of more than one page adds
+    "หน้า P" ("แถว" restarts at 1 on every page)."""
+    groups: dict[tuple[Shift, date, str], list[DailyEvent]] = {}
+    for e in events:
+        groups.setdefault((e.shift, e.local.date(), e.kind), []).append(e)
+    for (_shift, form_date, kind), rows in groups.items():
+        yesterday = "เมื่อวาน" if form_date < report_date else ""
+        paged = len(rows) > FORM_ROWS_PER_PAGE
+        for i, e in enumerate(rows):
+            page, row = divmod(i, FORM_ROWS_PER_PAGE)
+            where = f"หน้า {page + 1} แถว {row + 1}" if paged else f"แถว {row + 1}"
+            e.form_position = f"แบบบันทึก{'ส่ง' if kind == 'dispatch' else 'รับ'}เครื่อง{yesterday} {where}"
 
 
 async def _load_events(db: AsyncSession, start: datetime, end: datetime) -> list[DailyEvent]:
@@ -325,6 +521,22 @@ async def _load_events(db: AsyncSession, start: datetime, end: datetime) -> list
     return events
 
 
+async def _pool_counts(db: AsyncSession) -> dict[str, int]:
+    rows = (
+        await db.execute(
+            select(EquipmentCategory.name, func.count(Equipment.id))
+            .join(Equipment, Equipment.category_id == EquipmentCategory.id)
+            .group_by(EquipmentCategory.name)
+        )
+    ).all()
+    counts: dict[str, int] = {}
+    for name, n in rows:
+        role = category_role(name)
+        if role:
+            counts[role] = counts.get(role, 0) + n
+    return counts
+
+
 async def build_daily_report(db: AsyncSession, report_date: date, grace_minutes: int) -> DailyReport:
     grace_minutes = validate_grace(grace_minutes)
     start, end = fetch_window_utc(report_date)
@@ -337,35 +549,32 @@ async def build_daily_report(db: AsyncSession, report_date: date, grace_minutes:
         raise ExportTooLargeError("Too many events for one daily report")
 
     mappings = await load_ward_mappings(db)
-    ward_rows: dict[tuple[str, str, str], WardRowSummary] = {}
+    ward_rows = build_ward_rows(
+        mappings,
+        {e.ward_id for e in events if e.ward_id in mappings},
+        [UNSPECIFIED_LABEL] if any(e.ward_id not in mappings for e in events) else [],
+    )
+    label_of = {r.ward_id: r.label for r in ward_rows if r.ward_id is not None}
     categories: dict[str, Counts] = {}
     operators: dict[str, Counts] = {}
     totals = Counts()
     for e in events:
-        m = mappings.get(e.ward_id, _UNMAPPED) if e.ward_id else _UNMAPPED
-        e.row_label = m.report_row_label
+        e.row_label = label_of.get(e.ward_id, UNSPECIFIED_LABEL)
         if not e.ward_name:
             e.ward_name = UNSPECIFIED_LABEL
-        key = (m.dispense_mode, m.treatment_type, m.report_row_label)
-        summary = ward_rows.get(key)
-        if summary is None:
-            summary = ward_rows[key] = WardRowSummary(*key[:2], key[2], m.sort_order)
-        else:
-            summary.sort_order = min(summary.sort_order, m.sort_order)
-        summary.counts.add(e)
         categories.setdefault(e.category_name, Counts()).add(e)
         operators.setdefault(e.operator_name, Counts()).add(e)
         totals.add(e)
-    _stamp_form_positions(events)
+    _stamp_form_positions(events, report_date)
+    pool_counts = await _pool_counts(db)
 
     return DailyReport(
         report_date=report_date,
         grace_minutes=grace_minutes,
         events=events,
-        ward_rows=sorted(
-            ward_rows.values(), key=lambda r: (r.sort_order, r.dispense_mode, r.treatment_type, r.label)
-        ),
+        ward_rows=ward_rows,
         categories=sorted(categories.items(), key=lambda kv: kv[0]),
         operators=sorted(operators.items(), key=lambda kv: kv[0]),
         totals=totals,
+        pool_counts=pool_counts,
     )
