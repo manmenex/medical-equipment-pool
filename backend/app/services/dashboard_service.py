@@ -3,21 +3,29 @@ from datetime import date, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import InvalidInputError
 from app.core.redis import cache_get, cache_set
 from app.models.equipment import Equipment, EquipmentStatus
 from app.models.transaction import BorrowTransaction
 
 
-async def get_summary(db: AsyncSession) -> dict:
-    cached = await cache_get("dashboard:summary")
+SOURCE_FILTERS = ("all", "pool", "demo", "loan")
+
+
+async def get_summary(db: AsyncSession, source: str = "all") -> dict:
+    # Roadmap PR33 (D14): counts include demo/loan with a source filter
+    # (all/pool/demo/loan); devices returned to their owner never count.
+    if source not in SOURCE_FILTERS:
+        raise InvalidInputError(f"source must be one of: {', '.join(SOURCE_FILTERS)}.")
+    cache_key = "dashboard:summary" if source == "all" else f"dashboard:summary:{source}"
+    cached = await cache_get(cache_key)
     if cached:
         return cached
 
-    stmt = (
-        select(Equipment.status, func.count())
-        .where(Equipment.deleted_at.is_(None))
-        .group_by(Equipment.status)
-    )
+    filters = [Equipment.deleted_at.is_(None), Equipment.returned_to_owner_at.is_(None)]
+    if source != "all":
+        filters.append(Equipment.equipment_source == source)
+    stmt = select(Equipment.status, func.count()).where(*filters).group_by(Equipment.status)
     rows = (await db.execute(stmt)).all()
     counts = {status.value: 0 for status in EquipmentStatus}
     total = 0
@@ -33,7 +41,7 @@ async def get_summary(db: AsyncSession) -> dict:
         "unavailable_defective": counts.get("unavailable_defective", 0),
         "decommissioned": counts.get("decommissioned", 0),
     }
-    await cache_set("dashboard:summary", result, ttl_seconds=15)
+    await cache_set(cache_key, result, ttl_seconds=15)
     return result
 
 

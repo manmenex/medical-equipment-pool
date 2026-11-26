@@ -494,3 +494,40 @@ describe("patient HN (Roadmap PR29, D1)", () => {
     expect(screen.getByRole("button", { name: "แก้ไข BCM001" })).not.toHaveTextContent("🔒HN");
   });
 });
+
+// Roadmap PR33 (D14): demo/loan badges on scan rows; a device returned to its owner is not added.
+describe("demo/loan devices (PR33)", () => {
+  it("shows the DEMO badge on the scan row for a demo device", async () => {
+    EQ.SNDEMO1 = { ...equipment("d1", "SNDEMO1", "Demo Pump"), equipment_source: "demo" };
+    const user = userEvent.setup();
+    renderPage();
+    await addBcm(user, "SNDEMO1");
+    const row = await screen.findByRole("button", { name: "แก้ไข SNDEMO1" });
+    expect(within(row).getByTestId("source-badge")).toHaveTextContent("DEMO");
+    delete EQ.SNDEMO1;
+  });
+
+  it("shows ยืม for a loaned device and no badge for a pool device", async () => {
+    EQ.SNLOAN1 = { ...equipment("l1", "SNLOAN1", "Loan Pump"), equipment_source: "loan" };
+    const user = userEvent.setup();
+    renderPage();
+    await addBcm(user, "SNLOAN1");
+    await addBcm(user, "BCM001");
+    const loanRow = await screen.findByRole("button", { name: "แก้ไข SNLOAN1" });
+    expect(within(loanRow).getByTestId("source-badge")).toHaveTextContent("ยืม");
+    const poolRow = await screen.findByRole("button", { name: "แก้ไข BCM001" });
+    expect(within(poolRow).queryByTestId("source-badge")).not.toBeInTheDocument();
+    delete EQ.SNLOAN1;
+  });
+
+  it("does not add a device returned to its owner", async () => {
+    EQ.SNRET1 = { ...equipment("r1", "SNRET1", "Returned Pump"), equipment_source: "loan" };
+    checkFor.r1 = { warning: "returned_to_owner", dispatchable: false };
+    const user = userEvent.setup();
+    renderPage();
+    await addBcm(user, "SNRET1");
+    expect(await screen.findByRole("alert")).toHaveTextContent("คืนผู้ให้ยืมแล้ว");
+    expect(screen.queryByRole("button", { name: "แก้ไข SNRET1" })).not.toBeInTheDocument();
+    delete EQ.SNRET1;
+  });
+});

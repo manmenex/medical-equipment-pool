@@ -42,6 +42,7 @@ from app.schemas.report_export import (
 )
 from app.schemas.transaction import ReportTransactionOut
 from app.services import report_query_service
+from app.services.equipment_badge import with_badge
 from app.utils.export_filename import build_filename_stem, date_range_segment, shift_segment
 
 logger = logging.getLogger(__name__)
@@ -211,7 +212,8 @@ def _transaction_report_row(
         values={
             "transaction_no": tx_out.transaction_no,
             "asset_number": tx_out.equipment.asset_number,
-            "equipment_name": tx_out.equipment.equipment_name,
+            # Roadmap PR33 (D14): "[DEMO]"/"[ยืม]" prefix for demo/loan devices.
+            "equipment_name": with_badge(tx_out.equipment.equipment_name, tx_out.equipment.equipment_source),
             "ward_name": ward_names.get(tx_out.ward_id, "ไม่ทราบ") if tx_out.ward_id else "ไม่ทราบ",
             "ward_contact_name": contact_name,
             "dispatch_operator_display_name": tx_out.dispatch_operator_display_name,
@@ -234,7 +236,7 @@ def _equipment_verify_checklist_row(
 ) -> ExportRow:
     return ExportRow(
         values={
-            "equipment_name": eq_out.equipment_name,
+            "equipment_name": with_badge(eq_out.equipment_name, eq_out.equipment_source),
             "bcm_code": eq_out.bcm_code,
             "asset_number": eq_out.asset_number,
             "serial_number": eq_out.serial_number,

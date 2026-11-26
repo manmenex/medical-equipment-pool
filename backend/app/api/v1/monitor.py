@@ -132,7 +132,11 @@ async def list_events(
                     id=operator.id if operator else None, full_name=operator.full_name if operator else None
                 ),
                 equipment=MonitorEquipment(
-                    id=eq.id, bcm_code=eq.bcm_code, name=eq.equipment_name, category=cat_name
+                    id=eq.id,
+                    bcm_code=eq.bcm_code,
+                    name=eq.equipment_name,
+                    category=cat_name,
+                    equipment_source=eq.equipment_source,
                 ),
                 receipt_outcome=outcome,
                 # PR31 (D8) may add this column; read defensively.

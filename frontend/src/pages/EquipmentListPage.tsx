@@ -2,10 +2,11 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
+import { SourceBadge, SOURCE_FILTER_LABELS } from "@/components/SourceBadge";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useDebounce } from "@/hooks/useDebounce";
 import { searchEquipment } from "@/services/equipment";
-import type { EquipmentStatus } from "@/types";
+import type { EquipmentSource, EquipmentStatus } from "@/types";
 
 const STATUS_OPTIONS: { value: EquipmentStatus | ""; label: string }[] = [
   { value: "", label: "ทุกสถานะ" },
@@ -15,16 +16,32 @@ const STATUS_OPTIONS: { value: EquipmentStatus | ""; label: string }[] = [
   { value: "decommissioned", label: "ปลดระวางถาวร" },
 ];
 
+const SOURCE_OPTIONS: { value: EquipmentSource | ""; label: string }[] = [
+  { value: "", label: "ทุกประเภท" },
+  { value: "pool", label: SOURCE_FILTER_LABELS.pool },
+  { value: "demo", label: SOURCE_FILTER_LABELS.demo },
+  { value: "loan", label: SOURCE_FILTER_LABELS.loan },
+];
+
 export function EquipmentListPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [q, setQ] = useState(searchParams.get("q") ?? "");
   const status = (searchParams.get("status") as EquipmentStatus | null) ?? "";
+  const source = (searchParams.get("source") as EquipmentSource | null) ?? "";
+  const includeReturned = searchParams.get("include_returned") === "true";
   const debouncedQ = useDebounce(q, 150);
 
   const query = useInfiniteQuery({
-    queryKey: ["equipment", "search", debouncedQ, status],
+    queryKey: ["equipment", "search", debouncedQ, status, source, includeReturned],
     queryFn: ({ pageParam }) =>
-      searchEquipment({ q: debouncedQ || undefined, status: status || undefined, cursor: pageParam, limit: 30 }),
+      searchEquipment({
+        q: debouncedQ || undefined,
+        status: status || undefined,
+        source: source || undefined,
+        include_returned: includeReturned || undefined,
+        cursor: pageParam,
+        limit: 30,
+      }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.next_cursor,
   });
@@ -58,6 +75,36 @@ export function EquipmentListPage() {
             </option>
           ))}
         </select>
+        <select
+          aria-label="ประเภทเครื่อง"
+          value={source}
+          onChange={(e) => {
+            const next = new URLSearchParams(searchParams);
+            if (e.target.value) next.set("source", e.target.value);
+            else next.delete("source");
+            setSearchParams(next);
+          }}
+          className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
+        >
+          {SOURCE_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+        <label className="flex items-center gap-1.5 text-sm">
+          <input
+            type="checkbox"
+            checked={includeReturned}
+            onChange={(e) => {
+              const next = new URLSearchParams(searchParams);
+              if (e.target.checked) next.set("include_returned", "true");
+              else next.delete("include_returned");
+              setSearchParams(next);
+            }}
+          />
+          แสดงที่คืนผู้ให้ยืมแล้ว
+        </label>
       </div>
 
       <div className="text-sm text-[var(--text-muted)]">พบ {total.toLocaleString()} รายการ</div>
@@ -70,10 +117,14 @@ export function EquipmentListPage() {
             className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-black/5 dark:hover:bg-white/5"
           >
             <div className="min-w-0">
-              <div className="truncate font-medium">{eq.equipment_name}</div>
+              <div className="flex items-center gap-2 truncate font-medium">
+                {eq.equipment_name}
+                <SourceBadge source={eq.equipment_source} />
+              </div>
               <div className="truncate text-sm text-[var(--text-muted)]">
-                {eq.asset_number ?? "-"}
+                {eq.equipment_source && eq.equipment_source !== "pool" ? `SN ${eq.bcm_code ?? "-"}` : (eq.asset_number ?? "-")}
                 {eq.serial_number ? ` · SN ${eq.serial_number}` : ""}
+                {eq.returned_to_owner_at ? " · คืนผู้ให้ยืมแล้ว" : ""}
               </div>
             </div>
             <StatusBadge status={eq.status} />

@@ -25,6 +25,13 @@ class EquipmentNotAvailableError(DomainError):
     status_code = 409
 
 
+class EquipmentReturnedToOwnerError(EquipmentNotAvailableError):
+    """Roadmap PR33 (D14): demo/loan equipment that was returned to its owner
+    is blocked from dispatch (like DECOMMISSIONED), under its own code."""
+
+    code = "EQUIPMENT_RETURNED_TO_OWNER"
+
+
 class DispatchStatusWarningError(EquipmentNotAvailableError):
     """Roadmap PR31 (D8): dispatch of equipment that is already dispatched or
     marked defective needs explicit operator confirmation

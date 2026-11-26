@@ -1,17 +1,24 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
+import { DemoLoanBatchPanel } from "@/components/DemoLoanBatchPanel";
 import { PhoneEditRow } from "@/components/PhoneEditRow";
 import { UsersPanel } from "@/components/UsersPanel";
 import { WardPhoneImportPanel } from "@/components/WardPhoneImportPanel";
-import { canImportInventory, canManageUsers, canManageWardPhones, useAuth } from "@/hooks/useAuth";
+import {
+  canImportInventory,
+  canManageEquipmentMasterData,
+  canManageUsers,
+  canManageWardPhones,
+  useAuth,
+} from "@/hooks/useAuth";
 import { apiErrorMessage } from "@/services/api";
 import { createEquipment } from "@/services/equipment";
 import { commitImport, previewImport } from "@/services/import";
 import { listCategories, listDepartments, listLocations, listWards, updateDepartmentPhone, updateWardPhone } from "@/services/masterData";
 import type { ImportCommitResponse, ImportPreviewResponse, ImportRowResult, ImportRowStatus } from "@/types";
 
-type Tab = "equipment" | "departments" | "wards" | "locations" | "categories" | "import" | "wardPhones" | "users";
+type Tab = "equipment" | "demoLoan" | "departments" | "wards" | "locations" | "categories" | "import" | "wardPhones" | "users";
 
 const BASE_TABS: { key: Tab; label: string }[] = [
   { key: "equipment", label: "เพิ่มเครื่องมือ" },
@@ -31,11 +38,17 @@ const WARD_PHONES_TAB: { key: Tab; label: string } = { key: "wardPhones", label:
 
 const USERS_TAB: { key: Tab; label: string } = { key: "users", label: "ผู้ใช้" };
 
+// Roadmap PR33 (D14): administrator-only demo/loan batch registration (usability gate only;
+// the backend remains authoritative).
+const DEMO_LOAN_TAB: { key: Tab; label: string } = { key: "demoLoan", label: "เพิ่มเครื่อง Demo/ยืม" };
+
 export function AdminPage() {
   const [tab, setTab] = useState<Tab>("equipment");
   const { user } = useAuth();
   const tabs = [
-    ...BASE_TABS,
+    BASE_TABS[0],
+    ...(canManageEquipmentMasterData(user) ? [DEMO_LOAN_TAB] : []),
+    ...BASE_TABS.slice(1),
     ...(canImportInventory(user) ? [IMPORT_TAB] : []),
     ...(canManageWardPhones(user) ? [WARD_PHONES_TAB] : []),
     ...(canManageUsers(user) ? [USERS_TAB] : []),
@@ -59,6 +72,7 @@ export function AdminPage() {
       </div>
 
       {tab === "equipment" && <EquipmentForm />}
+      {tab === "demoLoan" && canManageEquipmentMasterData(user) && <DemoLoanBatchPanel />}
       {tab === "departments" && <DepartmentsList />}
       {tab === "wards" && <WardsList />}
       {tab === "locations" && <LocationsList />}

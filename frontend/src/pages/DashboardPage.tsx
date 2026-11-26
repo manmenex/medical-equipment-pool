@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 
 import { StatCard } from "@/components/StatCard";
 import { STATUS_LABELS } from "@/components/StatusBadge";
 import { canDispatchOrReceiveEquipment, useAuth } from "@/hooks/useAuth";
-import { fetchSummary } from "@/services/dashboard";
+import { fetchSummary, type DashboardSource } from "@/services/dashboard";
 
 // Dashboard & Equipment Status (unnumbered Post-PR11 frontend follow-up):
 // the dashboard's job is to let staff understand current Equipment Pool
@@ -56,8 +57,17 @@ function QuickActionLink({ to, icon, label }: QuickAction) {
   );
 }
 
+// Roadmap PR33 (D14): source filter chips for the counts.
+const SOURCE_CHIPS: { value: DashboardSource; label: string }[] = [
+  { value: "all", label: "ทั้งหมด" },
+  { value: "pool", label: "Pool" },
+  { value: "demo", label: "Demo" },
+  { value: "loan", label: "ยืม" },
+];
+
 export function DashboardPage() {
   const { user } = useAuth();
+  const [source, setSource] = useState<DashboardSource>("all");
   const canDispatchOrReceive = canDispatchOrReceiveEquipment(user);
 
   const {
@@ -66,8 +76,8 @@ export function DashboardPage() {
     isError,
     refetch,
   } = useQuery({
-    queryKey: ["dashboard", "summary"],
-    queryFn: fetchSummary,
+    queryKey: ["dashboard", "summary", source],
+    queryFn: () => fetchSummary(source),
     refetchInterval: 15000,
   });
 
@@ -76,6 +86,22 @@ export function DashboardPage() {
   return (
     <div className="flex flex-col gap-6">
       <h1 className="text-lg font-semibold">ภาพรวมระบบ</h1>
+
+      <div role="group" aria-label="ประเภทเครื่อง" className="flex flex-wrap gap-2">
+        {SOURCE_CHIPS.map((chip) => (
+          <button
+            key={chip.value}
+            type="button"
+            aria-pressed={source === chip.value}
+            onClick={() => setSource(chip.value)}
+            className={`rounded-full px-3 py-1 text-sm font-medium ${
+              source === chip.value ? "bg-status-borrowed text-white" : "surface border"
+            }`}
+          >
+            {chip.label}
+          </button>
+        ))}
+      </div>
 
       {isLoading && <p className="text-sm text-[var(--text-muted)]">กำลังโหลด...</p>}
 

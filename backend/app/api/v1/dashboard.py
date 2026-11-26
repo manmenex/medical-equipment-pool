@@ -3,7 +3,7 @@ import json
 from uuid import UUID
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,8 +21,12 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
 @router.get("/summary", response_model=DashboardSummary)
-async def summary(db: AsyncSession = Depends(get_db), _user=Depends(get_current_user)):
-    return await dashboard_service.get_summary(db)
+async def summary(
+    source: str = Query(default="all", pattern="^(all|pool|demo|loan)$"),
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    return await dashboard_service.get_summary(db, source=source)
 
 
 @router.get("/borrow-trend", response_model=list[BorrowTrendPoint])

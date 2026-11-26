@@ -14,6 +14,7 @@ from app.core.exceptions import (
     EquipmentStatusChangedError,
     TransactionClosedByRedispatchError,
     EquipmentNotAvailableError,
+    EquipmentReturnedToOwnerError,
     EquipmentNotFoundError,
     InvalidInputError,
     ReceiptRaceLostError,
@@ -66,6 +67,9 @@ RECEIPT_OUTCOME_TO_STATUS = {
 WARNING_ALREADY_DISPATCHED = "already_dispatched"
 WARNING_DEFECTIVE = "defective"
 WARNING_DECOMMISSIONED = "decommissioned"
+# Roadmap PR33 (D14): demo/loan equipment returned to its owner; blocked like
+# decommissioned but with its own code (EQUIPMENT_RETURNED_TO_OWNER).
+WARNING_RETURNED_TO_OWNER = "returned_to_owner"
 
 
 @dataclass
@@ -82,7 +86,7 @@ class DispatchAssessment:
 
     @property
     def blocked(self) -> bool:
-        return self.warning == WARNING_DECOMMISSIONED
+        return self.warning in (WARNING_DECOMMISSIONED, WARNING_RETURNED_TO_OWNER)
 
     @property
     def requires_acknowledgement(self) -> bool:
@@ -112,6 +116,8 @@ async def assess_dispatch(db: AsyncSession, equipment) -> DispatchAssessment:
     """Shared by borrow() and the GET /equipment/{id}/dispatch-check
     pre-check so the scan-time warning and the dispatch guard cannot drift.
     Exact-equality dispatch: every status is named, never a negative check."""
+    if getattr(equipment, "returned_to_owner_at", None) is not None:
+        return DispatchAssessment(equipment, WARNING_RETURNED_TO_OWNER)
     status = equipment.status
     if status == EquipmentStatus.AVAILABLE_AT_POOL:
         return DispatchAssessment(equipment, None)
@@ -191,6 +197,8 @@ async def borrow(
 
     assessment = await assess_dispatch(db, equipment)
     if assessment.blocked:
+        if assessment.warning == WARNING_RETURNED_TO_OWNER:
+            raise EquipmentReturnedToOwnerError("Equipment was returned to its owner and cannot be dispatched")
         raise EquipmentNotAvailableError(assessment.message())
     if expected_status is not None and equipment.status != expected_status:
         # Roadmap PR27 review gap: a confirmation given for one status must

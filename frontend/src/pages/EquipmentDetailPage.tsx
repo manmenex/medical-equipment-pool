@@ -2,12 +2,14 @@ import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-quer
 import { useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 
+import { SourceBadge } from "@/components/SourceBadge";
 import { StatusBadge } from "@/components/StatusBadge";
 import { WardCorrectionAction } from "@/components/WardCorrectionAction";
 import { apiErrorMessage } from "@/services/api";
 import { HnReveal } from "@/components/entry/HnField";
 import { listTransactions } from "@/services/borrow";
-import { getEquipment, getEquipmentHistory } from "@/services/equipment";
+import { canManageEquipmentMasterData, useAuth } from "@/hooks/useAuth";
+import { getEquipment, getEquipmentHistory, returnToOwner } from "@/services/equipment";
 import { listWards } from "@/services/masterData";
 import type { DispatchType, RoutineRound, Shift, TransactionEventBasis, TransactionOut } from "@/types";
 
@@ -58,6 +60,7 @@ function daysSinceDispatch(borrowedAt: string): number {
 export function EquipmentDetailPage() {
   const { id = "" } = useParams();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const { data: equipment, isLoading } = useQuery({
     queryKey: ["equipment", id],
     queryFn: () => getEquipment(id),
@@ -236,18 +239,46 @@ export function EquipmentDetailPage() {
     return <p className="text-sm text-[var(--text-muted)]">กำลังโหลด...</p>;
   }
 
+  const isDemoLoan = !!equipment.equipment_source && equipment.equipment_source !== "pool";
+  const returned = !!equipment.returned_to_owner_at;
+  // Roadmap PR33 (D14): administrator-only "คืนผู้ให้ยืม", only while available at the pool
+  // (usability gate; the backend is authoritative).
+  const canReturnToOwner =
+    canManageEquipmentMasterData(user) && isDemoLoan && !returned && equipment.status === "available_at_pool";
+
   return (
     <div className="flex flex-col gap-4">
       <div className="surface flex flex-col gap-4 rounded-xl border p-4">
         <div>
-          <h1 className="text-lg font-semibold">{equipment.equipment_name}</h1>
+          <h1 className="flex items-center gap-2 text-lg font-semibold">
+            {equipment.equipment_name}
+            <SourceBadge source={equipment.equipment_source} />
+          </h1>
           <p className="text-sm text-[var(--text-muted)]">
-            {equipment.asset_number ?? "-"}
+            {isDemoLoan ? `SN ${equipment.bcm_code ?? "-"}` : (equipment.asset_number ?? "-")}
             {equipment.serial_number ? ` · SN ${equipment.serial_number}` : ""}
           </p>
           <div className="mt-2">
             <StatusBadge status={equipment.status} />
           </div>
+          {isDemoLoan && (
+            <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm" aria-label="ข้อมูล Demo/ยืม">
+              <dt className="text-[var(--text-muted)]">บริษัทเจ้าของเครื่อง</dt>
+              <dd>{equipment.owner_company ?? "-"}</dd>
+              <dt className="text-[var(--text-muted)]">กำหนดคืน</dt>
+              <dd>{equipment.due_back_date ?? "-"}</dd>
+              <dt className="text-[var(--text-muted)]">สายชาร์จ / Clamp</dt>
+              <dd>
+                {equipment.has_charger === false ? "ไม่มีสายชาร์จ" : "มีสายชาร์จ"} · {equipment.has_clamp === false ? "ไม่มี Clamp" : "มี Clamp"}
+              </dd>
+              {returned && (
+                <>
+                  <dt className="text-[var(--text-muted)]">สถานะการยืม</dt>
+                  <dd className="text-amber-400">คืนผู้ให้ยืมแล้ว ({new Date(equipment.returned_to_owner_at as string).toLocaleDateString("th-TH")})</dd>
+                </>
+              )}
+            </dl>
+          )}
           <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
             <dt className="text-[var(--text-muted)]">ยี่ห้อ / รุ่น</dt>
             <dd>
@@ -259,7 +290,16 @@ export function EquipmentDetailPage() {
             <dd>{equipment.cal_due_date ?? "-"}</dd>
           </dl>
           <div className="mt-4 flex gap-2">
-            {equipment.status === "available_at_pool" && (
+            {canReturnToOwner && (
+              <ReturnToOwnerAction
+                equipmentId={equipment.id}
+                onDone={() => {
+                  queryClient.invalidateQueries({ queryKey: ["equipment"] });
+                  queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+                }}
+              />
+            )}
+            {equipment.status === "available_at_pool" && !returned && (
               <Link
                 to={`/borrow?equipment_id=${equipment.id}`}
                 className="rounded-lg bg-status-borrowed px-4 py-2 text-sm font-medium text-white"
@@ -567,6 +607,59 @@ export function EquipmentDetailPage() {
             <li className="text-sm text-[var(--text-muted)]">ยังไม่มีประวัติ</li>
           )}
         </ol>
+      </div>
+    </div>
+  );
+}
+
+// Roadmap PR33 (D14): two-step confirm before the administrator marks a demo/loan device as
+// returned to its owner (it then leaves active lists/counts/pickers and cannot be dispatched).
+function ReturnToOwnerAction({ equipmentId, onDone }: { equipmentId: string; onDone: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function confirm() {
+    setBusy(true);
+    setError(null);
+    try {
+      await returnToOwner(equipmentId);
+      setConfirming(false);
+      onDone();
+    } catch (err) {
+      setError(apiErrorMessage(err, "คืนผู้ให้ยืมไม่สำเร็จ"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!confirming) {
+    return (
+      <button
+        type="button"
+        onClick={() => setConfirming(true)}
+        className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-medium"
+      >
+        คืนผู้ให้ยืม
+      </button>
+    );
+  }
+  return (
+    <div role="alertdialog" aria-label="ยืนยันคืนผู้ให้ยืม" className="flex flex-col gap-2 rounded-lg border border-amber-500/60 p-3 text-sm">
+      <p>ยืนยันคืนเครื่องนี้ให้ผู้ให้ยืม? เครื่องจะไม่แสดงในรายการใช้งานและเบิกไม่ได้อีก (ประวัติยังคงอยู่)</p>
+      {error && <p role="alert" className="text-status-repair">{error}</p>}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => void confirm()}
+          disabled={busy}
+          className="rounded-lg bg-status-borrowed px-3 py-1.5 font-medium text-white disabled:opacity-50"
+        >
+          ยืนยัน
+        </button>
+        <button type="button" onClick={() => setConfirming(false)} disabled={busy} className="rounded-lg border border-[var(--border)] px-3 py-1.5">
+          ยกเลิก
+        </button>
       </div>
     </div>
   );

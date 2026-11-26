@@ -10,6 +10,7 @@ import { ScanBar } from "@/components/entry/ScanBar";
 import { useWardRefs } from "@/components/entry/useWardRefs";
 import { WardSection } from "@/components/entry/WardSection";
 import { OfflineStaleGate } from "@/components/OfflineStaleGate";
+import { SourceBadge } from "@/components/SourceBadge";
 import { useDirtyForm } from "@/hooks/useDirtyForm";
 import { useOfflineMode } from "@/hooks/useOfflineMode";
 import { effectiveCachedEquipment, enqueueOfflineReceipt, listReceiptCandidates, LocalOpError } from "@/offline/localOps";
@@ -19,7 +20,7 @@ import { listActiveBorrows, receiptBatch, type ReceiptBatchItem } from "@/servic
 import { batchErrorText, defaultChecks, hasAbnormal, totalCuffs } from "@/services/checks";
 import { getDispatchCheck, getEquipment, resolveEquipmentByQr } from "@/services/equipment";
 import { useUiStore } from "@/store/uiStore";
-import type { Checks, ChecklistKind, Cuffs, Equipment, ReceiptOutcome, TransactionOut } from "@/types";
+import type { Checks, ChecklistKind, Cuffs, Equipment, EquipmentSource, ReceiptOutcome, TransactionOut } from "@/types";
 
 // Roadmap PR27/PR28 (D3/D4/D7/D10/D11): ward-first multi-equipment receipt.
 // Equipment may be received from ANY ward with no warning (only the first
@@ -37,6 +38,8 @@ export interface ReceiptItem {
   checks: Checks;
   outcome: ReceiptOutcome;
   wardName?: string | null;
+  /** Roadmap PR33 (D14): source badge (DEMO / ยืม). */
+  source?: EquipmentSource;
   error?: string;
 }
 
@@ -85,7 +88,7 @@ export function ReturnPage() {
   const wardOpen = (active ?? []).filter((t) => t.ward_id === wardId && !itemsRef.current.some((i) => i.transactionId === t.id));
 
   const toItem = (
-    eq: Pick<Equipment, "id" | "bcm_code" | "asset_number" | "equipment_name">,
+    eq: Pick<Equipment, "id" | "bcm_code" | "asset_number" | "equipment_name" | "equipment_source">,
     tx: { id: string; kind: ChecklistKind; issued: Cuffs | null; wardName?: string | null },
   ): ReceiptItem => ({
     equipmentId: eq.id,
@@ -97,10 +100,11 @@ export function ReturnPage() {
     checks: defaultChecks(tx.kind, tx.issued ?? undefined),
     outcome: "usable",
     wardName: tx.wardName,
+    source: eq.equipment_source,
   });
 
   const addEquipment = useCallback(
-    async (eq: Pick<Equipment, "id" | "bcm_code" | "asset_number" | "equipment_name">) => {
+    async (eq: Pick<Equipment, "id" | "bcm_code" | "asset_number" | "equipment_name" | "equipment_source">) => {
       const label = eq.bcm_code ?? eq.asset_number ?? eq.equipment_name;
       if (itemsRef.current.some((i) => i.equipmentId === eq.id)) return; // duplicates ignored
       let item: ReceiptItem | null = null;
@@ -363,6 +367,7 @@ export function ReturnPage() {
                         className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-left"
                       >
                         <strong className="text-sm">{it.bcm}</strong>
+                        <SourceBadge source={it.source} />
                         <span className="min-w-0 flex-1 truncate text-xs text-[var(--text-muted)]">{it.name}</span>
                         {partial && <span className="whitespace-nowrap text-xs text-amber-400">Cuff {totalCuffs(cuffs)}/{totalCuffs(it.issuedCuffs)}</span>}
                         {it.outcome === "defective" && <span className="whitespace-nowrap text-xs font-medium text-status-repair">เสีย</span>}
