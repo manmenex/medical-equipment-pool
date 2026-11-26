@@ -382,98 +382,16 @@ describe("EquipmentDetailPage transaction history pagination and load state (Roa
 });
 
 describe("EquipmentDetailPage history filters and dispatch-type/days-since display (Roadmap PR13)", () => {
-  const routineTransaction: TransactionOut = {
-    ...openTransaction,
-    id: "tx-routine-1",
-    transaction_no: "TX-ROUTINE-1",
-    dispatch_type: "routine_round",
-    routine_round: "11:00",
-  };
-
-  it("distinguishes an on-demand dispatch from a routine-round dispatch in the history list (Part H acceptance criterion)", async () => {
-    listTransactions.mockResolvedValue(page([openTransaction, routineTransaction]));
-    renderPage();
-    await waitFor(() => expect(screen.getByText("TX-OPEN-1", { exact: false })).toBeInTheDocument());
-
-    const onDemandRow = rowFor("TX-OPEN-1");
-    expect(within(onDemandRow).getByText(/On-Demand/)).toBeInTheDocument();
-
-    const routineRow = rowFor("TX-ROUTINE-1");
-    expect(within(routineRow).getByText(/Routine Round/)).toBeInTheDocument();
-    expect(within(routineRow).getByText(/11:00/)).toBeInTheDocument();
-  });
-
   it('shows a "days since dispatch" indicator only for OPEN transactions', async () => {
     listTransactions.mockResolvedValue(page([openTransaction, closedTransaction]));
     renderPage();
     await waitForHistoryLoaded();
 
     const openRow = rowFor("TX-OPEN-1");
-    expect(within(openRow).getByText(/เบิกมาแล้ว/)).toBeInTheDocument();
+    expect(within(openRow).getByText(/ระยะเวลา/)).toBeInTheDocument();
 
     const closedRow = rowFor("TX-CLOSED-1");
-    expect(within(closedRow).queryByText(/เบิกมาแล้ว/)).not.toBeInTheDocument();
-  });
-
-  it("re-queries transaction history with dispatch_type when the dispatch-type filter changes", async () => {
-    const user = userEvent.setup();
-    renderPage();
-    await waitForHistoryLoaded();
-
-    await user.selectOptions(screen.getByLabelText("ประเภทการเบิก"), "routine_round");
-
-    await waitFor(() =>
-      expect(listTransactions).toHaveBeenLastCalledWith(
-        expect.objectContaining({ equipment_id: "eq-1", dispatch_type: "routine_round" })
-      )
-    );
-  });
-
-  it("re-queries transaction history with routine_round when the round filter changes, and resets it when dispatch type moves off routine_round", async () => {
-    const user = userEvent.setup();
-    renderPage();
-    await waitForHistoryLoaded();
-
-    await user.selectOptions(screen.getByLabelText("ประเภทการเบิก"), "routine_round");
-    await user.selectOptions(screen.getByLabelText("รอบเวลา"), "15:00");
-
-    await waitFor(() =>
-      expect(listTransactions).toHaveBeenLastCalledWith(
-        expect.objectContaining({ dispatch_type: "routine_round", routine_round: "15:00" })
-      )
-    );
-
-    await user.selectOptions(screen.getByLabelText("ประเภทการเบิก"), "on_demand");
-
-    await waitFor(() =>
-      expect(listTransactions).toHaveBeenLastCalledWith(
-        expect.objectContaining({ dispatch_type: "on_demand", routine_round: undefined })
-      )
-    );
-  });
-
-  it("disables the routine-round filter unless the dispatch-type filter is set to routine_round", async () => {
-    renderPage();
-    await waitForHistoryLoaded();
-
-    expect(screen.getByLabelText("รอบเวลา")).toBeDisabled();
-  });
-
-  it("re-queries transaction history with from_date/to_date when the date-range filters change", async () => {
-    const user = userEvent.setup();
-    renderPage();
-    await waitForHistoryLoaded();
-
-    const fromInput = screen.getByLabelText("ตั้งแต่วันที่");
-    const toInput = screen.getByLabelText("ถึงวันที่");
-    await user.type(fromInput, "2026-07-01");
-    await user.type(toInput, "2026-07-31");
-
-    await waitFor(() =>
-      expect(listTransactions).toHaveBeenLastCalledWith(
-        expect.objectContaining({ from_date: "2026-07-01", to_date: "2026-07-31" })
-      )
-    );
+    expect(within(closedRow).queryByText(/ระยะเวลา/)).not.toBeInTheDocument();
   });
 });
 
@@ -495,8 +413,8 @@ describe("EquipmentDetailPage business-date/shift filter controls (Roadmap PR16 
     renderPage();
     await waitForHistoryLoaded();
 
-    expect(screen.getByLabelText("วันที่ทำการ ตั้งแต่")).toHaveValue("");
-    expect(screen.getByLabelText("วันที่ทำการ ถึง")).toHaveValue("");
+    expect(screen.getByLabelText("ตั้งแต่")).toHaveValue("");
+    expect(screen.getByLabelText("ถึง")).toHaveValue("");
     expect(screen.getByLabelText("กะ")).toHaveValue("");
     expect(screen.getByLabelText("เหตุการณ์")).toHaveValue("");
     // The initial, unfiltered query must not carry any of the four new
@@ -521,8 +439,8 @@ describe("EquipmentDetailPage business-date/shift filter controls (Roadmap PR16 
     // are enabled (PR61 review fix, H1) -- see the "date/shift controls are
     // disabled until an event is picked" tests below for that gating itself.
     await user.selectOptions(screen.getByLabelText("เหตุการณ์"), "receipt");
-    await user.type(screen.getByLabelText("วันที่ทำการ ตั้งแต่"), "2026-07-01");
-    await user.type(screen.getByLabelText("วันที่ทำการ ถึง"), "2026-07-31");
+    await user.type(screen.getByLabelText("ตั้งแต่"), "2026-07-01");
+    await user.type(screen.getByLabelText("ถึง"), "2026-07-31");
     await user.selectOptions(screen.getByLabelText("กะ"), "day");
 
     expect(listTransactions).toHaveBeenCalledTimes(1);
@@ -540,11 +458,6 @@ describe("EquipmentDetailPage business-date/shift filter controls (Roadmap PR16 
         })
       )
     );
-    // Never merged into, or substituted for, the existing raw-timestamp
-    // from_date/to_date filter (design's explicit correction).
-    expect(listTransactions).toHaveBeenLastCalledWith(
-      expect.objectContaining({ from_date: undefined, to_date: undefined })
-    );
   });
 
   it("'ล้างตัวกรอง' resets every business-date/shift/event control and re-queries without them", async () => {
@@ -553,7 +466,7 @@ describe("EquipmentDetailPage business-date/shift filter controls (Roadmap PR16 
     await waitForHistoryLoaded();
 
     await user.selectOptions(screen.getByLabelText("เหตุการณ์"), "receipt");
-    await user.type(screen.getByLabelText("วันที่ทำการ ตั้งแต่"), "2026-07-01");
+    await user.type(screen.getByLabelText("ตั้งแต่"), "2026-07-01");
     await user.selectOptions(screen.getByLabelText("กะ"), "night");
     await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
     await waitFor(() =>
@@ -564,7 +477,7 @@ describe("EquipmentDetailPage business-date/shift filter controls (Roadmap PR16 
 
     await user.click(screen.getByRole("button", { name: "ล้างตัวกรอง" }));
 
-    expect(screen.getByLabelText("วันที่ทำการ ตั้งแต่")).toHaveValue("");
+    expect(screen.getByLabelText("ตั้งแต่")).toHaveValue("");
     expect(screen.getByLabelText("กะ")).toHaveValue("");
     expect(screen.getByLabelText("เหตุการณ์")).toHaveValue("");
     await waitFor(() =>
@@ -585,7 +498,7 @@ describe("EquipmentDetailPage business-date/shift filter controls (Roadmap PR16 
     await waitForHistoryLoaded();
 
     await user.selectOptions(screen.getByLabelText("เหตุการณ์"), "dispatch");
-    await user.type(screen.getByLabelText("วันที่ทำการ ตั้งแต่"), "2026-07-01");
+    await user.type(screen.getByLabelText("ตั้งแต่"), "2026-07-01");
     await user.selectOptions(screen.getByLabelText("กะ"), "day");
     await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
 
@@ -605,8 +518,8 @@ describe("EquipmentDetailPage business-date/shift filter controls (Roadmap PR16 
     expect(listTransactions).toHaveBeenCalledTimes(1);
 
     await user.selectOptions(screen.getByLabelText("เหตุการณ์"), "dispatch");
-    await user.type(screen.getByLabelText("วันที่ทำการ ตั้งแต่"), "2026-07-31");
-    await user.type(screen.getByLabelText("วันที่ทำการ ถึง"), "2026-07-01");
+    await user.type(screen.getByLabelText("ตั้งแต่"), "2026-07-31");
+    await user.type(screen.getByLabelText("ถึง"), "2026-07-01");
     await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
 
     expect(await screen.findByText(/ต้องไม่มาหลัง/)).toBeInTheDocument();
@@ -621,8 +534,8 @@ describe("EquipmentDetailPage business-date/shift filter controls (Roadmap PR16 
     await waitForHistoryLoaded();
 
     await user.selectOptions(screen.getByLabelText("เหตุการณ์"), "dispatch");
-    await user.type(screen.getByLabelText("วันที่ทำการ ตั้งแต่"), "2026-07-15");
-    await user.type(screen.getByLabelText("วันที่ทำการ ถึง"), "2026-07-15");
+    await user.type(screen.getByLabelText("ตั้งแต่"), "2026-07-15");
+    await user.type(screen.getByLabelText("ถึง"), "2026-07-15");
     await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
 
     expect(screen.queryByText(/ต้องไม่มาหลัง/)).not.toBeInTheDocument();
@@ -663,8 +576,8 @@ describe("EquipmentDetailPage business-date/shift filter controls (Roadmap PR16 
 
     listTransactions.mockResolvedValue(page([]));
     await user.selectOptions(screen.getByLabelText("เหตุการณ์"), "dispatch");
-    await user.type(screen.getByLabelText("วันที่ทำการ ตั้งแต่"), "2000-01-01");
-    await user.type(screen.getByLabelText("วันที่ทำการ ถึง"), "2000-01-01");
+    await user.type(screen.getByLabelText("ตั้งแต่"), "2000-01-01");
+    await user.type(screen.getByLabelText("ถึง"), "2000-01-01");
     await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
 
     await waitFor(() => expect(screen.getByText("ยังไม่มีประวัติการเบิก-รับคืน")).toBeInTheDocument());
@@ -674,8 +587,8 @@ describe("EquipmentDetailPage business-date/shift filter controls (Roadmap PR16 
     renderPage("/equipment/eq-1?business_date_from=2026-07-01&business_date_to=2026-07-31&shift=night&event=receipt");
     await waitForHistoryLoaded();
 
-    expect(screen.getByLabelText("วันที่ทำการ ตั้งแต่")).toHaveValue("2026-07-01");
-    expect(screen.getByLabelText("วันที่ทำการ ถึง")).toHaveValue("2026-07-31");
+    expect(screen.getByLabelText("ตั้งแต่")).toHaveValue("2026-07-01");
+    expect(screen.getByLabelText("ถึง")).toHaveValue("2026-07-31");
     expect(screen.getByLabelText("กะ")).toHaveValue("night");
     expect(screen.getByLabelText("เหตุการณ์")).toHaveValue("receipt");
     expect(listTransactions).toHaveBeenCalledWith(
@@ -712,8 +625,8 @@ describe("EquipmentDetailPage event-basis request serialization (PR61 review fix
     renderPage();
     await waitForHistoryLoaded();
 
-    expect(screen.getByLabelText("วันที่ทำการ ตั้งแต่")).toBeDisabled();
-    expect(screen.getByLabelText("วันที่ทำการ ถึง")).toBeDisabled();
+    expect(screen.getByLabelText("ตั้งแต่")).toBeDisabled();
+    expect(screen.getByLabelText("ถึง")).toBeDisabled();
     expect(screen.getByLabelText("กะ")).toBeDisabled();
   });
 
@@ -727,13 +640,13 @@ describe("EquipmentDetailPage event-basis request serialization (PR61 review fix
     // business_date/shift selections, not just leave `event` blank while
     // silently keeping them.
     await user.selectOptions(screen.getByLabelText("เหตุการณ์"), "dispatch");
-    await user.type(screen.getByLabelText("วันที่ทำการ ตั้งแต่"), "2026-07-01");
+    await user.type(screen.getByLabelText("ตั้งแต่"), "2026-07-01");
     await user.selectOptions(screen.getByLabelText("กะ"), "day");
     await user.selectOptions(screen.getByLabelText("เหตุการณ์"), "");
 
-    expect(screen.getByLabelText("วันที่ทำการ ตั้งแต่")).toHaveValue("");
+    expect(screen.getByLabelText("ตั้งแต่")).toHaveValue("");
     expect(screen.getByLabelText("กะ")).toHaveValue("");
-    expect(screen.getByLabelText("วันที่ทำการ ตั้งแต่")).toBeDisabled();
+    expect(screen.getByLabelText("ตั้งแต่")).toBeDisabled();
     expect(screen.getByLabelText("กะ")).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
@@ -756,8 +669,8 @@ describe("EquipmentDetailPage event-basis request serialization (PR61 review fix
     await waitForHistoryLoaded();
 
     await user.selectOptions(screen.getByLabelText("เหตุการณ์"), "dispatch");
-    await user.type(screen.getByLabelText("วันที่ทำการ ตั้งแต่"), "2026-07-01");
-    await user.type(screen.getByLabelText("วันที่ทำการ ถึง"), "2026-07-31");
+    await user.type(screen.getByLabelText("ตั้งแต่"), "2026-07-01");
+    await user.type(screen.getByLabelText("ถึง"), "2026-07-31");
     await user.selectOptions(screen.getByLabelText("กะ"), "day");
     await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
 
@@ -779,8 +692,8 @@ describe("EquipmentDetailPage event-basis request serialization (PR61 review fix
     await waitForHistoryLoaded();
 
     await user.selectOptions(screen.getByLabelText("เหตุการณ์"), "receipt");
-    await user.type(screen.getByLabelText("วันที่ทำการ ตั้งแต่"), "2026-07-01");
-    await user.type(screen.getByLabelText("วันที่ทำการ ถึง"), "2026-07-31");
+    await user.type(screen.getByLabelText("ตั้งแต่"), "2026-07-01");
+    await user.type(screen.getByLabelText("ถึง"), "2026-07-31");
     await user.selectOptions(screen.getByLabelText("กะ"), "night");
     await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
 
@@ -814,13 +727,13 @@ describe("EquipmentDetailPage event-basis request serialization (PR61 review fix
 });
 
 describe("EquipmentDetailPage without an Asset Number (Governance 2026-10-21)", () => {
-  it('shows "-" instead of an Asset Number when the equipment has none', async () => {
+  it('hides the empty Asset Number/SN line instead of a dangling "-"', async () => {
     getEquipment.mockResolvedValue({ ...equipment, asset_number: null, serial_number: null });
     renderPage();
     await waitFor(() => expect(screen.getByRole("heading", { name: "Infusion Pump" })).toBeInTheDocument());
     expect(screen.queryByText(/AST-1/)).not.toBeInTheDocument();
     expect(screen.queryByText(/null/)).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Infusion Pump" }).nextElementSibling).toHaveTextContent("-");
+    expect(screen.getByRole("heading", { name: "Infusion Pump" }).nextElementSibling).toHaveTextContent(/^$/);
   });
 });
 

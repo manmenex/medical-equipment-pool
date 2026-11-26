@@ -301,7 +301,7 @@ export function BorrowPage() {
 
       <WardSection
         title="หอผู้ป่วย"
-        contactLabel="ชื่อผู้รับ (Ward)"
+        contactLabel="ชื่อผู้รับ"
         wards={wards}
         departments={departments}
         wardId={wardId}
@@ -352,7 +352,7 @@ export function BorrowPage() {
                         {it.check?.warning === "already_dispatched" && (
                           <span className="text-amber-400">
                             {" "}
-                            · ⚠ ถูกจ่ายไป {it.check.current_ward_name ?? "-"} ยังไม่บันทึกรับคืน (ยืนยันเพื่อเบิกซ้ำ ระบบจะปิดรายการเดิม)
+                            · ⚠ ถูกจ่ายไป {it.check.current_ward_name ?? "-"} ยังไม่รับคืน (เบิกซ้ำจะปิดรายการเดิม)
                           </span>
                         )}
                         {it.check?.warning === "defective" && (
@@ -400,7 +400,7 @@ export function BorrowPage() {
       )}
       {queuedCount > 0 && (
         <p role="status" className="rounded-lg border border-[var(--border)] p-2 text-sm">
-          🕓 บันทึกในเครื่องแล้ว {queuedCount} เครื่อง — ยังไม่ได้ส่งเข้าระบบ ระบบจะส่งอัตโนมัติเมื่อเชื่อมต่อได้
+          🕓 บันทึกในเครื่องแล้ว {queuedCount} เครื่อง — รอส่งเมื่อออนไลน์
         </p>
       )}
 

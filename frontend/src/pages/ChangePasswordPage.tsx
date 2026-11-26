@@ -165,8 +165,7 @@ export function ChangePasswordPage() {
         <div className="surface rounded-xl border border-status-overdue p-4 text-sm" role="alert">
           <div className="font-medium">ต้องเปลี่ยนรหัสผ่านก่อนใช้งาน</div>
           <p className="mt-1 text-[var(--text-muted)]">
-            รหัสผ่านปัจจุบันของคุณถูกตั้งโดยผู้อื่น (รหัสผ่านครั้งแรก หรือผู้ดูแลระบบตั้งให้)
-            กรุณาตั้งรหัสผ่านใหม่ที่มีเพียงคุณเท่านั้นที่ทราบ
+            กรุณาตั้งรหัสผ่านใหม่ที่คุณเท่านั้นที่ทราบ
           </p>
         </div>
       )}
@@ -200,9 +199,8 @@ export function ChangePasswordPage() {
             />
           </label>
           <span className="text-xs text-[var(--text-muted)]">
-            ใช้ได้เฉพาะ a-z, A-Z และ 0-9 — ยาว {MINIMUM_PASSWORD_LENGTH}-{MAXIMUM_PASSWORD_BYTES} ตัวอักษร
-            ต้องมีตัวเลขอย่างน้อย 1 ตัว ไม่บังคับตัวพิมพ์ใหญ่ ห้ามใช้รหัสที่เดาง่าย
-            และห้ามมีรหัสพนักงานหรือชื่อของคุณอยู่ในนั้น — ยิ่งยาวยิ่งปลอดภัย
+            a-z, A-Z, 0-9 ยาว {MINIMUM_PASSWORD_LENGTH}-{MAXIMUM_PASSWORD_BYTES} ตัว มีตัวเลขอย่างน้อย 1 ตัว
+            ห้ามเดาง่ายหรือมีรหัสพนักงาน/ชื่อ
           </span>
         </div>
 

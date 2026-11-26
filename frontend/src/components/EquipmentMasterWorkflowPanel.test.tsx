@@ -624,7 +624,7 @@ describe("EquipmentMasterWorkflowPanel", () => {
       expect(await screen.findByRole("alert")).toHaveTextContent("ไม่สามารถโหลดรายการที่ต้องตรวจสอบได้");
       expect(screen.queryByText("ไม่พบรายการที่มีปัญหา")).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "ทดลองนำเข้า" })).toBeDisabled();
-      expect(screen.getByText(/ต้องโหลดรายการที่ต้องตรวจสอบให้สำเร็จก่อน/)).toBeInTheDocument();
+      expect(screen.getByText(/โหลดรายการที่ต้องตรวจสอบให้สำเร็จก่อน/)).toBeInTheDocument();
     });
 
     it("retry calls refetch, and a successful retry renders the actual findings and re-enables dry-run", async () => {

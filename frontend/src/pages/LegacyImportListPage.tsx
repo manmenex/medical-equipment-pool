@@ -111,7 +111,7 @@ export function LegacyImportListPage() {
           <div>
             <h1 className="text-lg font-semibold">นำเข้าข้อมูลเดิม</h1>
             <p className="text-sm text-[var(--text-muted)]">
-              นำเข้าข้อมูลเดิมจากระบบเก่า (AppSheet) สำหรับข้อมูลหลักเครื่องมือ และประวัติการรับ-ส่งเครื่องมือเดิม
+              ข้อมูลหลักเครื่องมือและประวัติจากระบบเดิม
             </p>
           </div>
           <Link

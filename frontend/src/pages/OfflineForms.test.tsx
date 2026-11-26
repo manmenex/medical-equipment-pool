@@ -109,7 +109,7 @@ describe("offline dispatch (Roadmap PR27/PR28)", () => {
     expect(screen.queryByRole("button", { name: "สแกน QR" })).not.toBeInTheDocument(); // QR is online only
     await pickWard(user, "Ward B");
     await waitFor(() => expect(screen.getByLabelText("เบอร์โทร")).toHaveValue("0222"));
-    await user.type(screen.getByLabelText("ชื่อผู้รับ (Ward)"), "คุณสมศรี");
+    await user.type(screen.getByLabelText("ชื่อผู้รับ"), "คุณสมศรี");
     await addBcm(user, "BCM001");
     await addBcm(user, "BCM002");
     expect(await screen.findByRole("button", { name: "แก้ไข BCM002" })).toBeInTheDocument();
@@ -117,7 +117,7 @@ describe("offline dispatch (Roadmap PR27/PR28)", () => {
     expect(getDispatchCheck).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (2 เครื่อง)" }));
-    expect(await screen.findByText(/บันทึกในเครื่องแล้ว 2 เครื่อง — ยังไม่ได้ส่งเข้าระบบ/)).toBeInTheDocument();
+    expect(await screen.findByText(/บันทึกในเครื่องแล้ว 2 เครื่อง — รอส่งเมื่อออนไลน์/)).toBeInTheDocument();
     expect(dispatchBatch).not.toHaveBeenCalled();
     expect(searchBcmSuggestions).not.toHaveBeenCalled();
     const recs = await listOutbox("u1");
@@ -201,7 +201,7 @@ describe("offline receipt (Roadmap PR27/PR28)", () => {
     const user = userEvent.setup();
     renderPage(<ReturnPage />, "/return");
 
-    await user.type(await screen.findByLabelText("ชื่อผู้ส่งคืน (Ward)"), "คุณมาลี");
+    await user.type(await screen.findByLabelText("ชื่อผู้ส่งคืน"), "คุณมาลี");
     await addBcm(user, "BCM777");
     await user.click(await screen.findByRole("button", { name: "แก้ไข BCM777" }));
     await user.click(screen.getByRole("button", { name: "เสีย" }));

@@ -46,7 +46,7 @@ describe("SettingsPage hub", () => {
     mockUser = makeUser("administrator");
     renderPage();
     expect(screen.getByText("การจัดการข้อมูล")).toBeInTheDocument();
-    expect(screen.getByText("การย้ายระบบ (ใช้ช่วงเปลี่ยนจาก AppSheet)")).toBeInTheDocument();
+    expect(screen.getByText("การย้ายระบบ")).toBeInTheDocument();
     const hrefs: Record<string, string> = {
       "จัดการระบบ": "/admin",
       "นำเข้าข้อมูลเดิม": "/imports",
@@ -57,8 +57,8 @@ describe("SettingsPage hub", () => {
     for (const [name, href] of Object.entries(hrefs)) {
       expect(screen.getByRole("link", { name: new RegExp(name) })).toHaveAttribute("href", href);
     }
-    expect(screen.getByText("เทียบข้อมูลที่นำเข้าจากระบบเดิมกับข้อมูลในระบบนี้ หาจุดที่ไม่ตรงกัน")).toBeInTheDocument();
-    expect(screen.getByText("เช็กลิสต์ว่าระบบพร้อมเลิกใช้ระบบเดิมหรือยัง")).toBeInTheDocument();
+    expect(screen.getByText("เทียบข้อมูลระบบเดิมกับระบบนี้")).toBeInTheDocument();
+    expect(screen.getByText("เช็กลิสต์ก่อนเลิกใช้ระบบเดิม")).toBeInTheDocument();
     expect(await screen.findByLabelText("รอตรวจสอบ 4 รายการ")).toBeInTheDocument();
   });
 

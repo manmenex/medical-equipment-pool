@@ -58,7 +58,7 @@ function ReceiveRow({ tx, wardName, onDone }: { tx: OutstandingCuffTx; wardName:
       {open && (
         <div role="group" aria-label={`รับ Cuff ${tx.bcm_code ?? ""}`} className="surface flex flex-col gap-2 rounded-lg border-2 border-status-borrowed p-3">
           {!tx.device_received ? (
-            <p className="text-xs text-amber-400">เครื่องยังไม่ถูกรับคืน — บันทึก Cuff พร้อมการรับเครื่องในแท็บ "รับคืนเครื่อง"</p>
+            <p className="text-xs text-amber-400">ยังไม่รับคืนเครื่อง — บันทึก Cuff ที่หน้ารับคืน</p>
           ) : (
             <>
               <div className="grid grid-cols-2 gap-2">
@@ -82,7 +82,7 @@ function ReceiveRow({ tx, wardName, onDone }: { tx: OutstandingCuffTx; wardName:
                 ))}
               </div>
               <input
-                aria-label="ชื่อผู้ส่งคืน (Ward)"
+                aria-label="ชื่อผู้ส่งคืน"
                 placeholder="ชื่อผู้ส่งคืน (Ward)"
                 value={contact}
                 maxLength={100}

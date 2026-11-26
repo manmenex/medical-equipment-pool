@@ -112,7 +112,7 @@ describe("receipt screen", () => {
     const user = userEvent.setup();
     renderPage();
     expect(screen.getByRole("heading", { name: "หอผู้ป่วยที่ส่งคืน" })).toBeInTheDocument();
-    expect(screen.getByLabelText("ชื่อผู้ส่งคืน (Ward)")).toBeInTheDocument();
+    expect(screen.getByLabelText("ชื่อผู้ส่งคืน")).toBeInTheDocument();
     await addBcm(user, "BCM001");
     expect(await screen.findByRole("button", { name: "แก้ไข BCM001" })).toHaveTextContent("✓✓✓");
     expect(screen.getByRole("heading", { name: "สแกนเครื่อง (1 เครื่อง)" })).toBeInTheDocument();
@@ -151,7 +151,7 @@ describe("receipt screen", () => {
     const user = userEvent.setup();
     renderPage();
     await pickWard(user, "Ward A");
-    await user.type(screen.getByLabelText("ชื่อผู้ส่งคืน (Ward)"), "คุณมาลี");
+    await user.type(screen.getByLabelText("ชื่อผู้ส่งคืน"), "คุณมาลี");
     await addBcm(user, "BCM002"); // dispatched to Ward B, returned by Ward A
     await screen.findByRole("button", { name: "แก้ไข BCM002" });
     expect(screen.queryByText(/ค้าง Ward|ต่างหอ|ไม่ใช่หอ/)).not.toBeInTheDocument();
@@ -276,7 +276,7 @@ describe("receipt screen", () => {
 describe("review fixes", () => {
   it("hides the phone field (the receipt API takes no phone)", async () => {
     renderPage();
-    expect(await screen.findByLabelText("ชื่อผู้ส่งคืน (Ward)")).toBeInTheDocument();
+    expect(await screen.findByLabelText("ชื่อผู้ส่งคืน")).toBeInTheDocument();
     expect(screen.queryByLabelText("เบอร์โทร")).not.toBeInTheDocument();
   });
 

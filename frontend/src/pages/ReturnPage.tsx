@@ -297,7 +297,7 @@ export function ReturnPage() {
         <>
           <WardSection
             title="หอผู้ป่วยที่ส่งคืน"
-            contactLabel="ชื่อผู้ส่งคืน (Ward)"
+            contactLabel="ชื่อผู้ส่งคืน"
             wards={wards}
             departments={departments}
             wardId={wardId}
@@ -448,7 +448,7 @@ export function ReturnPage() {
           )}
           {queuedCount > 0 && (
             <p role="status" className="rounded-lg border border-[var(--border)] p-2 text-sm">
-              🕓 บันทึกในเครื่องแล้ว {queuedCount} เครื่อง — ยังไม่ได้ส่งเข้าระบบ ระบบจะส่งอัตโนมัติเมื่อเชื่อมต่อได้
+              🕓 บันทึกในเครื่องแล้ว {queuedCount} เครื่อง — รอส่งเมื่อออนไลน์
             </p>
           )}
 

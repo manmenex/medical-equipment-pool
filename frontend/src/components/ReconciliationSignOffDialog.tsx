@@ -149,7 +149,7 @@ export function ReconciliationSignOffDialog({ run, onClose, onSettled, triggerRe
         </h2>
 
         <div id="reconciliation-signoff-warning" className="rounded-lg border border-[var(--border)] bg-[var(--border)]/10 p-3 text-sm">
-          การลงนามจะยืนยันผลการตรวจสอบของรอบนี้และไม่สามารถแก้ไขผลการตรวจสอบภายหลังได้ ต้องการดำเนินการต่อหรือไม่
+          ลงนามแล้วแก้ไขไม่ได้ ดำเนินการต่อหรือไม่
         </div>
 
         {error && (

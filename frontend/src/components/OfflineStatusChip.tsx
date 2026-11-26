@@ -39,12 +39,12 @@ export function OfflineStatusChip() {
     <div className="flex items-center gap-2 text-xs">
       {offline && (
         <span className="rounded-full bg-status-repair/15 px-2 py-0.5 text-status-repair">
-          เซิร์ฟเวอร์ไม่พร้อม — ทำงานแบบออฟไลน์
+          ออฟไลน์
         </span>
       )}
       {versionMismatch && (
         <span className="rounded-full bg-status-repair/15 px-2 py-0.5 text-status-repair">
-          เซิร์ฟเวอร์ยังเป็นเวอร์ชันเก่า ส่งข้อมูลไม่ได้ชั่วคราว — รายการยังอยู่ครบ แจ้งผู้ดูแลระบบ
+          เซิร์ฟเวอร์เป็นเวอร์ชันเก่า ส่งข้อมูลไม่ได้ — รายการยังอยู่ แจ้งผู้ดูแลระบบ
         </span>
       )}
       {pending > 0 && (
@@ -54,7 +54,7 @@ export function OfflineStatusChip() {
       )}
       {conflicts > 0 && (
         <span className="rounded-full bg-status-repair/15 px-2 py-0.5 text-status-repair">
-          รอเจ้าหน้าที่ตรวจสอบ {conflicts} รายการ
+          รอตรวจสอบ {conflicts} รายการ
         </span>
       )}
     </div>

@@ -83,7 +83,7 @@ describe("Admin ward/department phone UI (Roadmap PR25E S0)", () => {
     await user.click(screen.getByLabelText("ข้อมูล CSV"));
     await user.paste("﻿ward_name,nsmart_department,phone\nWard A,x,1\nNope,y,2");
     await user.click(screen.getByLabelText("เขียนทับเบอร์โทรที่มีอยู่แล้ว"));
-    await user.click(screen.getByRole("button", { name: /Dry-run/ }));
+    await user.click(screen.getByRole("button", { name: /ตรวจสอบก่อนนำเข้า/ }));
 
     expect(await screen.findByText("จะตั้งเบอร์ใหม่")).toBeInTheDocument();
     expect(screen.getByText("ไม่พบหอผู้ป่วย")).toBeInTheDocument();
@@ -117,12 +117,12 @@ describe("Admin ward/department phone UI (Roadmap PR25E S0)", () => {
     const user = userEvent.setup();
     renderAdmin();
     await openImport(user);
-    await user.click(screen.getByRole("button", { name: /Dry-run/ }));
+    await user.click(screen.getByRole("button", { name: /ตรวจสอบก่อนนำเข้า/ }));
     expect(await screen.findByRole("button", { name: /ยืนยันนำเข้า/ })).toBeInTheDocument();
     await user.click(screen.getByLabelText("เขียนทับเบอร์โทรที่มีอยู่แล้ว"));
     expect(screen.queryByRole("button", { name: /ยืนยันนำเข้า/ })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /Dry-run/ }));
+    await user.click(screen.getByRole("button", { name: /ตรวจสอบก่อนนำเข้า/ }));
     expect(await screen.findByRole("button", { name: /ยืนยันนำเข้า/ })).toBeInTheDocument();
     await user.type(screen.getByLabelText("ข้อมูล CSV"), "x");
     expect(screen.queryByRole("button", { name: /ยืนยันนำเข้า/ })).not.toBeInTheDocument();
@@ -137,7 +137,7 @@ describe("Admin ward/department phone UI (Roadmap PR25E S0)", () => {
     const user = userEvent.setup();
     renderAdmin();
     await openImport(user);
-    await user.click(screen.getByRole("button", { name: /Dry-run/ }));
+    await user.click(screen.getByRole("button", { name: /ตรวจสอบก่อนนำเข้า/ }));
     expect(screen.getByLabelText("เขียนทับเบอร์โทรที่มีอยู่แล้ว")).toBeDisabled();
     expect(screen.getByLabelText("ข้อมูล CSV")).toBeDisabled();
     expect(screen.getByLabelText("อัปโหลดไฟล์ CSV")).toBeDisabled();
@@ -154,7 +154,7 @@ describe("Admin ward/department phone UI (Roadmap PR25E S0)", () => {
     const user = userEvent.setup();
     renderAdmin();
     await openImport(user);
-    await user.click(screen.getByRole("button", { name: /Dry-run/ }));
+    await user.click(screen.getByRole("button", { name: /ตรวจสอบก่อนนำเข้า/ }));
     // Force a change event despite the disabled checkbox (e.g. a race).
     const box = screen.getByLabelText("เขียนทับเบอร์โทรที่มีอยู่แล้ว") as HTMLInputElement;
     box.disabled = false;

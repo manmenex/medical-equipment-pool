@@ -61,12 +61,12 @@ export function SettingsPage() {
             to: "/admin",
             icon: "⚙️",
             title: "จัดการระบบ",
-            description: "เครื่องมือ, เครื่อง Demo/ยืม, แผนก, หอผู้ป่วย, สถานที่, หมวดหมู่, นำเข้าคลังเครื่องมือและเบอร์โทรหอผู้ป่วย, ผู้ใช้",
+            description: "เครื่องมือ, Ward, ผู้ใช้, นำเข้าข้อมูล",
           },
         ]
       : []),
     ...(canManageLegacyImport(user)
-      ? [{ to: "/imports", icon: "📥", title: "นำเข้าข้อมูลเดิม", description: "นำเข้าข้อมูลจากระบบเดิม" }]
+      ? [{ to: "/imports", icon: "📥", title: "นำเข้าข้อมูลเดิม", description: "ข้อมูลจากระบบเดิม" }]
       : []),
     ...(reviewAllowed
       ? [
@@ -74,7 +74,7 @@ export function SettingsPage() {
             to: "/sync-review",
             icon: "📨",
             title: "ตรวจสอบรายการออฟไลน์",
-            description: "ตรวจสอบรายการที่บันทึกแบบออฟไลน์แล้วซิงก์ไม่สำเร็จ",
+            description: "รายการออฟไลน์ที่ส่งไม่สำเร็จ",
             badge: reviewCount,
           },
         ]
@@ -88,7 +88,7 @@ export function SettingsPage() {
             to: "/reconciliation",
             icon: "🔎",
             title: "ตรวจสอบข้อมูลย้อนหลัง",
-            description: "เทียบข้อมูลที่นำเข้าจากระบบเดิมกับข้อมูลในระบบนี้ หาจุดที่ไม่ตรงกัน",
+            description: "เทียบข้อมูลระบบเดิมกับระบบนี้",
           },
         ]
       : []),
@@ -98,7 +98,7 @@ export function SettingsPage() {
             to: "/cutover-readiness",
             icon: "🚦",
             title: "ความพร้อมก่อนเปลี่ยนระบบ",
-            description: "เช็กลิสต์ว่าระบบพร้อมเลิกใช้ระบบเดิมหรือยัง",
+            description: "เช็กลิสต์ก่อนเลิกใช้ระบบเดิม",
           },
         ]
       : []),
@@ -158,7 +158,7 @@ export function SettingsPage() {
       {migrationCards.length > 0 && (
         <section aria-labelledby="migration-heading" className="flex flex-col gap-2">
           <h2 id="migration-heading" className="text-sm font-medium">
-            การย้ายระบบ (ใช้ช่วงเปลี่ยนจาก AppSheet)
+            การย้ายระบบ
           </h2>
           <div className="grid gap-2 sm:grid-cols-2">
             {migrationCards.map((c) => (

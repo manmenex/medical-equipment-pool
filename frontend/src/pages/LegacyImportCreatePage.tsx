@@ -139,7 +139,7 @@ export function LegacyImportCreatePage() {
         <div>
           <h1 className="text-lg font-semibold">เริ่มนำเข้าข้อมูลเดิม</h1>
           <p className="text-sm text-[var(--text-muted)]">
-            ไฟล์ที่เลือกจะถูกอัปโหลดไปยังระบบจริงเมื่อกด &quot;ตรวจสอบข้อมูล&quot;
+            ไฟล์จะถูกอัปโหลดเมื่อกด &quot;ตรวจสอบข้อมูล&quot;
           </p>
         </div>
 
@@ -191,9 +191,6 @@ export function LegacyImportCreatePage() {
         {step === "file" && (
           <div className="surface flex flex-col gap-3 rounded-xl border p-4">
             <LegacyImportFileDropzone file={file} onSelect={setFile} onRemove={() => setFile(null)} />
-            <p className="text-sm text-[var(--text-muted)]">
-              ระบบจะตรวจสอบไฟล์นี้หลังอัปโหลด ยังไม่มีการอ่านหรือตรวจสอบเนื้อหาไฟล์ในเครื่องของคุณ
-            </p>
             {error && (
               <p role="alert" className="text-sm text-status-repair">
                 {error}
@@ -228,8 +225,7 @@ export function LegacyImportCreatePage() {
             ) : (
               <>
                 <p className="text-sm text-[var(--text-muted)]">
-                  ไฟล์นี้ยังไม่ได้รับการอนุมัติให้ใช้นำเข้าข้อมูลชุดนี้ ต้องมีผู้ดูแลระบบอนุมัติไฟล์นี้ก่อนจึงจะทดลองนำเข้าข้อมูลได้
-                  การอนุมัตินี้ผูกกับเนื้อหาไฟล์ที่อัปโหลดจริงเท่านั้น (ตรวจสอบจาก checksum ที่ระบบคำนวณเอง)
+                  ไฟล์นี้ยังไม่ได้รับอนุมัติ ผู้ดูแลระบบต้องอนุมัติก่อนทดลองนำเข้า
                 </p>
                 {authorityError && (
                   <p role="alert" className="text-sm text-status-repair">
@@ -262,8 +258,7 @@ export function LegacyImportCreatePage() {
                     ยืนยันการอนุมัติไฟล์
                   </h4>
                   <p id="approve-authority-dialog-body" className="mt-2 text-sm text-[var(--text-muted)]">
-                    การอนุมัตินี้จะอนุญาตให้ไฟล์ที่อัปโหลดไว้ (ตามเนื้อหาไฟล์จริง) ถูกใช้ทดลองนำเข้าประวัติการรับ-ส่งเครื่องมือเดิมได้
-                    ยังไม่มีการบันทึกข้อมูลลงระบบจากขั้นตอนนี้
+                    อนุมัติไฟล์นี้สำหรับทดลองนำเข้า ขั้นตอนนี้ยังไม่บันทึกข้อมูลลงระบบ
                   </p>
                   <div className="mt-4 flex justify-end gap-2">
                     <button

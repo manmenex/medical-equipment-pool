@@ -12,19 +12,7 @@ import { listTransactions } from "@/services/borrow";
 import { canDispatchOrReceiveEquipment, canManageEquipmentMasterData, useAuth } from "@/hooks/useAuth";
 import { getEquipment, getEquipmentHistory, returnToOwner } from "@/services/equipment";
 import { listWards } from "@/services/masterData";
-import type { DispatchType, RoutineRound, Shift, TransactionEventBasis, TransactionOut } from "@/types";
-
-// Roadmap PR13 (docs/audits/04-consolidated-implementation-plan.md's PR13
-// entry, Part H acceptance criterion "when viewed in history, [an
-// on-demand dispatch] is distinguishable from routine dispatches"):
-// reuses BorrowPage.tsx's own dispatch-type/round labels so the two
-// screens describe the same concept identically.
-const DISPATCH_TYPE_LABELS: Record<DispatchType, string> = {
-  on_demand: "เบิกตามคำขอ (On-Demand)",
-  routine_round: "รอบเวลาปกติ (Routine Round)",
-};
-
-const ROUTINE_ROUNDS: RoutineRound[] = ["06:00", "11:00", "15:00", "21:00"];
+import type { Shift, TransactionEventBasis, TransactionOut } from "@/types";
 
 // Roadmap PR16 Slice 4 (docs/archive/design/PR16_REPORTING_FOUNDATION_PLAN.md §10):
 // ค่ากะ -- กลางวัน / กลางคืน, matching the design's own Thai wording.
@@ -72,15 +60,6 @@ export function EquipmentDetailPage() {
     queryFn: () => getEquipmentHistory(id),
     enabled: Boolean(id),
   });
-  // Roadmap PR13: dispatch-type/round-aware and date-range history
-  // filtering, on top of the equipment_id scope this page already applies.
-  // All optional and independently combinable (backend/app/crud/transaction.py's
-  // search()).
-  const [dispatchTypeFilter, setDispatchTypeFilter] = useState<DispatchType | "">("");
-  const [routineRoundFilter, setRoutineRoundFilter] = useState<RoutineRound | "">("");
-  const [fromDateFilter, setFromDateFilter] = useState("");
-  const [toDateFilter, setToDateFilter] = useState("");
-
   // Roadmap PR16 Slice 4 (docs/archive/design/PR16_REPORTING_FOUNDATION_PLAN.md §10):
   // business_date_from/business_date_to/shift/event -- a distinct filter
   // basis from the from_date/to_date raw-timestamp pair above, never merged
@@ -129,7 +108,7 @@ export function EquipmentDetailPage() {
     const to = eventIsScoped ? draftBusinessDateTo : "";
     const shift = eventIsScoped ? draftShift : "";
     if (from && to && from > to) {
-      setBusinessDateRangeError('"วันที่ทำการ ตั้งแต่" ต้องไม่มาหลัง "วันที่ทำการ ถึง"');
+      setBusinessDateRangeError('"ตั้งแต่" ต้องไม่มาหลัง "ถึง"');
       return;
     }
     setBusinessDateRangeError(null);
@@ -171,10 +150,6 @@ export function EquipmentDetailPage() {
     "equipment",
     id,
     "transactions",
-    dispatchTypeFilter,
-    routineRoundFilter,
-    fromDateFilter,
-    toDateFilter,
     appliedBusinessDateFrom,
     appliedBusinessDateTo,
     appliedShift,
@@ -194,14 +169,10 @@ export function EquipmentDetailPage() {
     queryFn: ({ pageParam }) =>
       listTransactions({
         equipment_id: id,
-        dispatch_type: dispatchTypeFilter || undefined,
-        routine_round: routineRoundFilter || undefined,
         business_date_from: appliedEventIsScoped ? appliedBusinessDateFrom || undefined : undefined,
         business_date_to: appliedEventIsScoped ? appliedBusinessDateTo || undefined : undefined,
         shift: appliedEventIsScoped ? appliedShift || undefined : undefined,
         event: appliedEvent || undefined,
-        from_date: fromDateFilter || undefined,
-        to_date: toDateFilter || undefined,
         limit: 50,
         cursor: pageParam,
       }),
@@ -256,8 +227,12 @@ export function EquipmentDetailPage() {
             <SourceBadge source={equipment.equipment_source} />
           </h1>
           <p className="text-sm text-[var(--text-muted)]">
-            {isDemoLoan ? `SN ${equipment.bcm_code ?? "-"}` : (equipment.asset_number ?? "-")}
-            {equipment.serial_number ? ` · SN ${equipment.serial_number}` : ""}
+            {[
+              isDemoLoan ? (equipment.bcm_code ? `SN ${equipment.bcm_code}` : null) : equipment.asset_number,
+              equipment.serial_number ? `SN ${equipment.serial_number}` : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           </p>
           <div className="mt-2">
             <StatusBadge status={equipment.status} />
@@ -283,12 +258,8 @@ export function EquipmentDetailPage() {
           <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
             <dt className="text-[var(--text-muted)]">ยี่ห้อ / รุ่น</dt>
             <dd>
-              {equipment.brand ?? "-"} {equipment.model ?? ""}
+              {[equipment.brand, equipment.model].filter(Boolean).join(" ") || "-"}
             </dd>
-            <dt className="text-[var(--text-muted)]">กำหนด PM</dt>
-            <dd>{equipment.pm_due_date ?? "-"}</dd>
-            <dt className="text-[var(--text-muted)]">กำหนด Calibration</dt>
-            <dd>{equipment.cal_due_date ?? "-"}</dd>
           </dl>
           <div className="mt-4 flex gap-2">
             {canReturnToOwner && (
@@ -323,108 +294,12 @@ export function EquipmentDetailPage() {
       {wardCorrectionNotice && <p className="text-sm text-status-available">{wardCorrectionNotice}</p>}
 
       <div className="surface rounded-xl border p-4">
-        <h2 className="mb-1 text-sm font-medium">ประวัติการเบิก-รับคืน</h2>
-        {/* Workflow Audit §7.1: this is the detail-view caption -- the ward
-            shown per transaction below is a one-time record of where the
-            equipment was first sent, never a live tracker of its later
-            movement between wards. */}
-        <p className="mb-3 text-xs text-[var(--text-muted)]">
-          หอผู้ป่วยที่แสดงคือหอผู้ป่วยที่รับเครื่อง ณ วันที่เบิกเท่านั้น ระบบไม่ได้ติดตามการเคลื่อนย้ายเครื่องมือในภายหลัง
-        </p>
+        <h2 className="mb-3 text-sm font-medium">ประวัติการเบิก-รับคืน</h2>
 
-        {/* Roadmap PR13: dispatch-type/round-aware and date-range history
-            filtering (docs/audits/04-consolidated-implementation-plan.md's
-            PR13 entry). All four filters are optional and independently
-            combinable; changing any of them refetches from the first page. */}
-        <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <div>
-            <label htmlFor="tx-filter-dispatch-type" className="mb-1 block text-xs text-[var(--text-muted)]">
-              ประเภทการเบิก
-            </label>
-            <select
-              id="tx-filter-dispatch-type"
-              value={dispatchTypeFilter}
-              onChange={(e) => {
-                const next = e.target.value as DispatchType | "";
-                setDispatchTypeFilter(next);
-                if (next !== "routine_round") setRoutineRoundFilter("");
-              }}
-              className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
-            >
-              <option value="">ทั้งหมด</option>
-              <option value="on_demand">{DISPATCH_TYPE_LABELS.on_demand}</option>
-              <option value="routine_round">{DISPATCH_TYPE_LABELS.routine_round}</option>
-            </select>
-          </div>
-          <div>
-            <label htmlFor="tx-filter-routine-round" className="mb-1 block text-xs text-[var(--text-muted)]">
-              รอบเวลา
-            </label>
-            <select
-              id="tx-filter-routine-round"
-              value={routineRoundFilter}
-              onChange={(e) => setRoutineRoundFilter(e.target.value as RoutineRound | "")}
-              disabled={dispatchTypeFilter !== "routine_round"}
-              className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm disabled:opacity-50"
-            >
-              <option value="">ทั้งหมด</option>
-              {ROUTINE_ROUNDS.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label htmlFor="tx-filter-from-date" className="mb-1 block text-xs text-[var(--text-muted)]">
-              ตั้งแต่วันที่
-            </label>
-            <input
-              id="tx-filter-from-date"
-              type="date"
-              value={fromDateFilter}
-              onChange={(e) => setFromDateFilter(e.target.value)}
-              className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
-            />
-          </div>
-          <div>
-            <label htmlFor="tx-filter-to-date" className="mb-1 block text-xs text-[var(--text-muted)]">
-              ถึงวันที่
-            </label>
-            <input
-              id="tx-filter-to-date"
-              type="date"
-              value={toDateFilter}
-              onChange={(e) => setToDateFilter(e.target.value)}
-              className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
-            />
-          </div>
-        </div>
-
-        {/* Roadmap PR16 Slice 4 (docs/archive/design/PR16_REPORTING_FOUNDATION_PLAN.md
-            §10): business_date_from/business_date_to/shift/event -- kept as
-            an explicitly separate control group from the from_date/to_date
-            pair above (never merged, never relabeled), since the two
-            represent genuinely different concepts: raw event timestamp vs.
-            backend-derived Asia/Bangkok business day/shift. Draft values are
-            only sent to the API once "นำตัวกรองไปใช้" (Apply) is pressed;
-            business_date/shift are never computed here, only selected. */}
-        <div className="mb-1 flex items-baseline justify-between gap-2">
-          <h3 className="text-xs font-medium text-[var(--text-muted)]">ตัวกรองตามวันที่ทำการและกะ</h3>
-        </div>
-        <p className="mb-2 text-xs text-[var(--text-muted)]">
-          วันที่ทำการและกะคำนวณโดยระบบตามเวลาประเทศไทย แยกจาก &quot;ตั้งแต่วันที่ / ถึงวันที่&quot; ด้านบนซึ่งกรองตามเวลาที่บันทึกจริง
-          {/* PR61 review fix (H1): business_date/shift are always derived
-              from one concrete event basis (dispatch's borrowed_at or
-              receipt's returned_at) -- the backend has no "all events"
-              value to filter by business_date/shift against, so these two
-              controls only make sense once เบิก/รับคืน is chosen below. */}
-          {" "}เลือก &quot;เบิก&quot; หรือ &quot;รับคืน&quot; ก่อน จึงจะกรองตามวันที่ทำการ/กะได้
-        </p>
         <div className="mb-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
           <div>
             <label htmlFor="tx-filter-business-date-from" className="mb-1 block text-xs text-[var(--text-muted)]">
-              วันที่ทำการ ตั้งแต่
+              ตั้งแต่
             </label>
             <input
               id="tx-filter-business-date-from"
@@ -437,7 +312,7 @@ export function EquipmentDetailPage() {
           </div>
           <div>
             <label htmlFor="tx-filter-business-date-to" className="mb-1 block text-xs text-[var(--text-muted)]">
-              วันที่ทำการ ถึง
+              ถึง
             </label>
             <input
               id="tx-filter-business-date-to"
@@ -472,13 +347,7 @@ export function EquipmentDetailPage() {
               id="tx-filter-event"
               value={draftEvent}
               onChange={(e) => {
-                // PR61 review fix (H1): "ทั้งหมด" (event = "") means no
-                // event-scoped filter at all -- business_date_from/
-                // business_date_to/shift cannot be meaningfully combined
-                // with it (the backend has no "all events" value for
-                // event), so switching to "ทั้งหมด" clears them, exactly
-                // mirroring the existing dispatch_type -> routine_round
-                // dependency above.
+                // "ทั้งหมด" has no event basis, so date/shift filters are cleared with it.
                 const next = e.target.value as TransactionEventBasis | "";
                 setDraftEvent(next);
                 if (next === "") {
@@ -537,29 +406,20 @@ export function EquipmentDetailPage() {
               {transactions.map((tx) => (
                 <li key={tx.id} className="flex flex-col gap-1 rounded-lg border border-[var(--border)] p-3 text-sm">
                   <div>
-                    เลขที่รายการ {tx.transaction_no} ·{" "}
+                    {tx.transaction_no} ·{" "}
                     <strong>{tx.status === "open" ? "อยู่ระหว่างเบิก" : "รับคืนแล้ว"}</strong>
                   </div>
-                  {/* Roadmap PR13 (Part H acceptance criterion): an
-                      on-demand dispatch must be distinguishable from a
-                      routine-round dispatch when viewed in history. */}
-                  <div className="text-[var(--text-muted)]">
-                    {tx.dispatch_type ? DISPATCH_TYPE_LABELS[tx.dispatch_type] : "ไม่ระบุประเภทการเบิก"}
-                    {tx.dispatch_type === "routine_round" && tx.routine_round ? ` · รอบ ${tx.routine_round}` : ""}
-                  </div>
-                  <div className="text-[var(--text-muted)]">
-                    หอผู้ป่วยที่รับเครื่อง (บันทึก ณ วันที่เบิก): {wardName(tx.ward_id)}
-                  </div>
+                  <div className="text-[var(--text-muted)]">Ward: {wardName(tx.ward_id)}</div>
                   <div className="text-xs text-[var(--text-muted)]">
-                    เบิกเมื่อ {new Date(tx.borrowed_at).toLocaleString("th-TH")}
-                    {tx.returned_at ? ` · รับคืนเมื่อ ${new Date(tx.returned_at).toLocaleString("th-TH")}` : ""}
+                    เบิก {new Date(tx.borrowed_at).toLocaleString("th-TH")}
+                    {tx.returned_at ? ` · รับคืน ${new Date(tx.returned_at).toLocaleString("th-TH")}` : ""}
                   </div>
                   {/* Roadmap PR13: a read-only "days since dispatch"
                       indicator replaces the retired overdue-indicator
                       concept -- purely informational, never implies a due
                       date or a maintenance/compliance deadline. */}
                   {tx.status === "open" && (
-                    <div className="text-xs text-[var(--text-muted)]">เบิกมาแล้ว {daysSinceDispatch(tx.borrowed_at)} วัน</div>
+                    <div className="text-xs text-[var(--text-muted)]">ระยะเวลา {daysSinceDispatch(tx.borrowed_at)} วัน</div>
                   )}
                   {tx.has_hn && <HnReveal transactionId={tx.id} />}
                   {/* Roadmap PR34 (D15): an open dispatch without HN is Standby; staff may add one. */}
@@ -659,7 +519,7 @@ function ReturnToOwnerAction({ equipmentId, onDone }: { equipmentId: string; onD
   }
   return (
     <div role="alertdialog" aria-label="ยืนยันคืนผู้ให้ยืม" className="flex flex-col gap-2 rounded-lg border border-amber-500/60 p-3 text-sm">
-      <p>ยืนยันคืนเครื่องนี้ให้ผู้ให้ยืม? เครื่องจะไม่แสดงในรายการใช้งานและเบิกไม่ได้อีก (ประวัติยังคงอยู่)</p>
+      <p>ยืนยันคืนเครื่องนี้ให้ผู้ให้ยืม? เครื่องจะเบิกไม่ได้อีก</p>
       {error && <p role="alert" className="text-status-repair">{error}</p>}
       <div className="flex gap-2">
         <button

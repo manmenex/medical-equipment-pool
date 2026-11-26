@@ -91,6 +91,28 @@ describe("MonitorPage", () => {
     expect(screen.getByText("(ชำรุด)")).toBeInTheDocument();
   });
 
+  it("filters the loaded events by equipment category (ชนิดเครื่อง)", async () => {
+    fetchMonitorEvents.mockImplementation(async () => {
+      const items = [
+        ev("1", { equipment: { id: "e1", bcm_code: "BCM-1", name: "Pump", category: "Infusion Pump" } }),
+        ev("2", { equipment: { id: "e2", bcm_code: "BCM-2", name: "Vent", category: "Ventilator" } }),
+      ];
+      return { items, next_cursor: null, total: 2 };
+    });
+    listWards.mockResolvedValue([]);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MonitorPage />
+      </QueryClientProvider>,
+    );
+    await screen.findByRole("option", { name: "Ventilator" });
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "ชนิดเครื่อง" }), "Ventilator");
+    await userEvent.click(await screen.findByRole("button", { name: /ICU/ }));
+    expect(screen.getByText("BCM-2")).toBeInTheDocument();
+    expect(screen.queryByText("BCM-1")).not.toBeInTheDocument();
+  });
+
   it("filters by ward via type-ahead chip", async () => {
     setup();
     await waitFor(() => expect(screen.getByRole("tab", { name: "จ่าย (3)" })).toBeInTheDocument());

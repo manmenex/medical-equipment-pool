@@ -138,7 +138,7 @@ describe("dispatch screen layout", () => {
     expect(screen.getByRole("heading", { name: "หอผู้ป่วย" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "สแกนเครื่อง (0 เครื่อง)" })).toBeInTheDocument();
     expect(screen.getByTestId("shift-chip")).toHaveTextContent(/^(Day|Night) · \d{2}:\d{2}$/);
-    expect(screen.getByLabelText("ชื่อผู้รับ (Ward)")).toBeInTheDocument();
+    expect(screen.getByLabelText("ชื่อผู้รับ")).toBeInTheDocument();
     expect(screen.getByLabelText("หมายเหตุ (ไม่บังคับ)")).toBeInTheDocument();
     expect(screen.getByText("เวลาและกะบันทึกอัตโนมัติ")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "ยืนยันการเบิก (0 เครื่อง)" })).toBeDisabled();
@@ -242,7 +242,7 @@ describe("status warnings (PR31) and acknowledgement payload", () => {
     renderPage();
     await addBcm(user, "BCM001");
     await user.click(await screen.findByRole("button", { name: "แก้ไข BCM001" }));
-    expect(screen.getByRole("group", { name: "แก้ไข BCM001" })).toHaveTextContent(/ถูกจ่ายไป Ward Z ยังไม่บันทึกรับคืน/);
+    expect(screen.getByRole("group", { name: "แก้ไข BCM001" })).toHaveTextContent(/ถูกจ่ายไป Ward Z ยังไม่รับคืน/);
   });
 });
 
@@ -251,7 +251,7 @@ describe("edit panel and checks", () => {
     const user = userEvent.setup();
     renderPage();
     await pickWard(user, "Ward A");
-    await user.type(screen.getByLabelText("ชื่อผู้รับ (Ward)"), "คุณสมศรี");
+    await user.type(screen.getByLabelText("ชื่อผู้รับ"), "คุณสมศรี");
     await user.type(screen.getByLabelText("หมายเหตุ (ไม่บังคับ)"), "ด่วน");
     await addBcm(user, "BCM001");
     await user.click(await screen.findByRole("button", { name: "แก้ไข BCM001" }));

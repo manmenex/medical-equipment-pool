@@ -1,4 +1,4 @@
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
@@ -6,6 +6,7 @@ import { SourceBadge, SOURCE_FILTER_LABELS } from "@/components/SourceBadge";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useDebounce } from "@/hooks/useDebounce";
 import { searchEquipment } from "@/services/equipment";
+import { listCategories } from "@/services/masterData";
 import type { EquipmentSource, EquipmentStatus } from "@/types";
 
 const STATUS_OPTIONS: { value: EquipmentStatus | ""; label: string }[] = [
@@ -28,16 +29,19 @@ export function EquipmentListPage() {
   const [q, setQ] = useState(searchParams.get("q") ?? "");
   const status = (searchParams.get("status") as EquipmentStatus | null) ?? "";
   const source = (searchParams.get("source") as EquipmentSource | null) ?? "";
+  const categoryId = searchParams.get("category_id") ?? "";
+  const categories = useQuery({ queryKey: ["categories"], queryFn: listCategories, staleTime: 5 * 60_000 });
   const includeReturned = searchParams.get("include_returned") === "true";
   const debouncedQ = useDebounce(q, 150);
 
   const query = useInfiniteQuery({
-    queryKey: ["equipment", "search", debouncedQ, status, source, includeReturned],
+    queryKey: ["equipment", "search", debouncedQ, status, source, categoryId, includeReturned],
     queryFn: ({ pageParam }) =>
       searchEquipment({
         q: debouncedQ || undefined,
         status: status || undefined,
         source: source || undefined,
+        category_id: categoryId || undefined,
         include_returned: includeReturned || undefined,
         cursor: pageParam,
         limit: 30,
@@ -89,6 +93,24 @@ export function EquipmentListPage() {
           {SOURCE_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
               {opt.label}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label="ชนิดเครื่อง"
+          value={categoryId}
+          onChange={(e) => {
+            const next = new URLSearchParams(searchParams);
+            if (e.target.value) next.set("category_id", e.target.value);
+            else next.delete("category_id");
+            setSearchParams(next);
+          }}
+          className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
+        >
+          <option value="">ทุกชนิด</option>
+          {(categories.data ?? []).map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
             </option>
           ))}
         </select>

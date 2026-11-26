@@ -48,7 +48,7 @@ export function SyncStatsPanel() {
           <dd>{s.total_conflicts}</dd>
           <dt>เครื่องที่ขัดแย้งหลายรายการ</dt>
           <dd>{s.groups.equipment_with_multiple_conflicts}</dd>
-          <dt>ข้ามอุปกรณ์ (device)</dt>
+          <dt>ข้ามอุปกรณ์</dt>
           <dd>{s.groups.cross_device}</dd>
           <dt>ตัดสินตามลำดับเวลา</dt>
           <dd>{pct(s.groups.agreement_rate)}</dd>

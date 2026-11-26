@@ -350,7 +350,7 @@ export function LegacyHistoryWorkflowPanel({ sessionId }: { sessionId: string })
         </div>
         {findingsBlockProgression && DRY_RUN_ADMISSIBLE_STATUSES.has(session.status) && (
           <p className="mt-2 text-xs text-status-repair">
-            ต้องโหลดรายการที่ต้องตรวจสอบให้สำเร็จก่อนจึงจะทดลองนำเข้าต่อได้ (ดูด้านล่าง)
+            โหลดรายการที่ต้องตรวจสอบให้สำเร็จก่อน (ดูด้านล่าง)
           </p>
         )}
         {POLLING_STATUSES.has(session.status) && (

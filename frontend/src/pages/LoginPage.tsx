@@ -73,7 +73,7 @@ export function LoginPage() {
             🏥
           </div>
           <h1 className="text-lg font-semibold">Medical Equipment Pool</h1>
-          <p className="text-sm text-[var(--text-muted)]">ระบบรับ-ส่งเครื่องมือแพทย์</p>
+          <p className="text-sm text-[var(--text-muted)]">เบิก-รับคืนเครื่องมือแพทย์</p>
         </div>
 
         {/* htmlFor/id, not decoration: without the association these labels

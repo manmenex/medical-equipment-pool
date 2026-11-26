@@ -49,7 +49,7 @@ describe("CuffsOutstandingPanel", () => {
     expect(within(panel).getByLabelText("จำนวน Knee")).toHaveValue(2);
     await user.clear(within(panel).getByLabelText("จำนวน Knee"));
     await user.type(within(panel).getByLabelText("จำนวน Knee"), "1");
-    await user.type(within(panel).getByLabelText("ชื่อผู้ส่งคืน (Ward)"), "คุณมาลี");
+    await user.type(within(panel).getByLabelText("ชื่อผู้ส่งคืน"), "คุณมาลี");
     await user.click(within(panel).getByRole("button", { name: "บันทึกรับ Cuff" }));
     await waitFor(() => expect(receiveCuffs).toHaveBeenCalledWith("t1", { knee: 1, ankle: 1 }, "คุณมาลี"));
     expect(await screen.findByText("✓ รับ Cuff แล้ว")).toBeInTheDocument();
@@ -59,7 +59,7 @@ describe("CuffsOutstandingPanel", () => {
     const user = userEvent.setup();
     renderPanel();
     await user.click(await screen.findByRole("button", { name: "รับ Cuff BCM-2" }));
-    expect(screen.getByText(/เครื่องยังไม่ถูกรับคืน/)).toBeInTheDocument();
+    expect(screen.getByText(/ยังไม่รับคืนเครื่อง/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "บันทึกรับ Cuff" })).not.toBeInTheDocument();
   });
 

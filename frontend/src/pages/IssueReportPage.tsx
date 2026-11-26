@@ -45,7 +45,7 @@ export function IssueReportPage() {
         <div>
           <h1 className="text-lg font-semibold">รายงานการเบิก</h1>
           <p className="text-sm text-[var(--text-muted)]">
-            รายการเครื่องมือที่เบิกออกจาก Pool ตามช่วงวันที่ทำการและตัวกรองที่เลือก
+            เครื่องที่เบิกออกจาก Pool
           </p>
         </div>
         {/* Roadmap PR18C: opens the dedicated print view in a new tab,
