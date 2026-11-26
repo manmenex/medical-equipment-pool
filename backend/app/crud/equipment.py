@@ -216,6 +216,9 @@ async def search(
                 Equipment.equipment_name.ilike(like),
                 Equipment.asset_number.ilike(like),
                 Equipment.serial_number.ilike(like),
+                # BCM Code is the operator-facing identifier; Item No is the QR label.
+                Equipment.bcm_code.ilike(like),
+                Equipment.item_no.ilike(like),
             )
         )
 

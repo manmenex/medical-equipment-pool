@@ -37,88 +37,45 @@ function renderShell() {
   );
 }
 
-describe("AppShell legacy import nav entry", () => {
-  it("shows the นำเข้าข้อมูลเดิม nav link for an administrator", () => {
-    mockUser = makeUser("administrator");
-    renderShell();
+// Data-management and migration entries moved into the Settings hub
+// (pages/SettingsPage.tsx); the shell keeps daily work plus ตั้งค่า.
+const MOVED_LINKS = [
+  /นำเข้าข้อมูลเดิม/,
+  /ตรวจสอบข้อมูลย้อนหลัง/,
+  /ความพร้อมก่อนเปลี่ยนระบบ/,
+  /ตรวจสอบรายการออฟไลน์/,
+  /^⚙️\s*จัดการระบบ$/,
+];
 
-    expect(screen.getAllByRole("link", { name: /นำเข้าข้อมูลเดิม/ }).length).toBeGreaterThan(0);
-  });
-
-  // Bug-fix regression: the desktop sidebar's navItems array structurally
-  // never included admin-tier entries in the mobile bottom nav -- the
-  // mobile <nav> only ever mapped over navItems. Fixed by adding a
-  // dedicated canManageLegacyImport-gated link to the mobile <nav> block,
-  // mirroring the desktop sidebar's. This asserts both surfaces render
-  // exactly one link each (desktop <aside> + mobile <nav>), not just "at
-  // least one", so a regression that only fixes one surface fails loudly.
-  it("reaches /imports from both the desktop sidebar and the mobile bottom nav for an administrator", () => {
-    mockUser = makeUser("administrator");
-    renderShell();
-
-    const links = screen.getAllByRole("link", { name: /นำเข้าข้อมูลเดิม/ });
-    expect(links).toHaveLength(2);
-    for (const link of links) {
-      expect(link).toHaveAttribute("href", "/imports");
+describe("AppShell navigation", () => {
+  it.each(["administrator", "equipment_pool_staff", "read_only"] as const)(
+    "does not list data-management links in sidebar, header or bottom nav for %s",
+    (role) => {
+      mockUser = makeUser(role);
+      renderShell();
+      for (const name of MOVED_LINKS) {
+        expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
+      }
+      expect(screen.queryByRole("link", { name: "จัดการระบบ" })).not.toBeInTheDocument();
     }
-  });
+  );
 
-  it("hides the นำเข้าข้อมูลเดิม nav link for equipment_pool_staff", () => {
+  it.each(["administrator", "equipment_pool_staff", "read_only"] as const)(
+    "shows ตั้งค่า in the sidebar and header for %s",
+    (role) => {
+      mockUser = makeUser(role);
+      renderShell();
+      const links = screen.getAllByRole("link", { name: /ตั้งค่า/ });
+      expect(links).toHaveLength(2);
+      for (const link of links) expect(link).toHaveAttribute("href", "/settings");
+    }
+  );
+
+  it("keeps the daily-work links for pool staff", () => {
     mockUser = makeUser("equipment_pool_staff");
     renderShell();
-
-    expect(screen.queryByRole("link", { name: /นำเข้าข้อมูลเดิม/ })).not.toBeInTheDocument();
-  });
-
-  it("hides the นำเข้าข้อมูลเดิม nav link for read_only", () => {
-    mockUser = makeUser("read_only");
-    renderShell();
-
-    expect(screen.queryByRole("link", { name: /นำเข้าข้อมูลเดิม/ })).not.toBeInTheDocument();
-  });
-});
-
-// Roadmap PR22F §7/§37 of the task: unlike นำเข้าข้อมูลเดิม (Administrator-only,
-// shown on both the desktop sidebar and the mobile bottom nav), the
-// reconciliation entry is visible to every authenticated role (mirrors
-// backend VIEW_AND_REPORT_ROLES) but deliberately reaches mobile users
-// through the always-visible header row instead of the bottom nav, so it
-// never competes for space with ค้นหา/เบิก/รับคืน/รายงาน. This asserts
-// exactly two links (desktop sidebar + header), never a third link
-// added to the mobile bottom-nav <nav> block.
-describe("AppShell reconciliation nav entry", () => {
-  it.each(["administrator", "equipment_pool_staff", "read_only"] as const)(
-    "shows the ตรวจสอบข้อมูลย้อนหลัง link (sidebar + header, never bottom nav) for %s",
-    (role) => {
-      mockUser = makeUser(role);
-      renderShell();
-
-      const links = screen.getAllByRole("link", { name: /ตรวจสอบข้อมูลย้อนหลัง/ });
-      expect(links).toHaveLength(2);
-      for (const link of links) {
-        expect(link).toHaveAttribute("href", "/reconciliation");
-      }
+    for (const name of [/หน้าหลัก/, /ค้นหา/, /^.{0,3}\s*เบิก$/, /รับคืน/, /Monitor/, /สรุป Stand By/, /รายงาน/]) {
+      expect(screen.getAllByRole("link", { name }).length).toBeGreaterThan(0);
     }
-  );
-});
-
-// Roadmap PR23E: same placement rationale/assertion shape as the
-// reconciliation nav entry directly above -- visible to every
-// authenticated role (mirrors backend VIEW_AND_REPORT_ROLES, see
-// hooks/useAuth.ts's canReviewCutoverReadiness), sidebar + header only,
-// never the mobile bottom nav.
-describe("AppShell cutover readiness nav entry", () => {
-  it.each(["administrator", "equipment_pool_staff", "read_only"] as const)(
-    "shows the ความพร้อมก่อนเปลี่ยนระบบ link (sidebar + header, never bottom nav) for %s",
-    (role) => {
-      mockUser = makeUser(role);
-      renderShell();
-
-      const links = screen.getAllByRole("link", { name: /ความพร้อมก่อนเปลี่ยนระบบ/ });
-      expect(links).toHaveLength(2);
-      for (const link of links) {
-        expect(link).toHaveAttribute("href", "/cutover-readiness");
-      }
-    }
-  );
+  });
 });
