@@ -185,3 +185,30 @@ async def test_concurrent_cuff_receipts_never_exceed_issued_on_postgres(pg_clien
             )
         ).one()
     assert (issued, returned) == (2, 2)
+
+
+async def test_migration_0036_keyer_labels_round_trip():
+    """D22: additive nullable columns; downgrade drops them, upgrade restores the fresh-install schema."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+    try:
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                fresh = await _schema_snapshot(conn)
+            names = {c[1] for c in fresh["columns"] if c[0] == "borrow_transactions"}
+            assert {"dispatch_keyer_label", "receipt_keyer_label"} <= names
+            _run_alembic("downgrade", "0035_standby_summary")
+            async with engine.connect() as conn:
+                old = await _schema_snapshot(conn)
+            assert not {"dispatch_keyer_label", "receipt_keyer_label"} & {c[1] for c in old["columns"]}
+            _run_alembic("upgrade", "head")
+            async with engine.connect() as conn:
+                assert await _schema_snapshot(conn) == fresh
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()

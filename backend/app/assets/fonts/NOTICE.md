@@ -57,3 +57,19 @@ SIL Open Font License, Version 1.1 (OFL-1.1) — see `OFL.txt` in this
 directory (the exact license file from the same release archive). Same
 license already accepted for the `frontend/public/fonts/` copy. Royalty-free;
 permits bundling and embedding, including in a generated PDF.
+
+# Trirong (daily forms PDF, Owner visual-match request 2026-11-26)
+
+`Trirong-Regular.ttf` (400) and `Trirong-Bold.ttf` (700) are the **Trirong**
+Thai/Latin serif by Cadson Demak, used only by the printable daily forms
+(`daily_report_forms_service.py`) because the Owner's own tool prints in
+Angsana New, a proprietary Microsoft font that cannot be bundled. Trirong is
+the closest freely licensed looped Thai serif (Times-style Latin).
+
+- Source: `@fontsource/trirong` 5.3.0 (npm; Google Fonts build of Trirong), the
+  `latin` and `thai` WOFF2 subsets converted to TTF and merged into one file per
+  weight with fontTools (single file per weight, same WeasyPrint reason as above).
+  No glyph outlines were changed and the family name is unchanged.
+- License: SIL Open Font License 1.1, see `OFL-Trirong.txt` (the license file
+  shipped in that package). No Reserved Font Name is declared. Royalty-free;
+  embedding in generated PDFs is permitted.

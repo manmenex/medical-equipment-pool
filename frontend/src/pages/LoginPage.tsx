@@ -95,7 +95,7 @@ export function LoginPage() {
         <label htmlFor="login-password" className="mb-1 block text-sm font-medium">
           รหัสผ่าน
         </label>
-        <div className="mb-4 flex items-center rounded-lg border border-[var(--border)]">
+        <div className="field-group mb-4 flex items-center rounded-lg border border-[var(--border)]">
           <input
             id="login-password"
             type={showPassword ? "text" : "password"}

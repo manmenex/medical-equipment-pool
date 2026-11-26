@@ -9492,3 +9492,28 @@ opening-balance transactions are created.
   integration.
 - **Source:** Owner decisions in chat, 2026-11-26. Docs-only Governance PR.
 - **Status:** Approved; implementation follows in the report and sync PRs.
+
+## 2026-11-26 (third set) — Sheet-sync ward contact name and BME keyer label on printed forms
+
+- **Decision (Owner, in chat, 2026-11-26):**
+  - **D21 Sheet-sync ward contact name:** the Legacy Sheet Sync maps the
+    sheet's ward user column ("ชื่อ (User)") into the D7 optional ward contact
+    name on synced dispatches/receipts, so printed forms show ผู้รับเครื่อง /
+    ผู้ส่งเครื่อง (User) as on the paper form. New synced rows only; no
+    backfill. Amends item 6 of "2026-10-21 — Governance: temporary demo-only legacy
+    pool sheet shadow sync" (ward-side names were not stored) for this one column.
+    Ward staff remain non-users; never a patient name; The value is free text
+    and must never contain a patient name or HN; no new patient field.
+  - **D22 BME keyer label:** a transaction may carry an optional display-only
+    free-text "keyer label" (the BME staff name written in the sheet) for rows
+    created by the Legacy Sheet Sync, printed in the form's ผู้ส่งเครื่อง/
+    ผู้รับเครื่อง (BME) column instead of the sync service user's name. It is
+    not a user, grants nothing, and does not change attribution in audit logs
+    (the actor stays the sync service user). One nullable column (migration).
+- **Reason:** make printed daily forms match the pool team's paper forms for
+  rows that still arrive from the Google Sheet.
+- **Amends:** "2026-10-21 — Governance: temporary demo-only legacy pool sheet shadow sync" item 6 (both parts: ward-side names are no longer "never stored" for the "ชื่อ (User)" column per D21, and "ชื่อ BME" is no longer "only inside the operation note" per D22; still no users are created or mapped from either name), `docs/BUSINESS_RULES.md`
+  (D7 line). Not changed: ward staff are not application users; four states;
+  HN safeguards; no MEMS integration.
+- **Source:** Owner decisions in chat, 2026-11-26. Docs-only Governance PR.
+- **Status:** Approved; implementation in the report visual-match PR.

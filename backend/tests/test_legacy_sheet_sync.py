@@ -31,6 +31,7 @@ from app.services.legacy_sheet_sync.sheet_parser import (
     _parse_time,
     parse_tab,
 )
+from app.services.system_notes import is_system_note, operator_note
 from app.services.legacy_sheet_sync.sheets_client import GoogleSheetsReader, SheetsError
 
 DISPATCH_HEADER = [
@@ -41,7 +42,7 @@ RECEIPT_HEADER = [
     "ลำดับ", "วันที่", "เลขที่ใบรับเครื่อง", "SCAN CODE (nsmart)", "ME.Code", "", "Equipment", "", "", "",
     "แผนกที่รับ", "หน้าจอไม่แตก", "สายชาร์จ", "ขาจับเสา", "จำนวน", "หมายเหตุ", "เวลา", "ชื่อ BME", "ชื่อ (User)",
 ]
-WARD_SIDE_NAME = "Nickname-Zed"  # column T: must never be stored
+WARD_SIDE_NAME = "Nickname-Zed"  # column T: stored ONLY as the D7 ward contact name, never in a note
 
 
 def when(hours_ago: float) -> datetime:
@@ -129,6 +130,23 @@ async def test_patient_like_and_bad_rows_skipped_without_echo():
     assert len(parsed.rows) == 1
 
 
+async def test_ward_side_name_parsed_as_contact_name_only():
+    r = parse_tab(KIND_DISPATCH, [DISPATCH_HEADER, drow("0a1b2c3d", 1)]).rows[0]
+    assert r.user_name == WARD_SIDE_NAME and WARD_SIDE_NAME not in runner.build_note(r)
+    old_header = [h for h in DISPATCH_HEADER if "(User)" not in h]  # older sheet without the column
+    row = drow("0a1b2c3d", 1)[:-1]
+    assert parse_tab(KIND_DISPATCH, [old_header, row]).rows[0].user_name == ""
+    hn = drow("0a1b2c3e", 1)
+    hn[-1] = "HN 1234567"
+    assert parse_tab(KIND_DISPATCH, [DISPATCH_HEADER, hn]).rows == []  # still HN-screened
+
+
+async def test_system_note_filter():
+    assert is_system_note(runner.build_note(parse_tab(KIND_DISPATCH, [DISPATCH_HEADER, drow("0a1b2c3d", 1)]).rows[0]))
+    assert operator_note("Legacy sheet receipt row 0a1b2c3d; BME x") is None
+    assert operator_note("ฝาเครื่องร้าว") == "ฝาเครื่องร้าว" and operator_note(None) is None
+
+
 async def test_accessory_flags_only_in_summary_and_notes_not_imported():
     r = parse_tab(KIND_DISPATCH, [DISPATCH_HEADER, drow("0a1b2c3d", 1, marks=("✓", "✗", "✓"), note="secret free text")]).rows[0]
     note = runner.build_note(r)
@@ -160,6 +178,10 @@ async def test_dispatch_applied_then_return_applied_against_it(world):
         tx = (await db.execute(select(BorrowTransaction))).scalar_one()
         assert tx.id == runner.op_id_for("dispatch", "0a1b2c3d")  # dispatch tx id == op_id
         assert "BME Somchai" in tx.notes and "สายชาร์จ ✗" in tx.notes and WARD_SIDE_NAME not in tx.notes
+        assert tx.dispatch_contact_name == WARD_SIDE_NAME  # D7: the sheet's "ชื่อ (User)"
+        assert tx.dispatch_keyer_label == "Somchai"  # D22: display-only BME label
+        assert tx.borrower_user_id is not None  # the actor stays the sync service user
+        assert is_system_note(tx.notes) and operator_note(tx.notes) is None  # never printed
         assert tx.status.value == "open"
     reader.tabs["ข้อมูลรับเครื่องมือ"].append(rrow("0a1b2c3e", 1))
     rep = await runner.run_once(world, reader, make_cfg())
@@ -167,9 +189,13 @@ async def test_dispatch_applied_then_return_applied_against_it(world):
     async with world() as db:
         tx = (await db.execute(select(BorrowTransaction))).scalar_one()
         assert tx.status.value == "closed"
+        assert tx.receipt_contact_name == WARD_SIDE_NAME
+        assert tx.receipt_keyer_label == "Somchai" and tx.dispatch_keyer_label == "Somchai"
         ops = (await db.execute(select(ClientOperation))).scalars().all()
         assert {o.status for o in ops} == {"applied"} and {o.device_id for o in ops} == {runner.DEVICE_ID}
-        assert WARD_SIDE_NAME not in json.dumps([o.payload for o in ops])
+        for o in ops:  # the name travels only as the contact name, never inside a note
+            body = o.payload.get("dispatch") or o.payload.get("receipt") or {}
+            assert WARD_SIDE_NAME not in (body.get("notes") or "")
 
 
 async def test_run_once_survives_expiring_sessions_commit_and_rollback(db_engine, world, monkeypatch):
