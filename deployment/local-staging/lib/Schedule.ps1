@@ -34,20 +34,40 @@ function Get-MepPwshPath {
     operator time once already; a schedule that does it unattended, hourly,
     would be worse.
     #>
+    # A persisted task path must be stable and launchable by Task Scheduler in
+    # a non-interactive "run whether logged on or not" session. The Microsoft
+    # Store (MSIX) build lives under ...\WindowsApps\Microsoft.PowerShell_<ver>_...
+    # which changes on every Store update and cannot be launched from such a
+    # session (task result 0x80070002, file not found). So: MSI path first,
+    # then anything that is not under WindowsApps.
+    $msi = Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe'
+    if (Test-Path -LiteralPath $msi) { return $msi }
+
     $current = (Get-Process -Id $PID -ErrorAction SilentlyContinue).Path
-    if ($current -and (Split-Path -Leaf $current) -in @('pwsh', 'pwsh.exe')) {
+    if ($current -and (Split-Path -Leaf $current) -in @('pwsh', 'pwsh.exe') -and -not (Test-MepStorePwshPath $current)) {
         return $current
     }
-    $command = Get-Command -Name 'pwsh' -CommandType Application -ErrorAction SilentlyContinue |
+    $command = Get-Command -Name 'pwsh' -CommandType Application -All -ErrorAction SilentlyContinue |
+        Where-Object { -not (Test-MepStorePwshPath $_.Source) } |
         Select-Object -First 1
     if ($command) { return $command.Source }
-    throw (New-MepFailure @'
-PowerShell 7 (pwsh) was not found on PATH, so a scheduled backup cannot be
-registered against it.
-ACTION: Install PowerShell 7 and rerun. The task must run pwsh, not
-powershell.exe -- under Windows PowerShell 5.1 the backup fails on docker's
-ordinary progress output.
-'@)
+    throw (New-MepFailure (Get-MepStorePwshAction -Problem 'No stable (non-Store) PowerShell 7 was found, so a scheduled backup cannot be registered against it. / ไม่พบ PowerShell 7 แบบติดตั้งถาวร (ไม่ใช่ Microsoft Store) จึงลงทะเบียนงานสำรองข้อมูลไม่ได้'))
+}
+
+function Test-MepStorePwshPath {
+    param([string]$Path)
+    return [bool]($Path -and $Path -like '*\WindowsApps\*')
+}
+
+function Get-MepStorePwshAction {
+    param([string]$Problem)
+    return @"
+$Problem
+ACTION: ติดตั้ง PowerShell 7 แบบ MSI / install the MSI build:
+  winget install --id Microsoft.PowerShell --source winget
+(installs to C:\Program Files\PowerShell\7), then rerun .\schedule-backup.ps1 -Install.
+The task must run pwsh (not powershell.exe, not the Store/WindowsApps build).
+"@
 }
 
 function Get-MepBackupScriptPath {
@@ -195,6 +215,15 @@ function Show-MepBackupScheduleStatus {
     }
 
     Write-Host "Backup schedule: REGISTERED ($($task.State))" -ForegroundColor Green
+    $execute = $null
+    try { $execute = @($task.Actions)[0].Execute } catch { $execute = $null }
+    if ($execute) {
+        $execute = [Environment]::ExpandEnvironmentVariables(([string]$execute).Trim('"'))
+        if ((Test-MepStorePwshPath $execute) -or -not (Test-Path -LiteralPath $execute)) {
+            Write-Host "  WARNING: the task runs '$execute', which is a Microsoft Store (WindowsApps) path or does not exist." -ForegroundColor Red
+            Write-Host (Get-MepStorePwshAction -Problem 'Task Scheduler cannot launch this path (last result 0x80070002 = file not found). / Task Scheduler เปิดไฟล์นี้ไม่ได้') -ForegroundColor Yellow
+        }
+    }
     $info = Get-ScheduledTaskInfo -TaskName $Script:BackupTaskName -ErrorAction SilentlyContinue
     if ($info) {
         Write-Host "  Last run:  $($info.LastRunTime)"

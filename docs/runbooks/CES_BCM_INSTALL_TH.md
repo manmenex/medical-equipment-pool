@@ -231,6 +231,7 @@ checks ไม่ได้ จากนั้นสคริปต์ **แทน
 | อยากเริ่มขั้นตอนใหม่ / ล้างการ resume | ไฟล์ความคืบหน้าอยู่ที่ `C:\MEP\setup-state.json` (โฟลเดอร์แม่ของ `-InstallDir`) เปลี่ยนชื่อไฟล์นี้ (เช่น เป็น `setup-state.old.json`) แล้วรัน `setup-ces-bcm.ps1` ใหม่ ขั้นตอนจะเริ่มจากต้น แต่ install.ps1 และ clone รันซ้ำได้อย่างปลอดภัย ข้อมูล backup และ `.env` ไม่ถูกลบ |
 | แทนที่โค้ดจาก ZIP ล้มเหลวกลางทาง | สคริปต์ย้อนไฟล์เดิมกลับให้เอง; ถ้าแจ้งว่ากู้คืนไม่ครบ ไฟล์เดิมอยู่ในโฟลเดอร์ `.mep-old-*` ข้างโฟลเดอร์ติดตั้ง อย่าลบ แจ้งผู้ดูแลระบบ; โฟลเดอร์ `.mep-staging-*`/`.mep-peek-*` ที่ค้างลบได้ภายหลัง |
 | state file unreadable | ไฟล์ `C:\MEP\setup-state.json` เสีย ให้เปลี่ยนชื่อไฟล์แล้วรันซ้ำ (สิ่งที่ติดตั้งแล้วไม่ถูกแตะ) |
+| งานสำรองข้อมูลรายชั่วโมงขึ้น Last result `0x80070002` (2147942402, file not found) | งานชี้ไปที่ pwsh แบบ Microsoft Store (`C:\Program Files\WindowsApps\Microsoft.PowerShell_...`) ซึ่งเปลี่ยนพาธทุกครั้งที่ Store อัปเดตและ Task Scheduler เปิดไม่ได้เมื่อไม่มีใคร login: รัน `winget install --id Microsoft.PowerShell --source winget` (ลงที่ `C:\Program Files\PowerShell\7`) แล้วเปิด PowerShell 7 ใหม่ รัน `.\schedule-backup.ps1 -Install` ซ้ำ และ `.\schedule-backup.ps1` เพื่อตรวจว่าไม่มีคำเตือน |
 | install/drive/schedule ล้มเหลว | อ่านข้อความ ERROR/ACTION แล้วรันคำสั่งเดิมซ้ำ ขั้นที่เสร็จแล้วจะไม่ทำซ้ำ |
 | อย่างอื่น | ดูข้อ 8 ของ `PR24_LOCAL_STAGING_INSTALLATION_RUNBOOK.md` และ **อย่าแก้ฐานข้อมูลหรือ Docker volume เอง** |
 
