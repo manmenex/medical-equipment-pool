@@ -242,13 +242,14 @@ async def test_cutoff_before_baseline_is_unknown(client, seeded_users, db_sessio
     assert (await _get(client, staff, "day")).json()["infusion"]["chargers"]["system_value"] is None
 
 
-async def test_returned_to_owner_equipment_is_excluded_when_column_exists(client, seeded_users, db_session, monkeypatch):
-    w = await _scenario(db_session)
+async def test_returned_to_owner_equipment_is_excluded(client, seeded_users, db_session):
+    await _scenario(db_session)
     await db_session.commit()
     staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
     before = (await _get(client, staff, "night")).json()["infusion"]["bme_devices"]["system_value"]
-    # PR33 adds Equipment.returned_to_owner; emulate it without the column.
-    monkeypatch.setattr(Equipment, "returned_to_owner", property(lambda self: self.bcm_code == "BCM-34-006"), raising=False)
+    eq = (await db_session.execute(select(Equipment).where(Equipment.bcm_code == "BCM-34-006"))).scalar_one()
+    eq.returned_to_owner_at = datetime(2026, 7, 20, tzinfo=timezone.utc)
+    await db_session.commit()
     after = (await _get(client, staff, "night")).json()["infusion"]["bme_devices"]["system_value"]
     assert (before, after) == (3, 2)
 
@@ -642,3 +643,36 @@ async def test_override_insert_race_retries_instead_of_500(client, seeded_users,
     )
     assert r.status_code == 200, r.text
     assert r.json()["infusion"]["ready"]["override_value"] == 2 and calls["n"] == 2
+
+
+async def test_returned_to_owner_equipment_cannot_be_edited_or_status_changed(client, seeded_users):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    cat = (await client.post("/api/v1/categories", headers=admin, json={"name": "Loan Cat 34"})).json()["id"]
+    batch = await client.post(
+        "/api/v1/equipment/demo-loan-batch",
+        headers=admin,
+        json={
+            "shared": {"category_id": cat, "brand": "Acme", "model": "X1", "equipment_source": "demo", "owner_company": "Acme Co."},
+            "items": [{"serial_number": "R-34-1"}],
+            "dry_run": False,
+        },
+    )
+    assert batch.status_code == 200, batch.text
+    eq = batch.json()["created"][0]["id"]
+    assert (await client.post(f"/api/v1/equipment/{eq}/return-to-owner", headers=admin)).status_code == 200
+
+    patch = await client.patch(f"/api/v1/equipment/{eq}", headers=admin, json={"brand": "Other"})
+    assert patch.status_code == 409 and patch.json()["code"] == "EQUIPMENT_RETURNED_TO_OWNER"
+    status = await client.post(
+        f"/api/v1/equipment/{eq}/status", headers=admin, json={"status": "unavailable_defective", "reason": "x"}
+    )
+    assert status.status_code == 409 and status.json()["code"] == "EQUIPMENT_RETURNED_TO_OWNER"
+
+
+async def test_export_record_event_skips_when_equipment_lookup_finds_nothing(db_session):
+    from app.services import export_service
+
+    event = await export_service.record_event(
+        db_session, transaction_id=uuid.uuid4(), event_type="dispatch", event_at=datetime.now(timezone.utc)
+    )
+    assert event is None

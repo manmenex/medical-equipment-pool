@@ -24,6 +24,7 @@ from app.core.audit import (
 from app.core.db_errors import translate_integrity_error
 from app.core.exceptions import (
     EquipmentNotFoundError,
+    EquipmentReturnedToOwnerError,
     InvalidInputError,
     InvalidStatusTransitionError,
     MalformedQrCodeError,
@@ -441,6 +442,8 @@ async def update_equipment(
     equipment = await equipment_crud.get_by_id(db, equipment_id)
     if equipment is None:
         raise EquipmentNotFoundError("Equipment not found")
+    if equipment.returned_to_owner_at is not None:
+        raise EquipmentReturnedToOwnerError("Equipment was returned to its owner and can no longer be edited")
     before = _serialize(equipment)
 
     update_data = payload.model_dump(exclude_unset=True)
@@ -524,6 +527,8 @@ async def change_equipment_status(
     equipment = await equipment_crud.get_by_id(db, equipment_id)
     if equipment is None:
         raise EquipmentNotFoundError("Equipment not found")
+    if equipment.returned_to_owner_at is not None:
+        raise EquipmentReturnedToOwnerError("Equipment was returned to its owner; its status can no longer be changed")
     # Roadmap PR6-H2: this generic endpoint may only perform authorized
     # maintenance-lifecycle changes -- never a dispatch or receipt
     # transition, which must stay atomic with the corresponding

@@ -275,8 +275,8 @@ async def _category_equipment(db: AsyncSession, categories: list[EquipmentCatego
             )
         )
     ).scalars().all()
-    # `returned_to_owner` is added by Roadmap PR33; tolerate its absence.
-    return [e for e in rows if not getattr(e, "returned_to_owner", False)]
+    # Roadmap PR33 (D14): devices returned to their owner leave all counts.
+    return [e for e in rows if e.returned_to_owner_at is None]
 
 
 async def _stock_delta(
