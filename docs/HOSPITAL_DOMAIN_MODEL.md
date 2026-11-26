@@ -137,5 +137,12 @@ implementation must preserve the entered counts rather than infer them from
 equipment transactions. Exact schema, validation, and reporting remain for a
 separately approved PR; they are not introduced by this Governance Pack.
 
+**Narrow carve-out (Owner Governance 2026-11-26, D16):** Roadmap PR34 brings
+forward a Standby summary page only. It is derived from open dispatches without
+HN (plus pool stock from accessory checks against a staff-entered baseline) and
+is overridable by staff edits (system and edited values both stored, audited).
+The broader Standby Snapshot concept above, with its manually entered
+department-level counts, stays future work.
+
 See [`GLOSSARY.md`](GLOSSARY.md) for concise preferred terms and
 [`ARCHITECTURE_DECISIONS.md`](ARCHITECTURE_DECISIONS.md) for rationale.

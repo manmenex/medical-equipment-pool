@@ -32,7 +32,7 @@
 | Standby | An open dispatch without HN: equipment sitting at a ward, not in use for a patient; with HN it is in use | Not a snapshot; HN may be added later to convert it (D15) | Planned PR34 |
 | Standby summary | Staff-editable Night (08:00) / Day (20:00) cut-off summary of infusion-pump standby per ward, BME stock and pneumatic-pump use, with "Copy text" | Only infusion and pneumatic pumps; charger/clamp stock approximate (D16) | Planned PR34 |
 | Demo / loan equipment | Vendor-owned device registered by an Administrator with `equipment_source` demo or loan; its BCM Code field holds the manufacturer Serial Number | Not in the N Smart read-only export; returned via admin "คืนผู้ให้ยืม", not a fifth state (D14) | Planned PR33 |
-| Standby Snapshot | Manually entered department-level counts for a Day/Night period | Not derived from transactions or Shift Sessions; narrowly brought forward as the D16 Standby summary (PR34), broader scope stays future | Confirmed future (partly PR34) |
+| Standby Snapshot | Manually entered department-level counts for a Day/Night period | Not derived from transactions or Shift Sessions. The narrow D16 Standby summary (PR34) is derived from transactions but editable; the broader snapshot scope stays future | Confirmed future (partly PR34) |
 | Ready-to-use unit | Manually counted equipment available for standby reporting | Exact schema deferred | Confirmed future snapshot concept |
 | Charging cable | Separately counted standby accessory where required | Not inferred from equipment quantity | Confirmed future snapshot item |
 | Clamp | Separately counted standby accessory where required | Exact type/schema deferred | Confirmed future snapshot item |

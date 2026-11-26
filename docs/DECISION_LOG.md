@@ -9412,6 +9412,10 @@ opening-balance transactions are created.
     `DECOMMISSIONED`), and its history is kept. No fifth equipment state is
     added: exactly four states remain. The DECOMMISSIONED path is not used,
     because it would require marking the device defective first.
+    Return to owner has no reversal defined: it is irreversible unless
+    separately approved. The dispatch block is enforced in the dispatch
+    service. BCM Code uniqueness applies across pool and demo/loan devices
+    alike, so a serial cannot collide with a real BCM Code.
   - **D15 Standby rule:** an open dispatch WITHOUT HN = Standby at that ward; an
     open dispatch WITH HN = in use for a patient. Pool staff may add an HN
     later to an existing open dispatch (audited; every D1 safeguard applies:
@@ -9436,6 +9440,8 @@ opening-balance transactions are created.
   BCM Codes; the Owner's daily LINE standby message needs system support.
 - **Amends:** `AGENTS.md` (identifier line: pointer to the D14 exception; HN
   line: HN may be added later to an open dispatch under the same safeguards),
+  `AGENTS.md` ("Confirmed Future Workflow Direction": D16 carve-out),
+  `docs/HOSPITAL_DOMAIN_MODEL.md` ("Future Standby Snapshots": D16 pointer),
   `docs/BUSINESS_RULES.md`, `docs/GLOSSARY.md`, `docs/ROADMAP.md` (new PR33,
   PR34; Standby Snapshots partially brought forward), `knowledge/adr/ADR-002-identifier-model.md`
   (amendment), knowledge memory files. Supersedes the 2026-11-25 note that the

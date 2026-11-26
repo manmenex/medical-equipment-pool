@@ -47,7 +47,7 @@ serve.
 # Domain Guardrails (compact — see `docs/BUSINESS_RULES.md` and `docs/ARCHITECTURE_GUARDRAILS.md` for full rationale)
 
 - Only Equipment Pool staff record transactions; ward staff are not application users.
-- Exactly four equipment identifiers (UUID, BCM Code, Item No, Asset Number), each with one fixed role. "ME Code" is retired and must not be used (sole exception: the verbatim printed-daily-form column label "ME.Code", which shows the BCM Code value; see `docs/BUSINESS_RULES.md`, D12). Narrow exception (Owner Governance 2026-11-26, D14): for demo/loan equipment only, the BCM Code field holds the manufacturer Serial Number; identifier count and roles unchanged, see `docs/BUSINESS_RULES.md`).
+- Exactly four equipment identifiers (UUID, BCM Code, Item No, Asset Number), each with one fixed role. "ME Code" is retired and must not be used (sole exception: the verbatim printed-daily-form column label "ME.Code", which shows the BCM Code value; see `docs/BUSINESS_RULES.md`, D12). Narrow exception (Owner Governance 2026-11-26, D14): for demo/loan equipment only, the BCM Code field holds the manufacturer Serial Number; identifier count and roles unchanged, see `docs/BUSINESS_RULES.md`.
 - Exactly four equipment states; no cleaning state exists or may be added.
 - Equipment receipt is one atomic usable/defective operation; cleaning is never tracked.
 - Dispatch/receipt services own the transaction lifecycle; do not bypass them via manual status maintenance.
@@ -74,7 +74,10 @@ Do not introduce any of the above unless a task explicitly asks for it and cites
 
 Reporting metadata (`business_date` and `shift`) is planned for Roadmap PR16;
 Day and Night are values in one model, not separate tables. Standby Snapshots
-and any richer Shift Session workflow remain separate future work. Production
+and any richer Shift Session workflow remain separate future work, with one
+narrow carve-out: Owner Governance 2026-11-26 (D16) brings a derived-but-editable
+Standby summary forward in Roadmap PR34; the broader Standby Snapshots / Shift
+Session workflow stays future. Production
 runs on an Owner-designated department host (Governance 2026-10-13), and the
 system must stay portable to a managed platform. Do not build them ahead of their planned PR; do not
 design current work to contradict or block them. See
