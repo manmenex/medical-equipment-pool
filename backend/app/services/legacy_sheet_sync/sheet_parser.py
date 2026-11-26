@@ -51,6 +51,9 @@ _HN_PATTERNS = (
     re.compile(r"^\s*\d{6,}\s*$"),
 )
 _FAIL_MARKS = {"✗", "✘", "✕", "×", "x", "false", "no", "ไม่"}
+_OK_MARKS = {"✓", "✔", "☑", "√", "true", "yes", "ok", "/"}
+# Header prefixes (normalised) of the three D4 standard-checklist columns.
+_CHECK_HEADERS = {"screen": "หน้าจอ", "charger": "สายชาร์จ", "clamp": "ขาจับเสา"}
 _ROW_ID_RE = re.compile(r"^[0-9a-fA-F]{8}$")
 
 
@@ -60,6 +63,7 @@ class Columns:
     index: dict[str, int]
     accessories: list[tuple[int, str]]  # (column index, header label)
     ignored_for_hn: frozenset[int]
+    check_columns: dict[str, int] = field(default_factory=dict)  # screen/charger/clamp; {} unless all 3 map cleanly
 
 
 @dataclass(frozen=True)
@@ -74,6 +78,9 @@ class LegacyRow:
     bme_name: str
     user_name: str = ""  # ward-side person ("ชื่อ (User)") -> D7 contact name
     failed_accessories: tuple[str, ...] = ()
+    # D4 standard checklist from the sheet: screen/charger/clamp -> True (✓),
+    # False (✗) or None (blank/unknown). {} when the columns do not map cleanly.
+    check_marks: dict[str, bool | None] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -137,7 +144,31 @@ def detect_columns(kind: str, header: list[str]) -> Columns:
         accessories.append((i, label[:40]))
         if len(accessories) == 3:
             break
-    return Columns(kind, index, accessories, frozenset(ignored))
+    return Columns(kind, index, accessories, frozenset(ignored), _map_check_columns(accessories))
+
+
+def _map_check_columns(accessories: list[tuple[int, str]]) -> dict[str, int]:
+    """Map the accessory columns to screen/charger/clamp by header text. Any
+    deviation (not exactly three, a duplicate or an unrecognised header)
+    yields {} -- never guess a mapping."""
+    if len(accessories) != 3:
+        return {}
+    found: dict[str, int] = {}
+    for col, label in accessories:
+        key = next((k for k, pre in _CHECK_HEADERS.items() if _norm(label).startswith(_norm(pre))), None)
+        if key is None or key in found:
+            return {}
+        found[key] = col
+    return found
+
+
+def _mark(text: str) -> bool | None:
+    t = (text or "").strip().casefold()
+    if t in _OK_MARKS:
+        return True
+    if t in _FAIL_MARKS:
+        return False
+    return None
 
 
 _MONTHS: dict[str, int] = {}
@@ -259,6 +290,7 @@ def parse_tab(kind: str, values: list[list[str]]) -> ParsedTab:
         failed = tuple(
             label for (i, label) in cols.accessories if cells[i].strip().casefold() in _FAIL_MARKS
         )
+        marks = {k: _mark(cells[i]) for k, i in cols.check_columns.items()}
         out.rows.append(
             LegacyRow(
                 kind=kind,
@@ -271,6 +303,7 @@ def parse_tab(kind: str, values: list[list[str]]) -> ParsedTab:
                 bme_name=cell("bme")[:40],
                 user_name=_clean_person(cell("user") if "user" in cols.index else ""),
                 failed_accessories=failed,
+                check_marks=marks,
             )
         )
     return out
