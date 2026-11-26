@@ -8,8 +8,10 @@ lifecycle conflict lands in the existing review page. This module never
 touches equipment or transaction state directly and never writes to the
 sheet.
 
-Not imported: free-text notes, ward-side person names, anything that looks
-like a patient number (see ``sheet_parser``).
+Not imported: free-text notes, anything that looks like a patient number (see
+``sheet_parser``). The ward-side person ("ชื่อ (User)") is carried only into
+the D7 ward contact name. The trace note stored here is internal
+(``system_notes``) and is never printed.
 """
 import hashlib
 import logging
@@ -28,6 +30,7 @@ from app.crud import equipment as equipment_crud
 from app.crud import transaction as transaction_crud
 from app.models.client_operation import OP_STATUS_APPLIED, OP_STATUS_PENDING, OP_STATUS_RESOLVED
 from app.models.master_data import Ward
+from app.services.system_notes import SYSTEM_NOTE_PREFIX
 from app.models.transaction import BorrowTransaction, DispatchType, ReceiptOutcome, TransactionStatus
 from app.models.user import ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, Role, User
 from app.schemas.sync import OP_TYPE_DISPATCH, OP_TYPE_RECEIPT, SyncOperation, SyncReceiptBody
@@ -94,7 +97,7 @@ def _eq_key(raw: str) -> str:
 
 
 def build_note(row: LegacyRow) -> str:
-    parts = [f"legacy sheet {row.kind} row {row.row_id}"]
+    parts = [f"{SYSTEM_NOTE_PREFIX}{row.kind} row {row.row_id}"]
     if row.doc_no:
         parts.append(row.doc_no)
     if row.bme_name:
@@ -272,6 +275,7 @@ async def run_once(session_factory, reader: SheetReader, cfg: SyncConfig, *, dry
                 body = BorrowRequest(
                     equipment_id=str(eq.id), ward_id=str(ward.id),
                     dispatch_type=DispatchType.ON_DEMAND, notes=build_note(row),
+                    ward_contact_name=row.user_name or None,
                     # D8 (PR31): re-dispatch of an out/defective item is not
                     # blocked; the sheet row is the operator's confirmation.
                     acknowledge_status_warning=True,
@@ -298,7 +302,10 @@ async def run_once(session_factory, reader: SheetReader, cfg: SyncConfig, *, dry
                 report.counts["would_apply"] += 1
                 report.planned.append(f"receipt {row.row_id} {eq.bcm_code}")
                 continue
-            body = SyncReceiptBody(transaction_id=tx_id, receipt_outcome=ReceiptOutcome.USABLE, notes=build_note(row))
+            body = SyncReceiptBody(
+                transaction_id=tx_id, receipt_outcome=ReceiptOutcome.USABLE, notes=build_note(row),
+                ward_contact_name=row.user_name or None,
+            )
             await _submit(db, _envelope(row, user_id, receipt=body), user_id, row, report)
     logger.info(report.summary())
     return report

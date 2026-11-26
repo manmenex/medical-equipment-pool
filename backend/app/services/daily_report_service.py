@@ -36,6 +36,7 @@ from app.models.transaction import BorrowTransaction
 from app.models.user import User
 from app.schemas.checklist import report_columns
 from app.services.report_export_service import MAX_EXPORT_ROWS
+from app.services.system_notes import operator_note
 
 _BKK = ZoneInfo("Asia/Bangkok")
 
@@ -513,7 +514,7 @@ async def _load_events(db: AsyncSession, start: datetime, end: datetime) -> list
                     contact_name=t.dispatch_contact_name if kind == "dispatch" else t.receipt_contact_name,
                     checks=checks,
                     # `notes` is one column; a receipt overwrites the dispatch note.
-                    notes=t.notes if (kind == "receipt" or t.returned_at is None) else None,
+                    notes=operator_note(t.notes) if (kind == "receipt" or t.returned_at is None) else None,
                 )
             )
         if len(rows) > MAX_EXPORT_ROWS:

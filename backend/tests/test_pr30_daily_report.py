@@ -502,14 +502,56 @@ async def test_form_notes_label_non_infusion_equipment(db_session, seeded_users)
 
 
 @pytest.mark.asyncio
-async def test_null_checks_print_blank(db_session, seeded_users):
+async def test_null_checks_print_ticks_and_only_false_prints_cross(db_session, seeded_users):
+    """Legacy-sheet rows carry no checks (NULL); the Owner's tool prints a tick for them and
+    D4's default is checked, so only an explicit false prints a cross."""
     w = await _world(db_session, seeded_users)
     await _tx(db_session, w, ward=w.w6, category=w.pump, dispatched=at(28, 10), op_d=w.bme_a, bcm="BCM-NULL")
+    await _tx(db_session, w, ward=w.w6, category=w.pump, dispatched=at(28, 11), op_d=w.bme_a, bcm="BCM-BAD",
+              checks_d={"kind": "standard", "screen_ok": True, "charger_ok": False, "clamp_ok": True})
+    await db_session.commit()
+    report = await svc.build_daily_report(db_session, D, 60)
+    body = forms.render_forms_html(report, "dispatch", "day").split("<tbody>", 1)[1]
+    assert "BCM-NULL" in body
+    assert body.count("chk-ok") == 3 + 2 and body.count("chk-bad") == 1
+
+
+def test_check_cell_glyphs():
+    assert "chk-ok" in forms._check_cell(None) and "chk-ok" in forms._check_cell(True)
+    assert "chk-bad" in forms._check_cell(False)
+    assert "#22cc22" in forms._TICK and "#e02020" in forms._CROSS  # legacy green / red
+
+
+@pytest.mark.asyncio
+async def test_system_notes_never_printed_but_operator_notes_are(db_session, seeded_users):
+    w = await _world(db_session, seeded_users)
+    sync_note = "legacy sheet dispatch row be737745; Borrow1000000009210; BME Somchai"
+    await _tx(db_session, w, ward=w.w6, category=w.pump, dispatched=at(28, 10), op_d=w.bme_a, bcm="BCM-SYNC", notes=sync_note)
+    await _tx(db_session, w, ward=w.w6, category=w.pump, dispatched=at(28, 11), op_d=w.bme_a, bcm="BCM-OPER", notes="ฝาครอบร้าว")
     await db_session.commit()
     report = await svc.build_daily_report(db_session, D, 60)
     html_doc = forms.render_forms_html(report, "dispatch", "day")
-    assert "BCM-NULL" in html_doc
-    assert "chk-ok" not in html_doc.split("<tbody>", 1)[1] and "chk-bad" not in html_doc.split("<tbody>", 1)[1]
+    assert "legacy sheet" not in html_doc and "be737745" not in html_doc and "Borrow1000" not in html_doc
+    assert "ฝาครอบร้าว" in html_doc
+    wb = load_workbook(io.BytesIO(xlsx.build_daily_workbook_sync(report)))
+    cells = [str(c.value) for ws in wb.worksheets for row in ws.iter_rows() for c in row if c.value is not None]
+    assert not any("legacy sheet" in c or "be737745" in c for c in cells)
+    assert any("ฝาครอบร้าว" in c for c in cells)
+
+
+def test_form_font_is_bundled_ofl_serif_and_fits_only_when_overflowing():
+    css = forms._font_css()
+    assert "Trirong Form" in css and css.count("@font-face") == 2
+    fonts = forms._FONTS_DIR
+    assert (fonts / "Trirong-Regular.ttf").exists() and (fonts / "Trirong-Bold.ttf").exists()
+    assert "SIL Open Font License" in (fonts / "OFL-Trirong.txt").read_text()
+    # Legacy sizes (Angsana 14/15/18) scaled by one factor; data text keeps full size when it fits.
+    assert forms.FS_DATA == round(14 * forms.FONT_SCALE, 1) and forms.FS_TITLE > forms.FS_HEAD > forms.FS_DATA
+    assert forms._fit("ICU3", 49.5) == ""
+    shrunk = forms._fit("Emergency/Trauma Center", 49.5)
+    assert shrunk and float(re.search(r"font-size:([\d.]+)pt", shrunk).group(1)) >= forms.FS_MIN
+    html_doc = forms.render_forms_html(svc.DailyReport(D, 60, [], [], [], [], svc.Counts()), "dispatch", "day")
+    assert 'font-family: "Trirong Form", serif' in html_doc and "font-size: %spt" % forms.FS_DATA in html_doc
 
 
 @pytest.mark.asyncio
@@ -547,6 +589,38 @@ async def test_forms_pdf_renders_paginated_with_thai_font(client, seeded_users, 
     assert len(weasyprint.HTML(string=forms.render_forms_html(blank, "both", "both")).render().pages) == 6
     bad = await client.get("/api/v1/reports/daily-forms.pdf", headers=staff, params={"date": "2026-07-28", "shift": "x"})
     assert bad.status_code == 422
+
+
+def test_summary_sheet_styling_matches_legacy_workbook():
+    """Cell styling of the Owner's legacy workbook, on synthetic wards (layout slots, not names)."""
+    rows = [
+        svc.WardRow("Ward 5", "Standby support", "IPD ตึก A", "92D050"),
+        svc.WardRow("Ward 6", "Standby support", "IPD ตึก A", "92D050", None, True),
+        svc.WardRow("Ward 6 B", "Standby support", "IPD ตึก A", "92D050", None, True),
+        svc.WardRow("Clinic", "After request", "OPD", "F8CBAD"),
+    ]
+    report = svc.DailyReport(D, 60, [], rows, [], [], svc.Counts())
+    ws = load_workbook(io.BytesIO(xlsx.build_daily_workbook_sync(report)))["รายงาน"]
+    # Title spans A1:J1 (bold 13); ward names are default (left) aligned, not centred.
+    assert "A1:J1" in {str(m) for m in ws.merged_cells.ranges}
+    assert ws["A1"].font.b and ws["A1"].font.sz == 13
+    for r in (5, 6, 7, 8):
+        assert ws.cell(r, 3).alignment.horizontal in (None, "general", "left")
+    # Grey (DDD9C4) follows the layout slot: the ward-name cell AND the count cells.
+    for r, grey in ((5, False), (6, True), (7, True), (8, False)):
+        for c in (3, 4, 5, 6, 7, 8, 9, 10):
+            fill = ws.cell(r, c).fill
+            assert (fill.fill_type == "solid" and fill.start_color.rgb.endswith("DDD9C4")) == grey, (r, c)
+    # Group labels are bold on their colour; mode labels red / purple like the legacy file.
+    assert ws["B5"].font.b and ws["B5"].fill.start_color.rgb.endswith("92D050")
+    assert ws["A5"].font.color.rgb.endswith("FF0000") and ws["A8"].font.color.rgb.endswith("7030A0")
+    assert ws["B8"].font.b and ws["B8"].fill.start_color.rgb.endswith("F8CBAD")
+    assert ws.freeze_panes == "D5" and ws.row_dimensions[3].height == 36
+    assert [ws.column_dimensions[c].width for c in "ABCDEFGHIJ"] == [15, 14, 24, 8, 8, 8, 8, 8, 11, 11]
+    assert ws.sheet_properties.pageSetUpPr.fitToPage and ws.page_setup.fitToWidth == 1 and ws.page_setup.fitToHeight == 0
+    # Turnover column of the pool table is bold on its blue fill.
+    start = next(r for r in range(1, ws.max_row) if ws.cell(r, 1).value == "ลำดับ")
+    assert ws.cell(start + 2, 10).font.b and ws.cell(start + 2, 10).fill.start_color.rgb.endswith("DDEBF7")
 
 
 @pytest.mark.asyncio

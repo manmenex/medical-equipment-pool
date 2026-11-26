@@ -70,7 +70,11 @@ _THIN = Side(style="thin")
 _BOX = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 _CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
 _LEFT = Alignment(horizontal="left", vertical="center")
+# The legacy file leaves ward names at the default (text left) alignment.
+_GENERAL = Alignment()
 _BOLD = Font(bold=True)
+# Dispense-mode label colours in the legacy file (red / purple).
+_MODE_FONT_COLORS = {"Standby support": "FF0000", "After request": "7030A0"}
 
 
 def _fill(rgb: str) -> PatternFill:
@@ -186,7 +190,7 @@ def _summary_sheet(ws: Worksheet, report: DailyReport, standby: dict[str, int] |
                 for f in ("night_dispatch", "night_receipt", "day_dispatch", "day_receipt"):
                     setattr(tot, f, getattr(tot, f) + getattr(c, f))
                 grey = ward_row.shaded
-                _put(ws, row, 3, label, align=_CENTER)
+                _put(ws, row, 3, label, align=_GENERAL, fill="DDD9C4" if grey else None)
                 values = [c.night_dispatch, c.night_receipt, c.day_dispatch, c.day_receipt]
                 for col, v in zip((4, 5, 6, 7), values):
                     _put(ws, row, col, _blank0(v), fill="DDD9C4" if grey else None)
@@ -195,11 +199,11 @@ def _summary_sheet(ws: Worksheet, report: DailyReport, standby: dict[str, int] |
                 _put(ws, row, 10, _blank0(c.total_receipt), fill="DDD9C4" if grey else None)
                 row += 1
             for r in range(group_start, row):
-                _put(ws, r, 2, treatment if r == group_start else None, fill=color if r == group_start else None)
+                _put(ws, r, 2, treatment if r == group_start else None, bold=r == group_start, fill=color if r == group_start else None)
             _merge(ws, group_start, 2, row - 1, 2)
         for r in range(mode_start, row):
             _put(ws, r, 1, mode if r == mode_start else None)
-        ws.cell(mode_start, 1).font = Font(color="FF0000") if mode == "Standby support" else Font()
+        ws.cell(mode_start, 1).font = Font(color=_MODE_FONT_COLORS[mode]) if mode in _MODE_FONT_COLORS else Font()
         _merge(ws, mode_start, 1, row - 1, 1)
     first_data, last_data = 5, row - 1
     _put(ws, row, 1)
@@ -250,7 +254,7 @@ def _summary_sheet(ws: Worksheet, report: DailyReport, standby: dict[str, int] |
         _merge(ws, row, 2, row, 3)
         vals = [c.night_dispatch, c.night_receipt, c.day_dispatch, c.day_receipt, c.total_dispatch, c.total_receipt, c.total]
         for col, v in zip(range(4, 11), vals):
-            _put(ws, row, col, _blank0(v), fill="DDEBF7" if col == 10 else None)
+            _put(ws, row, col, _blank0(v), bold=col == 10, fill="DDEBF7" if col == 10 else None)
         row += 1
     for col in (1, 2, 3):
         _put(ws, row, col)
@@ -270,6 +274,7 @@ def _summary_sheet(ws: Worksheet, report: DailyReport, standby: dict[str, int] |
     for text in notes:
         _write_cell(ws, row=row, column=1, value=text)
         row += 1
+    _merge(ws, 1, 1, 1, 10)  # the legacy title spans A1:J1
     ws.freeze_panes = "D5"
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.page_setup.fitToHeight = 0
