@@ -578,3 +578,67 @@ async def test_monitor_flags_open_dispatches_so_add_hn_can_be_offered(client, se
     assert by_code["BCM-34-005"]["is_open"] is False  # received
     receipts = (await client.get("/api/v1/monitor/events", headers=staff, params={**params, "kind": "receipt"})).json()["items"]
     assert receipts and all(r["is_open"] is False for r in receipts)
+
+
+async def test_copy_text_shows_dash_for_every_zero_or_blank(client, seeded_users, db_session):
+    await _scenario(db_session)
+    await _baseline(db_session)
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    for key in ("ward:W5A", "bme_devices", "chargers", "clamps", "ready", "pneumatic_in_use", "pneumatic_returned"):
+        r = await client.put(
+            "/api/v1/standby-summary/overrides",
+            headers=staff,
+            json={"date": "2026-07-28", "cutoff": "night", "field_key": key, "value": 0},
+        )
+        assert r.status_code == 200, r.text
+    text = (await _get(client, staff, "night", "/text")).text
+    assert text == (
+        "Infusion pump standby\n28/07/2026\nW5A = -\nW5B = -\n"
+        "BME = เครื่องใหม่ - เครื่อง\n🟢พร้อมใช้งาน - เครื่อง\nสายชาร์จ = -  Clamp = -\n"
+        "🟡 Pneumatic PUMP🟡\nเครื่องที่ใช้งานอยู่ ⏩ : -\nรับคืนเครื่องวันนี้ ⏩ : -"
+    )
+
+
+async def test_redispatch_closed_transaction_open_state_at_cutoff(client, seeded_users, db_session):
+    w = await _world(db_session)
+    eq = await _eq(db_session, w, w.infusion, EquipmentStatus.ISSUED_TO_WARD)
+    a = await _tx(db_session, w, eq, w.w5a, at(27, 21))
+    a.status = TransactionStatus.CLOSED
+    a.close_reason = "closed by re-dispatch, receipt not recorded"
+    await _tx(db_session, w, eq, w.w5b, at(28, 9))  # B: re-dispatch after the night cut-off (08:00)
+    await db_session.commit()
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    night = _wards((await _get(client, staff, "night")).json())
+    day = _wards((await _get(client, staff, "day")).json())
+    # Night 08:00: B not yet dispatched -> A still open at W5A.
+    assert (night["W5A"]["system_value"], night["W5B"]["system_value"]) == (1, 0)
+    # Day 20:00: B at W5B, A closed.
+    assert (day["W5A"]["system_value"], day["W5B"]["system_value"]) == (0, 1)
+
+
+async def test_override_insert_race_retries_instead_of_500(client, seeded_users, db_session, monkeypatch):
+    from sqlalchemy.exc import IntegrityError
+
+    await _scenario(db_session)
+    await db_session.commit()
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    real = svc._set_override_once
+    calls = {"n": 0}
+
+    async def racing(db, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # A concurrent request wins the insert first.
+            db.add(StandbySummaryOverride(summary_date=D, cutoff="night", section="infusion", field_key="ready", value=7))
+            await db.commit()
+            raise IntegrityError("insert", {}, Exception("unique"))
+        return await real(db, **kw)
+
+    monkeypatch.setattr(svc, "_set_override_once", racing)
+    r = await client.put(
+        "/api/v1/standby-summary/overrides",
+        headers=staff,
+        json={"date": "2026-07-28", "cutoff": "night", "field_key": "ready", "value": 2},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["infusion"]["ready"]["override_value"] == 2 and calls["n"] == 2

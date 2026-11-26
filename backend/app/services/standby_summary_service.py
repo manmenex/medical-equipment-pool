@@ -43,6 +43,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import Request
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import (
@@ -460,7 +461,8 @@ async def standby_by_label(db: AsyncSession, report_date: date) -> dict[str, int
 
 
 def _num(v: int | None) -> str:
-    return "-" if v is None else str(v)
+    """Owner decision: every zero (and every blank) shows as "-" in the LINE text."""
+    return "-" if not v else str(v)
 
 
 def render_text(summary: StandbySummary) -> str:
@@ -485,7 +487,18 @@ def render_text(summary: StandbySummary) -> str:
 # --------------------------------------------------------------------------
 
 
-async def set_override(
+async def set_override(db: AsyncSession, **kwargs) -> StandbySummaryOverride | None:
+    """Race-safe upsert: two concurrent first edits of the same key collide on
+    the unique (date, cut-off, field_key) constraint; the loser rolls back and
+    retries once, now finding the row and updating it. Never a 500."""
+    try:
+        return await _set_override_once(db, **kwargs)
+    except IntegrityError:
+        await db.rollback()
+        return await _set_override_once(db, **kwargs)
+
+
+async def _set_override_once(
     db: AsyncSession,
     *,
     summary_date: date,
