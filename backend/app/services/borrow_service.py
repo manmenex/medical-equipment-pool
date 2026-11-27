@@ -579,18 +579,11 @@ async def return_equipment(
         # Before record_event, which stays the last write (section 6.3).
         await client_op_crud.write_applied(db, client_op, transaction_id=tx.id, occurred_at=tx.returned_at)
     # Roadmap PR25B: last write before commit (see borrow() above).
-    # D28: a receipt that was voided (transaction reopened) and is received
-    # again already has its (transaction, receipt) export event, and
-    # uq_export_events_transaction_type allows one. Do not crash the receipt;
-    # the export API's compensating-event wiring owns re-emitting it.
-    if await db.scalar(
-        select(ExportEvent.seq).where(
-            ExportEvent.transaction_id == tx.id, ExportEvent.event_type == EVENT_TYPE_RECEIPT
-        )
-    ) is None:
-        await export_service.record_event(
-            db, transaction_id=tx.id, event_type=EVENT_TYPE_RECEIPT, event_at=tx.returned_at
-        )
+    # D28: a re-received transaction (after a receipt void) emits a fresh
+    # receipt event; export_events allows repeated (transaction, type) rows.
+    await export_service.record_event(
+        db, transaction_id=tx.id, event_type=EVENT_TYPE_RECEIPT, event_at=tx.returned_at
+    )
     if not _commit:
         await db.refresh(tx, attribute_names=["equipment"])
         return tx
@@ -934,6 +927,9 @@ async def _void_event(
         ) from None
     await db.refresh(tx)
     after["equipment_status_restored_to"] = restore.value
+    # D28 export API: withdraw (inside the hold-back window) or compensate
+    # (already visible) the voided event. Touches no HN.
+    await export_service.record_void(db, tx=tx, voided_kind=target.event)
     return after
 
 
