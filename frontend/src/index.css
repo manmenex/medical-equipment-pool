@@ -177,3 +177,15 @@ header a,
 header button {
   white-space: nowrap;
 }
+
+/* Native dropdown lists: some browsers paint the option popup white while
+   inheriting the light theme-text colour, making options unreadable in dark
+   mode. Give options explicit colours from the active theme. */
+select option,
+select optgroup {
+  background-color: var(--field);
+  color: var(--text);
+}
+select option:disabled {
+  color: var(--muted);
+}
