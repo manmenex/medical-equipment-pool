@@ -14,7 +14,9 @@ import { startOfflineServices } from "@/offline/lifecycle";
 import { fetchSyncConflicts } from "@/services/syncReview";
 import { logout as apiLogout } from "@/services/auth";
 import { useAuthStore } from "@/store/authStore";
-import { applyTheme, useUiStore } from "@/store/uiStore";
+import { useSaveUserTheme, useUserTheme } from "@/hooks/useUserTheme";
+import { applyPreferences, readCachedPreferences } from "@/lib/theme";
+import { useUiStore } from "@/store/uiStore";
 
 const BASE_NAV_ITEMS = [
   { to: "/", label: "หน้าหลัก", icon: "🏠" },
@@ -44,6 +46,8 @@ export function AppShell() {
   const theme = useUiStore((s) => s.theme);
   const setTheme = useUiStore((s) => s.setTheme);
   const logoutStore = useAuthStore((s) => s.logout);
+  const { prefs, isLoading: prefsLoading } = useUserTheme();
+  const saveTheme = useSaveUserTheme();
 
   // PR25E S4: sync worker + snapshot refresh run for the whole signed-in shell.
   useEffect(() => startOfflineServices(), []);
@@ -63,9 +67,13 @@ export function AppShell() {
     : BASE_NAV_ITEMS;
 
   const toggleTheme = () => {
-    const next = theme === "dark" ? "light" : "dark";
+    const next: "light" | "dark" = theme === "dark" ? "light" : "dark";
     setTheme(next);
-    applyTheme(next);
+    // Never overwrite saved custom prefs with a bare mode: merge into the
+    // loaded copy, else the cached one (the toggle is disabled while loading).
+    const nextPrefs = { ...(prefs ?? readCachedPreferences() ?? {}), mode: next };
+    applyPreferences(nextPrefs);
+    saveTheme.mutate(nextPrefs);
   };
 
   const handleLogout = async () => {
@@ -137,6 +145,7 @@ export function AppShell() {
             <OfflineStatusChip />
             <button
               onClick={toggleTheme}
+              disabled={prefsLoading}
               className="rounded-lg px-2 py-1 text-lg hover:bg-black/5 dark:hover:bg-white/5"
               aria-label="สลับธีมสว่าง/มืด"
             >

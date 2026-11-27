@@ -212,3 +212,31 @@ async def test_migration_0036_keyer_labels_round_trip():
             await engine.dispose()
     finally:
         await _drop_scratch_database()
+
+
+async def test_migration_0037_user_ui_preferences_round_trip():
+    """Additive nullable users.ui_preferences; downgrade drops it, upgrade restores it."""
+    try:
+        await _recreate_scratch_database()
+    except Exception as exc:
+        pytest.skip(f"Cannot create scratch database for migration test: {exc}")
+    q = text(
+        "SELECT count(*) FROM information_schema.columns "
+        "WHERE table_name='users' AND column_name='ui_preferences'"
+    )
+    try:
+        _run_alembic("upgrade", "head")
+        engine = create_async_engine(_scratch_dsn("postgresql+asyncpg"))
+        try:
+            async with engine.connect() as conn:
+                assert (await conn.execute(q)).scalar() == 1
+            _run_alembic("downgrade", "0036_keyer_labels")
+            async with engine.connect() as conn:
+                assert (await conn.execute(q)).scalar() == 0
+            _run_alembic("upgrade", "head")
+            async with engine.connect() as conn:
+                assert (await conn.execute(q)).scalar() == 1
+        finally:
+            await engine.dispose()
+    finally:
+        await _drop_scratch_database()

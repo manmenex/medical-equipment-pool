@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 import { queryClient } from "@/lib/queryClient";
+import { applyPreferences, cachePreferences } from "@/lib/theme";
 import { wipeOnLogout } from "@/offline/offlineStore";
 import type { UserProfile } from "@/types";
 
@@ -63,6 +64,9 @@ export const useAuthStore = create<AuthState>()(
       setUser: (user) => set({ user }),
       logout: () => {
         set({ accessToken: null, user: null });
+        // The theme belongs to the account: don't leave it for the next login.
+        cachePreferences(null);
+        applyPreferences(null);
         pendingWipe = wipeCachedData();
       },
     }),

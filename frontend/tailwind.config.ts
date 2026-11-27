@@ -27,7 +27,7 @@ export default {
         // status or other UI element maps to them anymore.
         status: {
           available: "#15803D",
-          borrowed: "#1D4ED8",
+          borrowed: "rgb(var(--accent-rgb, 29 78 216) / <alpha-value>)",
           pm: "#A16207",
           calibration: "#6D28D9",
           repair: "#C2410C",

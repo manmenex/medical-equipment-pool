@@ -11,7 +11,7 @@ import {
   useAuth,
 } from "@/hooks/useAuth";
 import { fetchSyncConflicts } from "@/services/syncReview";
-import { applyTheme, useUiStore } from "@/store/uiStore";
+import { ThemeSettings } from "@/components/ThemeSettings";
 
 type HubCard = { to: string; icon: string; title: string; description: string; badge?: number };
 
@@ -40,8 +40,6 @@ function HubCardLink({ card }: { card: HubCard }) {
 
 export function SettingsPage() {
   const { user } = useAuth();
-  const theme = useUiStore((s) => s.theme);
-  const setTheme = useUiStore((s) => s.setTheme);
 
   // Same role gates as the former sidebar entries (usability only; the
   // backend stays the authority).
@@ -104,11 +102,6 @@ export function SettingsPage() {
       : []),
   ];
 
-  const changeTheme = (value: "light" | "dark" | "system") => {
-    setTheme(value);
-    applyTheme(value);
-  };
-
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-4">
       <h1 className="text-lg font-semibold">ตั้งค่า</h1>
@@ -125,22 +118,7 @@ export function SettingsPage() {
         </Link>
       </div>
 
-      <div className="surface rounded-xl border p-4">
-        <div className="mb-2 text-sm font-medium">ธีม</div>
-        <div className="flex gap-2">
-          {(["light", "dark", "system"] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => changeTheme(t)}
-              className={`rounded-lg border px-3 py-1.5 text-sm ${
-                theme === t ? "border-status-borrowed bg-status-borrowed/10" : "border-[var(--border)]"
-              }`}
-            >
-              {t === "light" ? "สว่าง" : t === "dark" ? "มืด" : "ตามระบบ"}
-            </button>
-          ))}
-        </div>
-      </div>
+      <ThemeSettings />
 
       {dataCards.length > 0 && (
         <section aria-labelledby="data-mgmt-heading" className="flex flex-col gap-2">

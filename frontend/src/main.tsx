@@ -7,9 +7,11 @@ import { App } from "@/App";
 import "@/index.css";
 import { queryClient } from "@/lib/queryClient";
 import { captureInstallPrompt, registerServiceWorker } from "@/offline/pwa";
-import { applyTheme, useUiStore } from "@/store/uiStore";
+import { applyPreferences, readCachedPreferences } from "@/lib/theme";
+import { useUiStore } from "@/store/uiStore";
 
-applyTheme(useUiStore.getState().theme);
+// Instant paint: this account's cached theme, else the legacy local light/dark choice.
+applyPreferences(readCachedPreferences() ?? { mode: useUiStore.getState().theme });
 captureInstallPrompt();
 void registerServiceWorker().catch(() => undefined);
 

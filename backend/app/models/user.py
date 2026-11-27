@@ -81,6 +81,9 @@ class User(UUIDPKMixin, TimestampMixin, Base):
     email: Mapped[str] = mapped_column(String(255), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(20))
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Personal UI theme (mode, colours, font); validated by
+    # app.schemas.ui_preferences. NULL = app defaults. Not audited.
+    ui_preferences: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     role_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("roles.id", ondelete="RESTRICT"), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     # True whenever this account's current password was set by somebody
