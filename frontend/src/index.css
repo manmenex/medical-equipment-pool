@@ -15,6 +15,7 @@
   --divider: #cbd5e1;
   --focus: #1d4ed8;
   --shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+  --accent-rgb: 29 78 216;
 }
 
 .dark {
@@ -38,6 +39,31 @@ html,
 body,
 #root {
   height: 100%;
+}
+
+/* Personal font choice (set on :root by lib/theme.ts); unset = app default. */
+body {
+  font-family: var(--font-body, theme("fontFamily.sans"));
+}
+
+/* Print views never follow the personal theme: black on white. */
+.print-root {
+  --bg: #f5f7fb;
+  --surface: #ffffff;
+  --field: #ffffff;
+  --text: #0f172a;
+  --text-muted: #475569;
+  --placeholder: #64748b;
+  --border: #7f8ca1;
+  --divider: #cbd5e1;
+  --focus: #1d4ed8;
+  --accent-rgb: 29 78 216;
+  color: #0f172a;
+}
+@media print {
+  html {
+    font-size: 16px !important;
+  }
 }
 
 body {

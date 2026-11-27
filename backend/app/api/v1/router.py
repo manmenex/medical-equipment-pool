@@ -18,6 +18,7 @@ from app.api.v1 import (
     legacy_migration_authorities,
     legacy_reconciliation,
     master_data,
+    me_preferences,
     monitor,
     notifications,
     report_options,
@@ -55,3 +56,4 @@ api_router.include_router(legacy_reconciliation.runs_router)
 api_router.include_router(legacy_reconciliation.findings_router)
 api_router.include_router(cutover_readiness.router)
 api_router.include_router(sync.router)
+api_router.include_router(me_preferences.router)
