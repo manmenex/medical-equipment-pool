@@ -9614,7 +9614,8 @@ opening-balance transactions are created.
 - **Amends:** the two-state transaction lifecycle (ADR-005 / BUSINESS_RULES
   "Dispatch/Return owns transaction lifecycle"): adds a third transaction
   status `voided`. Voided transactions are kept in history and excluded from
-  reports, Standby, the daily Excel and the export.
+  reports, Standby, the daily Excel and every export except the read-only
+  export API, which carries them with status `voided`.
 - **Not changed:** exactly four equipment states, with no cleaning state; only
   the dispatch/receipt services change lifecycle; no ward-to-ward transfer
   tracking; every HN safeguard; no MEMS integration.
