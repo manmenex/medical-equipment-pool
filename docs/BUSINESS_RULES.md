@@ -101,7 +101,18 @@ Authorization is `administrator` and `equipment_pool_staff` (`app.api.v1.deps.WA
 
 Equipment Pool staff MAY record a patient HN (hospital number) on a dispatch. This narrowly amends the former "no patient tracking" rule; no other patient field (name, bed, etc.) exists and there is no patient-tracking workflow. Mandatory safeguards: HN is stored only in the database, encrypted at rest at the application level (key from the host `.env`, never in the repo, logs, or clear-text backups); masked by default in every UI view and revealed only by an explicit "แสดง HN" click by an authenticated user; every reveal is audited (who/when/which transaction, never the HN value); HN never appears in any printed report, PDF, Excel export, CSV, read-only export API, log, notification, or the legacy sheet sync/import (which keep dropping/skipping HN); no search by HN unless separately approved. **Add later (Owner Governance 2026-11-26, D15):** an HN may also be added afterwards to an existing open dispatch, audited, under every safeguard in this section. The Owner accepts PDPA responsibility; hospital legal/IT review is recommended; the retention policy is a future decision.
 
-- Source: `docs/DECISION_LOG.md` (2026-11-25).
+**HN to the N Smart keying tool (Owner Governance 2026-11-27, D29):** a single, narrow exception to "HN never appears in the read-only export API". The export API may include the decrypted HN of a dispatch only under all of the following conditions:
+- the caller uses an export key created with the explicit `hn` scope;
+- HN is served only on a **dedicated export listener**: its own port, bound to the loopback/tailnet IP or a Unix socket, and never mapped by the Tailscale Funnel/serve configuration. The normal app port never returns HN. A startup check refuses to enable HN if the Funnel/serve config exposes that port;
+- on that listener the allowlist checks the **socket peer address** against the administrator-configured allowlist (never forwarded headers), and any request that carries `Tailscale-Funnel-Request`, `X-Forwarded-For` or `Forwarded` is refused;
+- the transport is the same host (loopback or Unix socket), or TLS when the listener is on the tailnet IP (plain HTTP over WireGuard is not accepted);
+- only an administrator may create or revoke an `hn`-scoped key, and both actions are audited;
+- each response that contains HN writes one audit entry (key, count of HN values, time; never the values);
+- HN is never logged or cached by this system.
+
+Every other export, report, print, log, notification and the legacy sheet sync stay HN-free. HN still never travels to the sheet. Keys without the `hn` scope behave exactly as before. HN added later to an open dispatch (D15) is emitted to `hn`-scoped keys as an `hn_update` event; other keys never see it. Under D28, void and correction events never carry HN; the corrected follow-up dispatch carries the HN (to `hn`-scoped keys only) if the original had one. The export API keeps including legacy-sheet rows, labelled `origin = legacy_sheet`; the keying tool skips them. The ward contact name (a first name or nickname of ward staff) is personal data under PDPA; the Owner accepts exporting it to the keying tool. The external tool is responsible for protecting HN it receives (local storage, logs). This system still never calls N Smart.
+
+- Source: `docs/DECISION_LOG.md` (2026-11-25; 2026-11-27 D29).
 
 ## Dispatch/receipt entry flow and accessory checks (Owner Governance 2026-11-25)
 

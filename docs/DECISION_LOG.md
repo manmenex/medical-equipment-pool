@@ -9630,4 +9630,34 @@ opening-balance transactions are created.
 - **Source:** Owner decisions in chat, 2026-11-27 (1: all three layers, 2ข,
   3ก, plus switch action; ward-mismatch warning dropped). Docs-only Governance
   PR.
+## 2026-11-27 (sixth set) — App-keyed entries to N Smart; HN to the keying tool
+
+- **Decision (Owner, in chat, 2026-11-27):**
+  - **Transition (choice ก, with the sheet kept):** the existing N Smart
+    keying tool (NsmartReserve, external, not in this repo) also reads this
+    system's read-only export API and keys **app-originated** entries into N
+    Smart. It keeps reading the legacy Google Sheet. Export events therefore
+    carry `origin` (`app` | `legacy_sheet`), the BME keyer label and the
+    ward contact name, so sheet rows are never keyed twice.
+  - **D29 HN to the keying tool (choice ค, "needed in future"):** a narrow
+    exception lets the export API include the HN of a dispatch, only for a key
+    with the explicit `hn` scope (created or revoked by an administrator only,
+    audited), only on a dedicated listener never mapped by the Funnel (checked
+    at startup), only to allowlisted socket-peer addresses with
+    forwarding/Funnel headers refused, over TLS or the same host, with one count-only audit
+    entry per response containing HN, and never logged or cached by this system.
+  - Details: HN added later (D15) is emitted as `hn_update` to `hn`-scoped
+    keys only; D28 void/correction events never carry HN; legacy-sheet rows
+    stay in the export labelled `origin = legacy_sheet`; the ward contact name
+    is exported (PDPA scope accepted).
+- **Amends:** the HN safeguards (2026-11-25), which said "HN never appears in
+  the read-only export API", now carry this single exception. Not changed:
+  HN stays out of every report, print, Excel/CSV, log, notification and the
+  legacy sheet sync; HN is masked and its reveal audited in the UI; no HN
+  search; no MEMS integration (this system never calls N Smart; the external
+  tool does); demo/loan devices stay excluded from the export API.
+- **Risk accepted by the Owner:** HN leaves this system's database to the
+  keying tool's host, so PDPA responsibility extends to that tool's storage
+  and logs. Hospital legal/IT review is recommended.
+- **Source:** Owner decisions in chat, 2026-11-27. Docs-only Governance PR.
 - **Status:** Approved; implementation follows.
