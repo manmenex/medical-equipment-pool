@@ -737,3 +737,30 @@ async def test_verify_checklist_defective_receipt_ticks_fail_not_pass(db_session
     assert ["chk-ok" in c for c in cells(rows["SYN-OK"])] == [True] * 5 + [False]
     assert ["chk-ok" in c for c in cells(rows["SYN-BAD"])] == [True] * 4 + [False, True]
     assert "chk-bad" not in page
+
+
+@pytest.mark.asyncio
+async def test_receipt_form_never_prints_system_note_labels(db_session, seeded_users):
+    """Receipt BME column: keyer label, else receiving user's name; system-note text is never printed."""
+    from sqlalchemy import select
+    from sqlalchemy import update
+    w = await _world(db_session, seeded_users)
+    junk = "legacy sheet receipt row 0a1b2c3d; Return1; BME Somchai"
+    for code in ("BCM-GOOD", "BCM-JUNK", "BCM-NONE"):
+        await _tx(db_session, w, ward=w.w6, category=w.pump, dispatched=at(28, 9), received=at(28, 10),
+                  op_d=w.bme_a, op_r=w.bme_b, contact_r="WardPerson", bcm=code)
+    await db_session.commit()
+    for code, label in (("BCM-GOOD", "Somchai"), ("BCM-JUNK", junk)):
+        eq_id = (await db_session.execute(select(Equipment.id).where(Equipment.bcm_code == code))).scalar_one()
+        await db_session.execute(
+            update(BorrowTransaction).where(BorrowTransaction.equipment_id == eq_id).values(receipt_keyer_label=label))
+    await db_session.commit()
+    report = await svc.build_daily_report(db_session, D, 60)
+    by = {e.bcm_code: e for e in report.events if e.kind == "receipt"}
+    assert by["BCM-GOOD"].operator_name == "Somchai"
+    assert by["BCM-JUNK"].operator_name == "BME Beta" and by["BCM-NONE"].operator_name == "BME Beta"
+    assert by["BCM-GOOD"].contact_name == "WardPerson"
+    html_doc = forms.render_forms_html(report, "receipt", "day")
+    assert "legacy sheet" not in html_doc and "Somchai" in html_doc and "WardPerson" in html_doc
+    by["BCM-GOOD"].operator_name = junk  # print-time guard even if an upstream layer leaks
+    assert "legacy sheet" not in forms.render_forms_html(report, "receipt", "day")

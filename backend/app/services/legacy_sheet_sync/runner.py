@@ -30,7 +30,7 @@ from app.crud import equipment as equipment_crud
 from app.crud import transaction as transaction_crud
 from app.models.client_operation import OP_STATUS_APPLIED, OP_STATUS_PENDING, OP_STATUS_RESOLVED
 from app.models.master_data import Ward
-from app.services.system_notes import SYSTEM_NOTE_PREFIX
+from app.services.system_notes import SYSTEM_NOTE_PREFIX, clean_label
 from app.schemas.checklist import CHECKLIST_STANDARD, StandardChecks
 from app.services import checklist_service
 from app.models.transaction import BorrowTransaction, DispatchType, ReceiptOutcome, TransactionStatus
@@ -247,7 +247,9 @@ async def _store_keyer_label(db: AsyncSession, op: SyncOperation, row: LegacyRow
         tx = await db.get(BorrowTransaction, tx_id, populate_existing=True)
         if tx is None:
             return
-        label = row.bme_name.strip()[:100]
+        label = clean_label(row.bme_name.strip()[:100])
+        if label is None:
+            return
         if row.kind == KIND_DISPATCH:
             tx.dispatch_keyer_label = label
         else:

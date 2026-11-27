@@ -578,3 +578,44 @@ async def test_cryo_cuff_category_leaves_checks_null(world):
     rep = await runner.run_once(world, reader, make_cfg())
     assert rep.counts["applied"] == 1
     assert (await _only_tx(world)).dispatch_checks is None
+
+
+def test_receipt_tab_role_labelled_headers_are_mapped():
+    header = list(RECEIPT_HEADER)
+    header[-2], header[-1] = "ผู้รับเครื่อง (BME)", "ผู้ส่งเครื่องยืม (User)"
+    r = parse_tab(KIND_RECEIPT, [header, rrow("0a1b2c3d", 5)]).rows[0]
+    assert r.bme_name == "Somchai" and r.user_name == WARD_SIDE_NAME
+
+
+REAL_CHECKS = ["ตัวเครื่องหน้าจอไม่แตกร้าว", "สายชาร์จ (สายไม่ขาด)", "Pole Clamp (ไม่แตกหักไม่งอ)"]
+REAL_DISPATCH_HEADER = [
+    "ลำดับ", "วันที่", "เลขที่ใบส่งเครื่อง", "SCAN CODE ส่ง", "ME.Code", "", "Equipment", "", "", "", "", "แผนกที่ส่ง",
+    *REAL_CHECKS, "จำนวน", "หมายเหตุ", "เวลา", "ชื่อ BME", "ชื่อ (User)",
+]
+REAL_RECEIPT_HEADER = [
+    "ลำดับ", "วันที่", "เลขที่ใบรับเครื่อง", "SCAN CODE รับ", "ME.Code", "", "Equipment", "", "", "", "แผนกที่รับ",
+    *REAL_CHECKS, "จำนวน", "หมายเหตุ", "เวลา", "ชื่อ BME", "ชื่อ (User)",
+]
+
+
+def test_real_sheet_headers_map_checks_and_marks():
+    d = parse_tab(KIND_DISPATCH, [REAL_DISPATCH_HEADER, drow("0a1b2c3d", 3, marks=("✔", "❌", "✔️"))]).rows[0]
+    assert d.check_marks == {"screen": True, "charger": False, "clamp": True}
+    r = parse_tab(KIND_RECEIPT, [REAL_RECEIPT_HEADER, rrow("0a1b2c3e", 1, marks=("✔", "✖", "✔"))]).rows[0]
+    assert r.check_marks == {"screen": True, "charger": False, "clamp": True}
+    assert r.bme_name == "Somchai" and r.user_name == WARD_SIDE_NAME
+    assert list(r.failed_accessories) == [REAL_CHECKS[1]]
+
+
+async def test_receipt_end_to_end_with_real_headers(world):
+    reader = FakeReader(dispatch=[drow("0a1b2c3d", 3)], receipt=[rrow("0a1b2c3e", 1, marks=("✔", "✔", "✔"))])
+    reader.tabs["ข้อมูลส่งเครื่องมือ"][0] = REAL_DISPATCH_HEADER
+    reader.tabs["ข้อมูลรับเครื่องมือ"][0] = REAL_RECEIPT_HEADER
+    rep = await runner.run_once(world, reader, make_cfg())
+    assert rep.counts["applied"] == 2 and not rep.skipped
+    async with world() as db:
+        tx = (await db.execute(select(BorrowTransaction))).scalar_one()
+        assert tx.status.value == "closed"
+        assert tx.receipt_keyer_label == "Somchai" and tx.receipt_contact_name == WARD_SIDE_NAME
+        assert tx.receipt_checks is not None and tx.receipt_checks["screen_ok"] is True
+        assert not is_system_note(tx.receipt_keyer_label)

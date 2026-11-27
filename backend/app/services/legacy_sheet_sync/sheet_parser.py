@@ -41,19 +41,21 @@ _REQUIRED_COMMON = {
     "bcm": "mecode",
     "ward": "แผนก",
     "time": "เวลา",
-    "bme": "ชื่อbme",
+    "bme": ("ชื่อbme", "ชื่อ(bme)", "ผู้รับเครื่อง(bme)", "ผู้ส่งเครื่อง(bme)", "ผู้ส่งเครื่องยืม(bme)"),
 }
+# Optional ward-side person column; the receipt tab may label it by role.
+_USER_HEADERS = ("ชื่อ(user)", "ผู้รับเครื่อง(user)", "ผู้ส่งเครื่อง(user)", "ผู้ส่งเครื่องยืม(user)", "ผู้คืนเครื่อง(user)")
 _DOC_PREFIX = {KIND_DISPATCH: "เลขที่ใบส่ง", KIND_RECEIPT: "เลขที่ใบรับ"}
-_STOP_ACCESSORY = ("จำนวน", "หมายเหตุ", "เวลา", "ชื่อ")
+_STOP_ACCESSORY = ("จำนวน", "หมายเหตุ", "เวลา", "ชื่อ", "ผู้")
 
 _HN_PATTERNS = (
     re.compile(r"(?<![a-z])hn\s*[:.\-#]?\s*\d{3,}", re.IGNORECASE),
     re.compile(r"^\s*\d{6,}\s*$"),
 )
-_FAIL_MARKS = {"✗", "✘", "✕", "×", "x", "false", "no", "ไม่"}
+_FAIL_MARKS = {"✗", "✘", "✕", "✖", "❌", "×", "x", "false", "no", "ไม่"}
 _OK_MARKS = {"✓", "✔", "☑", "√", "true", "yes", "ok", "/"}
 # Header prefixes (normalised) of the three D4 standard-checklist columns.
-_CHECK_HEADERS = {"screen": "หน้าจอ", "charger": "สายชาร์จ", "clamp": "ขาจับเสา"}
+_CHECK_HEADERS = {"screen": ("หน้าจอ",), "charger": ("สายชาร์จ",), "clamp": ("clamp", "ขาจับเสา")}
 _ROW_ID_RE = re.compile(r"^[0-9a-fA-F]{8}$")
 
 
@@ -105,11 +107,13 @@ def tab_title(kind: str) -> str:
 def detect_columns(kind: str, header: list[str]) -> Columns:
     norm = [_norm(h) for h in header]
 
-    def find(prefix: str) -> int | None:
-        prefix = _norm(prefix)  # NFKC rewrites Thai sara-am, so both sides must be normalised
-        for i, h in enumerate(norm):
-            if h.startswith(prefix):
-                return i
+    def find(prefix) -> int | None:
+        prefixes = [prefix] if isinstance(prefix, str) else list(prefix)
+        for p in prefixes:
+            p = _norm(p)  # NFKC rewrites Thai sara-am, so both sides must be normalised
+            for i, h in enumerate(norm):
+                if h.startswith(p):
+                    return i
         return None
 
     wanted = dict(_REQUIRED_COMMON)
@@ -127,7 +131,7 @@ def detect_columns(kind: str, header: list[str]) -> Columns:
             f"Tab '{tab_title(kind)}': required header(s) not found: {', '.join(sorted(missing))}. "
             "The sheet layout may have changed."
         )
-    user_col = find("ชื่อ(user)")
+    user_col = find(_USER_HEADERS)
     if user_col is not None:
         index["user"] = user_col  # optional: older sheets may lack it
     scan = find("scancode")
@@ -155,15 +159,19 @@ def _map_check_columns(accessories: list[tuple[int, str]]) -> dict[str, int]:
         return {}
     found: dict[str, int] = {}
     for col, label in accessories:
-        key = next((k for k, pre in _CHECK_HEADERS.items() if _norm(label).startswith(_norm(pre))), None)
+        key = next((k for k, pres in _CHECK_HEADERS.items() if any(_norm(p) in _norm(label) for p in pres)), None)
         if key is None or key in found:
             return {}
         found[key] = col
     return found
 
 
+def _mark_text(text: str) -> str:
+    return (text or "").replace("\ufe0f", "").strip().casefold()
+
+
 def _mark(text: str) -> bool | None:
-    t = (text or "").strip().casefold()
+    t = _mark_text(text)
     if t in _OK_MARKS:
         return True
     if t in _FAIL_MARKS:
@@ -288,7 +296,7 @@ def parse_tab(kind: str, values: list[list[str]]) -> ParsedTab:
             skip("bad_date_or_time")
             continue
         failed = tuple(
-            label for (i, label) in cols.accessories if cells[i].strip().casefold() in _FAIL_MARKS
+            label for (i, label) in cols.accessories if _mark_text(cells[i]) in _FAIL_MARKS
         )
         marks = {k: _mark(cells[i]) for k, i in cols.check_columns.items()}
         out.rows.append(

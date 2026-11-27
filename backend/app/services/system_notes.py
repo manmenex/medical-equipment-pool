@@ -13,3 +13,10 @@ def is_system_note(note: str | None) -> bool:
 def operator_note(note: str | None) -> str | None:
     """The operator-entered remark, or None when the note is system text."""
     return None if is_system_note(note) else note
+
+
+def clean_label(label: str | None) -> str | None:
+    """A display label, or None when empty or system-note text (never printed)."""
+    if not label or not label.strip() or is_system_note(label):
+        return None
+    return label
