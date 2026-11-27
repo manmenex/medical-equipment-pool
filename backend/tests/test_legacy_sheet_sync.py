@@ -578,3 +578,10 @@ async def test_cryo_cuff_category_leaves_checks_null(world):
     rep = await runner.run_once(world, reader, make_cfg())
     assert rep.counts["applied"] == 1
     assert (await _only_tx(world)).dispatch_checks is None
+
+
+def test_receipt_tab_role_labelled_headers_are_mapped():
+    header = list(RECEIPT_HEADER)
+    header[-2], header[-1] = "ผู้รับเครื่อง (BME)", "ผู้ส่งเครื่องยืม (User)"
+    r = parse_tab(KIND_RECEIPT, [header, rrow("0a1b2c3d", 5)]).rows[0]
+    assert r.bme_name == "Somchai" and r.user_name == WARD_SIDE_NAME

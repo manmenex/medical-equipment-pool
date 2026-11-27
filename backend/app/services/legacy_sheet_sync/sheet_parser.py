@@ -41,10 +41,12 @@ _REQUIRED_COMMON = {
     "bcm": "mecode",
     "ward": "แผนก",
     "time": "เวลา",
-    "bme": "ชื่อbme",
+    "bme": ("ชื่อbme", "ชื่อ(bme)", "ผู้รับเครื่อง(bme)", "ผู้ส่งเครื่อง(bme)", "ผู้ส่งเครื่องยืม(bme)"),
 }
+# Optional ward-side person column; the receipt tab may label it by role.
+_USER_HEADERS = ("ชื่อ(user)", "ผู้รับเครื่อง(user)", "ผู้ส่งเครื่อง(user)", "ผู้ส่งเครื่องยืม(user)", "ผู้คืนเครื่อง(user)")
 _DOC_PREFIX = {KIND_DISPATCH: "เลขที่ใบส่ง", KIND_RECEIPT: "เลขที่ใบรับ"}
-_STOP_ACCESSORY = ("จำนวน", "หมายเหตุ", "เวลา", "ชื่อ")
+_STOP_ACCESSORY = ("จำนวน", "หมายเหตุ", "เวลา", "ชื่อ", "ผู้")
 
 _HN_PATTERNS = (
     re.compile(r"(?<![a-z])hn\s*[:.\-#]?\s*\d{3,}", re.IGNORECASE),
@@ -105,11 +107,13 @@ def tab_title(kind: str) -> str:
 def detect_columns(kind: str, header: list[str]) -> Columns:
     norm = [_norm(h) for h in header]
 
-    def find(prefix: str) -> int | None:
-        prefix = _norm(prefix)  # NFKC rewrites Thai sara-am, so both sides must be normalised
-        for i, h in enumerate(norm):
-            if h.startswith(prefix):
-                return i
+    def find(prefix) -> int | None:
+        prefixes = [prefix] if isinstance(prefix, str) else list(prefix)
+        for p in prefixes:
+            p = _norm(p)  # NFKC rewrites Thai sara-am, so both sides must be normalised
+            for i, h in enumerate(norm):
+                if h.startswith(p):
+                    return i
         return None
 
     wanted = dict(_REQUIRED_COMMON)
@@ -127,7 +131,7 @@ def detect_columns(kind: str, header: list[str]) -> Columns:
             f"Tab '{tab_title(kind)}': required header(s) not found: {', '.join(sorted(missing))}. "
             "The sheet layout may have changed."
         )
-    user_col = find("ชื่อ(user)")
+    user_col = find(_USER_HEADERS)
     if user_col is not None:
         index["user"] = user_col  # optional: older sheets may lack it
     scan = find("scancode")

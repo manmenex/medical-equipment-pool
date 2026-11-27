@@ -3,6 +3,12 @@ the Legacy Sheet Sync created before the label column was filled.
 
     python -m app.scripts.backfill_keyer_labels            # dry-run (default)
     python -m app.scripts.backfill_keyer_labels --apply    # write
+    python -m app.scripts.backfill_keyer_labels --repair            # dry-run repair
+    python -m app.scripts.backfill_keyer_labels --repair --apply    # write repair
+
+``--repair`` finds keyer labels / contact names that contain sheet-sync trace
+text ("legacy sheet ...") and rewrites a keyer label from the trace note's
+"BME <name>" part when parseable, else clears it to NULL. Counts only.
 
 Parses the BME name from the internal sheet-sync trace note
 ("legacy sheet <dispatch|receipt> row ...; BME <name>; ...") and sets
@@ -26,7 +32,7 @@ from app.db.session import AsyncSessionLocal
 from app.models.transaction import BorrowTransaction
 from app.models.user import User
 from app.services.legacy_sheet_sync.config import DEFAULT_EMPLOYEE_CODE, ENV_EMPLOYEE_CODE
-from app.services.system_notes import SYSTEM_NOTE_PREFIX
+from app.services.system_notes import SYSTEM_NOTE_PREFIX, is_system_note
 
 LABEL_MAX = 100
 AUDIT_ACTION = "KEYER_LABEL_BACKFILL"
@@ -43,8 +49,43 @@ def parse_bme(note: str | None) -> tuple[str, str] | None:
     for part in note.split("; ")[1:]:
         if part.startswith("BME "):
             name = part[4:].strip()[:LABEL_MAX]
-            return (m.group(1).lower(), name) if name else None
+            return (m.group(1).lower(), name) if name and not is_system_note(name) else None
     return None
+
+
+async def repair(*, apply: bool) -> dict[str, int]:
+    """Clear/rewrite labels that hold system-note text. Dry-run by default."""
+    counts = {"scanned": 0, "rewritten": 0, "cleared": 0}
+    pat = f"{SYSTEM_NOTE_PREFIX}%"
+    cols = ("dispatch_keyer_label", "receipt_keyer_label", "dispatch_contact_name", "receipt_contact_name")
+    async with AsyncSessionLocal() as db:
+        txs = (
+            await db.execute(
+                select(BorrowTransaction).where(or_(*(getattr(BorrowTransaction, c).ilike(pat) for c in cols)))
+            )
+        ).scalars().all()
+        for tx in txs:
+            counts["scanned"] += 1
+            for c in cols:
+                if not is_system_note(getattr(tx, c)):
+                    continue
+                new = None
+                if c.endswith("keyer_label"):
+                    parsed = parse_bme(getattr(tx, c))
+                    if parsed and parsed[0] == c.split("_")[0]:
+                        new = parsed[1]
+                setattr(tx, c, new)
+                counts["rewritten" if new else "cleared"] += 1
+        changed = counts["rewritten"] + counts["cleared"]
+        if apply and changed:
+            await audit_crud.create(
+                db, user_id=None, action=AUDIT_ACTION + "_REPAIR", entity_type="borrow_transaction",
+                entity_id=None, after_data={"rewritten": counts["rewritten"], "cleared": counts["cleared"]},
+            )
+            await db.commit()
+        else:
+            await db.rollback()
+    return counts
 
 
 async def backfill(*, apply: bool, employee_code: str | None = None) -> dict[str, int]:
@@ -106,7 +147,15 @@ async def backfill(*, apply: bool, employee_code: str | None = None) -> dict[str
 async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--apply", action="store_true", help="write changes (default: dry-run)")
+    parser.add_argument("--repair", action="store_true", help="repair labels containing system-note text")
     args = parser.parse_args()
+    if args.repair:
+        r = await repair(apply=args.apply)
+        print(f"{'APPLY' if args.apply else 'DRY-RUN'} repair: scanned={r['scanned']} "
+              f"rewritten={r['rewritten']} cleared={r['cleared']}")
+        if not args.apply:
+            print("Nothing written. Re-run with --repair --apply to write.")
+        return
     c = await backfill(apply=args.apply)
     print(f"{'APPLY' if args.apply else 'DRY-RUN'}: scanned={c['scanned']} "
           f"dispatch_labels={c['dispatch_labels']} receipt_labels={c['receipt_labels']} "

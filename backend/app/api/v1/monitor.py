@@ -12,6 +12,7 @@ from sqlalchemy import String, and_, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.services.system_notes import clean_label
 from app.api.v1.deps import EQUIPMENT_POOL_OPERATION_ROLES, require_roles
 from app.core.exceptions import InvalidInputError
 from app.core.reporting_time import business_date_and_shift, business_date_and_shift_sql
@@ -140,7 +141,7 @@ async def list_events(
                 ),
                 receipt_outcome=outcome,
                 # PR31 (D8) may add this column; read defensively.
-                keyer_label=t.dispatch_keyer_label if is_dispatch else t.receipt_keyer_label,
+                keyer_label=clean_label(t.dispatch_keyer_label if is_dispatch else t.receipt_keyer_label),
                 close_reason=getattr(t, "close_reason", None),
                 ward_contact_name=t.dispatch_contact_name if is_dispatch else t.receipt_contact_name,
                 has_hn=bool(t.has_hn),

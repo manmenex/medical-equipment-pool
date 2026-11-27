@@ -36,7 +36,7 @@ from app.models.transaction import BorrowTransaction, ReceiptOutcome
 from app.models.user import User
 from app.schemas.checklist import report_columns
 from app.services.report_export_service import MAX_EXPORT_ROWS
-from app.services.system_notes import operator_note
+from app.services.system_notes import clean_label, operator_note
 
 _BKK = ZoneInfo("Asia/Bangkok")
 
@@ -588,14 +588,18 @@ async def _load_events(db: AsyncSession, start: datetime, end: datetime) -> list
                     at=at,
                     local=at.astimezone(_BKK).replace(tzinfo=None),
                     operator_id=t.borrower_user_id if kind == "dispatch" else t.received_by_user_id,
-                    operator_name=(t.dispatch_keyer_label if kind == "dispatch" else t.receipt_keyer_label) or op_name or UNSPECIFIED_LABEL,
+                    operator_name=(
+                        clean_label(t.dispatch_keyer_label if kind == "dispatch" else t.receipt_keyer_label)
+                        or clean_label(op_name)
+                        or UNSPECIFIED_LABEL
+                    ),
                     transaction_id=t.id,
                     bcm_code=bcm or "",
                     source=source or "pool",
                     category_name=cat_name or UNSPECIFIED_LABEL,
                     ward_id=t.ward_id,
                     ward_name=ward_name or "",
-                    contact_name=t.dispatch_contact_name if kind == "dispatch" else t.receipt_contact_name,
+                    contact_name=clean_label(t.dispatch_contact_name if kind == "dispatch" else t.receipt_contact_name),
                     checks=checks,
                     defective=kind == "receipt" and t.receipt_outcome == ReceiptOutcome.DEFECTIVE,
                     # `notes` is one column; a receipt overwrites the dispatch note.

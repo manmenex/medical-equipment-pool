@@ -49,7 +49,7 @@ from app.services.daily_report_service import (
     format_date,
 )
 from app.services.equipment_badge import with_badge
-from app.services.system_notes import operator_note
+from app.services.system_notes import clean_label, operator_note
 
 FORM_TITLE = "แบบบันทึกการเบิก-จ่าย Equipment Pool"
 KIND_TITLES = {"dispatch": "ส่งเครื่อง", "receipt": "รับเครื่อง"}
@@ -180,7 +180,7 @@ def _row_html(e: DailyEvent | None, kind: str) -> str:
     if e is None:
         return "<tr>" + "<td><div class='c'></div></td>" * 9 + "</tr>"
     checks = "".join(f"<td><div class='c'>{_check_cell(e.checks.get(k))}</div></td>" for k in ("screen", "charger", "clamp"))
-    code, user, ward, bme = with_badge(e.bcm_code, e.source), e.contact_name or "", e.ward_name, e.operator_name
+    code, user, ward, bme = with_badge(e.bcm_code, e.source), clean_label(e.contact_name) or "", e.ward_name, clean_label(e.operator_name) or ""
     note = _note(e)
     return (
         f"<tr><td><div class='c code'>{_e(code)}</div></td>{checks}"
