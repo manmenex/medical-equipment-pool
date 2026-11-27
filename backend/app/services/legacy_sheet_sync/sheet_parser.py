@@ -138,6 +138,11 @@ def detect_columns(kind: str, header: list[str]) -> Columns:
     ignored = {index[k] for k in ("row_id", "date", "time", "doc_no")}
     if scan is not None:
         ignored.add(scan)
+    # Device-description block between the ME.Code and ward columns (equipment
+    # name, brand, model, serial number, photo link): a long numeric serial
+    # (e.g. a 10-digit pneumatic-pump SN) is not an HN. Free-text columns such
+    # as the note stay scanned.
+    ignored.update(range(index["bcm"] + 1, index["ward"]))
     # Accessory check-mark columns: the headers right after the ward column,
     # up to the first quantity/note/time/name header.
     accessories: list[tuple[int, str]] = []

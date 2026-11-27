@@ -619,3 +619,15 @@ async def test_receipt_end_to_end_with_real_headers(world):
         assert tx.receipt_keyer_label == "Somchai" and tx.receipt_contact_name == WARD_SIDE_NAME
         assert tx.receipt_checks is not None and tx.receipt_checks["screen_ok"] is True
         assert not is_system_note(tx.receipt_keyer_label)
+
+
+async def test_long_serial_in_device_columns_is_not_an_hn():
+    # Pneumatic pumps carry a 10-digit serial in the device-description block
+    # (between ME.Code and the ward column); that is not a patient identifier.
+    row = drow("0a1b2c3d", 1)
+    row[9] = "2300035982"
+    parsed = parse_tab(KIND_DISPATCH, [DISPATCH_HEADER, row])
+    assert parsed.skipped == [] and len(parsed.rows) == 1
+    # The same number in the note column is still treated as a possible HN.
+    parsed = parse_tab(KIND_DISPATCH, [DISPATCH_HEADER, drow("0a1b2c3e", 1, note="2300035982")])
+    assert [s.reason for s in parsed.skipped] == ["possible_patient_identifier"]
