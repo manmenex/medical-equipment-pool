@@ -12,7 +12,7 @@ import type { EquipmentSource, EquipmentStatus } from "@/types";
 const STATUS_OPTIONS: { value: EquipmentStatus | ""; label: string }[] = [
   { value: "", label: "ทุกสถานะ" },
   { value: "available_at_pool", label: "พร้อมใช้งาน" },
-  { value: "issued_to_ward", label: "จ่ายให้หอผู้ป่วยแล้ว" },
+  { value: "issued_to_ward", label: "จ่ายให้ Ward แล้ว" },
   { value: "unavailable_defective", label: "ไม่พร้อมใช้งาน" },
   { value: "decommissioned", label: "ปลดระวางถาวร" },
 ];

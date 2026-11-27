@@ -9,7 +9,7 @@ import type { EquipmentStatus } from "@/types";
 // duplicating the same four literals and risking future drift.
 export const STATUS_LABELS: Record<EquipmentStatus, string> = {
   available_at_pool: "พร้อมใช้งาน",
-  issued_to_ward: "จ่ายให้หอผู้ป่วยแล้ว",
+  issued_to_ward: "จ่ายให้ Ward แล้ว",
   unavailable_defective: "ไม่พร้อมใช้งาน",
   decommissioned: "ปลดระวางถาวร",
 };
