@@ -9517,3 +9517,21 @@ opening-balance transactions are created.
   HN safeguards; no MEMS integration.
 - **Source:** Owner decisions in chat, 2026-11-26. Docs-only Governance PR.
 - **Status:** Approved; implementation in the report visual-match PR.
+
+## 2026-11-27 — Printed Equipment Verify Checklist: pre-printed tick marks (amends D17)
+
+- **Decision (Owner, in chat, 2026-11-27):**
+  - **D23:** on the printed "Equipment Verify Checklist" (D17), each received
+    device's row is pre-printed with ✓ in Cleaner, Function Test, Run Test,
+    Battery Check and Pass (Fail blank), matching the pool team's legacy
+    form. For a device whose receipt outcome was defective, the row prints ✓
+    in Fail instead of Pass (the other columns as above). The ticks are a
+    printed template derived only from the existing receipt outcome; nothing
+    is recorded from the form, and the system still stores no cleaning or test
+    result. Staff correct the paper by hand when the actual check differs.
+- **Amends:** D17 ("all check cells printed blank"). Not changed: cleaning is
+  never tracked; no cleaning state, field or workflow; four states; HN never
+  printed.
+- **Source:** Owner decision in chat, 2026-11-27 (choices 1ก, 2ข). Docs-only
+  Governance PR.
+- **Status:** Approved; implementation follows.
