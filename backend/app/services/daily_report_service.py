@@ -342,6 +342,13 @@ def _slot_key(text: str) -> str:
     return "w" + key[4:] if key.startswith("ward") else key
 
 
+# Owner-confirmed ward-name aliases for layout slots whose label differs from
+# the hospital ward name (normalised with _slot_key).
+SLOT_ALIASES: dict[str, str] = {
+    "orthopedicunit": "Surgery +Ortho",
+}
+
+
 def _match_slot(m: WardMapping, slots: list[tuple[str, str, str, str]]) -> int | None:
     """Layout slot of a ward, by normalised name (admin short label first, then
     ward name): exact match first; then slot "Ward N" takes only "Ward N" /
@@ -354,6 +361,10 @@ def _match_slot(m: WardMapping, slots: list[tuple[str, str, str, str]]) -> int |
     for cand in candidates:
         if cand in norms:
             return norms.index(cand)
+    for cand in candidates:
+        alias = SLOT_ALIASES.get(cand)
+        if alias is not None and _slot_key(alias) in norms:
+            return norms.index(_slot_key(alias))
     for cand, orig in zip(candidates, originals):
         best: int | None = None
         for i, n in enumerate(norms):
