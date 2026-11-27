@@ -9599,7 +9599,13 @@ opening-balance transactions are created.
   - **Layer 1, prevention:** a one-tap switch between dispatch and receipt
     when the scanned device's state contradicts the page, plus a duplicate-scan
     warning. No warning for a different returning ward.
-  - **Layer 2, undo:** within 5 minutes, by the operator who saved (choice 2ข).
+  - **Layer 2, undo:** by the operator who saved, within 2 minutes for a
+    dispatch and 30 seconds for a receipt (revised from 5 minutes, choice 1,
+    to stay inside the external N Smart tool's send delays).
+  - **After the undo window (Owner):** the external tool re-keys the correction
+    in N Smart. The export API emits compensating events: a voided dispatch
+    yields a correction receipt first, and a voided receipt yields a correction
+    dispatch. The corrected event follows as a normal event.
   - **Layer 3, corrections:** void, change device, switch action
     (dispatch↔receipt; Owner addition), and the existing ward correction. Each
     needs a mandatory reason and is audited. Only the device's latest
