@@ -9641,9 +9641,15 @@ opening-balance transactions are created.
     ward contact name, so sheet rows are never keyed twice.
   - **D29 HN to the keying tool (choice ค, "needed in future"):** a narrow
     exception lets the export API include the HN of a dispatch, only for a key
-    with the explicit `hn` scope, only to allowlisted source IPs (never through
-    the public Funnel), over TLS or the same host, with one count-only audit
+    with the explicit `hn` scope (created or revoked by an administrator only,
+    audited), only on a dedicated listener never mapped by the Funnel (checked
+    at startup), only to allowlisted socket-peer addresses with
+    forwarding/Funnel headers refused, over TLS or the same host, with one count-only audit
     entry per response containing HN, and never logged or cached by this system.
+  - Details: HN added later (D15) is emitted as `hn_update` to `hn`-scoped
+    keys only; D28 void/correction events never carry HN; legacy-sheet rows
+    stay in the export labelled `origin = legacy_sheet`; the ward contact name
+    is exported (PDPA scope accepted).
 - **Amends:** the HN safeguards (2026-11-25), which said "HN never appears in
   the read-only export API", now carry this single exception. Not changed:
   HN stays out of every report, print, Excel/CSV, log, notification and the
