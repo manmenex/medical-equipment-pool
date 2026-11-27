@@ -631,3 +631,22 @@ async def test_long_serial_in_device_columns_is_not_an_hn():
     # The same number in the note column is still treated as a possible HN.
     parsed = parse_tab(KIND_DISPATCH, [DISPATCH_HEADER, drow("0a1b2c3e", 1, note="2300035982")])
     assert [s.reason for s in parsed.skipped] == ["possible_patient_identifier"]
+
+
+async def test_any_value_in_hn_column_skips_row_without_echo():
+    for header, row_fn in ((DISPATCH_HEADER, drow), (RECEIPT_HEADER, rrow)):
+        h = [*header, "HN คนไข้"]
+        filled = [*row_fn("0a1b2c3d", 1), "A12"]  # short / odd format still counts
+        empty = [*row_fn("0a1b2c3e", 1), ""]
+        kind = KIND_DISPATCH if header is DISPATCH_HEADER else KIND_RECEIPT
+        parsed = parse_tab(kind, [h, filled, empty])
+        assert [s.reason for s in parsed.skipped] == ["possible_patient_identifier"]
+        assert "A12" not in json.dumps([s.__dict__ for s in parsed.skipped])
+        assert [r.row_id for r in parsed.rows] == ["0a1b2c3e"]
+
+
+async def test_long_serial_in_receipt_device_columns_is_not_an_hn():
+    row = rrow("0a1b2c3d", 1)
+    row[8] = "2300035982"
+    parsed = parse_tab(KIND_RECEIPT, [RECEIPT_HEADER, row])
+    assert parsed.skipped == [] and len(parsed.rows) == 1
