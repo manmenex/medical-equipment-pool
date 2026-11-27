@@ -481,6 +481,7 @@ async def return_equipment(
     # gets won == True; the rest get won == False.
     won = await transaction_crud.close(
         db, tx, received_by_user_id=received_by_user_id,
+        record_save_time=user_agent != LEGACY_SYNC_USER_AGENT,
         receipt_outcome=receipt_outcome.value, notes=notes, returned_at=returned_at,
         receipt_contact_name=ward_contact_name,
         receipt_checks=receipt_checks.model_dump(mode="json") if receipt_checks is not None else None,
@@ -706,6 +707,10 @@ async def correct_ward(
 
 UNDO_WINDOW_DISPATCH = timedelta(seconds=120)
 UNDO_WINDOW_RECEIPT = timedelta(seconds=30)
+# Receipts replayed by the legacy-sheet sync (user agent set by
+# app.services.legacy_sheet_sync.runner.USER_AGENT) record no ``receipt_saved_at``
+# and so can never be undone: the sync user is not an operator who "just saved".
+LEGACY_SYNC_USER_AGENT = "legacy-sheet-sync"
 UNDO_REASON = "เลิกทำ"
 REASON_MAX_LENGTH = 500
 
@@ -731,6 +736,16 @@ class _CorrectionTarget:
     equipment: object
     event: str
     role: str
+
+
+def _split_return_note(notes: str | None) -> tuple[str | None, str | None]:
+    """(dispatch notes, receipt note). close() appends the receipt note as
+    "\n[Return] <note>"; split only on the LAST such marker so a dispatch note
+    that itself contains "[Return] " is never cut."""
+    if not notes or "\n[Return] " not in notes:
+        return notes, None
+    head, tail = notes.rsplit("\n[Return] ", 1)
+    return (head.strip() or None), (tail.strip() or None)
 
 
 def _aware(dt: datetime) -> datetime:
@@ -761,6 +776,7 @@ def _snapshot(tx: BorrowTransaction) -> dict:
         "receipt_contact_name": tx.receipt_contact_name,
         "receipt_keyer_label": tx.receipt_keyer_label,
         "receipt_checks": tx.receipt_checks,
+        "receipt_note": _split_return_note(tx.notes)[1] if tx.returned_at else None,
         "close_reason": tx.close_reason,
         "has_hn": tx.has_hn,
     }
@@ -851,6 +867,17 @@ async def _void_event(
     tx, equipment = target.tx, target.equipment
     after: dict = {"event": target.event, "reason": reason}
     if target.event == EVENT_KIND_DISPATCH:
+        reopen_id = reopen_transaction_id or tx.closed_by_redispatch_transaction_id
+        if reopen_id is None:
+            # Legacy dispatch without the stored link: the transaction it closed
+            # by re-dispatch is the device's immediately preceding one.
+            earlier = await transaction_crud.previous_redispatch_closed(db, tx)
+            reopen_id = earlier.id if earlier is not None else None
+        if reopen_id is None and tx.prior_equipment_status == EquipmentStatus.ISSUED_TO_WARD.value:
+            raise CorrectionStateChangedError(
+                "This dispatch followed an open transaction that cannot be identified; "
+                "an administrator must resolve it first."
+            )
         won = await transaction_crud.void_open_dispatch(
             db,
             tx,
@@ -862,7 +889,6 @@ async def _void_event(
         if not won:
             await db.rollback()
             raise CorrectionConflictError("The transaction was changed by someone else. Refresh and retry.")
-        reopen_id = reopen_transaction_id or tx.closed_by_redispatch_transaction_id
         if reopen_id is not None:
             if not await transaction_crud.reopen_redispatch_closed(db, reopen_id):
                 await db.rollback()
@@ -879,11 +905,8 @@ async def _void_event(
             if restore is None or restore == EquipmentStatus.ISSUED_TO_WARD:
                 restore = EquipmentStatus.AVAILABLE_AT_POOL
     else:
-        before_notes = tx.notes
-        # close() appended "[Return] <note>" to the dispatch notes: strip it.
-        notes = before_notes
-        if before_notes and "[Return] " in before_notes:
-            notes = before_notes.split("[Return] ")[0].strip() or None
+        # close() appended the receipt note to the dispatch notes: strip it.
+        notes = _split_return_note(tx.notes)[0]
         returned_cuffs = CuffCounts()
         if isinstance(tx.receipt_checks, dict) and tx.receipt_checks.get("kind") == "cryo_cuff":
             try:
@@ -1017,6 +1040,7 @@ async def change_device(
         "pickup_location_id": tx.pickup_location_id,
         "dropoff_location_id": tx.dropoff_location_id,
         "notes": tx.notes,
+        "receipt_note": _split_return_note(tx.notes)[1] if tx.returned_at else None,
         "dispatch_contact_name": tx.dispatch_contact_name,
         "receipt_contact_name": tx.receipt_contact_name,
         "dispatch_keyer_label": tx.dispatch_keyer_label,
@@ -1076,7 +1100,7 @@ async def change_device(
                 db,
                 transaction_id=receipt_target_id,
                 receipt_outcome=outcome,
-                notes=None,
+                notes=old["receipt_note"],
                 received_by_user_id=old["received_by_user_id"],
                 ip_address=ip,
                 user_agent=ua,

@@ -184,6 +184,7 @@ async def close(
     returned_at: datetime | None = None,
     receipt_contact_name: str | None = None,
     receipt_checks: dict | None = None,
+    record_save_time: bool = True,
 ) -> bool:
     """Conditionally closes an OPEN transaction and reports whether *this*
     call is the one that closed it. The only path that may set
@@ -240,7 +241,8 @@ async def close(
         "received_by_user_id": received_by_user_id,
         # D28: server time of this save -- the undo window base (returned_at
         # is business time and may lie in the past).
-        "receipt_saved_at": datetime.now(timezone.utc),
+        # ``record_save_time=False`` (legacy-sheet sync receipts): NULL = not undoable.
+        "receipt_saved_at": datetime.now(timezone.utc) if record_save_time else None,
     }
     # Roadmap PR27/PR28: only set when supplied; omitted stays SQL NULL
     # ("not recorded"), never a JSON null.
@@ -255,7 +257,9 @@ async def close(
         # composing from the in-memory value is correct for the winner (a
         # loser's UPDATE matches zero rows, so its computed value is never
         # persisted).
-        values["notes"] = f"{tx.notes or ''}\n[Return] {notes}".strip()
+        # No strip: the receipt note always starts at the LAST "\n[Return] "
+        # (D28 void splits on it); a dispatch note may itself contain "[Return] ".
+        values["notes"] = f"{tx.notes or ''}\n[Return] {notes}"
 
     result = await db.execute(
         update(BorrowTransaction)
@@ -451,22 +455,24 @@ async def reopen_redispatch_closed(db: AsyncSession, transaction_id: uuid.UUID) 
 
 async def previous_redispatch_closed(db: AsyncSession, tx: BorrowTransaction) -> BorrowTransaction | None:
     """D28 legacy fallback for a dispatch without ``closed_by_redispatch_
-    transaction_id``: the device's latest earlier non-voided transaction that
-    was closed by re-dispatch."""
-    return (
+    transaction_id``: the device's immediately preceding non-voided
+    transaction, if (and only if) it was closed by re-dispatch."""
+    prev = (
         await db.execute(
             select(BorrowTransaction)
             .where(
                 BorrowTransaction.equipment_id == tx.equipment_id,
                 BorrowTransaction.id != tx.id,
-                BorrowTransaction.status == TransactionStatus.CLOSED,
-                BorrowTransaction.close_reason == CLOSE_REASON_REDISPATCH,
+                BorrowTransaction.status != TransactionStatus.VOIDED,
                 BorrowTransaction.created_at <= tx.created_at,
             )
             .order_by(BorrowTransaction.created_at.desc(), BorrowTransaction.transaction_no.desc())
             .limit(1)
         )
     ).scalar_one_or_none()
+    if prev is not None and prev.status == TransactionStatus.CLOSED and prev.close_reason == CLOSE_REASON_REDISPATCH:
+        return prev
+    return None
 
 
 async def list_active(db: AsyncSession) -> list[BorrowTransaction]:

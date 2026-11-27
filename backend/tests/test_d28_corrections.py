@@ -13,7 +13,7 @@ from app.core.config import get_settings
 from app.models.audit import AuditLog
 from app.models.client_operation import ClientOperation
 from app.models.equipment import Equipment, EquipmentStatus
-from app.models.transaction import CLOSE_REASON_REDISPATCH, BorrowTransaction, TransactionStatus
+from app.models.transaction import CLOSE_REASON_REDISPATCH, BorrowTransaction, ReceiptOutcome, TransactionStatus
 from app.models.user import ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, ROLE_READ_ONLY, Role, User
 from tests.conftest import auth_headers as _auth_headers
 from tests.conftest import cached_password_hash
@@ -553,3 +553,59 @@ async def test_voided_sync_dispatch_ledger_entry_stays_applied(client, ctx, db_s
     count = len((await db_session.execute(select(BorrowTransaction))).scalars().all())
     assert count == 1
     assert await _eq_status(db_session, ctx["eq1"]) == EquipmentStatus.AVAILABLE_AT_POOL
+
+
+# ----------------------------------------------------------------- review fixes
+
+
+@pytest.mark.parametrize("action, body", [("void", {"reason": "legacy"}), ("undo", None)])
+async def test_void_or_undo_legacy_redispatch_reopens_predecessor(client, ctx, db_session, action, body):
+    first = await _dispatch(client, ctx["staff"], ctx["eq1"], ctx["ward_a"])
+    second = await _dispatch(client, ctx["staff"], ctx["eq1"], ctx["ward_b"], acknowledge_status_warning=True)
+    await _age(db_session, second["id"], prior_equipment_status=None, closed_by_redispatch_transaction_id=None)
+    resp = await _post(client, ctx["staff"], second["id"], action, body)
+    assert resp.status_code == 200, resp.text
+    assert (await _tx(db_session, first["id"])).status == TransactionStatus.OPEN
+    assert (await _tx(db_session, second["id"])).status == TransactionStatus.VOIDED
+    assert await _eq_status(db_session, ctx["eq1"]) == EquipmentStatus.ISSUED_TO_WARD
+
+
+async def test_void_issued_prior_with_unidentifiable_predecessor_is_refused(client, ctx, db_session):
+    tx = await _dispatch(client, ctx["staff"], ctx["eq1"], ctx["ward_a"])
+    await _age(db_session, tx["id"], prior_equipment_status="issued_to_ward", closed_by_redispatch_transaction_id=None)
+    resp = await _post(client, ctx["admin"], tx["id"], "void", {"reason": "r"})
+    assert resp.status_code == 409, resp.text
+    assert (await _tx(db_session, tx["id"])).status == TransactionStatus.OPEN
+    assert await _eq_status(db_session, ctx["eq1"]) == EquipmentStatus.ISSUED_TO_WARD
+    assert not await _audits(db_session, "transaction_void")
+
+
+async def test_return_note_split_and_change_device_carries_receipt_note(client, ctx, db_session):
+    a = await _dispatch(client, ctx["staff"], ctx["eq1"], ctx["ward_a"], notes="see [Return] policy")
+    b = await _dispatch(client, ctx["staff"], ctx["eq2"], ctx["ward_a"])
+    await _receive(client, ctx["staff"], a["id"], notes="cracked case")
+    assert (await _tx(db_session, a["id"])).notes == "see [Return] policy\n[Return] cracked case"
+    resp = await _post(client, ctx["staff"], a["id"], "change-device", {"reason": "wrong pump", "equipment_id": ctx["eq2"]})
+    assert resp.status_code == 200, resp.text
+    assert (await _tx(db_session, a["id"])).notes == "see [Return] policy"  # dispatch note intact
+    assert "cracked case" in (await _tx(db_session, b["id"])).notes
+    c = await _dispatch(client, ctx["staff"], ctx["eq1"], ctx["ward_a"], notes="x [Return] y", acknowledge_status_warning=True)
+    await _receive(client, ctx["staff"], c["id"])
+    assert (await _post(client, ctx["staff"], c["id"], "void", {"reason": "r"})).status_code == 200
+    assert (await _tx(db_session, c["id"])).notes == "x [Return] y"
+
+
+async def test_legacy_sync_receipt_is_not_undoable(client, ctx, db_session):
+    from app.services import borrow_service
+    from app.services.legacy_sheet_sync import runner
+
+    assert runner.USER_AGENT == borrow_service.LEGACY_SYNC_USER_AGENT
+    tx = await _dispatch(client, ctx["staff"], ctx["eq1"], ctx["ward_a"])
+    staff_id = (await _tx(db_session, tx["id"])).borrower_user_id
+    await borrow_service.return_equipment(
+        db_session, transaction_id=uuid.UUID(tx["id"]), receipt_outcome=ReceiptOutcome.USABLE,
+        notes=None, received_by_user_id=staff_id, ip_address=None, user_agent=runner.USER_AGENT,
+    )
+    assert (await _tx(db_session, tx["id"])).receipt_saved_at is None
+    resp = await _post(client, ctx["staff"], tx["id"], "undo")
+    assert resp.status_code == 409 and resp.json()["code"] == "UNDO_WINDOW_EXPIRED"
