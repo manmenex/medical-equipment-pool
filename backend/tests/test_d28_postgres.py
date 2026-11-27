@@ -1,5 +1,5 @@
 """Owner Governance 2026-11-27 (D28) PostgreSQL proofs (postgres CI job):
-migration 0038 round trip (columns, widened status CHECK, fail-closed
+migration 0039 round trip (columns, widened status CHECK, fail-closed
 downgrade while a voided row exists) and the partial unique index ignoring
 voided rows."""
 import uuid
@@ -46,7 +46,7 @@ async def _insert_tx(conn, equipment_id, n, status):
     )
 
 
-async def test_migration_0038_round_trip_and_status_check():
+async def test_migration_0039_round_trip_and_status_check():
     try:
         await _recreate_scratch_database()
     except Exception as exc:
@@ -82,10 +82,10 @@ async def test_migration_0038_round_trip_and_status_check():
 
             # Fail closed: the old CHECK cannot hold a voided row.
             with pytest.raises(Exception):
-                _run_alembic("downgrade", "0037_user_ui_preferences")
+                _run_alembic("downgrade", "0038_export_hn_scope")
             async with engine.begin() as conn:
                 await conn.execute(text("DELETE FROM borrow_transactions WHERE status = 'voided'"))
-            _run_alembic("downgrade", "0037_user_ui_preferences")
+            _run_alembic("downgrade", "0038_export_hn_scope")
             async with engine.connect() as conn:
                 assert not _NEW_COLUMNS & {r[0] for r in (await conn.execute(_COLS)).all()}
                 assert "voided" not in (await conn.execute(_CHECK)).scalar()

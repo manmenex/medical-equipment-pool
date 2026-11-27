@@ -1,7 +1,7 @@
 """Transaction corrections: voided status and restore/void columns (Owner Governance 2026-11-27, D28)
 
-Revision ID: 0038_transaction_corrections
-Revises: 0037_user_ui_preferences
+Revision ID: 0039_transaction_corrections
+Revises: 0038_export_hn_scope
 Create Date: 2026-11-27
 
 Additive and nullable (legacy rows keep NULLs), plus one constraint change:
@@ -25,7 +25,7 @@ never open.
 Downgrade refuses (fails closed) while any row is `voided`, since the old
 constraint cannot represent it.
 
-Only runs raw SQL against PostgreSQL (dialect-gated like 0002-0037); SQLite
+Only runs raw SQL against PostgreSQL (dialect-gated like 0002-0038); SQLite
 tests build the schema from ORM metadata.
 """
 from typing import Sequence, Union
@@ -33,8 +33,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0038_transaction_corrections"
-down_revision: Union[str, None] = "0037_user_ui_preferences"
+revision: str = "0039_transaction_corrections"
+down_revision: Union[str, None] = "0038_export_hn_scope"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -110,7 +110,7 @@ def downgrade() -> None:
     voided = bind.execute(sa.text("SELECT count(*) FROM borrow_transactions WHERE status = 'voided'")).scalar()
     if voided:
         raise RuntimeError(
-            f"Cannot downgrade 0038: {voided} voided transaction(s) exist and the previous schema cannot hold them."
+            f"Cannot downgrade 0039: {voided} voided transaction(s) exist and the previous schema cannot hold them."
         )
     for statement in _DOWNGRADE:
         op.execute(sa.text(statement))
