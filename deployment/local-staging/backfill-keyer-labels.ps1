@@ -10,10 +10,13 @@ overwrites an existing one. Prints counts only, never names.
 
     .\backfill-keyer-labels.ps1           # preview / ดูตัวอย่าง
     .\backfill-keyer-labels.ps1 -Apply    # write / บันทึกจริง
+    .\backfill-keyer-labels.ps1 -Repair          # preview repair / ดูตัวอย่างการซ่อม
+    .\backfill-keyer-labels.ps1 -Repair -Apply   # repair labels holding system-note text / ซ่อมจริง
 #>
 [CmdletBinding()]
 param(
-    [switch]$Apply
+    [switch]$Apply,
+    [switch]$Repair
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,6 +32,7 @@ try {
     if (-not (Test-EnvFileExists)) { throw 'ไม่พบการติดตั้ง รัน .\install.ps1 ก่อน (not installed)' }
 
     $toolArgs = @('exec', '-T', 'backend', 'python', '-m', 'app.scripts.backfill_keyer_labels')
+    if ($Repair) { $toolArgs += '--repair' }
     if ($Apply) { $toolArgs += '--apply' }
     $r = Invoke-DockerCompose -Arguments $toolArgs -AllowNonZeroExit -Phase 'backfill-keyer-labels'
     foreach ($line in @($r.Output)) { Write-Host $line }
@@ -36,7 +40,8 @@ try {
 
     Write-Host ''
     if ($Apply) {
-        Write-Host 'เสร็จแล้ว / Done: บันทึกชื่อ BME แล้ว (written).' -ForegroundColor Green
+        $doneMsg = if ($Repair) { 'เสร็จแล้ว / Done: ซ่อมป้ายชื่อที่เป็นข้อความระบบแล้ว (repaired).' } else { 'เสร็จแล้ว / Done: บันทึกชื่อ BME แล้ว (written).' }
+        Write-Host $doneMsg -ForegroundColor Green
     }
     else {
         Write-Host 'นี่คือการดูตัวอย่างเท่านั้น ยังไม่บันทึก ใส่ -Apply เพื่อบันทึกจริง (Preview only; add -Apply to write).' -ForegroundColor Yellow
