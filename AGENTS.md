@@ -50,7 +50,7 @@ serve.
 - Exactly four equipment identifiers (UUID, BCM Code, Item No, Asset Number), each with one fixed role. "ME Code" is retired and must not be used (sole exception: the verbatim printed-daily-form column label "ME.Code", which shows the BCM Code value; see `docs/BUSINESS_RULES.md`, D12). Narrow exception (Owner Governance 2026-11-26, D14): for demo/loan equipment only, the BCM Code field holds the manufacturer Serial Number (D27, 2026-11-27: or, for a device loaned from another hospital, that hospital's asset code, e.g. "BKN…"); identifier count and roles unchanged, see `docs/BUSINESS_RULES.md`.
 - Exactly four equipment states; no cleaning state exists or may be added.
 - Equipment receipt is one atomic usable/defective operation; cleaning is never tracked. (Owner Governance 2026-11-26, D17: the verbatim paper "Equipment Verify Checklist" may be printed for hand completion, pre-printed with ticks per D23 (2026-11-27); nothing from it is recorded.)
-- Dispatch/receipt services own the transaction lifecycle; do not bypass them via manual status maintenance.
+- Dispatch/receipt services own the transaction lifecycle; do not bypass them via manual status maintenance. (Owner Governance 2026-11-27, D28: audited undo/void/change-device/switch-action corrections add a `voided` transaction status, through those services only; see `docs/BUSINESS_RULES.md`.)
 - Only the first receiving ward is recorded — no ward-to-ward transfer tracking.
 - No patient tracking beyond one optional dispatch field: Equipment Pool staff
   MAY record a patient HN on a dispatch, or add it later to an open dispatch

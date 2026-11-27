@@ -9591,3 +9591,28 @@ opening-balance transactions are created.
   Governance PR.
 - **Status:** Approved; registration of the two devices follows (no code change
   expected if the demo/loan form accepts any code).
+
+## 2026-11-27 (fifth set) — Entry-error prevention, undo, and audited corrections
+
+- **Decision (Owner, in chat, 2026-11-27):** **D28**, three layers to handle
+  keying errors (wrong device, wrong ward, wrong action).
+  - **Layer 1, prevention:** a one-tap switch between dispatch and receipt
+    when the scanned device's state contradicts the page, plus a duplicate-scan
+    warning. No warning for a different returning ward.
+  - **Layer 2, undo:** within 5 minutes, by the operator who saved (choice 2ข).
+  - **Layer 3, corrections:** void, change device, switch action
+    (dispatch↔receipt; Owner addition), and the existing ward correction. Each
+    needs a mandatory reason and is audited. Only the device's latest
+    transaction can be corrected. Staff may correct their own entries within
+    the same shift; after that, only an administrator may (choice 3ก).
+- **Amends:** the two-state transaction lifecycle (ADR-005 / BUSINESS_RULES
+  "Dispatch/Return owns transaction lifecycle"): adds a third transaction
+  status `voided`. Voided transactions are kept in history and excluded from
+  reports, Standby, the daily Excel and the export.
+- **Not changed:** exactly four equipment states, with no cleaning state; only
+  the dispatch/receipt services change lifecycle; no ward-to-ward transfer
+  tracking; every HN safeguard; no MEMS integration.
+- **Source:** Owner decisions in chat, 2026-11-27 (1: all three layers, 2ข,
+  3ก, plus switch action; ward-mismatch warning dropped). Docs-only Governance
+  PR.
+- **Status:** Approved; implementation follows.
