@@ -71,7 +71,7 @@ jobs:
       # runtime via cffi, not via a pip wheel -- matches the native packages
       # backend/Dockerfile installs for the production image.
       - name: Install WeasyPrint native dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
+        run: sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list /etc/apt/sources.list.d/microsoft-prod.sources && sudo apt-get update && sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
 
       - name: Install backend dependencies
         run: pip install --require-hashes -r requirements.lock
@@ -163,7 +163,7 @@ jobs:
 
       # Roadmap PR18D: see the matching step in the backend-tests job above.
       - name: Install WeasyPrint native dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
+        run: sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list /etc/apt/sources.list.d/microsoft-prod.sources && sudo apt-get update && sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
 
       - name: Install backend dependencies
         run: pip install --require-hashes -r requirements.lock
@@ -551,7 +551,7 @@ jobs:
           cache-dependency-path: backend/requirements.lock
 
       - name: Install WeasyPrint native dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
+        run: sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list /etc/apt/sources.list.d/microsoft-prod.sources && sudo apt-get update && sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
 
       - name: Install backend dependencies
         working-directory: backend
