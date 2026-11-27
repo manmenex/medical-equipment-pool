@@ -1,6 +1,7 @@
 import { api } from "@/services/api";
 import type {
   Checks,
+  CorrectionOut,
   Cuffs,
   DispatchType,
   EquipmentStatus,
@@ -206,4 +207,29 @@ export async function correctTransactionWard(
 ): Promise<TransactionOut> {
   const resp = await api.post<TransactionOut>(`/transactions/${transactionId}/correct-ward`, payload);
   return resp.data;
+}
+
+// Owner Governance 2026-11-27 (D28): audited undo / void / change-device /
+// switch-action (docs/api/transactions.md). The server is the authority for
+// permission, window and state guards; callers surface its message.
+export async function undoTransaction(transactionId: string): Promise<CorrectionOut> {
+  return (await api.post<CorrectionOut>(`/transactions/${transactionId}/undo`)).data;
+}
+
+export async function voidTransaction(transactionId: string, reason: string): Promise<CorrectionOut> {
+  return (await api.post<CorrectionOut>(`/transactions/${transactionId}/void`, { reason })).data;
+}
+
+export async function changeTransactionDevice(
+  transactionId: string,
+  payload: { reason: string; equipment_id: string; acknowledge_status_warning?: boolean }
+): Promise<CorrectionOut> {
+  return (await api.post<CorrectionOut>(`/transactions/${transactionId}/change-device`, payload)).data;
+}
+
+export async function switchTransactionAction(
+  transactionId: string,
+  payload: { reason: string; outcome?: ReceiptOutcome; ward_id?: string }
+): Promise<CorrectionOut> {
+  return (await api.post<CorrectionOut>(`/transactions/${transactionId}/switch-action`, payload)).data;
 }

@@ -143,7 +143,7 @@ export interface TransactionOut {
   // same transaction. Never rendered as if it were a current-contract
   // outcome.
   legacy_condition_on_return: string | null;
-  status: "open" | "closed";
+  status: TransactionStatus;
   notes: string | null;
   // Roadmap PR31 (D8): read-only. close_reason is set only on a transaction
   // closed by re-dispatch (no receipt recorded); the flag marks a dispatch
@@ -159,6 +159,22 @@ export interface TransactionOut {
   // Roadmap PR29 (D1): an HN is recorded. The HN itself is never in any list/detail
   // response; it is fetched only by the audited POST /transactions/{id}/reveal-hn.
   has_hn?: boolean;
+  // Owner Governance 2026-11-27 (D28): set only when status === "voided".
+  voided_at?: string | null;
+  void_reason?: string | null;
+  corrected_by_transaction_id?: string | null;
+  dispatch_business_date?: string;
+  dispatch_shift?: Shift;
+  receipt_business_date?: string | null;
+  receipt_shift?: Shift | null;
+}
+
+// D28: `voided` is a transaction status only, never an equipment state.
+export type TransactionStatus = "open" | "closed" | "voided";
+
+export interface CorrectionOut {
+  transaction: TransactionOut;
+  new_transaction: TransactionOut | null;
 }
 
 // Roadmap PR28 (D4/D10): accessory / Cryo-Cuff checklists (docs/api/ward-first-entry.md 2.2).

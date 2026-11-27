@@ -242,13 +242,13 @@ describe("offline receipt (Roadmap PR27/PR28)", () => {
     expect(await screen.findByRole("button", { name: "แก้ไข BCM001" })).toBeInTheDocument();
   });
 
-  it("shows the red not-dispatched notice for equipment with no open transaction", async () => {
+  it("offers the dispatch switch (D28) for equipment at the pool with no open transaction", async () => {
     await seed();
     setMarkedOffline(true);
     const user = userEvent.setup();
     renderPage(<ReturnPage />, "/return");
     await addBcm(user, "BCM001");
-    expect(await screen.findByRole("alert")).toHaveTextContent("⛔ BCM001 ไม่ได้ถูกจ่ายออกไป ไม่ถูกเพิ่ม");
+    expect(await screen.findByRole("alert")).toHaveTextContent("เครื่องนี้อยู่ในคลัง — จ่ายแทน?");
   });
 });
 

@@ -764,3 +764,32 @@ describe("EquipmentDetailPage patient HN (Roadmap PR29, D1)", () => {
     expect(await within(row).findByTestId("hn-value")).toHaveTextContent("HN-4455");
   });
 });
+
+describe("D28 corrections on the history", () => {
+  const voided: TransactionOut = {
+    ...closedTransaction,
+    id: "tx-void-1",
+    transaction_no: "TX-VOID-1",
+    status: "voided",
+    void_reason: "ลงผิดเครื่อง",
+  };
+
+  it("renders a voided row struck through with the label and reason, and no menu on it", async () => {
+    listTransactions.mockResolvedValue(page([openTransaction, voided]));
+    renderPage();
+    await waitFor(() => expect(screen.getByText("TX-VOID-1", { exact: false })).toBeInTheDocument());
+    const row = rowFor("TX-VOID-1");
+    expect(within(row).getByText(/ยกเลิกแล้ว · ลงผิดเครื่อง/)).toBeInTheDocument();
+    expect(row.querySelector(".line-through")).not.toBeNull();
+    expect(within(row).queryByRole("button", { name: "แก้ไขรายการ" })).not.toBeInTheDocument();
+  });
+
+  it("offers the correction menu only on the latest non-voided transaction", async () => {
+    listTransactions.mockResolvedValue(page([voided, openTransaction, closedTransaction]));
+    renderPage();
+    await waitForHistoryLoaded();
+    expect(within(rowFor("TX-OPEN-1")).getByRole("button", { name: "แก้ไขรายการ" })).toBeInTheDocument();
+    expect(within(rowFor("TX-CLOSED-1")).queryByRole("button", { name: "แก้ไขรายการ" })).not.toBeInTheDocument();
+    expect(within(rowFor("TX-OPEN-1")).getByRole("button", { name: TRIGGER })).toBeInTheDocument();
+  });
+});

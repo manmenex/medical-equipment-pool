@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ReturnPage } from "@/pages/ReturnPage";
@@ -46,6 +46,7 @@ const searchBcmSuggestions = vi.fn();
 const getDispatchCheck = vi.fn();
 const listActiveBorrows = vi.fn();
 const receiptBatch = vi.fn();
+const undoTransaction = vi.fn();
 
 vi.mock("@/services/equipment", () => ({
   getEquipment: (...a: unknown[]) => getEquipment(...a),
@@ -56,6 +57,7 @@ vi.mock("@/services/equipment", () => ({
 vi.mock("@/services/borrow", () => ({
   listActiveBorrows: (...a: unknown[]) => listActiveBorrows(...a),
   receiptBatch: (...a: unknown[]) => receiptBatch(...a),
+  undoTransaction: (...a: unknown[]) => undoTransaction(...a),
 }));
 vi.mock("@/services/masterData", () => ({
   listWards: () => Promise.resolve(wards),
@@ -90,11 +92,18 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
+
+function LocationProbe() {
+  const loc = useLocation();
+  return <div data-testid="loc">{loc.pathname + loc.search}</div>;
+}
+
 function renderPage(entry = "/return") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[entry]}>
+        <LocationProbe />
         <ReturnPage />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -306,5 +315,42 @@ describe("review fixes", () => {
     expect(receiptBatch).toHaveBeenCalledTimes(1);
     release({ total: 1, succeeded: 1, failed: 0, results: [{ index: 0, ok: true, equipment_id: "e1", transaction_id: "t1", transaction_no: "RX-1", cuffs_outstanding: null, error: null }] });
     expect(await screen.findByText("✓ BCM001 (RX-1)")).toBeInTheDocument();
+  });
+});
+
+describe("D28 prevention and undo (receipt)", () => {
+  it("offers a one-tap switch to dispatch when the device is at the pool", async () => {
+    getEquipment.mockImplementation(async (id: string) => {
+      const e = Object.values(EQ).find((x) => x.id === id)!;
+      return id === "f1" ? { ...e, status: "available_at_pool" } : e;
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await addBcm(user, "FREE1");
+    expect(await screen.findByText("เครื่องนี้อยู่ในคลัง — จ่ายแทน?")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "จ่ายแทน" }));
+    expect(screen.getByTestId("loc")).toHaveTextContent("/borrow?equipment_id=f1");
+  });
+
+  it("flags a device scanned twice and does not add it twice", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await addBcm(user, "BCM001");
+    await screen.findByRole("button", { name: "แก้ไข BCM001" });
+    await addBcm(user, "BCM001");
+    expect(await screen.findByRole("alert")).toHaveTextContent("BCM001 สแกนซ้ำ");
+    expect(screen.getByRole("heading", { name: "สแกนเครื่อง (1 เครื่อง)" })).toBeInTheDocument();
+  });
+
+  it("shows a 0:30 undo toast, reports a failed undo with the server message", async () => {
+    undoTransaction.mockRejectedValue({ isAxiosError: true, response: { data: { detail: "หมดเวลาเลิกทำ" } } });
+    const user = userEvent.setup();
+    renderPage();
+    await addBcm(user, "BCM001");
+    await screen.findByRole("button", { name: "แก้ไข BCM001" });
+    await user.click(screen.getByRole("button", { name: "ยืนยันการรับคืน (1 เครื่อง)" }));
+    await user.click(await screen.findByRole("button", { name: "บันทึกแล้ว · เลิกทำ (0:30)" }));
+    await waitFor(() => expect(undoTransaction).toHaveBeenCalledWith("x"));
+    expect(await screen.findByText("✗ หมดเวลาเลิกทำ")).toBeInTheDocument();
   });
 });

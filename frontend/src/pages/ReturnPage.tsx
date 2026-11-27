@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { CuffsOutstandingPanel } from "@/components/CuffsOutstandingPanel";
 import { ChecksEditor } from "@/components/entry/ChecksEditor";
@@ -10,6 +10,7 @@ import { ScanBar } from "@/components/entry/ScanBar";
 import { useWardRefs } from "@/components/entry/useWardRefs";
 import { WardSection } from "@/components/entry/WardSection";
 import { OfflineStaleGate } from "@/components/OfflineStaleGate";
+import { UNDO_WINDOW_SECONDS, UndoToast, type UndoTarget } from "@/components/entry/UndoToast";
 import { SourceBadge } from "@/components/SourceBadge";
 import { useDirtyForm } from "@/hooks/useDirtyForm";
 import { useOfflineMode } from "@/hooks/useOfflineMode";
@@ -20,7 +21,7 @@ import { listActiveBorrows, receiptBatch, type ReceiptBatchItem } from "@/servic
 import { batchErrorText, defaultChecks, hasAbnormal, totalCuffs } from "@/services/checks";
 import { getDispatchCheck, getEquipment, resolveEquipmentByQr } from "@/services/equipment";
 import { useUiStore } from "@/store/uiStore";
-import type { Checks, ChecklistKind, Cuffs, Equipment, EquipmentSource, ReceiptOutcome, TransactionOut } from "@/types";
+import type { Checks, ChecklistKind, Cuffs, Equipment, EquipmentStatus, EquipmentSource, ReceiptOutcome, TransactionOut } from "@/types";
 
 // Roadmap PR27/PR28 (D3/D4/D7/D10/D11): ward-first multi-equipment receipt.
 // Equipment may be received from ANY ward with no warning (only the first
@@ -54,6 +55,7 @@ function cuffsOf(c: Checks): Cuffs | null {
 
 export function ReturnPage() {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const presetEquipmentId = searchParams.get("equipment_id");
   const offline = useOfflineMode();
   const { wards, departments } = useWardRefs(offline);
@@ -75,6 +77,10 @@ export function ReturnPage() {
   const [submitting, setSubmitting] = useState(false);
   const [adding, setAdding] = useState(false);
   const [showOpen, setShowOpen] = useState(false);
+  // D28 layer 1: a scanned device that is already at the pool -> offer a one-tap switch to dispatch.
+  const [switchPrompt, setSwitchPrompt] = useState<string | null>(null);
+  // D28 layer 2: undo window of the last online save (never set for queued offline ops).
+  const [undo, setUndo] = useState<UndoTarget | null>(null);
   const itemsRef = useRef<ReceiptItem[]>([]);
   itemsRef.current = items;
   useDirtyForm(items.length > 0);
@@ -104,9 +110,14 @@ export function ReturnPage() {
   });
 
   const addEquipment = useCallback(
-    async (eq: Pick<Equipment, "id" | "bcm_code" | "asset_number" | "equipment_name" | "equipment_source">) => {
+    async (eq: Pick<Equipment, "id" | "bcm_code" | "asset_number" | "equipment_name" | "equipment_source"> & { status?: EquipmentStatus }) => {
       const label = eq.bcm_code ?? eq.asset_number ?? eq.equipment_name;
-      if (itemsRef.current.some((i) => i.equipmentId === eq.id)) return; // duplicates ignored
+      if (itemsRef.current.some((i) => i.equipmentId === eq.id)) {
+        // D28 layer 1: a device scanned twice in one batch is flagged at once, never added twice.
+        setSwitchPrompt(null);
+        setNotice(`⚠ ${label} สแกนซ้ำ อยู่ในรายการแล้ว`);
+        return;
+      }
       let item: ReceiptItem | null = null;
       if (offline) {
         const cand = (await listReceiptCandidates()).find((c) => c.equipment_id === eq.id);
@@ -128,9 +139,16 @@ export function ReturnPage() {
         }
       }
       if (!item) {
+        if (eq.status === "available_at_pool") {
+          setNotice(null);
+          setSwitchPrompt(eq.id);
+          return;
+        }
+        setSwitchPrompt(null);
         setNotice(`⛔ ${label} ไม่ได้ถูกจ่ายออกไป ไม่ถูกเพิ่ม`);
         return;
       }
+      setSwitchPrompt(null);
       setNotice(null);
       setDone([]);
       const add = item;
@@ -243,11 +261,14 @@ export function ReturnPage() {
         items: payload,
       });
       const ok: { bcm: string; ref: string }[] = [];
+      const okIds: string[] = [];
       const keep: ReceiptItem[] = [];
       sent.forEach((it, i) => {
         const r = resp.results.find((x) => x.index === i);
-        if (r?.ok) ok.push({ bcm: it.bcm, ref: r.transaction_no ?? "" });
-        else keep.push({ ...it, error: batchErrorText(r?.error?.code, r?.error?.message) });
+        if (r?.ok) {
+          ok.push({ bcm: it.bcm, ref: r.transaction_no ?? "" });
+          okIds.push(r.transaction_id ?? it.transactionId);
+        } else keep.push({ ...it, error: batchErrorText(r?.error?.code, r?.error?.message) });
       });
       if (ok.length > 0) {
         if (wardId) {
@@ -255,6 +276,7 @@ export function ReturnPage() {
           bumpWardUsage(wardId);
         }
         setNote("");
+        if (okIds.length > 0) setUndo({ ids: okIds, seconds: UNDO_WINDOW_SECONDS.receipt });
         void queryClient.invalidateQueries({ queryKey: ["active-borrows"] });
       }
       setDone(ok);
@@ -351,6 +373,18 @@ export function ReturnPage() {
               <p role="alert" className="mt-2 rounded-lg bg-status-repair/10 px-3 py-2 text-sm text-status-repair">
                 {notice}
               </p>
+            )}
+            {switchPrompt && (
+              <div role="alert" className="mt-2 flex items-center gap-2 rounded-lg border border-amber-500/60 bg-amber-500/10 px-3 py-2 text-sm">
+                <span className="min-w-0 flex-1">เครื่องนี้อยู่ในคลัง — จ่ายแทน?</span>
+                <button
+                  type="button"
+                  onClick={() => navigate(`/borrow?equipment_id=${switchPrompt}`)}
+                  className="min-h-11 whitespace-nowrap rounded-md bg-status-borrowed px-3 text-xs font-medium text-white"
+                >
+                  จ่ายแทน
+                </button>
+              </div>
             )}
             <ul className="mt-2 flex flex-col gap-1.5">
               {items.map((it) => {
@@ -465,6 +499,7 @@ export function ReturnPage() {
           </div>
         </>
       )}
+      {undo && <UndoToast key={undo.ids.join(",")} {...undo} onClose={() => setUndo(null)} onUndone={() => setDone([])} />}
     </div>
   );
 }
