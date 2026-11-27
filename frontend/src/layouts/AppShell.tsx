@@ -18,7 +18,9 @@ import { useSaveUserTheme, useUserTheme } from "@/hooks/useUserTheme";
 import { applyPreferences, readCachedPreferences } from "@/lib/theme";
 import { useUiStore } from "@/store/uiStore";
 
-const BASE_NAV_ITEMS = [
+type NavItem = { to: string; label: string; short?: string; icon: string };
+
+const BASE_NAV_ITEMS: NavItem[] = [
   { to: "/", label: "หน้าหลัก", icon: "🏠" },
   { to: "/equipment", label: "ค้นหา", icon: "🔍" },
   { to: "/reports", label: "รายงาน", icon: "📊" },
@@ -31,13 +33,13 @@ const BASE_NAV_ITEMS = [
 // never "ยืม"/"คืน" (borrow/return), which the confirmed workflow
 // terminology retires everywhere in the UI (docs/audits/
 // 04-consolidated-implementation-plan.md Part D, PR11 acceptance criteria).
-const DISPATCH_NAV_ITEMS = [
+const DISPATCH_NAV_ITEMS: NavItem[] = [
   { to: "/borrow", label: "เบิก", icon: "📷" },
   { to: "/return", label: "รับคืน", icon: "↩️" },
   // Roadmap PR32 (D9/D13): read-only Monitor, Equipment Pool staff + admin.
-  { to: "/monitor", label: "Monitor การจ่าย/รับ", icon: "🖥️" },
+  { to: "/monitor", label: "Monitor การจ่าย/รับ", short: "Monitor", icon: "🖥️" },
   // Roadmap PR34 (D16): standby summary, Equipment Pool staff + admin.
-  { to: "/standby-summary", label: "สรุป Stand By", icon: "📋" },
+  { to: "/standby-summary", label: "สรุป Stand By", short: "Stand By", icon: "📋" },
 ];
 
 export function AppShell() {
@@ -164,20 +166,24 @@ export function AppShell() {
           <Outlet />
         </main>
 
-        <nav className="surface fixed inset-x-0 bottom-0 flex border-t md:hidden">
+        <nav aria-label="เมนูหลัก" className="surface fixed inset-x-0 bottom-0 flex border-t md:hidden">
           {navItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.to === "/"}
+              aria-label={item.label}
+              data-testid="bottom-nav-link"
               className={({ isActive }) =>
-                `flex flex-1 flex-col items-center gap-0.5 py-2 text-xs ${
+                `flex min-h-[44px] min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-0.5 py-1.5 text-center text-[11px] leading-tight ${
                   isActive ? "text-status-borrowed" : "text-[var(--text-muted)]"
                 }`
               }
             >
-              <span className="text-lg">{item.icon}</span>
-              {item.label}
+              <span aria-hidden="true" className="text-lg">
+                {item.icon}
+              </span>
+              <span className="max-w-full truncate whitespace-nowrap">{item.short ?? item.label}</span>
             </NavLink>
           ))}
         </nav>

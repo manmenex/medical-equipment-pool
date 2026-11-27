@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
@@ -77,5 +77,20 @@ describe("AppShell navigation", () => {
     for (const name of [/หน้าหลัก/, /ค้นหา/, /^.{0,3}\s*เบิก$/, /รับคืน/, /Monitor/, /สรุป Stand By/, /รายงาน/]) {
       expect(screen.getAllByRole("link", { name }).length).toBeGreaterThan(0);
     }
+  });
+
+  it("bottom nav uses short labels with the full label as aria-label (7 items, 44px targets)", () => {
+    mockUser = makeUser("equipment_pool_staff");
+    renderShell();
+    const nav = screen.getByRole("navigation", { name: "เมนูหลัก" });
+    const links = within(nav).getAllByTestId("bottom-nav-link");
+    expect(links).toHaveLength(7);
+    for (const l of links) expect(l).toHaveClass("min-h-[44px]");
+    const monitor = within(nav).getByRole("link", { name: "Monitor การจ่าย/รับ" });
+    expect(monitor).toHaveTextContent("Monitor");
+    expect(monitor).not.toHaveTextContent("การจ่าย/รับ");
+    const standby = within(nav).getByRole("link", { name: "สรุป Stand By" });
+    expect(standby).toHaveTextContent(/^\S*\s*Stand By$/);
+    expect(standby).not.toHaveTextContent("สรุป");
   });
 });
