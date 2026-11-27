@@ -33,6 +33,8 @@ ALLOWED_KEYS = {
     # Roadmap PR29: indicator only; the HN itself is never in this feed.
     "has_hn",
     "is_open",
+    # D22: display-only keyer label.
+    "keyer_label",
 }
 
 
@@ -215,3 +217,20 @@ async def test_receipt_operator_is_receiver_not_dispatcher(client, seeded_users,
     d = (await client.get("/api/v1/monitor/events", headers=staff, params={"kind": "dispatch"})).json()
     rc = (await client.get("/api/v1/monitor/events", headers=staff, params={"kind": "receipt"})).json()
     assert rc["items"][0]["operator"]["id"] != d["items"][0]["operator"]["id"]
+
+
+async def test_keyer_label_and_checks_returned_for_synced_rows(client, seeded_users, db_session):
+    """D22: keyer_label is exposed per event side; stored checks are returned (NULL stays null)."""
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    w = await _create_ward(client, admin, "W-KL", "Kl")
+    e = await _eq(client, admin, "AST-KL-1", "BCM-KL-1")
+    t = await _dispatch(client, staff, e["id"], w)
+    chk = {"kind": "standard", "screen_ok": True, "charger_ok": True, "clamp_ok": False}
+    await _force(db_session, t["id"], dispatch_keyer_label="BME Synthetic", dispatch_checks=chk)
+    d = (await client.get("/api/v1/monitor/events", headers=staff, params={"kind": "dispatch"})).json()["items"][0]
+    assert d["keyer_label"] == "BME Synthetic" and d["checks"] == chk
+    r = await client.post(f"/api/v1/return/{t['id']}", headers=admin, json={"receipt_outcome": "usable"})
+    assert r.status_code == 200, r.text
+    rc = (await client.get("/api/v1/monitor/events", headers=staff, params={"kind": "receipt"})).json()["items"][0]
+    assert rc["keyer_label"] is None and rc["checks"] is None  # genuinely NULL -> UI shows "-"

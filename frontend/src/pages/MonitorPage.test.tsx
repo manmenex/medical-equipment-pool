@@ -64,6 +64,11 @@ function setup() {
 afterEach(() => vi.clearAllMocks());
 
 describe("groupEvents", () => {
+  it("prefers the keyer label over the operator name", () => {
+    const g = groupEvents([ev("K", { keyer_label: " BME Synth " }), ev("L")]);
+    expect(g[0].submissions.map((x) => x.operator).sort()).toEqual(["BME Synth", "Somchai"]);
+  });
+
   it("groups by date+shift and merges same ward/operator/minute into one submission", () => {
     const g = groupEvents([ev("1"), ev("2"), ev("3", { ward: { id: "w2", name: "ER" } }), ev("4", { shift: "night" })]);
     expect(g).toHaveLength(2);

@@ -712,9 +712,28 @@ async def test_verify_checklist_pages_blank_checks_one_row_per_receipt(db_sessio
         assert text in first, text
     assert first.count("SYN-") == 58 and checks[1].count("SYN-") == 3  # 61 receipts, one row each
     assert "Bed Alarms" in checks[1] or "Bed Alarms" in first
-    # Nothing is ticked on the checklist, and no free text / HN-like data is printed.
-    assert "chk-ok" not in first and "chk-bad" not in first and "free text" not in first
+    # D23: usable rows are pre-ticked (5 ticks: Cleaner..Battery + Pass), never a cross;
+    # no free text / HN-like data is printed.
+    assert first.count("chk-ok") == 58 * 5 and "chk-bad" not in first and "free text" not in first
     # Dispatch-only output has no checklist; the receipt-bearing outputs do.
     assert "page check" not in forms.render_forms_html(report, "dispatch", "day")
     pages = len(weasyprint.HTML(string=html_doc).render().pages)
     assert pages == 1 + 2 + 2  # blank dispatch form + receipt form (33+28 rows) + 2 checklist pages
+
+
+@pytest.mark.asyncio
+async def test_verify_checklist_defective_receipt_ticks_fail_not_pass(db_session, seeded_users):
+    """D23: a defective receipt prints a tick in Fail and leaves Pass blank (synthetic data)."""
+    w = await _world(db_session, seeded_users)
+    await _tx(db_session, w, ward=w.w6, category=w.pump, dispatched=at(27, 9), received=at(28, 9), op_r=w.bme_a, bcm="SYN-OK")
+    bad = await _tx(db_session, w, ward=w.w6, category=w.pump, dispatched=at(27, 9), received=at(28, 10), op_r=w.bme_a, bcm="SYN-BAD")
+    bad.condition_on_return = "defective"
+    await db_session.commit()
+    report = await svc.build_daily_report(db_session, D, 60)
+    page = forms.render_forms_html(report, "both", "day").split("<section class='page check'>")[1]
+    rows = {c: r for c in ("SYN-OK", "SYN-BAD") for r in page.split("<tr>") if c in r}
+    # cells after the code cell: Cleaner, Function, Run, Battery, Pass, Fail
+    cells = lambda r: r.split("</div></td>", 2)[2].split("<td><div class='c'><span")[0].split("<td>")[1:]  # noqa: E731
+    assert ["chk-ok" in c for c in cells(rows["SYN-OK"])] == [True] * 5 + [False]
+    assert ["chk-ok" in c for c in cells(rows["SYN-BAD"])] == [True] * 4 + [False, True]
+    assert "chk-bad" not in page

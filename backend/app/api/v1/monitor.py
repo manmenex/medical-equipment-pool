@@ -140,6 +140,7 @@ async def list_events(
                 ),
                 receipt_outcome=outcome,
                 # PR31 (D8) may add this column; read defensively.
+                keyer_label=t.dispatch_keyer_label if is_dispatch else t.receipt_keyer_label,
                 close_reason=getattr(t, "close_reason", None),
                 ward_contact_name=t.dispatch_contact_name if is_dispatch else t.receipt_contact_name,
                 has_hn=bool(t.has_hn),
