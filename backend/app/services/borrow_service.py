@@ -42,7 +42,7 @@ from app.crud import cuff as cuff_crud
 from app.crud import equipment as equipment_crud
 from app.crud import transaction as transaction_crud
 from app.models.equipment import EquipmentStatus
-from app.models.export import EVENT_TYPE_DISPATCH, EVENT_TYPE_RECEIPT
+from app.models.export import EVENT_TYPE_DISPATCH, EVENT_TYPE_RECEIPT, ExportEvent
 from app.models.master_data import Ward
 from app.models.user import ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, Role
 from app.models.transaction import (
