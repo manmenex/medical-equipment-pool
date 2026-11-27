@@ -52,10 +52,10 @@ _HN_PATTERNS = (
     re.compile(r"(?<![a-z])hn\s*[:.\-#]?\s*\d{3,}", re.IGNORECASE),
     re.compile(r"^\s*\d{6,}\s*$"),
 )
-_FAIL_MARKS = {"✗", "✘", "✕", "×", "x", "false", "no", "ไม่"}
+_FAIL_MARKS = {"✗", "✘", "✕", "✖", "❌", "×", "x", "false", "no", "ไม่"}
 _OK_MARKS = {"✓", "✔", "☑", "√", "true", "yes", "ok", "/"}
 # Header prefixes (normalised) of the three D4 standard-checklist columns.
-_CHECK_HEADERS = {"screen": "หน้าจอ", "charger": "สายชาร์จ", "clamp": "ขาจับเสา"}
+_CHECK_HEADERS = {"screen": ("หน้าจอ",), "charger": ("สายชาร์จ",), "clamp": ("clamp", "ขาจับเสา")}
 _ROW_ID_RE = re.compile(r"^[0-9a-fA-F]{8}$")
 
 
@@ -159,15 +159,19 @@ def _map_check_columns(accessories: list[tuple[int, str]]) -> dict[str, int]:
         return {}
     found: dict[str, int] = {}
     for col, label in accessories:
-        key = next((k for k, pre in _CHECK_HEADERS.items() if _norm(label).startswith(_norm(pre))), None)
+        key = next((k for k, pres in _CHECK_HEADERS.items() if any(_norm(p) in _norm(label) for p in pres)), None)
         if key is None or key in found:
             return {}
         found[key] = col
     return found
 
 
+def _mark_text(text: str) -> str:
+    return (text or "").replace("\ufe0f", "").strip().casefold()
+
+
 def _mark(text: str) -> bool | None:
-    t = (text or "").strip().casefold()
+    t = _mark_text(text)
     if t in _OK_MARKS:
         return True
     if t in _FAIL_MARKS:
@@ -292,7 +296,7 @@ def parse_tab(kind: str, values: list[list[str]]) -> ParsedTab:
             skip("bad_date_or_time")
             continue
         failed = tuple(
-            label for (i, label) in cols.accessories if cells[i].strip().casefold() in _FAIL_MARKS
+            label for (i, label) in cols.accessories if _mark_text(cells[i]) in _FAIL_MARKS
         )
         marks = {k: _mark(cells[i]) for k, i in cols.check_columns.items()}
         out.rows.append(
