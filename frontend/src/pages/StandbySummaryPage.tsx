@@ -495,6 +495,7 @@ export function StandbySummaryPage() {
             </span>
           )}
         </div>
+        <p className="mt-2 text-xs">ตัวเลขที่แก้มีผลกับข้อความ LINE เท่านั้น (Excel ใช้ค่าที่ระบบคำนวณ)</p>
         {downloadError && (
           <p role="alert" className="mt-2 text-xs text-red-600">
             {downloadError}

@@ -83,3 +83,39 @@ async def test_standby_uses_exact_categories(client, seeded_users, db_session):
     assert body["pneumatic"]["in_use"]["system_value"] == 1
     assert body["pneumatic"]["returned"]["system_value"] == 1
     assert "INFUSION PUMPS" in body["infusion"]["categories"] and not any("SYRINGE" in c or "ANALGESIC" in c for c in body["infusion"]["categories"])
+
+
+def _pool_rows(ws):
+    """(label, row) of the pool table lines plus the row of its total line."""
+    start = next(r for r in range(1, ws.max_row + 1) if ws.cell(r, 2).value == "ชนิดเครื่องมือ Equipment Pool")
+    labels, r = [], start + 2
+    while isinstance(ws.cell(r, 1).value, int):
+        labels.append(ws.cell(r, 2).value)
+        r += 1
+    return labels, r, ws
+
+
+async def test_respirator_row_only_with_activity(client, seeded_users, db_session):
+    w = await p30._world(db_session, seeded_users)
+    cat = EquipmentCategory(name="INFUSION PUMPS")
+    db_session.add(cat)
+    await db_session.flush()
+    await p30._tx(db_session, w, ward=w.w5a, category=cat, dispatched=p30.at(28, 10), op_d=w.bme_b)
+    await db_session.commit()
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    resp = await p30._get_xlsx(client, staff, date="2026-07-28")
+    ws = load_workbook(io.BytesIO(resp.content))["รายงาน"]
+    labels, total_row, _ = _pool_rows(ws)
+    assert len(labels) == 7 and not any(x.startswith("RESPIRATORS") for x in labels)
+    assert ws.cell(total_row, 8).value == 1  # total line directly follows the 7 rows
+
+    rcat = EquipmentCategory(name="RESPIRATORS, AIR-PURIFYING, PARTICULATE")
+    db_session.add(rcat)
+    await db_session.flush()
+    await p30._tx(db_session, w, ward=w.w5a, category=rcat, dispatched=p30.at(28, 11), op_d=w.bme_b)
+    await db_session.commit()
+    resp = await p30._get_xlsx(client, staff, date="2026-07-28")
+    ws = load_workbook(io.BytesIO(resp.content))["รายงาน"]
+    labels, total_row, _ = _pool_rows(ws)
+    assert len(labels) == 8 and labels[-1].startswith("RESPIRATORS")
+    assert ws.cell(total_row, 8).value == 2

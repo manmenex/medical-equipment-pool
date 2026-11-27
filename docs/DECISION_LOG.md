@@ -9555,3 +9555,20 @@ opening-balance transactions are created.
   merged; Owner-confirmed same-place aliases share one row").
 - **Source:** Owner decisions in chat, 2026-11-27. Docs-only Governance PR.
 - **Status:** Approved; implementation follows.
+
+## 2026-11-27 (third set) — Standby edits apply to the LINE text only; optional respirator pool row
+
+- **Decision (Owner, in chat, 2026-11-27):**
+  - **D25 LINE text and Excel are separate:** numbers edited on the Standby
+    summary page (D16 overrides) change only the "Copy text" LINE message. The
+    daily Excel "Stand By" column and the shift summary always use the
+    system-computed values. Edits stay stored and audited as before.
+  - **D26 Respirator pool row:** in the daily Excel pool usage table, the
+    "RESPIRATORS, AIR-PURIFYING, PARTICULATE" row is shown only on days with
+    dispatches or receipts of that category; otherwise the table keeps the
+    legacy 7 rows.
+- **Amends:** D16 ("the PR30 daily Excel Stand By column is filled from this
+  summary" now means the system values, not the edited values).
+- **Source:** Owner decisions in chat, 2026-11-27 (choices 1ข, 2ข). Docs-only
+  Governance PR.
+- **Status:** Approved; implementation follows.
