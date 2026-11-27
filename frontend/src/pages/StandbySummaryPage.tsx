@@ -26,11 +26,13 @@ interface EditableNumberProps {
   field: StandbyField;
   label?: string;
   disabled: boolean;
+  /** Mobile list row: 72px x 44px input, hint/reset rendered inside the row. */
+  compact?: boolean;
   onSave: (key: string, value: number | null) => void;
 }
 
 /** Number input that saves on blur/Enter, with a system-value hint + reset when edited. */
-export function EditableNumber({ field, label, disabled, onSave }: EditableNumberProps) {
+export function EditableNumber({ field, label, disabled, compact = false, onSave }: EditableNumberProps) {
   const shown = field.effective_value === null ? "" : String(field.effective_value);
   const [draft, setDraft] = useState(shown);
   useEffect(() => setDraft(shown), [shown]);
@@ -51,6 +53,53 @@ export function EditableNumber({ field, label, disabled, onSave }: EditableNumbe
   };
 
   const edited = field.override_value !== null;
+  if (compact) {
+    return (
+      <span className="flex min-w-0 flex-col items-end gap-1">
+        <span className="flex items-center gap-2">
+          {edited && (
+            <span className="flex items-center gap-1 text-xs text-amber-600" data-testid={`m-edited-${field.key}`}>
+              <span aria-hidden="true" className="inline-block h-2 w-2 rounded-full bg-amber-500" />
+              แก้แล้ว
+            </span>
+          )}
+          <input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={MAX_VALUE}
+            step={1}
+            aria-label={name}
+            value={draft}
+            placeholder="-"
+            disabled={disabled}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commit();
+            }}
+            className={`h-11 w-[72px] shrink-0 rounded-lg border bg-transparent px-2 text-right text-base ${
+              edited ? "border-amber-500" : "border-[var(--border)]"
+            }`}
+          />
+        </span>
+        {edited && (
+          <span className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+            <span data-testid={`m-hint-${field.key}`}>ระบบ: {field.system_value ?? "-"}</span>
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => onSave(field.key, null)}
+              aria-label={`คืนค่าระบบ ${name}`}
+              className="min-h-[32px] rounded-md border border-[var(--border)] px-2 text-xs disabled:opacity-60"
+            >
+              คืนค่าระบบ
+            </button>
+          </span>
+        )}
+      </span>
+    );
+  }
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
       <input
@@ -68,7 +117,7 @@ export function EditableNumber({ field, label, disabled, onSave }: EditableNumbe
         onKeyDown={(e) => {
           if (e.key === "Enter") commit();
         }}
-        className={`w-20 rounded-lg border bg-transparent px-2 py-1 text-sm ${
+        className={`min-h-[44px] w-20 rounded-lg border bg-transparent px-2 py-1 text-sm md:min-h-0 ${
           edited ? "border-amber-500" : "border-[var(--border)]"
         }`}
       />
@@ -92,6 +141,17 @@ export function EditableNumber({ field, label, disabled, onSave }: EditableNumbe
   );
 }
 
+function groupWards(wards: StandbyField[]) {
+  const groups: { id: string; title: string; wards: StandbyField[] }[] = [];
+  for (const w of wards) {
+    const title = [w.mode, w.treatment].filter(Boolean).join(" · ") || "อื่น ๆ";
+    const last = groups[groups.length - 1];
+    if (last && last.title === title) last.wards.push(w);
+    else groups.push({ id: `${groups.length}:${title}`, title, wards: [w] });
+  }
+  return groups;
+}
+
 function BaselineDialog({ summary, onClose }: { summary: StandbySummary; onClose: () => void }) {
   const queryClient = useQueryClient();
   const base = summary.infusion.baseline;
@@ -106,7 +166,7 @@ function BaselineDialog({ summary, onClose }: { summary: StandbySummary; onClose
       onClose();
     },
   });
-  const inputCls = "w-28 rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm";
+  const inputCls = "w-full min-w-0 rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm";
   return (
     <div role="dialog" aria-modal="true" aria-labelledby="baseline-title" className="surface rounded-xl border p-4">
       <h3 id="baseline-title" className="mb-1 text-sm font-medium">
@@ -116,12 +176,12 @@ function BaselineDialog({ summary, onClose }: { summary: StandbySummary; onClose
         กรอกจำนวนที่คลังตอนนี้
         {base.set_at ? ` (ตั้งไว้ล่าสุด ${new Date(base.set_at).toLocaleString("th-TH")})` : ""}
       </p>
-      <div className="flex flex-wrap items-end gap-3">
-        <label className="flex flex-col gap-1 text-xs">
+      <div className="grid grid-cols-2 items-end gap-3 sm:flex sm:flex-wrap">
+        <label className="flex min-w-0 flex-col gap-1 text-xs sm:w-28">
           สายชาร์จที่คลัง
           <input type="number" min={0} value={chargers} onChange={(e) => setChargers(e.target.value)} className={inputCls} />
         </label>
-        <label className="flex flex-col gap-1 text-xs">
+        <label className="flex min-w-0 flex-col gap-1 text-xs sm:w-28">
           Clamp ที่คลัง
           <input type="number" min={0} value={clamps} onChange={(e) => setClamps(e.target.value)} className={inputCls} />
         </label>
@@ -129,11 +189,11 @@ function BaselineDialog({ summary, onClose }: { summary: StandbySummary; onClose
           type="button"
           disabled={!valid(chargers) || !valid(clamps) || save.isPending}
           onClick={() => save.mutate()}
-          className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium disabled:opacity-50"
+          className="min-h-[44px] rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium disabled:opacity-50"
         >
           บันทึกค่าเริ่มต้น
         </button>
-        <button type="button" onClick={onClose} className="rounded-lg px-3 py-2 text-sm">
+        <button type="button" onClick={onClose} className="min-h-[44px] rounded-lg px-3 py-2 text-sm">
           ยกเลิก
         </button>
       </div>
@@ -213,19 +273,19 @@ export function StandbySummaryPage() {
   const data = summary.data;
   const disabled = edit.isPending;
   const toggleCls = (active: boolean) =>
-    `rounded-lg border px-3 py-2 text-sm font-medium ${
+    `min-h-[44px] rounded-lg border px-2 py-2 text-sm font-medium sm:px-3 ${
       active ? "border-status-borrowed bg-status-borrowed/15 text-status-borrowed" : "border-[var(--border)]"
     }`;
   const cell = "px-2 py-2 text-sm";
 
   return (
-    <section className="flex flex-col gap-4 p-4" aria-labelledby="standby-title">
+    <section className="flex min-w-0 flex-col gap-4 sm:p-4" aria-labelledby="standby-title">
       <h1 id="standby-title" className="text-lg font-semibold">
         สรุป Stand By
       </h1>
 
-      <div className="flex flex-wrap items-end gap-3">
-        <label className="flex flex-col gap-1 text-xs">
+      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+        <label className="flex min-w-0 flex-col gap-1 text-xs">
           วันที่
           <input
             type="date"
@@ -234,10 +294,10 @@ export function StandbySummaryPage() {
               setDate(e.target.value);
               setCopied(null);
             }}
-            className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm"
+            className="min-h-[44px] w-full min-w-0 rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm"
           />
         </label>
-        <div role="group" aria-label="รอบสรุป" className="flex gap-2">
+        <div role="group" aria-label="รอบสรุป" className="grid grid-cols-2 gap-2 sm:flex">
           <button
             type="button"
             aria-pressed={cutoff === "night"}
@@ -277,14 +337,21 @@ export function StandbySummaryPage() {
 
       {data && (
         <>
-          <section className="surface rounded-xl border p-4" aria-labelledby="infusion-title">
+          <section className="surface min-w-0 rounded-xl border p-3 sm:p-4" aria-labelledby="infusion-title">
             <h2 id="infusion-title" className="mb-1 text-sm font-medium">
               Infusion pump standby
             </h2>
             <p className="mb-3 text-xs text-[var(--text-muted)]">
               เครื่องที่ส่งแล้วและยังไม่มี HN แยกตาม Ward
             </p>
-            <table className="w-full text-left">
+            <div className="hidden md:block">
+            <table className="w-full table-fixed text-left" data-testid="standby-table">
+              <colgroup>
+                <col className="w-[22%]" />
+                <col className="w-[24%]" />
+                <col className="w-[18%]" />
+                <col />
+              </colgroup>
               <thead>
                 <tr className="text-xs text-[var(--text-muted)]">
                   <th className={cell}>รูปแบบการจ่ายเครื่อง</th>
@@ -303,11 +370,11 @@ export function StandbySummaryPage() {
                 )}
                 {data.infusion.wards.map((w, i, all) => (
                   <tr key={w.key} className="border-t border-[var(--border)]">
-                    <td className={cell}>{i > 0 && all[i - 1].mode === w.mode ? "" : (w.mode ?? "")}</td>
-                    <td className={cell}>
+                    <td className={`${cell} break-words align-top`}>{i > 0 && all[i - 1].mode === w.mode ? "" : (w.mode ?? "")}</td>
+                    <td className={`${cell} break-words align-top`}>
                       {i > 0 && all[i - 1].mode === w.mode && all[i - 1].treatment === w.treatment ? "" : (w.treatment ?? "")}
                     </td>
-                    <th scope="row" className={`${cell} font-normal`}>
+                    <th scope="row" className={`${cell} break-words align-top font-normal`}>
                       {w.label}
                     </th>
                     <td className={cell}>
@@ -317,26 +384,49 @@ export function StandbySummaryPage() {
                 ))}
               </tbody>
             </table>
+            </div>
+
+            <div className="md:hidden" data-testid="standby-mobile-list">
+              {data.infusion.wards.length === 0 && <p className="py-2 text-sm">ไม่มีเครื่อง Stand By ที่หอผู้ป่วย</p>}
+              {groupWards(data.infusion.wards).map((g) => (
+                <div key={g.id} role="group" aria-label={g.title} className="mb-3 last:mb-0">
+                  <h3 className="sticky top-0 z-10 rounded-md bg-[var(--surface,var(--bg))] px-2 py-1.5 text-xs font-semibold text-[var(--text-muted)] ring-1 ring-[var(--border)]">
+                    {g.title}
+                  </h3>
+                  <ul>
+                    {g.wards.map((w) => (
+                      <li
+                        key={w.key}
+                        className="flex min-h-[52px] items-center justify-between gap-3 border-b border-[var(--border)] px-2 py-1 last:border-b-0 odd:bg-black/[0.03] dark:odd:bg-white/[0.04]"
+                      >
+                        <span className="min-w-0 break-words text-sm">{w.label}</span>
+                        <EditableNumber field={w} label={`Stand By ${w.label}`} disabled={disabled} compact onSave={onSave} />
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
 
             <h3 className="mb-2 mt-4 text-sm font-medium">BME (คลัง)</h3>
-            <div className="flex flex-wrap gap-x-6 gap-y-3">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:flex sm:flex-wrap sm:gap-x-6">
               {[
                 [data.infusion.bme_devices, "เครื่องใหม่ (เครื่อง)"],
                 [data.infusion.chargers, "สายชาร์จ"],
                 [data.infusion.clamps, "Clamp"],
                 [data.infusion.ready, "พร้อมใช้งาน (เครื่อง)"],
               ].map(([f, caption]) => (
-                <label key={(f as StandbyField).key} className="flex flex-col gap-1 text-xs">
+                <label key={(f as StandbyField).key} className="flex min-w-0 flex-col gap-1 text-xs">
                   {caption as string}
                   <EditableNumber field={f as StandbyField} label={caption as string} disabled={disabled} onSave={onSave} />
                 </label>
               ))}
             </div>
-            <div className="mt-3 flex flex-wrap items-center gap-3">
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
               <button
                 type="button"
                 onClick={() => setShowBaseline(true)}
-                className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+                className="min-h-[44px] rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
               >
                 ตั้งค่าเริ่มต้น สายชาร์จ/Clamp
               </button>
@@ -347,23 +437,23 @@ export function StandbySummaryPage() {
             {showBaseline && <BaselineDialog summary={data} onClose={() => setShowBaseline(false)} />}
           </section>
 
-          <section className="surface rounded-xl border p-4" aria-labelledby="pneumatic-title">
+          <section className="surface min-w-0 rounded-xl border p-3 sm:p-4" aria-labelledby="pneumatic-title">
             <h2 id="pneumatic-title" className="mb-3 text-sm font-medium">
               Pneumatic PUMP
             </h2>
-            <div className="flex flex-wrap gap-x-6 gap-y-3">
-              <label className="flex flex-col gap-1 text-xs">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:flex sm:flex-wrap sm:gap-x-6">
+              <label className="flex min-w-0 flex-col gap-1 text-xs">
                 เครื่องที่ใช้งานอยู่
                 <EditableNumber field={data.pneumatic.in_use} disabled={disabled} onSave={onSave} />
               </label>
-              <label className="flex flex-col gap-1 text-xs">
+              <label className="flex min-w-0 flex-col gap-1 text-xs">
                 รับคืนเครื่องวันนี้
                 <EditableNumber field={data.pneumatic.returned} disabled={disabled} onSave={onSave} />
               </label>
             </div>
           </section>
 
-          <ul className="list-disc pl-5 text-xs text-[var(--text-muted)]">
+          <ul className="list-disc break-words pl-5 text-xs text-[var(--text-muted)]">
             {data.approximations.map((a) => (
               <li key={a}>{a}</li>
             ))}
@@ -371,22 +461,22 @@ export function StandbySummaryPage() {
         </>
       )}
 
-      <section className="surface rounded-xl border p-4" aria-labelledby="text-title">
+      <section className="surface min-w-0 rounded-xl border p-3 sm:p-4" aria-labelledby="text-title">
         <h2 id="text-title" className="mb-2 text-sm font-medium">
           ข้อความ LINE
         </h2>
         <pre
           data-testid="standby-text"
-          className="mb-3 whitespace-pre-wrap rounded-lg border border-[var(--border)] p-3 text-sm"
+          className="mb-3 whitespace-pre-wrap break-words rounded-lg border border-[var(--border)] p-3 text-sm"
         >
           {text.data ?? (text.isLoading ? "กำลังโหลด..." : "")}
         </pre>
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
           <button
             type="button"
             onClick={() => void copy()}
             disabled={text.data === undefined}
-            className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium disabled:opacity-50"
+            className="min-h-[44px] w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium disabled:opacity-50 sm:w-auto"
           >
             คัดลอกข้อความ
           </button>
@@ -394,7 +484,7 @@ export function StandbySummaryPage() {
             type="button"
             onClick={() => void download()}
             disabled={busy || !date}
-            className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium disabled:opacity-50"
+            className="min-h-[44px] w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium disabled:opacity-50 sm:w-auto"
           >
             ดาวน์โหลด Excel
           </button>

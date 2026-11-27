@@ -80,16 +80,24 @@ beforeEach(() => {
 });
 afterEach(() => vi.clearAllMocks());
 
+// The page renders both the md+ table and the <md list (CSS toggles them), so
+// ward inputs exist twice in jsdom; desktop-oriented tests scope to the table.
+const tableInput = (name: string) => within(screen.getByTestId("standby-table")).getByRole("spinbutton", { name });
+const findTableInput = async (name: string) => {
+  await screen.findByTestId("standby-table");
+  return tableInput(name);
+};
+
 describe("StandbySummaryPage", () => {
   it("defaults to the Night (08:00) summary and the toggle switches the cut-off", async () => {
     const user = userEvent.setup();
     setup();
-    expect(await screen.findByRole("spinbutton", { name: "Stand By W5A" })).toHaveValue(2);
+    expect(await findTableInput("Stand By W5A")).toHaveValue(2);
     expect(fetchStandbySummary).toHaveBeenLastCalledWith(expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), "night");
     expect(screen.getByRole("button", { name: "สรุปกะ Night (08:00)" })).toHaveAttribute("aria-pressed", "true");
 
     await user.click(screen.getByRole("button", { name: "สรุปกะ Day (20:00)" }));
-    await waitFor(() => expect(screen.getByRole("spinbutton", { name: "Stand By W5A" })).toHaveValue(1));
+    await waitFor(() => expect(tableInput("Stand By W5A")).toHaveValue(1));
     expect(fetchStandbySummary).toHaveBeenLastCalledWith(expect.any(String), "day");
     expect(fetchStandbyText).toHaveBeenLastCalledWith(expect.any(String), "day");
     expect(screen.getByRole("button", { name: "สรุปกะ Day (20:00)" })).toHaveAttribute("aria-pressed", "true");
@@ -104,7 +112,8 @@ describe("StandbySummaryPage", () => {
 
   it("shows all editable fields", async () => {
     setup();
-    for (const name of ["Stand By W5B", "เครื่องใหม่ (เครื่อง)", "สายชาร์จ", "Clamp", "พร้อมใช้งาน (เครื่อง)", "เครื่องที่ใช้งานอยู่", "รับคืนเครื่องวันนี้"]) {
+    expect(await findTableInput("Stand By W5B")).toBeEnabled();
+    for (const name of ["เครื่องใหม่ (เครื่อง)", "สายชาร์จ", "Clamp", "พร้อมใช้งาน (เครื่อง)", "เครื่องที่ใช้งานอยู่", "รับคืนเครื่องวันนี้"]) {
       expect(await screen.findByRole("spinbutton", { name })).toBeEnabled();
     }
   });
@@ -113,7 +122,7 @@ describe("StandbySummaryPage", () => {
     const user = userEvent.setup();
     saveStandbyOverride.mockResolvedValueOnce(summary("night", { "ward:W5A": 5 }));
     setup();
-    const input = await screen.findByRole("spinbutton", { name: "Stand By W5A" });
+    const input = await findTableInput("Stand By W5A");
     expect(screen.queryByTestId("hint-ward:W5A")).toBeNull();
 
     await user.clear(input);
@@ -123,21 +132,21 @@ describe("StandbySummaryPage", () => {
       expect(saveStandbyOverride).toHaveBeenCalledWith(expect.any(String), "night", "ward:W5A", 5),
     );
     expect(await screen.findByTestId("hint-ward:W5A")).toHaveTextContent("ระบบ: 2");
-    expect(screen.getByRole("spinbutton", { name: "Stand By W5A" })).toHaveValue(5);
+    expect(tableInput("Stand By W5A")).toHaveValue(5);
 
     saveStandbyOverride.mockResolvedValueOnce(summary("night"));
-    await user.click(screen.getByRole("button", { name: "คืนค่าระบบ Stand By W5A" }));
+    await user.click(within(screen.getByTestId("standby-table")).getByRole("button", { name: "คืนค่าระบบ Stand By W5A" }));
     await waitFor(() =>
       expect(saveStandbyOverride).toHaveBeenLastCalledWith(expect.any(String), "night", "ward:W5A", null),
     );
     await waitFor(() => expect(screen.queryByTestId("hint-ward:W5A")).toBeNull());
-    expect(screen.getByRole("spinbutton", { name: "Stand By W5A" })).toHaveValue(2);
+    expect(tableInput("Stand By W5A")).toHaveValue(2);
   });
 
   it("does not save an unchanged or invalid value", async () => {
     const user = userEvent.setup();
     setup();
-    const input = await screen.findByRole("spinbutton", { name: "Stand By W5A" });
+    const input = await findTableInput("Stand By W5A");
     await user.click(input);
     await user.tab();
     await user.clear(input);
@@ -192,7 +201,7 @@ describe("StandbySummaryPage", () => {
     const user = userEvent.setup();
     downloadDailySummary.mockResolvedValue(undefined);
     setup();
-    await screen.findByRole("spinbutton", { name: "Stand By W5A" });
+    await findTableInput("Stand By W5A");
     await user.click(screen.getByRole("button", { name: "ดาวน์โหลด Excel" }));
     expect(downloadDailySummary).toHaveBeenCalledWith(expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), 60);
   });
@@ -202,5 +211,37 @@ describe("StandbySummaryPage", () => {
     setup();
     expect(screen.getByText(/สำหรับเจ้าหน้าที่ศูนย์เครื่องมือ/)).toBeInTheDocument();
     expect(fetchStandbySummary).not.toHaveBeenCalled();
+  });
+
+  describe("mobile layout (CSS-only responsive)", () => {
+    it("renders the md+ table and the <md grouped list with the right responsive classes", async () => {
+      setup();
+      const table = await screen.findByTestId("standby-table");
+      expect(table.parentElement).toHaveClass("hidden", "md:block");
+      expect(table).toHaveClass("table-fixed");
+      const list = screen.getByTestId("standby-mobile-list");
+      expect(list).toHaveClass("md:hidden");
+      expect(within(list).queryByRole("table")).toBeNull();
+    });
+
+    it("shows one group header per mode/treatment with ward rows and 44px numeric inputs", async () => {
+      setup();
+      const list = await screen.findByTestId("standby-mobile-list");
+      const groups = within(list).getAllByRole("group");
+      expect(groups.length).toBeGreaterThan(0);
+      for (const g of groups) expect(within(g).getAllByRole("heading", { level: 3 })).toHaveLength(1);
+      const input = within(list).getByRole("spinbutton", { name: "Stand By W5A" });
+      expect(input).toHaveAttribute("inputmode", "numeric");
+      expect(input).toHaveClass("h-11", "w-[72px]");
+      expect(within(list).getByText("W5B")).toBeInTheDocument();
+    });
+
+    it("marks an overridden ward as edited (แก้แล้ว) in the mobile list", async () => {
+      fetchStandbySummary.mockImplementation((_d: string, c: StandbyCutoff) => Promise.resolve(summary(c, { "ward:W5A": 5 })));
+      setup();
+      const list = await screen.findByTestId("standby-mobile-list");
+      expect(await within(list).findByTestId("m-edited-ward:W5A")).toHaveTextContent("แก้แล้ว");
+      expect(within(list).getByTestId("m-hint-ward:W5A")).toHaveTextContent("ระบบ: 2");
+    });
   });
 });
