@@ -1,5 +1,6 @@
 """Owner Governance 2026-11-27 (D28): export API compensating (correction)
 events, withdrawn-in-window originals, re-receive, HN exclusion. SQLite."""
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -167,3 +168,49 @@ async def test_corrections_follow_the_cursor_without_hold_back(client, ctx, db_s
     await _act(client, ctx, tx["id"], "void", {"reason": "oops"})
     page = (await client.get("/api/v1/export/events", headers=key, params={"after": first["next_cursor"]})).json()
     assert [(e["event_type"], e["correction"]) for e in page["events"]] == [("receipt", True)]
+
+
+async def _age_seq(db_session, seq, seconds):
+    await db_session.execute(
+        update(ExportEvent).where(ExportEvent.seq == seq).values(created_at=datetime.now(timezone.utc) - timedelta(seconds=seconds))
+    )
+    await db_session.commit()
+
+
+async def test_void_inside_safety_margin_corrects_instead_of_withdrawing(client, ctx, db_session):
+    """Dispatch event is 115 s old (hold 120 s): not yet visible, but within 10 s
+    of becoming so -- a reader could see it before this commit, so emit a correction."""
+    _, key = await _key(client, ctx["admin"])
+    tx = await _dispatch(client, ctx)
+    await _age_seq(db_session, 1, 115)
+    await _act(client, ctx, tx["id"], "void", {"reason": "late"})
+    row = (await db_session.execute(select(ExportEvent).where(ExportEvent.seq == 1))).scalar_one()
+    assert row.withdrawn is False
+    await _age_seq(db_session, 1, 3600)
+    assert [(e["event_type"], e["correction"]) for e in await _events(client, key)] == [("dispatch", False), ("receipt", True)]
+
+
+async def test_correction_waits_behind_older_held_back_event_then_delivers_in_seq_order(client, ctx, db_session):
+    _, key = await _key(client, ctx["admin"])
+    await _dispatch(client, ctx, eq="eq1")  # seq 1, still held back
+    tx2 = await _dispatch(client, ctx, eq="eq2")  # seq 2
+    await _age_seq(db_session, 2, 3600)
+    await _act(client, ctx, tx2["id"], "void", {"reason": "oops"})  # correction seq 3
+    assert await _events(client, key) == []  # cursor blocked behind seq 1
+    await _age_seq(db_session, 1, 3600)
+    assert [e["seq"] for e in await _events(client, key)] == [1, 2, 3]
+
+
+async def test_retried_normal_emit_is_rejected_but_reemit_after_void_is_allowed(client, ctx, db_session):
+    from sqlalchemy.exc import IntegrityError
+
+    from app.models.export import EVENT_TYPE_DISPATCH
+    from app.services import export_service
+
+    tx = await _dispatch(client, ctx)
+    tx_id = uuid.UUID(tx["id"])
+    with pytest.raises(IntegrityError):  # duplicate normal dispatch event (same generation)
+        await export_service.record_event(
+            db_session, transaction_id=tx_id, event_type=EVENT_TYPE_DISPATCH, event_at=datetime.now(timezone.utc)
+        )
+    await db_session.rollback()

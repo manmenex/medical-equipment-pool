@@ -17,14 +17,14 @@ from tests.test_postgres_integration import (  # noqa: F401
 
 pytestmark = pytest.mark.postgres
 
-_NEW = {"correction", "corrects_event_id", "withdrawn"}
+_NEW = {"correction", "corrects_event_id", "withdrawn", "generation"}
 _COLS = text(
     "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='export_events'"
 )
 _UQ = text("SELECT count(*) FROM pg_constraint WHERE conname='uq_export_events_transaction_type'")
 _INS = text(
-    "INSERT INTO export_events (seq, event_id, event_type, transaction_id, event_at, correction, corrects_event_id) "
-    "VALUES (:s, :e, :t, :tx, now(), :c, :co)"
+    "INSERT INTO export_events (seq, event_id, event_type, transaction_id, event_at, correction, corrects_event_id, generation) "
+    "VALUES (:s, :e, :t, :tx, now(), :c, :co, :g)"
 )
 
 
@@ -56,13 +56,13 @@ async def test_migration_0040_export_corrections_round_trip():
                     ),
                     {"id": tx, "eq": eq},
                 )
-                await conn.execute(_INS, {"s": 1, "e": orig, "t": "receipt", "tx": tx, "c": False, "co": None})
-                await conn.execute(_INS, {"s": 2, "e": uuid.uuid4(), "t": "receipt", "tx": tx, "c": False, "co": None})
-                await conn.execute(_INS, {"s": 3, "e": uuid.uuid4(), "t": "dispatch", "tx": tx, "c": True, "co": orig})
+                await conn.execute(_INS, {"s": 1, "e": orig, "t": "receipt", "tx": tx, "c": False, "co": None, "g": 0})
+                await conn.execute(_INS, {"s": 2, "e": uuid.uuid4(), "t": "receipt", "tx": tx, "c": False, "co": None, "g": 1})
+                await conn.execute(_INS, {"s": 3, "e": uuid.uuid4(), "t": "dispatch", "tx": tx, "c": True, "co": orig, "g": 0})
             async with engine.begin() as conn:
                 with pytest.raises(IntegrityError):  # a second correction of the same original
                     await conn.execute(
-                        _INS, {"s": 4, "e": uuid.uuid4(), "t": "dispatch", "tx": tx, "c": True, "co": orig}
+                        _INS, {"s": 4, "e": uuid.uuid4(), "t": "dispatch", "tx": tx, "c": True, "co": orig, "g": 0}
                     )
             _run_alembic("downgrade", "0039_transaction_corrections")
             async with engine.connect() as conn:

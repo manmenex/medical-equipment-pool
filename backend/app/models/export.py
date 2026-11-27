@@ -16,7 +16,7 @@ This system never calls the consumer; the consumer polls.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, ForeignKey, Index, String, UniqueConstraint, Uuid, func, text
+from sqlalchemy import BigInteger, Boolean, Integer, CheckConstraint, ForeignKey, Index, String, UniqueConstraint, Uuid, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -45,6 +45,15 @@ class ExportEvent(Base):
             sqlite_where=text("corrects_event_id IS NOT NULL"),
         ),
         CheckConstraint("event_type IN ('dispatch', 'receipt', 'hn_update')", name="ck_export_events_event_type"),
+        Index(
+            "uq_export_events_tx_type_generation",
+            "transaction_id",
+            "event_type",
+            "generation",
+            unique=True,
+            postgresql_where=text("correction = false AND withdrawn = false AND event_type IN ('dispatch', 'receipt')"),
+            sqlite_where=text("correction = 0 AND withdrawn = 0 AND event_type IN ('dispatch', 'receipt')"),
+        ),
         Index("ix_export_events_event_at", "event_at"),
     )
 
@@ -59,6 +68,10 @@ class ExportEvent(Base):
     )
     event_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, server_default=func.now(), nullable=False)
+    # D28: n-th emission of this (transaction, type): number of earlier events of
+    # that type that were voided (withdrawn or corrected). Together with the
+    # partial unique index below it makes a retried normal emit a no-op error.
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
     # D28: compensating event for a void done after the original was visible.
     correction: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
     # event_id (not seq) of the original event this one compensates.

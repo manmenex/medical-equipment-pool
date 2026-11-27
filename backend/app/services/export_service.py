@@ -106,6 +106,34 @@ async def _next_seq(db: AsyncSession) -> int:
     return (await db.execute(stmt)).scalar_one()
 
 
+VISIBILITY_MARGIN = timedelta(seconds=10)
+
+
+async def db_now(db: AsyncSession) -> datetime:
+    """One clock for hold-back decisions on both the write and read side:
+    the database's on PostgreSQL (app and DB clocks may differ), the app's on
+    SQLite tests."""
+    if db.get_bind().dialect.name == "postgresql":
+        return (await db.execute(select(func.now()))).scalar_one()
+    return datetime.now(timezone.utc)
+
+
+async def _next_generation(db: AsyncSession, transaction_id: uuid.UUID, event_type: str) -> int:
+    corrected = select(ExportEvent.corrects_event_id).where(ExportEvent.corrects_event_id.is_not(None))
+    return (
+        await db.execute(
+            select(func.count())
+            .select_from(ExportEvent)
+            .where(
+                ExportEvent.transaction_id == transaction_id,
+                ExportEvent.event_type == event_type,
+                ExportEvent.correction.is_(False),
+                or_(ExportEvent.withdrawn.is_(True), ExportEvent.event_id.in_(corrected)),
+            )
+        )
+    ).scalar_one()
+
+
 async def record_event(
     db: AsyncSession,
     *,
@@ -131,8 +159,10 @@ async def record_event(
     ).scalar_one_or_none()
     if source != EQUIPMENT_SOURCE_POOL:  # demo/loan, or the equipment lookup found nothing
         return None
+    generation = 0 if correction or event_type == EVENT_TYPE_HN_UPDATE else await _next_generation(db, transaction_id, event_type)
     seq = await _next_seq(db)
     event = ExportEvent(
+        generation=generation,
         seq=seq,
         event_id=uuid.uuid4(),
         event_type=event_type,
@@ -142,7 +172,7 @@ async def record_event(
         corrects_event_id=corrects_event_id,
         # D28 hold-back runs from the server insert time, not the (possibly
         # backdated, offline) occurred time.
-        created_at=datetime.now(timezone.utc),
+        created_at=await db_now(db),
     )
     db.add(event)
     await db.flush()
@@ -176,19 +206,26 @@ async def record_void(db: AsyncSession, *, tx: BorrowTransaction, voided_kind: s
             )
             .order_by(ExportEvent.seq.desc())
             .limit(1)
+            .with_for_update()  # serializes against a concurrent reader's decision (no-op on SQLite)
         )
     ).scalar_one_or_none()
     if original is None:
         return
-    now = datetime.now(timezone.utc)
-    if not _visible(original, now):
+    now = await db_now(db)
+    # Safety margin: a reader may see the event before this transaction commits,
+    # so only withdraw when it is comfortably still hidden.
+    if not _visible(original, now + VISIBILITY_MARGIN):
         original.withdrawn = True
         await db.flush()
         if voided_kind == "dispatch":
             # An hn_update for the voided dispatch must not leak either.
             await db.execute(
                 update(ExportEvent)
-                .where(ExportEvent.transaction_id == tx.id, ExportEvent.event_type == EVENT_TYPE_HN_UPDATE)
+                .where(
+                    ExportEvent.transaction_id == tx.id,
+                    ExportEvent.event_type == EVENT_TYPE_HN_UPDATE,
+                    ExportEvent.seq > original.seq,  # only this dispatch's own hn_updates
+                )
                 .values(withdrawn=True)
             )
         return
@@ -292,7 +329,7 @@ async def query_events(
     ever skipped. When blocked, ``has_more`` is False: there is nothing more
     to fetch *now*, and the consumer should wait and poll again.
     """
-    now = now or datetime.now(timezone.utc)
+    now = now or await db_now(db)
     dispatcher = aliased(User)
     receiver = aliased(User)
     cols = [ExportEvent, BorrowTransaction, Equipment, EquipmentCategory.name, Ward, dispatcher.full_name, receiver.full_name]
