@@ -104,6 +104,17 @@ services:
       # install/update when absent. Deliberately optional here: without it HN
       # writes are rejected with a clear error and the rest of the app works.
       HN_ENCRYPTION_KEY: "${HN_ENCRYPTION_KEY:-}"
+      # D29 (Owner Governance 2026-11-27): dedicated export listener that is
+      # the ONLY place the read-only export API may return a patient HN, and
+      # only to an hn-scoped key. Disabled while EXPORT_HN_PORT is empty. The
+      # app refuses to enable it when the port equals the normal app port
+      # (APP_PORT) or the allowlist is empty/invalid. EXPORT_HN_ALLOWED_PEERS
+      # is matched against the SOCKET PEER only; behind Docker's published
+      # port the host tool connects from the bridge GATEWAY IP (see the
+      # runbook), so list that IP/CIDR here, never a forwarded address.
+      APP_PORT: "8000"
+      EXPORT_HN_PORT: "${EXPORT_HN_PORT:-}"
+      EXPORT_HN_ALLOWED_PEERS: "${EXPORT_HN_ALLOWED_PEERS:-}"
       ENVIRONMENT: production
       DEBUG: "false"
       COOKIE_SECURE: "false"
@@ -137,8 +148,14 @@ services:
       timeout: 5s
       retries: 10
       start_period: 15s
-    # No host port: LAN clients reach this service only through
-    # `frontend`'s nginx reverse proxy on the internal Docker network.
+    # The normal app port is NOT published: LAN clients reach this service
+    # only through `frontend`'s nginx reverse proxy on the internal Docker
+    # network. The ONE exception is the D29 HN export listener, published on
+    # the host's 127.0.0.1 ONLY (never 0.0.0.0, never the LAN, never mapped
+    # by Tailscale Funnel/serve). The default port below is published even
+    # while EXPORT_HN_PORT is unset, but nothing listens on it then.
+    ports:
+      - "127.0.0.1:${EXPORT_HN_PORT:-18443}:${EXPORT_HN_PORT:-18443}"
 
   frontend:
     build: ../../frontend

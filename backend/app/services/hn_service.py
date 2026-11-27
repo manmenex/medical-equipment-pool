@@ -21,6 +21,8 @@ from app.core.exceptions import (
     TransactionNotOpenError,
 )
 from app.crud import transaction as transaction_crud
+from app.models.export import EVENT_TYPE_HN_UPDATE
+from app.services import export_service
 from app.models.transaction import BorrowTransaction, TransactionStatus
 
 
@@ -77,6 +79,7 @@ async def add_hn(
         raise HnAlreadyRecordedError("This dispatch already has an HN; it cannot be replaced")
     # Raises HnUnavailableError (503) when the key is missing: nothing written.
     ciphertext = hn_crypto.encrypt_hn(hn)
+    added_at = datetime.now(timezone.utc)
     result = await db.execute(
         update(BorrowTransaction)
         .where(
@@ -84,7 +87,7 @@ async def add_hn(
             BorrowTransaction.status == TransactionStatus.OPEN,
             BorrowTransaction.has_hn.is_(False),
         )
-        .values(hn_ciphertext=ciphertext, has_hn=True, hn_added_at=datetime.now(timezone.utc))
+        .values(hn_ciphertext=ciphertext, has_hn=True, hn_added_at=added_at)
     )
     if result.rowcount != 1:  # lost a race (received or HN added concurrently)
         await db.rollback()
@@ -97,6 +100,11 @@ async def add_hn(
         entity_id=transaction_id,
         after={"transaction_id": str(transaction_id), "has_hn": True},  # never the value
         request=request,
+    )
+    # D29: hn_update export event (only hn-scoped keys on the HN listener ever
+    # see it). Carries no HN itself. Must be the last write before the commit.
+    await export_service.record_event(
+        db, transaction_id=transaction_id, event_type=EVENT_TYPE_HN_UPDATE, event_at=added_at
     )
     await db.commit()
     db.expire_all()

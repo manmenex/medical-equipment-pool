@@ -11,6 +11,9 @@ cd "$backend"
 export DATABASE_URL="sqlite+aiosqlite:///$db_dir/e2e.db"
 export CACHE_ENABLED=false
 export DEBUG=false
+# D28 undo hold-back would hide fresh export events from the drills.
+export EXPORT_HOLD_DISPATCH_SECONDS=0
+export EXPORT_HOLD_RECEIPT_SECONDS=0
 export ENVIRONMENT=development
 py="${PYTHON:-python3}"
 "$py" "$here/seed_e2e.py" >/dev/null
