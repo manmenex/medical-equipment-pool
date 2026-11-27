@@ -351,6 +351,40 @@ describe("D28 prevention and undo (receipt)", () => {
     await user.click(screen.getByRole("button", { name: "ยืนยันการรับคืน (1 เครื่อง)" }));
     await user.click(await screen.findByRole("button", { name: "บันทึกแล้ว · เลิกทำ (0:30)" }));
     await waitFor(() => expect(undoTransaction).toHaveBeenCalledWith("x"));
-    expect(await screen.findByText("✗ หมดเวลาเลิกทำ")).toBeInTheDocument();
+    expect(await screen.findByText("✗ BCM001: หมดเวลาเลิกทำ")).toBeInTheDocument();
+  });
+});
+
+describe("D28 partial undo (receipt)", () => {
+  it("keeps the failed item listed when only some undos succeed", async () => {
+    receiptBatch.mockImplementation(async () => ({
+      total: 2, succeeded: 2, failed: 0,
+      results: [
+        { index: 0, ok: true, equipment_id: null, transaction_id: "t1", transaction_no: "RX-1", cuffs_outstanding: null, error: null },
+        { index: 1, ok: true, equipment_id: null, transaction_id: "t2", transaction_no: "RX-2", cuffs_outstanding: null, error: null },
+      ],
+    }));
+    undoTransaction
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce({ isAxiosError: true, response: { data: { detail: "หมดเวลาเลิกทำ" } } });
+    const user = userEvent.setup();
+    renderPage();
+    await addBcm(user, "BCM001");
+    await screen.findByRole("button", { name: "แก้ไข BCM001" });
+    await addBcm(user, "BCM002");
+    await screen.findByRole("button", { name: "แก้ไข BCM002" });
+    await user.click(screen.getByRole("button", { name: "ยืนยันการรับคืน (2 เครื่อง)" }));
+    await user.click(await screen.findByRole("button", { name: /บันทึกแล้ว · เลิกทำ/ }));
+    expect(await screen.findByText("✗ BCM002: หมดเวลาเลิกทำ")).toBeInTheDocument();
+    expect(screen.getByText("✓ BCM002 (RX-2)")).toBeInTheDocument();
+    expect(screen.queryByText("✓ BCM001 (RX-1)")).not.toBeInTheDocument();
+  });
+
+  it("does not offer the dispatch switch when the fresh status says issued", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await addBcm(user, "FREE1"); // fixture status issued_to_ward, no open tx
+    expect(await screen.findByRole("alert")).toHaveTextContent("⛔ FREE1 ไม่ได้ถูกจ่ายออกไป ไม่ถูกเพิ่ม");
+    expect(screen.queryByRole("button", { name: "จ่ายแทน" })).not.toBeInTheDocument();
   });
 });

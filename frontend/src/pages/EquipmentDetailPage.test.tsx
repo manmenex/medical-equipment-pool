@@ -792,4 +792,13 @@ describe("D28 corrections on the history", () => {
     expect(within(rowFor("TX-CLOSED-1")).queryByRole("button", { name: "แก้ไขรายการ" })).not.toBeInTheDocument();
     expect(within(rowFor("TX-OPEN-1")).getByRole("button", { name: TRIGGER })).toBeInTheDocument();
   });
+
+  it("picks the latest by event time, not list order (backdated entry listed first)", async () => {
+    const backdated: TransactionOut = { ...openTransaction, id: "tx-back", transaction_no: "TX-BACK", borrowed_at: "2026-01-01T00:00:00Z" };
+    listTransactions.mockResolvedValue(page([backdated, closedTransaction]));
+    renderPage();
+    await waitFor(() => expect(screen.getByText("TX-BACK", { exact: false })).toBeInTheDocument());
+    expect(within(rowFor("TX-CLOSED-1")).getByRole("button", { name: "แก้ไขรายการ" })).toBeInTheDocument();
+    expect(within(rowFor("TX-BACK")).queryByRole("button", { name: "แก้ไขรายการ" })).not.toBeInTheDocument();
+  });
 });

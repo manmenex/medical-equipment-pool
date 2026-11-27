@@ -76,7 +76,7 @@ export function BorrowPage() {
   const [items, setItems] = useState<DispatchItem[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [done, setDone] = useState<{ bcm: string; ref: string }[]>([]);
+  const [done, setDone] = useState<{ id?: string; bcm: string; ref: string }[]>([]);
   const [queuedCount, setQueuedCount] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -260,15 +260,19 @@ export function BorrowPage() {
         note: note.trim() || null,
         items: payloadItems,
       });
-      const ok: { bcm: string; ref: string }[] = [];
+      const ok: { id?: string; bcm: string; ref: string }[] = [];
       const okIds: string[] = [];
+      const okLabels: string[] = [];
       const keep: DispatchItem[] = [];
       const refresh: string[] = [];
       for (let i = 0; i < sent.length; i++) {
         const r = resp.results.find((x) => x.index === i);
         if (r?.ok) {
-          ok.push({ bcm: sent[i].bcm, ref: r.transaction_no ?? "" });
-          if (r.transaction_id) okIds.push(r.transaction_id);
+          ok.push({ id: r.transaction_id ?? undefined, bcm: sent[i].bcm, ref: r.transaction_no ?? "" });
+          if (r.transaction_id) {
+            okIds.push(r.transaction_id);
+            okLabels.push(sent[i].bcm);
+          }
         } else {
           keep.push({ ...sent[i], error: batchErrorText(r?.error?.code, r?.error?.message) });
           const code = r?.error?.code;
@@ -281,7 +285,7 @@ export function BorrowPage() {
         setLastWard(wardId);
         bumpWardUsage(wardId);
         setNote("");
-        if (okIds.length > 0) setUndo({ ids: okIds, seconds: UNDO_WINDOW_SECONDS.dispatch });
+        if (okIds.length > 0) setUndo({ ids: okIds, labels: okLabels, seconds: UNDO_WINDOW_SECONDS.dispatch });
       }
       setDone(ok);
       setItems(keep);
@@ -446,7 +450,7 @@ export function BorrowPage() {
         {!wardId && items.length > 0 && <p className="text-xs text-amber-400">กรุณาเลือกหอผู้ป่วย</p>}
         <p className="text-xs text-[var(--text-muted)]">เวลาและกะบันทึกอัตโนมัติ</p>
       </div>
-      {undo && <UndoToast key={undo.ids.join(",")} {...undo} onClose={() => setUndo(null)} onUndone={() => setDone([])} />}
+      {undo && <UndoToast key={undo.ids.join(",")} {...undo} onClose={() => setUndo(null)} onUndone={({ failedIds }) => setDone((prev) => prev.filter((d) => d.id && failedIds.includes(d.id)))} />}
     </div>
   );
 }

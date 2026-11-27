@@ -186,7 +186,16 @@ export function EquipmentDetailPage() {
   // D28: only the device's latest non-voided transaction is correctable; that is
   // only knowable from the unfiltered list (newest first).
   const unfiltered = !appliedBusinessDateFrom && !appliedBusinessDateTo && !appliedShift && !appliedEvent;
-  const latestId = unfiltered ? transactions.find((t) => t.status !== "voided")?.id : undefined;
+  // TransactionOut carries no created_at (the server picks by created_at, then
+  // transaction_no), so the latest EVENT time is the closest client proxy; a
+  // backdated entry can still differ, in which case the server's 409
+  // CORRECTION_NOT_LATEST is the authority and its message is shown.
+  const eventTime = (t: TransactionOut) => new Date(t.returned_at ?? t.borrowed_at).getTime();
+  const latestId = unfiltered
+    ? [...transactions]
+        .filter((t) => t.status !== "voided")
+        .sort((a, b) => eventTime(b) - eventTime(a) || b.transaction_no.localeCompare(a.transaction_no))[0]?.id
+    : undefined;
   const [wardCorrectionNotice, setWardCorrectionNotice] = useState<string | null>(null);
 
   function wardName(wardId: string | null): string {

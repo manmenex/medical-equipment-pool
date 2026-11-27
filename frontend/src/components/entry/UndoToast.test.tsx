@@ -40,12 +40,12 @@ describe("UndoToast (D28 layer 2)", () => {
       .mockRejectedValueOnce({ isAxiosError: true, response: { data: { detail: "เกินเวลาเลิกทำ" } } });
     const onUndone = vi.fn();
     const user = userEvent.setup();
-    render(<UndoToast ids={["a", "b"]} seconds={120} onClose={vi.fn()} onUndone={onUndone} />);
+    render(<UndoToast ids={["a", "b"]} labels={["BCM-A", "BCM-B"]} seconds={120} onClose={vi.fn()} onUndone={onUndone} />);
     await user.click(screen.getByRole("button", { name: /เลิกทำ \(2:00\)/ }));
     await waitFor(() => expect(undoTransaction).toHaveBeenCalledTimes(2));
     expect(undoTransaction.mock.calls.map((c) => c[0])).toEqual(["a", "b"]);
     expect(await screen.findByText("เลิกทำแล้ว 1 รายการ")).toBeInTheDocument();
-    expect(screen.getByText("✗ เกินเวลาเลิกทำ")).toBeInTheDocument();
-    expect(onUndone).toHaveBeenCalledWith(1);
+    expect(screen.getByText("✗ BCM-B: เกินเวลาเลิกทำ")).toBeInTheDocument();
+    expect(onUndone).toHaveBeenCalledWith({ ok: 1, failedIds: ["b"] });
   });
 });

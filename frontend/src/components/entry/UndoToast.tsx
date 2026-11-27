@@ -13,6 +13,8 @@ export const UNDO_WINDOW_SECONDS = { dispatch: 120, receipt: 30 } as const;
 
 export interface UndoTarget {
   ids: string[];
+  /** Optional display label per id (same order), used to name failures. */
+  labels?: string[];
   seconds: number;
 }
 
@@ -20,7 +22,7 @@ interface Props extends UndoTarget {
   /** Called when the window ran out (toast hides) or after the result is dismissed. */
   onClose: () => void;
   /** Called after at least one transaction was undone. */
-  onUndone?: (count: number) => void;
+  onUndone?: (result: { ok: number; failedIds: string[] }) => void;
 }
 
 export function formatCountdown(total: number): string {
@@ -28,7 +30,7 @@ export function formatCountdown(total: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-export function UndoToast({ ids, seconds, onClose, onUndone }: Props) {
+export function UndoToast({ ids, labels, seconds, onClose, onUndone }: Props) {
   const [left, setLeft] = useState(seconds);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ ok: number; errors: string[] } | null>(null);
@@ -53,17 +55,20 @@ export function UndoToast({ ids, seconds, onClose, onUndone }: Props) {
     setBusy(true);
     let ok = 0;
     const errors: string[] = [];
-    for (const id of ids) {
+    const failedIds: string[] = [];
+    for (const [i, id] of ids.entries()) {
       try {
         await undoTransaction(id);
         ok += 1;
       } catch (err) {
-        errors.push(apiErrorMessage(err, "เลิกทำไม่สำเร็จ"));
+        failedIds.push(id);
+        const msg = apiErrorMessage(err, "เลิกทำไม่สำเร็จ");
+        errors.push(labels?.[i] ? `${labels[i]}: ${msg}` : msg);
       }
     }
     setBusy(false);
     setResult({ ok, errors });
-    if (ok > 0) onUndone?.(ok);
+    if (ok > 0) onUndone?.({ ok, failedIds });
   };
 
   const box = "surface fixed inset-x-4 bottom-4 z-40 mx-auto flex max-w-md flex-col gap-1 rounded-xl border p-3 text-sm shadow-lg";

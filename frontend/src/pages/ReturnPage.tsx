@@ -72,7 +72,7 @@ export function ReturnPage() {
   const [items, setItems] = useState<ReceiptItem[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [done, setDone] = useState<{ bcm: string; ref: string }[]>([]);
+  const [done, setDone] = useState<{ id?: string; bcm: string; ref: string }[]>([]);
   const [queuedCount, setQueuedCount] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -139,7 +139,16 @@ export function ReturnPage() {
         }
       }
       if (!item) {
-        if (eq.status === "available_at_pool") {
+        // D28: online only, and from a fresh server status (a cached/stale one must not prompt).
+        let fresh: EquipmentStatus | undefined;
+        if (!offline) {
+          try {
+            fresh = (await getEquipment(eq.id)).status;
+          } catch {
+            fresh = undefined;
+          }
+        }
+        if (!offline && fresh === "available_at_pool") {
           setNotice(null);
           setSwitchPrompt(eq.id);
           return;
@@ -260,14 +269,17 @@ export function ReturnPage() {
         note: note.trim() || null,
         items: payload,
       });
-      const ok: { bcm: string; ref: string }[] = [];
+      const ok: { id?: string; bcm: string; ref: string }[] = [];
       const okIds: string[] = [];
+      const okLabels: string[] = [];
       const keep: ReceiptItem[] = [];
       sent.forEach((it, i) => {
         const r = resp.results.find((x) => x.index === i);
         if (r?.ok) {
-          ok.push({ bcm: it.bcm, ref: r.transaction_no ?? "" });
-          okIds.push(r.transaction_id ?? it.transactionId);
+          const tid = r.transaction_id ?? it.transactionId;
+          ok.push({ id: tid, bcm: it.bcm, ref: r.transaction_no ?? "" });
+          okIds.push(tid);
+          okLabels.push(it.bcm);
         } else keep.push({ ...it, error: batchErrorText(r?.error?.code, r?.error?.message) });
       });
       if (ok.length > 0) {
@@ -276,7 +288,7 @@ export function ReturnPage() {
           bumpWardUsage(wardId);
         }
         setNote("");
-        if (okIds.length > 0) setUndo({ ids: okIds, seconds: UNDO_WINDOW_SECONDS.receipt });
+        if (okIds.length > 0) setUndo({ ids: okIds, labels: okLabels, seconds: UNDO_WINDOW_SECONDS.receipt });
         void queryClient.invalidateQueries({ queryKey: ["active-borrows"] });
       }
       setDone(ok);
@@ -499,7 +511,7 @@ export function ReturnPage() {
           </div>
         </>
       )}
-      {undo && <UndoToast key={undo.ids.join(",")} {...undo} onClose={() => setUndo(null)} onUndone={() => setDone([])} />}
+      {undo && <UndoToast key={undo.ids.join(",")} {...undo} onClose={() => setUndo(null)} onUndone={({ failedIds }) => setDone((prev) => prev.filter((d) => d.id && failedIds.includes(d.id)))} />}
     </div>
   );
 }
