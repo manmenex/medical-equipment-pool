@@ -51,15 +51,17 @@ def test_redis_not_exposed_to_lan():
 
 def test_backend_not_exposed_to_lan():
     services = _load_compose()["services"]
-    assert "ports" not in services["backend"], (
-        "backend must not publish a host port -- LAN clients reach it only through frontend's reverse proxy"
-    )
+    # D29: the single permitted mapping is the HN export listener, loopback only.
+    ports = services["backend"].get("ports", [])
+    assert len(ports) <= 1 and all(
+        p.startswith("127.0.0.1:${EXPORT_HN_PORT") and p.count("EXPORT_HN_PORT") == 2 for p in ports
+    ), "backend may publish only the D29 HN listener, bound to 127.0.0.1 -- LAN clients reach the app only through frontend"
 
 
-def test_only_frontend_publishes_a_host_port():
+def test_only_frontend_and_loopback_hn_listener_publish_a_host_port():
     services = _load_compose()["services"]
-    published = [name for name, svc in services.items() if "ports" in svc]
-    assert published == ["frontend"], f"expected only frontend to publish a port, got: {published}"
+    published = sorted(name for name, svc in services.items() if "ports" in svc)
+    assert published == ["backend", "frontend"], published
 
 
 def test_postgres_has_persistent_named_volume():
@@ -174,7 +176,7 @@ def test_no_hardcoded_secrets_or_ip_in_compose_file():
             assert found == "127.0.0.1", (
                 f"compose.yml must not contain a hardcoded IP address (found {found!r})"
             )
-            assert "test:" in line, (
+            assert "test:" in line or line.strip().startswith("- \"127.0.0.1:${EXPORT_HN_PORT"), (
                 "the loopback address is permitted only inside a health probe, "
                 f"not here: {line.strip()}"
             )

@@ -129,6 +129,12 @@ try {
     }
 
     $port = Get-ConfiguredHttpPort
+    # D29: the HN export listener must never be reachable through Funnel/serve.
+    $envMap = Read-EnvFile
+    $hnPort = if ($envMap.ContainsKey('EXPORT_HN_PORT')) { [string]$envMap['EXPORT_HN_PORT'] } else { '' }
+    if ($hnPort -and $hnPort -eq [string]$port) {
+        throw "EXPORT_HN_PORT ($hnPort) equals the port Funnel would expose; the HN listener must be a different port. Fix .env first."
+    }
     Write-InstallLog -Phase 'online' -Message "Starting Tailscale Funnel to local port $port."
     # Streamed live (-NoCapture): on a tailnet without Funnel/HTTPS enabled,
     # tailscale prints a login.tailscale.com/f/... link and WAITS for the
@@ -137,6 +143,16 @@ try {
     $r = Invoke-Tailscale -Arguments @('funnel', '--bg', "$port") -NoCapture
     if ($r.ExitCode -ne 0 -or -not (Test-FunnelActive)) {
         throw 'เปิด Funnel ไม่สำเร็จ: หากมีลิงก์ Enable ให้เปิดและกด Enable ก่อน แล้วรัน .\enable-online.ps1 อีกครั้ง'
+    }
+
+    # D29: after enabling, refuse to leave the HN port mapped by serve/funnel.
+    if ($hnPort) {
+        $mapped = (Invoke-Tailscale -Arguments @('serve', 'status')).Output -join "`n"
+        $mapped += "`n" + ((Invoke-Tailscale -Arguments @('funnel', 'status')).Output -join "`n")
+        if ($mapped -match "(:|\s)$([regex]::Escape($hnPort))(\D|$)") {
+            Invoke-Tailscale -Arguments @('funnel', 'reset') | Out-Null
+            throw "tailscale serve/funnel maps the HN port $hnPort. Funnel was reset; remove that mapping and retry."
+        }
     }
 
     $hostName = Get-FunnelHostName

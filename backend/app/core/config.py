@@ -102,6 +102,21 @@ class Settings(BaseSettings):
     # "unavailable"; the rest of the application works normally.
     HN_ENCRYPTION_KEY: str | None = None
 
+    # Roadmap export-d29 (Owner Governance 2026-11-27, D28/D29).
+    # D28 undo hold-back: the read-only export API withholds an event until
+    # its undo window has passed (dispatch 2 min, receipt 30 s).
+    EXPORT_HOLD_DISPATCH_SECONDS: int = 120
+    EXPORT_HOLD_RECEIPT_SECONDS: int = 30
+    # D29: the ONLY place the export API may return a patient HN is a
+    # dedicated listener on this port (unset/0 = disabled). It must differ
+    # from APP_PORT (the normal port uvicorn serves) and must never be mapped
+    # by Tailscale Funnel/serve. EXPORT_HN_ALLOWED_PEERS is a comma-separated
+    # list of IPs/CIDRs matched against the socket peer address only.
+    APP_PORT: int = 8000
+    EXPORT_HN_PORT: int | None = None
+    EXPORT_HN_HOST: str = "0.0.0.0"
+    EXPORT_HN_ALLOWED_PEERS: str = ""
+
     # Per-account login lockout (migration 0024). Owner decision 2026-11-01
     # (docs/DECISION_LOG.md): OFF by default. It MUST be turned on
     # (LOGIN_LOCKOUT_ENABLED=true) before any external/internet exposure,
@@ -219,6 +234,13 @@ class Settings(BaseSettings):
                 "configuration."
             )
         return self
+
+    @field_validator("EXPORT_HN_PORT", mode="before")
+    @classmethod
+    def _blank_hn_port_is_disabled(cls, value):
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @field_validator("ENVIRONMENT")
     @classmethod

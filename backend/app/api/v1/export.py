@@ -4,9 +4,11 @@ a human bearer token is not accepted here, and a machine key is not accepted
 anywhere else. This system never calls the consumer."""
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.audit import AUDIT_ACTION_EXPORT_HN_READ, record_audit_event
+from app.core.export_hn import HN_STATE_KEY
 from app.core.exceptions import ExportCursorAheadError
 from app.db.session import get_db
 from app.schemas.export import ExportCursorOut, ExportEventsPage
@@ -30,12 +32,13 @@ async def require_export_key(
     return row
 
 
-@router.get("/events", response_model=ExportEventsPage)
+@router.get("/events", response_model=ExportEventsPage, response_model_exclude_unset=True)
 async def list_events(
     after: int = Query(0, ge=0, description="seq of the last event already processed; 0 = from the beginning"),
     limit: int = Query(export_service.DEFAULT_PAGE_SIZE, ge=1, le=export_service.MAX_PAGE_SIZE),
+    request: Request = None,
     db: AsyncSession = Depends(get_db),
-    _key=Depends(require_export_key),
+    key=Depends(require_export_key),
 ):
     # Head is read before the page; events only ever append, so a cursor that
     # is <= head here is valid regardless of commits that land in between.
@@ -44,9 +47,24 @@ async def list_events(
             "The cursor is newer than any event in this database. The database may have been restored "
             "from a backup; re-seed the consumer from GET /export/cursor."
         )
-    events, has_more = await export_service.query_events(db, after=after, limit=limit)
-    next_cursor = events[-1]["seq"] if events else after
-    return ExportEventsPage(events=events, next_cursor=next_cursor, has_more=has_more)
+    # D29: HN only for an hn-scoped key AND the dedicated listener from an
+    # allowed peer (the middleware sets the marker; the normal port never does).
+    on_hn_listener = bool(request.scope.get("state", {}).get(HN_STATE_KEY))
+    hn_allowed = bool(key.scope_hn and on_hn_listener)
+    page = await export_service.query_events(db, after=after, limit=limit, hn_allowed=hn_allowed)
+    if page.hn_count:
+        # One count-only audit entry per response containing HN (never values).
+        await record_audit_event(
+            db,
+            actor_user_id=None,
+            action=AUDIT_ACTION_EXPORT_HN_READ,
+            entity_type="export_api_key",
+            entity_id=key.id,
+            after={"key_id": str(key.id), "value_count": page.hn_count},
+            request=request,
+        )
+        await db.commit()
+    return ExportEventsPage(events=page.events, next_cursor=page.next_cursor, has_more=page.has_more)
 
 
 @router.get("/cursor", response_model=ExportCursorOut)

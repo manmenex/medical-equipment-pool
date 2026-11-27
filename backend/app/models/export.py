@@ -16,7 +16,7 @@ This system never calls the consumer; the consumer polls.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Index, String, UniqueConstraint, Uuid, func, text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, ForeignKey, Index, String, UniqueConstraint, Uuid, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -24,7 +24,10 @@ from app.models.mixins import UTCDateTime, UUIDPKMixin
 
 EVENT_TYPE_DISPATCH = "dispatch"
 EVENT_TYPE_RECEIPT = "receipt"
-ALL_EVENT_TYPES = (EVENT_TYPE_DISPATCH, EVENT_TYPE_RECEIPT)
+# D29: HN added later to an open dispatch (D15). Visible only to `hn`-scoped
+# keys on the dedicated HN listener; other keys skip it.
+EVENT_TYPE_HN_UPDATE = "hn_update"
+ALL_EVENT_TYPES = (EVENT_TYPE_DISPATCH, EVENT_TYPE_RECEIPT, EVENT_TYPE_HN_UPDATE)
 
 
 class ExportEvent(Base):
@@ -35,7 +38,7 @@ class ExportEvent(Base):
         # opens once and closes once (ADR-005), so the pair is a natural key
         # that also makes a double-emit impossible.
         UniqueConstraint("transaction_id", "event_type", name="uq_export_events_transaction_type"),
-        CheckConstraint("event_type IN ('dispatch', 'receipt')", name="ck_export_events_event_type"),
+        CheckConstraint("event_type IN ('dispatch', 'receipt', 'hn_update')", name="ck_export_events_event_type"),
         Index("ix_export_events_event_at", "event_at"),
     )
 
@@ -77,3 +80,6 @@ class ExportApiKey(UUIDPKMixin, Base):
     revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     revoked_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
     last_used_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    # D29: only an administrator may create/revoke an hn-scoped key. HN is
+    # returned only to such a key AND only on the dedicated HN listener.
+    scope_hn: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
