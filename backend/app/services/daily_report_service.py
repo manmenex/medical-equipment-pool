@@ -335,21 +335,49 @@ def _layout_slots() -> list[tuple[str, str, str, str]]:
     ]
 
 
+def _slot_key(text: str) -> str:
+    """Matching key: case-insensitive, spaces/dots/hyphens removed, leading
+    "WARD" folded to "W" ("Ward 6 B", "Ward6B", "W6B" -> "w6b")."""
+    key = re.sub(r"[\s.\-]+", "", text or "").casefold()
+    return "w" + key[4:] if key.startswith("ward") else key
+
+
+# Owner-confirmed ward-name aliases for layout slots whose label differs from
+# the hospital ward name (normalised with _slot_key).
+SLOT_ALIASES: dict[str, str] = {
+    "orthopedicunit": "Surgery +Ortho",
+}
+
+
 def _match_slot(m: WardMapping, slots: list[tuple[str, str, str, str]]) -> int | None:
-    """Layout slot of a ward: the admin-mapped short label, else the ward name,
-    each by exact (case/space-insensitive) match first, then by label prefix
-    ("Ward 7A" -> slot "Ward 7"; never when a digit follows: "Ward 70")."""
-    candidates = [_norm(m.report_row_label), _norm(m.ward_name)]
-    norms = [_norm(s[3]) for s in slots]
+    """Layout slot of a ward, by normalised name (admin short label first, then
+    ward name): exact match first; then slot "Ward N" takes only "Ward N" /
+    "Ward NA" (never a B or other letter suffix, never extra digits, so a
+    "Ward NB" without a W{N}B slot goes to "อื่น ๆ"); other slots match by
+    label prefix on the original name with a word boundary."""
+    originals = [m.report_row_label or "", m.ward_name or ""]
+    candidates = [_slot_key(o) for o in originals]
+    norms = [_slot_key(s[3]) for s in slots]
     for cand in candidates:
         if cand in norms:
             return norms.index(cand)
     for cand in candidates:
+        alias = SLOT_ALIASES.get(cand)
+        if alias is not None and _slot_key(alias) in norms:
+            return norms.index(_slot_key(alias))
+    for cand, orig in zip(candidates, originals):
         best: int | None = None
         for i, n in enumerate(norms):
-            if cand.startswith(n) and not cand[len(n) : len(n) + 1].isdigit():
-                if best is None or len(n) > len(norms[best]):
-                    best = i
+            if re.fullmatch(r"w\d+", n):
+                ok = cand == n + "a"
+            else:
+                # Word boundary on the original name: the slot label must be
+                # followed by end/space/punctuation, never a letter or digit
+                # ("OR 2" -> OR, but "Orthopedic Unit" is not OR).
+                words = r"\s+".join(re.escape(w) for w in slots[i][3].split())
+                ok = re.match(words + r"(?!\w)", orig.strip(), re.I) is not None
+            if ok and (best is None or len(n) > len(norms[best])):
+                best = i
         if best is not None:
             return best
     return None
