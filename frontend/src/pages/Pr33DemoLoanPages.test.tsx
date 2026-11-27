@@ -135,7 +135,7 @@ describe("equipment list", () => {
     wrap(<EquipmentListPage />);
     await screen.findByText("Demo Pump");
     expect(screen.getAllByTestId("source-badge")).toHaveLength(1);
-    expect(screen.getByText(/SN SN-100/)).toBeInTheDocument();
+    expect(screen.getByText(/รหัส SN-100/)).toBeInTheDocument();
     expect(screen.getByText("AST-1")).toBeInTheDocument();
   });
 

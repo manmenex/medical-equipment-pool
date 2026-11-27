@@ -228,7 +228,7 @@ export function EquipmentDetailPage() {
           </h1>
           <p className="text-sm text-[var(--text-muted)]">
             {[
-              isDemoLoan ? (equipment.bcm_code ? `SN ${equipment.bcm_code}` : null) : equipment.asset_number,
+              isDemoLoan ? (equipment.bcm_code ? `รหัส ${equipment.bcm_code}` : null) : equipment.asset_number,
               equipment.serial_number ? `SN ${equipment.serial_number}` : null,
             ]
               .filter(Boolean)
@@ -239,7 +239,7 @@ export function EquipmentDetailPage() {
           </div>
           {isDemoLoan && (
             <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm" aria-label="ข้อมูล Demo/ยืม">
-              <dt className="text-[var(--text-muted)]">บริษัทเจ้าของเครื่อง</dt>
+              <dt className="text-[var(--text-muted)]">เจ้าของเครื่อง</dt>
               <dd>{equipment.owner_company ?? "-"}</dd>
               <dt className="text-[var(--text-muted)]">กำหนดคืน</dt>
               <dd>{equipment.due_back_date ?? "-"}</dd>

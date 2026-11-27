@@ -133,8 +133,8 @@ export function DemoLoanBatchPanel() {
           ))}
         </select>
         <input
-          aria-label="บริษัทเจ้าของเครื่อง"
-          placeholder="บริษัทเจ้าของเครื่อง (ผู้ให้ยืม)"
+          aria-label="เจ้าของเครื่อง"
+          placeholder="เจ้าของเครื่อง (บริษัท/โรงพยาบาลผู้ให้ยืม)"
           value={ownerCompany}
           onChange={(e) => { setOwnerCompany(e.target.value); invalidateResult(); }}
           className={INPUT}
