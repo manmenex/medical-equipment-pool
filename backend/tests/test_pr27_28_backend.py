@@ -191,11 +191,11 @@ async def test_contact_name_in_reports_and_exports(client, ctx, db_session, seed
     # Legacy CSV / XLSX builders.
     parsed = list(csv.reader(io.StringIO((await report_service.export_csv(db_session)).decode("utf-8-sig"))))
     header, first = parsed[0], parsed[1]
-    assert first[header.index("dispatch_contact_name")] == "Khun Dispatch"
-    assert first[header.index("receipt_contact_name")] == "Khun Receipt"
+    assert first[header.index("ผู้รับ (Ward)")] == "Khun Dispatch"
+    assert first[header.index("ผู้ส่งคืน (Ward)")] == "Khun Receipt"
     ws = load_workbook(io.BytesIO(await report_service.export_xlsx(db_session))).active
     xl_header = [c.value for c in ws[1]]
-    assert ws[2][xl_header.index("dispatch_contact_name")].value == "Khun Dispatch"
+    assert ws[2][xl_header.index("ผู้รับ (Ward)")].value == "Khun Dispatch"
 
 
 async def test_contact_name_never_in_application_logs(client, ctx, caplog):

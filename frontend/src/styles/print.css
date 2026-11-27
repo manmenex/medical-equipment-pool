@@ -59,7 +59,7 @@
 }
 @page landscape-a4 {
   size: A4 landscape;
-  margin: 12mm;
+  margin: 8mm;
 }
 
 .print-root {
@@ -128,10 +128,40 @@
   }
 }
 
+/* The table fits the page width (never wider than its container); on screen
+   the wrapper scrolls instead of widening the page. */
+.print-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 .print-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 11px;
+}
+
+.print-table .nowrap {
+  white-space: nowrap;
+  word-break: keep-all;
+}
+
+@media print {
+  .print-table-wrap {
+    overflow: visible;
+  }
+  .print-table {
+    table-layout: auto;
+    font-size: 10px;
+    line-height: 1.25;
+  }
+  .print-table th,
+  .print-table td {
+    padding: 3px 4px;
+  }
+  .print-table thead {
+    display: table-header-group;
+  }
 }
 
 .print-table th,

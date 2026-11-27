@@ -14,6 +14,9 @@ import type { PrintDocumentOut } from "@/types";
 // system label, and a neutral footer with report identity, template
 // version, and generation time. No hospital identity is assumed or
 // hardcoded.
+// Identifier/date-time columns must stay on one line (never wrap mid-value).
+const NOWRAP_COLUMN_KEYS = new Set(["transaction_no", "bcm_code", "dispatch_at", "receipt_at"]);
+
 export function PrintDocumentView({ document }: { document: PrintDocumentOut }) {
   const { metadata, columns, rows } = document;
   const orientation = PRINT_ORIENTATION[metadata.report_identity];
@@ -68,11 +71,14 @@ export function PrintDocumentView({ document }: { document: PrintDocumentOut }) 
               ไม่พบข้อมูลตามตัวกรองที่เลือก
             </p>
           ) : (
+            <div className="print-table-wrap">
             <table className="print-table">
               <thead>
                 <tr>
                   {columns.map((c) => (
-                    <th key={c.key}>{c.label_th}</th>
+                    <th key={c.key} className={NOWRAP_COLUMN_KEYS.has(c.key) ? "nowrap" : undefined}>
+                      {c.label_th}
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -83,12 +89,15 @@ export function PrintDocumentView({ document }: { document: PrintDocumentOut }) 
                   // client-side after this array is received.
                   <tr key={index}>
                     {columns.map((c) => (
-                      <td key={c.key}>{formatPrintValue(row.values[c.key], c.value_type)}</td>
+                      <td key={c.key} className={NOWRAP_COLUMN_KEYS.has(c.key) ? "nowrap" : undefined}>
+                        {formatPrintValue(row.values[c.key], c.value_type)}
+                      </td>
                     ))}
                   </tr>
                 ))}
               </tbody>
             </table>
+            </div>
           )}
 
           <footer className="mt-4 border-t border-[#e2e8f0] pt-2 text-[10px] text-[#94a3b8]">

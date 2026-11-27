@@ -40,8 +40,8 @@ export function IssueReportPage() {
   const total = pages?.pages[0]?.total;
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-start justify-between gap-3">
+    <div className="flex min-w-0 flex-col gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold">รายงานการเบิก</h1>
           <p className="text-sm text-[var(--text-muted)]">
@@ -82,7 +82,7 @@ export function IssueReportPage() {
             {typeof total === "number" && (
               <p className="mb-2 text-xs text-[var(--text-muted)]">พบทั้งหมด {total} รายการ</p>
             )}
-            <ReportResultsTable rows={rows} />
+            <ReportResultsTable rows={rows} kind="issue" />
             {hasNextPage && (
               <button
                 type="button"

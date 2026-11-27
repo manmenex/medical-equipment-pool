@@ -316,7 +316,7 @@ async def test_print_data_receive_report_includes_closed_transaction(client, see
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["metadata"]["row_count"] == 1
-    assert body["rows"][0]["values"]["asset_number"] == "AST-PR18B-0003"
+    assert body["rows"][0]["values"]["bcm_code"] == "AST-PR18B-0003"  # asset number is only the BCM fallback
     assert body["rows"][0]["values"]["receipt_outcome"] == "ใช้งานได้"
 
 

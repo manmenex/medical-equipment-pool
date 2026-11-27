@@ -99,7 +99,7 @@ describe("IssueReportPage", () => {
 
     expect(await screen.findByText("TX-1")).toBeInTheDocument();
     expect(screen.getByText("สมชาย ใจดี")).toBeInTheDocument();
-    expect(screen.getByText(/2026-07-10/)).toBeInTheDocument();
+    expect(screen.getByText(/10\/07\/2026 10:00/)).toBeInTheDocument();
   });
 
   it("shows a loading state while the report is being fetched", async () => {
@@ -195,7 +195,7 @@ describe("IssueReportPage", () => {
     await user.type(screen.getByLabelText("วันที่ทำการ ตั้งแต่"), "2026-07-01");
     await user.type(screen.getByLabelText("วันที่ทำการ ถึง"), "2026-07-31");
     await user.selectOptions(screen.getByLabelText("กะ"), "day");
-    await user.selectOptions(screen.getByLabelText("หอผู้ป่วย"), "ward-1");
+    await user.selectOptions(screen.getByLabelText("Ward"), "ward-1");
     await user.selectOptions(screen.getByLabelText("หมวดหมู่เครื่องมือ"), "cat-1");
     await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
 

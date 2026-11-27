@@ -15,7 +15,15 @@ export function ReportsPage() {
   });
 
   const download = async (format: "xlsx" | "csv") => {
-    const resp = await api.get("/reports/export", { params: { format }, responseType: "blob" });
+    // The selected range ("N วันล่าสุด") is sent as Bangkok calendar dates,
+    // today inclusive, so the file matches what the owner is looking at.
+    const fmt = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(d);
+    const now = new Date();
+    const from = new Date(now.getTime() - (range - 1) * 86_400_000);
+    const resp = await api.get("/reports/export", {
+      params: { format, date_from: fmt(from), date_to: fmt(now) },
+      responseType: "blob",
+    });
     const url = URL.createObjectURL(resp.data as Blob);
     const a = document.createElement("a");
     a.href = url;
@@ -26,7 +34,7 @@ export function ReportsPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex min-w-0 flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold">รายงาน</h1>
         <select
           value={range}
@@ -37,7 +45,7 @@ export function ReportsPage() {
           <option value={30}>30 วันล่าสุด</option>
           <option value={90}>90 วันล่าสุด</option>
         </select>
-        <div className="ml-auto flex gap-2">
+        <div className="flex flex-wrap gap-2 sm:ml-auto">
           <button
             onClick={() => download("xlsx")}
             className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium"
