@@ -472,10 +472,11 @@ async def build_summary(db: AsyncSession, summary_date: date, cutoff: str) -> St
 
 
 async def standby_by_label(db: AsyncSession, report_date: date) -> dict[str, int]:
-    """PR30 Excel "Stand By" column: effective per-row values of the DAY
-    cut-off (20:00) of the report date."""
+    """PR30 Excel "Stand By" column: SYSTEM-computed per-row values of the DAY
+    cut-off (20:00) of the report date. D25: Standby page edits (overrides)
+    affect only the LINE copy text, never the Excel."""
     summary = await build_summary(db, report_date, "day")
-    return {w.label: w.effective_value for w in summary.wards if w.effective_value}
+    return {w.label: w.system_value for w in summary.wards if w.system_value}
 
 
 # --------------------------------------------------------------------------

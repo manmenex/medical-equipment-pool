@@ -21,6 +21,7 @@ from app.core.reporting_time import Shift
 from app.services import report_xlsx_service
 from app.services.daily_report_service import (
     ROLE_CRYO,
+    ROLE_RESPIRATOR,
     ROLE_INFUSION,
     ROLE_ORDER,
     ROLE_SHORT_NAMES,
@@ -243,7 +244,10 @@ def _summary_sheet(ws: Worksheet, report: DailyReport, standby: dict[str, int] |
     for role, label in POOL_LABELS:
         if role == ROLE_CRYO and report.pool_counts.get(ROLE_CRYO):
             label = f"CRYO CUFF (ทั้งหมดมีในระบบ {report.pool_counts[ROLE_CRYO]} รายการ)"
-        lines.append((label, by_role.get(role, Counts())))
+        counts = by_role.get(role, Counts())
+        if role == ROLE_RESPIRATOR and not counts.total:  # D26: only on days with activity
+            continue
+        lines.append((label, counts))
     lines.extend(sorted(other.items()))
     pool_total = Counts()
     for i, (label, c) in enumerate(lines, start=1):
@@ -269,7 +273,7 @@ def _summary_sheet(ws: Worksheet, report: DailyReport, standby: dict[str, int] |
     notes = [
         f"ช่วงเปลี่ยนกะ ±{report.grace_minutes} นาที: นับให้กะที่คนนั้นทำเป็นหลัก | {moved}",
         "ตารางแผนกนับเฉพาะ Infusion Pump",
-        "Stand By: จากสรุป Standby ของวัน (แก้ไขได้ในระบบ)",
+        "Stand By: ค่าที่ระบบคำนวณ (ตัวเลขที่แก้ในหน้า Standby มีผลกับข้อความ LINE เท่านั้น)",
     ]
     row += 1  # the Owner's file keeps one spare line above the notes
     for text in notes:
