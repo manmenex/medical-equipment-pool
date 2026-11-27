@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { CheckGlyphs, ItemEditPanel } from "@/components/entry/ItemEditPanel";
 import { ChecksEditor } from "@/components/entry/ChecksEditor";
@@ -9,6 +9,7 @@ import { ScanBar } from "@/components/entry/ScanBar";
 import { useWardRefs } from "@/components/entry/useWardRefs";
 import { WardSection } from "@/components/entry/WardSection";
 import { OfflineStaleGate } from "@/components/OfflineStaleGate";
+import { UNDO_WINDOW_SECONDS, UndoToast, type UndoTarget } from "@/components/entry/UndoToast";
 import { SourceBadge } from "@/components/SourceBadge";
 import { useDirtyForm } from "@/hooks/useDirtyForm";
 import { useOfflineMode } from "@/hooks/useOfflineMode";
@@ -61,6 +62,7 @@ function rowSummary(it: DispatchItem) {
 
 export function BorrowPage() {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const presetEquipmentId = searchParams.get("equipment_id");
   const offline = useOfflineMode();
   const { wards, departments } = useWardRefs(offline);
@@ -74,10 +76,12 @@ export function BorrowPage() {
   const [items, setItems] = useState<DispatchItem[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [done, setDone] = useState<{ bcm: string; ref: string }[]>([]);
+  const [done, setDone] = useState<{ id?: string; bcm: string; ref: string }[]>([]);
   const [queuedCount, setQueuedCount] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [adding, setAdding] = useState(false);
+  // D28 layer 2: undo window of the last online save (never set for queued offline ops).
+  const [undo, setUndo] = useState<UndoTarget | null>(null);
   const submittingRef = useRef(false);
   const itemsRef = useRef<DispatchItem[]>([]);
   itemsRef.current = items;
@@ -86,7 +90,11 @@ export function BorrowPage() {
   const addEquipment = useCallback(
     async (eq: Pick<Equipment, "id" | "bcm_code" | "equipment_name" | "status" | "asset_number" | "equipment_source" | "returned_to_owner_at">) => {
       const label = eq.bcm_code ?? eq.asset_number ?? eq.equipment_name;
-      if (itemsRef.current.some((i) => i.equipmentId === eq.id)) return; // duplicates ignored
+      if (itemsRef.current.some((i) => i.equipmentId === eq.id)) {
+        // D28 layer 1: a device scanned twice in one batch is flagged at once, never added twice.
+        setNotice(`⚠ ${label} สแกนซ้ำ อยู่ในรายการแล้ว`);
+        return;
+      }
       let check: DispatchCheck | null = null;
       if (!offline) {
         check = await getDispatchCheck(eq.id);
@@ -188,6 +196,13 @@ export function BorrowPage() {
     setEditing(null);
   };
 
+  // D28 layer 1: the device is still out at a ward -- switch to the receipt page with it kept.
+  const switchToReceipt = (id: string) => {
+    setItems((prev) => prev.filter((i) => i.equipmentId !== id));
+    setEditing(null);
+    navigate(`/return?equipment_id=${id}`);
+  };
+
   const submit = async () => {
     if (!wardId || items.length === 0 || submittingRef.current) return;
     submittingRef.current = true;
@@ -245,13 +260,19 @@ export function BorrowPage() {
         note: note.trim() || null,
         items: payloadItems,
       });
-      const ok: { bcm: string; ref: string }[] = [];
+      const ok: { id?: string; bcm: string; ref: string }[] = [];
+      const okIds: string[] = [];
+      const okLabels: string[] = [];
       const keep: DispatchItem[] = [];
       const refresh: string[] = [];
       for (let i = 0; i < sent.length; i++) {
         const r = resp.results.find((x) => x.index === i);
         if (r?.ok) {
-          ok.push({ bcm: sent[i].bcm, ref: r.transaction_no ?? "" });
+          ok.push({ id: r.transaction_id ?? undefined, bcm: sent[i].bcm, ref: r.transaction_no ?? "" });
+          if (r.transaction_id) {
+            okIds.push(r.transaction_id);
+            okLabels.push(sent[i].bcm);
+          }
         } else {
           keep.push({ ...sent[i], error: batchErrorText(r?.error?.code, r?.error?.message) });
           const code = r?.error?.code;
@@ -264,6 +285,7 @@ export function BorrowPage() {
         setLastWard(wardId);
         bumpWardUsage(wardId);
         setNote("");
+        if (okIds.length > 0) setUndo({ ids: okIds, labels: okLabels, seconds: UNDO_WINDOW_SECONDS.dispatch });
       }
       setDone(ok);
       setItems(keep);
@@ -367,6 +389,18 @@ export function BorrowPage() {
                     <ChecksEditor checks={it.checks} onChange={(c) => patch(it.equipmentId, { checks: c })} />
                   </ItemEditPanel>
                 )}
+                {it.check?.warning === "already_dispatched" && (
+                  <div role="alert" className="flex items-center gap-2 rounded-lg border border-amber-500/60 bg-amber-500/10 px-3 py-2 text-sm">
+                    <span className="min-w-0 flex-1">เครื่องนี้อยู่ที่ {it.check.current_ward_name ?? "-"} — รับคืนแทน?</span>
+                    <button
+                      type="button"
+                      onClick={() => switchToReceipt(it.equipmentId)}
+                      className="min-h-11 whitespace-nowrap rounded-md bg-status-available px-3 text-xs font-medium text-white"
+                    >
+                      รับคืนแทน
+                    </button>
+                  </div>
+                )}
                 {it.error && (
                   <p role="alert" className="px-1 text-xs text-status-repair">
                     ✗ {it.bcm}: {it.error}
@@ -416,6 +450,7 @@ export function BorrowPage() {
         {!wardId && items.length > 0 && <p className="text-xs text-amber-400">กรุณาเลือกหอผู้ป่วย</p>}
         <p className="text-xs text-[var(--text-muted)]">เวลาและกะบันทึกอัตโนมัติ</p>
       </div>
+      {undo && <UndoToast key={undo.ids.join(",")} {...undo} onClose={() => setUndo(null)} onUndone={({ failedIds }) => setDone((prev) => prev.filter((d) => d.id && failedIds.includes(d.id)))} />}
     </div>
   );
 }

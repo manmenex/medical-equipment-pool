@@ -14,17 +14,21 @@ export const STATUS_LABELS: Record<EquipmentStatus, string> = {
   decommissioned: "ปลดระวางถาวร",
 };
 
-const COLORS: Record<EquipmentStatus, string> = {
+// D28: a voided TRANSACTION status (never an equipment state).
+const VOIDED_LABEL = "ยกเลิกแล้ว";
+
+const COLORS: Record<EquipmentStatus | "voided", string> = {
+  voided: "bg-[var(--border)]/40 text-[var(--text-muted)] line-through",
   available_at_pool: "bg-status-available/15 text-status-available",
   issued_to_ward: "bg-status-borrowed/15 text-status-borrowed",
   unavailable_defective: "bg-status-repair/15 text-status-repair",
   decommissioned: "bg-status-out_of_service/15 text-status-out_of_service",
 };
 
-export function StatusBadge({ status }: { status: EquipmentStatus }) {
+export function StatusBadge({ status }: { status: EquipmentStatus | "voided" }) {
   return (
     <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${COLORS[status]}`}>
-      {STATUS_LABELS[status]}
+      {status === "voided" ? VOIDED_LABEL : STATUS_LABELS[status]}
     </span>
   );
 }

@@ -4,6 +4,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { SourceBadge } from "@/components/SourceBadge";
 import { StatusBadge } from "@/components/StatusBadge";
+import { TransactionCorrectionMenu } from "@/components/TransactionCorrectionMenu";
 import { WardCorrectionAction } from "@/components/WardCorrectionAction";
 import { apiErrorMessage } from "@/services/api";
 import { AddHnAction } from "@/components/entry/AddHnAction";
@@ -182,6 +183,19 @@ export function EquipmentDetailPage() {
   });
   const transactions = transactionPages?.pages.flatMap((p) => p.items) ?? [];
   const { data: wards } = useQuery({ queryKey: ["wards"], queryFn: listWards });
+  // D28: only the device's latest non-voided transaction is correctable; that is
+  // only knowable from the unfiltered list (newest first).
+  const unfiltered = !appliedBusinessDateFrom && !appliedBusinessDateTo && !appliedShift && !appliedEvent;
+  // TransactionOut carries no created_at (the server picks by created_at, then
+  // transaction_no), so the latest EVENT time is the closest client proxy; a
+  // backdated entry can still differ, in which case the server's 409
+  // CORRECTION_NOT_LATEST is the authority and its message is shown.
+  const eventTime = (t: TransactionOut) => new Date(t.returned_at ?? t.borrowed_at).getTime();
+  const latestId = unfiltered
+    ? [...transactions]
+        .filter((t) => t.status !== "voided")
+        .sort((a, b) => eventTime(b) - eventTime(a) || b.transaction_no.localeCompare(a.transaction_no))[0]?.id
+    : undefined;
   const [wardCorrectionNotice, setWardCorrectionNotice] = useState<string | null>(null);
 
   function wardName(wardId: string | null): string {
@@ -205,6 +219,13 @@ export function EquipmentDetailPage() {
     // just the one currently selected.
     queryClient.invalidateQueries({ queryKey: ["equipment", id, "transactions"] });
     queryClient.invalidateQueries({ queryKey: ["transactions"] });
+  }
+
+  function handleCorrectionDone(message: string) {
+    setWardCorrectionNotice(message);
+    queryClient.invalidateQueries({ queryKey: ["equipment", id] });
+    queryClient.invalidateQueries({ queryKey: ["transactions"] });
+    queryClient.invalidateQueries({ queryKey: ["active-borrows"] });
   }
 
   if (isLoading || !equipment) {
@@ -407,11 +428,21 @@ export function EquipmentDetailPage() {
           <>
             <ol className="flex flex-col gap-3">
               {transactions.map((tx) => (
-                <li key={tx.id} className="flex flex-col gap-1 rounded-lg border border-[var(--border)] p-3 text-sm">
-                  <div>
+                <li
+                  key={tx.id}
+                  className={`flex flex-col gap-1 rounded-lg border border-[var(--border)] p-3 text-sm ${tx.status === "voided" ? "opacity-70" : ""}`}
+                >
+                  <div className={tx.status === "voided" ? "line-through" : ""}>
                     {tx.transaction_no} ·{" "}
-                    <strong>{tx.status === "open" ? "อยู่ระหว่างเบิก" : "รับคืนแล้ว"}</strong>
+                    <strong>
+                      {tx.status === "open" ? "อยู่ระหว่างเบิก" : tx.status === "voided" ? "ยกเลิกแล้ว" : "รับคืนแล้ว"}
+                    </strong>
                   </div>
+                  {tx.status === "voided" && (
+                    <div className="text-xs font-medium text-status-repair">
+                      ยกเลิกแล้ว{tx.void_reason ? ` · ${tx.void_reason}` : ""}
+                    </div>
+                  )}
                   {/* Dispatch type/routine round are intentionally not shown: removed by Owner Governance D2
                       (DECISION_LOG 2026-11-25), superseding the PR13 on-demand/routine criterion. */}
                   <div className="text-[var(--text-muted)]">Ward ที่รับ (ณ วันเบิก): {wardName(tx.ward_id)}</div>
@@ -437,6 +468,11 @@ export function EquipmentDetailPage() {
                           void queryClient.invalidateQueries({ queryKey: ["standby-summary"] });
                         }}
                       />
+                    </div>
+                  )}
+                  {tx.id === latestId && (
+                    <div className="mt-1">
+                      <TransactionCorrectionMenu transaction={tx} onCorrected={handleCorrectionDone} />
                     </div>
                   )}
                   <div className="mt-1">

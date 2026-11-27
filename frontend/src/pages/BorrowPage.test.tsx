@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BorrowPage } from "@/pages/BorrowPage";
@@ -65,6 +65,7 @@ const resolveEquipmentByQr = vi.fn();
 const searchBcmSuggestions = vi.fn();
 const getDispatchCheck = vi.fn();
 const dispatchBatch = vi.fn();
+const undoTransaction = vi.fn();
 
 vi.mock("@/services/equipment", () => ({
   getEquipment: (...a: unknown[]) => getEquipment(...a),
@@ -72,7 +73,10 @@ vi.mock("@/services/equipment", () => ({
   searchBcmSuggestions: (...a: unknown[]) => searchBcmSuggestions(...a),
   getDispatchCheck: (...a: unknown[]) => getDispatchCheck(...a),
 }));
-vi.mock("@/services/borrow", () => ({ dispatchBatch: (...a: unknown[]) => dispatchBatch(...a) }));
+vi.mock("@/services/borrow", () => ({
+  dispatchBatch: (...a: unknown[]) => dispatchBatch(...a),
+  undoTransaction: (...a: unknown[]) => undoTransaction(...a),
+}));
 vi.mock("@/services/masterData", () => ({
   listWards: () => Promise.resolve(wards),
   listDepartments: () => Promise.resolve([{ id: "d1", code: "D1", name: "Dept", phone: "2222" }]),
@@ -111,11 +115,18 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
+
+function LocationProbe() {
+  const loc = useLocation();
+  return <div data-testid="loc">{loc.pathname + loc.search}</div>;
+}
+
 function renderPage(entry = "/borrow") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[entry]}>
+        <LocationProbe />
         <BorrowPage />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -529,5 +540,51 @@ describe("demo/loan devices (PR33)", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("คืนผู้ให้ยืมแล้ว");
     expect(screen.queryByRole("button", { name: "แก้ไข SNRET1" })).not.toBeInTheDocument();
     delete EQ.SNRET1;
+  });
+});
+
+describe("D28 prevention and undo (dispatch)", () => {
+  it("offers a one-tap switch to receipt when the device is still out at a ward", async () => {
+    checkFor.e1 = { status: "issued_to_ward", warning: "already_dispatched", current_ward_name: "Ward Z", open_transaction_id: "tx-open" };
+    const user = userEvent.setup();
+    renderPage();
+    await addBcm(user, "BCM001");
+    expect(await screen.findByText("เครื่องนี้อยู่ที่ Ward Z — รับคืนแทน?")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "รับคืนแทน" }));
+    expect(screen.getByTestId("loc")).toHaveTextContent("/return?equipment_id=e1");
+  });
+
+  it("does not show the switch prompt for an available device", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await addBcm(user, "BCM001");
+    await screen.findByRole("button", { name: "แก้ไข BCM001" });
+    expect(screen.queryByText(/รับคืนแทน/)).not.toBeInTheDocument();
+  });
+
+  it("flags a device scanned twice and does not add it twice", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await addBcm(user, "BCM001");
+    await screen.findByRole("button", { name: "แก้ไข BCM001" });
+    await addBcm(user, "BCM001");
+    expect(await screen.findByRole("alert")).toHaveTextContent("BCM001 สแกนซ้ำ");
+    expect(screen.getByRole("heading", { name: "สแกนเครื่อง (1 เครื่อง)" })).toBeInTheDocument();
+  });
+
+  it("shows the undo toast with a 2:00 countdown and undoes every saved transaction", async () => {
+    undoTransaction.mockResolvedValue({ transaction: {}, new_transaction: null });
+    const user = userEvent.setup();
+    renderPage();
+    await pickWard(user, "Ward A");
+    await addBcm(user, "BCM001");
+    await addBcm(user, "BCM002");
+    await screen.findByRole("button", { name: "แก้ไข BCM002" });
+    await user.click(screen.getByRole("button", { name: "ยืนยันการเบิก (2 เครื่อง)" }));
+    const toast = await screen.findByRole("button", { name: "บันทึกแล้ว · เลิกทำ (2:00)" });
+    await user.click(toast);
+    await waitFor(() => expect(undoTransaction).toHaveBeenCalledTimes(2));
+    expect(undoTransaction.mock.calls.map((c) => c[0])).toEqual(["t0", "t1"]);
+    expect(await screen.findByText("เลิกทำแล้ว 2 รายการ")).toBeInTheDocument();
   });
 });
