@@ -64,8 +64,21 @@ ROLE_CRYO = "cryo"
 ROLE_BED = "bed"
 ROLE_PNEUMATIC = "pneumatic"
 ROLE_RESPIRATOR = "respirator"
+# Explicit host category name -> role map (normalised: casefold, whitespace
+# collapsed). Checked before the fuzzy patterns so "INFUSION PUMPS" can never
+# capture the PCA / SYRINGE categories.
+CATEGORY_ROLE_MAP = {
+    "infusion pumps": ROLE_INFUSION,
+    "infusion pumps, analgesic, patient-controlled": ROLE_PCA,
+    "infusion pumps, syringe": ROLE_SYRINGE,
+    "mattress systems, alternating-pressure": ROLE_MATTRESS,
+    "cryotherapy systems": ROLE_CRYO,
+    "alarms, occupancy, bed": ROLE_BED,
+    "pneumatic pump": ROLE_PNEUMATIC,
+    "respirators, air-purifying, particulate": ROLE_RESPIRATOR,
+}
 _ROLE_PATTERNS = (
-    (ROLE_PCA, re.compile(r"\bpca\b", re.I)),
+    (ROLE_PCA, re.compile(r"\bpca\b|analgesic|patient[\s-]*controlled", re.I)),
     (ROLE_SYRINGE, re.compile(r"syringe", re.I)),
     (ROLE_INFUSION, re.compile(r"infusion", re.I)),
     (ROLE_MATTRESS, re.compile(r"mattress", re.I)),
@@ -77,6 +90,9 @@ _ROLE_PATTERNS = (
 
 
 def category_role(name: str | None) -> str | None:
+    exact = CATEGORY_ROLE_MAP.get(" ".join((name or "").split()).casefold())
+    if exact:
+        return exact
     for role, pattern in _ROLE_PATTERNS:
         if pattern.search(name or ""):
             return role

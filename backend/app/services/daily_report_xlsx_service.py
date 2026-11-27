@@ -51,6 +51,7 @@ POOL_LABELS = [
     ("cryo", "CRYO CUFF"),
     ("bed", "BED EXIT ALRM"),
     ("pneumatic", "PNEUMATIC PUMP"),
+    ("respirator", "RESPIRATORS, AIR-PURIFYING, PARTICULATE"),
 ]
 
 # Header text (verbatim from the Owner's file).

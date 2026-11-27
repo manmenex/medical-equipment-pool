@@ -65,6 +65,7 @@ from app.models.standby_summary import (
     StandbySummaryConfig,
     StandbySummaryOverride,
 )
+from app.services.daily_report_service import category_role
 from app.models.transaction import BorrowTransaction, TransactionStatus
 from app.schemas.checklist import report_columns
 from app.services import daily_report_service
@@ -73,7 +74,6 @@ _BKK = ZoneInfo("Asia/Bangkok")
 _CUTOFF_TIME = {"night": time(8, 0), "day": time(20, 0)}
 _DAY_START_LOCAL = time(20, 0)  # PR30 report day starts at 20:00 on D-1
 
-NAME_PATTERNS = {ROLE_INFUSION: re.compile("infusion", re.I), ROLE_PNEUMATIC: re.compile("pneumatic", re.I)}
 
 KEY_BME_DEVICES = "bme_devices"
 KEY_CHARGERS = "chargers"
@@ -200,7 +200,7 @@ async def resolve_categories(db: AsyncSession, role: str) -> list[EquipmentCateg
         cat = await db.get(EquipmentCategory, cfg.category_id)
         return [cat] if cat is not None else []
     cats = (await db.execute(select(EquipmentCategory).order_by(EquipmentCategory.name))).scalars().all()
-    return [c for c in cats if NAME_PATTERNS[role].search(c.name)]
+    return [c for c in cats if category_role(c.name) == role]
 
 
 def _present(checks: dict | None, item: str) -> bool:
