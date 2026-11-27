@@ -335,21 +335,33 @@ def _layout_slots() -> list[tuple[str, str, str, str]]:
     ]
 
 
+def _slot_key(text: str) -> str:
+    """Matching key: case-insensitive, spaces/dots/hyphens removed, leading
+    "WARD" folded to "W" ("Ward 6 B", "Ward6B", "W6B" -> "w6b")."""
+    key = re.sub(r"[\s.\-]+", "", text or "").casefold()
+    return "w" + key[4:] if key.startswith("ward") else key
+
+
 def _match_slot(m: WardMapping, slots: list[tuple[str, str, str, str]]) -> int | None:
-    """Layout slot of a ward: the admin-mapped short label, else the ward name,
-    each by exact (case/space-insensitive) match first, then by label prefix
-    ("Ward 7A" -> slot "Ward 7"; never when a digit follows: "Ward 70")."""
-    candidates = [_norm(m.report_row_label), _norm(m.ward_name)]
-    norms = [_norm(s[3]) for s in slots]
+    """Layout slot of a ward, by normalised name (admin short label first, then
+    ward name): exact match first; then slot "Ward N" takes only "Ward N" /
+    "Ward NA" (never a B or other letter suffix, never extra digits, so a
+    "Ward NB" without a W{N}B slot goes to "อื่น ๆ"); other slots match by
+    label prefix not followed by a digit."""
+    candidates = [_slot_key(m.report_row_label), _slot_key(m.ward_name)]
+    norms = [_slot_key(s[3]) for s in slots]
     for cand in candidates:
         if cand in norms:
             return norms.index(cand)
     for cand in candidates:
         best: int | None = None
         for i, n in enumerate(norms):
-            if cand.startswith(n) and not cand[len(n) : len(n) + 1].isdigit():
-                if best is None or len(n) > len(norms[best]):
-                    best = i
+            if re.fullmatch(r"w\d+", n):
+                ok = cand == n + "a"
+            else:
+                ok = cand.startswith(n) and not cand[len(n) : len(n) + 1].isdigit()
+            if ok and (best is None or len(n) > len(norms[best])):
+                best = i
         if best is not None:
             return best
     return None

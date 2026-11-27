@@ -249,12 +249,12 @@ async def test_workbook_sheets_headers_and_counts(client, seeded_users, db_sessi
     assert ws["H3"].value == "Stand By" and ws["I3"].value == "Total per DAY"
     assert [ws.cell(4, c).value for c in (4, 5, 6, 7, 9, 10)] == ["ส่ง", "รับ", "ส่ง", "รับ", "ส่งเครื่อง", "รับคืน"]
     merged = {str(m) for m in ws.merged_cells.ranges}
-    assert {"A3:A4", "B3:B4", "C3:C4", "D3:E3", "F3:G3", "H3:H4", "I3:J3", "A5:A22", "B5:B12", "B13:B17",
-            "B18:B22", "A23:A42", "B23:B42"} <= merged
-    assert ws["A5"].value == "Standby support" and ws["B5"].value == "IPD ตึก A" and ws["A23"].value == "After request"
+    assert {"A3:A4", "B3:B4", "C3:C4", "D3:E3", "F3:G3", "H3:H4", "I3:J3", "A5:A21", "B5:B11", "B12:B16",
+            "B17:B21", "A22:A41", "B22:B41"} <= merged
+    assert ws["A5"].value == "Standby support" and ws["B5"].value == "IPD ตึก A" and ws["A22"].value == "After request"
     assert ws.freeze_panes == "D5" and ws.row_dimensions[3].height == 36
     assert [ws.column_dimensions[c].width for c in "ABCDEFGHIJ"] == [15, 14, 24, 8, 8, 8, 8, 8, 11, 11]
-    assert ws["H5"].fill.start_color.rgb.endswith("FFFF00") and ws["D7"].fill.start_color.rgb.endswith("DDD9C4")
+    assert ws["H5"].fill.start_color.rgb.endswith("FFFF00") and ws["D6"].fill.start_color.rgb.endswith("DDD9C4")
     assert ws["D5"].border.left.style == "thin"
 
     # Ward table counts Infusion Pump only; zero cells are blank; unknown labels -> "อื่น ๆ" block.
@@ -681,10 +681,11 @@ async def test_each_ward_is_its_own_row_in_layout_order(db_session, seeded_users
     report = await svc.build_daily_report(db_session, D, 60)
     labels = [r.label for r in report.ward_rows]
     assert "Ward 7" not in labels
-    assert labels.index("Ward 6") < labels.index("Ward 7A") < labels.index("Ward 7B") < labels.index("Ward 8")
+    assert labels.index("Ward 6") < labels.index("Ward 7A") < labels.index("Ward 8")
     rows = {r.label: r for r in report.ward_rows}
     assert rows["Ward 7A"].mode == "Standby support" and rows["Ward 7A"].treatment == "IPD ตึก A"
     assert rows["Lab Annex"].mode == "อื่น ๆ"
+    assert rows["Ward 7B"].mode == "อื่น ๆ"  # building-B ward without a W7B slot is not building A
     counted = {e.row_label for e in report.events}
     assert {"Ward 7A", "Ward 7B", "Lab Annex"} <= counted  # lossless: every event has its own row
 
