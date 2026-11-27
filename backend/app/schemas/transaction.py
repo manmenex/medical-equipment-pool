@@ -276,3 +276,4 @@ class ReportTransactionOut(TransactionOut):
 
     dispatch_operator_display_name: str | None
     receipt_operator_display_name: str | None
+    category_name: str | None = None

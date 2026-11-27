@@ -29,7 +29,7 @@ from app.crud import equipment as equipment_crud
 from app.crud import master_data as master_data_crud
 from app.crud import user as user_crud
 from app.models.equipment import EquipmentStatus
-from app.models.transaction import DispatchType, RoutineRound
+from app.models.transaction import BorrowTransaction, DispatchType, RoutineRound
 from app.models.user import User
 from app.schemas.equipment import EquipmentOut
 from app.schemas.report_export import (
@@ -43,6 +43,8 @@ from app.schemas.report_export import (
 from app.schemas.transaction import ReportTransactionOut
 from app.services import report_query_service
 from app.services.equipment_badge import with_badge
+from app.services.system_notes import clean_label
+from app.utils.bkk_time import format_bkk, keyer_display
 from app.utils.export_filename import build_filename_stem, date_range_segment, shift_segment
 
 logger = logging.getLogger(__name__)
@@ -176,22 +178,30 @@ async def _department_name_lookup(db: AsyncSession) -> dict[str, str]:
 # operator would not already recognize from the screen.
 # ---------------------------------------------------------------------------
 
-_TRANSACTION_REPORT_COLUMNS = [
-    ExportColumn(key="transaction_no", label_th="เลขที่รายการ", value_type="string"),
-    ExportColumn(key="asset_number", label_th="รหัสครุภัณฑ์", value_type="string"),
-    ExportColumn(key="equipment_name", label_th="เครื่องมือ", value_type="string"),
-    ExportColumn(key="ward_name", label_th="หอผู้ป่วย", value_type="string"),
-    # Roadmap PR27 (D7): the ward-side contact name of the report's own event
-    # (dispatch side on the issue report, receipt side on the receive report).
-    ExportColumn(key="ward_contact_name", label_th="ผู้ใช้หอผู้ป่วย", value_type="string"),
-    ExportColumn(key="dispatch_operator_display_name", label_th="เบิกโดย", value_type="string"),
-    ExportColumn(key="dispatch_business_date", label_th="วันที่ทำการเบิก", value_type="date"),
-    ExportColumn(key="dispatch_shift", label_th="กะที่เบิก", value_type="string"),
-    ExportColumn(key="receipt_operator_display_name", label_th="รับคืนโดย", value_type="string"),
-    ExportColumn(key="receipt_business_date", label_th="วันที่ทำการรับคืน", value_type="date"),
-    ExportColumn(key="receipt_shift", label_th="กะที่รับคืน", value_type="string"),
-    ExportColumn(key="receipt_outcome", label_th="สภาพเมื่อรับคืน", value_type="string"),
-]
+def _transaction_report_columns(contact_side: str) -> list[ExportColumn]:
+    """Owner-usable layout (reports-usable): BCM code as the device code, a
+    full date+time (Asia/Bangkok) per event, BME keyer labels, and the ward
+    contact header worded for the report's own side. No HN column exists."""
+    contact_label = "ผู้ส่งคืน (Ward)" if contact_side == "receipt" else "ผู้รับ (Ward)"
+    return [
+        ExportColumn(key="transaction_no", label_th="เลขที่รายการ", value_type="string"),
+        ExportColumn(key="bcm_code", label_th="รหัส", value_type="string"),
+        ExportColumn(key="equipment_name", label_th="เครื่องมือ", value_type="string"),
+        ExportColumn(key="category_name", label_th="ประเภท", value_type="string"),
+        ExportColumn(key="ward_name", label_th="Ward", value_type="string"),
+        # Roadmap PR27 (D7): the ward-side contact name of the report's own event.
+        ExportColumn(key="ward_contact_name", label_th=contact_label, value_type="string"),
+        ExportColumn(key="dispatch_operator_display_name", label_th="เบิกโดย", value_type="string"),
+        ExportColumn(key="dispatch_at", label_th="วันที่/เวลาเบิก", value_type="string"),
+        ExportColumn(key="dispatch_shift", label_th="กะที่เบิก", value_type="string"),
+        ExportColumn(key="receipt_operator_display_name", label_th="รับคืนโดย", value_type="string"),
+        ExportColumn(key="receipt_at", label_th="วันที่/เวลารับคืน", value_type="string"),
+        ExportColumn(key="receipt_shift", label_th="กะที่รับคืน", value_type="string"),
+        ExportColumn(key="receipt_outcome", label_th="สภาพเมื่อรับคืน", value_type="string"),
+    ]
+
+
+_TRANSACTION_REPORT_COLUMNS = _transaction_report_columns("dispatch")
 
 _EQUIPMENT_VERIFY_CHECKLIST_COLUMNS = [
     ExportColumn(key="equipment_name", label_th="เครื่องมือ", value_type="string"),
@@ -205,22 +215,35 @@ _EQUIPMENT_VERIFY_CHECKLIST_COLUMNS = [
 
 
 def _transaction_report_row(
-    tx_out: ReportTransactionOut, *, ward_names: dict[str, str], contact_side: str = "dispatch"
+    tx: BorrowTransaction,
+    *,
+    ward_names: dict[str, str],
+    category_names: dict[str, str],
+    contact_side: str = "dispatch",
 ) -> ExportRow:
-    contact_name = tx_out.receipt_contact_name if contact_side == "receipt" else tx_out.dispatch_contact_name
+    tx_out = ReportTransactionOut.model_validate(tx)
+    eq = tx.equipment
+    contact_name = tx.receipt_contact_name if contact_side == "receipt" else tx.dispatch_contact_name
+    category = category_names.get(str(eq.category_id)) if eq is not None and eq.category_id else None
     return ExportRow(
         values={
             "transaction_no": tx_out.transaction_no,
-            "asset_number": tx_out.equipment.asset_number,
+            # Devices are identified by BCM code; asset number only as fallback.
+            "bcm_code": tx_out.equipment.bcm_code or tx_out.equipment.asset_number,
             # Roadmap PR33 (D14): "[DEMO]"/"[ยืม]" prefix for demo/loan devices.
             "equipment_name": with_badge(tx_out.equipment.equipment_name, tx_out.equipment.equipment_source),
+            "category_name": category,
             "ward_name": ward_names.get(tx_out.ward_id, "ไม่ทราบ") if tx_out.ward_id else "ไม่ทราบ",
-            "ward_contact_name": contact_name,
-            "dispatch_operator_display_name": tx_out.dispatch_operator_display_name,
-            "dispatch_business_date": tx_out.dispatch_business_date,
+            "ward_contact_name": clean_label(contact_name),
+            "dispatch_operator_display_name": keyer_display(tx.dispatch_keyer_label, tx.dispatch_operator_display_name),
+            "dispatch_at": format_bkk(tx.borrowed_at),
             "dispatch_shift": _SHIFT_LABELS_TH[tx_out.dispatch_shift.value],
-            "receipt_operator_display_name": tx_out.receipt_operator_display_name,
-            "receipt_business_date": tx_out.receipt_business_date,
+            "receipt_operator_display_name": (
+                keyer_display(tx.receipt_keyer_label, tx.receipt_operator_display_name)
+                if tx.returned_at is not None
+                else None
+            ),
+            "receipt_at": format_bkk(tx.returned_at),
             "receipt_shift": _SHIFT_LABELS_TH[tx_out.receipt_shift.value] if tx_out.receipt_shift else None,
             "receipt_outcome": (
                 _RECEIPT_OUTCOME_LABELS_TH.get(tx_out.receipt_outcome.value, tx_out.receipt_outcome.value)
@@ -342,6 +365,12 @@ async def _resolve_equipment_label(db: AsyncSession, equipment_id: uuid.UUID | N
     return equipment.equipment_name
 
 
+def _bcm_filter_summary(bcm_code: str | None) -> ExportFilterSummary | None:
+    if bcm_code is None or not bcm_code.strip():
+        return None
+    return ExportFilterSummary(label_th="รหัส BCM", value=bcm_code.strip())
+
+
 def _status_filter_summary(status: EquipmentStatus | None) -> ExportFilterSummary | None:
     if status is None:
         return None
@@ -383,6 +412,7 @@ async def build_receive_report_document(
     equipment_id: uuid.UUID | None = None,
     equipment_category_id: uuid.UUID | None = None,
     operator_id: uuid.UUID | None = None,
+    bcm_code: str | None = None,
     generated_by: User,
     generated_at: datetime | None = None,
 ) -> ExportDocument:
@@ -396,11 +426,13 @@ async def build_receive_report_document(
         equipment_id=equipment_id,
         equipment_category_id=equipment_category_id,
         operator_id=operator_id,
+        bcm_code=bcm_code,
     )
     rows, _total = await _fetch_all_matching_rows(query_fn, row_limit=MAX_EXPORT_ROWS)
     ward_names = await _ward_name_lookup(db)
+    all_category_names = await _category_name_lookup(db)
     export_rows = [
-        _transaction_report_row(ReportTransactionOut.model_validate(row), ward_names=ward_names, contact_side="receipt")
+        _transaction_report_row(row, ward_names=ward_names, category_names=all_category_names, contact_side="receipt")
         for row in rows
     ]
     # Roadmap PR18B review 4837529462 (PR18B-H2): category/operator/equipment
@@ -421,6 +453,7 @@ async def build_receive_report_document(
                 category_names.get(str(equipment_category_id)) if equipment_category_id else None,
             ),
             _filter_summary("เครื่องมือ", equipment_id, equipment_label),
+            _bcm_filter_summary(bcm_code),
             _filter_summary("ผู้รับคืน", operator_id, operator_name),
         )
         if f is not None
@@ -436,7 +469,7 @@ async def build_receive_report_document(
         date_segment=date_range_segment(business_date_from, business_date_to),
         shift_segment_value=shift_segment(shift.value if shift else None),
     )
-    return ExportDocument(metadata=metadata, columns=_TRANSACTION_REPORT_COLUMNS, rows=export_rows)
+    return ExportDocument(metadata=metadata, columns=_transaction_report_columns("receipt"), rows=export_rows)
 
 
 async def build_issue_report_document(
@@ -449,6 +482,7 @@ async def build_issue_report_document(
     equipment_id: uuid.UUID | None = None,
     equipment_category_id: uuid.UUID | None = None,
     operator_id: uuid.UUID | None = None,
+    bcm_code: str | None = None,
     dispatch_type: DispatchType | None = None,
     routine_round: RoutineRound | None = None,
     generated_by: User,
@@ -464,13 +498,15 @@ async def build_issue_report_document(
         equipment_id=equipment_id,
         equipment_category_id=equipment_category_id,
         operator_id=operator_id,
+        bcm_code=bcm_code,
         dispatch_type=dispatch_type,
         routine_round=routine_round,
     )
     rows, _total = await _fetch_all_matching_rows(query_fn, row_limit=MAX_EXPORT_ROWS)
     ward_names = await _ward_name_lookup(db)
+    all_category_names = await _category_name_lookup(db)
     export_rows = [
-        _transaction_report_row(ReportTransactionOut.model_validate(row), ward_names=ward_names) for row in rows
+        _transaction_report_row(row, ward_names=ward_names, category_names=all_category_names) for row in rows
     ]
     category_names = await _category_name_lookup(db) if equipment_category_id is not None else {}
     operator_name = await _resolve_operator_name(db, operator_id)
@@ -487,6 +523,7 @@ async def build_issue_report_document(
                 category_names.get(str(equipment_category_id)) if equipment_category_id else None,
             ),
             _filter_summary("เครื่องมือ", equipment_id, equipment_label),
+            _bcm_filter_summary(bcm_code),
             _filter_summary("ผู้เบิก", operator_id, operator_name),
             _dispatch_type_filter_summary(dispatch_type),
             _routine_round_filter_summary(routine_round),

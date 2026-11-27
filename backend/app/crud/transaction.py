@@ -362,6 +362,7 @@ async def search(
     ward_id: uuid.UUID | None = None,
     equipment_id: uuid.UUID | None = None,
     equipment_category_id: uuid.UUID | None = None,
+    bcm_code: str | None = None,
     operator_id: uuid.UUID | None = None,
     status: str | None = None,
     dispatch_type: DispatchType | None = None,
@@ -447,6 +448,13 @@ async def search(
                 select(Equipment.id).where(Equipment.category_id == equipment_category_id)
             )
         )
+    if bcm_code is not None and bcm_code.strip():
+        token = bcm_code.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        filters.append(
+            BorrowTransaction.equipment_id.in_(
+                select(Equipment.id).where(Equipment.bcm_code.ilike(f"%{token}%", escape="\\"))
+            )
+        )
     if operator_id is not None:
         operator_column = (
             BorrowTransaction.borrower_user_id if event == "dispatch" else BorrowTransaction.received_by_user_id
@@ -480,7 +488,7 @@ async def search(
     total = (await db.execute(count_stmt)).scalar_one()
 
     stmt = select(BorrowTransaction).options(
-        selectinload(BorrowTransaction.equipment),
+        selectinload(BorrowTransaction.equipment).selectinload(Equipment.category),
         # Roadmap PR17 Slice 2 (§11): identical eager-loading pattern to
         # `equipment` above, not a new one. Harmless for every existing
         # caller (GET /transactions included) -- only `ReportTransactionOut`

@@ -17,6 +17,7 @@ export interface ReportQueryParams {
   ward_id?: string;
   equipment_id?: string;
   equipment_category_id?: string;
+  bcm_code?: string;
   operator_id?: string;
   limit?: number;
   cursor?: string | null;

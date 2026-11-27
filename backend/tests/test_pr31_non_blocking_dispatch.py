@@ -319,9 +319,9 @@ async def test_reports_exports_and_active_list_handle_closed_by_redispatch(clien
     # CSV export serializes the closed row with an empty return time/outcome.
     csv_resp = await client.get("/api/v1/reports/export", headers=ctx["admin"], params={"format": "csv"})
     assert csv_resp.status_code == 200
-    rows = list(csv.DictReader(io.StringIO(csv_resp.text)))
-    closed = [r for r in rows if r["status"] == "closed"]
-    assert len(closed) == 1 and closed[0]["returned_at"] == "" and closed[0]["condition_on_return"] == ""
+    rows = list(csv.DictReader(io.StringIO(csv_resp.text.lstrip("\ufeff"))))
+    closed = [r for r in rows if r["สถานะ"] == "รับคืนแล้ว"]
+    assert len(closed) == 1 and closed[0]["วันที่รับคืน"] == "" and closed[0]["สภาพตอนคืน"] == ""
 
     # Read-only export API: dispatch events only, no receipt event for the superseded tx.
     key = (await client.post("/api/v1/export-keys", headers=ctx["admin"], json={"name": "k"})).json()["key"]

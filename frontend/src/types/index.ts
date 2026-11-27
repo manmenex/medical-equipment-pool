@@ -110,7 +110,14 @@ export type ReceiptOutcome = "usable" | "defective";
 export interface TransactionOut {
   id: string;
   transaction_no: string;
-  equipment: { id: string; asset_number: string | null; equipment_name: string; status: EquipmentStatus };
+  equipment: {
+    id: string;
+    asset_number: string | null;
+    equipment_name: string;
+    status: EquipmentStatus;
+    bcm_code?: string | null;
+    equipment_source?: EquipmentSource;
+  };
   quantity: number;
   borrowed_at: string;
   // Roadmap PR7b: due_at is deliberately absent -- removed from the active
@@ -202,6 +209,7 @@ export interface Page<T> {
 export interface ReportTransactionOut extends TransactionOut {
   dispatch_operator_display_name: string | null;
   receipt_operator_display_name: string | null;
+  category_name?: string | null;
   dispatch_business_date: string;
   dispatch_shift: Shift;
   receipt_business_date: string | null;

@@ -57,6 +57,7 @@ _PRINT_DATA_APPLICABLE_FILTERS: dict[ReportIdentity, frozenset[str]] = {
             "ward_id",
             "equipment_id",
             "equipment_category_id",
+            "bcm_code",
             "operator_id",
         }
     ),
@@ -68,6 +69,7 @@ _PRINT_DATA_APPLICABLE_FILTERS: dict[ReportIdentity, frozenset[str]] = {
             "ward_id",
             "equipment_id",
             "equipment_category_id",
+            "bcm_code",
             "operator_id",
             "dispatch_type",
             "routine_round",
@@ -89,18 +91,24 @@ def _reject_inapplicable_print_data_filters(report_id: ReportIdentity, **filters
 @router.get("/export")
 async def export_report(
     format: str = Query(default="xlsx", pattern="^(xlsx|csv)$"),
+    date_from: date | None = None,
+    date_to: date | None = None,
+    category_id: str | None = None,
     db: AsyncSession = Depends(get_db),
     # Roadmap PR10: this export surface already existed for admin, viewer,
     # and biomedical_engineer pre-PR10 -- preserved at the same breadth for
     # all three new roles, not narrowed and not newly added.
     _user=Depends(require_roles(*VIEW_AND_REPORT_ROLES)),
 ):
+    if date_from is not None and date_to is not None and date_from > date_to:
+        raise InvalidInputError("'date_from' must not be after 'date_to'")
+    filters = {"date_from": date_from, "date_to": date_to, "category_id": parse_uuid(category_id, "category_id")}
     if format == "csv":
-        content = await report_service.export_csv(db)
+        content = await report_service.export_csv(db, **filters)
         media_type = "text/csv"
         filename = "borrow_report.csv"
     else:
-        content = await report_service.export_xlsx(db)
+        content = await report_service.export_xlsx(db, **filters)
         media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         filename = "borrow_report.xlsx"
 
@@ -119,6 +127,7 @@ async def get_receive_report(
     ward_id: str | None = None,
     equipment_id: str | None = None,
     equipment_category_id: str | None = None,
+    bcm_code: str | None = None,
     operator_id: str | None = None,
     limit: int = Query(default=25, ge=1, le=200),
     cursor: str | None = None,
@@ -143,6 +152,7 @@ async def get_receive_report(
         ward_id=parse_uuid(ward_id, "ward_id"),
         equipment_id=parse_uuid(equipment_id, "equipment_id"),
         equipment_category_id=parse_uuid(equipment_category_id, "equipment_category_id"),
+        bcm_code=bcm_code,
         operator_id=parse_uuid(operator_id, "operator_id"),
         limit=limit,
         cursor=cursor,
@@ -158,6 +168,7 @@ async def get_issue_report(
     ward_id: str | None = None,
     equipment_id: str | None = None,
     equipment_category_id: str | None = None,
+    bcm_code: str | None = None,
     operator_id: str | None = None,
     dispatch_type: DispatchType | None = None,
     routine_round: RoutineRound | None = None,
@@ -178,6 +189,7 @@ async def get_issue_report(
         ward_id=parse_uuid(ward_id, "ward_id"),
         equipment_id=parse_uuid(equipment_id, "equipment_id"),
         equipment_category_id=parse_uuid(equipment_category_id, "equipment_category_id"),
+        bcm_code=bcm_code,
         operator_id=parse_uuid(operator_id, "operator_id"),
         dispatch_type=dispatch_type,
         routine_round=routine_round,
@@ -236,6 +248,7 @@ async def _build_export_document_for_request(
     ward_id: str | None,
     equipment_id: str | None,
     equipment_category_id: str | None,
+    bcm_code: str | None,
     operator_id: str | None,
     dispatch_type: DispatchType | None,
     routine_round: RoutineRound | None,
@@ -251,6 +264,7 @@ async def _build_export_document_for_request(
         ward_id=ward_id,
         equipment_id=equipment_id,
         equipment_category_id=equipment_category_id,
+        bcm_code=bcm_code,
         operator_id=operator_id,
         dispatch_type=dispatch_type,
         routine_round=routine_round,
@@ -269,6 +283,7 @@ async def _build_export_document_for_request(
             ward_id=parse_uuid(ward_id, "ward_id"),
             equipment_id=parse_uuid(equipment_id, "equipment_id"),
             equipment_category_id=parse_uuid(equipment_category_id, "equipment_category_id"),
+            bcm_code=bcm_code,
             operator_id=parse_uuid(operator_id, "operator_id"),
             generated_by=generated_by,
         )
@@ -281,6 +296,7 @@ async def _build_export_document_for_request(
             ward_id=parse_uuid(ward_id, "ward_id"),
             equipment_id=parse_uuid(equipment_id, "equipment_id"),
             equipment_category_id=parse_uuid(equipment_category_id, "equipment_category_id"),
+            bcm_code=bcm_code,
             operator_id=parse_uuid(operator_id, "operator_id"),
             dispatch_type=dispatch_type,
             routine_round=routine_round,
@@ -304,6 +320,7 @@ async def get_report_print_data(
     ward_id: str | None = None,
     equipment_id: str | None = None,
     equipment_category_id: str | None = None,
+    bcm_code: str | None = None,
     operator_id: str | None = None,
     dispatch_type: DispatchType | None = None,
     routine_round: RoutineRound | None = None,
@@ -342,6 +359,7 @@ async def get_report_print_data(
             ward_id=ward_id,
             equipment_id=equipment_id,
             equipment_category_id=equipment_category_id,
+            bcm_code=bcm_code,
             operator_id=operator_id,
             dispatch_type=dispatch_type,
             routine_round=routine_round,
@@ -380,6 +398,7 @@ async def get_report_pdf(
     ward_id: str | None = None,
     equipment_id: str | None = None,
     equipment_category_id: str | None = None,
+    bcm_code: str | None = None,
     operator_id: str | None = None,
     dispatch_type: DispatchType | None = None,
     routine_round: RoutineRound | None = None,
@@ -413,6 +432,7 @@ async def get_report_pdf(
             ward_id=ward_id,
             equipment_id=equipment_id,
             equipment_category_id=equipment_category_id,
+            bcm_code=bcm_code,
             operator_id=operator_id,
             dispatch_type=dispatch_type,
             routine_round=routine_round,
@@ -483,6 +503,7 @@ async def get_report_xlsx(
     ward_id: str | None = None,
     equipment_id: str | None = None,
     equipment_category_id: str | None = None,
+    bcm_code: str | None = None,
     operator_id: str | None = None,
     dispatch_type: DispatchType | None = None,
     routine_round: RoutineRound | None = None,
@@ -519,6 +540,7 @@ async def get_report_xlsx(
             ward_id=ward_id,
             equipment_id=equipment_id,
             equipment_category_id=equipment_category_id,
+            bcm_code=bcm_code,
             operator_id=operator_id,
             dispatch_type=dispatch_type,
             routine_round=routine_round,

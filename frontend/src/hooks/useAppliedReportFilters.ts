@@ -17,6 +17,7 @@ export function useAppliedReportFilters(): ReportQueryParams {
     ward_id: searchParams.get("ward_id") || undefined,
     equipment_category_id: searchParams.get("equipment_category_id") || undefined,
     equipment_id: searchParams.get("equipment_id") || undefined,
+    bcm_code: searchParams.get("bcm_code") || undefined,
     operator_id: searchParams.get("operator_id") || undefined,
   };
 }

@@ -99,8 +99,8 @@ describe("ReceiveReportPage", () => {
     expect(await screen.findByText("TX-1")).toBeInTheDocument();
     expect(screen.getByText("สมชาย ใจดี")).toBeInTheDocument();
     expect(screen.getByText("สมหญิง รักงาน")).toBeInTheDocument();
-    expect(screen.getByText(/2026-07-10/)).toBeInTheDocument();
-    expect(screen.getByText(/2026-07-12/)).toBeInTheDocument();
+    expect(screen.getByText(/10\/07\/2026 10:00/)).toBeInTheDocument();
+    expect(screen.getByText(/12\/07\/2026 10:00/)).toBeInTheDocument();
   });
 
   it("shows a loading state while the report is being fetched", async () => {
@@ -184,7 +184,7 @@ describe("ReceiveReportPage", () => {
     await user.type(screen.getByLabelText("วันที่ทำการ ตั้งแต่"), "2026-07-01");
     await user.type(screen.getByLabelText("วันที่ทำการ ถึง"), "2026-07-31");
     await user.selectOptions(screen.getByLabelText("กะ"), "day");
-    await user.selectOptions(screen.getByLabelText("หอผู้ป่วย"), "ward-1");
+    await user.selectOptions(screen.getByLabelText("Ward"), "ward-1");
     await user.selectOptions(screen.getByLabelText("หมวดหมู่เครื่องมือ"), "cat-1");
     await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
 
@@ -290,5 +290,50 @@ describe("ReceiveReportPage", () => {
     const printLink = screen.getByRole("link", { name: "พิมพ์รายงาน" });
     expect(printLink).toHaveAttribute("href", "/reports/receive-report/print?ward_id=ward-1&shift=day");
     expect(printLink).toHaveAttribute("target", "_blank");
+  });
+
+  it("shows BCM code, Bangkok date+time (no-wrap), and the renamed headers", async () => {
+    getReceiveReport.mockResolvedValue(
+      page([
+        makeRow({
+          equipment: {
+            id: "eq-1",
+            asset_number: null,
+            bcm_code: "BCM-77",
+            equipment_name: "Infusion Pump",
+            equipment_source: "loan",
+            status: "available_at_pool",
+          },
+          category_name: "Pump",
+          receipt_contact_name: "พยาบาล ก",
+        }),
+      ])
+    );
+    renderPage();
+
+    expect(await screen.findByText("BCM-77")).toBeInTheDocument();
+    // 2026-07-10T03:00Z is 10:00 in Asia/Bangkok; 2026-07-12T03:00Z is 10:00 too.
+    expect(screen.getByText("10/07/2026 10:00")).toBeInTheDocument();
+    expect(screen.getByText("12/07/2026 10:00")).toBeInTheDocument();
+    expect(screen.getByText("TX-1").className).toContain("whitespace-nowrap");
+    expect(screen.getByText(/\[ยืม\] Infusion Pump/)).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Ward" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "ผู้ส่งคืน (Ward)" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "รหัส" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "หอผู้ป่วย" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "รหัสครุภัณฑ์" })).not.toBeInTheDocument();
+  });
+
+  it("filters by รหัส BCM and no longer offers the UUID filter", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("TX-1");
+
+    expect(screen.queryByLabelText("รหัสเครื่องมือ (UUID)")).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText("รหัส BCM"), "BCM-9");
+    await user.click(screen.getByRole("button", { name: "นำตัวกรองไปใช้" }));
+
+    await waitFor(() => expect(getReceiveReport).toHaveBeenLastCalledWith(expect.objectContaining({ bcm_code: "BCM-9" })));
+    expect(screen.getByTestId("location-search").textContent).toContain("bcm_code=BCM-9");
   });
 });

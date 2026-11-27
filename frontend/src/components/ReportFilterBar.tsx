@@ -36,7 +36,10 @@ export function ReportFilterBar() {
   const [draftShift, setDraftShift] = useState<Shift | "">((searchParams.get("shift") as Shift | null) ?? "");
   const [draftWardId, setDraftWardId] = useState(searchParams.get("ward_id") ?? "");
   const [draftCategoryId, setDraftCategoryId] = useState(searchParams.get("equipment_category_id") ?? "");
-  const [draftEquipmentId, setDraftEquipmentId] = useState(searchParams.get("equipment_id") ?? "");
+  // The UUID `equipment_id` URL param still works (old shared links) but is
+  // no longer editable in the UI: it is kept as-is on apply and dropped on clear.
+  const equipmentIdFromUrl = searchParams.get("equipment_id") ?? "";
+  const [draftBcmCode, setDraftBcmCode] = useState(searchParams.get("bcm_code") ?? "");
   // PR67-H1: the applied operator identifier is tracked separately from the
   // autocomplete's resolved display object. It is seeded from the URL on
   // mount so that pressing Apply after editing an unrelated filter does not
@@ -68,7 +71,8 @@ export function ReportFilterBar() {
     setOrDelete("shift", draftShift);
     setOrDelete("ward_id", draftWardId);
     setOrDelete("equipment_category_id", draftCategoryId);
-    setOrDelete("equipment_id", draftEquipmentId);
+    setOrDelete("equipment_id", equipmentIdFromUrl);
+    setOrDelete("bcm_code", draftBcmCode.trim());
     setOrDelete("operator_id", draftOperatorId);
     setSearchParams(next);
   }
@@ -79,7 +83,7 @@ export function ReportFilterBar() {
     setDraftShift("");
     setDraftWardId("");
     setDraftCategoryId("");
-    setDraftEquipmentId("");
+    setDraftBcmCode("");
     setDraftOperatorId("");
     setDraftOperator(null);
     setRangeError(null);
@@ -91,6 +95,7 @@ export function ReportFilterBar() {
       "ward_id",
       "equipment_category_id",
       "equipment_id",
+      "bcm_code",
       "operator_id",
     ]) {
       next.delete(key);
@@ -101,7 +106,7 @@ export function ReportFilterBar() {
   return (
     <div className="surface mb-3 rounded-xl border p-4">
       <h2 className="mb-3 text-sm font-medium">ตัวกรอง</h2>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div>
           <label htmlFor="report-filter-business-date-from" className="mb-1 block text-xs text-[var(--text-muted)]">
             วันที่ทำการ ตั้งแต่
@@ -111,7 +116,7 @@ export function ReportFilterBar() {
             type="date"
             value={draftBusinessDateFrom}
             onChange={(e) => setDraftBusinessDateFrom(e.target.value)}
-            className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
+            className="w-full min-w-0 rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
           />
         </div>
         <div>
@@ -123,7 +128,7 @@ export function ReportFilterBar() {
             type="date"
             value={draftBusinessDateTo}
             onChange={(e) => setDraftBusinessDateTo(e.target.value)}
-            className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
+            className="w-full min-w-0 rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
           />
         </div>
         <div>
@@ -134,7 +139,7 @@ export function ReportFilterBar() {
             id="report-filter-shift"
             value={draftShift}
             onChange={(e) => setDraftShift(e.target.value as Shift | "")}
-            className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
+            className="w-full min-w-0 rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
           >
             <option value="">ทั้งหมด</option>
             <option value="day">{SHIFT_LABELS.day}</option>
@@ -143,13 +148,13 @@ export function ReportFilterBar() {
         </div>
         <div>
           <label htmlFor="report-filter-ward" className="mb-1 block text-xs text-[var(--text-muted)]">
-            หอผู้ป่วย
+            Ward
           </label>
           <select
             id="report-filter-ward"
             value={draftWardId}
             onChange={(e) => setDraftWardId(e.target.value)}
-            className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
+            className="w-full min-w-0 rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
           >
             <option value="">ทั้งหมด</option>
             {(wards ?? []).map((w) => (
@@ -167,7 +172,7 @@ export function ReportFilterBar() {
             id="report-filter-category"
             value={draftCategoryId}
             onChange={(e) => setDraftCategoryId(e.target.value)}
-            className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
+            className="w-full min-w-0 rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
           >
             <option value="">ทั้งหมด</option>
             {(categories ?? []).map((c) => (
@@ -178,24 +183,24 @@ export function ReportFilterBar() {
           </select>
         </div>
         <div>
-          <label htmlFor="report-filter-equipment-id" className="mb-1 block text-xs text-[var(--text-muted)]">
-            รหัสเครื่องมือ (UUID)
+          <label htmlFor="report-filter-bcm-code" className="mb-1 block text-xs text-[var(--text-muted)]">
+            รหัส BCM
           </label>
           <input
-            id="report-filter-equipment-id"
+            id="report-filter-bcm-code"
             type="text"
-            value={draftEquipmentId}
-            onChange={(e) => setDraftEquipmentId(e.target.value)}
-            placeholder="เว้นว่างไว้เพื่อดูทั้งหมด"
-            className="w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
+            value={draftBcmCode}
+            onChange={(e) => setDraftBcmCode(e.target.value)}
+            placeholder="เช่น BCM-001 (ค้นหาบางส่วนได้)"
+            className="w-full min-w-0 rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
           />
         </div>
-        <div className="col-span-2">
+        <div className="sm:col-span-2">
           <OperatorAutocomplete id="report-filter-operator" value={draftOperator} onChange={handleOperatorChange} />
         </div>
       </div>
       {rangeError && <p className="mt-2 text-xs text-status-repair">{rangeError}</p>}
-      <div className="mt-3 flex gap-2">
+      <div className="mt-3 flex flex-wrap gap-2">
         <button
           type="button"
           onClick={apply}

@@ -302,15 +302,32 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
         field, read by `ReportTransactionOut` (`from_attributes`) exactly
         like `dispatch_business_date`'s existing computed-property pattern.
         `None` when `borrower_user_id` was never recorded, mirroring that
-        precedent's None-when-absent rule."""
-        return self.borrower_user.full_name if self.borrower_user else None
+        precedent's None-when-absent rule. The BME keyer label (system-note
+        text stripped) wins over the user's name, same as the Monitor -- the
+        legacy sync user's name must never appear when a label exists."""
+        from app.services.system_notes import clean_label
+
+        return clean_label(self.dispatch_keyer_label) or (self.borrower_user.full_name if self.borrower_user else None)
 
     @property
     def receipt_operator_display_name(self) -> str | None:
         """See `dispatch_operator_display_name` above -- same pattern,
         `received_by_user_id`/`received_by_user` side. `None` until the
-        transaction is received (no `received_by_user_id` recorded yet)."""
-        return self.received_by_user.full_name if self.received_by_user else None
+        transaction is received (no `received_by_user_id` recorded yet).
+        BME keyer label first, like the dispatch side."""
+        from app.services.system_notes import clean_label
+
+        if self.returned_at is None:
+            return None
+        return clean_label(self.receipt_keyer_label) or (
+            self.received_by_user.full_name if self.received_by_user else None
+        )
+
+    @property
+    def category_name(self) -> str | None:
+        """Equipment category name for report rows (eager-loaded by search)."""
+        eq = self.equipment
+        return eq.category.name if eq is not None and eq.category is not None else None
 
     @property
     def receipt_outcome(self) -> "ReceiptOutcome | None":
