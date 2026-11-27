@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import InvalidInputError
 from app.core.redis import cache_get, cache_set
 from app.models.equipment import Equipment, EquipmentStatus
-from app.models.transaction import BorrowTransaction
+from app.models.transaction import BorrowTransaction, TransactionStatus
 
 
 SOURCE_FILTERS = ("all", "pool", "demo", "loan")
@@ -54,7 +54,10 @@ async def get_borrow_trend(db: AsyncSession, days: int = 30) -> list[dict]:
     since = date.today() - timedelta(days=days)
     stmt = (
         select(func.date(BorrowTransaction.borrowed_at), func.count())
-        .where(func.date(BorrowTransaction.borrowed_at) >= since)
+        .where(
+            func.date(BorrowTransaction.borrowed_at) >= since,
+            BorrowTransaction.status != TransactionStatus.VOIDED,
+        )
         .group_by(func.date(BorrowTransaction.borrowed_at))
         .order_by(func.date(BorrowTransaction.borrowed_at))
     )
@@ -78,6 +81,7 @@ async def get_top_borrowed(db: AsyncSession, limit: int = 10) -> list[dict]:
             func.count(BorrowTransaction.id).label("borrow_count"),
         )
         .join(BorrowTransaction, BorrowTransaction.equipment_id == Equipment.id)
+        .where(BorrowTransaction.status != TransactionStatus.VOIDED)
         .group_by(Equipment.id, Equipment.asset_number, Equipment.equipment_name)
         .order_by(func.count(BorrowTransaction.id).desc())
         .limit(limit)

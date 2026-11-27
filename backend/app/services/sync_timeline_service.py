@@ -153,6 +153,7 @@ async def timeline(db: AsyncSession, equipment_id: uuid.UUID, *, is_admin: bool)
             await db.execute(
                 select(BorrowTransaction).where(
                     BorrowTransaction.equipment_id == equipment_id,
+                    BorrowTransaction.status != TransactionStatus.VOIDED,
                     (BorrowTransaction.borrowed_at >= cutoff)
                     | (BorrowTransaction.returned_at >= cutoff)
                     | (BorrowTransaction.status == TransactionStatus.OPEN),

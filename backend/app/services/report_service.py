@@ -40,7 +40,11 @@ REPORT_COLUMNS = [
 
 MAX_ROWS = 50000
 _SOURCE_LABELS = {"pool": "Pool", "demo": "Demo", "loan": "ยืม"}
-_STATUS_LABELS = {TransactionStatus.OPEN: "ยังไม่รับคืน", TransactionStatus.CLOSED: "รับคืนแล้ว"}
+_STATUS_LABELS = {
+    TransactionStatus.OPEN: "ยังไม่รับคืน",
+    TransactionStatus.CLOSED: "รับคืนแล้ว",
+    TransactionStatus.VOIDED: "ยกเลิก",
+}
 _OUTCOME_LABELS = {"usable": "ใช้งานได้", "defective": "ชำรุด"}
 
 
@@ -93,6 +97,7 @@ async def _fetch_rows(
             selectinload(BorrowTransaction.borrower_user),
             selectinload(BorrowTransaction.received_by_user),
         )
+        .where(BorrowTransaction.status != TransactionStatus.VOIDED)
         .order_by(BorrowTransaction.borrowed_at.desc())
         .limit(MAX_ROWS)
     )

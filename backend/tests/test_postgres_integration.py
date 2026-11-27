@@ -7556,7 +7556,11 @@ async def test_migration_0013_fresh_database_all_foreign_keys_are_restrict():
                 # standby_summary_config.category_id -> equipment_categories,
                 # standby_summary_config.baseline_set_by_user_id -> users (3).
                 # 90 + 3 = 93.
-                assert len(rows) == 93, f"expected exactly 93 foreign keys, found {len(rows)}: {rows}"
+                # + 3 added by migration 0039 (D28 corrections):
+                # borrow_transactions.closed_by_redispatch_transaction_id,
+                # .corrected_by_transaction_id -> borrow_transactions,
+                # .voided_by_user_id -> users (3). 93 + 3 = 96.
+                assert len(rows) == 96, f"expected exactly 96 foreign keys, found {len(rows)}: {rows}"
                 for conname, confdeltype in rows:
                     assert confdeltype == "r", f"{conname} has confdeltype={confdeltype!r}, expected 'r' (RESTRICT)"
         finally:

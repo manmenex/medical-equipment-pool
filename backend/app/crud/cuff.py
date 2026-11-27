@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.cuff import TransactionCuff
 from app.models.equipment import Equipment
 from app.models.master_data import Ward
-from app.models.transaction import BorrowTransaction
+from app.models.transaction import BorrowTransaction, TransactionStatus
 from app.schemas.checklist import CUFF_TYPES, CuffCounts
 
 
@@ -73,9 +73,28 @@ async def list_outstanding(db: AsyncSession, *, ward_id: uuid.UUID | None = None
         .join(BorrowTransaction, BorrowTransaction.id == TransactionCuff.transaction_id)
         .join(Equipment, Equipment.id == BorrowTransaction.equipment_id)
         .outerjoin(Ward, Ward.id == BorrowTransaction.ward_id)
-        .where(TransactionCuff.issued_count > TransactionCuff.returned_count)
+        .where(
+            TransactionCuff.issued_count > TransactionCuff.returned_count,
+            BorrowTransaction.status != TransactionStatus.VOIDED,
+        )
         .order_by(BorrowTransaction.borrowed_at, BorrowTransaction.id, TransactionCuff.cuff_type)
     )
     if ward_id is not None:
         stmt = stmt.where(BorrowTransaction.ward_id == ward_id)
     return (await db.execute(stmt)).all()
+
+
+async def reverse_return(db: AsyncSession, *, transaction_id: uuid.UUID, cuff_type: str, count: int) -> bool:
+    """D28: lower ``returned_count`` by ``count`` (a voided receipt's cuffs go
+    back to outstanding) only if that keeps it non-negative. True = applied."""
+    result = await db.execute(
+        update(TransactionCuff)
+        .where(
+            TransactionCuff.transaction_id == transaction_id,
+            TransactionCuff.cuff_type == cuff_type,
+            TransactionCuff.returned_count >= count,
+        )
+        .values(returned_count=TransactionCuff.returned_count - count)
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount == 1

@@ -21,7 +21,14 @@ from app.schemas.batch import BatchResponse, DispatchBatchRequest, ReceiptBatchR
 from app.schemas.checklist import ContactName, CuffCounts
 from app.schemas.common import Page
 from app.schemas.hn import HnInput
-from app.schemas.transaction import TransactionOut, WardCorrectionRequest
+from app.schemas.transaction import (
+    ChangeDeviceRequest,
+    CorrectionOut,
+    SwitchActionRequest,
+    TransactionOut,
+    VoidRequest,
+    WardCorrectionRequest,
+)
 from app.services import batch_service, borrow_service, cuff_service, hn_service
 from app.utils.parsing import parse_uuid
 
@@ -88,6 +95,8 @@ async def list_transactions(
         ward_id=parse_uuid(ward_id, "ward_id"),
         equipment_id=parse_uuid(equipment_id, "equipment_id"),
         status=status,
+        # D28: the equipment history (equipment_id given) still lists voided rows.
+        include_voided=equipment_id is not None,
         dispatch_type=dispatch_type,
         routine_round=routine_round,
         from_date=from_date,
@@ -237,3 +246,76 @@ async def correct_transaction_ward(
         actor_user_id=user.id,
         request=request,
     )
+
+
+@router.post("/{transaction_id}/undo", response_model=CorrectionOut)
+async def undo_transaction(
+    transaction_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_roles(*EQUIPMENT_POOL_OPERATION_ROLES)),
+):
+    """D28 Layer 2: one-tap undo by the operator who saved the entry, within 2
+    minutes (dispatch) / 30 seconds (receipt). No body, reason "เลิกทำ"."""
+    tx = await borrow_service.undo(db, transaction_id=transaction_id, user=user, request=request)
+    return CorrectionOut(transaction=tx)
+
+
+@router.post("/{transaction_id}/void", response_model=CorrectionOut)
+async def void_transaction(
+    transaction_id: uuid.UUID,
+    payload: VoidRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_roles(*EQUIPMENT_POOL_OPERATION_ROLES)),
+):
+    """D28 Layer 3: void the latest transaction's dispatch or receipt."""
+    tx = await borrow_service.void(
+        db, transaction_id=transaction_id, user=user, reason=payload.reason, request=request
+    )
+    return CorrectionOut(transaction=tx)
+
+
+@router.post("/{transaction_id}/change-device", response_model=CorrectionOut)
+async def change_transaction_device(
+    transaction_id: uuid.UUID,
+    payload: ChangeDeviceRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_roles(*EQUIPMENT_POOL_OPERATION_ROLES)),
+):
+    """D28 Layer 3: atomically move the event to the correct device."""
+    response.headers["Cache-Control"] = "no-store"
+    voided, new = await borrow_service.change_device(
+        db,
+        transaction_id=transaction_id,
+        new_equipment_id=str(payload.equipment_id),
+        user=user,
+        reason=payload.reason,
+        acknowledge_status_warning=payload.acknowledge_status_warning,
+        request=request,
+    )
+    return CorrectionOut(transaction=voided, new_transaction=new)
+
+
+@router.post("/{transaction_id}/switch-action", response_model=CorrectionOut)
+async def switch_transaction_action(
+    transaction_id: uuid.UUID,
+    payload: SwitchActionRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_roles(*EQUIPMENT_POOL_OPERATION_ROLES)),
+):
+    """D28 Layer 3: a dispatch that should have been a receipt, or a receipt
+    that should have been a dispatch (needs ``ward_id``)."""
+    voided, new = await borrow_service.switch_action(
+        db,
+        transaction_id=transaction_id,
+        user=user,
+        reason=payload.reason,
+        outcome=payload.outcome,
+        ward_id=str(payload.ward_id) if payload.ward_id else None,
+        request=request,
+    )
+    return CorrectionOut(transaction=voided, new_transaction=new)

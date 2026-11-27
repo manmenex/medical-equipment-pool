@@ -194,3 +194,12 @@ async def outstanding_by_ward(db: AsyncSession, *, ward_id: uuid.UUID | None = N
         items.append(w)
     items.sort(key=lambda w: (w["ward_name"] or "", w["ward_id"] or ""))
     return {"items": items, "total_outstanding": total}
+
+
+async def reverse_receipt_return(db: AsyncSession, transaction_id: uuid.UUID, counts: CuffCounts) -> None:
+    """D28: a voided receipt puts the cuffs it returned back to outstanding.
+    Best effort per type: a type whose returned count is already lower (cuffs
+    were adjusted separately) is left as it is."""
+    for cuff_type, n in counts.as_dict().items():
+        if n > 0:
+            await cuff_crud.reverse_return(db, transaction_id=transaction_id, cuff_type=cuff_type, count=n)

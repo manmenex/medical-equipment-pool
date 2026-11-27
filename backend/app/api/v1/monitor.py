@@ -59,7 +59,7 @@ async def list_events(
     event_col = tx.borrowed_at if is_dispatch else tx.returned_at
     op_id_col = tx.borrower_user_id if is_dispatch else tx.received_by_user_id
 
-    filters = [event_col.is_not(None)]
+    filters = [event_col.is_not(None), tx.status != TransactionStatus.VOIDED]
     if ward_uuid is not None:
         filters.append(tx.ward_id == ward_uuid)
     if business_date_from is not None or business_date_to is not None:

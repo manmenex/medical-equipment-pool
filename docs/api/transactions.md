@@ -169,6 +169,65 @@ the exact element that opened it on close. On `WARD_CORRECTION_CONFLICT`
 it refetches `GET /transactions/{transaction_id}` and displays the newly
 committed ward rather than retrying blindly.
 
+## Entry-error corrections (Owner Governance 2026-11-27, D28)
+
+Four actions on `/transactions/{transaction_id}/`, all in the dispatch/receipt
+service layer (`app/services/borrow_service.py`), never manual status
+maintenance. Roles: `administrator` and `equipment_pool_staff`; `read_only`
+gets `403`. Each success writes exactly one audit entry (`transaction_undo`,
+`transaction_void`, `transaction_change_device`, `transaction_switch_action`),
+committed with the change and **never containing an HN**. The response of every
+action is `CorrectionOut`: `{ "transaction": TransactionOut, "new_transaction":
+TransactionOut | null }`.
+
+Which event is corrected is derived from the transaction: an `open`
+transaction is a **dispatch**; a `closed` transaction with a receipt is a
+**receipt**. A transaction closed by D8 re-dispatch (no receipt) is never
+the latest and cannot be corrected.
+
+| Action | Body | Effect |
+|---|---|---|
+| `POST .../undo` | none | One-tap `void` by the operator who saved it, reason `"เลิกทำ"`. Not limited by shift. |
+| `POST .../void` | `{ "reason" }` | Dispatch: the transaction becomes `voided`, the device returns to `prior_equipment_status` (legacy rows without it: `available_at_pool`) and a transaction this dispatch closed by D8 re-dispatch (`closed_by_redispatch_transaction_id`) reopens. Receipt: the transaction is reopened (returned/receipt fields cleared; they stay in the audit `before`) and the device goes back to `issued_to_ward`. |
+| `POST .../change-device` | `{ "reason", "equipment_id", "acknowledge_status_warning"? }` | Atomically voids the event on the wrong device and records the same event (time, ward, operator, BME keyer label, contact name, checks) on `equipment_id` through the normal `borrow()` / `return_equipment()` rules. A dispatch's HN is moved server-side (decrypted and re-encrypted in the service, cleared on the voided row, never in a response or audit). The voided dispatch gets `corrected_by_transaction_id` = the new transaction. A receipt needs the correct device to have an open transaction. |
+| `POST .../switch-action` | `{ "reason", "outcome"? (default `usable`), "ward_id"? }` | Dispatch to receipt: allowed only if the dispatch closed an earlier transaction by re-dispatch (stored link, else the device's earlier re-dispatch-closed transaction); the dispatch is voided, that transaction reopens and is received at the dispatch time with `outcome`; the voided row's `corrected_by_transaction_id` is that transaction. Receipt to dispatch: needs `ward_id`; the receipt is voided (reopened) and a dispatch to `ward_id` is recorded at the receipt time, closing the reopened transaction as a D8 re-dispatch. Operator, contact name and keyer label carry over; accessory checks do not. |
+
+**Voided-row fields** (on `TransactionOut`, `null` unless `status = "voided"`):
+`voided_at`, `void_reason`, `corrected_by_transaction_id`; the row also stores
+`voided_by_user_id` (not exposed). At dispatch the service stores
+`prior_equipment_status` and `closed_by_redispatch_transaction_id`, and a
+receipt stores `receipt_saved_at`; legacy rows have `NULL`s.
+
+**Guards** (a violation changes nothing):
+
+- Only the device's **latest non-voided** transaction (most recently saved:
+  `created_at`, tie-break `transaction_no`) -> `409 CORRECTION_NOT_LATEST`.
+- **State guard**: the device's current state must equal the state the event
+  produced (dispatch: `issued_to_ward`; receipt: `available_at_pool` /
+  `unavailable_defective` per outcome) -> `409 CORRECTION_STATE_CHANGED`.
+- **Permission**: the administrator always; `equipment_pool_staff` only their
+  own entry (`borrower_user_id` / `received_by_user_id`) and only within the
+  same PR16 `business_date` + shift as the event -> `403 CORRECTION_NOT_PERMITTED`.
+- **Reason** is mandatory (1-500 chars after trimming) except for undo -> `422`.
+- **Undo window**, measured from the server **save** time, not the business
+  time (which can be in the past for legacy-sheet or offline-synced rows):
+  a dispatch within 120 s of `created_at`, a receipt within 30 s of
+  `receipt_saved_at`; a legacy receipt without `receipt_saved_at` is not
+  undoable. Only the operator who saved it (any role) ->
+  `409 UNDO_WINDOW_EXPIRED` / `403 CORRECTION_NOT_PERMITTED`.
+- `switch-action` with no earlier open transaction -> `409
+  SWITCH_ACTION_NOT_AVAILABLE`; receipt to dispatch without `ward_id` -> `400`.
+- A voided transaction cannot be received or corrected again -> `409
+  TRANSACTION_VOIDED`.
+
+**Visibility.** Voided rows are excluded from every list, count and report
+(`GET /transactions` unless `status=voided` or `equipment_id` is given, the
+Receive/Issue reports, CSV/XLSX export, daily report/Excel/forms, Standby
+summary, monitor, dashboard, cuff balances). `GET /transactions?equipment_id=`
+(the equipment history) still lists them with `status = "voided"`. A voided
+dispatch's op_id ledger entry stays `applied`, so the legacy sheet sync never
+re-applies it. The read-only export API is unchanged by this document.
+
 ## See also
 
 - `docs/api/dispatch.md` — create a transaction (`POST /borrow`), list only open ones (`GET /borrow/active`)

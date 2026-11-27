@@ -50,7 +50,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.legacy_history import LegacyEquipmentEvent
-from app.models.transaction import BorrowTransaction
+from app.models.transaction import BorrowTransaction, TransactionStatus
 
 from .candidates import HistoryProjectionEvent, LegacyEventSnapshot, TransactionSnapshot
 
@@ -133,6 +133,7 @@ async def load_transactions_for_equipment(
             select(BorrowTransaction)
             .where(
                 BorrowTransaction.equipment_id.in_(equipment_ids),
+                BorrowTransaction.status != TransactionStatus.VOIDED,
                 or_(
                     BorrowTransaction.borrowed_at >= live_system_start,
                     BorrowTransaction.returned_at >= live_system_start,
