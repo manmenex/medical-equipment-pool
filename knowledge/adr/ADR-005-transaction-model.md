@@ -123,3 +123,7 @@ Forward pointer: Owner Governance 2026-11-25 (second set, D7) later allows an op
   (Roadmap PR6) — the precedent this decision mirrors throughout.
 - `docs/DOMAIN_MODEL.md` — where this model sits among the system's other
   domain concepts.
+
+## Amendment (Owner Governance 2026-11-27, D28)
+
+A third transaction status, `voided`, exists for audited corrections (undo, void, change device, switch action) made through the dispatch/receipt services only. Equipment states are unchanged. See `docs/BUSINESS_RULES.md` "Entry-error prevention and correction" and `docs/DECISION_LOG.md` (2026-11-27, fifth set).

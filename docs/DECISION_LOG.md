@@ -9605,6 +9605,12 @@ opening-balance transactions are created.
     needs a mandatory reason and is audited. Only the device's latest
     transaction can be corrected. Staff may correct their own entries within
     the same shift; after that, only an administrator may (choice 3ก).
+- **Implementation constraints (orchestrator, within the Owner's intent):**
+  restore comes from fields stored at dispatch; a state guard refuses a
+  correction if the device changed state afterwards; change device is atomic;
+  switch-action details; undo ignores the shift limit; the export API exposes
+  `voided`; the HN moves server-side on change device. All are specified in
+  BUSINESS_RULES "Entry-error prevention and correction".
 - **Amends:** the two-state transaction lifecycle (ADR-005 / BUSINESS_RULES
   "Dispatch/Return owns transaction lifecycle"): adds a third transaction
   status `voided`. Voided transactions are kept in history and excluded from
