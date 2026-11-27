@@ -9572,3 +9572,22 @@ opening-balance transactions are created.
 - **Source:** Owner decisions in chat, 2026-11-27 (choices 1ข, 2ข). Docs-only
   Governance PR.
 - **Status:** Approved; implementation follows.
+
+## 2026-11-27 (fourth set) — Loaned devices keep the lending hospital's asset code
+
+- **Decision (Owner, in chat, 2026-11-27):**
+  - **D27 Lending-hospital asset code:** a `loan` device borrowed from another
+    hospital that labels it with its own asset code (for example the Khon Kaen
+    "BKN…" codes) is registered with that code in the BCM Code field, exactly as
+    staff scan or type it in the legacy sheet. The manufacturer serial, when
+    known, goes in the Serial Number field. This lets the legacy sheet sync
+    match these rows without changing how staff work.
+- **Amends:** D14 (the BCM Code field of a demo/loan device holds the
+  manufacturer Serial Number, or for a device loaned from another hospital, that
+  hospital's asset code). Not changed: exactly four identifiers with fixed roles;
+  BCM Code uniqueness across all sources; demo/loan devices stay excluded from
+  the read-only export API; no MEMS integration.
+- **Source:** Owner decision in chat, 2026-11-27 (choice ก). Docs-only
+  Governance PR.
+- **Status:** Approved; registration of the two devices follows (no code change
+  expected if the demo/loan form accepts any code).
