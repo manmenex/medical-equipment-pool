@@ -158,6 +158,6 @@ Equipment Pool staff MAY record a patient HN (hospital number) on a dispatch. Th
 
 ## Daily report rows, sheet-sync duplicates and bulk dismiss (Owner Governance 2026-11-26, D18-D20)
 
-- **Per-ward rows (D18):** the daily Excel and the Standby summary show one row per ward (Ward 7A and Ward 7B are separate), grouped and ordered by the Owner's layout. Wards are never merged.
+- **Per-ward rows (D18):** the daily Excel and the Standby summary show one row per ward (Ward 7A and Ward 7B are separate), grouped and ordered by the Owner's layout. Wards are never merged. D24 (2026-11-27) refines this: rows carry the legacy layout labels, and ward names the Owner confirms are the same place (alias list) share one row; different places are still never merged.
 - **Sheet-sync duplicate receipts (D19):** on the Legacy Sheet Sync path only, a receipt row whose transaction is already closed by a receipt for the same equipment and ward within a short business-time window is skipped as already received, not filed as a conflict. App clients keep `TRANSACTION_ALREADY_RETURNED`.
 - **Bulk dismiss (D20):** an administrator may dismiss all open sync conflicts from the Legacy Sheet Sync device in one action; each dismissal is individually audited through the existing dismiss service; nothing is applied.

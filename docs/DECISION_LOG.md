@@ -9535,3 +9535,23 @@ opening-balance transactions are created.
 - **Source:** Owner decision in chat, 2026-11-27 (choices 1ก, 2ข). Docs-only
   Governance PR.
 - **Status:** Approved; implementation follows.
+
+## 2026-11-27 (second set) — Daily report rows use the legacy row labels (refines D18)
+
+- **Decision (Owner, in chat, 2026-11-27):**
+  - **D24:** the daily Excel ward table and the Standby summary reproduce the
+    pool team's legacy sheet exactly: rows carry the legacy layout labels
+    (Ward 5 … Ward 11, W4B, W5B, W6B, ICU3, ICU4, RR, OR, ICU1, ICU2 CCU, ER,
+    Pediatrics Clinic … ARI) in legacy order with the legacy grey rows. Hospital
+    ward names are mapped to those rows by an Owner-confirmed alias list (for
+    example Ward 7A → Ward 7, Recovery Room → RR, Emergency/Trauma Center → ER,
+    Orthopedic Unit → Surgery +Ortho, Gastroenterology and Gastroenterology
+    Clinic → Gastroenterology Clinic). Names the Owner confirms are the same
+    place are counted in one row. D18 still applies to different places: they
+    are never merged (a ward that is not confirmed as an alias of a row keeps
+    its own row, or goes to "อื่น ๆ"). Owner aliases take precedence over admin
+    short labels for row placement.
+- **Amends:** D18 (refines "never merged" to "different places are never
+  merged; Owner-confirmed same-place aliases share one row").
+- **Source:** Owner decisions in chat, 2026-11-27. Docs-only Governance PR.
+- **Status:** Approved; implementation follows.
