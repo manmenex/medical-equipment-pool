@@ -273,12 +273,12 @@ async def test_workbook_sheets_headers_and_counts(client, seeded_users, db_sessi
     assert ws.cell(start - 2, 1).value.startswith("สรุปจำนวนการใช้งานเครื่องมือกลุ่ม Pool")
     assert ws.cell(start, 2).value == "ชนิดเครื่องมือ Equipment Pool" and ws.cell(start, 10).value == "อัตราการหมุนเวียน\nรวมต่อชนิดเครื่อง"
     assert [ws.cell(start + 1, c).value for c in range(4, 10)] == ["จ่าย", "รับคืน"] * 3
-    pool = {ws.cell(r, 2).value: [ws.cell(r, c).value for c in range(4, 11)] for r in range(start + 2, start + 9)}
+    pool = {ws.cell(r, 2).value: [ws.cell(r, c).value for c in range(4, 11)] for r in range(start + 2, start + 9)}  # D26: respirator row absent (no activity)
     assert list(pool)[0] == "INFUSION PUMP" and "CRYO CUFF (ทั้งหมดมีในระบบ 1 รายการ)" in pool
     assert pool["INFUSION PUMP"] == [3, 1, 2, 1, 5, 2, 7]
     assert pool["CRYO CUFF (ทั้งหมดมีในระบบ 1 รายการ)"] == [1, None, None, None, 1, None, 1]
-    assert [ws.cell(start + 10, c).value for c in range(4, 11)] == [4, 1, 2, 1, 6, 2, 8]
-    footer = [ws.cell(r, 1).value for r in range(start + 11, ws.max_row + 1) if ws.cell(r, 1).value]
+    assert [ws.cell(start + 9, c).value for c in range(4, 11)] == [4, 1, 2, 1, 6, 2, 8]
+    footer = [ws.cell(r, 1).value for r in range(start + 10, ws.max_row + 1) if ws.cell(r, 1).value]
     assert footer[0].startswith("ช่วงเปลี่ยนกะ ±60 นาที") and footer[1] == "ตารางแผนกนับเฉพาะ Infusion Pump"
 
     # Sheet 2: equipment type (fixed types in the Owner's order, then per-ward x type).

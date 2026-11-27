@@ -429,12 +429,12 @@ async def test_ward_rows_follow_report_layout_and_excel_column(client, seeded_us
     # Zero rows still show "-" in the LINE text.
     text = (await _get(client, staff, "day", "/text")).text
     assert "Ward 7 = 3 เครื่อง" in text
-    # The same numbers land in column H of the matching rows of the Excel.
+    # D25: the edit is LINE-only; column H of the Excel keeps the system value.
     r = await client.get("/api/v1/reports/daily-summary.xlsx", headers=staff, params={"date": "2026-07-28"})
     ws = load_workbook(io.BytesIO(r.content))["รายงาน"]
     by_row = {ws.cell(i, 3).value: ws.cell(i, 8).value for i in range(5, 5 + len(layout))}
     assert [ws.cell(5 + i, 3).value for i in range(len(layout))] == [lbl for *_, lbl in layout]
-    assert by_row["Ward 7"] == 3
+    assert not by_row["Ward 7"]  # system value is 0 -> blank, not the edited 3
 
 
 async def test_line_text_lists_layout_label_ward_at_zero_in_admin_order(client, seeded_users, db_session):
@@ -452,7 +452,7 @@ async def test_line_text_lists_layout_label_ward_at_zero_in_admin_order(client, 
 # ------------------------------------------------------------------ Excel
 
 
-async def test_daily_excel_stand_by_column_uses_day_cutoff_effective_values(client, seeded_users, db_session):
+async def test_daily_excel_stand_by_column_uses_system_values_not_overrides(client, seeded_users, db_session):
     await _scenario(db_session)
     await db_session.commit()
     staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
@@ -472,7 +472,7 @@ async def test_daily_excel_stand_by_column_uses_day_cutoff_effective_values(clie
     col = standby_col(r.content)
     assert col["Ward 5"] == 1 and col["W5B"] == 1  # day (20:00) cut-off system values
 
-    # Night-cutoff edits do not leak in; a day-cutoff edit does; 0 renders blank.
+    # D25: overrides (any cutoff) never reach the Excel; they stay in the LINE text.
     for cutoff, key, value in (("night", "ward:Ward 5", 9), ("day", "ward:Ward 5", 5), ("day", "ward:W5B", 0)):
         await client.put(
             "/api/v1/standby-summary/overrides",
@@ -480,7 +480,9 @@ async def test_daily_excel_stand_by_column_uses_day_cutoff_effective_values(clie
             json={"date": "2026-07-28", "cutoff": cutoff, "field_key": key, "value": value},
         )
     col = standby_col((await client.get("/api/v1/reports/daily-summary.xlsx", headers=staff, params={"date": "2026-07-28"})).content)
-    assert col["Ward 5"] == 5 and col["W5B"] is None
+    assert col["Ward 5"] == 1 and col["W5B"] == 1
+    text = (await _get(client, staff, "day", "/text")).text
+    assert "W5A = 5 เครื่อง" in text
 
 
 # ------------------------------------------------------------------ roles
