@@ -1,14 +1,22 @@
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Request
+from pydantic import TypeAdapter
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import AUDIT_ACTION_WARD_CORRECTION, AUDIT_ENTITY_BORROW_TRANSACTION, record_audit_event
 from app.core.db_errors import IntegrityViolationKind, classify_integrity_error
 from app.core.exceptions import (
+    CorrectionConflictError,
+    CorrectionNotLatestError,
+    CorrectionNotPermittedError,
+    CorrectionStateChangedError,
+    SwitchActionNotAvailableError,
+    UndoWindowExpiredError,
     DispatchStatusWarningError,
     DispatchWarningStaleError,
     EquipmentStatusChangedError,
@@ -20,11 +28,13 @@ from app.core.exceptions import (
     ReceiptRaceLostError,
     TransactionAlreadyReturnedError,
     TransactionNotFoundError,
+    TransactionVoidedError,
     WardCorrectionConflictError,
     WardCorrectionNoOpError,
 )
 from app.core.redis import cache_delete_prefix
 from app.core.references import ensure_referenced_row_exists
+from app.core.reporting_time import business_date_and_shift
 from app.core import hn_crypto
 from app.crud import audit as audit_crud
 from app.crud import client_operation as client_op_crud
@@ -32,8 +42,9 @@ from app.crud import cuff as cuff_crud
 from app.crud import equipment as equipment_crud
 from app.crud import transaction as transaction_crud
 from app.models.equipment import EquipmentStatus
-from app.models.export import EVENT_TYPE_DISPATCH, EVENT_TYPE_RECEIPT
+from app.models.export import EVENT_TYPE_DISPATCH, EVENT_TYPE_RECEIPT, ExportEvent
 from app.models.master_data import Ward
+from app.models.user import ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF, Role
 from app.models.transaction import (
     CLOSE_REASON_REDISPATCH,
     BorrowTransaction,
@@ -42,7 +53,7 @@ from app.models.transaction import (
     RoutineRound,
     TransactionStatus,
 )
-from app.schemas.checklist import CuffCounts, CryoCuffChecks, StandardChecks
+from app.schemas.checklist import Checks, CuffCounts, CryoCuffChecks, StandardChecks
 from app.services import checklist_service, cuff_service, export_service
 from app.utils.parsing import parse_uuid
 
@@ -157,7 +168,11 @@ async def borrow(
     dispatch_checks: StandardChecks | CryoCuffChecks | None = None,
     expected_status: EquipmentStatus | None = None,
     hn: str | None = None,
+    _commit: bool = True,
 ) -> BorrowTransaction:
+    # D28: ``_commit=False`` is for the correction services only (change
+    # device / switch action), which must make the void and the corrected
+    # event one atomic unit and commit once themselves.
     # Roadmap PR25E slice B2b: ``borrowed_at`` is business time and is passed
     # only by the sync layer after the section 11 guards; online callers omit
     # it and keep the server clock.
@@ -291,6 +306,9 @@ async def borrow(
                 "checklist_kind": checklist_kind,
                 "hn_ciphertext": hn_ciphertext,
                 "has_hn": hn_ciphertext is not None,
+                # D28 restore source: see BorrowTransaction.prior_equipment_status.
+                "prior_equipment_status": previous_status.value,
+                "closed_by_redispatch_transaction_id": redispatched_tx.id if redispatched_tx is not None else None,
                 # Omitted (None) stays SQL NULL = "not recorded".
                 **({"dispatch_checks": dispatch_checks.model_dump(mode="json")} if dispatch_checks is not None else {}),
             },
@@ -382,6 +400,8 @@ async def borrow(
     await export_service.record_event(
         db, transaction_id=tx.id, event_type=EVENT_TYPE_DISPATCH, event_at=tx.borrowed_at
     )
+    if not _commit:
+        return tx
     await db.commit()
     await cache_delete_prefix("equipment:search:")
     await cache_delete_prefix("dashboard:")
@@ -403,7 +423,9 @@ async def return_equipment(
     ward_contact_name: str | None = None,
     receipt_checks: StandardChecks | CryoCuffChecks | None = None,
     cuffs_returned: CuffCounts | None = None,
+    _commit: bool = True,
 ) -> BorrowTransaction:
+    # See borrow(): ``_commit=False`` is for the D28 correction services only.
     # See borrow(): ``received_by_user_id`` is the recorded operator,
     # ``actor_user_id`` (default: the operator) the audit/status-history actor.
     actor_user_id = actor_user_id if actor_user_id is not None else received_by_user_id
@@ -425,6 +447,8 @@ async def return_equipment(
     # genuine duplicate/repeat submission, not a timing race with another
     # in-flight request.
     if tx.status != TransactionStatus.OPEN:
+        if tx.status == TransactionStatus.VOIDED:
+            raise TransactionVoidedError("This transaction was voided; no receipt applies to it")
         if tx.close_reason == CLOSE_REASON_REDISPATCH:
             raise TransactionClosedByRedispatchError(
                 "This transaction was closed because the equipment was dispatched again; no receipt applies to it"
@@ -502,6 +526,7 @@ async def return_equipment(
             "notes",
             "receipt_contact_name",
             "receipt_checks",
+            "receipt_saved_at",
         ],
     )
 
@@ -553,9 +578,21 @@ async def return_equipment(
         # Before record_event, which stays the last write (section 6.3).
         await client_op_crud.write_applied(db, client_op, transaction_id=tx.id, occurred_at=tx.returned_at)
     # Roadmap PR25B: last write before commit (see borrow() above).
-    await export_service.record_event(
-        db, transaction_id=tx.id, event_type=EVENT_TYPE_RECEIPT, event_at=tx.returned_at
-    )
+    # D28: a receipt that was voided (transaction reopened) and is received
+    # again already has its (transaction, receipt) export event, and
+    # uq_export_events_transaction_type allows one. Do not crash the receipt;
+    # the export API's compensating-event wiring owns re-emitting it.
+    if await db.scalar(
+        select(ExportEvent.seq).where(
+            ExportEvent.transaction_id == tx.id, ExportEvent.event_type == EVENT_TYPE_RECEIPT
+        )
+    ) is None:
+        await export_service.record_event(
+            db, transaction_id=tx.id, event_type=EVENT_TYPE_RECEIPT, event_at=tx.returned_at
+        )
+    if not _commit:
+        await db.refresh(tx, attribute_names=["equipment"])
+        return tx
     await db.commit()
     await db.refresh(tx, attribute_names=["equipment"])
     await cache_delete_prefix("equipment:search:")
@@ -648,3 +685,526 @@ async def correct_ward(
     await db.commit()
     await db.refresh(tx, attribute_names=["equipment"])
     return tx
+
+
+# ---------------------------------------------------------------------------
+# Owner Governance 2026-11-27 (D28): entry-error correction.
+#
+# undo / void / change_device / switch_action live in the dispatch/receipt
+# service layer (never manual status maintenance). Every action:
+#   - touches only the device's LATEST non-voided transaction;
+#   - is refused (409, nothing changed) when the device's current state is no
+#     longer the state the event produced;
+#   - is permitted for the Administrator always, for Equipment Pool staff only
+#     on their own entry within the same PR16 business_date + shift as the
+#     event (undo: the operator who saved it, inside the undo window, not
+#     shift-limited); Read Only never;
+#   - writes exactly one audit entry (never an HN) in the same commit.
+# The event a correction targets is derived from the transaction: an OPEN
+# transaction is a dispatch; a CLOSED transaction with a receipt is a receipt.
+# ---------------------------------------------------------------------------
+
+UNDO_WINDOW_DISPATCH = timedelta(seconds=120)
+UNDO_WINDOW_RECEIPT = timedelta(seconds=30)
+UNDO_REASON = "เลิกทำ"
+REASON_MAX_LENGTH = 500
+
+EVENT_KIND_DISPATCH = "dispatch"
+EVENT_KIND_RECEIPT = "receipt"
+
+AUDIT_ACTION_UNDO = "transaction_undo"
+AUDIT_ACTION_VOID = "transaction_void"
+AUDIT_ACTION_CHANGE_DEVICE = "transaction_change_device"
+AUDIT_ACTION_SWITCH_ACTION = "transaction_switch_action"
+
+# Equipment state each receipt outcome produced (pre-PR8B 'available' = usable).
+_STATE_AFTER_RECEIPT = {
+    "usable": EquipmentStatus.AVAILABLE_AT_POOL,
+    "available": EquipmentStatus.AVAILABLE_AT_POOL,
+    "defective": EquipmentStatus.UNAVAILABLE_DEFECTIVE,
+}
+
+
+@dataclass
+class _CorrectionTarget:
+    tx: BorrowTransaction
+    equipment: object
+    event: str
+    role: str
+
+
+def _aware(dt: datetime) -> datetime:
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def _clean_reason(reason: str | None) -> str:
+    cleaned = (reason or "").strip()
+    if not cleaned:
+        raise InvalidInputError("A reason is required.")
+    if len(cleaned) > REASON_MAX_LENGTH:
+        raise InvalidInputError(f"The reason must be at most {REASON_MAX_LENGTH} characters.")
+    return cleaned
+
+
+def _snapshot(tx: BorrowTransaction) -> dict:
+    """Audit before-image. Receipt fields are kept here when a receipt is
+    voided. Never contains an HN (only the has_hn indicator)."""
+    return {
+        "transaction_no": tx.transaction_no,
+        "status": tx.status.value,
+        "equipment_id": str(tx.equipment_id),
+        "ward_id": str(tx.ward_id) if tx.ward_id else None,
+        "borrowed_at": tx.borrowed_at.isoformat() if tx.borrowed_at else None,
+        "returned_at": tx.returned_at.isoformat() if tx.returned_at else None,
+        "receipt_outcome": tx.condition_on_return,
+        "received_by_user_id": str(tx.received_by_user_id) if tx.received_by_user_id else None,
+        "receipt_contact_name": tx.receipt_contact_name,
+        "receipt_keyer_label": tx.receipt_keyer_label,
+        "receipt_checks": tx.receipt_checks,
+        "close_reason": tx.close_reason,
+        "has_hn": tx.has_hn,
+    }
+
+
+async def _prepare_correction(
+    db: AsyncSession, *, transaction_id: uuid.UUID, user, undo: bool
+) -> _CorrectionTarget:
+    role = await db.get(Role, user.role_id)
+    role_name = role.name if role is not None else ""
+    if role_name not in (ROLE_ADMINISTRATOR, ROLE_EQUIPMENT_POOL_STAFF):
+        raise CorrectionNotPermittedError("This role may not correct transactions.")
+
+    tx = await transaction_crud.get_by_id(db, transaction_id)
+    if tx is None:
+        raise TransactionNotFoundError("Transaction not found")
+    if tx.status == TransactionStatus.VOIDED:
+        raise TransactionVoidedError("This transaction was already voided.")
+    if tx.status == TransactionStatus.OPEN:
+        event = EVENT_KIND_DISPATCH
+    elif tx.returned_at is not None:
+        event = EVENT_KIND_RECEIPT
+    else:
+        # Closed by D8 re-dispatch with no receipt: a later dispatch exists.
+        raise CorrectionNotLatestError("Only the device's latest transaction can be corrected.")
+
+    operator_id = tx.borrower_user_id if event == EVENT_KIND_DISPATCH else tx.received_by_user_id
+    now = datetime.now(timezone.utc)
+    if undo:
+        if operator_id != user.id:
+            raise CorrectionNotPermittedError("Only the operator who saved this entry may undo it.")
+    elif role_name != ROLE_ADMINISTRATOR:
+        event_at = tx.borrowed_at if event == EVENT_KIND_DISPATCH else tx.returned_at
+        if operator_id != user.id or business_date_and_shift(event_at) != business_date_and_shift(now):
+            raise CorrectionNotPermittedError(
+                "Equipment Pool staff may correct only their own entries within the same shift; "
+                "ask an administrator."
+            )
+
+    latest = await transaction_crud.latest_non_voided_for_equipment(db, tx.equipment_id)
+    if latest is None or latest.id != tx.id:
+        raise CorrectionNotLatestError("Only the device's latest transaction can be corrected.")
+
+    equipment = await equipment_crud.get_by_id(db, tx.equipment_id)
+    if equipment is None:
+        raise EquipmentNotFoundError("Equipment not found")
+    if event == EVENT_KIND_DISPATCH:
+        expected = EquipmentStatus.ISSUED_TO_WARD
+    else:
+        expected = _STATE_AFTER_RECEIPT.get(tx.condition_on_return)
+    if expected is None or equipment.status != expected:
+        raise CorrectionStateChangedError(
+            "The device's state changed after this entry; an administrator must resolve it first.",
+            details={
+                "equipment_status": equipment.status.value,
+                "expected_status": expected.value if expected is not None else None,
+            },
+        )
+
+    if undo:
+        base = tx.created_at if event == EVENT_KIND_DISPATCH else tx.receipt_saved_at
+        window = UNDO_WINDOW_DISPATCH if event == EVENT_KIND_DISPATCH else UNDO_WINDOW_RECEIPT
+        if base is None or now - _aware(base) > window:
+            raise UndoWindowExpiredError(
+                "The undo window has passed; void the entry with a reason instead.",
+                details={"window_seconds": int(window.total_seconds())},
+            )
+    return _CorrectionTarget(tx=tx, equipment=equipment, event=event, role=role_name)
+
+
+async def _void_event(
+    db: AsyncSession,
+    target: _CorrectionTarget,
+    *,
+    user,
+    reason: str,
+    corrected_by_transaction_id: uuid.UUID | None = None,
+    clear_hn: bool = False,
+    reopen_transaction_id: uuid.UUID | None = None,
+) -> dict:
+    """Voids the targeted event inside the caller's database transaction (no
+    commit) and returns the audit ``after`` facts. A dispatch becomes a
+    ``voided`` transaction, the device returns to its stored prior state and a
+    transaction the dispatch closed by D8 re-dispatch reopens. A receipt is
+    reopened (receipt fields cleared) and the device returns to ISSUED_TO_WARD.
+    ``reopen_transaction_id`` lets switch_action name the transaction to reopen
+    for a legacy dispatch that has no stored ``closed_by_redispatch_...``."""
+    tx, equipment = target.tx, target.equipment
+    after: dict = {"event": target.event, "reason": reason}
+    if target.event == EVENT_KIND_DISPATCH:
+        won = await transaction_crud.void_open_dispatch(
+            db,
+            tx,
+            voided_by_user_id=user.id,
+            reason=reason,
+            corrected_by_transaction_id=corrected_by_transaction_id,
+            clear_hn=clear_hn,
+        )
+        if not won:
+            await db.rollback()
+            raise CorrectionConflictError("The transaction was changed by someone else. Refresh and retry.")
+        reopen_id = reopen_transaction_id or tx.closed_by_redispatch_transaction_id
+        if reopen_id is not None:
+            if not await transaction_crud.reopen_redispatch_closed(db, reopen_id):
+                await db.rollback()
+                raise CorrectionConflictError("The earlier transaction was changed by someone else. Refresh and retry.")
+            restore = EquipmentStatus.ISSUED_TO_WARD
+            after["reopened_transaction_id"] = str(reopen_id)
+        else:
+            try:
+                restore = EquipmentStatus(tx.prior_equipment_status) if tx.prior_equipment_status else None
+            except ValueError:
+                restore = None
+            # Legacy rows (no stored prior state) restore to the pool; a stored
+            # ISSUED_TO_WARD without a closed transaction cannot be restored.
+            if restore is None or restore == EquipmentStatus.ISSUED_TO_WARD:
+                restore = EquipmentStatus.AVAILABLE_AT_POOL
+    else:
+        before_notes = tx.notes
+        # close() appended "[Return] <note>" to the dispatch notes: strip it.
+        notes = before_notes
+        if before_notes and "[Return] " in before_notes:
+            notes = before_notes.split("[Return] ")[0].strip() or None
+        returned_cuffs = CuffCounts()
+        if isinstance(tx.receipt_checks, dict) and tx.receipt_checks.get("kind") == "cryo_cuff":
+            try:
+                returned_cuffs = CryoCuffChecks.model_validate(tx.receipt_checks).cuffs
+            except Exception:  # malformed stored JSON must not block a correction
+                returned_cuffs = CuffCounts()
+        if not await transaction_crud.reopen_received(db, tx, notes=notes or None):
+            await db.rollback()
+            raise CorrectionConflictError("The transaction was changed by someone else. Refresh and retry.")
+        if returned_cuffs.total() > 0:
+            await cuff_service.reverse_receipt_return(db, tx.id, returned_cuffs)
+        restore = EquipmentStatus.ISSUED_TO_WARD
+    try:
+        await equipment_crud.change_status_for_dispatch_receipt(
+            db,
+            equipment,
+            new_status=restore,
+            changed_by_user_id=user.id,
+            reason=f"Correction: {target.event} voided",
+        )
+    except EquipmentStatusChangedError:
+        await db.rollback()
+        raise CorrectionStateChangedError(
+            "The device's state changed while the correction was processed; nothing was changed."
+        ) from None
+    await db.refresh(tx)
+    after["equipment_status_restored_to"] = restore.value
+    return after
+
+
+async def _finish(db: AsyncSession, transaction_id: uuid.UUID) -> BorrowTransaction:
+    await db.commit()
+    await cache_delete_prefix("equipment:search:")
+    await cache_delete_prefix("dashboard:")
+    db.expire_all()
+    tx = await transaction_crud.get_by_id(db, transaction_id)
+    assert tx is not None
+    return tx
+
+
+async def _audit(db, *, user, action, tx, before, after, request) -> None:
+    await record_audit_event(
+        db,
+        actor_user_id=user.id,
+        action=action,
+        entity_type=AUDIT_ENTITY_BORROW_TRANSACTION,
+        entity_id=tx.id,
+        before=before,
+        after=after,
+        request=request,
+    )
+
+
+async def undo(db: AsyncSession, *, transaction_id: uuid.UUID, user, request: Request | None = None) -> BorrowTransaction:
+    """D28 Layer 2. The operator who saved the entry, within 120 s of saving a
+    dispatch (``created_at``) or 30 s of saving a receipt (``receipt_saved_at``).
+
+    The window is measured from the SERVER save time, never from the business
+    event time: ``borrowed_at``/``returned_at`` can be in the past (legacy
+    sheet sync, offline queue). A legacy receipt without ``receipt_saved_at``
+    is not undoable. Not limited by the end of the shift. System reason
+    "เลิกทำ"; otherwise identical to a void."""
+    target = await _prepare_correction(db, transaction_id=transaction_id, user=user, undo=True)
+    before = _snapshot(target.tx)
+    after = await _void_event(db, target, user=user, reason=UNDO_REASON)
+    after["undo"] = True
+    await _audit(db, user=user, action=AUDIT_ACTION_UNDO, tx=target.tx, before=before, after=after, request=request)
+    return await _finish(db, transaction_id)
+
+
+async def void(
+    db: AsyncSession, *, transaction_id: uuid.UUID, user, reason: str, request: Request | None = None
+) -> BorrowTransaction:
+    """D28 Layer 3 "Void (ยกเลิกรายการ)": mandatory reason, latest transaction
+    only, state guard, role/shift permission, one atomic audit entry."""
+    reason = _clean_reason(reason)
+    target = await _prepare_correction(db, transaction_id=transaction_id, user=user, undo=False)
+    before = _snapshot(target.tx)
+    after = await _void_event(db, target, user=user, reason=reason)
+    await _audit(db, user=user, action=AUDIT_ACTION_VOID, tx=target.tx, before=before, after=after, request=request)
+    return await _finish(db, transaction_id)
+
+
+def _client_meta(request: Request | None) -> tuple[str | None, str | None]:
+    if request is None:
+        return None, None
+    ua = request.headers.get("user-agent")
+    return (request.client.host if request.client else None), (ua[:255] if ua else None)
+
+
+def _parse_checks(raw: dict | None):
+    return TypeAdapter(Checks).validate_python(raw) if raw else None
+
+
+async def change_device(
+    db: AsyncSession,
+    *,
+    transaction_id: uuid.UUID,
+    new_equipment_id: str,
+    user,
+    reason: str,
+    acknowledge_status_warning: bool = False,
+    request: Request | None = None,
+) -> tuple[BorrowTransaction, BorrowTransaction]:
+    """D28 "Change device (เปลี่ยนเครื่อง)": voids the event on the wrong device
+    and records the same event (same time, ward, keyer label, contact name,
+    checks, operator) on the correct device through the normal borrow()/
+    return_equipment() rules, in ONE database transaction. A dispatch's HN is
+    decrypted and re-encrypted on the server (never leaves it) and cleared on
+    the voided row. Returns (transaction on the wrong device, new transaction)."""
+    reason = _clean_reason(reason)
+    ip, ua = _client_meta(request)
+    target = await _prepare_correction(db, transaction_id=transaction_id, user=user, undo=False)
+    tx = target.tx
+    new_equipment = await equipment_crud.get_by_id(db, parse_uuid(new_equipment_id, "equipment_id"))
+    if new_equipment is None:
+        raise EquipmentNotFoundError("Equipment not found")
+    if new_equipment.id == tx.equipment_id:
+        raise InvalidInputError("Choose a different device.")
+    before = _snapshot(tx)
+    old = {
+        "ward_id": tx.ward_id,
+        "borrowed_at": tx.borrowed_at,
+        "returned_at": tx.returned_at,
+        "borrower_user_id": tx.borrower_user_id,
+        "received_by_user_id": tx.received_by_user_id,
+        "dispatch_type": tx.dispatch_type,
+        "routine_round": tx.routine_round,
+        "department_id": tx.department_id,
+        "phone_number": tx.phone_number,
+        "pickup_location_id": tx.pickup_location_id,
+        "dropoff_location_id": tx.dropoff_location_id,
+        "notes": tx.notes,
+        "dispatch_contact_name": tx.dispatch_contact_name,
+        "receipt_contact_name": tx.receipt_contact_name,
+        "dispatch_keyer_label": tx.dispatch_keyer_label,
+        "receipt_keyer_label": tx.receipt_keyer_label,
+        "dispatch_checks": tx.dispatch_checks,
+        "receipt_checks": tx.receipt_checks,
+        "outcome": tx.condition_on_return,
+    }
+    moved_hn = False
+    hn_plain: str | None = None
+    if target.event == EVENT_KIND_DISPATCH and tx.has_hn:
+        ciphertext = (
+            await db.execute(select(BorrowTransaction.hn_ciphertext).where(BorrowTransaction.id == tx.id))
+        ).scalar_one_or_none()
+        if ciphertext:
+            hn_plain = hn_crypto.decrypt_hn(ciphertext)  # server-side only
+            moved_hn = True
+    try:
+        receipt_target_tx = None
+        if target.event == EVENT_KIND_RECEIPT:
+            receipt_target_tx = await transaction_crud.get_open_transaction_for_equipment(db, new_equipment.id)
+            if receipt_target_tx is None:
+                raise InvalidInputError("The correct device has no open dispatch to receive.")
+            try:
+                outcome = ReceiptOutcome("usable" if old["outcome"] == "available" else old["outcome"])
+            except ValueError:
+                raise InvalidInputError("This receipt's outcome cannot be carried to another device.") from None
+            receipt_target_id = receipt_target_tx.id
+        after = await _void_event(db, target, user=user, reason=reason, clear_hn=moved_hn)
+        if target.event == EVENT_KIND_DISPATCH:
+            new_tx = await borrow(
+                db,
+                equipment_id=str(new_equipment.id),
+                borrower_user_id=old["borrower_user_id"],
+                actor_user_id=user.id,
+                ward_id=str(old["ward_id"]) if old["ward_id"] else "",
+                dispatch_type=old["dispatch_type"],
+                routine_round=old["routine_round"],
+                department_id=str(old["department_id"]) if old["department_id"] else None,
+                phone_number=old["phone_number"],
+                pickup_location_id=str(old["pickup_location_id"]) if old["pickup_location_id"] else None,
+                dropoff_location_id=str(old["dropoff_location_id"]) if old["dropoff_location_id"] else None,
+                notes=old["notes"],
+                ip_address=ip,
+                user_agent=ua,
+                borrowed_at=old["borrowed_at"],
+                acknowledge_status_warning=acknowledge_status_warning,
+                ward_contact_name=old["dispatch_contact_name"],
+                dispatch_checks=_parse_checks(old["dispatch_checks"]),
+                hn=hn_plain,
+                _commit=False,
+            )
+            new_tx.dispatch_keyer_label = old["dispatch_keyer_label"]
+            await transaction_crud.set_corrected_by(db, tx, new_tx.id)
+        else:
+            new_tx = await return_equipment(
+                db,
+                transaction_id=receipt_target_id,
+                receipt_outcome=outcome,
+                notes=None,
+                received_by_user_id=old["received_by_user_id"],
+                ip_address=ip,
+                user_agent=ua,
+                actor_user_id=user.id,
+                returned_at=old["returned_at"],
+                ward_contact_name=old["receipt_contact_name"],
+                receipt_checks=_parse_checks(old["receipt_checks"]),
+                _commit=False,
+            )
+            new_tx.receipt_keyer_label = old["receipt_keyer_label"]
+        after.update({"new_transaction_id": str(new_tx.id), "new_equipment_id": str(new_equipment.id)})
+        if moved_hn:
+            after["hn_moved"] = True  # indicator only, never the value
+        await _audit(
+            db, user=user, action=AUDIT_ACTION_CHANGE_DEVICE, tx=tx, before=before, after=after, request=request
+        )
+    except Exception:
+        await db.rollback()
+        raise
+    new_id = new_tx.id
+    await _finish(db, tx.id)
+    new_tx = await transaction_crud.get_by_id(db, new_id)
+    return await transaction_crud.get_by_id(db, transaction_id), new_tx
+
+
+async def switch_action(
+    db: AsyncSession,
+    *,
+    transaction_id: uuid.UUID,
+    user,
+    reason: str,
+    outcome: ReceiptOutcome = ReceiptOutcome.USABLE,
+    ward_id: str | None = None,
+    request: Request | None = None,
+) -> tuple[BorrowTransaction, BorrowTransaction]:
+    """D28 "Switch action (สลับงาน)", one database transaction.
+
+    - dispatch -> receipt: offered only when the wrong dispatch had closed an
+      earlier transaction by re-dispatch (``closed_by_redispatch_transaction_id``,
+      else the device's earlier re-dispatch-closed transaction). The dispatch is
+      voided (that transaction reopens) and then received at the dispatch's
+      time with ``outcome`` (default usable). Returns (voided dispatch, the
+      received transaction).
+    - receipt -> dispatch: the receipt is voided (its transaction reopens) and
+      a dispatch to ``ward_id`` is recorded at the receipt's time; per D8 it
+      closes the reopened transaction as a re-dispatch. Returns (the reopened
+      transaction, the new dispatch).
+    The operator, contact name and BME keyer label of the original entry carry
+    over. Accessory checks are not carried (they belong to the other action)."""
+    reason = _clean_reason(reason)
+    ip, ua = _client_meta(request)
+    target = await _prepare_correction(db, transaction_id=transaction_id, user=user, undo=False)
+    tx = target.tx
+    before = _snapshot(tx)
+    old_borrowed_at, old_returned_at = tx.borrowed_at, tx.returned_at
+    old_borrower, old_receiver = tx.borrower_user_id, tx.received_by_user_id
+    old_dispatch_contact, old_receipt_contact = tx.dispatch_contact_name, tx.receipt_contact_name
+    old_dispatch_label, old_receipt_label = tx.dispatch_keyer_label, tx.receipt_keyer_label
+    try:
+        if target.event == EVENT_KIND_DISPATCH:
+            predecessor_id = tx.closed_by_redispatch_transaction_id
+            if predecessor_id is None:
+                earlier = await transaction_crud.previous_redispatch_closed(db, tx)
+                predecessor_id = earlier.id if earlier is not None else None
+            if predecessor_id is None:
+                raise SwitchActionNotAvailableError(
+                    "This dispatch did not follow an open transaction, so it cannot become a receipt."
+                )
+            after = await _void_event(
+                db,
+                target,
+                user=user,
+                reason=reason,
+                corrected_by_transaction_id=predecessor_id,
+                reopen_transaction_id=predecessor_id,
+            )
+            # The reopen above was a Core UPDATE: load fresh state for the receipt.
+            await db.get(BorrowTransaction, predecessor_id, populate_existing=True)
+            result_tx = await return_equipment(
+                db,
+                transaction_id=predecessor_id,
+                receipt_outcome=outcome,
+                notes=None,
+                received_by_user_id=old_borrower,
+                ip_address=ip,
+                user_agent=ua,
+                actor_user_id=user.id,
+                returned_at=old_borrowed_at,
+                ward_contact_name=old_dispatch_contact,
+                _commit=False,
+            )
+            result_tx.receipt_keyer_label = old_dispatch_label
+            after["switched_to"] = EVENT_KIND_RECEIPT
+            after["receipt_outcome"] = outcome.value
+        else:
+            if not ward_id:
+                raise InvalidInputError("A ward is required to record the dispatch.")
+            after = await _void_event(db, target, user=user, reason=reason)
+            result_tx = await borrow(
+                db,
+                equipment_id=str(tx.equipment_id),
+                borrower_user_id=old_receiver,
+                actor_user_id=user.id,
+                ward_id=ward_id,
+                dispatch_type=DispatchType.ON_DEMAND,
+                routine_round=None,
+                department_id=None,
+                phone_number=None,
+                pickup_location_id=None,
+                dropoff_location_id=None,
+                notes=None,
+                ip_address=ip,
+                user_agent=ua,
+                borrowed_at=old_returned_at,
+                acknowledge_status_warning=True,  # the reopened transaction is closed by D8 re-dispatch
+                expected_open_transaction_id=str(tx.id),
+                ward_contact_name=old_receipt_contact,
+                _commit=False,
+            )
+            result_tx.dispatch_keyer_label = old_receipt_label
+            after["switched_to"] = EVENT_KIND_DISPATCH
+        after["new_transaction_id"] = str(result_tx.id)
+        await _audit(
+            db, user=user, action=AUDIT_ACTION_SWITCH_ACTION, tx=tx, before=before, after=after, request=request
+        )
+    except Exception:
+        await db.rollback()
+        raise
+    result_id = result_tx.id
+    await _finish(db, tx.id)
+    return await transaction_crud.get_by_id(db, transaction_id), await transaction_crud.get_by_id(db, result_id)

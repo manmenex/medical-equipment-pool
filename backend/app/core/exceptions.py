@@ -114,6 +114,14 @@ class TransactionClosedByRedispatchError(TransactionAlreadyReturnedError):
     code = "TRANSACTION_CLOSED_BY_REDISPATCH"
 
 
+class TransactionVoidedError(TransactionAlreadyReturnedError):
+    """D28: the transaction was voided by a correction; no receipt or further
+    correction applies to it. Subclass of TransactionAlreadyReturnedError so
+    the offline sync engine files a receipt for it under its conflict path."""
+
+    code = "TRANSACTION_VOIDED"
+
+
 class ReceiptRaceLostError(DomainError):
     """Roadmap PR8C (knowledge/adr/ADR-006-receipt-outcome-contract.md's
     "Not decided here"): raised when this request's own read observed the
@@ -920,3 +928,53 @@ class EnvelopeVersionUnsupportedError(DomainError):
 
     code = "ENVELOPE_VERSION_UNSUPPORTED"
     status_code = 400
+
+
+# ---- Owner Governance 2026-11-27 (D28): audited corrections ---------------
+
+
+class CorrectionNotPermittedError(DomainError):
+    """The caller may not correct this entry: Read Only, or Equipment Pool
+    staff acting on someone else's entry or after the shift of the event."""
+
+    code = "CORRECTION_NOT_PERMITTED"
+    status_code = 403
+
+
+class CorrectionNotLatestError(DomainError):
+    """Only the device's latest non-voided transaction can be corrected."""
+
+    code = "CORRECTION_NOT_LATEST"
+    status_code = 409
+
+
+class CorrectionStateChangedError(DomainError):
+    """The device's current state is no longer the state the event produced
+    (for example an administrator moved it to maintenance afterwards).
+    Nothing changed; an administrator must resolve it first."""
+
+    code = "CORRECTION_STATE_CHANGED"
+    status_code = 409
+
+
+class CorrectionConflictError(DomainError):
+    """A concurrent request changed the transaction first; nothing changed."""
+
+    code = "CORRECTION_CONFLICT"
+    status_code = 409
+
+
+class UndoWindowExpiredError(DomainError):
+    """Undo is only possible within 2 minutes of saving a dispatch or 30
+    seconds of saving a receipt; use a void with a reason instead."""
+
+    code = "UNDO_WINDOW_EXPIRED"
+    status_code = 409
+
+
+class SwitchActionNotAvailableError(DomainError):
+    """The requested dispatch<->receipt switch cannot be applied (e.g. a
+    dispatch that closed no earlier transaction cannot become a receipt)."""
+
+    code = "SWITCH_ACTION_NOT_AVAILABLE"
+    status_code = 409

@@ -21,6 +21,7 @@ from app.schemas.hn import HN_FIELD, HnInput
 # than left open-ended, since a mandatory reason is exactly the kind of
 # field an operator could paste unbounded text into.
 WARD_CORRECTION_REASON_MAX_LENGTH = 500
+CORRECTION_REASON_MAX_LENGTH = 500
 
 
 class BorrowRequest(BaseModel):
@@ -179,6 +180,40 @@ class WardCorrectionRequest(BaseModel):
         return value
 
 
+class CorrectionReasonMixin(BaseModel):
+    """D28: every correction except undo carries a mandatory reason (trimmed
+    before the length check, like WardCorrectionRequest)."""
+
+    reason: str = Field(min_length=1, max_length=CORRECTION_REASON_MAX_LENGTH)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _trim_reason(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+
+class VoidRequest(CorrectionReasonMixin):
+    model_config = {"extra": "forbid"}
+
+
+class ChangeDeviceRequest(CorrectionReasonMixin):
+    equipment_id: UUID
+    # Same meaning as on a dispatch: confirms the D8 warning when the correct
+    # device is already out or marked defective.
+    acknowledge_status_warning: bool = False
+
+    model_config = {"extra": "forbid"}
+
+
+class SwitchActionRequest(CorrectionReasonMixin):
+    # dispatch -> receipt: the receipt outcome (default usable).
+    outcome: ReceiptOutcome = ReceiptOutcome.USABLE
+    # receipt -> dispatch: the ward to dispatch to (required for that switch).
+    ward_id: UUID | None = None
+
+    model_config = {"extra": "forbid"}
+
+
 class EquipmentSummary(BaseModel):
     id: UUIDStr
     asset_number: str | None
@@ -244,6 +279,10 @@ class TransactionOut(BaseModel):
     # Roadmap PR29 (D1): whether a patient HN is recorded. The HN itself is
     # never part of any response except POST /transactions/{id}/reveal-hn.
     has_hn: bool = False
+    # Owner Governance 2026-11-27 (D28): set only when status == "voided".
+    voided_at: datetime | None = None
+    void_reason: str | None = None
+    corrected_by_transaction_id: UUIDStr | None = None
     # Roadmap PR16 Slice 2 (docs/archive/design/PR16_REPORTING_FOUNDATION_PLAN.md
     # §9) -- read-only, computed, never accepted as request input.
     # dispatch_* is always present (every transaction has a `borrowed_at`);
@@ -277,3 +316,15 @@ class ReportTransactionOut(TransactionOut):
     dispatch_operator_display_name: str | None
     receipt_operator_display_name: str | None
     category_name: str | None = None
+
+
+class CorrectionOut(BaseModel):
+    """D28 response of void / undo / change-device / switch-action.
+
+    ``transaction`` is the transaction the action was applied to (voided for a
+    dispatch void; reopened for a receipt void). ``new_transaction`` is the
+    transaction that recorded the corrected event (change device, switch
+    action) and is ``None`` for undo and void."""
+
+    transaction: TransactionOut
+    new_transaction: TransactionOut | None = None

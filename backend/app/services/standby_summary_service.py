@@ -248,7 +248,9 @@ async def _open_at_cutoff(db: AsyncSession, equipment_ids: set[uuid.UUID], cutof
                 tx.has_hn,
                 tx.hn_added_at,
             )
-            .where(tx.equipment_id.in_(equipment_ids), tx.borrowed_at <= cutoff_at)
+            .where(
+                tx.equipment_id.in_(equipment_ids), tx.borrowed_at <= cutoff_at, tx.status != TransactionStatus.VOIDED
+            )
             .order_by(tx.equipment_id, tx.borrowed_at, tx.id)
         )
     ).all()
@@ -303,7 +305,12 @@ async def _stock_delta(
         await db.execute(
             select(tx.dispatch_checks)
             .join(Equipment, Equipment.id == tx.equipment_id)
-            .where(Equipment.category_id.in_(ids), tx.borrowed_at > after, tx.borrowed_at <= cutoff_at)
+            .where(
+                Equipment.category_id.in_(ids),
+                tx.borrowed_at > after,
+                tx.borrowed_at <= cutoff_at,
+                tx.status != TransactionStatus.VOIDED,
+            )
         )
     ).all()
     receipts = (
@@ -312,6 +319,7 @@ async def _stock_delta(
             .join(Equipment, Equipment.id == tx.equipment_id)
             .where(
                 Equipment.category_id.in_(ids),
+                tx.status != TransactionStatus.VOIDED,
                 tx.returned_at.is_not(None),
                 tx.returned_at > after,
                 tx.returned_at <= cutoff_at,
@@ -441,6 +449,7 @@ async def build_summary(db: AsyncSession, summary_date: date, cutoff: str) -> St
             await db.execute(
                 select(BorrowTransaction.id).where(
                     BorrowTransaction.equipment_id.in_(p_ids),
+                    BorrowTransaction.status != TransactionStatus.VOIDED,
                     BorrowTransaction.returned_at.is_not(None),
                     BorrowTransaction.returned_at >= day_start,
                     BorrowTransaction.returned_at <= cutoff_at,

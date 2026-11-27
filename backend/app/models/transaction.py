@@ -28,6 +28,12 @@ class TransactionStatus(str, enum.Enum):
 
     OPEN = "open"
     CLOSED = "closed"
+    # Owner Governance 2026-11-27 (D28, ADR-005 amendment): a correction
+    # (undo/void/change device/switch action) made through the dispatch/receipt
+    # services only. A voided transaction is neither open nor closed: every
+    # report, the Standby summary and the monitor exclude it; equipment
+    # history still lists it, marked voided.
+    VOIDED = "voided"
 
 
 TransactionStatusType = Enum(
@@ -285,6 +291,30 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     # or there is none. Lets the standby summary tell that a dispatch was
     # still Standby at an earlier cut-off.
     hn_added_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
+    # Owner Governance 2026-11-27 (D28). Restore source, stored at dispatch:
+    # the device's equipment status just before this dispatch, and the
+    # transaction this dispatch closed by D8 re-dispatch (if any). NULL on
+    # legacy rows (a voided legacy dispatch then restores AVAILABLE_AT_POOL).
+    prior_equipment_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    closed_by_redispatch_transaction_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("borrow_transactions.id", ondelete="RESTRICT"), nullable=True
+    )
+    # Server time at which the receipt was saved (undo window base for a
+    # receipt). ``returned_at`` is business time and can be in the past (legacy
+    # sheet sync, offline queue), so it cannot serve. NULL = legacy / no receipt.
+    receipt_saved_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    # Set only on a transaction whose status is VOIDED. ``corrected_by_
+    # transaction_id`` links to the transaction that recorded the corrected
+    # event (change device / switch action), if any.
+    voided_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    voided_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
+    )
+    void_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    corrected_by_transaction_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("borrow_transactions.id", ondelete="RESTRICT"), nullable=True
+    )
 
     equipment: Mapped["Equipment"] = relationship()
     # Roadmap PR17 Slice 2 (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md

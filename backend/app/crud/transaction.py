@@ -139,7 +139,10 @@ async def latest_returned_at(db: AsyncSession, equipment_id: uuid.UUID) -> datet
     """Latest recorded receipt time for the equipment (PR25E B2b guard)."""
     return (
         await db.execute(
-            select(func.max(BorrowTransaction.returned_at)).where(BorrowTransaction.equipment_id == equipment_id)
+            select(func.max(BorrowTransaction.returned_at)).where(
+                BorrowTransaction.equipment_id == equipment_id,
+                BorrowTransaction.status != TransactionStatus.VOIDED,
+            )
         )
     ).scalar_one_or_none()
 
@@ -235,6 +238,9 @@ async def close(
         "returned_at": returned_at if returned_at is not None else datetime.now(timezone.utc),
         "condition_on_return": receipt_outcome,
         "received_by_user_id": received_by_user_id,
+        # D28: server time of this save -- the undo window base (returned_at
+        # is business time and may lie in the past).
+        "receipt_saved_at": datetime.now(timezone.utc),
     }
     # Roadmap PR27/PR28: only set when supplied; omitted stays SQL NULL
     # ("not recorded"), never a JSON null.
@@ -346,6 +352,123 @@ async def correct_ward(
     return result.rowcount == 1
 
 
+async def latest_non_voided_for_equipment(db: AsyncSession, equipment_id: uuid.UUID) -> BorrowTransaction | None:
+    """D28: the device's latest non-voided transaction (the only one a
+    correction may touch). "Latest" = most recently saved: ``created_at``
+    (server time, not the possibly-backdated business ``borrowed_at``), with
+    ``transaction_no`` as the tie-break for equal timestamps."""
+    return (
+        await db.execute(
+            select(BorrowTransaction)
+            .where(
+                BorrowTransaction.equipment_id == equipment_id,
+                BorrowTransaction.status != TransactionStatus.VOIDED,
+            )
+            .order_by(BorrowTransaction.created_at.desc(), BorrowTransaction.transaction_no.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+async def void_open_dispatch(
+    db: AsyncSession, tx: BorrowTransaction, *, voided_by_user_id: uuid.UUID, reason: str,
+    corrected_by_transaction_id: uuid.UUID | None = None, clear_hn: bool = False,
+) -> bool:
+    """D28: conditionally voids an OPEN dispatch (UPDATE ... WHERE status =
+    'open', decided by rowcount, like ``close()``). The only path that sets
+    ``status = VOIDED``. Bypasses the ORM unit of work; the caller refreshes."""
+    values: dict = {
+        "status": TransactionStatus.VOIDED,
+        "voided_at": datetime.now(timezone.utc),
+        "voided_by_user_id": voided_by_user_id,
+        "void_reason": reason,
+        "corrected_by_transaction_id": corrected_by_transaction_id,
+    }
+    if clear_hn:
+        values.update(hn_ciphertext=None, has_hn=False)
+    result = await db.execute(
+        update(BorrowTransaction)
+        .where(BorrowTransaction.id == tx.id, BorrowTransaction.status == TransactionStatus.OPEN)
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount == 1
+
+
+async def set_corrected_by(db: AsyncSession, tx: BorrowTransaction, corrected_by_transaction_id: uuid.UUID) -> None:
+    """D28: link a voided transaction to the transaction that recorded the
+    corrected event (change device)."""
+    await db.execute(
+        update(BorrowTransaction)
+        .where(BorrowTransaction.id == tx.id)
+        .values(corrected_by_transaction_id=corrected_by_transaction_id)
+        .execution_options(synchronize_session=False)
+    )
+
+
+async def reopen_received(db: AsyncSession, tx: BorrowTransaction, *, notes: str | None) -> bool:
+    """D28: conditionally reopens a transaction closed by a RECEIPT (voided
+    receipt): clears every receipt field. WHERE status = 'closed' AND
+    returned_at IS NOT NULL decides the winner by rowcount."""
+    result = await db.execute(
+        update(BorrowTransaction)
+        .where(
+            BorrowTransaction.id == tx.id,
+            BorrowTransaction.status == TransactionStatus.CLOSED,
+            BorrowTransaction.returned_at.is_not(None),
+        )
+        .values(
+            status=TransactionStatus.OPEN,
+            returned_at=None,
+            condition_on_return=None,
+            received_by_user_id=None,
+            receipt_contact_name=None,
+            receipt_keyer_label=None,
+            receipt_checks=None,
+            receipt_saved_at=None,
+            notes=notes,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount == 1
+
+
+async def reopen_redispatch_closed(db: AsyncSession, transaction_id: uuid.UUID) -> bool:
+    """D28: reopens a transaction a (now voided) dispatch had closed by D8
+    re-dispatch: WHERE status = 'closed' AND close_reason = <re-dispatch>."""
+    result = await db.execute(
+        update(BorrowTransaction)
+        .where(
+            BorrowTransaction.id == transaction_id,
+            BorrowTransaction.status == TransactionStatus.CLOSED,
+            BorrowTransaction.close_reason == CLOSE_REASON_REDISPATCH,
+        )
+        .values(status=TransactionStatus.OPEN, close_reason=None)
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount == 1
+
+
+async def previous_redispatch_closed(db: AsyncSession, tx: BorrowTransaction) -> BorrowTransaction | None:
+    """D28 legacy fallback for a dispatch without ``closed_by_redispatch_
+    transaction_id``: the device's latest earlier non-voided transaction that
+    was closed by re-dispatch."""
+    return (
+        await db.execute(
+            select(BorrowTransaction)
+            .where(
+                BorrowTransaction.equipment_id == tx.equipment_id,
+                BorrowTransaction.id != tx.id,
+                BorrowTransaction.status == TransactionStatus.CLOSED,
+                BorrowTransaction.close_reason == CLOSE_REASON_REDISPATCH,
+                BorrowTransaction.created_at <= tx.created_at,
+            )
+            .order_by(BorrowTransaction.created_at.desc(), BorrowTransaction.transaction_no.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
 async def list_active(db: AsyncSession) -> list[BorrowTransaction]:
     result = await db.execute(
         select(BorrowTransaction)
@@ -374,6 +497,7 @@ async def search(
     shift: Shift | None = None,
     event: Literal["dispatch", "receipt"] = "dispatch",
     require_receipt: bool = False,
+    include_voided: bool = False,
     limit: int = 25,
     cursor: str | None = None,
 ) -> tuple[list[BorrowTransaction], str | None, int]:
@@ -464,6 +588,11 @@ async def search(
         filters.append(BorrowTransaction.returned_at.is_not(None))
     if status is not None:
         filters.append(BorrowTransaction.status == status)
+    if not include_voided and status != TransactionStatus.VOIDED.value:
+        # D28: voided rows are excluded from every list, count and report;
+        # only the equipment history (include_voided) or an explicit
+        # status=voided filter shows them.
+        filters.append(BorrowTransaction.status != TransactionStatus.VOIDED)
     if dispatch_type is not None:
         filters.append(BorrowTransaction.dispatch_type == dispatch_type)
     if routine_round is not None:

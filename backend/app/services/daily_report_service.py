@@ -32,7 +32,7 @@ from app.core.reporting_time import Shift
 from app.models.equipment import Equipment
 from app.models.master_data import Department, EquipmentCategory, Ward
 from app.models.report_mapping import ReportWardRow
-from app.models.transaction import BorrowTransaction, ReceiptOutcome
+from app.models.transaction import BorrowTransaction, ReceiptOutcome, TransactionStatus
 from app.models.user import User
 from app.schemas.checklist import report_columns
 from app.services.report_export_service import MAX_EXPORT_ROWS
@@ -571,7 +571,7 @@ async def _load_events(db: AsyncSession, start: datetime, end: datetime) -> list
             .outerjoin(EquipmentCategory, EquipmentCategory.id == Equipment.category_id)
             .outerjoin(Ward, Ward.id == tx.ward_id)
             .outerjoin(op, op.id == op_col)
-            .where(at_col.is_not(None), at_col >= start, at_col < end)
+            .where(at_col.is_not(None), at_col >= start, at_col < end, tx.status != TransactionStatus.VOIDED)
             .order_by(at_col, tx.id)
             .limit(MAX_EXPORT_ROWS + 1)
         )
