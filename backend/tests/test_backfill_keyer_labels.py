@@ -95,19 +95,21 @@ async def test_repair_clears_system_note_labels_dry_run_then_apply(maker, data):
     n_c = "ฝาเครื่องร้าว BME fake"
     async with maker() as db:
         by = {t.notes: t for t in (await db.execute(select(BorrowTransaction))).scalars().all()}
+        by[n_a].received_by_user_id = by[n_a].borrower_user_id
         by[n_a].receipt_keyer_label = "legacy sheet receipt row 1; BME X"
         by[n_a].dispatch_contact_name = "legacy sheet receipt row 2"
         by[n_b].dispatch_keyer_label = n_b
         by[n_c].dispatch_keyer_label = "Real Name"
+        by[n_b].borrower_user_id = (await db.execute(select(User.id).where(User.employee_code == "HUMAN1"))).scalar_one()
         await db.commit()
-    assert await bk.repair(apply=False) == {"scanned": 2, "rewritten": 2, "cleared": 1}
+    assert await bk.repair(apply=False) == {"scanned": 1, "rewritten": 1, "cleared": 1}
     async with maker() as db:
         by = {t.notes: t for t in (await db.execute(select(BorrowTransaction))).scalars().all()}
         assert by[n_a].receipt_keyer_label is not None  # dry-run wrote nothing
     await bk.repair(apply=True)
     async with maker() as db:
         by = {t.notes: t for t in (await db.execute(select(BorrowTransaction))).scalars().all()}
-        assert by[n_a].receipt_keyer_label == "X" and by[n_a].dispatch_contact_name is None
-        assert by[n_b].dispatch_keyer_label == "Notsync"
+        assert by[n_a].receipt_keyer_label == "X" and by[n_a].receipt_keyer_label and by[n_a].dispatch_contact_name is None
+        assert by[n_b].dispatch_keyer_label == n_b  # non-sync row untouched
         assert by[n_c].dispatch_keyer_label == "Real Name"
     assert await bk.repair(apply=True) == {"scanned": 0, "rewritten": 0, "cleared": 0}

@@ -234,3 +234,15 @@ async def test_keyer_label_and_checks_returned_for_synced_rows(client, seeded_us
     assert r.status_code == 200, r.text
     rc = (await client.get("/api/v1/monitor/events", headers=staff, params={"kind": "receipt"})).json()["items"][0]
     assert rc["keyer_label"] is None and rc["checks"] is None  # genuinely NULL -> UI shows "-"
+
+
+async def test_system_note_text_never_returned_as_label_or_contact(client, seeded_users, db_session):
+    admin = await _auth_headers(client, ROLE_ADMINISTRATOR)
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    w = await _create_ward(client, admin, "W-SN", "Sn")
+    e = await _eq(client, admin, "AST-SN-1", "BCM-SN-1")
+    t = await _dispatch(client, staff, e["id"], w)
+    junk = "legacy sheet dispatch row 0a1b2c3d; BME x"
+    await _force(db_session, t["id"], dispatch_keyer_label=junk, dispatch_contact_name=junk)
+    d = (await client.get("/api/v1/monitor/events", headers=staff, params={"kind": "dispatch"})).json()["items"][0]
+    assert d["keyer_label"] is None and d["ward_contact_name"] is None

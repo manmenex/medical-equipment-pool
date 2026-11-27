@@ -143,7 +143,7 @@ async def list_events(
                 # PR31 (D8) may add this column; read defensively.
                 keyer_label=clean_label(t.dispatch_keyer_label if is_dispatch else t.receipt_keyer_label),
                 close_reason=getattr(t, "close_reason", None),
-                ward_contact_name=t.dispatch_contact_name if is_dispatch else t.receipt_contact_name,
+                ward_contact_name=clean_label(t.dispatch_contact_name if is_dispatch else t.receipt_contact_name),
                 has_hn=bool(t.has_hn),
                 is_open=is_dispatch and t.status == TransactionStatus.OPEN,
                 checklist_kind=t.checklist_kind,

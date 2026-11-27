@@ -53,21 +53,31 @@ def parse_bme(note: str | None) -> tuple[str, str] | None:
     return None
 
 
-async def repair(*, apply: bool) -> dict[str, int]:
-    """Clear/rewrite labels that hold system-note text. Dry-run by default."""
+async def repair(*, apply: bool, employee_code: str | None = None) -> dict[str, int]:
+    """Clear/rewrite labels that hold system-note text, on LEGACY-SYNC rows only
+    (borrower for dispatch columns, receiver for receipt columns). Dry-run by default."""
+    code = employee_code or (os.environ.get(ENV_EMPLOYEE_CODE) or "").strip() or DEFAULT_EMPLOYEE_CODE
     counts = {"scanned": 0, "rewritten": 0, "cleared": 0}
     pat = f"{SYSTEM_NOTE_PREFIX}%"
     cols = ("dispatch_keyer_label", "receipt_keyer_label", "dispatch_contact_name", "receipt_contact_name")
     async with AsyncSessionLocal() as db:
+        user = (await db.execute(select(User).where(User.employee_code == code))).scalar_one_or_none()
+        if user is None:
+            raise SystemExit("Sync operator user not found. Nothing was changed.")
+        owner_col = {"dispatch": BorrowTransaction.borrower_user_id, "receipt": BorrowTransaction.received_by_user_id}
         txs = (
             await db.execute(
-                select(BorrowTransaction).where(or_(*(getattr(BorrowTransaction, c).ilike(pat) for c in cols)))
+                select(BorrowTransaction).where(
+                    or_(*(and_(getattr(BorrowTransaction, c).ilike(pat), owner_col[c.split("_")[0]] == user.id)
+                          for c in cols))
+                )
             )
         ).scalars().all()
         for tx in txs:
             counts["scanned"] += 1
             for c in cols:
-                if not is_system_note(getattr(tx, c)):
+                owner = tx.borrower_user_id if c.startswith("dispatch") else tx.received_by_user_id
+                if owner != user.id or not is_system_note(getattr(tx, c)):
                     continue
                 new = None
                 if c.endswith("keyer_label"):
