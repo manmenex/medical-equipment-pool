@@ -34,10 +34,16 @@ class ExportEvent(Base):
     __tablename__ = "export_events"
     __table_args__ = (
         UniqueConstraint("event_id", name="uq_export_events_event_id"),
-        # One dispatch and at most one receipt per transaction: a transaction
-        # opens once and closes once (ADR-005), so the pair is a natural key
-        # that also makes a double-emit impossible.
-        UniqueConstraint("transaction_id", "event_type", name="uq_export_events_transaction_type"),
+        # D28: a transaction may now be received again after a receipt void, so
+        # (transaction_id, event_type) is no longer unique. Idempotency key
+        # instead: at most one compensating event per original event.
+        Index(
+            "uq_export_events_corrects_event_id",
+            "corrects_event_id",
+            unique=True,
+            postgresql_where=text("corrects_event_id IS NOT NULL"),
+            sqlite_where=text("corrects_event_id IS NOT NULL"),
+        ),
         CheckConstraint("event_type IN ('dispatch', 'receipt', 'hn_update')", name="ck_export_events_event_type"),
         Index("ix_export_events_event_at", "event_at"),
     )
@@ -53,6 +59,12 @@ class ExportEvent(Base):
     )
     event_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, server_default=func.now(), nullable=False)
+    # D28: compensating event for a void done after the original was visible.
+    correction: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    # event_id (not seq) of the original event this one compensates.
+    corrects_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    # D28: original voided while still inside its hold-back window; never exposed.
+    withdrawn: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
 
 
 class ExportEventCounter(Base):

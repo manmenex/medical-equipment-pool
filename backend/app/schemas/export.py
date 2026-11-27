@@ -37,6 +37,11 @@ class ExportEventOut(BaseModel):
     # Decrypted HN. Present ONLY for an hn-scoped key on the dedicated HN
     # listener from an allowed peer; always null otherwise.
     hn: str | None = None
+    # D28 (additive): the transaction's status ("open", "closed" or "voided"),
+    # and compensating-event markers. Correction events never carry HN.
+    transaction_status: str | None = None
+    correction: bool = False
+    corrects_event_id: str | None = None
 
 
 class ExportEventsPage(BaseModel):

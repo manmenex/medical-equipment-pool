@@ -64,7 +64,7 @@ from app.models.export import (
     ExportEventCounter,
 )
 from app.models.master_data import EquipmentCategory, Ward
-from app.models.transaction import BorrowTransaction
+from app.models.transaction import BorrowTransaction, TransactionStatus
 from app.models.user import User
 from app.services.system_notes import clean_label
 
@@ -107,7 +107,13 @@ async def _next_seq(db: AsyncSession) -> int:
 
 
 async def record_event(
-    db: AsyncSession, *, transaction_id: uuid.UUID, event_type: str, event_at: datetime
+    db: AsyncSession,
+    *,
+    transaction_id: uuid.UUID,
+    event_type: str,
+    event_at: datetime,
+    correction: bool = False,
+    corrects_event_id: uuid.UUID | None = None,
 ) -> ExportEvent | None:
     """Append one event. Must be the last write before the caller commits and
     must run in the same database transaction as the business change, so the
@@ -132,6 +138,8 @@ async def record_event(
         event_type=event_type,
         transaction_id=transaction_id,
         event_at=event_at,
+        correction=correction,
+        corrects_event_id=corrects_event_id,
         # D28 hold-back runs from the server insert time, not the (possibly
         # backdated, offline) occurred time.
         created_at=datetime.now(timezone.utc),
@@ -139,6 +147,59 @@ async def record_event(
     db.add(event)
     await db.flush()
     return event
+
+
+async def record_void(db: AsyncSession, *, tx: BorrowTransaction, voided_kind: str) -> None:
+    """D28: called from the void/change-device/switch-action service after the
+    event ``voided_kind`` ("dispatch" or "receipt") of ``tx`` was voided, in the
+    caller's transaction.
+
+    * original still inside its hold-back window (never visible): mark it
+      ``withdrawn`` so it is never exposed and emit NOTHING;
+    * original already visible: emit ONE compensating event (voided dispatch ->
+      correction ``receipt``; voided receipt -> correction ``dispatch``), no HN.
+
+    No hold-back on the correction: a void is not undoable, so there is no
+    window to protect, and the external tool must re-key promptly. Demo/loan
+    equipment has no original event, so nothing happens."""
+    original_type = EVENT_TYPE_DISPATCH if voided_kind == "dispatch" else EVENT_TYPE_RECEIPT
+    corrected = select(ExportEvent.corrects_event_id).where(ExportEvent.corrects_event_id.is_not(None))
+    original = (
+        await db.execute(
+            select(ExportEvent)
+            .where(
+                ExportEvent.transaction_id == tx.id,
+                ExportEvent.event_type == original_type,
+                ExportEvent.correction.is_(False),
+                ExportEvent.withdrawn.is_(False),
+                ExportEvent.event_id.not_in(corrected),
+            )
+            .order_by(ExportEvent.seq.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if original is None:
+        return
+    now = datetime.now(timezone.utc)
+    if not _visible(original, now):
+        original.withdrawn = True
+        await db.flush()
+        if voided_kind == "dispatch":
+            # An hn_update for the voided dispatch must not leak either.
+            await db.execute(
+                update(ExportEvent)
+                .where(ExportEvent.transaction_id == tx.id, ExportEvent.event_type == EVENT_TYPE_HN_UPDATE)
+                .values(withdrawn=True)
+            )
+        return
+    await record_event(
+        db,
+        transaction_id=tx.id,
+        event_type=EVENT_TYPE_RECEIPT if voided_kind == "dispatch" else EVENT_TYPE_DISPATCH,
+        event_at=now,
+        correction=True,
+        corrects_event_id=original.event_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +239,8 @@ def hold_seconds(event_type: str) -> int:
 
 
 def _visible(event: ExportEvent, now: datetime) -> bool:
+    if event.correction:
+        return True  # D28: compensating events need no hold-back (not undoable)
     created = event.created_at
     if created.tzinfo is None:
         created = created.replace(tzinfo=timezone.utc)
@@ -243,7 +306,7 @@ async def query_events(
         .outerjoin(Ward, Ward.id == BorrowTransaction.ward_id)
         .outerjoin(dispatcher, dispatcher.id == BorrowTransaction.borrower_user_id)
         .outerjoin(receiver, receiver.id == BorrowTransaction.received_by_user_id)
-        .where(Equipment.equipment_source == EQUIPMENT_SOURCE_POOL)
+        .where(Equipment.equipment_source == EQUIPMENT_SOURCE_POOL, ExportEvent.withdrawn.is_(False))
         .order_by(ExportEvent.seq)
     )
     picked: list[tuple] = []
@@ -275,7 +338,14 @@ async def query_events(
     events, hn_count = [], 0
     for row in picked:
         item = _serialize(*row[:7], legacy_dispatch=legacy_dispatch, legacy_receipt=legacy_receipt)
-        if hn_allowed and item["event_type"] != EVENT_TYPE_RECEIPT and row[1].has_hn and row[7]:
+        if (
+            hn_allowed
+            and not row[0].correction
+            and row[1].status != TransactionStatus.VOIDED
+            and item["event_type"] != EVENT_TYPE_RECEIPT
+            and row[1].has_hn
+            and row[7]
+        ):
             item["hn"] = hn_crypto.decrypt_hn(row[7])  # HnUnavailableError -> 503, nothing returned
             hn_count += 1
         events.append(item)
@@ -288,8 +358,11 @@ def _serialize(event, tx, equipment, category_name, ward, dispatcher_name, recei
     free-text fields could carry anything an operator typed). ``hn`` is added
     by the caller only under the D29 conditions."""
     is_receipt = event.event_type == EVENT_TYPE_RECEIPT
-    outcome = tx.receipt_outcome if is_receipt else None
-    legacy = tx.id in (legacy_receipt if is_receipt else legacy_dispatch)
+    if event.correction:
+        # Voided side: the operator/contact of whichever side was recorded.
+        dispatcher_name = receiver_name = dispatcher_name or receiver_name
+    outcome = tx.receipt_outcome if is_receipt and not event.correction else None
+    legacy = not event.correction and tx.id in (legacy_receipt if is_receipt else legacy_dispatch)
     operator = receiver_name if is_receipt else dispatcher_name
     keyer = clean_label(tx.receipt_keyer_label if is_receipt else tx.dispatch_keyer_label) or operator
     return {
@@ -312,7 +385,10 @@ def _serialize(event, tx, equipment, category_name, ward, dispatcher_name, recei
         "operator_name": operator,
         "origin": "legacy_sheet" if legacy else "app",
         "keyer_label": keyer,
-        "contact_name": tx.receipt_contact_name if is_receipt else tx.dispatch_contact_name,
+        "contact_name": (tx.receipt_contact_name if is_receipt and not event.correction else tx.dispatch_contact_name),
+        "transaction_status": tx.status.value if hasattr(tx.status, "value") else tx.status,
+        "correction": bool(event.correction),
+        "corrects_event_id": str(event.corrects_event_id) if event.corrects_event_id else None,
     }
 
 
