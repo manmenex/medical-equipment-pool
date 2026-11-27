@@ -114,6 +114,10 @@ def business_day_start(summary_date: date) -> datetime:
     return datetime.combine(summary_date - timedelta(days=1), _DAY_START_LOCAL, tzinfo=_BKK).astimezone(timezone.utc)
 
 
+def _n(text: str) -> str:
+    return " ".join((text or "").split()).casefold()
+
+
 def ward_key(label: str) -> str:
     return f"{WARD_KEY_PREFIX}{label}"
 
@@ -145,6 +149,7 @@ class FieldValue:
     # Ward rows only: shown in the LINE copy text (admin-mapped, standby or edited).
     in_text: bool = True
     text_order: int = 10**6
+    text_label: str = ""
 
     @property
     def effective_value(self) -> int | None:
@@ -364,14 +369,22 @@ async def build_summary(db: AsyncSession, summary_date: date, cutoff: str) -> St
             key = t.ward_id if t.ward_id in mappings else None
             standby_by_ward[key] = standby_by_ward.get(key, 0) + 1
     extra = [daily_report_service.UNSPECIFIED_LABEL] if None in standby_by_ward else []
+    # Older stored edits are keyed by the per-ward label (admin label / ward name);
+    # those wards have rows, so such keys are not ward-less extra rows.
+    old_labels = {_n(x) for x in daily_report_service.ward_row_labels(mappings).values()}
     extra += sorted(
-        k[len(WARD_KEY_PREFIX):] for k in overrides if k.startswith(WARD_KEY_PREFIX) and k[len(WARD_KEY_PREFIX):]
+        k[len(WARD_KEY_PREFIX):]
+        for k in overrides
+        if k.startswith(WARD_KEY_PREFIX) and k[len(WARD_KEY_PREFIX):] and _n(k[len(WARD_KEY_PREFIX):]) not in old_labels
     )
     ward_rows = daily_report_service.build_ward_rows(mappings, {w for w in standby_by_ward if w}, extra)
     wards = []
     for r in ward_rows:
         override = overrides.get(ward_key(r.label))
-        system = standby_by_ward.get(r.ward_id, 0) if r.ward_id else (
+        if override is None and len(r.ward_ids) == 1 and r.text_label:
+            # Read-time fallback: edit stored under the previous per-ward key.
+            override = overrides.get(ward_key(r.text_label))
+        system = sum(standby_by_ward.get(w, 0) for w in r.ward_ids) if r.ward_ids else (
             standby_by_ward.get(None, 0) if r.label == daily_report_service.UNSPECIFIED_LABEL else 0
         )
         wards.append(
@@ -384,6 +397,7 @@ async def build_summary(db: AsyncSession, summary_date: date, cutoff: str) -> St
                 treatment=r.treatment,
                 # LINE text: every admin-mapped ward (even at zero), plus any with standby or an edit.
                 text_order=r.sort_order,
+                text_label=r.text_label,
                 in_text=(r.ward_id is not None and r.listed) or bool(system) or override is not None,
             )
         )
@@ -484,7 +498,8 @@ def render_text(summary: StandbySummary) -> str:
         # row with standby or an edit; empty layout placeholder rows stay out.
         if not w.in_text:
             continue
-        lines.append(f"{w.label} = -" if not v else f"{w.label} = {v} เครื่อง")
+        name = w.text_label or w.label
+        lines.append(f"{name} = -" if not v else f"{name} = {v} เครื่อง")
     lines += [
         f"BME = เครื่องใหม่ {_num(summary.bme_devices.effective_value)} เครื่อง",
         f"🟢พร้อมใช้งาน {_num(summary.ready.effective_value)} เครื่อง",

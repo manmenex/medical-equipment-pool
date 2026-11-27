@@ -259,8 +259,8 @@ async def test_workbook_sheets_headers_and_counts(client, seeded_users, db_sessi
 
     # Ward table counts Infusion Pump only; zero cells are blank; unknown labels -> "อื่น ๆ" block.
     body, total = _ward_table(ws)
-    assert body["Ward 5A"] == [2, 1, None, 1, 2, 2]
-    assert body["Ward 5B"] == [1, None, None, None, 1, None]
+    assert body["Ward 5"] == [2, 1, None, 1, 2, 2]
+    assert body["W5B"] == [1, None, None, None, 1, None]
     assert body["Ward 6"] == [None, None, 1, None, 1, None]  # the Cryo-Cuff dispatch is not in this table
     assert body[svc.UNSPECIFIED_LABEL] == [None, None, 1, None, 1, None]
     assert total == [3, 1, 2, 1, 5, 2]
@@ -316,7 +316,7 @@ async def test_workbook_sheets_headers_and_counts(client, seeded_users, db_sessi
     assert len(ev) - 1 == 8
     first = ev[1]
     assert first[0] == "กะดึก" and first[1] == "27/Jul/2026" and first[2] == "21:00:00" and first[3] == "ส่ง"
-    assert first[4].startswith("BCM-") and first[6] == "Ward 5A" and first[7] == "Ward 5A" and first[8] == "BME Alpha"
+    assert first[4].startswith("BCM-") and first[6] == "Ward 5A" and first[7] == "Ward 5" and first[8] == "BME Alpha"
     assert first[10] == "แบบบันทึกส่งเครื่องเมื่อวาน แถว 1"
     after_midnight = next(r for r in ev[1:] if r[2] == "01:30:00")
     assert after_midnight[10] == "แบบบันทึกส่งเครื่อง แถว 1"
@@ -335,7 +335,7 @@ async def test_strict_grace_changes_attribution(client, seeded_users, db_session
     receipt_0820 = next(r for r in ev[1:] if r[2] == "08:20:00")
     assert receipt_0820[0] == "กะเช้า"
     body, _ = _ward_table(wb["รายงาน"])
-    assert body["Ward 5A"][0:4] == [2, None, None, 2]
+    assert body["Ward 5"][0:4] == [2, None, None, 2]
 
 
 @pytest.mark.asyncio
@@ -363,13 +363,13 @@ async def test_ward_mapping_rollup_and_admin_api(client, seeded_users, db_sessio
     wb = load_workbook(io.BytesIO((await _get_xlsx(client, staff, date="2026-07-28")).content))
     ws = wb["รายงาน"]
     body, _ = _ward_table(ws)
-    assert "Ward 5" not in body  # D18: never merged -- 5A and 5B stay separate rows inside the "Ward 5" slot
-    assert body["Ward 5A"] == [2, 1, None, 1, 2, 2] and body["Ward 5B"] == [1, None, None, None, 1, None]
+    assert "Ward 5A" not in body  # slot label shown; 5B has its own slot W5B
+    assert body["Ward 5"] == [2, 1, None, 1, 2, 2] and body["W5B"] == [1, None, None, None, 1, None]
     assert body["Ward 6"] == [None, None, 1, None, 1, None]  # Ward 6's own row (unmapped ward name matches the layout)
-    assert ws["A5"].value == "Standby support" and [ws["C5"].value, ws["C6"].value] == ["Ward 5A", "Ward 5B"]
+    assert ws["A5"].value == "Standby support" and [ws["C5"].value, ws["C6"].value] == ["Ward 5", "Ward 6"]
     assert body[svc.UNSPECIFIED_LABEL] == [None, None, 1, None, 1, None]  # unmapped -> "อื่น ๆ" block
     ev = _rows(wb["รายการ"])
-    assert {r[7] for r in ev[1:] if r[6] in ("Ward 5A", "Ward 5B")} == {"Ward 5A", "Ward 5B"}
+    assert {r[7] for r in ev[1:] if r[6] in ("Ward 5A", "Ward 5B")} == {"Ward 5", "W5B"}
 
     # Reset reverts to default; unknown ward 404.
     assert (await client.delete(f"/api/v1/reports/ward-rows/{w.w5a.id}", headers=admin)).status_code == 204
@@ -680,14 +680,14 @@ async def test_each_ward_is_its_own_row_in_layout_order(db_session, seeded_users
     await db_session.commit()
     report = await svc.build_daily_report(db_session, D, 60)
     labels = [r.label for r in report.ward_rows]
-    assert "Ward 7" not in labels
-    assert labels.index("Ward 6") < labels.index("Ward 7A") < labels.index("Ward 8")
+    assert "Ward 7A" not in labels  # single ward in the slot shows the slot label
+    assert labels.index("Ward 6") < labels.index("Ward 7") < labels.index("Ward 8")
     rows = {r.label: r for r in report.ward_rows}
-    assert rows["Ward 7A"].mode == "Standby support" and rows["Ward 7A"].treatment == "IPD ตึก A"
+    assert rows["Ward 7"].mode == "Standby support" and rows["Ward 7"].treatment == "IPD ตึก A"
     assert rows["Lab Annex"].mode == "อื่น ๆ"
     assert rows["Ward 7B"].mode == "อื่น ๆ"  # building-B ward without a W7B slot is not building A
     counted = {e.row_label for e in report.events}
-    assert {"Ward 7A", "Ward 7B", "Lab Annex"} <= counted  # lossless: every event has its own row
+    assert {"Ward 7", "Ward 7B", "Lab Annex"} <= counted  # lossless: every event has its own row
 
 
 @pytest.mark.asyncio

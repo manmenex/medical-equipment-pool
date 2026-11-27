@@ -322,6 +322,10 @@ class WardRow:
     # Admin-mapped, or otherwise worth listing in the LINE text even at zero.
     listed: bool = False
     sort_order: int = 10**6
+    # Every ward summed into this row (several wards of one place share a slot).
+    ward_ids: tuple[uuid.UUID, ...] = ()
+    # Admin short label / ward name for the LINE text (the row label is the slot label).
+    text_label: str = ""
 
 
 def _norm(text: str) -> str:
@@ -348,25 +352,48 @@ def _slot_key(text: str) -> str:
 # the hospital ward name (normalised with _slot_key).
 SLOT_ALIASES: dict[str, str] = {
     "orthopedicunit": "Surgery +Ortho",
+    "ward5a": "Ward 5", "ward6a": "Ward 6", "ward7a": "Ward 7", "ward8a": "Ward 8",
+    "ward9a": "Ward 9", "ward10a": "Ward 10", "ward11a": "Ward 11",
+    "ward4b": "W4B", "ward5b": "W5B", "ward6b": "W6B",
+    "recoveryroom": "RR",
+    "emergency/traumacenter": "ER",
+    "obstetricsandgynecologyclinic": "OB",
+    "x-raydepartment": "X-Ray",
+    "skin&aestheticclinic": "Skin",
+    "eyecenter": "Eye",
+    "wellnesscenter": "Wellness",
+    "neurology": "Neuro",
+    "laboranddeliveryroom": "LR",
+    "gastroenterology": "Gastroenterology Clinic",
 }
+SLOT_ALIASES = {_slot_key(k): v for k, v in SLOT_ALIASES.items()}
 
 
 def _match_slot(m: WardMapping, slots: list[tuple[str, str, str, str]]) -> int | None:
-    """Layout slot of a ward, by normalised name (admin short label first, then
-    ward name): exact match first; then slot "Ward N" takes only "Ward N" /
-    "Ward NA" (never a B or other letter suffix, never extra digits, so a
-    "Ward NB" without a W{N}B slot goes to "อื่น ๆ"); other slots match by
-    label prefix on the original name with a word boundary."""
+    return _match_slot_ex(m, slots)[0]
+
+
+def _match_slot_ex(m: WardMapping, slots: list[tuple[str, str, str, str]]) -> tuple[int | None, bool]:
+    """(slot index, same_place). Order: Owner alias (ward name, then admin
+    label) -> exact slot name (admin label, then ward name) -> fuzzy ("Ward N"
+    takes only "Ward N" / "Ward NA", never a B or other letter suffix or extra
+    digits, so a "Ward NB" without a W{N}B slot goes to "อื่น ๆ"; other slots
+    match by label prefix on the original name with a word boundary).
+    same_place is True only for an alias or an exact match on the hospital
+    ward NAME (the ward IS that place, so duplicates sum); an admin label never
+    merges wards."""
     originals = [m.report_row_label or "", m.ward_name or ""]
     candidates = [_slot_key(o) for o in originals]
     norms = [_slot_key(s[3]) for s in slots]
-    for cand in candidates:
-        if cand in norms:
-            return norms.index(cand)
-    for cand in candidates:
-        alias = SLOT_ALIASES.get(cand)
+    # Owner aliases on the hospital ward name win over a (possibly stale)
+    # admin short label.
+    for pos in (1, 0):
+        alias = SLOT_ALIASES.get(candidates[pos])
         if alias is not None and _slot_key(alias) in norms:
-            return norms.index(_slot_key(alias))
+            return norms.index(_slot_key(alias)), pos == 1 or candidates[0] == candidates[1]
+    for pos in (0, 1):
+        if candidates[pos] in norms:
+            return norms.index(candidates[pos]), pos == 1 or candidates[0] == candidates[1]
     for cand, orig in zip(candidates, originals):
         best: int | None = None
         for i, n in enumerate(norms):
@@ -381,8 +408,8 @@ def _match_slot(m: WardMapping, slots: list[tuple[str, str, str, str]]) -> int |
             if ok and (best is None or len(n) > len(norms[best])):
                 best = i
         if best is not None:
-            return best
-    return None
+            return best, False
+    return None, False
 
 
 def ward_row_labels(mappings: dict[uuid.UUID, WardMapping]) -> dict[uuid.UUID, str]:
@@ -419,11 +446,13 @@ def build_ward_rows(
     slots = _layout_slots()
     labels = ward_row_labels(mappings)
     by_slot: dict[int, list[WardMapping]] = {}
+    same_place: dict[int, bool] = {}
     others: list[WardMapping] = []
     for m in mappings.values():
-        idx = _match_slot(m, slots)
+        idx, exact = _match_slot_ex(m, slots)
         if idx is not None:
             by_slot.setdefault(idx, []).append(m)
+            same_place[idx] = same_place.get(idx, True) and exact
         elif m.is_override or m.ward_id in relevant_ward_ids:
             others.append(m)
     rows: list[WardRow] = []
@@ -432,10 +461,19 @@ def build_ward_rows(
         wards = sorted(by_slot.get(i, []), key=lambda m: (m.sort_order, m.ward_name, str(m.ward_id)))
         if not wards:
             rows.append(WardRow(slot_label, mode, treatment, color, None, shaded, False))
+        if wards and (len(wards) == 1 or same_place.get(i)):
+            # Legacy look: one place per slot, shown with the slot label; wards
+            # that are the same place (alias / exact) are summed into one row.
+            first = wards[0]
+            rows.append(WardRow(
+                slot_label, mode, treatment, color, first.ward_id, shaded, any(w.is_override for w in wards),
+                first.sort_order, tuple(w.ward_id for w in wards), slot_label if len(wards) > 1 else labels[first.ward_id],
+            ))
+            continue
         for m in wards:
-            rows.append(WardRow(labels[m.ward_id], mode, treatment, color, m.ward_id, shaded, m.is_override, m.sort_order))
+            rows.append(WardRow(labels[m.ward_id], mode, treatment, color, m.ward_id, shaded, m.is_override, m.sort_order, (m.ward_id,), labels[m.ward_id]))
     for m in sorted(others, key=lambda m: (m.sort_order, labels[m.ward_id], str(m.ward_id))):
-        rows.append(WardRow(labels[m.ward_id], OTHER_LABEL, OTHER_LABEL, OTHER_COLOR, m.ward_id, False, m.is_override, m.sort_order))
+        rows.append(WardRow(labels[m.ward_id], OTHER_LABEL, OTHER_LABEL, OTHER_COLOR, m.ward_id, False, m.is_override, m.sort_order, (m.ward_id,), labels[m.ward_id]))
     seen = {_norm(r.label) for r in rows}
     for label in extra_labels:
         if _norm(label) not in seen:
@@ -586,7 +624,7 @@ async def build_daily_report(db: AsyncSession, report_date: date, grace_minutes:
         {e.ward_id for e in events if e.ward_id in mappings},
         [UNSPECIFIED_LABEL] if any(e.ward_id not in mappings for e in events) else [],
     )
-    label_of = {r.ward_id: r.label for r in ward_rows if r.ward_id is not None}
+    label_of = {w: r.label for r in ward_rows for w in (r.ward_ids or ((r.ward_id,) if r.ward_id else ()))}
     categories: dict[str, Counts] = {}
     operators: dict[str, Counts] = {}
     totals = Counts()
