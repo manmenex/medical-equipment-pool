@@ -32,7 +32,7 @@ from app.db.session import AsyncSessionLocal
 from app.models.transaction import BorrowTransaction
 from app.models.user import User
 from app.services.legacy_sheet_sync.config import DEFAULT_EMPLOYEE_CODE, ENV_EMPLOYEE_CODE
-from app.services.system_notes import SYSTEM_NOTE_PREFIX, is_system_note
+from app.services.system_notes import SYSTEM_NOTE_PREFIX, clean_label, has_system_text, is_system_note
 
 LABEL_MAX = 100
 AUDIT_ACTION = "KEYER_LABEL_BACKFILL"
@@ -43,12 +43,13 @@ def parse_bme(note: str | None) -> tuple[str, str] | None:
     """(kind, bme name) from a sync trace note, or None."""
     if not note:
         return None
+    note = note.strip().splitlines()[0]  # later lines are appended "[Return] ..." traces
     m = _KIND_RE.match(note)
     if not m:
         return None
     for part in note.split("; ")[1:]:
         if part.startswith("BME "):
-            name = part[4:].strip()[:LABEL_MAX]
+            name = (clean_label(part[4:]) or "")[:LABEL_MAX]
             return (m.group(1).lower(), name) if name and not is_system_note(name) else None
     return None
 
@@ -58,7 +59,7 @@ async def repair(*, apply: bool, employee_code: str | None = None) -> dict[str, 
     (borrower for dispatch columns, receiver for receipt columns). Dry-run by default."""
     code = employee_code or (os.environ.get(ENV_EMPLOYEE_CODE) or "").strip() or DEFAULT_EMPLOYEE_CODE
     counts = {"scanned": 0, "rewritten": 0, "cleared": 0}
-    pat = f"{SYSTEM_NOTE_PREFIX}%"
+    pat = f"%{SYSTEM_NOTE_PREFIX}%"
     cols = ("dispatch_keyer_label", "receipt_keyer_label", "dispatch_contact_name", "receipt_contact_name")
     async with AsyncSessionLocal() as db:
         user = (await db.execute(select(User).where(User.employee_code == code))).scalar_one_or_none()
@@ -68,7 +69,8 @@ async def repair(*, apply: bool, employee_code: str | None = None) -> dict[str, 
         txs = (
             await db.execute(
                 select(BorrowTransaction).where(
-                    or_(*(and_(getattr(BorrowTransaction, c).ilike(pat), owner_col[c.split("_")[0]] == user.id)
+                    or_(*(and_(or_(getattr(BorrowTransaction, c).ilike(pat),
+                               getattr(BorrowTransaction, c).contains("\n")), owner_col[c.split("_")[0]] == user.id)
                           for c in cols))
                 )
             )
@@ -77,10 +79,11 @@ async def repair(*, apply: bool, employee_code: str | None = None) -> dict[str, 
             counts["scanned"] += 1
             for c in cols:
                 owner = tx.borrower_user_id if c.startswith("dispatch") else tx.received_by_user_id
-                if owner != user.id or not is_system_note(getattr(tx, c)):
+                val = getattr(tx, c)
+                if owner != user.id or not has_system_text(val):
                     continue
-                new = None
-                if c.endswith("keyer_label"):
+                new = clean_label(val)  # a name with a trace line appended keeps the name
+                if new is None and c.endswith("keyer_label"):
                     parsed = parse_bme(getattr(tx, c))
                     if parsed and parsed[0] == c.split("_")[0]:
                         new = parsed[1]

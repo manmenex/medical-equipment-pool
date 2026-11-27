@@ -113,3 +113,24 @@ async def test_repair_clears_system_note_labels_dry_run_then_apply(maker, data):
         assert by[n_b].dispatch_keyer_label == n_b  # non-sync row untouched
         assert by[n_c].dispatch_keyer_label == "Real Name"
     assert await bk.repair(apply=True) == {"scanned": 0, "rewritten": 0, "cleared": 0}
+
+
+def test_parse_bme_ignores_appended_return_line():
+    note = "legacy sheet dispatch row x; BME Ann\n[Return] legacy sheet receipt row y"
+    assert bk.parse_bme(note) == ("dispatch", "Ann")
+    note2 = "legacy sheet dispatch row x; BME Ann; accessories: a\n[Return] legacy sheet receipt row y; BME Bob"
+    assert bk.parse_bme(note2) == ("dispatch", "Ann")
+
+
+async def test_repair_strips_appended_trace_from_name(maker, data):
+    n_a = "legacy sheet dispatch row 0a1b2c3d; Borrow1; BME Somchai; accessories: x"
+    async with maker() as db:
+        by = {t.notes: t for t in (await db.execute(select(BorrowTransaction))).scalars().all()}
+        by[n_a].dispatch_keyer_label = "Somchai\n[Return] legacy sheet receipt row 3d87cd27"
+        await db.commit()
+    assert await bk.repair(apply=False) == {"scanned": 1, "rewritten": 1, "cleared": 0}
+    await bk.repair(apply=True)
+    async with maker() as db:
+        by = {t.notes: t for t in (await db.execute(select(BorrowTransaction))).scalars().all()}
+        assert by[n_a].dispatch_keyer_label == "Somchai"
+    assert await bk.repair(apply=True) == {"scanned": 0, "rewritten": 0, "cleared": 0}
