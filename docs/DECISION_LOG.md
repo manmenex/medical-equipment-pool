@@ -9601,7 +9601,9 @@ opening-balance transactions are created.
     warning. No warning for a different returning ward.
   - **Layer 2, undo:** by the operator who saved, within 2 minutes for a
     dispatch and 30 seconds for a receipt (revised from 5 minutes, choice 1,
-    to stay inside the external N Smart tool's send delays).
+    to match the external N Smart tool's send delays). The export API withholds
+    each event until its undo window has passed, so undone entries are never
+    exposed and an undo emits no export event.
   - **After the undo window (Owner):** the external tool re-keys the correction
     in N Smart. The export API emits compensating events: a voided dispatch
     yields a correction receipt first, and a voided receipt yields a correction
