@@ -9591,3 +9591,43 @@ opening-balance transactions are created.
   Governance PR.
 - **Status:** Approved; registration of the two devices follows (no code change
   expected if the demo/loan form accepts any code).
+
+## 2026-11-27 (fifth set) — Entry-error prevention, undo, and audited corrections
+
+- **Decision (Owner, in chat, 2026-11-27):** **D28**, three layers to handle
+  keying errors (wrong device, wrong ward, wrong action).
+  - **Layer 1, prevention:** a one-tap switch between dispatch and receipt
+    when the scanned device's state contradicts the page, plus a duplicate-scan
+    warning. No warning for a different returning ward.
+  - **Layer 2, undo:** by the operator who saved, within 2 minutes for a
+    dispatch and 30 seconds for a receipt (revised from 5 minutes, choice 1,
+    to match the external N Smart tool's send delays). The export API withholds
+    each event until its undo window has passed, so undone entries are never
+    exposed and an undo emits no export event.
+  - **After the undo window (Owner):** the external tool re-keys the correction
+    in N Smart. The export API emits compensating events: a voided dispatch
+    yields a correction receipt first, and a voided receipt yields a correction
+    dispatch. The corrected event follows as a normal event.
+  - **Layer 3, corrections:** void, change device, switch action
+    (dispatch↔receipt; Owner addition), and the existing ward correction. Each
+    needs a mandatory reason and is audited. Only the device's latest
+    transaction can be corrected. Staff may correct their own entries within
+    the same shift; after that, only an administrator may (choice 3ก).
+- **Implementation constraints (orchestrator, within the Owner's intent):**
+  restore comes from fields stored at dispatch; a state guard refuses a
+  correction if the device changed state afterwards; change device is atomic;
+  switch-action details; undo ignores the shift limit; the export API exposes
+  `voided`; the HN moves server-side on change device. All are specified in
+  BUSINESS_RULES "Entry-error prevention and correction".
+- **Amends:** the two-state transaction lifecycle (ADR-005 / BUSINESS_RULES
+  "Dispatch/Return owns transaction lifecycle"): adds a third transaction
+  status `voided`. Voided transactions are kept in history and excluded from
+  reports, Standby, the daily Excel and every export except the read-only
+  export API, which carries them with status `voided`.
+- **Not changed:** exactly four equipment states, with no cleaning state; only
+  the dispatch/receipt services change lifecycle; no ward-to-ward transfer
+  tracking; every HN safeguard; no MEMS integration.
+- **Source:** Owner decisions in chat, 2026-11-27 (1: all three layers, 2ข,
+  3ก, plus switch action; ward-mismatch warning dropped). Docs-only Governance
+  PR.
+- **Status:** Approved; implementation follows.
