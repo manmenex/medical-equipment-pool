@@ -27,6 +27,9 @@ logger = logging.getLogger(__name__)
 
 # Never trusted, never accepted on the HN listener (lowercase, as ASGI sends).
 REFUSED_HEADERS = (b"tailscale-funnel-request", b"x-forwarded-for", b"forwarded")
+_started = False
+# Keep equal to the Dockerfile's `--port` (test_export_d29 pins it); APP_PORT
+# is what the HN-port != app-port startup check compares against.
 HN_STATE_KEY = "export_hn_ok"
 EXPORT_PATH_PREFIX = "/api/v1/export/"
 
@@ -132,12 +135,20 @@ class ExportHnListenerMiddleware:
 async def start_hn_listener(app, cfg=settings):
     """Serve ``app`` on the HN port inside this process. Returns (server, task)
     or None when disabled. Access logging is off; nothing HN-related is logged."""
+    global _started
+    if _started:  # idempotent: one HN listener per process
+        return None
     status = log_startup_check(cfg)
     if not status.enabled:
         return None
     import uvicorn
 
-    config = uvicorn.Config(app, host=cfg.EXPORT_HN_HOST, port=status.port, access_log=False, log_config=None)
+    _started = True
+    # lifespan="off": the HN server must not re-run the app lifespan (it would
+    # start a second scheduler and recurse into this function).
+    config = uvicorn.Config(
+        app, host=cfg.EXPORT_HN_HOST, port=status.port, access_log=False, log_config=None, lifespan="off"
+    )
     server = uvicorn.Server(config)
     server.install_signal_handlers = lambda: None  # the main server owns signals
     task = asyncio.create_task(server.serve())

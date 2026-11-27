@@ -382,3 +382,48 @@ async def test_demo_loan_still_excluded(client, ctx, db_session):
     r = await client.post("/api/v1/borrow", headers=ctx["staff"], json={"equipment_id": eq, "ward_id": ctx["ward"]})
     assert r.status_code in (201, 409, 422)
     assert (await _events(client, key))["events"] == []
+
+
+async def test_hn_listener_starts_once_with_lifespan_off_and_scheduler_once(monkeypatch):
+    import uvicorn
+
+    from app.core import export_hn
+    from app.main import lifespan
+    from app.worker import scheduler as sched
+
+    monkeypatch.setattr(settings, "EXPORT_HN_PORT", HN_PORT)
+    monkeypatch.setattr(settings, "EXPORT_HN_ALLOWED_PEERS", "127.0.0.1")
+    monkeypatch.setattr(export_hn, "_started", False)
+    configs, serves, starts = [], [], []
+
+    async def fake_serve(self, *a, **k):
+        serves.append(1)
+
+    orig_init = uvicorn.Server.__init__
+
+    def spy_init(self, config, *a, **k):
+        configs.append(config)
+        orig_init(self, config, *a, **k)
+
+    monkeypatch.setattr(uvicorn.Server, "serve", fake_serve)
+    monkeypatch.setattr(uvicorn.Server, "__init__", spy_init)
+    import app.main as main_mod
+
+    monkeypatch.setattr(main_mod, "start_scheduler", lambda: starts.append(1))
+    monkeypatch.setattr(main_mod, "stop_scheduler", lambda: None)
+    async with lifespan(app):
+        await export_hn.start_hn_listener(app)  # a second call must be a no-op
+    assert len(starts) == 1 and len(serves) == 1 and len(configs) == 1
+    assert configs[0].lifespan == "off"
+    del sched
+
+
+async def test_dockerfile_port_equals_app_port_default():
+    import re
+    from pathlib import Path
+
+    from app.core.config import Settings
+
+    df = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text()
+    port = re.search(r'CMD \[.*"--port", "(\d+)"', df).group(1)
+    assert int(port) == Settings.model_fields["APP_PORT"].default
