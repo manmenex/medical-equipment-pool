@@ -61,7 +61,10 @@ serve.
   default in every UI view and revealed only by an explicit "แสดง HN" click
   with an audited reveal (never the value); HN never appears in any printed
   report, PDF, Excel/CSV export, read-only export API, log, notification, or
-  legacy sheet sync/import.
+  legacy sheet sync/import. (Owner Governance 2026-11-27, D29: single exception —
+  the export API may return HN only to an `hn`-scoped key from an allowlisted
+  source IP, never via the public Funnel, with count-only audit; see
+  `docs/BUSINESS_RULES.md`.)
 - No MEMS integration, no PM/calibration/recall workflow.
   "No MEMS integration" means this system never writes to, calls, or depends
   on a MEMS (N Smart). An external tool may read this system's read-only
