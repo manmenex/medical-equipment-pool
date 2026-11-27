@@ -187,5 +187,5 @@ select optgroup {
   color: var(--text);
 }
 select option:disabled {
-  color: var(--muted);
+  color: var(--text-muted);
 }
