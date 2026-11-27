@@ -45,6 +45,9 @@ _REQUIRED_COMMON = {
 }
 # Optional ward-side person column; the receipt tab may label it by role.
 _USER_HEADERS = ("ชื่อ(user)", "ผู้รับเครื่อง(user)", "ผู้ส่งเครื่อง(user)", "ผู้ส่งเครื่องยืม(user)", "ผู้คืนเครื่อง(user)")
+# Headers (normalised) that name a patient-identifier column.
+_PATIENT_HEADERS = ("hn",)
+_PATIENT_WORDS = ("คนไข้", "ผู้ป่วย")
 _DOC_PREFIX = {KIND_DISPATCH: "เลขที่ใบส่ง", KIND_RECEIPT: "เลขที่ใบรับ"}
 _STOP_ACCESSORY = ("จำนวน", "หมายเหตุ", "เวลา", "ชื่อ", "ผู้")
 
@@ -66,6 +69,9 @@ class Columns:
     accessories: list[tuple[int, str]]  # (column index, header label)
     ignored_for_hn: frozenset[int]
     check_columns: dict[str, int] = field(default_factory=dict)  # screen/charger/clamp; {} unless all 3 map cleanly
+    # Columns whose header names a patient identifier (e.g. "HN คนไข้"): any
+    # non-empty value skips the whole row, whatever its format.
+    patient_columns: frozenset[int] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -143,6 +149,8 @@ def detect_columns(kind: str, header: list[str]) -> Columns:
     # (e.g. a 10-digit pneumatic-pump SN) is not an HN. Free-text columns such
     # as the note stay scanned.
     ignored.update(range(index["bcm"] + 1, index["ward"]))
+    patient = frozenset(i for i, h in enumerate(norm) if h.startswith(_PATIENT_HEADERS) or any(t in h for t in _PATIENT_WORDS))
+    ignored -= patient  # a patient column is never exempt from the scan
     # Accessory check-mark columns: the headers right after the ward column,
     # up to the first quantity/note/time/name header.
     accessories: list[tuple[int, str]] = []
@@ -153,7 +161,7 @@ def detect_columns(kind: str, header: list[str]) -> Columns:
         accessories.append((i, label[:40]))
         if len(accessories) == 3:
             break
-    return Columns(kind, index, accessories, frozenset(ignored), _map_check_columns(accessories))
+    return Columns(kind, index, accessories, frozenset(ignored), _map_check_columns(accessories), patient)
 
 
 def _map_check_columns(accessories: list[tuple[int, str]]) -> dict[str, int]:
@@ -279,7 +287,7 @@ def parse_tab(kind: str, values: list[list[str]]) -> ParsedTab:
         def skip(reason: str) -> None:
             out.skipped.append(SkippedRow(kind, n, row_id[:16], reason))
 
-        if looks_like_patient_id(cells, cols.ignored_for_hn):
+        if any(cells[i] for i in cols.patient_columns) or looks_like_patient_id(cells, cols.ignored_for_hn):
             skip("possible_patient_identifier")  # never echo the cell
             continue
         if not _ROW_ID_RE.match(row_id):
