@@ -26,7 +26,7 @@ function renderPanel() {
 async function fillShared() {
   await screen.findByRole("option", { name: "Infusion Pump" });
   await userEvent.selectOptions(screen.getByLabelText("หมวดหมู่"), "cat-1");
-  await userEvent.type(screen.getByLabelText("บริษัทเจ้าของเครื่อง"), "Acme Co.");
+  await userEvent.type(screen.getByLabelText("เจ้าของเครื่อง"), "Acme Co.");
 }
 
 // userEvent.paste so tabs/newlines reach the textarea exactly as a paste would.

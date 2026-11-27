@@ -144,7 +144,7 @@ export function EquipmentListPage() {
                 <SourceBadge source={eq.equipment_source} />
               </div>
               <div className="truncate text-sm text-[var(--text-muted)]">
-                {eq.equipment_source && eq.equipment_source !== "pool" ? `SN ${eq.bcm_code ?? "-"}` : (eq.asset_number ?? "-")}
+                {eq.equipment_source && eq.equipment_source !== "pool" ? `รหัส ${eq.bcm_code ?? "-"}` : (eq.asset_number ?? "-")}
                 {eq.serial_number ? ` · SN ${eq.serial_number}` : ""}
                 {eq.returned_to_owner_at ? " · คืนผู้ให้ยืมแล้ว" : ""}
               </div>
