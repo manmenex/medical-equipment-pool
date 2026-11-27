@@ -728,3 +728,38 @@ async def test_export_record_event_skips_when_equipment_lookup_finds_nothing(db_
         db_session, transaction_id=uuid.uuid4(), event_type="dispatch", event_at=datetime.now(timezone.utc)
     )
     assert event is None
+
+
+async def test_same_place_wards_sum_into_one_row_and_one_text_line(client, seeded_users, db_session):
+    """Gastroenterology == Gastroenterology Clinic (Owner): one row, summed standby, one LINE entry."""
+    w = await _world(db_session)
+    g1 = Ward(code="GA", name="Gastroenterology", department_id=w.w5a.department_id)
+    g2 = Ward(code="GB", name="Gastroenterology Clinic", department_id=w.w5a.department_id)
+    db_session.add_all([g1, g2])
+    await db_session.flush()
+    for ward in (g1, g2):
+        eq = await _eq(db_session, w, w.infusion, EquipmentStatus.ISSUED_TO_WARD)
+        await _tx(db_session, w, eq, ward, at(27, 21))
+    await db_session.commit()
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    body = (await _get(client, staff, "night")).json()
+    rows = [x for x in body["infusion"]["wards"] if x["label"] == "Gastroenterology Clinic"]
+    assert len(rows) == 1 and rows[0]["system_value"] == 2 and rows[0]["treatment"] != "อื่น ๆ"
+    assert not [x for x in body["infusion"]["wards"] if x["label"] == "Gastroenterology"]
+    text = (await _get(client, staff, "night", "/text")).text
+    assert text.count("Gastroenterology Clinic = 2 เครื่อง") == 1 and "Gastroenterology =" not in text
+
+
+async def test_old_per_ward_override_key_still_read_for_single_ward_row(client, seeded_users, db_session):
+    await _scenario(db_session)
+    await db_session.commit()
+    staff = await _auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF)
+    r = await client.put(
+        "/api/v1/standby-summary/overrides",
+        headers=staff,
+        json={"date": "2026-07-28", "cutoff": "night", "field_key": "ward:W5A", "value": 7},
+    )
+    assert r.status_code == 200, r.text
+    wards = _wards((await _get(client, staff, "night")).json())
+    assert wards["Ward 5"]["override_value"] == 7 and wards["Ward 5"]["effective_value"] == 7
+    assert "W5A" not in wards

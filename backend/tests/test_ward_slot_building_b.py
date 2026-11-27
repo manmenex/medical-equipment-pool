@@ -97,6 +97,14 @@ def test_stale_admin_label_does_not_override_alias():
     assert got == {"Ward 5B": "W5B", "Orthopedic Unit": "Surgery +Ortho"}
 
 
+def test_admin_label_never_merges_different_wards():
+    maps = _maps(["Alpha Unit", "Beta Unit"])
+    for m in maps.values():
+        object.__setattr__(m, "report_row_label", "Ward 7")
+    rows = [r for r in drs.build_ward_rows(maps, set(maps)) if r.ward_ids]
+    assert len(rows) == 2 and {r.ward_ids for r in rows} == {(w,) for w in maps}
+
+
 def test_gastroenterology_sums_into_clinic_row():
     maps = _maps(["Gastroenterology", "Gastroenterology Clinic"])
     rows = drs.build_ward_rows(maps, set(maps))

@@ -372,25 +372,26 @@ def _match_slot(m: WardMapping, slots: list[tuple[str, str, str, str]]) -> int |
 
 
 def _match_slot_ex(m: WardMapping, slots: list[tuple[str, str, str, str]]) -> tuple[int | None, bool]:
-    """(slot index, same_place): same_place is True for an Owner alias or an
-    exact slot-name match (the ward IS that slot's place, so duplicates sum)."""
-    """Layout slot of a ward, by normalised name (admin short label first, then
-    ward name): exact match first; then slot "Ward N" takes only "Ward N" /
-    "Ward NA" (never a B or other letter suffix, never extra digits, so a
-    "Ward NB" without a W{N}B slot goes to "อื่น ๆ"); other slots match by
-    label prefix on the original name with a word boundary."""
+    """(slot index, same_place). Order: Owner alias (ward name, then admin
+    label) -> exact slot name (admin label, then ward name) -> fuzzy ("Ward N"
+    takes only "Ward N" / "Ward NA", never a B or other letter suffix or extra
+    digits, so a "Ward NB" without a W{N}B slot goes to "อื่น ๆ"; other slots
+    match by label prefix on the original name with a word boundary).
+    same_place is True only for an alias or an exact match on the hospital
+    ward NAME (the ward IS that place, so duplicates sum); an admin label never
+    merges wards."""
     originals = [m.report_row_label or "", m.ward_name or ""]
     candidates = [_slot_key(o) for o in originals]
     norms = [_slot_key(s[3]) for s in slots]
     # Owner aliases on the hospital ward name win over a (possibly stale)
     # admin short label.
-    for cand in reversed(candidates):
-        alias = SLOT_ALIASES.get(cand)
+    for pos in (1, 0):
+        alias = SLOT_ALIASES.get(candidates[pos])
         if alias is not None and _slot_key(alias) in norms:
-            return norms.index(_slot_key(alias)), True
-    for cand in candidates:
-        if cand in norms:
-            return norms.index(cand), True
+            return norms.index(_slot_key(alias)), pos == 1 or candidates[0] == candidates[1]
+    for pos in (0, 1):
+        if candidates[pos] in norms:
+            return norms.index(candidates[pos]), pos == 1 or candidates[0] == candidates[1]
     for cand, orig in zip(candidates, originals):
         best: int | None = None
         for i, n in enumerate(norms):
@@ -464,7 +465,7 @@ def build_ward_rows(
             first = wards[0]
             rows.append(WardRow(
                 slot_label, mode, treatment, color, first.ward_id, shaded, any(w.is_override for w in wards),
-                first.sort_order, tuple(w.ward_id for w in wards), labels[first.ward_id],
+                first.sort_order, tuple(w.ward_id for w in wards), slot_label if len(wards) > 1 else labels[first.ward_id],
             ))
             continue
         for m in wards:
