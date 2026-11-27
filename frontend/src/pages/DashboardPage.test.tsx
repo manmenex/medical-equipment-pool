@@ -81,7 +81,7 @@ describe("DashboardPage rendering and lifecycle-status counts", () => {
     expect(screen.getByText("2")).toBeInTheDocument();
 
     expect(screen.getByText("พร้อมใช้งาน")).toBeInTheDocument();
-    expect(screen.getByText("จ่ายให้หอผู้ป่วยแล้ว")).toBeInTheDocument();
+    expect(screen.getByText("จ่ายให้ Ward แล้ว")).toBeInTheDocument();
     expect(screen.getByText("ไม่พร้อมใช้งาน")).toBeInTheDocument();
     expect(screen.getByText("ปลดระวางถาวร")).toBeInTheDocument();
   });
@@ -96,7 +96,7 @@ describe("DashboardPage rendering and lifecycle-status counts", () => {
       "href",
       "/equipment?status=available_at_pool"
     );
-    expect(screen.getByText("จ่ายให้หอผู้ป่วยแล้ว").closest("a")).toHaveAttribute(
+    expect(screen.getByText("จ่ายให้ Ward แล้ว").closest("a")).toHaveAttribute(
       "href",
       "/equipment?status=issued_to_ward"
     );

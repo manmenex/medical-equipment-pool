@@ -261,7 +261,7 @@ describe("Dispatch -> receipt workflow (Roadmap PR11 required end-to-end test, s
 
     // --- 3. UI reflects the issued state, read from the store createBorrow mutated ---
     const detailAfterDispatch = renderEquipmentDetailPage();
-    await waitFor(() => expect(screen.getByText("จ่ายให้หอผู้ป่วยแล้ว")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("จ่ายให้ Ward แล้ว")).toBeInTheDocument());
     expect(screen.getByRole("link", { name: "รับคืนเครื่องนี้" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "เบิกเครื่องนี้" })).not.toBeInTheDocument();
     detailAfterDispatch.unmount();
