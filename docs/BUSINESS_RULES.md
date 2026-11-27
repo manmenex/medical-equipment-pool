@@ -105,7 +105,7 @@ Equipment Pool staff MAY record a patient HN (hospital number) on a dispatch. Th
 - the caller uses an export key created with the explicit `hn` scope;
 - HN is served only on a **dedicated export listener**: its own port, bound to the loopback/tailnet IP or a Unix socket, and never mapped by the Tailscale Funnel/serve configuration. The normal app port never returns HN. A startup check refuses to enable HN if the Funnel/serve config exposes that port;
 - on that listener the allowlist checks the **socket peer address** against the administrator-configured allowlist (never forwarded headers), and any request that carries `Tailscale-Funnel-Request`, `X-Forwarded-For` or `Forwarded` is refused;
-- the transport is TLS or the same host;
+- the transport is the same host (loopback or Unix socket), or TLS when the listener is on the tailnet IP (plain HTTP over WireGuard is not accepted);
 - only an administrator may create or revoke an `hn`-scoped key, and both actions are audited;
 - each response that contains HN writes one audit entry (key, count of HN values, time; never the values);
 - HN is never logged or cached by this system.

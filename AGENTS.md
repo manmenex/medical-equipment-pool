@@ -62,8 +62,8 @@ serve.
   with an audited reveal (never the value); HN never appears in any printed
   report, PDF, Excel/CSV export, read-only export API, log, notification, or
   legacy sheet sync/import. (Owner Governance 2026-11-27, D29: single exception —
-  the export API may return HN only to an `hn`-scoped key from an allowlisted
-  source IP, never via the public Funnel, with count-only audit; see
+  the export API may return HN only to an `hn`-scoped key whose socket-peer address
+  is allowlisted, on a dedicated listener never mapped by the public Funnel, with count-only audit; see
   `docs/BUSINESS_RULES.md`.)
 - No MEMS integration, no PM/calibration/recall workflow.
   "No MEMS integration" means this system never writes to, calls, or depends
