@@ -25,6 +25,7 @@ def _out(row: ExportApiKey) -> dict:
         "id": str(row.id),
         "name": row.name,
         "key_prefix": row.key_prefix,
+        "scope_hn": row.scope_hn,
         "created_at": row.created_at,
         "revoked_at": row.revoked_at,
         "last_used_at": row.last_used_at,
@@ -43,14 +44,14 @@ async def create_key(
     db: AsyncSession = Depends(get_db),
     actor=Depends(require_roles(ROLE_ADMINISTRATOR)),
 ):
-    row, key = await export_service.create_key(db, name=payload.name, created_by=actor.id)
+    row, key = await export_service.create_key(db, name=payload.name, created_by=actor.id, scope_hn=payload.scope_hn)
     await record_audit_event(
         db,
         actor_user_id=actor.id,
         action=AUDIT_ACTION_CREATE,
         entity_type=AUDIT_ENTITY_EXPORT_API_KEY,
         entity_id=row.id,
-        after={"name": row.name, "key_prefix": row.key_prefix},
+        after={"name": row.name, "key_prefix": row.key_prefix, "scope_hn": row.scope_hn},
         request=request,
     )
     await db.commit()
@@ -77,8 +78,8 @@ async def revoke_key(
             action=AUDIT_ACTION_UPDATE,
             entity_type=AUDIT_ENTITY_EXPORT_API_KEY,
             entity_id=row.id,
-            before={"revoked": False},
-            after={"revoked": True},
+            before={"revoked": False, "scope_hn": row.scope_hn},
+            after={"revoked": True, "scope_hn": row.scope_hn},
             request=request,
         )
         await db.commit()

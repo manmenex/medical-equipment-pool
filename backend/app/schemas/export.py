@@ -29,6 +29,14 @@ class ExportEventOut(BaseModel):
     routine_round: str | None
     receipt_outcome: str | None
     operator_name: str | None
+    # D29/sixth set: "legacy_sheet" when the legacy sheet sync created this
+    # side of the transaction, else "app" (the keying tool skips legacy rows).
+    origin: str = "app"
+    keyer_label: str | None = None
+    contact_name: str | None = None
+    # Decrypted HN. Present ONLY for an hn-scoped key on the dedicated HN
+    # listener from an allowed peer; always null otherwise.
+    hn: str | None = None
 
 
 class ExportEventsPage(BaseModel):
@@ -45,6 +53,7 @@ class ExportCursorOut(BaseModel):
 
 class ExportKeyCreate(BaseModel):
     name: str
+    scope_hn: bool = False
 
     model_config = ConfigDict(str_strip_whitespace=True, str_min_length=1, str_max_length=100)
 
@@ -53,6 +62,7 @@ class ExportKeyOut(BaseModel):
     id: str
     name: str
     key_prefix: str
+    scope_hn: bool = False
     created_at: datetime
     revoked_at: datetime | None
     last_used_at: datetime | None

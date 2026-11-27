@@ -637,7 +637,8 @@ def test_compose_still_has_no_postgres_or_redis_lan_exposure():
     services = yaml.safe_load(COMPOSE_PATH.read_text())["services"]
     assert "ports" not in services["postgres"]
     assert "ports" not in services["redis"]
-    assert "ports" not in services["backend"]
+    # D29: backend publishes only the HN export listener, on 127.0.0.1.
+    assert all(p.startswith("127.0.0.1:") for p in services["backend"].get("ports", []))
 
 
 def test_compose_backend_fixed_container_name_preserved():

@@ -362,8 +362,8 @@ async def test_query_events_excludes_demo_events_even_if_present(client, ctx, db
         )
     )
     await db_session.commit()
-    events, _ = await export_service.query_events(db_session, after=0, limit=50)
-    assert events == []
+    page = await export_service.query_events(db_session, after=0, limit=50)
+    assert page.events == []
 
 
 async def test_monitor_events_carry_source_badge_fields(client, ctx):

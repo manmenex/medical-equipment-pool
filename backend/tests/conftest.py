@@ -174,3 +174,13 @@ def pytest_collection_modifyitems(config, items):
                 },
                 handle,
             )
+
+
+@pytest.fixture(autouse=True)
+def _no_export_hold_back(monkeypatch):
+    """D28 hold-back is a production default; tests that are not about it see
+    events immediately. tests/test_export_d29.py sets its own windows."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "EXPORT_HOLD_DISPATCH_SECONDS", 0)
+    monkeypatch.setattr(settings, "EXPORT_HOLD_RECEIPT_SECONDS", 0)

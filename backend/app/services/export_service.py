@@ -43,16 +43,21 @@ import hashlib
 import hmac
 import secrets
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, insert, select, update
+from sqlalchemy import func, insert, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.core import hn_crypto
+from app.core.config import settings
+from app.models.client_operation import OP_STATUS_APPLIED, OP_TYPE_DISPATCH, ClientOperation
 from app.models.equipment import EQUIPMENT_SOURCE_POOL, Equipment
 from app.models.export import (
     EVENT_TYPE_DISPATCH,
+    EVENT_TYPE_HN_UPDATE,
     EVENT_TYPE_RECEIPT,
     ExportApiKey,
     ExportEvent,
@@ -61,10 +66,15 @@ from app.models.export import (
 from app.models.master_data import EquipmentCategory, Ward
 from app.models.transaction import BorrowTransaction
 from app.models.user import User
+from app.services.system_notes import clean_label
 
 MAX_PAGE_SIZE = 500
 DEFAULT_PAGE_SIZE = 100
 KEY_PREFIX = "mepx_"
+# Fixed device id the legacy sheet sync stamps on its client_operations
+# (app.services.legacy_sheet_sync.runner.DEVICE_ID; a test pins the two equal,
+# so this module need not import the sync's Google client stack).
+LEGACY_SYNC_DEVICE_ID = uuid.UUID("a6c1f2d4-5b3e-4c7a-9d10-6e2f8b4a1c35")
 # last_used_at is informational; throttle its write so a 30 s poller does not
 # turn every read into a write.
 _LAST_USED_GRANULARITY = timedelta(minutes=5)
@@ -122,6 +132,9 @@ async def record_event(
         event_type=event_type,
         transaction_id=transaction_id,
         event_at=event_at,
+        # D28 hold-back runs from the server insert time, not the (possibly
+        # backdated, offline) occurred time.
+        created_at=datetime.now(timezone.utc),
     )
     db.add(event)
     await db.flush()
@@ -147,34 +160,138 @@ async def cursor_for_time(db: AsyncSession, at: datetime) -> int:
     return first - 1
 
 
-async def query_events(db: AsyncSession, *, after: int, limit: int) -> tuple[list[dict], bool]:
-    """Events with seq > after, ascending, at most ``limit``. Returns
-    (events, has_more)."""
+@dataclass
+class EventsPage:
+    events: list[dict]
+    next_cursor: int
+    has_more: bool
+    hn_count: int = 0
+
+
+def hold_seconds(event_type: str) -> int:
+    """D28 undo window per event type. hn_update is not undoable: no hold."""
+    if event_type == EVENT_TYPE_DISPATCH:
+        return settings.EXPORT_HOLD_DISPATCH_SECONDS
+    if event_type == EVENT_TYPE_RECEIPT:
+        return settings.EXPORT_HOLD_RECEIPT_SECONDS
+    return 0
+
+
+def _visible(event: ExportEvent, now: datetime) -> bool:
+    created = event.created_at
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    return now >= created + timedelta(seconds=hold_seconds(event.event_type))
+
+
+async def _legacy_sets(db: AsyncSession, tx_ids: list[uuid.UUID]) -> tuple[set, set]:
+    """Transactions whose dispatch / receipt was created by the legacy sheet
+    sync: its applied ``client_operations`` rows carry the sync's fixed
+    device id (the dispatch op id is the transaction id; a receipt op points
+    at its transaction via ``transaction_id``)."""
+    if not tx_ids:
+        return set(), set()
+    rows = (
+        await db.execute(
+            select(ClientOperation.op_id, ClientOperation.transaction_id, ClientOperation.op_type).where(
+                ClientOperation.device_id == LEGACY_SYNC_DEVICE_ID,
+                ClientOperation.status == OP_STATUS_APPLIED,
+                or_(ClientOperation.op_id.in_(tx_ids), ClientOperation.transaction_id.in_(tx_ids)),
+            )
+        )
+    ).all()
+    dispatch, receipt = set(), set()
+    for op_id, tx_id, op_type in rows:
+        if op_type == OP_TYPE_DISPATCH:
+            dispatch.add(op_id)
+        elif tx_id is not None:
+            receipt.add(tx_id)
+    return dispatch, receipt
+
+
+async def query_events(
+    db: AsyncSession,
+    *,
+    after: int,
+    limit: int,
+    hn_allowed: bool = False,
+    now: datetime | None = None,
+) -> EventsPage:
+    """Visible events with seq > after, ascending, at most ``limit``.
+
+    Paging invariant (D28 hold-back + D29 hn_update): ``seq`` is gap-free and
+    commit-ordered, but hold-back makes *visibility* non-monotonic (a receipt
+    becomes visible after 30 s, an earlier dispatch only after 120 s). The scan
+    therefore walks rows in seq order and STOPS at the first row that is not
+    yet visible; nothing after it is returned even if it is already past its
+    own window. ``next_cursor`` is the last row consumed (returned OR skipped
+    as invisible-to-this-key), never past the blocking row, so no event is
+    ever skipped. When blocked, ``has_more`` is False: there is nothing more
+    to fetch *now*, and the consumer should wait and poll again.
+    """
+    now = now or datetime.now(timezone.utc)
     dispatcher = aliased(User)
     receiver = aliased(User)
-    stmt = (
-        select(ExportEvent, BorrowTransaction, Equipment, EquipmentCategory.name, Ward, dispatcher.full_name, receiver.full_name)
+    cols = [ExportEvent, BorrowTransaction, Equipment, EquipmentCategory.name, Ward, dispatcher.full_name, receiver.full_name]
+    if hn_allowed:
+        cols.append(BorrowTransaction.hn_ciphertext)  # deferred column: loaded only when HN may be returned
+    base = (
+        select(*cols)
         .join(BorrowTransaction, BorrowTransaction.id == ExportEvent.transaction_id)
         .join(Equipment, Equipment.id == BorrowTransaction.equipment_id)
         .outerjoin(EquipmentCategory, EquipmentCategory.id == Equipment.category_id)
         .outerjoin(Ward, Ward.id == BorrowTransaction.ward_id)
         .outerjoin(dispatcher, dispatcher.id == BorrowTransaction.borrower_user_id)
         .outerjoin(receiver, receiver.id == BorrowTransaction.received_by_user_id)
-        .where(ExportEvent.seq > after, Equipment.equipment_source == EQUIPMENT_SOURCE_POOL)
+        .where(Equipment.equipment_source == EQUIPMENT_SOURCE_POOL)
         .order_by(ExportEvent.seq)
-        .limit(limit + 1)
     )
-    rows = (await db.execute(stmt)).all()
-    has_more = len(rows) > limit
-    return [_serialize(*row) for row in rows[:limit]], has_more
+    picked: list[tuple] = []
+    cursor = after
+    has_more = False
+    blocked = False
+    while not blocked and not has_more:
+        rows = (await db.execute(base.where(ExportEvent.seq > cursor).limit(limit + 1))).all()
+        if not rows:
+            break
+        for row in rows:
+            event = row[0]
+            if not _visible(event, now):
+                blocked = True
+                break
+            if event.event_type == EVENT_TYPE_HN_UPDATE and not hn_allowed:
+                cursor = event.seq  # consumed (skipped) without breaking the cursor
+                continue
+            if len(picked) == limit:
+                has_more = True
+                break
+            picked.append(row)
+            cursor = event.seq
+        else:
+            if len(rows) <= limit:
+                break  # exhausted
+            continue
+    legacy_dispatch, legacy_receipt = await _legacy_sets(db, [r[1].id for r in picked])
+    events, hn_count = [], 0
+    for row in picked:
+        item = _serialize(*row[:7], legacy_dispatch=legacy_dispatch, legacy_receipt=legacy_receipt)
+        if hn_allowed and item["event_type"] != EVENT_TYPE_RECEIPT and row[1].has_hn and row[7]:
+            item["hn"] = hn_crypto.decrypt_hn(row[7])  # HnUnavailableError -> 503, nothing returned
+            hn_count += 1
+        events.append(item)
+    return EventsPage(events=events, next_cursor=cursor, has_more=has_more, hn_count=hn_count)
 
 
-def _serialize(event, tx, equipment, category_name, ward, dispatcher_name, receiver_name) -> dict:
+def _serialize(event, tx, equipment, category_name, ward, dispatcher_name, receiver_name, *, legacy_dispatch=(), legacy_receipt=()) -> dict:
     """Explicit allow-list. Item No, asset number, serial number, notes, phone
     and borrower_name are deliberately absent (api-information-boundaries.md;
-    free-text fields could carry anything an operator typed)."""
+    free-text fields could carry anything an operator typed). ``hn`` is added
+    by the caller only under the D29 conditions."""
     is_receipt = event.event_type == EVENT_TYPE_RECEIPT
     outcome = tx.receipt_outcome if is_receipt else None
+    legacy = tx.id in (legacy_receipt if is_receipt else legacy_dispatch)
+    operator = receiver_name if is_receipt else dispatcher_name
+    keyer = clean_label(tx.receipt_keyer_label if is_receipt else tx.dispatch_keyer_label) or operator
     return {
         "seq": event.seq,
         "event_id": str(event.event_id),
@@ -192,7 +309,10 @@ def _serialize(event, tx, equipment, category_name, ward, dispatcher_name, recei
         "dispatch_type": tx.dispatch_type.value if tx.dispatch_type else None,
         "routine_round": tx.routine_round.value if tx.routine_round else None,
         "receipt_outcome": outcome.value if outcome else None,
-        "operator_name": receiver_name if is_receipt else dispatcher_name,
+        "operator_name": operator,
+        "origin": "legacy_sheet" if legacy else "app",
+        "keyer_label": keyer,
+        "contact_name": tx.receipt_contact_name if is_receipt else tx.dispatch_contact_name,
     }
 
 
@@ -205,11 +325,13 @@ def hash_key(key: str) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
-async def create_key(db: AsyncSession, *, name: str, created_by: uuid.UUID) -> tuple[ExportApiKey, str]:
+async def create_key(
+    db: AsyncSession, *, name: str, created_by: uuid.UUID, scope_hn: bool = False
+) -> tuple[ExportApiKey, str]:
     """Returns (row, plaintext key). The plaintext is shown once and never
     stored."""
     key = KEY_PREFIX + secrets.token_urlsafe(32)
-    row = ExportApiKey(name=name, key_hash=hash_key(key), key_prefix=key[:12], created_by_user_id=created_by)
+    row = ExportApiKey(name=name, key_hash=hash_key(key), key_prefix=key[:12], created_by_user_id=created_by, scope_hn=scope_hn)
     db.add(row)
     await db.flush()
     return row, key

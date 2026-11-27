@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 import time
@@ -11,7 +12,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.router import api_router
-from app.core import hn_crypto
+from app.core import export_hn, hn_crypto
 from app.core.config import InsecureConfigurationError, settings, validate_production_secrets
 from app.core.exceptions import DomainError
 from app.core.log_context import correlation_id_var, request_id_var
@@ -112,7 +113,17 @@ def _log_context(request: Request) -> dict:
 async def lifespan(app: FastAPI):
     hn_crypto.warn_if_key_malformed()
     start_scheduler()
+    # D29: optional dedicated HN listener (same app, extra port). Disabled and
+    # logged loudly when EXPORT_HN_PORT is unset or misconfigured.
+    hn_listener = await export_hn.start_hn_listener(app)
     yield
+    if hn_listener is not None:
+        server, task = hn_listener
+        server.should_exit = True
+        try:
+            await asyncio.wait_for(task, timeout=5)
+        except Exception:
+            task.cancel()
     stop_scheduler()
 
 
@@ -143,6 +154,8 @@ def create_app() -> FastAPI:
     )
 
     app.add_middleware(SecurityHeadersMiddleware)
+    # Outermost: refuses forbidden requests on the HN listener before anything else runs.
+    app.add_middleware(export_hn.ExportHnListenerMiddleware)
 
     @app.middleware("http")
     async def request_context_middleware(request: Request, call_next):

@@ -59,6 +59,8 @@ AUDIT_ACTION_RETURN_TO_OWNER = "return_to_owner"
 # Roadmap PR34 (D15): an HN added later to an existing open dispatch. Never
 # carries the value (only has_hn / transaction id).
 AUDIT_ACTION_HN_ADD = "hn_add"
+# D29: one count-only entry per export response that contained HN (never the values).
+AUDIT_ACTION_EXPORT_HN_READ = "export_hn_read"
 # Roadmap PR12 (docs/audits/04-consolidated-implementation-plan.md Part F.1
 # step 7): one audit_logs entry per import commit batch (who ran it, when,
 # filename, aggregate row counts) -- deliberately not one entry per
