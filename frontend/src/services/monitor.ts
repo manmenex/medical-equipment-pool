@@ -23,6 +23,8 @@ export interface MonitorEvent {
   };
   receipt_outcome: "usable" | "defective" | null;
   close_reason: string | null;
+  // D22: display-only keyer label (sheet-synced rows); preferred over operator name.
+  keyer_label?: string | null;
   // Roadmap PR27/PR28: event-side contact name, checklist and outstanding cuffs.
   ward_contact_name?: string | null;
   checklist_kind?: ChecklistKind | null;

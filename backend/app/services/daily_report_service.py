@@ -32,7 +32,7 @@ from app.core.reporting_time import Shift
 from app.models.equipment import Equipment
 from app.models.master_data import Department, EquipmentCategory, Ward
 from app.models.report_mapping import ReportWardRow
-from app.models.transaction import BorrowTransaction
+from app.models.transaction import BorrowTransaction, ReceiptOutcome
 from app.models.user import User
 from app.schemas.checklist import report_columns
 from app.services.report_export_service import MAX_EXPORT_ROWS
@@ -215,6 +215,8 @@ class DailyEvent:
     notes: str | None
     # Roadmap PR33 (D14): "pool" | "demo" | "loan"; shown as a text badge.
     source: str = "pool"
+    # D23: receipt outcome was defective (verify-checklist Fail tick); display only.
+    defective: bool = False
     clock_shift: Shift = Shift.DAY
     instance: datetime = field(default_factory=datetime.now)
     shift: Shift = Shift.DAY
@@ -541,6 +543,7 @@ async def _load_events(db: AsyncSession, start: datetime, end: datetime) -> list
                     ward_name=ward_name or "",
                     contact_name=t.dispatch_contact_name if kind == "dispatch" else t.receipt_contact_name,
                     checks=checks,
+                    defective=kind == "receipt" and t.receipt_outcome == ReceiptOutcome.DEFECTIVE,
                     # `notes` is one column; a receipt overwrites the dispatch note.
                     notes=operator_note(t.notes) if (kind == "receipt" or t.returned_at is None) else None,
                 )

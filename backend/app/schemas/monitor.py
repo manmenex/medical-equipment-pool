@@ -44,6 +44,8 @@ class MonitorEvent(BaseModel):
     equipment: MonitorEquipment
     receipt_outcome: Literal["usable", "defective"] | None = None
     close_reason: str | None = None
+    # D22: display-only BME keyer label of sheet-synced rows (this event's side).
+    keyer_label: str | None = None
     # Roadmap PR27 (D7): the ward-side contact name recorded on this event's
     # side (dispatch_contact_name for dispatch events, receipt_contact_name for
     # receipt events). Never a patient name.

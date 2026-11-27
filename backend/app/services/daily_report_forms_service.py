@@ -253,10 +253,13 @@ def _check_page_html(rows: list[DailyEvent], form_date: date) -> str:
     body = []
     for e in rows:
         code, remark = with_badge(e.bcm_code, e.source), _check_remark(e)
-        # Check cells (Cleaner .. Fail) and the sign column are always blank (D17).
+        # D23: pre-printed template ticks (nothing stored): Cleaner..Battery + Pass, Fail blank;
+        # a defective receipt ticks Fail instead of Pass. The sign column stays blank.
+        pass_m, fail_m = ("", _TICK) if e.defective else (_TICK, "")
+        marks = "".join(f"<td><div class='c'>{m}</div></td>" for m in (_TICK,) * 4 + (pass_m, fail_m))
         body.append(
             f"<tr><td><div class='c'>{_e(format_date(form_date))}</div></td>"
-            f"<td><div class='c'>{_e(code)}</div></td>{cells(6)}"
+            f"<td><div class='c'>{_e(code)}</div></td>{marks}"
             f"<td><div class='c'><span{_fit(remark, CHECK_COLUMNS[8], 10)}>{_e(remark)}</span></div></td>{cells(1)}</tr>"
         )
     body.extend(f"<tr>{cells(10)}</tr>" for _ in range(per_page - len(rows)))

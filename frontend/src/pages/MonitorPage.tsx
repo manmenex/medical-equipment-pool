@@ -86,13 +86,13 @@ export function groupEvents(events: MonitorEvent[]): Group[] {
       groups.set(gKey, g);
     }
     const minute = e.event_at.slice(0, 16);
-    const sKey = `${gKey}|${e.kind}|${e.ward.id ?? ""}|${e.operator.id ?? e.operator.full_name ?? ""}|${minute}`;
+    const sKey = `${gKey}|${e.kind}|${e.ward.id ?? ""}|${e.keyer_label?.trim() || e.operator.id || e.operator.full_name || ""}|${minute}`;
     let s = subs.get(sKey);
     if (!s) {
       s = {
         key: sKey,
         ward: e.ward.name ?? "-",
-        operator: e.operator.full_name ?? "-",
+        operator: e.keyer_label?.trim() || e.operator.full_name || "-",
         contact: e.ward_contact_name?.trim() || null,
         cuffsOutstanding: false,
         time: hhmm(e.event_at),
