@@ -22,7 +22,7 @@ Scope: `docs/`, `knowledge/`, root markdown, `.github/PULL_REQUEST_TEMPLATE.md`.
 - `.github/PULL_REQUEST_TEMPLATE.md` - Codex review checklist item replaced by reviewer-agent approval.
 
 ## Kept but flagged
-- `AGENTS.md` (review only, not edited): the HN guardrail line still says HN never appears in the read-only export API; D29 adds one exception. Needs a Governance PR.
+- `AGENTS.md` (review only, not edited): checked; it already carries the D29 export exception, no change needed.
 - `docs/prompts/codex-pr-review.md` - historical filename, is the live reviewer-agent prompt; referenced in about 15 files, so not renamed.
 - `docs/ROADMAP_STATUS.md` - pointer only, but linked from runbooks, audits and guardrails; kept.
 - `docs/PROJECT_MEMORY.md` vs `knowledge/PROJECT_MEMORY.md` - different purposes (dated history vs current snapshot); kept both.
