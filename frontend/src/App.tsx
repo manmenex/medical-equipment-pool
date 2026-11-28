@@ -20,6 +20,9 @@ const StandbySummaryPage = lazy(() =>
   import("@/pages/StandbySummaryPage").then((m) => ({ default: m.StandbySummaryPage }))
 );
 const ReportsPage = lazy(() => import("@/pages/ReportsPage").then((m) => ({ default: m.ReportsPage })));
+const OutstandingReportPage = lazy(() =>
+  import("@/pages/OutstandingReportPage").then((m) => ({ default: m.OutstandingReportPage }))
+);
 const ReceiveReportPage = lazy(() =>
   import("@/pages/ReceiveReportPage").then((m) => ({ default: m.ReceiveReportPage }))
 );
@@ -105,7 +108,8 @@ export function App() {
               /reports route (docs/archive/design/PR17_OPERATIONAL_REPORTS_PLAN.md
               §12) -- additional, separate report screens, not a
               replacement for /reports. */}
-          <Route path="/reports/receive" element={<ReceiveReportPage />} />
+          <Route path="/reports/outstanding" element={<OutstandingReportPage />} />
+          <Route path="/reports/receive"element={<ReceiveReportPage />} />
           <Route path="/reports/issue" element={<IssueReportPage />} />
           {/* Roadmap PR17 Slice 4: the final PR17 report screen, same
               /reports sub-route convention as Slice 3's two screens. */}
