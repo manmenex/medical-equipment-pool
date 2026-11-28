@@ -1,5 +1,6 @@
 import axios from "axios";
 
+import { invalidateOperationalData } from "@/lib/invalidateOperationalData";
 import { markClientTooOld } from "./appUpdate";
 import { isUnreachableError } from "@/services/connectivity";
 import { MAX_BATCH_OPS, postOperations, type SyncOperationResult } from "@/services/syncClient";
@@ -275,6 +276,7 @@ export async function syncNow(opts: { force?: boolean } = {}): Promise<RunOutcom
       return "skipped_locked";
     }
     const outcome = out.value;
+    void invalidateOperationalData();
     if (outcome === "backoff") {
       const failures = state.failures + 1;
       setState({ status: "backoff", failures, nextAttemptAt: Date.now() + computeBackoff(failures) });

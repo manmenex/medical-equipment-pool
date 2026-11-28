@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { prefetchProps } from "@/lib/routePrefetch";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
 import { UpdateNotice } from "@/components/UpdateNotice";
@@ -99,6 +100,7 @@ export function AppShell() {
             <NavLink
               key={item.to}
               to={item.to}
+              {...prefetchProps(item.to)}
               end={item.to === "/"}
               className={({ isActive }) =>
                 `flex min-h-[44px] items-center rounded-lg px-3 py-2 text-sm font-medium transition ${
@@ -117,6 +119,7 @@ export function AppShell() {
               Settings entry that carries the offline-review count badge. */}
           <NavLink
             to="/settings"
+            {...prefetchProps("/settings")}
             className={({ isActive }) =>
               `flex min-h-[44px] items-center rounded-lg px-3 py-2 text-sm font-medium transition ${
                 isActive
@@ -177,6 +180,7 @@ export function AppShell() {
             <NavLink
               key={item.to}
               to={item.to}
+              {...prefetchProps(item.to)}
               end={item.to === "/"}
               aria-label={item.label}
               data-testid="bottom-nav-link"
