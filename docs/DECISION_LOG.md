@@ -9679,3 +9679,21 @@ opening-balance transactions are created.
 - **Source:** Owner choice in chat, 2026-11-28 (suggestion list items ข and
   ง). Docs-only Governance PR.
 - **Status:** Approved; implementation follows.
+
+## 2026-11-28 (second set) — HN retention 2 years; monthly backups 12 months
+
+- **Decision (Owner, in chat, 2026-11-28):**
+  - **D31 HN retention:** an HN is kept for 2 years from its dispatch's
+    `borrowed_at`. A scheduled job then erases it: the encrypted value is
+    cleared, a "HN was recorded" marker is kept (so Standby and D30's has-HN
+    flag stay meaningful), and each run writes one audit entry that holds only
+    a count. Transaction history is unaffected.
+  - **Backup retention:** add a monthly backup tier, kept for 12 months, on
+    top of the existing tiers (hourly for 48 h, daily for 30 days), both
+    locally and on Google Drive.
+- **Consequence:** because backups contain HN, an erased HN can persist in a
+  backup for at most 12 more months.
+- **Amends:** the HN safeguards (2026-11-25), which deferred the retention
+  policy to a future decision.
+- **Source:** Owner decision in chat, 2026-11-28. Docs-only Governance PR.
+- **Status:** Approved; implementation follows.
