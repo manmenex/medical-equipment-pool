@@ -7,28 +7,32 @@
 
 ## Current baseline
 
-**Current baseline: `0bca016`** — GitHub PR **#154** ("PR25D: offline
-operation design"), squash-merged into
-`claude/medical-equipment-pool-0c7fz0`. A squash SHA becomes authoritative on
-merge; no separate "baseline adoption" PR is created.
+**Current baseline (as of 2026-11-28): `e1e57cd`** — GitHub PR **#257**
+("D28 scan prompts, undo toast, correction menu"), the head of
+`claude/medical-equipment-pool-0c7fz0` when this section was refreshed. A
+squash SHA becomes authoritative on merge; no separate "baseline adoption" PR
+is created. GitHub PR #258 (Governance, Owner decision D30: read-only
+long-outstanding report) was open and not merged at that time.
 
-**Chain since PR24D-L1 (#135):** #136 (L2 installer/operations engine) → #137
-(L3 backup/restore runbook) → #138–#141 (four defect fixes found by real
-Windows execution) → #142 (Windows Staging/UAT evidence record) → #143 (hourly
-backup schedule, tiered retention) → #144 (password change, forced first login,
-lockout) → #145 (parallel CI shards, agent-team pipeline) → #146 (test hash
-speedup) → #147 (workflow docs, shard node ids) → #148 (backend-enforced forced
-password change) → #149 (tests for those gates) → #150 (local Production
-decision, Stage 1 PR25A–E) → #151/#152/#153 (docs consolidation) → #155 (PR25A)
-→ #156 (PR25B) → **#154** (PR25D design).
+**Chain since #150** (details in the Completed table below): #151–#153 docs
+consolidation → #155 PR25A → #156 PR25B → #154 PR25D design → #158–#179 PR25E
+offline slices → #180–#184 CES-BCM host setup → #185–#198 demo/legacy sheet
+sync, lockout toggle, Tailscale Funnel, admin user management, import helpers
+→ #203–#217 Owner decisions D1–D16 (PR26–PR34) → #220–#251 reports, forms and
+sheet-sync refinements (D17–D27) → #252–#257 D28 undo/void/corrections, and
+D29 (HN to the N Smart keying tool; app/sheet origin on export events).
 
-**Where things stand:** Roadmap PR1–PR23 are complete. PR24 (deployment) is in
-progress: code/tooling and local Windows Staging/UAT operation are evidenced
-(`docs/evidence/PR24D_LOCAL_STAGING_WINDOWS_VALIDATION.md`). Managed-cloud
-Staging is superseded by the Owner's 2026-10-13 decision to run Production on
-an Owner-designated department host (`docs/DECISION_LOG.md`). PR24E (UAT),
-PR24F (Pilot) and PR24G (Go-Live) run on that host after Stage 1 (PR25A–E,
-below). No Production Go decision has been authorized. Per-PR detail and review
+**Where things stand (as of 2026-11-28):** Roadmap PR1–PR23 are complete.
+PR25A, PR25B, PR25D and the PR25E code slices (B0–S6, D1, E1 code) are
+merged, as are PR26–PR34 (Owner decisions of 2026-11-25/26). The system runs
+on the CES-BCM Windows host (`C:\MEP\app`, `deployment/local-staging`) for
+UAT/demo, reached through Tailscale Funnel (PR25C-demo); updates go through
+`update-online.ps1` with a GitHub ZIP. The legacy Google Sheet shadow sync
+runs alongside the app. Login lockout is off by Owner decision (#191).
+PR25C (Cloudflare Tunnel + Access), PR24E (UAT), PR24F (Pilot) and PR24G
+(Go-Live) are not complete and no Production Go decision has been authorized;
+only the Owner authorizes it. Managed-cloud Staging is superseded by the
+Owner's 2026-10-13 decision (`docs/DECISION_LOG.md`). Per-PR detail and review
 history live in the Completed table below and in `docs/DECISION_LOG.md`.
 
 ## Numbering note
@@ -138,6 +142,18 @@ history live in the Completed table below and in `docs/DECISION_LOG.md`.
 | — (test) | Cache fixed fixture password hash across the test session | #146 | `577e401` |
 | — (docs) | Stale pipeline docs point at PROJECT_WORKFLOW; CI shard gate checks node ids | #147 | `0eb98b3` |
 | — (security) | Backend enforcement of the forced first-login password change | #148 | `a1557fe` |
+| PR25A | Off-host backup to Google Drive | #155 | `2ff8a4f` |
+| PR25B | Read-only export API for external consumers (Nsmart Realtime) | #156 | `832ebb1` |
+| PR25D | Offline operation design | #154 | `0bca016` |
+| PR25E (B0–S6, D1, E1) | Offline operation implementation slices: B0 #159, S1 #158, S2 #160, B1 #162, S0 #161, B2 #164, S3 #165, B2b #166/#168, B3 #167, B4 #169, S4 #170, S5 #171, B2c #172, S5b #173, B4b #174, S6 #177, D1 docs #178, E1 browser drills #179 (squash SHAs in `git log`) | #158–#179 | — |
+| — (ops) | CES-BCM host setup and Owner-triggered online/offline update (`setup-ces-bcm.ps1`, `update-online.ps1`) and follow-ups | #180–#184 | `ab89804` (#180) |
+| — (governance + feature) | Asset Number optional; pool equipment loader; demo-only legacy sheet shadow sync (governance #187, implementation #188) | #185–#188 | `21216ea` (#188) |
+| — (security/ops) | Configurable login lockout, off by default (#190); Tailscale Funnel demo access, lockout stays off (governance #191, `enable-online.ps1` #192); host-only admin password reset (#189); admin user-management tab (#193) | #189–#193 | `0dd949d` (#193) |
+| — (import tooling) | Legacy sheet sync fixes and `prepare-legacy-history` helper; line-authoritative legacy history validation | #195–#202 | `b9fe637` (#202) |
+| PR26–PR32 | Owner decisions of 2026-11-25 (governance #203–#205, #213): PR26 #206 dispatch without type/round; PR31 #207 non-blocking dispatch; PR32 #208 Monitor page (base); PR27/PR28 #209/#210 ward-first entry, checks, Cryo-Cuff, cuffs; PR30 #211 daily shift workbook and forms; PR29 #212 patient HN (encrypted, masked, audited reveal) | #203–#213 | `935932a` (#212) |
+| PR33, PR34 | Owner decisions of 2026-11-26 (governance #214): PR33 #216 demo/loan equipment; PR34 #215 standby rule, add HN later, Standby summary page | #214–#217 | `eb5ed3b` (#216) |
+| — (D17–D27 refinements) | Governance #223, #229, #237, #239, #243, #249; implementation: verify-checklist print and pre-printed ticks, per-ward report rows, sheet-sync duplicate skip and bulk dismiss, legacy row labels and aliases, Standby LINE-text edits and optional respirator row, loaned-device asset code, report/UI fixes | #218–#251 | `4ef77fd` (#251) |
+| — (D28/D29) | Governance #252 (D28 entry-error prevention, undo, audited corrections, `voided` status) and #253 (D29 HN to the N Smart keying tool, export origin); implementation: D29 HN listener and export origin/keyer/contact fields #254, D28 backend corrections #255, D28 export compensating events #256, D28 UI #257 | #252–#257 | `e1e57cd` (#257) |
 | — (test) | Test coverage for the forced password change gates | #149 | `00677bc` |
 | — (governance) | Local Production on the department host; Stage 1 roadmap (PR25A–E) | #150 | `80f61d6` |
 | — (docs) | One status source, refreshed knowledge snapshot, management overview | #151 | `30089d8` |
@@ -450,10 +466,10 @@ the department host"). These items finish Roadmap PR24 on that host.
 |---|---|---|
 | PR25A | Off-host backup: upload every hourly backup to the department's Google Drive (OAuth consent of the department account; a service account has no Drive quota on a consumer account), same tiered retention on Drive; scheduled task runs without a logged-in user; restore-from-Drive onto any Docker-capable PC | Done (#155) |
 | PR25B | Read-only export API for external consumers (Nsmart Realtime): dispatches and receipts since a cursor, stable UUID identifiers, no patient data. This system does not integrate with N Smart; the consumer does | Done (#156) |
-| PR25C | External access: Cloudflare Tunnel + Cloudflare Access (allow-listed accounts) in front of the existing login; host hardening checklist (no sleep, scheduled Windows Update window, UPS) | Not started (awaiting Owner Cloudflare account/domain). **Checklist (Owner decision 2026-11-01): set `LOGIN_LOCKOUT_ENABLED=true` in the host `.env` before exposing the system externally; lockout is OFF by default** **Demo-period interim (Owner 2026-11-24): see PR25C-demo; lockout stays OFF for the demo only, and the lockout checklist line still applies before production go-live via Cloudflare** |
-| PR25C-demo | Demo-period external access only: Tailscale Funnel (public HTTPS `<host>.<tailnet>.ts.net`, no domain) on the CES-BCM host instead of Cloudflare. Temporary; no identity gate before the app login. `LOGIN_LOCKOUT_ENABLED=false` kept by Owner decision (accepted risk, see `docs/DECISION_LOG.md`). Admin user-management UI (account list, one-time temporary password reset with `must_change_password`) planned as a separate implementation PR. Production GO is NOT authorized | Decided 2026-11-24 (docs only) |
+| PR25C | External access: Cloudflare Tunnel + Cloudflare Access (allow-listed accounts) in front of the existing login; host hardening checklist (no sleep, scheduled Windows Update window, UPS) | Not started as of 2026-11-28 (awaiting Owner Cloudflare account/domain). **Checklist (Owner decision 2026-11-01): set `LOGIN_LOCKOUT_ENABLED=true` in the host `.env` before exposing the system externally; lockout is OFF by default** **Demo-period interim (Owner 2026-11-24): see PR25C-demo; lockout stays OFF for the demo only, and the lockout checklist line still applies before production go-live via Cloudflare** |
+| PR25C-demo | Demo-period external access only: Tailscale Funnel (public HTTPS `<host>.<tailnet>.ts.net`, no domain) on the CES-BCM host instead of Cloudflare. Temporary; no identity gate before the app login. `LOGIN_LOCKOUT_ENABLED=false` kept by Owner decision (accepted risk, see `docs/DECISION_LOG.md`). Admin user-management UI (account list, one-time temporary password reset with `must_change_password`) merged (#193); `enable-online.ps1` merged (#192). Production GO is NOT authorized | Implemented (#191, #192, #193); in use on the CES-BCM host |
 | PR25D | Offline operation design document: PWA offline queue for dispatch/receipt on personal phones, department tablets and PCs; client-generated UUIDs as idempotency keys; replay in client order through the normal lifecycle rules; conflicts go to a human review list, never auto-resolved; 48-hour client journal replayed after a server restore to recover the up-to-1-hour backup gap; per-user queues on shared devices | Done (#154); Owner decisions D1–D8 recorded in `docs/design/PR25D_OFFLINE_OPERATION_PLAN.md` §18 |
-| PR25E | Offline operation implementation, in slices defined by PR25D (§20). Merged: B0 #159, S1 #158, S2 #160, B1 #162, S0 #161, B2 #164, S3 #165, B2b #166/#168, B3 #167, B4 #169, S4 #170, S5 #171, B2c #172, S5b #173, B4b #174, S6 #177 (PWA update strategy); also merged: #176 (dependency pins). Docs: D1 (this slice; operator and reviewer guides in `docs/runbooks/`). E1 (browser drills, Playwright; in review; manual drills on the department host remain for the Owner: `docs/runbooks/OFFLINE_DRILLS_TH.md`). `SYNC_AUTO_SEQUENCE` stays off (D8); the Owner decides after the pilot | In progress (code slices B0–S6 done; D1 merged; E1 in review, manual host drills pending) |
+| PR25E | Offline operation implementation, in slices defined by PR25D (§20). Merged: B0 #159, S1 #158, S2 #160, B1 #162, S0 #161, B2 #164, S3 #165, B2b #166/#168, B3 #167, B4 #169, S4 #170, S5 #171, B2c #172, S5b #173, B4b #174, S6 #177 (PWA update strategy); also merged: #176 (dependency pins). Docs: D1 (this slice; operator and reviewer guides in `docs/runbooks/`). E1 (browser drills, Playwright; merged #179; manual drills on the department host remain for the Owner: `docs/runbooks/OFFLINE_DRILLS_TH.md`). `SYNC_AUTO_SEQUENCE` stays off (D8); the Owner decides after the pilot | Code slices B0–S6, D1 and E1 merged; manual host drills pending (as of 2026-11-28) |
 
 Then PR24E (UAT), PR24F (Pilot) and PR24G (Go-Live) run on this host.
 
@@ -469,7 +485,7 @@ system of record. Excluded by the Owner, 2026-10-13.
 
 | Item | Scope | Status |
 |---|---|---|
-| Legacy pool sheet shadow sync | Demo-only, disabled by default. Reads the pool team's current Google Sheet (read-only scope) and replays its dispatch and return rows through the existing dispatch/receipt services via the offline sync ledger, so conflicts go to the existing review page. No writes to the sheet, no patient data, no ward-side person names, no note import. Must be switched off before Production go-live (Owner decision), and the Owner decides database reset/re-import because demo-synced data would otherwise remain. Boundaries: `docs/DECISION_LOG.md` (Governance 2026-10-21) | Approved 2026-10-21; implementation PR follows this Governance PR |
+| Legacy pool sheet shadow sync | Demo-only, disabled by default. Reads the pool team's current Google Sheet (read-only scope) and replays its dispatch and return rows through the existing dispatch/receipt services via the offline sync ledger, so conflicts go to the existing review page. No writes to the sheet, no patient data, no ward-side person names, no note import. Must be switched off before Production go-live (Owner decision), and the Owner decides database reset/re-import because demo-synced data would otherwise remain. Boundaries: `docs/DECISION_LOG.md` (Governance 2026-10-21) | Approved 2026-10-21; implemented (#188) and running on the CES-BCM host alongside the app (as of 2026-11-28) |
 
 ## Notes on PR14, PR15 and GitHub PR #40
 
@@ -477,9 +493,9 @@ system of record. Excluded by the Owner, 2026-10-13.
 
 **GitHub PR #40 note:** GitHub PR #40 ("Dashboard & Equipment Status") is merged and recorded in the Completed table above as an unnumbered "— (frontend)" row. It did **not** implement Roadmap PR12 — its originating task description used "PR12" as an informal label, which conflicted with this file's Roadmap PR12 (Inventory Import). Governance PR #41 (see `docs/DECISION_LOG.md`, "Governance — GitHub PR #40 classification") resolved that conflict by classifying it as an unnumbered Post-PR11 Frontend Dashboard UX Follow-up. Roadmap PR12 was subsequently implemented and merged as GitHub PR #43 (see the PR12 note above), Roadmap PR13 as GitHub PR #45 (see the PR13 note above), Roadmap PR14's PR14A and PR14B slices as GitHub PR #46 and #48 respectively (see the PR14 note above), and Roadmap PR15's PR15A slice as GitHub PR #50 (see the PR15 note above). **Roadmap PR15's PR15B slice (Schema Hygiene) later merged as GitHub PR #54; broader Roadmap PR15 scope (metrics, tracing, dashboards, log aggregation, alerting) remains open pending future scheduling or an explicit governance decision.**
 
-## Planned: Owner decisions of 2026-11-25 (approved; not started)
+## Owner decisions of 2026-11-25 (approved; implemented as of 2026-11-28)
 
-Approved by Owner Governance 2026-11-25, both sets (`docs/DECISION_LOG.md`). Each is a separate small PR, in the intended order. None may be started ahead of its turn.
+Approved by Owner Governance 2026-11-25, both sets (`docs/DECISION_LOG.md`). Each was a separate small PR: PR26 #206, PR27/PR28 #209 (backend) and #210 (frontend), PR29 #212, PR30 #211, PR31 #207, PR32 #208 (base). The scope text below is kept as originally approved.
 
 | PR | Scope |
 |---|---|
@@ -491,9 +507,9 @@ Approved by Owner Governance 2026-11-25, both sets (`docs/DECISION_LOG.md`). Eac
 | PR31 | Non-blocking dispatch (D8): re-dispatch of an already-dispatched equipment atomically closes the prior open transaction ("closed by re-dispatch, receipt not recorded", audited); dispatch of `unavailable_defective` equipment allowed and flagged on the transaction (audited); `decommissioned` stays blocked; UI shows the problem and asks confirmation. |
 | PR32 | Monitor page (D9): dispatch/receipt submissions grouped by date (slip, ward, ward contact name, operator, time, equipment count, drill-down), dispatch/receipt tabs, search, auto-refresh; HN never shown unmasked. Also shows outstanding cuffs (type, count, ward) until received (D11). Available to all Equipment Pool staff, as is the "แสดง HN" reveal (D13). |
 
-## Planned: Owner decisions of 2026-11-26 (approved; not started)
+## Owner decisions of 2026-11-26 (approved; implemented as of 2026-11-28)
 
-Approved by Owner Governance 2026-11-26 (`docs/DECISION_LOG.md`, D14-D16). Each is a separate small PR, after PR32.
+Approved by Owner Governance 2026-11-26 (`docs/DECISION_LOG.md`, D14-D16). PR33 merged as #216 and PR34 as #215. The scope text below is kept as originally approved. Later Owner decisions D17–D30 are recorded in `docs/DECISION_LOG.md` (D28 added the `voided` transaction status; D29 HN to the N Smart keying tool through a dedicated listener; D30 long-outstanding read-only report was in open PR #258 as of 2026-11-28).
 
 | PR | Scope |
 |---|---|

@@ -102,7 +102,7 @@ flows below.
 
 | Task | Mandatory reads | Conditional reads |
 |---|---|---|
-| Implementation | `AGENTS.md`; this Playbook; assigned Roadmap section; task prompt | DoD sections for affected layer; ADR/guardrail linked by scope |
+| Implementation | `AGENTS.md`; this Playbook; `docs/BUSINESS_RULES.md` "Current rules at a glance"; assigned Roadmap section; task prompt | DoD sections for affected layer; ADR/guardrail linked by scope |
 | Review (reviewer agent) | `AGENTS.md`; this Playbook; [`prompts/codex-pr-review.md`](prompts/codex-pr-review.md); PR diff and assigned Roadmap section | DoD/ADR for affected risk |
 | Governance | `AGENTS.md`; this Playbook; affected authoritative documents | Repository strategy, memory, or ADR index |
 | Focused bugfix | `AGENTS.md`; this Playbook; task/issue; affected code | DoD and technical-debt item |

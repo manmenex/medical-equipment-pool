@@ -20,7 +20,7 @@
 The initial import of the hospital pool list loads every Active item as `AVAILABLE_AT_POOL`, although about 312 of the 464 items are physically at wards. No opening-balance dispatch transactions are created (Owner accepted the risk; `docs/DECISION_LOG.md`, Governance 2026-10-21).
 
 1. **Dispatch of an item that is actually out.** The system shows the item as available, so staff can dispatch it. The physical item is not at the pool, so staff must verify the item is in hand before dispatching.
-2. **No receipt for a pre-system dispatch.** An item dispatched before go-live has no open transaction, so its return cannot be recorded as a receipt. No transaction is recorded; the item already shows as available, so staff simply return it to the shelf. A demo-only legacy sheet sync is planned and may correct statuses.
+2. **No receipt for a pre-system dispatch.** An item dispatched before go-live has no open transaction, so its return cannot be recorded as a receipt. No transaction is recorded; the item already shows as available, so staff simply return it to the shelf. The demo-only legacy sheet sync (merged, #188) runs alongside the app and may correct statuses.
 3. **Asset Number is optional.** Most imported items have no Asset Number; the system shows "-". It is never filled in from Asset ID.
 4. **No way yet to add an Asset Number to an existing item.** `EquipmentUpdate` lacks `asset_number`, so there is no API or UI for it. Follow-up work.
 
@@ -30,7 +30,7 @@ The initial import of the hospital pool list loads every Active item as `AVAILAB
 
 ## Offline operation (PR25E) limitations
 
-Design and rationale: `docs/design/PR25D_OFFLINE_OPERATION_PLAN.md` (see 18.1); guides: `docs/runbooks/PR25E_OPERATOR_GUIDE_TH.md`, `docs/runbooks/PR25E_REVIEWER_GUIDE_TH.md`. Not yet exercised on real devices (slice E1).
+Design and rationale: `docs/design/PR25D_OFFLINE_OPERATION_PLAN.md` (see 18.1); guides: `docs/runbooks/PR25E_OPERATOR_GUIDE_TH.md`, `docs/runbooks/PR25E_REVIEWER_GUIDE_TH.md`. Browser drills (E1, #179) are merged; manual drills on real devices are still pending as of 2026-11-28.
 
 1. **Duplicate dispatch when the network drops mid-submit.** If a request commits on the server but the response is lost, the client keeps the row and re-sends the same `op_id`; this is idempotent. But if the operator, seeing "pending", re-enters the same dispatch as a new entry, it becomes a second operation. The server records it as a `conflict` (equipment no longer available) for review, and a local double-entry guard blocks the repeat on the same device. A repeat from another device is only caught by review.
 2. **Shared device: another user's unsent dispatch cannot be received.** The offline receipt form offers only open dispatches from the reference snapshot plus the current user's own unsent dispatches. A dispatch that user A recorded on a shared device and has not sent is not offered to user B until it is sent or adopted (`docs/runbooks/PR25E_OPERATOR_GUIDE_TH.md` section 7). The equipment may meanwhile be physically returned with no receipt recordable on that device.
@@ -57,7 +57,7 @@ before any external/internet access such as Cloudflare Tunnel.** See
 ### Demo-period exception: Tailscale Funnel with lockout OFF (Owner decision 2026-11-24)
 
 For the demo period only, the CES-BCM host is exposed through Tailscale Funnel
-(public HTTPS URL, no identity gate in front of the app login), and the Owner
+(public HTTPS URL, no identity gate in front of the app login; implemented in #191-#192), and the Owner
 keeps `LOGIN_LOCKOUT_ENABLED=false`. Accepted risk: unlimited online password
 guessing (failures are still counted and audited). Mitigations: admin
 passwords of at least 12 characters, and review of the audit log for failed
