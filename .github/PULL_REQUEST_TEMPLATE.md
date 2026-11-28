@@ -52,7 +52,7 @@ Clearly label local, CI, manual, inspection-only, reported, and unknown evidence
 
 ## Merge readiness checklist
 
-See `docs/PROJECT_WORKFLOW.md` for the full Claude → Codex → owner sequence
+See `docs/PROJECT_WORKFLOW.md` for the current orchestrator → reviewer agent → merge pipeline (Codex and ChatGPT are no longer part of the project)
 this checklist supports.
 
 - [ ] Base SHA recorded (see Reference and purpose)
@@ -63,8 +63,8 @@ this checklist supports.
 - [ ] Out-of-scope stated (see Scope)
 - [ ] CI passing (all required GitHub Actions checks green on the current head SHA)
 - [ ] Reviewed head SHA recorded
-- [ ] Codex review completed for the exact reviewed head SHA
-- [ ] Owner approval recorded before merge
+- [ ] Reviewer agent approved the exact reviewed head SHA
+- [ ] Merge authorized per `docs/PROJECT_WORKFLOW.md` (CI green on the exact head SHA and reviewer approval; only the Owner authorizes Production deployment)
 
 ## Author checklist
 
