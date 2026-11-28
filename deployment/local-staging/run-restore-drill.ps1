@@ -16,7 +16,7 @@ shows the failure.
 
 .PARAMETER Scheduled
 Set by the scheduled task. Skips Sundays that are not the first Sunday of the
-month (unless this month has no result yet).
+month (unless this month has no PASS yet, so a FAIL is retried).
 #>
 #Requires -Version 7.0
 [CmdletBinding()]
@@ -35,7 +35,7 @@ Write-Host '=== Medical Equipment Pool -- Monthly Restore Drill / ทดสอ�
 
 $lock = $null
 try {
-    if ($Scheduled -and -not (Test-MepRestoreDrillDue -ResultExistsThisMonth (Test-Path -LiteralPath (Get-MepRestoreDrillResultPath)))) {
+    if ($Scheduled -and -not (Test-MepRestoreDrillDue -ResultExistsThisMonth (Test-MepRestoreDrillMonthPassed))) {
         Write-Host 'Not the first Sunday of the month; skipping. / ไม่ใช่วันอาทิตย์แรกของเดือน ข้ามการทดสอบ'
         exit 0
     }

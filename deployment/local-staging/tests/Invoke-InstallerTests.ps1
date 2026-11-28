@@ -2677,6 +2677,49 @@ Test-Case 'drill: live-DB parameters are never passed; only a disposable DB is t
     }
 }
 
+Test-Case 'drill schedule: a FAIL month is not done and is retried; PASS is done' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
+    $r = Invoke-WithMocks -Context $ctx -Body {
+        $now = [datetime]'2026-12-13T03:17:00'
+        $none = Test-MepRestoreDrillMonthPassed -Now $now
+        New-Item -ItemType Directory -Path (Get-MepRestoreDrillRoot) -Force | Out-Null
+        $p = Get-MepRestoreDrillResultPath -Now $now
+        Set-Content -LiteralPath $p -Value '{"result":"FAIL"}'
+        $fail = Test-MepRestoreDrillMonthPassed -Now $now
+        $due = Test-MepRestoreDrillDue -Now $now -ResultExistsThisMonth $fail
+        $kept = Test-Path -LiteralPath $p
+        Set-Content -LiteralPath $p -Value '{"result":"PASS"}'
+        [pscustomobject]@{ None = $none; Fail = $fail; Due = $due; Kept = $kept; Pass = (Test-MepRestoreDrillMonthPassed -Now $now) }
+    }
+    Assert-True (-not $r.None -and -not $r.Fail) 'missing or FAIL result must not count as done'
+    Assert-True $r.Due 'a FAIL month must be due again on a later Sunday'
+    Assert-True $r.Kept 'the FAIL file must be kept'
+    Assert-True $r.Pass 'a PASS result counts as done'
+}
+
+Test-Case 'drill: leftover rehearsal databases are dropped at start; live DB can never be targeted' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $false `
+        -ExitCodeRules @(@{ Match = 'pg_database'; ExitCode = 0; Output = @(' datname', '-----', 'mep_local_restore_rehearsal_20260101t000000z', 'mep_local_staging_db', 'mep_local_restore_rehearsal_x; DROP DATABASE y', '(3 rows)') })
+    $r = Invoke-WithMocks -Context $ctx -Body {
+        $n = Remove-MepLeftoverRestoreDatabases
+        [pscustomobject]@{ N = $n; Calls = @($script:RecordedCalls | ForEach-Object { $_.Args }) }
+    }
+    $drops = @($r.Calls -match 'DROP DATABASE')
+    Assert-Equal 1 $drops.Count 'only the well-formed leftover is dropped'
+    Assert-True ($drops[0] -match 'DROP DATABASE IF EXISTS mep_local_restore_rehearsal_20260101t000000z') 'the leftover rehearsal database is dropped'
+    Assert-True (-not ($r.Calls -match 'DROP DATABASE[^\n]*mep_local_staging_db')) 'live database is never dropped'
+
+    # Even if the live DB were named like a rehearsal DB, it is never dropped.
+    $ctx2 = New-MockContext -EnvFileExists $true -InstallCompleted $true `
+        -ExitCodeRules @(@{ Match = 'pg_database'; ExitCode = 0; Output = @('mep_local_restore_rehearsal_live') })
+    $r2 = Invoke-WithMocks -Context $ctx2 -Body {
+        function Get-MepConfiguredValue { param($Name) if ($Name -eq 'POSTGRES_DB') { return 'mep_local_restore_rehearsal_live' } return 'x' }
+        Remove-MepLeftoverRestoreDatabases | Out-Null
+        @($script:RecordedCalls | ForEach-Object { $_.Args })
+    }
+    Assert-True (@($r2 -match 'DROP DATABASE').Count -eq 0) 'a database equal to the live name is never dropped'
+}
+
 Test-Case 'drill: scripts never keep the disposable DB or run down/volume/backup-deleting actions' {
     foreach ($f in 'run-restore-drill.ps1', 'schedule-restore-drill.ps1', 'lib/RestoreDrill.ps1') {
         $lines = @(Get-Content -LiteralPath (Join-Path $script:DeploymentRootForTests $f) | Where-Object { $_ -notmatch '^\s*#' })

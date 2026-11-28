@@ -45,6 +45,45 @@ function Test-MepRestoreDrillDue {
     return (-not $ResultExistsThisMonth)
 }
 
+function Test-MepRestoreDrillMonthPassed {
+    <#
+    .SYNOPSIS
+    A month counts as done only when its result file says PASS. A FAIL (or an
+    unreadable file) is retried on the next Sunday; the FAIL file is kept
+    until a later run overwrites it.
+    #>
+    param([datetime]$Now = (Get-Date))
+    $path = Get-MepRestoreDrillResultPath -Now $Now
+    if (-not (Test-Path -LiteralPath $path)) { return $false }
+    try { return ((Get-Content -LiteralPath $path -Raw | ConvertFrom-Json).result -eq 'PASS') } catch { return $false }
+}
+
+function Remove-MepLeftoverRestoreDatabases {
+    <#
+    .SYNOPSIS
+    Drops disposable rehearsal databases left by an earlier drill that was
+    killed (e.g. by the task's time limit). Only names that match the
+    rehearsal's own generated form (prefix + [a-z0-9_]) and are not the live
+    database are ever dropped. Caller holds the mutation lock.
+    #>
+    $live = Get-MepConfiguredValue -Name 'POSTGRES_DB'
+    $prefix = $Script:RehearsalDatabasePrefix
+    Start-MepPostgres
+    $list = Invoke-MepPsql -Sql "SELECT datname FROM pg_database WHERE datname LIKE '$prefix%'" -AllowNonZeroExit
+    if ($list.ExitCode -ne 0) { Write-InstallLog -Phase 'restore-drill' -Level 'WARN' -Message 'Could not list leftover rehearsal databases; continuing.'; return 0 }
+    $dropped = 0
+    foreach ($line in @($list.Output)) {
+        $name = "$line".Trim()
+        if ($name -cnotmatch '^mep_local_restore_rehearsal_[a-z0-9_]+$') { continue }
+        if (-not $name.StartsWith($prefix) -or $name -eq $live) { continue }
+        $drop = Invoke-MepPsql -Sql "DROP DATABASE IF EXISTS $name" -AllowNonZeroExit
+        if ($drop.ExitCode -eq 0) { $dropped++ }
+        else { Write-InstallLog -Phase 'restore-drill' -Level 'WARN' -Message "Could not drop leftover rehearsal database $name." }
+    }
+    if ($dropped -gt 0) { Write-InstallLog -Phase 'restore-drill' -Message "Dropped $dropped leftover rehearsal database(s) from an earlier drill." }
+    return $dropped
+}
+
 function ConvertFrom-MepRestoreDrillOutput {
     <#
     .SYNOPSIS
@@ -135,6 +174,8 @@ function Invoke-MepRestoreDrill {
     $source = if (Test-MepDriveConfigured) { 'drive' } else { 'local' }
     $parsed = $null
     $err = $null
+    try { Remove-MepLeftoverRestoreDatabases | Out-Null }
+    catch { Write-InstallLog -Phase 'restore-drill' -Level 'WARN' -Message 'Leftover rehearsal database cleanup failed; continuing.' }
     try {
         if ($source -eq 'drive') {
             $run = Invoke-MepRestoreFromDrive
