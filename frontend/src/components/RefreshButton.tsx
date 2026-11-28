@@ -1,10 +1,17 @@
 import { useEffect, useState } from "react";
 
 import { useOfflineMode } from "@/hooks/useOfflineMode";
-import { applyUpdateNow, getUpdateState, subscribeUpdate } from "@/offline/appUpdate";
+import {
+  applyUpdateNow,
+  getUpdateState,
+  subscribeUpdate,
+  updateBlockReason,
+} from "@/offline/appUpdate";
+import { getSyncState } from "@/offline/syncWorker";
 
 const LABEL_UPDATE = "มีเวอร์ชันใหม่ กดเพื่ออัปเดต";
 const LABEL_REFRESH = "รีเฟรช";
+const CONFIRM_TEXT = "มีข้อมูลที่ยังไม่บันทึก ต้องการรีเฟรชหรือไม่?";
 const LABEL_OFFLINE = "ออฟไลน์ - โหลดจากแคช";
 
 export function RefreshButton({ reload }: { reload?: () => void }) {
@@ -31,6 +38,10 @@ export function RefreshButton({ reload }: { reload?: () => void }) {
   const doReload = reload ?? (() => window.location.reload());
 
   const onClick = async () => {
+    // Same guard as the update notice; here the operator may override it, but
+    // only after confirming -- before update()/SKIP_WAITING can reload the page.
+    const block = await updateBlockReason(getSyncState().status === "running");
+    if (block && !window.confirm(CONFIRM_TEXT)) return;
     try {
       const reg = await navigator.serviceWorker?.getRegistration?.();
       if (reg) {

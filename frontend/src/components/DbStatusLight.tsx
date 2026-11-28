@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export type DbState = "online" | "offline" | "db_down";
 
 const POLL_MS = 30_000;
+const TIMEOUT_MS = 5_000;
 
 const VIEW: Record<DbState, { label: string; title: string; color: string }> = {
   online: {
@@ -26,11 +27,15 @@ const VIEW: Record<DbState, { label: string; title: string; color: string }> = {
 // HTTP status is used; the body (incl. redis) is never read or displayed.
 async function checkReady(): Promise<DbState> {
   if (typeof navigator !== "undefined" && navigator.onLine === false) return "offline";
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch("/api/v1/ready", { cache: "no-store" });
+    const res = await fetch("/api/v1/ready", { cache: "no-store", signal: ctrl.signal });
     return res.ok ? "online" : "db_down";
   } catch {
     return navigator.onLine === false ? "offline" : "db_down";
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -39,8 +44,15 @@ export function DbStatusLight() {
     typeof navigator !== "undefined" && navigator.onLine === false ? "offline" : "online",
   );
 
+  const inFlight = useRef(false);
   const refresh = useCallback(() => {
-    void checkReady().then(setState);
+    if (inFlight.current) return;
+    inFlight.current = true;
+    void checkReady()
+      .then(setState)
+      .finally(() => {
+        inFlight.current = false;
+      });
   }, []);
 
   useEffect(() => {

@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { resetAppUpdate, setUpdateReady } from "@/offline/appUpdate";
+import { registerFormDirty, resetAppUpdate, setUpdateReady } from "@/offline/appUpdate";
 import { RefreshButton } from "./RefreshButton";
 
 function setReg(reg: unknown) {
@@ -14,7 +14,34 @@ function setOnline(v: boolean) {
   Object.defineProperty(navigator, "onLine", { value: v, configurable: true });
 }
 
+vi.mock("@/offline/offlineStore", () => ({
+  listAllActiveOutboxCount: vi.fn().mockResolvedValue(0),
+}));
+
 describe("RefreshButton", () => {
+  it("dirty form: cancel keeps page, confirm proceeds", async () => {
+    const waiting = { postMessage: vi.fn() };
+    const update = vi.fn().mockResolvedValue(undefined);
+    setReg({ update, waiting });
+    const reload = vi.fn();
+    registerFormDirty(Symbol("f"), true);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<RefreshButton reload={reload} />);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("refresh-button"));
+    });
+    expect(confirm).toHaveBeenCalledWith("มีข้อมูลที่ยังไม่บันทึก ต้องการรีเฟรชหรือไม่?");
+    expect(reload).not.toHaveBeenCalled();
+    expect(waiting.postMessage).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+    confirm.mockReturnValue(true);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("refresh-button"));
+    });
+    expect(waiting.postMessage).toHaveBeenCalled();
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
   beforeEach(() => {
     resetAppUpdate();
     setOnline(true);

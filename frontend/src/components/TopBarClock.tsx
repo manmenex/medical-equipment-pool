@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 const TZ = "Asia/Bangkok";
-const TICK_MS = 30_000;
+const TICK_MS = 60_000;
 
 export function formatBangkokClock(now: Date): { date: string; time: string } {
   const parts = new Intl.DateTimeFormat("en-GB", {
@@ -24,8 +24,16 @@ export function formatBangkokClock(now: Date): { date: string; time: string } {
 export function TopBarClock() {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), TICK_MS);
-    return () => clearInterval(t);
+    let interval: ReturnType<typeof setInterval> | undefined;
+    // Align to the next minute boundary, then tick every 60 s.
+    const timeout = setTimeout(() => {
+      setNow(new Date());
+      interval = setInterval(() => setNow(new Date()), TICK_MS);
+    }, TICK_MS - (Date.now() % TICK_MS));
+    return () => {
+      clearTimeout(timeout);
+      if (interval) clearInterval(interval);
+    };
   }, []);
   const { date, time } = formatBangkokClock(now);
   return (

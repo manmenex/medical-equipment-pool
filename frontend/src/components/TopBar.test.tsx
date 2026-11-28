@@ -58,6 +58,28 @@ describe("DbStatusLight", () => {
     expect(screen.getByTestId("db-status")).toHaveAttribute("data-state", "db_down");
   });
 
+  it("hung request times out to red after 5 s and does not overlap polls", async () => {
+    const f = vi.fn(
+      (_u: string, init: RequestInit) =>
+        new Promise((_, rej) => {
+          init.signal?.addEventListener("abort", () => rej(new DOMException("a", "AbortError")));
+        }),
+    );
+    vi.stubGlobal("fetch", f);
+    render(<DbStatusLight />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4_000);
+    });
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(f).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500);
+    });
+    expect(screen.getByTestId("db-status")).toHaveAttribute("data-state", "db_down");
+  });
+
   it("re-polls every 30 s and reacts to offline/online events", async () => {
     const f = vi.fn().mockResolvedValue({ ok: true, status: 200 });
     vi.stubGlobal("fetch", f);
@@ -96,12 +118,25 @@ describe("TopBarClock", () => {
     });
   });
 
+  it("ticks on the minute boundary", () => {
+    vi.setSystemTime(new Date("2026-11-28T01:45:50Z"));
+    render(<TopBarClock />);
+    act(() => {
+      vi.advanceTimersByTime(9_000);
+    });
+    expect(screen.getByTestId("clock-time")).toHaveTextContent("08:45");
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(screen.getByTestId("clock-time")).toHaveTextContent("08:46");
+  });
+
   it("renders full text, ticks every 30 s, and has a compact HH:mm part", () => {
     vi.setSystemTime(new Date("2026-11-28T01:45:00Z"));
     render(<TopBarClock />);
     expect(screen.getByTestId("top-bar-clock")).toHaveTextContent("28/11/2569 08:45");
     act(() => {
-      vi.advanceTimersByTime(30_000 * 2);
+      vi.advanceTimersByTime(60_000);
     });
     expect(screen.getByTestId("clock-time")).toHaveTextContent("08:46");
     expect(screen.getByTestId("clock-date").className).toMatch(/hidden\s+sm:inline/);
