@@ -178,7 +178,7 @@ Every other export, report, print, log, notification and the legacy sheet sync s
 ## Long-outstanding dispatch report (Owner Governance 2026-11-28, D30)
 
 - A **read-only report** lists open dispatches whose age exceeds a threshold. Age is time since `borrowed_at`. The threshold defaults to 7 days and can be changed on the report page.
-- Rows are grouped by ward and show device, BCM code, ward, dispatch time, age in days, and the BME keyer label. Each row also shows whether HN is present (yes/no only, never the value).
+- Rows are grouped by ward and show device, BCM code, ward, dispatch time, age in days, and the BME keyer label. On screen only, each row also shows whether HN is present (yes/no only, never the value); the print view and copy text omit it.
 - A "Copy text" button produces a LINE-ready summary with no HN. A print view is available. Voided transactions (D28) and demo/loan devices returned to their owner are excluded.
 - This is **not** a due-date or overdue workflow:
   - there is no due date;
