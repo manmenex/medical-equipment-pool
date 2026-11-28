@@ -93,25 +93,25 @@ export function BorrowPage() {
       if (itemsRef.current.some((i) => i.equipmentId === eq.id)) {
         // D28 layer 1: a device scanned twice in one batch is flagged at once, never added twice.
         setNotice(`⚠ ${label} สแกนซ้ำ อยู่ในรายการแล้ว`);
-        return;
+        return `⚠ ${label} สแกนซ้ำ อยู่ในรายการแล้ว`;
       }
       let check: DispatchCheck | null = null;
       if (!offline) {
         check = await getDispatchCheck(eq.id);
         if (check.warning === "returned_to_owner") {
           setNotice(`⛔ ${label} คืนผู้ให้ยืมแล้ว ไม่ถูกเพิ่ม`);
-          return;
+          return `⛔ ${label} คืนผู้ให้ยืมแล้ว ไม่ถูกเพิ่ม`;
         }
         if (check.warning === "decommissioned" || !check.dispatchable) {
           setNotice(`⛔ ${label} ปลดระวางแล้ว ไม่ถูกเพิ่ม`);
-          return;
+          return `⛔ ${label} ปลดระวางแล้ว ไม่ถูกเพิ่ม`;
         }
       } else if (eq.returned_to_owner_at) {
         setNotice(`⛔ ${label} คืนผู้ให้ยืมแล้ว ไม่ถูกเพิ่ม`);
-        return;
+        return `⛔ ${label} คืนผู้ให้ยืมแล้ว ไม่ถูกเพิ่ม`;
       } else if (eq.status === "decommissioned") {
         setNotice(`⛔ ${label} ปลดระวางแล้ว ไม่ถูกเพิ่ม`);
-        return;
+        return `⛔ ${label} ปลดระวางแล้ว ไม่ถูกเพิ่ม`;
       }
       const kind: ChecklistKind = check?.checklist_kind ?? (offline ? await cachedChecklistKind(eq.id) : "standard");
       setNotice(null);
@@ -176,9 +176,11 @@ export function BorrowPage() {
     async (raw: string) => {
       try {
         const eq = await resolveEquipmentByQr(raw);
-        await addEquipment(eq);
+        return await addEquipment(eq);
       } catch (err) {
-        setNotice(`⛔ ${apiErrorMessage(err, "ไม่พบเครื่องมือจาก QR ที่สแกน")} ไม่ถูกเพิ่ม`);
+        const m = `⛔ ${apiErrorMessage(err, "ไม่พบเครื่องมือจาก QR ที่สแกน")} ไม่ถูกเพิ่ม`;
+        setNotice(m);
+        return m;
       }
     },
     [addEquipment],
@@ -336,7 +338,7 @@ export function BorrowPage() {
 
       <section className="surface rounded-xl border p-3" aria-label="สแกนเครื่อง">
         <h2 className="mb-2 text-sm font-semibold">สแกนเครื่อง ({items.length} เครื่อง)</h2>
-        <ScanBar onBcm={(t) => void addByBcm(t)} onQr={(r) => void addByQr(r)} busy={adding} offline={offline} />
+        <ScanBar onBcm={(t) => void addByBcm(t)} onQr={(r) => addByQr(r)} busy={adding} offline={offline} />
         {notice && (
           <p role="alert" className="mt-2 rounded-lg bg-status-repair/10 px-3 py-2 text-sm text-status-repair">
             {notice}

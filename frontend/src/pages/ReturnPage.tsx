@@ -116,7 +116,7 @@ export function ReturnPage() {
         // D28 layer 1: a device scanned twice in one batch is flagged at once, never added twice.
         setSwitchPrompt(null);
         setNotice(`⚠ ${label} สแกนซ้ำ อยู่ในรายการแล้ว`);
-        return;
+        return `⚠ ${label} สแกนซ้ำ อยู่ในรายการแล้ว`;
       }
       let item: ReceiptItem | null = null;
       if (offline) {
@@ -151,11 +151,11 @@ export function ReturnPage() {
         if (!offline && fresh === "available_at_pool") {
           setNotice(null);
           setSwitchPrompt(eq.id);
-          return;
+          return `${label} ยังไม่ได้ถูกจ่ายออก ต้องเลือกสลับไปเบิก`;
         }
         setSwitchPrompt(null);
         setNotice(`⛔ ${label} ไม่ได้ถูกจ่ายออกไป ไม่ถูกเพิ่ม`);
-        return;
+        return `⛔ ${label} ไม่ได้ถูกจ่ายออกไป ไม่ถูกเพิ่ม`;
       }
       setSwitchPrompt(null);
       setNotice(null);
@@ -204,9 +204,11 @@ export function ReturnPage() {
   const addByQr = useCallback(
     async (raw: string) => {
       try {
-        await addEquipment(await resolveEquipmentByQr(raw));
+        return await addEquipment(await resolveEquipmentByQr(raw));
       } catch (err) {
-        setNotice(`⛔ ${apiErrorMessage(err, "ไม่พบเครื่องมือจาก QR ที่สแกน")} ไม่ถูกเพิ่ม`);
+        const m = `⛔ ${apiErrorMessage(err, "ไม่พบเครื่องมือจาก QR ที่สแกน")} ไม่ถูกเพิ่ม`;
+        setNotice(m);
+        return m;
       }
     },
     [addEquipment],
@@ -380,7 +382,7 @@ export function ReturnPage() {
 
           <section className="surface rounded-xl border p-3" aria-label="สแกนเครื่อง">
             <h2 className="mb-2 text-sm font-semibold">สแกนเครื่อง ({items.length} เครื่อง)</h2>
-            <ScanBar onBcm={(t) => void addByBcm(t)} onQr={(r) => void addByQr(r)} busy={adding} offline={offline} />
+            <ScanBar onBcm={(t) => void addByBcm(t)} onQr={(r) => addByQr(r)} busy={adding} offline={offline} />
             {notice && (
               <p role="alert" className="mt-2 rounded-lg bg-status-repair/10 px-3 py-2 text-sm text-status-repair">
                 {notice}

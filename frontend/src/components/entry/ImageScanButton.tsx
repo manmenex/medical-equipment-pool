@@ -2,7 +2,8 @@ import { useRef, useState } from "react";
 
 interface ImageScanButtonProps {
   /** Same handler a camera scan uses, so lookup/duplicate/offline rules apply. */
-  onScan: (text: string) => void;
+  /** May resolve to a reason string when the scan raised a blocking prompt/notice. */
+  onScan: (text: string) => unknown;
   /** Decoder is injectable for tests; defaults to the lazy-loaded zxing one. */
   decode?: (file: File) => Promise<string[]>;
 }
@@ -11,6 +12,8 @@ interface Summary {
   codes: number;
   total: number;
   failed: string[];
+  /** Codes whose scan flow raised a blocking prompt/notice: staff must check by hand. */
+  review: { code: string; reason: string }[];
 }
 
 async function defaultDecode(file: File): Promise<string[]> {
@@ -32,6 +35,7 @@ export function ImageScanButton({ onScan, decode = defaultDecode }: ImageScanBut
     setSummary(null);
     const seen = new Set<string>();
     const failed: string[] = [];
+    const review: { code: string; reason: string }[] = [];
     let codes = 0;
     for (let i = 0; i < files.length; i++) {
       setProgress({ done: i + 1, total: files.length });
@@ -46,11 +50,18 @@ export function ImageScanButton({ onScan, decode = defaultDecode }: ImageScanBut
         if (seen.has(raw)) continue;
         seen.add(raw);
         codes++;
-        onScan(raw);
+        // Await each scan so one code's prompt/notice finishes before the next
+        // starts; blocked codes are listed in the summary, not left to overwrite.
+        try {
+          const reason = await onScan(raw);
+          if (typeof reason === "string" && reason) review.push({ code: raw, reason });
+        } catch {
+          review.push({ code: raw, reason: "เพิ่มไม่สำเร็จ" });
+        }
       }
     }
     setProgress(null);
-    setSummary({ codes, total: files.length, failed });
+    setSummary({ codes, total: files.length, failed, review });
   };
 
   return (
@@ -90,6 +101,18 @@ export function ImageScanButton({ onScan, decode = defaultDecode }: ImageScanBut
                 </li>
               ))}
             </ul>
+          )}
+          {summary.review.length > 0 && (
+            <div className="mt-1">
+              <p className="font-medium">ต้องตรวจเอง</p>
+              <ul className="list-disc pl-5 text-amber-400">
+                {summary.review.map((r, i) => (
+                  <li key={`${r.code}-${i}`} className="break-all">
+                    {r.code} · {r.reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
       )}

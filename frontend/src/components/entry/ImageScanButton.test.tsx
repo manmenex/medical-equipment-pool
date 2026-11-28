@@ -26,6 +26,27 @@ describe("ImageScanButton", () => {
     expect(decode).toHaveBeenCalledTimes(4);
   });
 
+  it("awaits each scan and lists every blocked code in the summary", async () => {
+    const order: string[] = [];
+    const onScan = vi.fn(async (code: string) => {
+      order.push(`start ${code}`);
+      await new Promise((r) => setTimeout(r, 5));
+      order.push(`end ${code}`);
+      if (code === "DUP") return "⚠ DUP สแกนซ้ำ";
+      if (code === "OUT") return "ยังไม่ได้ถูกจ่ายออก ต้องเลือกสลับไปเบิก";
+      return undefined;
+    });
+    const decode = async (f: File) => [f.name.replace(".jpg", "")];
+    render(<ImageScanButton onScan={onScan} decode={decode} />);
+    fireEvent.change(screen.getByTestId("image-scan-input"), {
+      target: { files: [file("OK.jpg"), file("DUP.jpg"), file("OUT.jpg")] },
+    });
+    await waitFor(() => expect(screen.getByText("ต้องตรวจเอง")).toBeTruthy());
+    expect(screen.getByText(/DUP · ⚠ DUP สแกนซ้ำ/)).toBeTruthy();
+    expect(screen.getByText(/OUT · ยังไม่ได้ถูกจ่ายออก/)).toBeTruthy();
+    expect(order).toEqual(["start OK", "end OK", "start DUP", "end DUP", "start OUT", "end OUT"]);
+  });
+
   it("treats a decoder error as a failed image and persists nothing", async () => {
     const setItem = vi.spyOn(Storage.prototype, "setItem");
     const onScan = vi.fn();

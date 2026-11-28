@@ -1,42 +1,73 @@
 import { BrowserQRCodeReader } from "@zxing/browser";
 import { DecodeHintType } from "@zxing/library";
 
-// Decodes a code from a photo entirely in the browser. The image is drawn to
-// a transient canvas and released straight away: nothing is uploaded, stored
-// or logged. zxing's QR reader finds one code per image (the library ships no
-// multi-QR reader), so each photo yields at most one code.
-const MAX_SIDE = 2000;
+// Decodes a code from a photo entirely in the browser. Nothing is uploaded,
+// stored or logged. zxing's QR reader finds one code per image (the library
+// ships no multi-QR reader), so each photo yields at most one code.
+//
+// Memory: a 48 MP photo is never decoded at full size. Each pass asks the
+// browser for a bitmap already resized to a capped long side
+// (createImageBitmap resize options), or, where those are unsupported, draws
+// the <img> straight into a capped canvas. Pass 1 caps at FAST_SIDE; the
+// retry caps at RETRY_SIDE. Everything is released after each image.
+export const FAST_SIDE = 2000;
+export const RETRY_SIDE = 3000;
 
-async function loadBitmap(file: Blob): Promise<{ source: CanvasImageSource; w: number; h: number; close: () => void }> {
-  if (typeof createImageBitmap === "function") {
-    const bmp = await createImageBitmap(file);
-    return { source: bmp, w: bmp.width, h: bmp.height, close: () => bmp.close() };
-  }
-  const url = URL.createObjectURL(file);
-  try {
+function loadImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
     const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("image load failed"));
     img.src = url;
-    await img.decode();
-    return { source: img, w: img.naturalWidth, h: img.naturalHeight, close: () => undefined };
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+  });
 }
 
-function tryDecode(reader: BrowserQRCodeReader, source: CanvasImageSource, w: number, h: number, scale: number): string | null {
+async function resizedSource(
+  img: HTMLImageElement,
+  file: Blob,
+  w: number,
+  h: number,
+): Promise<{ source: CanvasImageSource; close: () => void }> {
+  const resized = w !== img.naturalWidth || h !== img.naturalHeight;
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bmp = resized
+        ? await createImageBitmap(file, { resizeWidth: w, resizeHeight: h, resizeQuality: "high" })
+        : await createImageBitmap(file);
+      return { source: bmp, close: () => bmp.close() };
+    } catch {
+      // resize options unsupported: fall through to the <img> path.
+    }
+  }
+  return { source: img, close: () => undefined };
+}
+
+async function decodePass(
+  reader: BrowserQRCodeReader,
+  img: HTMLImageElement,
+  file: Blob,
+  cap: number,
+): Promise<string | null> {
+  const nw = img.naturalWidth;
+  const nh = img.naturalHeight;
+  const scale = Math.min(1, cap / Math.max(nw, nh));
+  const w = Math.max(1, Math.round(nw * scale));
+  const h = Math.max(1, Math.round(nh * scale));
+  const { source, close } = await resizedSource(img, file, w, h);
   const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(w * scale));
-  canvas.height = Math.max(1, Math.round(h * scale));
+  canvas.width = w;
+  canvas.height = h;
   try {
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
-    ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(source, 0, 0, w, h);
     return reader.decodeFromCanvas(canvas).getText();
   } catch {
     return null;
   } finally {
     canvas.width = 0;
     canvas.height = 0;
+    close();
   }
 }
 
@@ -44,22 +75,21 @@ function tryDecode(reader: BrowserQRCodeReader, source: CanvasImageSource, w: nu
 export async function decodeImageFile(file: Blob): Promise<string[]> {
   const hints = new Map<DecodeHintType, unknown>([[DecodeHintType.TRY_HARDER, true]]);
   const reader = new BrowserQRCodeReader(hints);
-  let bmp;
+  const url = URL.createObjectURL(file);
+  let img: HTMLImageElement | null = null;
   try {
-    bmp = await loadBitmap(file);
-  } catch {
-    return [];
-  }
-  try {
-    const long = Math.max(bmp.w, bmp.h);
-    // Very large photos: try the downscaled copy first (fast), then natural size.
-    const scales = long > MAX_SIDE ? [MAX_SIDE / long, 1] : [1];
-    for (const s of scales) {
-      const text = tryDecode(reader, bmp.source, bmp.w, bmp.h, s);
+    img = await loadImage(url);
+    const long = Math.max(img.naturalWidth, img.naturalHeight);
+    const caps = long > FAST_SIDE ? [FAST_SIDE, RETRY_SIDE] : [FAST_SIDE];
+    for (const cap of caps) {
+      const text = await decodePass(reader, img, file, cap);
       if (text) return [text];
     }
     return [];
+  } catch {
+    return [];
   } finally {
-    bmp.close();
+    if (img) img.src = "";
+    URL.revokeObjectURL(url);
   }
 }
