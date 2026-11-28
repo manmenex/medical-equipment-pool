@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { StatCardsSkeleton } from "@/components/Skeleton";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -110,7 +111,7 @@ export function DashboardPage() {
         ))}
       </div>
 
-      {isLoading && <p className="text-sm text-[var(--text-muted)]">กำลังโหลด...</p>}
+      {isLoading && <StatCardsSkeleton />}
 
       {isError && (
         <div className="flex flex-col items-start gap-2">

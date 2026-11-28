@@ -220,3 +220,88 @@ select optgroup {
 select option:disabled {
   color: var(--text-muted);
 }
+
+/* ---- Subtle motion (simple and fast). transform/opacity only; never layout
+   properties. All motion lives under no-preference, so `reduce` gets none. ---- */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: 0.5rem;
+  background-color: var(--divider);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes page-enter {
+    from { opacity: 0; transform: translateY(5px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes pop-in {
+    from { opacity: 0; transform: scale(0.97); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes slide-up-in {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes slide-down-in {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes skeleton-shimmer {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(100%); }
+  }
+
+  .page-enter { animation: page-enter 170ms ease-out both; }
+
+  /* Dialogs: backdrop fades, the first child panel scales in. */
+  [role="dialog"][aria-modal="true"] { animation: fade-in 150ms ease-out both; }
+  [role="dialog"][aria-modal="true"] > * { animation: pop-in 150ms ease-out both; }
+  /* Toasts (incl. the undo toast) slide up; banners slide down. */
+  .fixed[role="status"] { animation: slide-up-in 170ms ease-out both; }
+  [role="alert"][aria-label="สถานะระบบ"],
+  [role="status"].border-b { animation: slide-down-in 170ms ease-out both; }
+
+  .skeleton::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, var(--surface), transparent);
+    opacity: 0.55;
+    animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  }
+
+  /* Press feedback + quick colour transitions on buttons and tappable cards. */
+  button,
+  a > .surface,
+  [role="button"] {
+    transition: background-color 100ms ease-out, border-color 100ms ease-out,
+      color 100ms ease-out, box-shadow 100ms ease-out, transform 100ms ease-out;
+  }
+  button:not(:disabled):active,
+  a > .surface:active,
+  [role="button"]:active {
+    transform: scale(0.97);
+  }
+}
+
+/* Print: no animation or transition, ever. */
+@media print {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+.print-root,
+.print-root *,
+.print-root *::before,
+.print-root *::after {
+  animation: none !important;
+  transition: none !important;
+}

@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
+import { PageTransition } from "@/components/PageTransition";
 import { UpdateNotice } from "@/components/UpdateNotice";
 import { DbStatusLight } from "@/components/DbStatusLight";
 import { RefreshButton } from "@/components/RefreshButton";
@@ -169,7 +170,9 @@ export function AppShell() {
         </header>
 
         <main className="flex-1 overflow-y-auto p-4 pb-20 md:pb-4">
-          <Outlet />
+          <PageTransition>
+            <Outlet />
+          </PageTransition>
         </main>
 
         <nav aria-label="เมนูหลัก" className="surface fixed inset-x-0 bottom-0 flex border-t md:hidden">

@@ -1,4 +1,5 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { ListSkeleton } from "@/components/Skeleton";
 import { useMemo, useState } from "react";
 
 import {
@@ -341,6 +342,7 @@ export function MonitorPage() {
             อัปเดตล่าสุด {updatedAt ? hhmmss(new Date(updatedAt)) : "--:--:--"}
           </p>
 
+          {active.isLoading && <ListSkeleton rows={5} rowClassName="h-12" />}
           {active.isError && <p role="alert">ไม่สามารถโหลดข้อมูลได้</p>}
           {!active.isLoading && !active.isError && groups.length === 0 && (
             <p>ไม่มีรายการ</p>

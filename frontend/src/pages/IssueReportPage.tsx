@@ -1,4 +1,5 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
+import { ListSkeleton } from "@/components/Skeleton";
 import { useLocation } from "react-router-dom";
 
 import { ReportFilterBar } from "@/components/ReportFilterBar";
@@ -64,7 +65,7 @@ export function IssueReportPage() {
       <ReportFilterBar />
 
       <div className="surface rounded-xl border p-4">
-        {isLoading && <p className="text-sm text-[var(--text-muted)]">กำลังโหลดรายงานการเบิก...</p>}
+        {isLoading && <ListSkeleton rows={5} rowClassName="h-9" label="กำลังโหลดรายงานการเบิก..." />}
         {isError && (
           <div className="flex flex-col items-start gap-2">
             <p className="text-sm text-status-repair">{apiErrorMessage(error, "ไม่สามารถโหลดรายงานการเบิกได้")}</p>
