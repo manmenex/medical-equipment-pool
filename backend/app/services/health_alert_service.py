@@ -91,7 +91,7 @@ async def compute_alerts(db: AsyncSession, now: datetime | None = None, env=None
     if failed is not None:
         alerts.append(_alert(
             "restore_drill_failed", "high",
-            "ระบบทดสอบกู้คืนรายเดือนมีปัญหา: ไม่ผ่าน 5 ครั้งในเดือนนี้ ตรวจไฟล์ logs\\restore-drill",
+            "ระบบทดสอบกู้คืนรายเดือนมีปัญหา: ไม่ผ่านครบ 5 ครั้ง (แจ้งเตือนจะหายเมื่อทดสอบผ่าน) ตรวจไฟล์ logs\\restore-drill",
             failed.beat_at,
         ))
     # f. last PASS older than 40 days (only once a PASS has ever been recorded)

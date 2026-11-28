@@ -103,7 +103,7 @@ async def test_restore_drill_alert_raise_and_clear(db_session):
     alerts = await svc.compute_alerts(db_session, NOW, env={})
     assert _codes(alerts) == ["restore_drill_failed"]
     assert alerts[0]["severity"] == "high"
-    assert alerts[0]["message_th"] == "ระบบทดสอบกู้คืนรายเดือนมีปัญหา: ไม่ผ่าน 5 ครั้งในเดือนนี้ ตรวจไฟล์ logs\\restore-drill"
+    assert alerts[0]["message_th"] == "ระบบทดสอบกู้คืนรายเดือนมีปัญหา: ไม่ผ่านครบ 5 ครั้ง (แจ้งเตือนจะหายเมื่อทดสอบผ่าน) ตรวจไฟล์ logs\\restore-drill"
     await record(db_session, "restore_drill", "fail")  # idempotent update, still one alert
     assert _codes(await svc.compute_alerts(db_session, NOW, env={})) == ["restore_drill_failed"]
     await record(db_session, "restore_drill", "pass")

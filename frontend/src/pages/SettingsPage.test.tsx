@@ -42,7 +42,7 @@ describe("SettingsPage hub", () => {
   const DRILL_ALERT = {
     code: "restore_drill_failed",
     severity: "high",
-    message_th: "ระบบทดสอบกู้คืนรายเดือนมีปัญหา: ไม่ผ่าน 5 ครั้งในเดือนนี้ ตรวจไฟล์ logs\\restore-drill",
+    message_th: "ระบบทดสอบกู้คืนรายเดือนมีปัญหา: ไม่ผ่านครบ 5 ครั้ง (แจ้งเตือนจะหายเมื่อทดสอบผ่าน) ตรวจไฟล์ logs\\restore-drill",
     since: null,
   };
 
