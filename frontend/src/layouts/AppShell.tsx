@@ -3,6 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
 import { UpdateNotice } from "@/components/UpdateNotice";
+import { DbStatusLight } from "@/components/DbStatusLight";
+import { RefreshButton } from "@/components/RefreshButton";
+import { TopBarClock } from "@/components/TopBarClock";
 import { OfflineStatusChip } from "@/components/OfflineStatusChip";
 import {
   canDispatchOrReceiveEquipment,
@@ -143,7 +146,10 @@ export function AppShell() {
           <div className="hidden text-sm text-[var(--text-muted)] md:block">
             {user ? `${user.full_name} · ${roleLabel(user.role)}` : ""}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-1">
+            <DbStatusLight />
+            <RefreshButton />
+            <TopBarClock />
             <OfflineStatusChip />
             <button
               onClick={toggleTheme}

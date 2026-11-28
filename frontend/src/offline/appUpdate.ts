@@ -91,6 +91,19 @@ export async function applyUpdateIfSafe(
   return null;
 }
 
+/**
+ * Explicit operator refresh (top-bar button): activate the waiting worker (if
+ * any, via updateSW) or reload. Only the page reloads -- the IndexedDB outbox
+ * and caches are never cleared, so queued ops survive.
+ */
+export async function applyUpdateNow(reload: () => void = () => window.location.reload()): Promise<void> {
+  if (applyFn) {
+    await applyFn();
+    return;
+  }
+  reload();
+}
+
 /** Test hook. */
 export function resetAppUpdate(): void {
   state = { ready: false, required: false };
