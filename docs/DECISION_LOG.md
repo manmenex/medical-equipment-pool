@@ -9661,3 +9661,21 @@ opening-balance transactions are created.
   and logs. Hospital legal/IT review is recommended.
 - **Source:** Owner decisions in chat, 2026-11-27. Docs-only Governance PR.
 - **Status:** Approved; implementation follows.
+
+## 2026-11-28 — Long-outstanding dispatch report
+
+- **Decision (Owner, in chat, 2026-11-28):** **D30**, a read-only report of
+  open dispatches older than a threshold. The threshold defaults to 7 days and
+  can be changed on the page. Rows are grouped by ward. The page offers a
+  LINE copy text and a print view. HN is never shown; only "has HN: yes/no"
+  is shown. Voided transactions and demo/loan devices returned to owner are
+  excluded.
+- **Not changed:** there is still no due date, no overdue status or flag, and
+  no automatic notification, reminder or escalation. The transaction
+  lifecycle is unchanged, and the "no due-date/overdue workflow" rule
+  otherwise stands.
+- **Amends:** BUSINESS_RULES "Dispatch/Return owns transaction lifecycle"
+  (overdue sentence) gains a pointer to this narrow exception.
+- **Source:** Owner choice in chat, 2026-11-28 (suggestion list items ข and
+  ง). Docs-only Governance PR.
+- **Status:** Approved; implementation follows.
