@@ -6,15 +6,13 @@ export const queryClient = new QueryClient({
     queries: {
       retry: 1,
       refetchOnWindowFocus: false,
-      // Transactional lists: short freshness window so returning to a page
-      // paints cached data instantly and refetches in the background.
-      staleTime: 15_000,
+      // staleTime stays 0 (default) for every transactional/status key.
     },
   },
 });
 
 // Reference data changes rarely (admin edits invalidate these keys).
 // None of these carry HN.
-for (const key of ["wards", "categories", "users"]) {
+for (const key of ["wards", "categories", "departments", "users"]) {
   queryClient.setQueryDefaults([key], { staleTime: 5 * 60_000 });
 }
