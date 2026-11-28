@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 
+import { ImageScanButton } from "@/components/entry/ImageScanButton";
 import { QRScanner } from "@/components/QRScanner";
 
 interface ScanBarProps {
@@ -71,6 +72,7 @@ export function ScanBar({ onBcm, onQr, busy, offline }: ScanBarProps) {
           </button>
         )}
       </div>
+      {!offline && <ImageScanButton onScan={handleScan} />}
       {!offline && scanning && <QRScanner active onScan={handleScan} />}
     </div>
   );
