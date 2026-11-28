@@ -53,8 +53,11 @@ verification passes.
 
 ## TD-003 — No required PostgreSQL CI workflow
 
-- **Description:** PostgreSQL-backed tests exist, but the repository currently
-  has no tracked GitHub Actions workflow requiring them on PRs.
+- **Status note (as of 2026-11-28):** `.github/workflows/ci.yml` now exists and
+  runs the PostgreSQL job, but branch protection does not require it (see
+  `docs/KNOWN_LIMITATIONS.md`); the item stays open until it does.
+- **Description (original, 2026-07-17):** PostgreSQL-backed tests exist, but the repository then
+  had no tracked GitHub Actions workflow requiring them on PRs.
 - **Operational impact:** PR descriptions may report local PostgreSQL evidence,
   but the repository does not independently enforce it.
 - **Why deferred:** CI infrastructure is outside Roadmap PR3 and this Governance

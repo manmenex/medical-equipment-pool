@@ -11,6 +11,9 @@ PM, calibration, recalls, or the hospital-wide asset lifecycle. See
 
 ## Start here
 
+0. [`docs/BUSINESS_RULES.md`](docs/BUSINESS_RULES.md) — start with "Current
+   rules at a glance"; for a one-file orientation use
+   [`knowledge/PROJECT_MEMORY.md`](knowledge/PROJECT_MEMORY.md)
 1. [`docs/OVERVIEW.md`](docs/OVERVIEW.md) — what the system is, what it does
    and does not do, and where the project stands (non-technical, Thai)
 2. [`docs/ROADMAP.md`](docs/ROADMAP.md) — single source of project status,
@@ -38,7 +41,9 @@ and are not governance authority.
 ```text
 backend/    FastAPI, SQLAlchemy, Alembic, pytest
 frontend/   React, TypeScript, Vite PWA
-docs/       governance, domain, Roadmap, decisions, prompts, and historical audits
+docs/       governance, domain, Roadmap, decisions, runbooks, prompts, and historical audits
+knowledge/  ADRs, glossary, and the AI-memory snapshot (PROJECT_MEMORY, CONTEXT)
+deployment/ Windows host install/update scripts (local-staging, CES-BCM)
 .github/    Pull Request and issue templates
 ```
 
