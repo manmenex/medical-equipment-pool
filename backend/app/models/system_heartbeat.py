@@ -7,6 +7,10 @@ from app.db.base import Base
 from app.models.mixins import UTCDateTime
 
 HEARTBEAT_LEGACY_SHEET_SYNC = "legacy_sheet_sync"
+# Monthly restore drill (deployment/local-staging) reports via app.scripts.record_ops_status.
+# FAIL row present = alert raised; PASS row = time of the last pass.
+HEARTBEAT_RESTORE_DRILL_FAIL = "restore_drill_fail"
+HEARTBEAT_RESTORE_DRILL_PASS = "restore_drill_pass"
 
 
 class SystemHeartbeat(Base):

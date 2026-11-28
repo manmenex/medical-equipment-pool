@@ -58,6 +58,58 @@ function Test-MepRestoreDrillMonthPassed {
     try { return ((Get-Content -LiteralPath $path -Raw | ConvertFrom-Json).result -eq 'PASS') } catch { return $false }
 }
 
+$Script:RestoreDrillMaxAttempts = 5
+
+function Get-MepRestoreDrillMonthState {
+    <#
+    .SYNOPSIS
+    This month's drill state from YYYY-MM.json: Passed (latest result PASS),
+    Failures (failed attempts recorded) and Attempts (the list).
+    #>
+    param([datetime]$Now = (Get-Date))
+    $state = [pscustomobject]@{ Passed = $false; Failures = 0; Attempts = @() }
+    $path = Get-MepRestoreDrillResultPath -Now $Now
+    if (-not (Test-Path -LiteralPath $path)) { return $state }
+    try {
+        $json = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        $state.Passed = ($json.result -eq 'PASS')
+        $prior = @()
+        if ($json.PSObject.Properties.Name -contains 'attempts') { $prior = @($json.attempts) }
+        elseif ($json.result -eq 'FAIL') { $prior = @([pscustomobject]@{ result = 'FAIL' }) }  # older single-result file
+        $state.Attempts = $prior
+        $state.Failures = @($prior | Where-Object { $_.result -eq 'FAIL' }).Count
+    }
+    catch { }
+    return $state
+}
+
+function Test-MepRestoreDrillCapReached {
+    param([datetime]$Now = (Get-Date))
+    $s = Get-MepRestoreDrillMonthState -Now $Now
+    return ((-not $s.Passed) -and $s.Failures -ge $Script:RestoreDrillMaxAttempts)
+}
+
+function Send-MepRestoreDrillStatus {
+    <#
+    .SYNOPSIS
+    Reports pass/fail to the app (admin Dashboard/Settings banner) through the
+    backend CLI. Best effort: a reporting problem never changes the drill result.
+    #>
+    param([Parameter(Mandatory)] [ValidateSet('pass', 'fail')] [string]$Status, [string]$Detail = '')
+    try {
+        $r = Invoke-DockerCompose -Arguments @(
+            'exec', '-T', 'backend', 'python', '-m', 'app.scripts.record_ops_status',
+            '--code', 'restore_drill', '--status', $Status, '--detail', $Detail
+        ) -AllowNonZeroExit -Phase 'restore-drill-report'
+        if ($r.ExitCode -ne 0) {
+            Write-InstallLog -Phase 'restore-drill' -Level 'WARN' -Message "Could not report restore drill status '$Status' to the app (exit code $($r.ExitCode))."
+        }
+    }
+    catch {
+        Write-InstallLog -Phase 'restore-drill' -Level 'WARN' -Message "Could not report restore drill status '$Status' to the app."
+    }
+}
+
 function Remove-MepLeftoverRestoreDatabases {
     <#
     .SYNOPSIS
@@ -191,8 +243,30 @@ function Invoke-MepRestoreDrill {
     }
     $finished = Get-Date
     $result = New-MepRestoreDrillResult -Started $started -Finished $finished -Source $source -Parsed $parsed -ErrorMessage $err
+    # Attempts list: every attempt this month, so failures are never lost.
+    $month = Get-MepRestoreDrillMonthState -Now $started
+    $entry = [ordered]@{
+        started = $result.started; finished = $result.finished; result = $result.result
+        source = $result.source; elapsed_seconds = $result.elapsed_seconds
+        checksum = $result.checksum; error = $result.error
+    }
+    $attempts = @($month.Attempts) + @([pscustomobject]$entry)
+    $failures = @($attempts | Where-Object { $_.result -eq 'FAIL' }).Count
+    $result['attempts'] = $attempts
+    $result['failures'] = $failures
     $path = Write-MepRestoreDrillResult -Result $result -Now $started
-    $level = if ($result.result -eq 'PASS') { 'INFO' } else { 'ERROR' }
+    if ($result.result -eq 'FAIL') {
+        # Every failure: leave nothing behind (also covers a killed earlier run).
+        try { Remove-MepLeftoverRestoreDatabases | Out-Null }
+        catch { Write-InstallLog -Phase 'restore-drill' -Level 'WARN' -Message 'Post-failure cleanup of rehearsal databases failed.' }
+        if ($failures -ge $Script:RestoreDrillMaxAttempts) {
+            Send-MepRestoreDrillStatus -Status 'fail' -Detail "restore drill failed $failures times in $($started.ToString('yyyy-MM'))"
+        }
+    }
+    else {
+        Send-MepRestoreDrillStatus -Status 'pass' -Detail "restore drill passed $($started.ToString('yyyy-MM'))"
+    }
+    $level =if ($result.result -eq 'PASS') { 'INFO' } else { 'ERROR' }
     Write-InstallLog -Phase 'restore-drill' -Level $level -Message ("Restore drill $($result.result) (source=$source, file=$($result.backup_file), elapsed_seconds=$($result.elapsed_seconds), checksum=$($result.checksum), tables=$(@($result.row_counts.Keys).Count), result_file=$(Split-Path -Leaf $path)).")
     return [pscustomobject]$result
 }

@@ -35,6 +35,10 @@ Write-Host '=== Medical Equipment Pool -- Monthly Restore Drill / ทดสอ�
 
 $lock = $null
 try {
+    if ($Scheduled -and (Test-MepRestoreDrillCapReached)) {
+        Write-InstallLog -Phase 'restore-drill' -Level 'WARN' -Message 'Restore drill skipped: 5 failed attempts already recorded this month; no more attempts until next month. See logs\restore-drill.'
+        exit 0
+    }
     if ($Scheduled -and -not (Test-MepRestoreDrillDue -ResultExistsThisMonth (Test-MepRestoreDrillMonthPassed))) {
         Write-Host 'Not the first Sunday of the month; skipping. / ไม่ใช่วันอาทิตย์แรกของเดือน ข้ามการทดสอบ'
         exit 0

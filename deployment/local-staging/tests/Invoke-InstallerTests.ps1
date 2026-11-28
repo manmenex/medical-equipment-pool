@@ -2720,6 +2720,53 @@ Test-Case 'drill: leftover rehearsal databases are dropped at start; live DB can
     Assert-True (@($r2 -match 'DROP DATABASE').Count -eq 0) 'a database equal to the live name is never dropped'
 }
 
+Test-Case 'drill attempts: failures accumulate in the attempts list; cap at 5 stops scheduled runs' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $true `
+        -ExitCodeRules @(@{ Match = 'restore_postgres.py'; ExitCode = 1; Output = @('[restore] FAIL: checksum mismatch') })
+    $r = Invoke-WithMocks -Context $ctx -Body {
+        $caps = @()
+        for ($i = 1; $i -le 5; $i++) {
+            $caps += (Test-MepRestoreDrillCapReached)
+            Invoke-MepRestoreDrill | Out-Null
+        }
+        $caps += (Test-MepRestoreDrillCapReached)
+        $json = Get-Content -LiteralPath (Get-MepRestoreDrillResultPath) -Raw | ConvertFrom-Json
+        [pscustomobject]@{ Caps = $caps; Json = $json }
+    }
+    Assert-True (@($r.Caps[0..4] | Where-Object { $_ }).Count -eq 0) 'attempts 1-5 must be allowed to run'
+    Assert-True $r.Caps[5] 'after the 5th failure no more attempts that month'
+    Assert-Equal 5 @($r.Json.attempts).Count 'every failed attempt is recorded'
+    Assert-Equal 5 $r.Json.failures 'failure count'
+    Assert-Equal 'FAIL' $r.Json.result 'overall month result stays FAIL'
+}
+
+Test-Case 'drill report: only the 5th failure raises the app alert; PASS clears it; commands are the backend CLI only' {
+    $failRules = @(@{ Match = 'restore_postgres.py'; ExitCode = 1; Output = @('[restore] FAIL: x') })
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $true -ExitCodeRules $failRules
+    $r = Invoke-WithMocks -Context $ctx -Body {
+        $perAttempt = @()
+        for ($i = 1; $i -le 5; $i++) {
+            Invoke-MepRestoreDrill | Out-Null
+            $perAttempt += @($script:RecordedCalls | Where-Object { $_.Args -match 'record_ops_status' }).Count
+        }
+        [pscustomobject]@{ Counts = $perAttempt; Calls = @($script:RecordedCalls | ForEach-Object { $_.Args }) }
+    }
+    Assert-True (($r.Counts[0..3] | Where-Object { $_ -ne 0 }).Count -eq 0) 'no report before the 5th failure'
+    Assert-Equal 1 $r.Counts[4] 'the 5th failure reports once'
+    $call = @($r.Calls -match 'record_ops_status')[0]
+    Assert-True ($call -match 'exec -T backend python -m app\.scripts\.record_ops_status --code restore_drill --status fail') 'fail report via backend exec'
+    Assert-True (-not ($call -match 'postgres|password|secret')) 'report carries no data or secrets'
+
+    $ctx2 = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $true `
+        -ExitCodeRules @(@{ Match = 'restore_postgres.py'; ExitCode = 0; Output = $script:DrillRestoreOutput })
+    $pass = Invoke-WithMocks -Context $ctx2 -Body {
+        Invoke-MepRestoreDrill | Out-Null
+        @($script:RecordedCalls | ForEach-Object { $_.Args } | Where-Object { $_ -match 'record_ops_status' })
+    }
+    Assert-Equal 1 @($pass).Count 'a PASS reports once'
+    Assert-True ($pass[0] -match '--status pass') 'a PASS clears the alert'
+}
+
 Test-Case 'drill: scripts never keep the disposable DB or run down/volume/backup-deleting actions' {
     foreach ($f in 'run-restore-drill.ps1', 'schedule-restore-drill.ps1', 'lib/RestoreDrill.ps1') {
         $lines = @(Get-Content -LiteralPath (Join-Path $script:DeploymentRootForTests $f) | Where-Object { $_ -notmatch '^\s*#' })
