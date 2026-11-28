@@ -2764,7 +2764,7 @@ Test-Case 'drill report: only the 5th failure raises the app alert; PASS clears 
         @($script:RecordedCalls | ForEach-Object { $_.Args } | Where-Object { $_ -match 'record_ops_status' })
     }
     Assert-Equal 1 @($pass).Count 'a PASS reports once'
-    Assert-True ($pass[0] -match '--status pass') 'a PASS clears the alert'
+    Assert-True (@($pass)[0] -match '--status pass') 'a PASS clears the alert'
 }
 
 Test-Case 'drill: scripts never keep the disposable DB or run down/volume/backup-deleting actions' {
