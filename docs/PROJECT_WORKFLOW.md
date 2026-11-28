@@ -108,3 +108,22 @@ assessment.
 | Review format and severity definitions | `docs/prompts/codex-pr-review.md` (used by the reviewer agent) |
 | Git/branch/merge/release policy | `docs/REPOSITORY_STRATEGY.md` |
 | Known process limitations | `docs/KNOWN_LIMITATIONS.md` |
+
+## How to record a rule change
+
+When the Owner changes or adds a business rule, a guardrail, or a data
+format, record it in this order. Domain guardrail, business-rule and Roadmap
+boundary changes need their own Governance PR (`AGENTS.md`); this checklist
+is the content of that PR.
+
+1. Add a new `docs/DECISION_LOG.md` entry (append-only, next free Dx, date,
+   decision, what it amends, source, status). Never edit an older entry.
+2. Update the "Current rules at a glance" list at the top of
+   `docs/BUSINESS_RULES.md` (and the affected detailed section).
+3. Add a "⚠ Amended by Dx: ..." line at the top of each older section the
+   decision partly supersedes; keep the old text as history.
+4. If the rule is a guardrail, update the compact line in `AGENTS.md` and the
+   matching bullet in `docs/ARCHITECTURE_GUARDRAILS.md`.
+5. Update `knowledge/PROJECT_MEMORY.md` (and `knowledge/CONTEXT.md` if the
+   current work or baseline changed) so the fast orientation matches.
+6. Update `docs/ROADMAP.md` if scope, order or status changed.
