@@ -175,7 +175,7 @@ async def test_receive_report_filter_summary_reflects_applied_filters(db_session
     )
     labels = {f.label_th for f in document.metadata.applied_filters}
     assert "ช่วงวันที่ทำการ" in labels
-    assert "หอผู้ป่วย" in labels
+    assert "Ward" in labels
     # No filter summary line for a filter that was never supplied.
     assert "กะ" not in labels
 
@@ -546,8 +546,8 @@ async def test_receive_report_filter_summary_resolves_ward_category_equipment_op
     )
     by_label = {f.label_th: f.value for f in document.metadata.applied_filters}
 
-    assert by_label["หอผู้ป่วย"] == "W-PR18B-H2A"
-    assert by_label["หอผู้ป่วย"] != ward_id
+    assert by_label["Ward"] == "W-PR18B-H2A"
+    assert by_label["Ward"] != ward_id
 
     assert by_label["หมวดหมู่เครื่องมือ"] == "Infusion Devices PR18B-H2"
     assert by_label["หมวดหมู่เครื่องมือ"] != category["id"]
