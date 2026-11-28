@@ -35,6 +35,8 @@ vi.mock("@/services/dashboard", () => ({
   fetchSummary: (...args: unknown[]) => fetchSummary(...args),
 }));
 
+vi.mock("@/services/system", () => ({ fetchHealthAlerts: () => Promise.resolve([]) }));
+
 let mockUser: UserProfile | null = null;
 vi.mock("@/hooks/useAuth", async () => {
   const actual = await vi.importActual<typeof import("@/hooks/useAuth")>("@/hooks/useAuth");

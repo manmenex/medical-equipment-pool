@@ -38,7 +38,7 @@ function makeDocument(overrides: Partial<PrintDocumentOut> = {}): PrintDocumentO
       generated_by_display_name: "สมชาย ใจดี",
       generated_by_user_id: "user-1",
       timezone: "Asia/Bangkok",
-      applied_filters: [{ label_th: "หอผู้ป่วย", value: "Ward A" }],
+      applied_filters: [{ label_th: "Ward", value: "Ward A" }],
       row_count: 1,
       filename_stem: "receive-report_all_all_20260731T031500Z",
     },
@@ -171,7 +171,7 @@ describe("ReportPrintPage", () => {
     expect(await screen.findByText("รายงานการรับคืน")).toBeInTheDocument();
     expect(screen.getByText("สมชาย ใจดี")).toBeInTheDocument();
     expect(screen.getAllByText(/Asia\/Bangkok/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/หอผู้ป่วย/)).toBeInTheDocument();
+    expect(screen.getByText("Ward:", { exact: false, selector: "span" })).toBeInTheDocument();
     expect(screen.getByText("Ward A")).toBeInTheDocument();
     expect(screen.getByText(/พบทั้งหมด 1 รายการ/)).toBeInTheDocument();
   });
