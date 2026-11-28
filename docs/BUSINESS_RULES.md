@@ -56,7 +56,7 @@ Dispatch and receipt (`backend/app/services/borrow_service.py`) are the only pat
 
 **Amended by Owner Governance 2026-11-27 (D28):** a third transaction status `voided` exists for corrections (see "Entry-error prevention and correction" below); equipment states are unchanged.
 
-`BorrowTransaction.status` is `TransactionStatus.OPEN` / `TransactionStatus.CLOSED`, plus `VOIDED` for D28 corrections only (`backend/app/models/transaction.py`; Roadmap PR7; `knowledge/adr/ADR-005-transaction-model.md`), matching `docs/HOSPITAL_DOMAIN_MODEL.md`'s confirmed `OPEN`/`CLOSED` workflow. An overdue (`due_at` passed) transaction remains `OPEN` — the approved MVP business model has no due-date/overdue workflow at all, not a status value and not a notification. The `due_at`-driven overdue notification job (`app.worker.scheduler.check_overdue_returns`) has been removed and is not registered with the scheduler (Codex PR7a review round 1, BLOCKER: the job re-notified on every hourly tick with no de-duplication) — see `knowledge/adr/ADR-005-transaction-model.md` decision 3.
+`BorrowTransaction.status` is `TransactionStatus.OPEN` / `TransactionStatus.CLOSED`, plus `VOIDED` for D28 corrections only (`backend/app/models/transaction.py`; Roadmap PR7; `knowledge/adr/ADR-005-transaction-model.md`), matching `docs/HOSPITAL_DOMAIN_MODEL.md`'s confirmed `OPEN`/`CLOSED` workflow. An overdue (`due_at` passed) transaction remains `OPEN` — the approved MVP business model has no due-date/overdue workflow at all, not a status value and not a notification. (Owner Governance 2026-11-28, D30: a read-only long-outstanding report by dispatch age is allowed; it adds no due date, status or notification.) The `due_at`-driven overdue notification job (`app.worker.scheduler.check_overdue_returns`) has been removed and is not registered with the scheduler (Codex PR7a review round 1, BLOCKER: the job re-notified on every hourly tick with no de-duplication) — see `knowledge/adr/ADR-005-transaction-model.md` decision 3.
 
 **Amended by Owner Governance 2026-11-25 (D2):** `dispatch_type` and `routine_round` are removed from data entry; new dispatches no longer carry them (the columns become nullable and historical values are preserved read-only, never erased or backfilled), so the requirement below that every dispatch carry them no longer applies to new dispatches. Reporting groups by the PR16 `business_date`/`shift` (Day/Night) derived from the event time. Source: `docs/DECISION_LOG.md` (2026-11-25).
 
@@ -174,6 +174,19 @@ Every other export, report, print, log, notification and the legacy sheet sync s
 - **Export API and HN:** the read-only export API includes the `voided` status value so external readers learn about the void. For a correction made after the undo window, the entry may already be in N Smart, so the export API also emits **compensating events** for the external tool to re-key: a voided dispatch yields a correction `receipt` event (the device is received back first, as usual), and a voided receipt yields a correction `dispatch` event. The corrected event (for example, the dispatch on the right device or to the right ward) follows as a normal event. Correction events are marked as such and never carry HN. Every other report excludes voided rows. A voided dispatch's HN stays encrypted and masked, and a reveal is audited as usual. Change device moves the HN server-side to the new transaction and clears it from the voided row. The HN never travels through the client.
 - **Scope and permission:** only the device's **latest** transaction may be voided, re-assigned or switched, so the state restore is unambiguous. Equipment Pool staff may correct their own entries within the same shift (PR16 business date + shift). After that, only an administrator may. All corrections go through the dispatch/receipt services, never through manual status maintenance.
 - Source: `docs/DECISION_LOG.md` (2026-11-27, D28).
+
+## Long-outstanding dispatch report (Owner Governance 2026-11-28, D30)
+
+- A **read-only report** lists open dispatches whose age exceeds a threshold. Age is time since `borrowed_at`. The threshold defaults to 7 days and can be changed on the report page.
+- Rows are grouped by ward and show device, BCM code, ward, dispatch time, age in days, and the BME keyer label. On screen only, each row also shows whether HN is present (yes/no only, never the value); the print view and copy text omit it.
+- A "Copy text" button produces a LINE-ready summary with no HN. A print view is available. Voided transactions (D28) and demo/loan devices returned to their owner are excluded.
+- This is **not** a due-date or overdue workflow:
+  - there is no due date;
+  - there is no "overdue" status or flag stored anywhere;
+  - there are no automatic notifications, reminders or escalations;
+  - the transaction lifecycle does not change.
+  The rule "no due-date/overdue workflow" otherwise stands unchanged.
+- Source: `docs/DECISION_LOG.md` (2026-11-28, D30).
 
 ## Related documents
 
