@@ -9,6 +9,9 @@ import type { UserProfile } from "@/types";
 const fetchSyncConflicts = vi.fn();
 vi.mock("@/services/syncReview", () => ({ fetchSyncConflicts: (...a: unknown[]) => fetchSyncConflicts(...a) }));
 
+const fetchHealthAlerts = vi.fn();
+vi.mock("@/services/system", () => ({ fetchHealthAlerts: () => fetchHealthAlerts() }));
+
 let mockUser: UserProfile | null = null;
 vi.mock("@/hooks/useAuth", async () => {
   const actual = await vi.importActual<typeof import("@/hooks/useAuth")>("@/hooks/useAuth");
@@ -33,6 +36,29 @@ function renderPage() {
 describe("SettingsPage hub", () => {
   beforeEach(() => {
     fetchSyncConflicts.mockReset().mockResolvedValue({ total: 4, limit: 1, offset: 0, items: [] });
+    fetchHealthAlerts.mockReset().mockResolvedValue([]);
+  });
+
+  const DRILL_ALERT = {
+    code: "restore_drill_failed",
+    severity: "high",
+    message_th: "ระบบทดสอบกู้คืนรายเดือนมีปัญหา: ไม่ผ่านครบ 5 ครั้ง (แจ้งเตือนจะหายเมื่อทดสอบผ่าน) ตรวจไฟล์ logs\\restore-drill",
+    since: null,
+  };
+
+  it("shows the restore-drill alert banner to an administrator", async () => {
+    mockUser = makeUser("administrator");
+    fetchHealthAlerts.mockResolvedValue([DRILL_ALERT]);
+    renderPage();
+    expect(await screen.findByText(DRILL_ALERT.message_th)).toBeInTheDocument();
+  });
+
+  it("never fetches or shows the alert for a non-administrator", () => {
+    mockUser = makeUser("equipment_pool_staff");
+    fetchHealthAlerts.mockResolvedValue([DRILL_ALERT]);
+    renderPage();
+    expect(fetchHealthAlerts).not.toHaveBeenCalled();
+    expect(screen.queryByText(DRILL_ALERT.message_th)).not.toBeInTheDocument();
   });
 
   it("keeps personal settings", () => {

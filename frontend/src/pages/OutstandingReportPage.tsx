@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { ListSkeleton } from "@/components/Skeleton";
 import { useState } from "react";
 
 import { apiErrorMessage } from "@/services/api";
@@ -64,7 +65,7 @@ export function OutstandingReportPage() {
           {copyMsg && <span role="status" className="text-sm">{copyMsg}</span>}
         </div>
         {!valid && <p className="text-sm text-red-600">ใส่จำนวนวัน 1-365</p>}
-        {isLoading && <p className="text-sm">กำลังโหลด...</p>}
+        {isLoading && <ListSkeleton rows={5} rowClassName="h-9" label="กำลังโหลด..." />}
         {isError && <p className="text-sm text-red-600">{apiErrorMessage(error)}</p>}
         {data && <p className="text-sm font-medium">รวม {data.total} เครื่อง</p>}
         {data && data.total === 0 && <p className="text-sm text-[var(--text-muted)]">ไม่มีเครื่องค้าง</p>}

@@ -1,7 +1,9 @@
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { prefetchProps } from "@/lib/routePrefetch";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
+import { PageTransition } from "@/components/PageTransition";
 import { UpdateNotice } from "@/components/UpdateNotice";
 import { DbStatusLight } from "@/components/DbStatusLight";
 import { RefreshButton } from "@/components/RefreshButton";
@@ -99,6 +101,7 @@ export function AppShell() {
             <NavLink
               key={item.to}
               to={item.to}
+              {...prefetchProps(item.to)}
               end={item.to === "/"}
               className={({ isActive }) =>
                 `flex min-h-[44px] items-center rounded-lg px-3 py-2 text-sm font-medium transition ${
@@ -117,6 +120,7 @@ export function AppShell() {
               Settings entry that carries the offline-review count badge. */}
           <NavLink
             to="/settings"
+            {...prefetchProps("/settings")}
             className={({ isActive }) =>
               `flex min-h-[44px] items-center rounded-lg px-3 py-2 text-sm font-medium transition ${
                 isActive
@@ -169,7 +173,9 @@ export function AppShell() {
         </header>
 
         <main className="flex-1 overflow-y-auto p-4 pb-20 md:pb-4">
-          <Outlet />
+          <PageTransition>
+            <Outlet />
+          </PageTransition>
         </main>
 
         <nav aria-label="เมนูหลัก" className="surface fixed inset-x-0 bottom-0 flex border-t md:hidden">
@@ -177,6 +183,7 @@ export function AppShell() {
             <NavLink
               key={item.to}
               to={item.to}
+              {...prefetchProps(item.to)}
               end={item.to === "/"}
               aria-label={item.label}
               data-testid="bottom-nav-link"

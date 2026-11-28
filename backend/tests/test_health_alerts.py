@@ -92,3 +92,39 @@ async def test_endpoint_admin_only(client, seeded_users):
     staff = await client.get(URL, headers=await auth_headers(client, ROLE_EQUIPMENT_POOL_STAFF))
     assert staff.status_code == 403
     assert (await client.get(URL)).status_code in (401, 403)
+
+
+@pytest.mark.asyncio
+async def test_restore_drill_alert_raise_and_clear(db_session):
+    from app.scripts.record_ops_status import record
+
+    assert _codes(await svc.compute_alerts(db_session, NOW, env={})) == []
+    await record(db_session, "restore_drill", "fail")
+    alerts = await svc.compute_alerts(db_session, NOW, env={})
+    assert _codes(alerts) == ["restore_drill_failed"]
+    assert alerts[0]["severity"] == "high"
+    assert alerts[0]["message_th"] == "ระบบทดสอบกู้คืนรายเดือนมีปัญหา: ไม่ผ่านครบ 5 ครั้ง (แจ้งเตือนจะหายเมื่อทดสอบผ่าน) ตรวจไฟล์ logs\\restore-drill"
+    await record(db_session, "restore_drill", "fail")  # idempotent update, still one alert
+    assert _codes(await svc.compute_alerts(db_session, NOW, env={})) == ["restore_drill_failed"]
+    await record(db_session, "restore_drill", "pass")
+    assert _codes(await svc.compute_alerts(db_session, NOW, env={})) == []
+
+
+@pytest.mark.asyncio
+async def test_restore_drill_stale_after_40_days(db_session):
+    await svc.record_restore_drill(db_session, "pass", NOW - timedelta(days=39))
+    assert _codes(await svc.compute_alerts(db_session, NOW, env={})) == []
+    await svc.record_restore_drill(db_session, "pass", NOW - timedelta(days=41))
+    assert _codes(await svc.compute_alerts(db_session, NOW, env={})) == ["restore_drill_stale"]
+
+
+def test_record_ops_status_cli_args():
+    from app.scripts.record_ops_status import parse_args
+
+    a = parse_args(["--code", "restore_drill", "--status", "fail", "--detail", "5 failures"])
+    assert (a.code, a.status) == ("restore_drill", "fail")
+    for bad in (["--code", "other", "--status", "pass"], ["--code", "restore_drill", "--status", "maybe"],
+                ["--code", "restore_drill", "--status", "pass", "--detail", "a\nb"],
+                ["--code", "restore_drill", "--status", "pass", "--detail", "x" * 201]):
+        with pytest.raises(SystemExit):
+            parse_args(bad)

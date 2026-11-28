@@ -144,6 +144,9 @@ function Invoke-WithMocks {
         . (Join-Path $deploymentRoot 'lib/Backup.ps1')
         . (Join-Path $deploymentRoot 'lib/Schedule.ps1')
         . (Join-Path $deploymentRoot 'lib/DriveBackup.ps1')
+        . (Join-Path $deploymentRoot 'lib/RestoreDrill.ps1')
+        $script:TestRestoreDrillRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("mep-test-drill-" + [Guid]::NewGuid().ToString('N'))
+        function Get-MepRestoreDrillRoot { return $script:TestRestoreDrillRoot }
         $script:TestPassword = ConvertTo-SecureString 'Test-Windows-Pass-NotReal-1' -AsPlainText -Force
 
         # --- Windows Task Scheduler seam --------------------------------
@@ -170,9 +173,10 @@ function Invoke-WithMocks {
             return $script:ScheduledTaskState.LastAction
         }
         function New-ScheduledTaskTrigger {
-            param([switch]$Once, $At, $RepetitionInterval)
+            param([switch]$Once, [switch]$Weekly, $DaysOfWeek, $At, $RepetitionInterval)
             $script:ScheduledTaskState.LastTrigger = [pscustomobject]@{
-                Once = [bool]$Once; At = $At; RepetitionInterval = $RepetitionInterval
+                Once = [bool]$Once; Weekly = [bool]$Weekly; DaysOfWeek = $DaysOfWeek
+                At = $At; RepetitionInterval = $RepetitionInterval
             }
             return $script:ScheduledTaskState.LastTrigger
         }
@@ -2558,6 +2562,230 @@ Test-Case 'sync: stop.ps1 path passes the profile so the sync is stopped too' {
         return @($script:RecordedCalls | ForEach-Object { $_.Args })
     }
     Assert-True (@($calls | Where-Object { $_ -match '--profile legacy-sheet-sync stop$' }).Count -eq 1) 'compose stop must carry --profile legacy-sheet-sync'
+}
+
+# ===========================================================================
+# Monthly restore drill. The task must run the drill at the first Sunday
+# 03:17, the result file must have the agreed shape and hold counts only,
+# and the drill may only ever target a disposable database.
+# ===========================================================================
+
+$script:DrillRestoreOutput = @(
+    '[restore] verifying checksum of /mep-backups/mep-postgres-localstaging-20260101T000000Z.dump',
+    '[restore] checksum OK',
+    '[restore] restoring into postgresql+asyncpg://mep_user:***@postgres:5432/x',
+    '[restore] pg_restore OK',
+    '[restore] Alembic revision verified: abc123def456',
+    "[restore] restored row counts: {'equipment': 12, 'wards': 3}",
+    '[restore] elapsed_seconds=4.2',
+    '[restore] OK'
+)
+
+Test-Case 'drill schedule: weekly Sunday 03:17 trigger, pwsh, non-interactive, -Scheduled, named task' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
+    $state = Invoke-WithMocks -Context $ctx -Body {
+        Register-MepRestoreDrillSchedule -Password $script:TestPassword -UserName 'HOST\deptuser' | Out-Null
+        return [pscustomobject]@{ State = $script:ScheduledTaskState; Name = (Get-MepRestoreDrillTaskName) }
+    }
+    Assert-Equal 'MEP Monthly Restore Drill' $state.Name 'task name'
+    $t = $state.State.LastTrigger
+    Assert-True ($t.Weekly -and "$($t.DaysOfWeek)" -eq 'Sunday') 'trigger must be weekly on Sunday (first-Sunday filtering is in the script)'
+    Assert-True ($t.At.Hour -eq 3 -and $t.At.Minute -eq 17) 'trigger must be 03:17 local time'
+    $a = $state.State.LastAction
+    Assert-True ((Split-Path -Leaf $a.Execute) -in @('pwsh', 'pwsh.exe')) 'must run pwsh'
+    Assert-True ($a.Argument -match '-NonInteractive' -and $a.Argument -match 'run-restore-drill\.ps1' -and $a.Argument -match '-Scheduled') 'non-interactive run-restore-drill.ps1 -Scheduled'
+    Assert-Equal 'HOST\deptuser' $state.State.LastRegistration.User 'same account pattern as the backup task'
+}
+
+Test-Case 'drill schedule: only the first Sunday (or a missed month) is due' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
+    $r = Invoke-WithMocks -Context $ctx -Body {
+        [pscustomobject]@{
+            First   = (Test-MepRestoreDrillDue -Now ([datetime]'2026-12-06T03:17:00') -ResultExistsThisMonth $true)
+            Second  = (Test-MepRestoreDrillDue -Now ([datetime]'2026-12-13T03:17:00') -ResultExistsThisMonth $true)
+            CatchUp = (Test-MepRestoreDrillDue -Now ([datetime]'2026-12-13T03:17:00') -ResultExistsThisMonth $false)
+        }
+    }
+    Assert-True $r.First 'Dec 6 2026 is the first Sunday'
+    Assert-True (-not $r.Second) 'second Sunday is skipped once the month has a result'
+    Assert-True $r.CatchUp 'a missed month is caught up on the next Sunday'
+}
+
+Test-Case 'drill result: JSON has the agreed shape, counts only, and the file is YYYY-MM.json' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $true `
+        -ExitCodeRules @(@{ Match = 'restore_postgres.py'; ExitCode = 0; Output = $script:DrillRestoreOutput })
+    $r = Invoke-WithMocks -Context $ctx -Body {
+        $res = Invoke-MepRestoreDrill
+        $path = Get-MepRestoreDrillResultPath
+        return [pscustomobject]@{ Res = $res; Path = $path; Json = (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json) }
+    }
+    Assert-True ((Split-Path -Leaf $r.Path) -match '^\d{4}-\d{2}\.json$') 'file name must be YYYY-MM.json'
+    $names = @($r.Json.PSObject.Properties.Name)
+    foreach ($k in 'started', 'finished', 'source', 'backup_file', 'elapsed_seconds', 'checksum', 'alembic_revision', 'row_counts', 'result') {
+        Assert-True ($names -contains $k) "result JSON must contain '$k'"
+    }
+    Assert-Equal 'PASS' $r.Json.result 'overall result'
+    Assert-Equal 'PASS' $r.Json.checksum 'checksum'
+    Assert-Equal 'drive' $r.Json.source 'source'
+    Assert-Equal 'mep-postgres-localstaging-20260101T000000Z.dump' $r.Json.backup_file 'backup file name'
+    Assert-Equal 'abc123def456' $r.Json.alembic_revision 'alembic revision'
+    Assert-True ($r.Json.row_counts.equipment -eq 12 -and $r.Json.row_counts.wards -eq 3) 'row counts per table'
+    $raw = $r.Json | ConvertTo-Json -Depth 5
+    Assert-True (-not ($raw -match 'postgresql|asyncpg|password|test-password-not-a-real-secret')) 'no connection string or secret in the result'
+}
+
+Test-Case 'drill result: failed restore records FAIL and the disposable DB is still dropped' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $true `
+        -ExitCodeRules @(@{ Match = 'restore_postgres.py'; ExitCode = 1; Output = @('[restore] FAIL: checksum mismatch') })
+    $r = Invoke-WithMocks -Context $ctx -Body {
+        $res = Invoke-MepRestoreDrill
+        return [pscustomobject]@{ Res = $res; Calls = @($script:RecordedCalls | ForEach-Object { $_.Args }) }
+    }
+    Assert-Equal 'FAIL' $r.Res.result 'a failed restore must be FAIL'
+    Assert-Equal 'FAIL' $r.Res.checksum 'checksum unverified means FAIL'
+    Assert-True (@($r.Calls -match 'DROP DATABASE IF EXISTS mep_local_restore_rehearsal_').Count -eq 1) 'the disposable database must still be dropped'
+}
+
+Test-Case 'drill: Drive not configured falls back to the newest local backup' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $false `
+        -ExitCodeRules @(@{ Match = 'restore_postgres.py'; ExitCode = 0; Output = $script:DrillRestoreOutput })
+    $r = Invoke-WithMocks -Context $ctx -Body {
+        $root = Get-MepBackupRoot
+        $f = Join-Path $root 'mep-postgres-localstaging-20260101T000000Z.dump'
+        Set-Content -LiteralPath $f -Value 'x'
+        Set-Content -LiteralPath "$f.manifest.json" -Value '{}'
+        $res = Invoke-MepRestoreDrill
+        return [pscustomobject]@{ Res = $res; Calls = @($script:RecordedCalls | ForEach-Object { $_.Args }) }
+    }
+    Assert-Equal 'local' $r.Res.source 'source'
+    Assert-True (@($r.Calls -match 'drive_backup\.py').Count -eq 0) 'Drive must not be contacted when it is not configured'
+    Assert-True (@($r.Calls -match 'restore_postgres\.py').Count -eq 1) 'the local backup must be restored'
+}
+
+Test-Case 'drill: live-DB parameters are never passed; only a disposable DB is targeted and cleaned up' {
+    foreach ($drive in @($true, $false)) {
+        $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $drive `
+            -ExitCodeRules @(@{ Match = 'restore_postgres.py'; ExitCode = 0; Output = $script:DrillRestoreOutput })
+        $r = Invoke-WithMocks -Context $ctx -Body {
+            $root = Get-MepBackupRoot
+            $f = Join-Path $root 'mep-postgres-localstaging-20260101T000000Z.dump'
+            Set-Content -LiteralPath $f -Value 'x'
+            Set-Content -LiteralPath "$f.manifest.json" -Value '{}'
+            Invoke-MepRestoreDrill | Out-Null
+            return [pscustomobject]@{
+                Calls = @($script:RecordedCalls | ForEach-Object { $_.Args })
+                Urls  = @($script:RecordedCalls | ForEach-Object { $_.TargetUrl } | Where-Object { $_ })
+            }
+        }
+        $all = $r.Calls -join "`n"
+        Assert-True (-not ($all -match 'mep_local_staging_db')) "live database name must never appear in a command (drive=$drive)"
+        Assert-True (-not ($all -match '\bdown\b|--volumes|volume rm|prune')) 'no down / volume / prune operations'
+        Assert-True (-not ($all -match 'force-non-empty|allow-production')) 'no PR24C guard may be bypassed'
+        Assert-True (-not ($all -match 'target-environment (?!local-staging-rehearsal)')) 'target environment must be the rehearsal one'
+        Assert-True (@($r.Urls).Count -ge 1) 'a restore target URL must have been set'
+        foreach ($u in $r.Urls) { Assert-True ($u -match '/mep_local_restore_rehearsal_[a-z0-9_]+$') 'the target URL must point at the disposable database' }
+        Assert-True (@($r.Calls -match 'CREATE DATABASE mep_local_restore_rehearsal_').Count -eq 1) 'one disposable database created'
+        Assert-True (@($r.Calls -match 'DROP DATABASE IF EXISTS mep_local_restore_rehearsal_').Count -eq 1) 'and dropped again'
+    }
+}
+
+Test-Case 'drill schedule: a FAIL month is not done and is retried; PASS is done' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
+    $r = Invoke-WithMocks -Context $ctx -Body {
+        $now = [datetime]'2026-12-13T03:17:00'
+        $none = Test-MepRestoreDrillMonthPassed -Now $now
+        New-Item -ItemType Directory -Path (Get-MepRestoreDrillRoot) -Force | Out-Null
+        $p = Get-MepRestoreDrillResultPath -Now $now
+        Set-Content -LiteralPath $p -Value '{"result":"FAIL"}'
+        $fail = Test-MepRestoreDrillMonthPassed -Now $now
+        $due = Test-MepRestoreDrillDue -Now $now -ResultExistsThisMonth $fail
+        $kept = Test-Path -LiteralPath $p
+        Set-Content -LiteralPath $p -Value '{"result":"PASS"}'
+        [pscustomobject]@{ None = $none; Fail = $fail; Due = $due; Kept = $kept; Pass = (Test-MepRestoreDrillMonthPassed -Now $now) }
+    }
+    Assert-True (-not $r.None -and -not $r.Fail) 'missing or FAIL result must not count as done'
+    Assert-True $r.Due 'a FAIL month must be due again on a later Sunday'
+    Assert-True $r.Kept 'the FAIL file must be kept'
+    Assert-True $r.Pass 'a PASS result counts as done'
+}
+
+Test-Case 'drill: leftover rehearsal databases are dropped at start; live DB can never be targeted' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $false `
+        -ExitCodeRules @(@{ Match = 'pg_database'; ExitCode = 0; Output = @(' datname', '-----', 'mep_local_restore_rehearsal_20260101t000000z', 'mep_local_staging_db', 'mep_local_restore_rehearsal_x; DROP DATABASE y', '(3 rows)') })
+    $r = Invoke-WithMocks -Context $ctx -Body {
+        $n = Remove-MepLeftoverRestoreDatabases
+        [pscustomobject]@{ N = $n; Calls = @($script:RecordedCalls | ForEach-Object { $_.Args }) }
+    }
+    $drops = @($r.Calls -match 'DROP DATABASE')
+    Assert-Equal 1 $drops.Count 'only the well-formed leftover is dropped'
+    Assert-True ($drops[0] -match 'DROP DATABASE IF EXISTS mep_local_restore_rehearsal_20260101t000000z') 'the leftover rehearsal database is dropped'
+    Assert-True (-not ($r.Calls -match 'DROP DATABASE[^\n]*mep_local_staging_db')) 'live database is never dropped'
+
+    # Even if the live DB were named like a rehearsal DB, it is never dropped.
+    $ctx2 = New-MockContext -EnvFileExists $true -InstallCompleted $true `
+        -ExitCodeRules @(@{ Match = 'pg_database'; ExitCode = 0; Output = @('mep_local_restore_rehearsal_live') })
+    $r2 = Invoke-WithMocks -Context $ctx2 -Body {
+        function Get-MepConfiguredValue { param($Name) if ($Name -eq 'POSTGRES_DB') { return 'mep_local_restore_rehearsal_live' } return 'x' }
+        Remove-MepLeftoverRestoreDatabases | Out-Null
+        @($script:RecordedCalls | ForEach-Object { $_.Args })
+    }
+    Assert-True (@($r2 -match 'DROP DATABASE').Count -eq 0) 'a database equal to the live name is never dropped'
+}
+
+Test-Case 'drill attempts: failures accumulate in the attempts list; cap at 5 stops scheduled runs' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $true `
+        -ExitCodeRules @(@{ Match = 'restore_postgres.py'; ExitCode = 1; Output = @('[restore] FAIL: checksum mismatch') })
+    $r = Invoke-WithMocks -Context $ctx -Body {
+        $caps = @()
+        for ($i = 1; $i -le 5; $i++) {
+            $caps += (Test-MepRestoreDrillCapReached)
+            Invoke-MepRestoreDrill | Out-Null
+        }
+        $caps += (Test-MepRestoreDrillCapReached)
+        $json = Get-Content -LiteralPath (Get-MepRestoreDrillResultPath) -Raw | ConvertFrom-Json
+        [pscustomobject]@{ Caps = $caps; Json = $json }
+    }
+    Assert-True (@($r.Caps[0..4] | Where-Object { $_ }).Count -eq 0) 'attempts 1-5 must be allowed to run'
+    Assert-True $r.Caps[5] 'after the 5th failure no more attempts that month'
+    Assert-Equal 5 @($r.Json.attempts).Count 'every failed attempt is recorded'
+    Assert-Equal 5 $r.Json.failures 'failure count'
+    Assert-Equal 'FAIL' $r.Json.result 'overall month result stays FAIL'
+}
+
+Test-Case 'drill report: only the 5th failure raises the app alert; PASS clears it; commands are the backend CLI only' {
+    $failRules = @(@{ Match = 'restore_postgres.py'; ExitCode = 1; Output = @('[restore] FAIL: x') })
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $true -ExitCodeRules $failRules
+    $r = Invoke-WithMocks -Context $ctx -Body {
+        $perAttempt = @()
+        for ($i = 1; $i -le 5; $i++) {
+            Invoke-MepRestoreDrill | Out-Null
+            $perAttempt += @($script:RecordedCalls | Where-Object { $_.Args -match 'record_ops_status' }).Count
+        }
+        [pscustomobject]@{ Counts = $perAttempt; Calls = @($script:RecordedCalls | ForEach-Object { $_.Args }) }
+    }
+    Assert-True (@($r.Counts[0..3] | Where-Object { $_ -ne 0 }).Count -eq 0) 'no report before the 5th failure'
+    Assert-Equal 1 $r.Counts[4] 'the 5th failure reports once'
+    $call = @($r.Calls -match 'record_ops_status')[0]
+    Assert-True ($call -match 'exec -T backend python -m app\.scripts\.record_ops_status --code restore_drill --status fail') 'fail report via backend exec'
+    Assert-True (-not ($call -match 'postgres|password|secret')) 'report carries no data or secrets'
+
+    $ctx2 = New-MockContext -EnvFileExists $true -InstallCompleted $true -DriveConfigured $true `
+        -ExitCodeRules @(@{ Match = 'restore_postgres.py'; ExitCode = 0; Output = $script:DrillRestoreOutput })
+    $pass = Invoke-WithMocks -Context $ctx2 -Body {
+        Invoke-MepRestoreDrill | Out-Null
+        @($script:RecordedCalls | ForEach-Object { $_.Args } | Where-Object { $_ -match 'record_ops_status' })
+    }
+    Assert-Equal 1 @($pass).Count 'a PASS reports once'
+    Assert-True (@($pass)[0] -match '--status pass') 'a PASS clears the alert'
+}
+
+Test-Case 'drill: scripts never keep the disposable DB or run down/volume/backup-deleting actions' {
+    foreach ($f in 'run-restore-drill.ps1', 'schedule-restore-drill.ps1', 'lib/RestoreDrill.ps1') {
+        $lines = @(Get-Content -LiteralPath (Join-Path $script:DeploymentRootForTests $f) | Where-Object { $_ -notmatch '^\s*#' })
+        $code = $lines -join "`n"
+        Assert-True (-not ($code -match '-KeepRehearsalDatabase')) "$f must not keep the disposable database"
+        Assert-True (-not ($code -match 'compose[^\n]*\bdown\b|Remove-Item')) "$f must not take down/volume/backup-deleting actions"
+    }
 }
 
 # ===========================================================================

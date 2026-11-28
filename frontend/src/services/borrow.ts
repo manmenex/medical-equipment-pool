@@ -1,3 +1,4 @@
+import { invalidateOperationalData } from "@/lib/invalidateOperationalData";
 import { api } from "@/services/api";
 import type {
   Checks,
@@ -46,6 +47,7 @@ export interface BorrowPayload {
 
 export async function createBorrow(payload: BorrowPayload): Promise<TransactionOut> {
   const resp = await api.post<TransactionOut>("/borrow", payload);
+  void invalidateOperationalData();
   return resp.data;
 }
 
@@ -126,11 +128,15 @@ export interface ReceiptBatchPayload {
 }
 
 export async function dispatchBatch(payload: DispatchBatchPayload): Promise<BatchResponse> {
-  return (await api.post<BatchResponse>("/transactions/dispatch-batch", payload)).data;
+  const data = (await api.post<BatchResponse>("/transactions/dispatch-batch", payload)).data;
+  void invalidateOperationalData();
+  return data;
 }
 
 export async function receiptBatch(payload: ReceiptBatchPayload): Promise<BatchResponse> {
-  return (await api.post<BatchResponse>("/transactions/receipt-batch", payload)).data;
+  const data = (await api.post<BatchResponse>("/transactions/receipt-batch", payload)).data;
+  void invalidateOperationalData();
+  return data;
 }
 
 /**
@@ -150,11 +156,13 @@ export async function revealHn(transactionId: string): Promise<string> {
  */
 export async function addHn(transactionId: string, hn: string): Promise<TransactionOut> {
   const resp = await api.post<TransactionOut>(`/transactions/${transactionId}/hn`, { hn });
+  void invalidateOperationalData();
   return resp.data;
 }
 
 export async function createReturn(transactionId: string, payload: ReturnPayload): Promise<TransactionOut> {
   const resp = await api.post<TransactionOut>(`/return/${transactionId}`, payload);
+  void invalidateOperationalData();
   return resp.data;
 }
 
@@ -206,6 +214,7 @@ export async function correctTransactionWard(
   payload: WardCorrectionPayload
 ): Promise<TransactionOut> {
   const resp = await api.post<TransactionOut>(`/transactions/${transactionId}/correct-ward`, payload);
+  void invalidateOperationalData();
   return resp.data;
 }
 
@@ -213,23 +222,31 @@ export async function correctTransactionWard(
 // switch-action (docs/api/transactions.md). The server is the authority for
 // permission, window and state guards; callers surface its message.
 export async function undoTransaction(transactionId: string): Promise<CorrectionOut> {
-  return (await api.post<CorrectionOut>(`/transactions/${transactionId}/undo`)).data;
+  const data = (await api.post<CorrectionOut>(`/transactions/${transactionId}/undo`)).data;
+  void invalidateOperationalData();
+  return data;
 }
 
 export async function voidTransaction(transactionId: string, reason: string): Promise<CorrectionOut> {
-  return (await api.post<CorrectionOut>(`/transactions/${transactionId}/void`, { reason })).data;
+  const data = (await api.post<CorrectionOut>(`/transactions/${transactionId}/void`, { reason })).data;
+  void invalidateOperationalData();
+  return data;
 }
 
 export async function changeTransactionDevice(
   transactionId: string,
   payload: { reason: string; equipment_id: string; acknowledge_status_warning?: boolean }
 ): Promise<CorrectionOut> {
-  return (await api.post<CorrectionOut>(`/transactions/${transactionId}/change-device`, payload)).data;
+  const data = (await api.post<CorrectionOut>(`/transactions/${transactionId}/change-device`, payload)).data;
+  void invalidateOperationalData();
+  return data;
 }
 
 export async function switchTransactionAction(
   transactionId: string,
   payload: { reason: string; outcome?: ReceiptOutcome; ward_id?: string }
 ): Promise<CorrectionOut> {
-  return (await api.post<CorrectionOut>(`/transactions/${transactionId}/switch-action`, payload)).data;
+  const data = (await api.post<CorrectionOut>(`/transactions/${transactionId}/switch-action`, payload)).data;
+  void invalidateOperationalData();
+  return data;
 }
