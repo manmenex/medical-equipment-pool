@@ -345,7 +345,7 @@ def select_tiered_prune_candidates(
             local = created_at.astimezone(local_tz)
             first_of_month.setdefault((local.year, local.month), (path, created_at))
         now_local = now.astimezone(local_tz)
-        floor = now_local.year * 12 + now_local.month - monthly_retention_months
+        floor = now_local.year * 12 + now_local.month - monthly_retention_months + 1
         for (year, month), (path, _created) in first_of_month.items():
             if year * 12 + month >= floor:
                 monthly_keepers.add(path)

@@ -40,6 +40,16 @@ async def reveal_hn(
     if row is None:
         raise TransactionNotFoundError("Transaction not found")
     if row.has_hn and not row.hn_ciphertext:
+        await record_audit_event(
+            db,
+            actor_user_id=actor_user_id,
+            action=AUDIT_ACTION_HN_REVEAL,
+            entity_type=AUDIT_ENTITY_BORROW_TRANSACTION,
+            entity_id=transaction_id,
+            after={"transaction_id": str(transaction_id), "erased": True},  # never a value
+            request=request,
+        )
+        await db.commit()
         raise HnErasedError("HN นี้ถูกลบตามนโยบายการเก็บรักษาข้อมูล (2 ปี)")
     if not row.has_hn or not row.hn_ciphertext:
         raise HnNotRecordedError("No HN is recorded for this transaction")

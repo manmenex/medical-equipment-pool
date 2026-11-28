@@ -5,7 +5,7 @@ count-only audit entry per applying run; no export event, no ``hn_update``.
 Idempotent (only non-null ciphertext rows match). Never logs values.
 """
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,12 +15,20 @@ from app.crud import audit as audit_crud
 from app.models.transaction import BorrowTransaction
 
 logger = logging.getLogger(__name__)
-RETENTION_DAYS = 730  # 2 years
+RETENTION_YEARS = 2
+
+
+def years_ago(now: datetime, years: int) -> datetime:
+    """Calendar-year subtraction (Feb 29 -> Feb 28 in a non-leap target year)."""
+    try:
+        return now.replace(year=now.year - years)
+    except ValueError:
+        return now.replace(year=now.year - years, day=28)
 
 
 async def erase_old_hn(db: AsyncSession, *, apply: bool, now: datetime | None = None) -> int:
     now = now or datetime.now(timezone.utc)
-    cutoff = now - timedelta(days=RETENTION_DAYS)
+    cutoff = years_ago(now, RETENTION_YEARS)
     cond = (BorrowTransaction.hn_ciphertext.is_not(None), BorrowTransaction.borrowed_at < cutoff)
     if not apply:
         return (await db.execute(select(func.count()).select_from(BorrowTransaction).where(*cond))).scalar_one()

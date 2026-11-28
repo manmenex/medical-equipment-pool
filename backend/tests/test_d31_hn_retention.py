@@ -119,6 +119,34 @@ async def test_add_hn_later_sets_hn_recorded(client, ctx, db_session):
     assert (await _row(db_session, tx["id"])).hn_recorded is True
 
 
+async def test_cutoff_is_calendar_years_incl_leap_day(db_session):
+    from app.services.hn_retention_service import years_ago
+
+    now = datetime(2026, 11, 28, 12, tzinfo=timezone.utc)
+    assert years_ago(now, 2) == datetime(2024, 11, 28, 12, tzinfo=timezone.utc)  # 731 days, not 730
+    assert years_ago(datetime(2028, 2, 29, tzinfo=timezone.utc), 2) == datetime(2026, 2, 28, tzinfo=timezone.utc)
+    w = await _ward(db_session)
+    keep = await _mk(db_session, 1, w, 0)
+    erase = await _mk(db_session, 2, w, 0)
+    keep.borrowed_at = datetime(2024, 11, 28, 13, tzinfo=timezone.utc)  # 1 h inside 2 calendar years
+    erase.borrowed_at = datetime(2024, 11, 28, 11, tzinfo=timezone.utc)
+    await db_session.commit()
+    assert await erase_old_hn(db_session, apply=True, now=now) == 1
+
+
+async def test_reveal_of_erased_hn_is_audited_without_value(client, ctx, db_session):
+    eq = await _equipment(client, ctx["admin"], 33)
+    tx = (await _borrow(client, ctx["staff"], eq, ctx["ward"], hn=HN)).json()
+    await db_session.execute(
+        update(BorrowTransaction).where(BorrowTransaction.id == uuid.UUID(tx["id"])).values(hn_ciphertext=None)
+    )
+    await db_session.commit()
+    r = await client.post(f"/api/v1/transactions/{tx['id']}/reveal-hn", headers=ctx["staff"])
+    assert r.status_code == 410
+    rows = [a for a in (await db_session.execute(select(AuditLog))).scalars().all() if a.action == "hn_reveal"]
+    assert len(rows) == 1 and rows[0].after_data["erased"] is True and HN not in json.dumps(rows[0].after_data)
+
+
 def test_migration_0042_backfills_from_ciphertext():
     src = (Path(__file__).resolve().parents[1] / "alembic/versions/0042_hn_recorded.py").read_text()
     assert 'down_revision: Union[str, None] = "0041_system_heartbeats"' in src
@@ -158,3 +186,12 @@ def test_monthly_tier_never_deletes_newest_and_rejects_negative():
     assert select_tiered_prune_candidates([only], now=now, local_tz=TZ) == []
     with pytest.raises(ValueError):
         select_tiered_prune_candidates([only], now=now, monthly_retention_months=-1)
+
+
+def test_monthly_tier_spans_at_most_12_months_in_total():
+    now = datetime(2026, 11, 28, 12, tzinfo=timezone.utc)
+    nov25 = _b(datetime(2025, 11, 2, 1, tzinfo=timezone.utc))  # 13th month back: dropped
+    dec25 = _b(datetime(2025, 12, 2, 1, tzinfo=timezone.utc))  # current + 11 before: kept
+    newest = _b(datetime(2026, 11, 28, 11, tzinfo=timezone.utc))
+    got = select_tiered_prune_candidates([nov25, dec25, newest], now=now, local_tz=TZ)
+    assert nov25[0] in got and dec25[0] not in got
