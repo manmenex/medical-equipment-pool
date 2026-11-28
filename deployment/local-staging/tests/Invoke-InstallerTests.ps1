@@ -2751,7 +2751,7 @@ Test-Case 'drill report: only the 5th failure raises the app alert; PASS clears 
         }
         [pscustomobject]@{ Counts = $perAttempt; Calls = @($script:RecordedCalls | ForEach-Object { $_.Args }) }
     }
-    Assert-True (($r.Counts[0..3] | Where-Object { $_ -ne 0 }).Count -eq 0) 'no report before the 5th failure'
+    Assert-True (@($r.Counts[0..3] | Where-Object { $_ -ne 0 }).Count -eq 0) 'no report before the 5th failure'
     Assert-Equal 1 $r.Counts[4] 'the 5th failure reports once'
     $call = @($r.Calls -match 'record_ops_status')[0]
     Assert-True ($call -match 'exec -T backend python -m app\.scripts\.record_ops_status --code restore_drill --status fail') 'fail report via backend exec'
