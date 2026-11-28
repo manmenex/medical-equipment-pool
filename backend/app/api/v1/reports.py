@@ -1,8 +1,9 @@
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.responses import Response
+from starlette.responses import PlainTextResponse, Response
 
 from app.api.v1.deps import VIEW_AND_REPORT_ROLES, require_roles
 from app.api.v1.equipment import _serialize as _serialize_equipment
@@ -17,6 +18,7 @@ from app.schemas.equipment import EquipmentOut
 from app.schemas.report_export import PrintDocumentOut, ReportIdentity, to_print_document_out
 from app.schemas.transaction import ReportTransactionOut
 from app.services import (
+    outstanding_report_service,
     report_export_service,
     report_pdf_service,
     report_query_service,
@@ -86,6 +88,57 @@ def _reject_inapplicable_print_data_filters(report_id: ReportIdentity, **filters
         raise InvalidInputError(
             f"The following filters are not supported for report_id '{report_id.value}': {', '.join(rejected)}"
         )
+
+
+class OutstandingRowOut(BaseModel):
+    transaction_no: str
+    bcm_code: str | None
+    equipment_name: str
+    category: str | None
+    source: str
+    source_badge: str | None
+    ward: str
+    borrowed_at: datetime
+    age_days: int
+    keyer: str | None
+    has_hn: bool
+
+
+class OutstandingWardOut(BaseModel):
+    ward: str
+    count: int
+    rows: list[OutstandingRowOut]
+
+
+class OutstandingOut(BaseModel):
+    days: int
+    total: int
+    wards: list[OutstandingWardOut]
+
+
+@router.get("/outstanding", response_model=OutstandingOut)
+async def outstanding_report(
+    days: int = Query(default=7, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(require_roles(*VIEW_AND_REPORT_ROLES)),
+):
+    """Owner Governance 2026-11-28 (D30): read-only; no due date/overdue flag."""
+    groups = await outstanding_report_service.build_report(db, days)
+    wards = [
+        OutstandingWardOut(ward=g.ward, count=len(g.rows), rows=[OutstandingRowOut(**r.__dict__) for r in g.rows])
+        for g in groups
+    ]
+    return OutstandingOut(days=days, total=sum(w.count for w in wards), wards=wards)
+
+
+@router.get("/outstanding/line-text", response_class=PlainTextResponse)
+async def outstanding_line_text(
+    days: int = Query(default=7, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(require_roles(*VIEW_AND_REPORT_ROLES)),
+):
+    groups = await outstanding_report_service.build_report(db, days)
+    return PlainTextResponse(outstanding_report_service.render_line_text(groups, days))
 
 
 @router.get("/export")
