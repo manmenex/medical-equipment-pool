@@ -51,7 +51,7 @@ async def test_migration_0040_export_corrections_round_trip():
                 await conn.execute(
                     text(
                         "INSERT INTO borrow_transactions (id, transaction_no, equipment_id, quantity, borrowed_at, "
-                        "status, dispatched_while_defective, has_hn) "
+                        "status, dispatched_while_defective, hn_recorded) "
                         "VALUES (:id, 'TX-D28-X', :eq, 1, now(), 'open', false, false)"
                     ),
                     {"id": tx, "eq": eq},

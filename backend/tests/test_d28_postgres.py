@@ -40,7 +40,7 @@ async def _insert_tx(conn, equipment_id, n, status):
     await conn.execute(
         text(
             "INSERT INTO borrow_transactions (id, transaction_no, equipment_id, quantity, borrowed_at, status, "
-            "dispatched_while_defective, has_hn) VALUES (:id, :no, :eq, 1, now(), :st, false, false)"
+            "dispatched_while_defective, hn_recorded) VALUES (:id, :no, :eq, 1, now(), :st, false, false)"
         ),
         {"id": uuid.uuid4(), "no": f"TX-D28-{n}", "eq": equipment_id, "st": status},
     )
