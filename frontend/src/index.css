@@ -1,0 +1,307 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Contrast pass (owner feedback 2026-11): text tokens are >= WCAG AA against
+   --bg/--surface/--field, and field/card borders are >= 3:1. */
+:root {
+  --bg: #e8edf4;
+  --surface: #ffffff;
+  --field: #ffffff;
+  --text: #0b1220;
+  --text-muted: #475569;
+  --placeholder: #64748b;
+  --border: #7f8ca1;
+  --divider: #cbd5e1;
+  --focus: #1d4ed8;
+  --shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+  --accent-rgb: 29 78 216;
+}
+
+.dark {
+  --bg: #080d18;
+  --surface: #121c30;
+  --field: #1d2b45;
+  --text: #f1f5f9;
+  --text-muted: #b8c4d6;
+  --placeholder: #94a3b8;
+  --border: #7083a0;
+  --divider: #2f3f5c;
+  --focus: #7cb4ff;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+html {
+  font-size: 16px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* Personal font choice (set on :root by lib/theme.ts); unset = app default. */
+body {
+  font-family: var(--font-body, theme("fontFamily.sans"));
+}
+
+/* Print views never follow the personal theme: black on white. */
+.print-root {
+  --bg: #f5f7fb;
+  --surface: #ffffff;
+  --field: #ffffff;
+  --text: #0f172a;
+  --text-muted: #475569;
+  --placeholder: #64748b;
+  --border: #7f8ca1;
+  --divider: #cbd5e1;
+  --focus: #1d4ed8;
+  --accent-rgb: 29 78 216;
+  --font-body: "Noto Sans Thai", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--font-body);
+  color: #0f172a;
+}
+@media print {
+  :root {
+    --font-body: "Noto Sans Thai", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+  }
+  html {
+    font-size: 16px !important;
+  }
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+h1,
+h2 {
+  font-weight: 700;
+}
+h3,
+h4 {
+  font-weight: 600;
+}
+
+.surface {
+  background-color: var(--surface);
+  border-color: var(--border);
+  box-shadow: var(--shadow);
+}
+
+/* Fields: visible border, lighter background than the page, >=44px target,
+   16px text (prevents iOS zoom). Specificity beats the per-page utility
+   classes (bg-transparent, border-[var(--border)]) on purpose. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]),
+select,
+textarea {
+  background-color: var(--field);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  min-height: 44px;
+  font-size: 1rem;
+  min-width: 0;
+  max-width: 100%;
+}
+/* Input embedded in a bordered wrapper (e.g. password + toggle): the wrapper
+   draws the frame, so the input itself stays borderless. */
+.field-group > input {
+  background-color: transparent;
+  border: 0;
+  border-radius: 0;
+  min-height: 42px;
+}
+input[type="checkbox"],
+input[type="radio"] {
+  width: 1.15rem;
+  height: 1.15rem;
+  accent-color: var(--focus);
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--placeholder);
+  opacity: 1;
+}
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.field-group:focus-within {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+input:disabled,
+select:disabled,
+textarea:disabled {
+  background-color: var(--divider);
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+/* Buttons */
+button.rounded-lg,
+button.rounded-xl {
+  min-height: 44px;
+  font-weight: 600;
+}
+button.border {
+  border-color: var(--border);
+  border-width: 1.5px;
+  color: var(--text);
+}
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Tables / list rows: visible dividers and header separation */
+/* Not applied to print views: .print-root stays black-on-white in any theme. */
+table:not(.print-table) thead th {
+  font-weight: 700;
+  color: var(--text);
+  border-bottom: 2px solid var(--border);
+}
+table:not(.print-table) tbody tr {
+  border-bottom: 1px solid var(--divider);
+}
+table:not(.print-table) tbody tr:hover {
+  background-color: rgba(127, 140, 161, 0.12);
+}
+.divide-y > * + * {
+  border-color: var(--divider);
+}
+
+/* Status colors: tailwind tokens are the darker shades (AA on white and under
+   white button text); on the dark theme text uses lighter variants. */
+.dark .text-status-available { color: #4ade80; }
+.dark .text-status-borrowed { color: #7cb4ff; }
+.dark .text-status-pm { color: #facc15; }
+.dark .text-status-calibration { color: #c4b5fd; }
+.dark .text-status-repair { color: #fb923c; }
+.dark .text-status-out_of_service { color: #cbd5e1; }
+.dark .text-red-600 { color: #f87171; }
+.dark .text-green-700 { color: #4ade80; }
+:root:not(.dark) .text-amber-400,
+:root:not(.dark) .text-amber-500 { color: #b45309; }
+:root:not(.dark) .text-orange-400 { color: #c2410c; }
+:root:not(.dark) .text-purple-400 { color: #6d28d9; }
+:root:not(.dark) .text-red-400 { color: #b91c1c; }
+/* Tinted status chips get an outline so they read as chips */
+.bg-status-available\/15,
+.bg-status-borrowed\/15,
+.bg-status-repair\/15,
+.bg-status-out_of_service\/15 {
+  border: 1px solid currentColor;
+}
+
+header a,
+header button {
+  white-space: nowrap;
+}
+
+/* Native dropdown lists: some browsers paint the option popup white while
+   inheriting the light theme-text colour, making options unreadable in dark
+   mode. Give options explicit colours from the active theme. */
+select option,
+select optgroup {
+  background-color: var(--field);
+  color: var(--text);
+}
+select option:disabled {
+  color: var(--text-muted);
+}
+
+/* ---- Subtle motion (simple and fast). transform/opacity only; never layout
+   properties. All motion lives under no-preference, so `reduce` gets none. ---- */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: 0.5rem;
+  background-color: var(--divider);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes page-enter {
+    from { opacity: 0; transform: translateY(5px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes pop-in {
+    from { opacity: 0; transform: scale(0.97); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes slide-up-in {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes slide-down-in {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes skeleton-shimmer {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(100%); }
+  }
+
+  .page-enter { animation: page-enter 170ms ease-out both; }
+
+  /* Dialogs: backdrop fades, the first child panel scales in. */
+  [role="dialog"][aria-modal="true"] { animation: fade-in 150ms ease-out both; }
+  [role="dialog"][aria-modal="true"] > * { animation: pop-in 150ms ease-out both; }
+  /* Toasts (incl. the undo toast) slide up; banners slide down. */
+  .fixed[role="status"] { animation: slide-up-in 170ms ease-out both; }
+  [role="alert"][aria-label="สถานะระบบ"],
+  [role="status"].border-b { animation: slide-down-in 170ms ease-out both; }
+
+  .skeleton::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, var(--surface), transparent);
+    opacity: 0.55;
+    animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  }
+
+  /* Press feedback + quick colour transitions on buttons and tappable cards. */
+  button,
+  a > .surface,
+  [role="button"] {
+    transition: background-color 100ms ease-out, border-color 100ms ease-out,
+      color 100ms ease-out, box-shadow 100ms ease-out, transform 100ms ease-out;
+  }
+  button:not(:disabled):active,
+  a > .surface:active,
+  [role="button"]:active {
+    transform: scale(0.97);
+  }
+}
+
+/* Print: no animation or transition, ever. */
+@media print {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+.print-root,
+.print-root *,
+.print-root *::before,
+.print-root *::after {
+  animation: none !important;
+  transition: none !important;
+}

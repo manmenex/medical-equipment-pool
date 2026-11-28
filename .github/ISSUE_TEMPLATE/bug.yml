@@ -1,0 +1,48 @@
+name: Reproducible bug
+description: Report a defect with observable evidence and bounded impact.
+title: "bug: "
+labels: ["type:bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not include credentials, patient data, tokens, or sensitive logs."
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What failed, and what should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Minimal steps, inputs, role, and environment. Sanitize sensitive data.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Exact error/status and whether it was automated, manual, inspected, or reported.
+    validations:
+      required: true
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Suspected impact
+      options: [Critical, High, Medium, Low, Unknown]
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Affected and unaffected scope
+      description: APIs, workflows, data, users, and known workarounds.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: I removed secrets, credentials, patient data, and unsafe identifiers.
+          required: true

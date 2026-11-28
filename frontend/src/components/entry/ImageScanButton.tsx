@@ -1,0 +1,121 @@
+import { useRef, useState } from "react";
+
+interface ImageScanButtonProps {
+  /** Same handler a camera scan uses, so lookup/duplicate/offline rules apply. */
+  /** May resolve to a reason string when the scan raised a blocking prompt/notice. */
+  onScan: (text: string) => unknown;
+  /** Decoder is injectable for tests; defaults to the lazy-loaded zxing one. */
+  decode?: (file: File) => Promise<string[]>;
+}
+
+interface Summary {
+  codes: number;
+  total: number;
+  failed: string[];
+  /** Codes whose scan flow raised a blocking prompt/notice: staff must check by hand. */
+  review: { code: string; reason: string }[];
+}
+
+async function defaultDecode(file: File): Promise<string[]> {
+  const mod = await import("@/lib/imageCodeDecoder");
+  return mod.decodeImageFile(file);
+}
+
+// Decode photos one at a time (phones freeze with parallel big bitmaps).
+// Files are only read in memory; nothing is uploaded or persisted.
+export function ImageScanButton({ onScan, decode = defaultDecode }: ImageScanButtonProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [summary, setSummary] = useState<Summary | null>(null);
+
+  const handleFiles = async (list: FileList | null) => {
+    const files = list ? Array.from(list) : [];
+    if (inputRef.current) inputRef.current.value = "";
+    if (files.length === 0) return;
+    setSummary(null);
+    const seen = new Set<string>();
+    const failed: string[] = [];
+    const review: { code: string; reason: string }[] = [];
+    let codes = 0;
+    for (let i = 0; i < files.length; i++) {
+      setProgress({ done: i + 1, total: files.length });
+      let found: string[] = [];
+      try {
+        found = await decode(files[i]);
+      } catch {
+        found = [];
+      }
+      if (found.length === 0) failed.push(files[i].name);
+      for (const raw of found) {
+        if (seen.has(raw)) continue;
+        seen.add(raw);
+        codes++;
+        // Await each scan so one code's prompt/notice finishes before the next
+        // starts; blocked codes are listed in the summary, not left to overwrite.
+        try {
+          const reason = await onScan(raw);
+          if (typeof reason === "string" && reason) review.push({ code: raw, reason });
+        } catch {
+          review.push({ code: raw, reason: "เพิ่มไม่สำเร็จ" });
+        }
+      }
+    }
+    setProgress(null);
+    setSummary({ codes, total: files.length, failed, review });
+  };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        data-testid="image-scan-input"
+        onChange={(e) => void handleFiles(e.target.files)}
+      />
+      <button
+        type="button"
+        disabled={progress !== null}
+        onClick={() => inputRef.current?.click()}
+        className="min-h-11 rounded-lg border border-[var(--border)] px-3 text-sm disabled:opacity-50"
+      >
+        สแกนจากรูปภาพ
+      </button>
+      {progress && (
+        <p role="status" className="text-sm text-[var(--text-muted)]">
+          กำลังอ่าน {progress.done}/{progress.total}
+        </p>
+      )}
+      {summary && (
+        <div role="status" className="text-sm">
+          <p>
+            อ่านได้ {summary.codes} รหัส จาก {summary.total} รูป · อ่านไม่ได้ {summary.failed.length} รูป
+          </p>
+          {summary.failed.length > 0 && (
+            <ul className="list-disc pl-5 text-status-repair">
+              {summary.failed.map((n, i) => (
+                <li key={`${n}-${i}`} className="break-all">
+                  {n}
+                </li>
+              ))}
+            </ul>
+          )}
+          {summary.review.length > 0 && (
+            <div className="mt-1">
+              <p className="font-medium">ต้องตรวจเอง</p>
+              <ul className="list-disc pl-5 text-amber-400">
+                {summary.review.map((r, i) => (
+                  <li key={`${r.code}-${i}`} className="break-all">
+                    {r.code} · {r.reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,458 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+
+import { CheckGlyphs, ItemEditPanel } from "@/components/entry/ItemEditPanel";
+import { ChecksEditor } from "@/components/entry/ChecksEditor";
+import { HnField, HnIndicator } from "@/components/entry/HnField";
+import { resolveBcmText } from "@/components/entry/lookup";
+import { ScanBar } from "@/components/entry/ScanBar";
+import { useWardRefs } from "@/components/entry/useWardRefs";
+import { WardSection } from "@/components/entry/WardSection";
+import { OfflineStaleGate } from "@/components/OfflineStaleGate";
+import { UNDO_WINDOW_SECONDS, UndoToast, type UndoTarget } from "@/components/entry/UndoToast";
+import { SourceBadge } from "@/components/SourceBadge";
+import { useDirtyForm } from "@/hooks/useDirtyForm";
+import { useOfflineMode } from "@/hooks/useOfflineMode";
+import { cachedChecklistKind, effectiveCachedEquipment, enqueueOfflineDispatch, LocalOpError } from "@/offline/localOps";
+import { OfflineStoreError } from "@/offline/offlineStore";
+import { apiErrorMessage } from "@/services/api";
+import { dispatchBatch, type DispatchBatchItem } from "@/services/borrow";
+import { batchErrorText, defaultChecks } from "@/services/checks";
+import { getDispatchCheck, getEquipment, resolveEquipmentByQr, type DispatchCheck } from "@/services/equipment";
+import { useUiStore } from "@/store/uiStore";
+import type { Checks, ChecklistKind, Equipment, EquipmentSource } from "@/types";
+
+// Roadmap PR27/PR28 (D3/D4/D7/D10): ward-first multi-equipment dispatch. One
+// ward + N scanned items; each item carries its own accessory/Cryo-Cuff check
+// and is submitted through dispatch-batch (online) or queued as N single sync
+// operations (offline). Roadmap PR31 (D8): status warnings are confirmed by the
+// operator pressing the big confirm button (acknowledge + expected_* sent).
+export interface DispatchItem {
+  equipmentId: string;
+  bcm: string;
+  name: string;
+  /** null while offline: dispatch-check is unavailable, so no status/kind is known. */
+  check: DispatchCheck | null;
+  kind: ChecklistKind;
+  checks: Checks;
+  /** Roadmap PR29: optional patient HN, kept in memory only until submitted/queued. */
+  hn: string;
+  /** Roadmap PR33 (D14): source badge (DEMO / ยืม). */
+  source?: EquipmentSource;
+  error?: string;
+}
+
+const isWarning = (c: DispatchCheck | null) => !!c && (c.warning === "already_dispatched" || c.warning === "defective");
+
+function rowSummary(it: DispatchItem) {
+  const c = it.check;
+  if (c?.warning === "already_dispatched") {
+    return <span className="whitespace-nowrap text-xs font-medium text-amber-400">⚠ ค้าง {c.current_ward_name ?? "-"}</span>;
+  }
+  if (c?.warning === "defective") {
+    return <span className="whitespace-nowrap text-xs font-medium text-amber-400">⚠ เสีย</span>;
+  }
+  return (
+    <span className="flex items-center gap-1.5">
+      <CheckGlyphs checks={it.checks} />
+      <HnIndicator hn={it.hn} />
+    </span>
+  );
+}
+
+export function BorrowPage() {
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const presetEquipmentId = searchParams.get("equipment_id");
+  const offline = useOfflineMode();
+  const { wards, departments } = useWardRefs(offline);
+  const bumpWardUsage = useUiStore((s) => s.bumpWardUsage);
+  const setLastWard = useUiStore((s) => s.setLastWard);
+
+  const [wardId, setWardId] = useState("");
+  const [contact, setContact] = useState("");
+  const [phone, setPhone] = useState("");
+  const [note, setNote] = useState("");
+  const [items, setItems] = useState<DispatchItem[]>([]);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [done, setDone] = useState<{ id?: string; bcm: string; ref: string }[]>([]);
+  const [queuedCount, setQueuedCount] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
+  const [adding, setAdding] = useState(false);
+  // D28 layer 2: undo window of the last online save (never set for queued offline ops).
+  const [undo, setUndo] = useState<UndoTarget | null>(null);
+  const submittingRef = useRef(false);
+  const itemsRef = useRef<DispatchItem[]>([]);
+  itemsRef.current = items;
+  useDirtyForm(items.length > 0);
+
+  const addEquipment = useCallback(
+    async (eq: Pick<Equipment, "id" | "bcm_code" | "equipment_name" | "status" | "asset_number" | "equipment_source" | "returned_to_owner_at">) => {
+      const label = eq.bcm_code ?? eq.asset_number ?? eq.equipment_name;
+      if (itemsRef.current.some((i) => i.equipmentId === eq.id)) {
+        // D28 layer 1: a device scanned twice in one batch is flagged at once, never added twice.
+        setNotice(`⚠ ${label} สแกนซ้ำ อยู่ในรายการแล้ว`);
+        return `⚠ ${label} สแกนซ้ำ อยู่ในรายการแล้ว`;
+      }
+      let check: DispatchCheck | null = null;
+      if (!offline) {
+        check = await getDispatchCheck(eq.id);
+        if (check.warning === "returned_to_owner") {
+          setNotice(`⛔ ${label} คืนผู้ให้ยืมแล้ว ไม่ถูกเพิ่ม`);
+          return `⛔ ${label} คืนผู้ให้ยืมแล้ว ไม่ถูกเพิ่ม`;
+        }
+        if (check.warning === "decommissioned" || !check.dispatchable) {
+          setNotice(`⛔ ${label} ปลดระวางแล้ว ไม่ถูกเพิ่ม`);
+          return `⛔ ${label} ปลดระวางแล้ว ไม่ถูกเพิ่ม`;
+        }
+      } else if (eq.returned_to_owner_at) {
+        setNotice(`⛔ ${label} คืนผู้ให้ยืมแล้ว ไม่ถูกเพิ่ม`);
+        return `⛔ ${label} คืนผู้ให้ยืมแล้ว ไม่ถูกเพิ่ม`;
+      } else if (eq.status === "decommissioned") {
+        setNotice(`⛔ ${label} ปลดระวางแล้ว ไม่ถูกเพิ่ม`);
+        return `⛔ ${label} ปลดระวางแล้ว ไม่ถูกเพิ่ม`;
+      }
+      const kind: ChecklistKind = check?.checklist_kind ?? (offline ? await cachedChecklistKind(eq.id) : "standard");
+      setNotice(null);
+      setDone([]);
+      setItems((prev) =>
+        prev.some((i) => i.equipmentId === eq.id)
+          ? prev
+          : [
+              ...prev,
+              {
+                equipmentId: eq.id,
+                bcm: label,
+                name: eq.equipment_name,
+                check,
+                kind,
+                checks: defaultChecks(kind),
+                hn: "",
+                source: check?.equipment_source ?? eq.equipment_source,
+              },
+            ],
+      );
+    },
+    [offline],
+  );
+
+  const addById = useCallback(
+    async (id: string) => {
+      setAdding(true);
+      try {
+        const eq = offline ? (await effectiveCachedEquipment(id)).equipment : await getEquipment(id);
+        await addEquipment(eq);
+      } catch (err) {
+        setNotice(`⛔ ${err instanceof LocalOpError ? err.message : apiErrorMessage(err, "ไม่พบเครื่องมือ")} ไม่ถูกเพิ่ม`);
+      } finally {
+        setAdding(false);
+      }
+    },
+    [offline, addEquipment],
+  );
+
+  const addByBcm = useCallback(
+    async (text: string) => {
+      setAdding(true);
+      try {
+        const s = await resolveBcmText(text, offline);
+        if (!s) {
+          setNotice(`⛔ ไม่พบเครื่อง ${text} ไม่ถูกเพิ่ม`);
+          return;
+        }
+        const eq = offline ? (await effectiveCachedEquipment(s.id)).equipment : await getEquipment(s.id);
+        await addEquipment(eq);
+      } catch (err) {
+        setNotice(`⛔ ${err instanceof LocalOpError ? err.message : apiErrorMessage(err, `ไม่พบเครื่อง ${text}`)} ไม่ถูกเพิ่ม`);
+      } finally {
+        setAdding(false);
+      }
+    },
+    [offline, addEquipment],
+  );
+
+  const addByQr = useCallback(
+    async (raw: string) => {
+      try {
+        const eq = await resolveEquipmentByQr(raw);
+        return await addEquipment(eq);
+      } catch (err) {
+        const m = `⛔ ${apiErrorMessage(err, "ไม่พบเครื่องมือจาก QR ที่สแกน")} ไม่ถูกเพิ่ม`;
+        setNotice(m);
+        return m;
+      }
+    },
+    [addEquipment],
+  );
+
+  useEffect(() => {
+    if (presetEquipmentId) void addById(presetEquipmentId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presetEquipmentId]);
+
+  const patch = (id: string, p: Partial<DispatchItem>) =>
+    setItems((prev) => prev.map((i) => (i.equipmentId === id ? { ...i, ...p } : i)));
+  const remove = (id: string) => {
+    setItems((prev) => prev.filter((i) => i.equipmentId !== id));
+    setEditing(null);
+  };
+
+  // D28 layer 1: the device is still out at a ward -- switch to the receipt page with it kept.
+  const switchToReceipt = (id: string) => {
+    setItems((prev) => prev.filter((i) => i.equipmentId !== id));
+    setEditing(null);
+    navigate(`/return?equipment_id=${id}`);
+  };
+
+  const submit = async () => {
+    if (!wardId || items.length === 0 || submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    setNotice(null);
+    const sent = items;
+    try {
+      if (offline) {
+        // Offline: N single sync operations, sharing the contact name (docs/api/ward-first-entry.md s6).
+        const failed: DispatchItem[] = [];
+        let queued = 0;
+        for (const it of sent) {
+          try {
+            await enqueueOfflineDispatch({
+              equipment_id: it.equipmentId,
+              ward_id: wardId,
+              phone_number: phone || undefined,
+              notes: note || undefined,
+              ward_contact_name: contact.trim() || undefined,
+              dispatch_checks: it.checks,
+              hn: it.hn.trim() || undefined,
+            });
+            queued += 1;
+          } catch (err) {
+            const msg = err instanceof LocalOpError || err instanceof OfflineStoreError ? err.message : "บันทึกในเครื่องไม่สำเร็จ";
+            failed.push({ ...it, error: msg });
+          }
+        }
+        setItems(failed);
+        setQueuedCount((n) => n + queued);
+        if (queued > 0) {
+          setLastWard(wardId);
+          bumpWardUsage(wardId);
+        }
+        return;
+      }
+
+      const payloadItems: DispatchBatchItem[] = sent.map((it) => {
+        const base: DispatchBatchItem = { equipment_id: it.equipmentId, checks: it.checks };
+        if (it.hn.trim()) base.hn = it.hn.trim();
+        if (isWarning(it.check)) {
+          return {
+            ...base,
+            acknowledge_status_warning: true,
+            expected_open_transaction_id: it.check?.open_transaction_id ?? null,
+            expected_status: it.check?.status ?? null,
+          };
+        }
+        return base;
+      });
+      const resp = await dispatchBatch({
+        ward_id: wardId,
+        ward_contact_name: contact.trim() || null,
+        phone: phone.trim() || null,
+        note: note.trim() || null,
+        items: payloadItems,
+      });
+      const ok: { id?: string; bcm: string; ref: string }[] = [];
+      const okIds: string[] = [];
+      const okLabels: string[] = [];
+      const keep: DispatchItem[] = [];
+      const refresh: string[] = [];
+      for (let i = 0; i < sent.length; i++) {
+        const r = resp.results.find((x) => x.index === i);
+        if (r?.ok) {
+          ok.push({ id: r.transaction_id ?? undefined, bcm: sent[i].bcm, ref: r.transaction_no ?? "" });
+          if (r.transaction_id) {
+            okIds.push(r.transaction_id);
+            okLabels.push(sent[i].bcm);
+          }
+        } else {
+          keep.push({ ...sent[i], error: batchErrorText(r?.error?.code, r?.error?.message) });
+          const code = r?.error?.code;
+          if (code === "DISPATCH_STATUS_WARNING" || code === "DISPATCH_WARNING_STALE" || code === "EQUIPMENT_STATUS_CHANGED") {
+            refresh.push(sent[i].equipmentId);
+          }
+        }
+      }
+      if (ok.length > 0) {
+        setLastWard(wardId);
+        bumpWardUsage(wardId);
+        setNote("");
+        if (okIds.length > 0) setUndo({ ids: okIds, labels: okLabels, seconds: UNDO_WINDOW_SECONDS.dispatch });
+      }
+      setDone(ok);
+      setItems(keep);
+      // A status that changed since the scan needs a fresh check before the retry.
+      await Promise.all(
+        refresh.map(async (id) => {
+          try {
+            const fresh = await getDispatchCheck(id);
+            if (fresh.warning === "decommissioned" || !fresh.dispatchable) {
+              const gone = keep.find((k) => k.equipmentId === id);
+              setItems((prev) => prev.filter((i) => i.equipmentId !== id));
+              setNotice(`⛔ ${gone?.bcm ?? ""} ปลดระวางแล้ว ไม่ถูกเพิ่ม`);
+            } else {
+              patch(id, { check: fresh });
+            }
+          } catch {
+            /* keep the old check; the operator can remove and re-scan */
+          }
+        }),
+      );
+    } catch (err) {
+      setNotice(apiErrorMessage(err, "เบิกเครื่องมือไม่สำเร็จ"));
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  };
+
+  const editingItem = items.find((i) => i.equipmentId === editing) ?? null;
+
+  return (
+    <div className="mx-auto flex max-w-md flex-col gap-3 pb-6">
+      {offline && <OfflineStaleGate />}
+      <h1 className="text-lg font-semibold">เบิกเครื่องมือ</h1>
+
+      <WardSection
+        title="หอผู้ป่วย"
+        contactLabel="ชื่อผู้รับ"
+        wards={wards}
+        departments={departments}
+        wardId={wardId}
+        onWardChange={setWardId}
+        contact={contact}
+        onContact={setContact}
+        phone={phone}
+        onPhone={setPhone}
+      />
+
+      <section className="surface rounded-xl border p-3" aria-label="สแกนเครื่อง">
+        <h2 className="mb-2 text-sm font-semibold">สแกนเครื่อง ({items.length} เครื่อง)</h2>
+        <ScanBar onBcm={(t) => void addByBcm(t)} onQr={(r) => addByQr(r)} busy={adding} offline={offline} />
+        {notice && (
+          <p role="alert" className="mt-2 rounded-lg bg-status-repair/10 px-3 py-2 text-sm text-status-repair">
+            {notice}
+          </p>
+        )}
+        <ul className="mt-2 flex flex-col gap-1.5">
+          {items.map((it) => {
+            const open = editing === it.equipmentId;
+            const warn = isWarning(it.check);
+            return (
+              <li key={it.equipmentId} className="flex flex-col gap-1">
+                {!open && (
+                  <button
+                    type="button"
+                    aria-label={`แก้ไข ${it.bcm}`}
+                    onClick={() => setEditing(it.equipmentId)}
+                    className={`flex min-h-11 w-full items-center gap-2 rounded-lg border px-3 py-2 text-left ${
+                      warn ? "border-amber-500/60 bg-amber-500/10" : "border-[var(--border)]"
+                    }`}
+                  >
+                    <strong className="text-sm">{it.bcm}</strong>
+                    <SourceBadge source={it.source} />
+                    <span className="min-w-0 flex-1 truncate text-xs text-[var(--text-muted)]">{it.name}</span>
+                    {rowSummary(it)}
+                    <span aria-hidden="true">›</span>
+                  </button>
+                )}
+                {open && editingItem && (
+                  <ItemEditPanel
+                    bcm={it.bcm}
+                    name={it.name}
+                    statusLine={
+                      <>
+                        {it.kind === "cryo_cuff" ? "Cryo-Cuff" : "ตรวจสภาพอุปกรณ์"}
+                        {it.check?.warning === "already_dispatched" && (
+                          <span className="text-amber-400">
+                            {" "}
+                            · ⚠ ถูกจ่ายไป {it.check.current_ward_name ?? "-"} ยังไม่รับคืน (เบิกซ้ำจะปิดรายการเดิม)
+                          </span>
+                        )}
+                        {it.check?.warning === "defective" && (
+                          <span className="text-amber-400"> · ⚠ เครื่องนี้ถูกแจ้งเสีย (ยืนยันเพื่อเบิกต่อ)</span>
+                        )}
+                      </>
+                    }
+                    onRemove={() => remove(it.equipmentId)}
+                    onDone={() => setEditing(null)}
+                    extraSlot={<HnField value={it.hn} onChange={(hn) => patch(it.equipmentId, { hn })} />}
+                  >
+                    <ChecksEditor checks={it.checks} onChange={(c) => patch(it.equipmentId, { checks: c })} />
+                  </ItemEditPanel>
+                )}
+                {it.check?.warning === "already_dispatched" && (
+                  <div role="alert" className="flex items-center gap-2 rounded-lg border border-amber-500/60 bg-amber-500/10 px-3 py-2 text-sm">
+                    <span className="min-w-0 flex-1">เครื่องนี้อยู่ที่ {it.check.current_ward_name ?? "-"} — รับคืนแทน?</span>
+                    <button
+                      type="button"
+                      onClick={() => switchToReceipt(it.equipmentId)}
+                      className="min-h-11 whitespace-nowrap rounded-md bg-status-available px-3 text-xs font-medium text-white"
+                    >
+                      รับคืนแทน
+                    </button>
+                  </div>
+                )}
+                {it.error && (
+                  <p role="alert" className="px-1 text-xs text-status-repair">
+                    ✗ {it.bcm}: {it.error}
+                  </p>
+                )}
+                {offline && !it.check && !open && (
+                  <p className="px-1 text-xs text-[var(--text-muted)]">ตรวจสอบสถานะไม่ได้ (ออฟไลน์)</p>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+
+      <input
+        aria-label="หมายเหตุ (ไม่บังคับ)"
+        placeholder="หมายเหตุ (ไม่บังคับ)"
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        className="h-10 w-full rounded-lg border border-[var(--border)] bg-transparent px-3 text-sm"
+      />
+
+      {done.length > 0 && (
+        <ul aria-label="ผลการเบิก" className="rounded-lg border border-status-available/40 bg-status-available/10 p-2 text-sm">
+          {done.map((d) => (
+            <li key={d.bcm} className="text-status-available">
+              ✓ {d.bcm} {d.ref && `(${d.ref})`}
+            </li>
+          ))}
+        </ul>
+      )}
+      {queuedCount > 0 && (
+        <p role="status" className="rounded-lg border border-[var(--border)] p-2 text-sm">
+          🕓 บันทึกในเครื่องแล้ว {queuedCount} เครื่อง — รอส่งเมื่อออนไลน์
+        </p>
+      )}
+
+      <div className="flex flex-col items-center gap-1">
+        <button
+          type="button"
+          onClick={() => void submit()}
+          disabled={submitting || items.length === 0 || !wardId}
+          className="w-full rounded-xl bg-status-borrowed py-3 text-base font-semibold text-white disabled:opacity-50"
+        >
+          {submitting ? "กำลังบันทึก..." : `ยืนยันการเบิก (${items.length} เครื่อง)`}
+        </button>
+        {!wardId && items.length > 0 && <p className="text-xs text-amber-400">กรุณาเลือกหอผู้ป่วย</p>}
+        <p className="text-xs text-[var(--text-muted)]">เวลาและกะบันทึกอัตโนมัติ</p>
+      </div>
+      {undo && <UndoToast key={undo.ids.join(",")} {...undo} onClose={() => setUndo(null)} onUndone={({ failedIds }) => setDone((prev) => prev.filter((d) => d.id && failedIds.includes(d.id)))} />}
+    </div>
+  );
+}

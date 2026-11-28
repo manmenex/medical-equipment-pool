@@ -1,0 +1,61 @@
+from fastapi import APIRouter
+
+from app.api.v1 import (
+    audit,
+    auth,
+    borrow,
+    cuffs,
+    cutover_readiness,
+    daily_reports,
+    dashboard,
+    equipment,
+    export,
+    export_keys,
+    health,
+    import_sessions,
+    inventory_import,
+    legacy_history_import,
+    legacy_migration_authorities,
+    legacy_reconciliation,
+    master_data,
+    me_preferences,
+    monitor,
+    notifications,
+    report_options,
+    reports,
+    standby_summary,
+    sync,
+    system,
+    transactions,
+    users,
+)
+
+api_router = APIRouter()
+api_router.include_router(health.router)
+api_router.include_router(auth.router)
+api_router.include_router(equipment.router)
+api_router.include_router(borrow.router)
+api_router.include_router(transactions.router)
+api_router.include_router(cuffs.router)
+api_router.include_router(dashboard.router)
+api_router.include_router(monitor.router)
+api_router.include_router(daily_reports.router)
+api_router.include_router(standby_summary.router)
+api_router.include_router(reports.router)
+api_router.include_router(report_options.router)
+api_router.include_router(users.router)
+api_router.include_router(master_data.router)
+api_router.include_router(audit.router)
+api_router.include_router(notifications.router)
+api_router.include_router(export.router)
+api_router.include_router(export_keys.router)
+api_router.include_router(inventory_import.router)
+api_router.include_router(import_sessions.router)
+api_router.include_router(legacy_migration_authorities.router)
+api_router.include_router(legacy_history_import.router)
+api_router.include_router(legacy_reconciliation.runs_router)
+api_router.include_router(legacy_reconciliation.findings_router)
+api_router.include_router(cutover_readiness.router)
+api_router.include_router(sync.router)
+api_router.include_router(system.router)
+api_router.include_router(me_preferences.router)
