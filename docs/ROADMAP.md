@@ -11,8 +11,8 @@
 ("D28 scan prompts, undo toast, correction menu"), the head of
 `claude/medical-equipment-pool-0c7fz0` when this section was refreshed. A
 squash SHA becomes authoritative on merge; no separate "baseline adoption" PR
-is created. GitHub PR #258 (Governance, Owner decision D30: read-only
-long-outstanding report) was open and not merged at that time.
+is created. Owner decisions D30 (long-outstanding report, GitHub PR #258)
+and D31 (HN retention, monthly backups, GitHub PR #263) are merged.
 
 **Chain since #150** (details in the Completed table below): #151–#153 docs
 consolidation → #155 PR25A → #156 PR25B → #154 PR25D design → #158–#179 PR25E
@@ -509,7 +509,7 @@ Approved by Owner Governance 2026-11-25, both sets (`docs/DECISION_LOG.md`). Eac
 
 ## Owner decisions of 2026-11-26 (approved; implemented as of 2026-11-28)
 
-Approved by Owner Governance 2026-11-26 (`docs/DECISION_LOG.md`, D14-D16). PR33 merged as #216 and PR34 as #215. The scope text below is kept as originally approved. Later Owner decisions D17–D30 are recorded in `docs/DECISION_LOG.md` (D28 added the `voided` transaction status; D29 HN to the N Smart keying tool through a dedicated listener; D30 long-outstanding read-only report was in open PR #258 as of 2026-11-28).
+Approved by Owner Governance 2026-11-26 (`docs/DECISION_LOG.md`, D14-D16). PR33 merged as #216 and PR34 as #215. The scope text below is kept as originally approved. Later Owner decisions D17–D31 are recorded in `docs/DECISION_LOG.md` (D28 added the `voided` transaction status; D29 HN to the N Smart keying tool through a dedicated listener; D30 long-outstanding read-only report, #258; D31 HN retention 2 years and monthly backups 12 months, #263).
 
 | PR | Scope |
 |---|---|

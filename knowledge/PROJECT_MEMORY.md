@@ -12,8 +12,8 @@ The consolidated, current rule list is the "Current rules at a glance (as of
 identifiers (D14/D27), HN (D1/D15/D29), dispatch/receipt (D8, D28 corrections
 and the `voided` transaction status), Standby (D16/D25), daily reports and
 forms, legacy sheet sync (D19-D22) and the export API. Per-decision history is
-`docs/DECISION_LOG.md` (D1-D29 merged; D30, long-outstanding read-only report,
-is in open GitHub PR #258 as of 2026-11-28). The sections below that predate
+`docs/DECISION_LOG.md` (D1-D31 merged; D30 long-outstanding read-only report,
+D31 HN retention and monthly backups). The sections below that predate
 those decisions are history; where they conflict, the summary controls.
 
 ## Project purpose and boundary

@@ -20,9 +20,9 @@ not repeated here. The rules in force are summarized in `docs/BUSINESS_RULES.md`
 - Roadmap PR1-PR23 are complete. PR25A, PR25B, PR25D, the PR25E code slices
   and PR26-PR34 are merged. PR25C (Cloudflare), PR24E (UAT), PR24F (Pilot)
   and PR24G (Go-Live) are not complete; no Production Go is authorized.
-- Owner decisions D1-D29 are merged in `docs/DECISION_LOG.md`; D30
-  (long-outstanding read-only report) is in open GitHub PR #258 (as of
-  2026-11-28).
+- Owner decisions D1-D31 are merged in `docs/DECISION_LOG.md` (D30
+  long-outstanding read-only report; D31 HN retention 2 years and monthly
+  backups 12 months).
 - The system runs on the CES-BCM Windows host (`C:\MEP\app`,
   `deployment/local-staging`, Tailscale Funnel); updates use
   `update-online.ps1` with a GitHub ZIP; the legacy Google Sheet sync runs
