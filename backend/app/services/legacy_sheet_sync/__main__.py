@@ -12,6 +12,8 @@ import asyncio
 import logging
 import sys
 
+from app.models.system_heartbeat import HEARTBEAT_LEGACY_SHEET_SYNC
+from app.services import health_alert_service
 from app.services.legacy_sheet_sync.config import SyncConfig, SyncConfigError, load_config
 from app.services.legacy_sheet_sync.runner import RunReport, run_once
 from app.services.legacy_sheet_sync.sheet_parser import HeaderError
@@ -35,7 +37,15 @@ async def _pass(cfg: SyncConfig, *, dry_run: bool, session_factory=None, reader=
     if session_factory is None:
         from app.db.session import AsyncSessionLocal as session_factory
     reader = reader or GoogleSheetsReader(cfg.key_file, cfg.spreadsheet_id)
-    return await run_once(session_factory, reader, cfg, dry_run=dry_run)
+    report = await run_once(session_factory, reader, cfg, dry_run=dry_run)
+    if not dry_run:
+        # Heartbeat for the admin health banner: a pass that completed. Never fatal.
+        try:
+            async with session_factory() as db:
+                await health_alert_service.record_heartbeat(db, HEARTBEAT_LEGACY_SHEET_SYNC)
+        except Exception as exc:
+            logger.warning("legacy_sheet_sync heartbeat not stored (%s)", type(exc).__name__)
+    return report
 
 
 def _idle() -> None:

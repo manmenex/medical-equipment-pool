@@ -27,8 +27,11 @@
   backups); be masked by default in every UI view and revealed only by an
   explicit "แสดง HN" click by an authenticated user, with every reveal audited
   (who/when/which transaction, never the HN value); never appear in any printed
-  report, PDF, Excel/CSV export, read-only export API, log, notification, or
-  legacy sheet sync/import; treat the offline queue/client storage as an HN
+  report, PDF, Excel/CSV export, log, notification, or legacy sheet sync/import,
+  and appear in the read-only export API only under the single D29 exception
+  (Owner Governance 2026-11-27: `hn`-scoped key created by an administrator,
+  dedicated listener never mapped by the Funnel, allowlisted socket peer,
+  audited, never logged); treat the offline queue/client storage as an HN
   surface (encrypted, cleared after sync, never logged); and not be
   searchable unless separately approved.
 - Do not track inter-ward transfers. Record only the first receiving ward.
@@ -37,6 +40,10 @@
 - Do not add a cleaning state, cleaning-complete action, or cleaning workflow.
 - Do not change confirmed equipment states, transaction states, Shift Session,
   or Standby Snapshot concepts without approved governance.
+  (Amended by Owner Governance 2026-11-27, D28: a third transaction status
+  `voided` exists for audited corrections, set only through the dispatch/receipt
+  services; equipment states remain exactly four. See `BUSINESS_RULES.md`,
+  "Current rules at a glance".)
 - Do not infer current workflow from confirmed future work. Current/future
   boundaries are defined in [`HOSPITAL_DOMAIN_MODEL.md`](HOSPITAL_DOMAIN_MODEL.md).
 
@@ -107,7 +114,7 @@ See the detailed audit decision in
 - Roadmap scope change → Governance PR.
 - Architecture/security invariant change → Architecture Decision update and,
   when cross-cutting or high-risk, a detailed ADR.
-- Status change → `ROADMAP_STATUS.md` after the event.
+- Status change → `ROADMAP.md` after the event (`ROADMAP_STATUS.md` is only a pointer).
 - Historical finding → retain it; add current resolution elsewhere.
 - Out-of-scope defect → document, assess severity, and route to a focused
   follow-up. Do not weaken tests or silently expand the current PR.

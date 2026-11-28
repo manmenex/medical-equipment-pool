@@ -446,7 +446,7 @@ async def build_receive_report_document(
         for f in (
             _date_filter_summary(business_date_from, business_date_to),
             _shift_filter_summary(shift),
-            _filter_summary("หอผู้ป่วย", ward_id, ward_names.get(str(ward_id)) if ward_id else None),
+            _filter_summary("Ward", ward_id, ward_names.get(str(ward_id)) if ward_id else None),
             _filter_summary(
                 "หมวดหมู่เครื่องมือ",
                 equipment_category_id,
@@ -516,7 +516,7 @@ async def build_issue_report_document(
         for f in (
             _date_filter_summary(business_date_from, business_date_to),
             _shift_filter_summary(shift),
-            _filter_summary("หอผู้ป่วย", ward_id, ward_names.get(str(ward_id)) if ward_id else None),
+            _filter_summary("Ward", ward_id, ward_names.get(str(ward_id)) if ward_id else None),
             _filter_summary(
                 "หมวดหมู่เครื่องมือ",
                 equipment_category_id,

@@ -9,23 +9,24 @@ ordering
 
 ## Current baseline
 
-`80f61d6` (GitHub PR #150) on `claude/medical-equipment-pool-0c7fz0`. The
-baseline chain, merged-PR list and per-PR history are in
+`e1e57cd` (GitHub PR #257) on `claude/medical-equipment-pool-0c7fz0`, as of
+2026-11-28. The baseline chain, merged-PR list and per-PR history are in
 [`docs/ROADMAP.md`](../docs/ROADMAP.md) and `docs/DECISION_LOG.md`; they are
-not repeated here.
+not repeated here. The rules in force are summarized in `docs/BUSINESS_RULES.md`
+("Current rules at a glance").
 
 ## Current work
 
-- Roadmap PR1-PR23 are complete. PR24 (deployment) is in progress; PR24E
-  (UAT), PR24F (Pilot) and PR24G (Go-Live) have not started.
-- Production target is the Owner-designated department host (Governance
-  2026-10-13), replacing managed cloud. Managed-Staging evidence is
-  superseded; local Windows Staging/UAT evidence exists.
-- Stage 1 comes next, in order: PR25A (hourly backup to Google Drive), PR25B
-  (read-only export API for Nsmart Realtime), PR25C (Cloudflare Tunnel +
-  Access, host hardening), PR25D (offline operation design), PR25E (offline
-  implementation after PR25D approval). All not started. Stage 2 is a
-  direction only; Stage 3 is out of scope.
+- Roadmap PR1-PR23 are complete. PR25A, PR25B, PR25D, the PR25E code slices
+  and PR26-PR34 are merged. PR25C (Cloudflare), PR24E (UAT), PR24F (Pilot)
+  and PR24G (Go-Live) are not complete; no Production Go is authorized.
+- Owner decisions D1-D29 are merged in `docs/DECISION_LOG.md`; D30
+  (long-outstanding read-only report) is in open GitHub PR #258 (as of
+  2026-11-28).
+- The system runs on the CES-BCM Windows host (`C:\MEP\app`,
+  `deployment/local-staging`, Tailscale Funnel); updates use
+  `update-online.ps1` with a GitHub ZIP; the legacy Google Sheet sync runs
+  alongside the app; login lockout is off by Owner decision (#191).
 - Workflow: Orchestrator + Sonnet implementers + Opus reviewer; Codex and
   ChatGPT are no longer used (`docs/PROJECT_WORKFLOW.md`).
 
@@ -47,6 +48,7 @@ not repeated here.
 - RPO <= 1h is a target, not yet proven: the hourly backup is local until
   PR25A adds off-host copies, and the host is a single machine.
 - Production Go is not authorized; the Owner alone authorizes it.
+- Cloudflare external access (PR25C) is not built; the demo host uses Tailscale Funnel with no identity gate in front of the app login and lockout off (accepted risk).
 - Branch protection is not enabled; required CI remains a documented manual
   merge gate. The default branch still has a temporary `claude/*` name.
 - PR18A Owner Decision #2 (branding configuration ownership) remains open;

@@ -78,7 +78,7 @@ point-in-time evidence and must not be treated as current policy.
 | `docs/development/TESTING.md` | Test guide | 2026-07-23 | Yes | Technical guide | Yes | Stable developer doc | Current test split documented | KEEP |
 | `docs/archive/kickoffs/PR4-architecture-kickoff.md` | Completed PR4 kickoff | 2026-07-17 | No direct | Historical evidence | N/A | Completed plan, >7 days | Decision provenance; do not delete | KEEP |
 | `docs/archive/kickoffs/PR5-equipment-master-bcm-search.md` | Completed PR5 kickoff | 2026-07-19 | No direct | Historical evidence | N/A | Completed plan, >7 days | Identifier/QR decision provenance | KEEP |
-| `docs/prompts/claude-implementation.md` | Compatibility prompt pointer | 2026-07-17 | No direct | No | Yes | Compatibility file, >7 days | Small pointer; retained to avoid external-link breakage | KEEP |
+| `docs/prompts/claude-implementation.md` (removed 2026-11-28) | Compatibility prompt pointer | 2026-07-17 | No direct | No | Yes | Compatibility file, >7 days | Small pointer; retained to avoid external-link breakage | KEEP |
 | `docs/prompts/codex-pr-review.md` | Detailed review prompt | 2026-07-18 | Yes | Process | Yes | Stable prompt, >7 days | Still authoritative for review role | KEEP |
 | `docs/prompts/tasks/README.md` | Compact prompt template index | 2026-07-17 | Yes | Process | Yes | Stable template index, >7 days | Distinct from detailed role prompts | KEEP |
 | `knowledge/CHANGE_HISTORY.md` | Conceptual change history | 2026-07-28 | Yes | Historical navigation | Updated | Dynamic traceability | Needed reporting/migration mental-model entry | UPDATE |

@@ -7,6 +7,10 @@
 
 This file tracks *what changed in the shared mental model* over time, one line of context per concept. For the PR-by-PR rationale behind each change, see `docs/DECISION_LOG.md` (from Roadmap PR5 onward) and `docs/PROJECT_MEMORY.md` (Roadmap PR1 through Governance Pack v1.0).
 
+## Printed forms, sheet-sync refinements, entry-error corrections, HN to the keying tool (Owner 2026-11-26 to 2026-11-27, D17-D29)
+
+The mental model gained: a printed-only Equipment Verify Checklist with pre-printed ticks (D17, D23; nothing recorded, cleaning still untracked); per-place report rows with legacy labels and Owner aliases (D18, D24, D26); Legacy Sheet Sync duplicate-receipt skip, bulk dismiss, ward contact name and display-only BME keyer label (D19-D22); Standby edits affecting only the LINE text (D25); loaned devices keeping the lending hospital's asset code in the BCM Code field (D27); audited undo/void/change-device/switch-action corrections with a third transaction status `voided` while equipment states stay four (D28); and a single narrow exception letting an `hn`-scoped export key read HN on a dedicated listener for the external N Smart keying tool, with `origin` on export events (D29). The current rule list is the top section of `docs/BUSINESS_RULES.md`; rationale is in `docs/DECISION_LOG.md`. As of 2026-11-28, D30 (long-outstanding read-only report) was in open GitHub PR #258.
+
 ## Patient HN, shift-by-time, ward-first entry, accessory checks (Owner 2026-11-25)
 
 "No patient tracking" is narrowly amended: staff may record an optional patient HN on a dispatch, encrypted at rest, masked by default, reveal audited, and never present in any report, export, API, log, notification or legacy sync. `dispatch_type`/`routine_round` leave data entry (historical values kept; shift derives from event time). Dispatch and receipt become ward-first multi-equipment, with three yes/no accessory checks per equipment (not a state), and a daily shift report is planned. See `docs/DECISION_LOG.md` (2026-11-25).

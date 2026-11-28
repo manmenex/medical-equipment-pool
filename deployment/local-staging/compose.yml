@@ -115,6 +115,8 @@ services:
       APP_PORT: "8000"
       EXPORT_HN_PORT: "${EXPORT_HN_PORT:-}"
       EXPORT_HN_ALLOWED_PEERS: "${EXPORT_HN_ALLOWED_PEERS:-}"
+      # Read-only here: the admin health banner only checks sync staleness while it is enabled.
+      LEGACY_SHEET_SYNC_ENABLED: "${LEGACY_SHEET_SYNC_ENABLED:-false}"
       ENVIRONMENT: production
       DEBUG: "false"
       COOKIE_SECURE: "false"
