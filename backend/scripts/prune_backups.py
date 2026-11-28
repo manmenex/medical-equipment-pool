@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.pg_backup_lib import (  # noqa: E402
     DEFAULT_HOURLY_RETENTION_HOURS,
+    DEFAULT_MONTHLY_RETENTION_MONTHS,
     DEFAULT_RETENTION_DAYS,
     default_backup_dir,
     manifest_filename_for,
@@ -61,6 +62,12 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=DEFAULT_RETENTION_DAYS,
         help="Keep one archive per UTC day up to this age (default: 30)",
+    )
+    parser.add_argument(
+        "--monthly-retention-months",
+        type=int,
+        default=DEFAULT_MONTHLY_RETENTION_MONTHS,
+        help="Keep the first archive of each calendar month (local time) this many months (default: 12; 0 = off)",
     )
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -95,10 +102,12 @@ def main() -> int:
         now=now,
         hourly_retention_hours=args.hourly_retention_hours,
         daily_retention_days=args.daily_retention_days,
+        monthly_retention_months=args.monthly_retention_months,
     )
     policy = (
         f"hourly_retention_hours={args.hourly_retention_hours}, "
-        f"daily_retention_days={args.daily_retention_days}"
+        f"daily_retention_days={args.daily_retention_days}, "
+        f"monthly_retention_months={args.monthly_retention_months}"
     )
 
     if not candidates:

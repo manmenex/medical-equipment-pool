@@ -22,6 +22,9 @@ The retention policy is therefore tiered (PR24C's prune_backups.py, which
 backup.ps1 already calls): every archive for 48 hours, then one per UTC day
 up to 30 days. That is roughly 78 archives, while keeping hour-level
 granularity across the two days most recoveries actually reach back into.
+D31 adds a monthly tier: the first backup of each local calendar month is
+also kept for 12 months (--monthly-retention-months, default 12), locally
+and on Google Drive.
 
 WHO IT RUNS AS (PR25A). The task is registered with the Windows account's
 PASSWORD, so it runs whether or not anyone is logged in (Task Scheduler

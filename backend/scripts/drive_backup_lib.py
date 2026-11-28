@@ -49,6 +49,7 @@ import httpx
 
 from scripts.pg_backup_lib import (
     DEFAULT_HOURLY_RETENTION_HOURS,
+    DEFAULT_MONTHLY_RETENTION_MONTHS,
     DEFAULT_RETENTION_DAYS,
     manifest_filename_for,
     parse_backup_filename,
@@ -708,6 +709,7 @@ def upload_pending(
     now: datetime | None = None,
     hourly_retention_hours: int = DEFAULT_HOURLY_RETENTION_HOURS,
     daily_retention_days: int = DEFAULT_RETENTION_DAYS,
+    monthly_retention_months: int = DEFAULT_MONTHLY_RETENTION_MONTHS,
 ) -> UploadReport:
     """Upload every pending local backup, then apply Drive retention.
 
@@ -722,7 +724,8 @@ def upload_pending(
         state = UploadState.load(state_path)
         state.last_attempt_at = _iso(now)
         try:
-            _run_upload(client, folder_id, backup_dir, state, report, now, hourly_retention_hours, daily_retention_days)
+            _run_upload(client, folder_id, backup_dir, state, report, now, hourly_retention_hours, daily_retention_days,
+                        monthly_retention_months)
         except DriveError as exc:
             report.fatal = str(exc)
         if report.fatal:
@@ -747,6 +750,7 @@ def _run_upload(
     now: datetime,
     hourly: int,
     daily: int,
+    monthly: int = DEFAULT_MONTHLY_RETENTION_MONTHS,
 ) -> None:
     listing = client.list_folder(folder_id)  # a failure here is fatal for the run, local files untouched
     local = local_backups(backup_dir)
@@ -763,6 +767,7 @@ def _run_upload(
             now=now,
             hourly_retention_hours=hourly,
             daily_retention_days=daily,
+            monthly_retention_months=monthly,
         )
     }
     for backup in list(pending):
@@ -788,7 +793,7 @@ def _run_upload(
         state.last_uploaded_name = backup.name
 
     # Forget bookkeeping for files long gone from disk (keeps the file small).
-    horizon = now - timedelta(days=daily + 2)
+    horizon = now - timedelta(days=max(daily, monthly * 31) + 2)
     local_names = {b.name for b in local}
     for name in list(state.uploaded):
         parsed = parse_backup_filename(name)
@@ -797,7 +802,7 @@ def _run_upload(
 
     if systemic_failure:
         return  # Google unreachable/refusing: do not attempt deletes either
-    _prune_drive(client, listing, report, now, hourly, daily)
+    _prune_drive(client, listing, report, now, hourly, daily, monthly)
 
 
 def _ensure_backup_on_drive(
@@ -816,10 +821,12 @@ def _ensure_backup_on_drive(
 
 
 def _prune_drive(
-    client: DriveClient, listing: dict[str, dict[str, Any]], report: UploadReport, now: datetime, hourly: int, daily: int
+    client: DriveClient, listing: dict[str, dict[str, Any]], report: UploadReport, now: datetime, hourly: int, daily: int,
+    monthly: int = DEFAULT_MONTHLY_RETENTION_MONTHS,
 ) -> None:
     candidates = select_tiered_prune_candidates(
-        _drive_dump_times(listing), now=now, hourly_retention_hours=hourly, daily_retention_days=daily
+        _drive_dump_times(listing), now=now, hourly_retention_hours=hourly, daily_retention_days=daily,
+        monthly_retention_months=monthly,
     )
     errors = []
     for candidate in candidates:

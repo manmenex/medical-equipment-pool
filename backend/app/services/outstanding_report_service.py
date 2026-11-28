@@ -50,8 +50,8 @@ async def build_report(db: AsyncSession, days: int, now: datetime | None = None)
     stmt = (
         select(
             BorrowTransaction,
-            # Presence only: the ciphertext column is deferred and never loaded.
-            BorrowTransaction.hn_ciphertext.is_not(None).label("hn_present"),
+            # D31: hn_recorded (not ciphertext presence) survives retention erasure.
+            BorrowTransaction.hn_recorded.label("hn_present"),
             Ward.name,
         )
         .join(Equipment, Equipment.id == BorrowTransaction.equipment_id)

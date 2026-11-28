@@ -16,6 +16,7 @@ from app.core import hn_crypto
 from app.core.audit import AUDIT_ACTION_HN_ADD, AUDIT_ACTION_HN_REVEAL, AUDIT_ENTITY_BORROW_TRANSACTION, record_audit_event
 from app.core.exceptions import (
     HnAlreadyRecordedError,
+    HnErasedError,
     HnNotRecordedError,
     TransactionNotFoundError,
     TransactionNotOpenError,
@@ -38,6 +39,8 @@ async def reveal_hn(
     ).one_or_none()
     if row is None:
         raise TransactionNotFoundError("Transaction not found")
+    if row.has_hn and not row.hn_ciphertext:
+        raise HnErasedError("HN นี้ถูกลบตามนโยบายการเก็บรักษาข้อมูล (2 ปี)")
     if not row.has_hn or not row.hn_ciphertext:
         raise HnNotRecordedError("No HN is recorded for this transaction")
     # Raises HnUnavailableError (503) without an audit row when the key is
@@ -85,9 +88,9 @@ async def add_hn(
         .where(
             BorrowTransaction.id == transaction_id,
             BorrowTransaction.status == TransactionStatus.OPEN,
-            BorrowTransaction.has_hn.is_(False),
+            BorrowTransaction.hn_recorded.is_(False),
         )
-        .values(hn_ciphertext=ciphertext, has_hn=True, hn_added_at=added_at)
+        .values(hn_ciphertext=ciphertext, hn_recorded=True, hn_added_at=added_at)
     )
     if result.rowcount != 1:  # lost a race (received or HN added concurrently)
         await db.rollback()

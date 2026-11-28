@@ -143,6 +143,18 @@ async def check_pm_cal_due() -> None:
         job_run_id_var.reset(run_id_token)
 
 
+async def erase_old_hn_job() -> None:
+    """D31: daily HN retention erase (count-only audit, never logs values)."""
+    from app.services.hn_retention_service import erase_old_hn
+
+    try:
+        async with AsyncSessionLocal() as db:
+            await erase_old_hn(db, apply=True)
+    except Exception:
+        safe_log(lambda: logger.exception("HN retention erase failed"))
+        raise
+
+
 # The overdue-returns notification job (formerly `check_overdue_returns`,
 # registered hourly as "overdue_check") is disabled and removed, not merely
 # unregistered. The approved MVP business model
@@ -165,6 +177,7 @@ def start_scheduler() -> None:
         return
     _scheduler = AsyncIOScheduler()
     _scheduler.add_job(check_pm_cal_due, "cron", hour=6, minute=0, id="pm_cal_due_check")
+    _scheduler.add_job(erase_old_hn_job, "cron", hour=3, minute=17, id="hn_retention_erase")
     _scheduler.start()
     logger.info("Scheduler started")
 

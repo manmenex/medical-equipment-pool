@@ -5,7 +5,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import Boolean, CheckConstraint, Enum, ForeignKey, Index, Integer, String, Text, false, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import JSON
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, synonym
 
 from app.core.reporting_time import Shift, business_date_and_shift
 from app.db.base import Base
@@ -285,7 +285,12 @@ class BorrowTransaction(UUIDPKMixin, TimestampMixin, Base):
     # schema except `has_hn`; the plaintext leaves the server only through
     # the audited POST /transactions/{id}/reveal-hn.
     hn_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True, deferred=True)
-    has_hn: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
+    # D31: true once an HN was EVER recorded on this transaction. Survives the
+    # 2-year erasure of ``hn_ciphertext``; every "has HN" check uses it, never
+    # ciphertext presence. (Migration 0042 replaced the old ``has_hn`` column;
+    # ``has_hn`` stays only as a Python/query alias of this column.)
+    hn_recorded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
+    has_hn = synonym("hn_recorded")
     # Roadmap PR34 (D15): set ONLY when the HN was added after the dispatch
     # (POST /transactions/{id}/hn); NULL when the HN was recorded at dispatch
     # or there is none. Lets the standby summary tell that a dispatch was

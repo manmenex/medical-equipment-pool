@@ -389,7 +389,7 @@ async def void_open_dispatch(
         "corrected_by_transaction_id": corrected_by_transaction_id,
     }
     if clear_hn:
-        values.update(hn_ciphertext=None, has_hn=False)
+        values.update(hn_ciphertext=None, hn_recorded=False)
     result = await db.execute(
         update(BorrowTransaction)
         .where(BorrowTransaction.id == tx.id, BorrowTransaction.status == TransactionStatus.OPEN)
