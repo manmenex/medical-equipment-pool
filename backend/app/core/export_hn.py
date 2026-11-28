@@ -18,6 +18,7 @@ import asyncio
 import ipaddress
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from starlette.responses import JSONResponse
 
@@ -71,8 +72,17 @@ def hn_listener_status(cfg=settings) -> HnListenerStatus:
     return HnListenerStatus(True, port, "ok", peers)
 
 
+_last_startup: tuple | None = None  # (HnListenerStatus, datetime) of this process's startup check
+
+
+def last_startup_result() -> tuple | None:
+    return _last_startup
+
+
 def log_startup_check(cfg=settings) -> HnListenerStatus:
+    global _last_startup
     status = hn_listener_status(cfg)
+    _last_startup = (status, datetime.now(timezone.utc))
     if status.enabled:
         logger.info("Export HN listener enabled on port %s (%d allowed peer range(s))", status.port, len(status.peers))
     elif cfg.EXPORT_HN_PORT:

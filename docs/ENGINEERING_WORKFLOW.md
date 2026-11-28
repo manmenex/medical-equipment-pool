@@ -1,5 +1,7 @@
 # Engineering Workflow
 
+> **Status note (2026-11-28):** kept for its engineering detail (design PRs, baselines, slicing, governance synchronization), which `docs/PROJECT_WORKFLOW.md` does not repeat. Where this file describes roles, review routing or merge authority, `PROJECT_WORKFLOW.md` controls (orchestrator, Sonnet implementers, Opus reviewer, Haiku helpers; Codex and ChatGPT are historical). The review prompt it cites, `prompts/codex-pr-review.md`, is the reviewer-agent prompt despite its historical filename.
+
 **Purpose:** Normative engineering execution policy for design,
 implementation, review, merge, baseline management, and governance
 synchronization.

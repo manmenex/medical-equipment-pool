@@ -5,6 +5,17 @@
 **Update trigger:** A stable scope, architecture, or Roadmap fact changes
 **Maintainer:** Documentation/Governance Engineer
 
+## Current rules (read this first)
+
+The consolidated, current rule list is the "Current rules at a glance (as of
+2026-11-28)" section at the top of `docs/BUSINESS_RULES.md`. It covers states,
+identifiers (D14/D27), HN (D1/D15/D29), dispatch/receipt (D8, D28 corrections
+and the `voided` transaction status), Standby (D16/D25), daily reports and
+forms, legacy sheet sync (D19-D22) and the export API. Per-decision history is
+`docs/DECISION_LOG.md` (D1-D29 merged; D30, long-outstanding read-only report,
+is in open GitHub PR #258 as of 2026-11-28). The sections below that predate
+those decisions are history; where they conflict, the summary controls.
+
 ## Project purpose and boundary
 
 Medical Equipment Pool is a browser/PWA system for Equipment Pool operators to
@@ -47,7 +58,7 @@ Sources: `AGENTS.md`, `docs/BUSINESS_RULES.md`,
 - Equipment states are exactly `AVAILABLE_AT_POOL`, `ISSUED_TO_WARD`,
   `UNAVAILABLE_DEFECTIVE`, and `DECOMMISSIONED`.
 - Cleaning is a physical activity, not a lifecycle state or workflow.
-- Transactions are `OPEN` or `CLOSED`.
+- Transactions are `OPEN` or `CLOSED`, plus `VOIDED` for D28 corrections only (never an equipment state).
 - Receipt uses a binary `usable` / `defective` outcome; backend services map
   the outcome to equipment state.
 - BCM Code, Item Number, hospital Asset Number, and internal UUID have distinct
@@ -69,8 +80,10 @@ async SQLAlchemy, and Alembic migrations. Audit records use the canonical audit
 writer and validated request/correlation context. Production behavior must not
 depend on SQLite test behavior or direct access to hospital-managed servers (the department host is
 Owner-designated, not run by hospital IT).
-Production runs on an Owner-designated department host under Docker,
-reachable through Cloudflare Tunnel + Access (Governance 2026-10-13).
+Production runs on an Owner-designated department host under Docker
+(Governance 2026-10-13). Cloudflare Tunnel + Access (PR25C) is the production
+target but is not built; the CES-BCM UAT/demo host is reached through
+Tailscale Funnel (Owner 2026-11-24).
 
 PR18B adds one canonical, output-neutral `ExportDocument` model for all three
 PR17 report families. Stable report identities, export metadata, deterministic
@@ -137,9 +150,11 @@ Durable facts as of the post-#150 state:
   Production runs on an Owner-designated department host (Windows 11 Pro,
   Docker), not managed cloud. The earlier managed-Staging plan is superseded;
   the system must stay managed-platform portable.
-- Stage 1 (PR25A-E, in `docs/ROADMAP.md`): off-host Google Drive backup,
-  read-only export API for Nsmart Realtime, Cloudflare Tunnel + Access, then
-  offline operation (design PR25D, implementation PR25E). Stage 2 (read-only
+- Stage 1 (PR25A-E, in `docs/ROADMAP.md`): PR25A (Drive backup, #155), PR25B
+  (read-only export API, #156), PR25D (offline design, #154) and the PR25E
+  code slices (through #179) are merged; PR25C (Cloudflare) is not started.
+  PR26-PR34 (Owner decisions of 2026-11-25/26) are merged. As of 2026-11-28
+  the baseline is `e1e57cd` (#257). Stage 2 (read-only
   PM/CAL and Repair dashboards sourced from N Smart) is a confirmed direction
   needing its own Governance PR. Stage 3 (replacing N Smart) is out of scope.
 - Workflow (2026-10-13, `docs/PROJECT_WORKFLOW.md`): an Orchestrator plans,
@@ -151,10 +166,13 @@ Durable facts as of the post-#150 state:
   first-login password enforced by the backend, and account lockout (#144,
   #148). Backups run hourly with tiered retention (#143); the RPO <= 1h target
   is not yet proven end to end.
-- Demo period (Owner 2026-11-24): external access via Tailscale Funnel
-  instead of Cloudflare; login lockout stays OFF (accepted risk, mitigations
-  in `docs/DECISION_LOG.md`); admins cannot view passwords, an admin reset UI
-  is planned; Production GO is not authorized. Cloudflare PR25C remains the
+- Demo/UAT host (Owner 2026-11-24, #191-#193): CES-BCM Windows host
+  (`C:\MEP\app`, `deployment/local-staging`), external access via Tailscale
+  Funnel instead of Cloudflare, updates through `update-online.ps1` with a
+  GitHub ZIP; login lockout stays OFF (accepted risk, mitigations in
+  `docs/DECISION_LOG.md`); admins cannot view passwords and use the admin
+  reset (temporary password) instead; the legacy Google Sheet sync runs
+  alongside the app; Production GO is not authorized. Cloudflare PR25C remains the
   production target and the lockout checklist applies there.
 - Legacy history import (Owner 2026-11-25): PR21 validation is
   line-authoritative; header/line time gap <= 24h is not a finding, orphan

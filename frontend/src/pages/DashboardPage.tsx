@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 
+import { HealthAlertsBanner } from "@/components/HealthAlertsBanner";
 import { StatCard } from "@/components/StatCard";
 import { STATUS_LABELS } from "@/components/StatusBadge";
 import { canDispatchOrReceiveEquipment, canManageEquipmentMasterData, useAuth } from "@/hooks/useAuth";
@@ -90,6 +91,8 @@ export function DashboardPage() {
   return (
     <div className="flex flex-col gap-6">
       <h1 className="text-lg font-semibold">ภาพรวมระบบ</h1>
+
+      <HealthAlertsBanner />
 
       <div role="group" aria-label="ประเภทเครื่อง" className="flex flex-wrap gap-2">
         {SOURCE_CHIPS.map((chip) => (

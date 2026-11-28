@@ -21,6 +21,7 @@ from app.models import (  # noqa: E402,F401
     notification,
     report_mapping,
     standby_summary,
+    system_heartbeat,
     transaction,
     user,
 )

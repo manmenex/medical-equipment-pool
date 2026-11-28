@@ -167,3 +167,9 @@ export function canManageWardPhones(user: RoleLike): boolean {
 export function canReviewSyncConflicts(user: RoleLike): boolean {
   return hasRole(user, "administrator", "equipment_pool_staff");
 }
+
+// Admin system-health banner (GET /system/health-alerts). Mirrors backend
+// ADMINISTRATOR_ONLY_ROLES; usability only.
+export function canViewHealthAlerts(user: RoleLike): boolean {
+  return hasRole(user, "administrator");
+}
