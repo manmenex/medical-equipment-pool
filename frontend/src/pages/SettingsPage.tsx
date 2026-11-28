@@ -11,6 +11,7 @@ import {
   useAuth,
 } from "@/hooks/useAuth";
 import { fetchSyncConflicts } from "@/services/syncReview";
+import { HealthAlertsBanner } from "@/components/HealthAlertsBanner";
 import { ThemeSettings } from "@/components/ThemeSettings";
 
 type HubCard = { to: string; icon: string; title: string; description: string; badge?: number };
@@ -105,6 +106,8 @@ export function SettingsPage() {
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-4">
       <h1 className="text-lg font-semibold">ตั้งค่า</h1>
+
+      <HealthAlertsBanner />
 
       <div className="surface rounded-xl border p-4">
         <div className="mb-2 text-sm font-medium">บัญชีผู้ใช้</div>
