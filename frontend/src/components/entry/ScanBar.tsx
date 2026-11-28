@@ -1,10 +1,12 @@
 import { useCallback, useRef, useState } from "react";
 
+import { ImageScanButton } from "@/components/entry/ImageScanButton";
 import { QRScanner } from "@/components/QRScanner";
 
 interface ScanBarProps {
   onBcm: (text: string) => void;
-  onQr: (raw: string) => void;
+  /** May resolve to a reason string when the scan raised a blocking prompt/notice (duplicate, switch flow...). */
+  onQr: (raw: string) => unknown;
   busy?: boolean;
   /** QR scanning needs the camera + server (decision D1): hidden while offline. */
   offline?: boolean;
@@ -26,11 +28,11 @@ export function ScanBar({ onBcm, onQr, busy, offline }: ScanBarProps) {
   };
 
   const handleScan = useCallback(
-    (raw: string) => {
+    (raw: string): unknown => {
       const now = Date.now();
-      if (last.current && last.current.raw === raw && now - last.current.at < 3000) return;
+      if (last.current && last.current.raw === raw && now - last.current.at < 3000) return undefined;
       last.current = { raw, at: now };
-      onQr(raw);
+      return onQr(raw);
     },
     [onQr],
   );
@@ -71,6 +73,8 @@ export function ScanBar({ onBcm, onQr, busy, offline }: ScanBarProps) {
           </button>
         )}
       </div>
+      {/* Hidden offline with the camera: the lazy zxing chunk may not be cached, and QR lookup needs the server (D1). */}
+      {!offline && <ImageScanButton onScan={handleScan} />}
       {!offline && scanning && <QRScanner active onScan={handleScan} />}
     </div>
   );
