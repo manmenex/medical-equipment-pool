@@ -22,7 +22,7 @@ import dataclasses
 import hashlib
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -37,6 +37,10 @@ DEFAULT_RETENTION_DAYS = 30
 # see select_tiered_prune_candidates for why a flat 30-day window does
 # not survive contact with an hourly cadence.
 DEFAULT_HOURLY_RETENTION_HOURS = 48
+
+# D31: the FIRST backup of each calendar month (local time) is kept this many
+# months (0 disables the monthly tier).
+DEFAULT_MONTHLY_RETENTION_MONTHS = 12
 
 
 def utc_now() -> datetime:
@@ -292,6 +296,8 @@ def select_tiered_prune_candidates(
     now: datetime,
     hourly_retention_hours: int = DEFAULT_HOURLY_RETENTION_HOURS,
     daily_retention_days: int = DEFAULT_RETENTION_DAYS,
+    monthly_retention_months: int = DEFAULT_MONTHLY_RETENTION_MONTHS,
+    local_tz: tzinfo | None = None,
 ) -> list[Path]:
     """Retention for an HOURLY backup schedule, as a pure function.
 
@@ -312,6 +318,12 @@ def select_tiered_prune_candidates(
     while still leaving an hourly granularity for the most recent two
     days, which is where recovery almost always reaches.
 
+    Monthly tier (D31): the FIRST (earliest) archive of each calendar month
+    in local time (`local_tz`, default the host's zone) is additionally kept
+    for `monthly_retention_months` months, whatever the hourly/daily tiers
+    say. The earliest file of a month stays the earliest, so the choice is
+    stable across runs.
+
     Safety invariant, unchanged from `select_prune_candidates`: the
     single newest archive is NEVER eligible, whatever the tiers say. A
     long gap since the last successful backup -- clock skew, an outage,
@@ -321,8 +333,22 @@ def select_tiered_prune_candidates(
         raise ValueError("hourly_retention_hours must be a positive number of hours")
     if daily_retention_days <= 0:
         raise ValueError("daily_retention_days must be a positive number of days")
+    if monthly_retention_months < 0:
+        raise ValueError("monthly_retention_months must not be negative")
     if not backups:
         return []
+
+    monthly_keepers: set[Path] = set()
+    if monthly_retention_months > 0:
+        first_of_month: dict[tuple[int, int], tuple[Path, datetime]] = {}
+        for path, created_at in sorted(backups, key=lambda item: item[1]):
+            local = created_at.astimezone(local_tz)
+            first_of_month.setdefault((local.year, local.month), (path, created_at))
+        now_local = now.astimezone(local_tz)
+        floor = now_local.year * 12 + now_local.month - monthly_retention_months + 1
+        for (year, month), (path, _created) in first_of_month.items():
+            if year * 12 + month >= floor:
+                monthly_keepers.add(path)
 
     newest_path, _ = max(backups, key=lambda item: item[1])
     hourly_cutoff_seconds = hourly_retention_hours * 3600
@@ -335,7 +361,7 @@ def select_tiered_prune_candidates(
     candidates: list[Path] = []
 
     for path, created_at in ordered:
-        if path == newest_path:
+        if path == newest_path or path in monthly_keepers:
             continue
         age_seconds = (now - created_at).total_seconds()
         if age_seconds <= hourly_cutoff_seconds:

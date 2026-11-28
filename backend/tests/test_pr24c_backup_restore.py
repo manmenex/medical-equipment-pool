@@ -182,7 +182,7 @@ def test_tiered_keeps_one_archive_per_day_beyond_the_hourly_window():
     now = _dt()
     # 10 days of hourly archives: 240 archives in, far fewer out.
     backups = _hourly_series(now, hours=24 * 10)
-    candidates = select_tiered_prune_candidates(backups, now=now)
+    candidates = select_tiered_prune_candidates(backups, now=now, monthly_retention_months=0)
     survivors = [path for path, _ in backups if path not in candidates]
 
     # Everything inside 48 h survives untouched...
@@ -215,7 +215,7 @@ def test_tiered_keeps_the_newest_archive_of_each_day_not_the_oldest():
     anchor = _dt(day=28, hour=11)
     backups = [(early_path, early), (late_path, late), (Path(backup_filename("production", anchor)), anchor)]
 
-    candidates = select_tiered_prune_candidates(backups, now=now)
+    candidates = select_tiered_prune_candidates(backups, now=now, monthly_retention_months=0)
     assert early_path in candidates
     assert late_path not in candidates
 
@@ -235,7 +235,7 @@ def test_tiered_never_deletes_the_newest_archive():
     older = Path("mep-postgres-production-20250101T000000Z.dump")
     newest = Path("mep-postgres-production-20250601T000000Z.dump")
     backups = [(older, now - timedelta(days=400)), (newest, now - timedelta(days=200))]
-    candidates = select_tiered_prune_candidates(backups, now=now)
+    candidates = select_tiered_prune_candidates(backups, now=now, monthly_retention_months=0)
     assert candidates == [older]
     assert newest not in candidates
 

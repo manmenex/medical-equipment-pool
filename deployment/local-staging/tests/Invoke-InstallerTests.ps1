@@ -1252,6 +1252,18 @@ Test-Case 'L3 backup: applies PR24C retention without overriding the 30-day poli
     Assert-True ($prune[0] -notlike '*--retention-days*') 'the local wrapper must not override the Owner-approved retention window'
 }
 
+Test-Case 'L3 backup: does not override the D31 monthly retention tier' {
+    $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true
+    $calls = Invoke-WithMocks -Context $ctx -Body {
+        Invoke-MepBackup -Reason 'test' | Out-Null
+        return @($script:RecordedCalls | ForEach-Object { $_.Args })
+    }
+    $prune = @($calls -match 'prune_backups\.py')
+    Assert-True ($prune.Count -gt 0) 'retention must use PR24C prune_backups.py'
+    Assert-True ($prune[0] -notlike '*--monthly-retention-months*') 'the wrapper must leave the 12-month monthly tier at the engine default'
+    Assert-True ($prune[0] -notlike '*--hourly-retention-hours*') 'the wrapper must not override the hourly tier'
+}
+
 Test-Case 'L3 backup: a failed PR24C backup fails closed' {
     $ctx = New-MockContext -EnvFileExists $true -InstallCompleted $true -ExitCodeRules @(
         @{ Match = 'backup_postgres.py'; ExitCode = 1; Output = @('[backup] FAIL: pg_dump exited 1') }

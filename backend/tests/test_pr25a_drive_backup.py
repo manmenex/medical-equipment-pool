@@ -121,9 +121,10 @@ def client(drive):
     return lib.DriveClient(config, http=httpx.Client(transport=httpx.MockTransport(drive.handler)), sleep=lambda s: None)
 
 
-def run_upload(client, tmp_path, now=NOW):
+def run_upload(client, tmp_path, now=NOW, monthly=lib.DEFAULT_MONTHLY_RETENTION_MONTHS):
     return lib.upload_pending(
-        client, folder_id=FOLDER, backup_dir=tmp_path, state_path=tmp_path / lib.STATE_FILENAME, now=now
+        client, folder_id=FOLDER, backup_dir=tmp_path, state_path=tmp_path / lib.STATE_FILENAME, now=now,
+        monthly_retention_months=monthly,
     )
 
 
@@ -378,7 +379,7 @@ def test_old_queued_backup_outside_retention_is_not_uploaded_just_to_be_deleted(
     # two backups on the same old UTC day: only the day's newest survives retention
     make_backup(tmp_path, NOW - timedelta(hours=100, minutes=0))
     make_backup(tmp_path, NOW - timedelta(hours=101, minutes=0))
-    report = run_upload(client, tmp_path)
+    report = run_upload(client, tmp_path, monthly=0)
     assert report.ok and len(report.retired_by_retention) == 1
     assert keep.name in drive.names()
 
@@ -389,7 +390,7 @@ def test_no_prune_when_google_is_unreachable(drive, client, tmp_path):
     drive.seed(_name(NOW - timedelta(hours=61)), b"x")
     make_backup(tmp_path, NOW - timedelta(minutes=5))
     drive.offline = True
-    report = run_upload(client, tmp_path)
+    report = run_upload(client, tmp_path, monthly=0)
     assert report.pruned == []
     assert len(drive.files) == 2
 

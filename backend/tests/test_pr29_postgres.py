@@ -16,7 +16,7 @@ pytestmark = pytest.mark.postgres
 _COLS = text(
     "SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns "
     "WHERE table_schema='public' AND table_name='borrow_transactions' "
-    "AND column_name IN ('hn_ciphertext','has_hn') ORDER BY column_name"
+    "AND column_name IN ('hn_ciphertext','hn_recorded') ORDER BY column_name"
 )
 
 
@@ -31,9 +31,9 @@ async def test_migration_0033_fresh_and_historical_paths_converge():
         try:
             async with engine.connect() as conn:
                 fresh = [tuple(r) for r in (await conn.execute(_COLS)).all()]
-            assert [r[0] for r in fresh] == ["has_hn", "hn_ciphertext"]
-            assert fresh[0][1:3] == ("boolean", "NO") and "false" in fresh[0][3]
-            assert fresh[1][1:] == ("text", "YES", None)
+            assert [r[0] for r in fresh] == ["hn_ciphertext", "hn_recorded"]
+            assert fresh[1][1:3] == ("boolean", "NO") and "false" in fresh[1][3]
+            assert fresh[0][1:] == ("text", "YES", None)
 
             _run_alembic("downgrade", "0032_report_ward_rows")
             async with engine.connect() as conn:

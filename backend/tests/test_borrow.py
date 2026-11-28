@@ -479,7 +479,7 @@ async def test_scheduler_never_registers_the_disabled_overdue_job():
         scheduler.start_scheduler()
         assert scheduler._scheduler is not None
         job_ids = {job.id for job in scheduler._scheduler.get_jobs()}
-        assert job_ids == {"pm_cal_due_check"}
+        assert job_ids == {"pm_cal_due_check", "hn_retention_erase"}
         assert "overdue_check" not in job_ids
         scheduler.stop_scheduler()
         assert scheduler._scheduler is None

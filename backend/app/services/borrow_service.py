@@ -305,7 +305,7 @@ async def borrow(
                 "dispatch_contact_name": ward_contact_name,
                 "checklist_kind": checklist_kind,
                 "hn_ciphertext": hn_ciphertext,
-                "has_hn": hn_ciphertext is not None,
+                "hn_recorded": hn_ciphertext is not None,
                 # D28 restore source: see BorrowTransaction.prior_equipment_status.
                 "prior_equipment_status": previous_status.value,
                 "closed_by_redispatch_transaction_id": redispatched_tx.id if redispatched_tx is not None else None,

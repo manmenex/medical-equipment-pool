@@ -73,6 +73,13 @@ class HnNotRecordedError(DomainError):
     status_code = 404
 
 
+class HnErasedError(DomainError):
+    """D31: the HN was erased by the 2-year retention job (hn_recorded stays true)."""
+
+    code = "HN_ERASED"
+    status_code = 410
+
+
 class HnAlreadyRecordedError(DomainError):
     """Roadmap PR34 (D15): an HN can be added only once; replacing is refused."""
 

@@ -372,6 +372,7 @@ async def test_change_device_dispatch_keeps_every_field_and_moves_hn(client, ctx
     assert await _eq_status(db_session, ctx["eq2"]) == EquipmentStatus.ISSUED_TO_WARD
     # HN moved server-side: cleared on the voided row, present on the new one.
     assert voided.has_hn is False and new.has_hn is True
+    assert voided.hn_recorded is False and new.hn_recorded is True  # D31
     cipher = (await db_session.execute(select(BorrowTransaction.hn_ciphertext).where(BorrowTransaction.id == voided.id))).scalar_one()
     assert cipher is None
     reveal = await client.post(f"/api/v1/transactions/{new.id}/reveal-hn", headers=ctx["staff"])

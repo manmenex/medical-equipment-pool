@@ -542,3 +542,8 @@ journal is the planned mitigation for that gap.
   — the same distinction this document draws between "CI proves tooling"
   and "Staging rehearsal proves operational readiness").
 - `docs/DECISION_LOG.md` — OD-PR24-3 resolution and PR24C's own entry.
+
+## D31: monthly backup tier and HN erase job
+
+- Backups: hourly kept 48 h, daily kept 30 days, plus a monthly tier: the first backup of each local calendar month is kept 12 months (`prune_backups.py --monthly-retention-months 12`, default 12, 0 = off). Applies to local pruning and Google Drive pruning; the newest backup is never deleted. The prune log line shows `monthly_retention_months`.
+- HN retention (D31): a daily job (03:17) erases HN older than 2 years from `borrowed_at`, keeping `hn_recorded`. Dry-run: `python -m app.scripts.erase_old_hn` (count only); apply manually: `python -m app.scripts.erase_old_hn --apply`. One count-only audit entry per run.

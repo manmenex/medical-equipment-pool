@@ -275,7 +275,10 @@ function Invoke-MepBackupRetention {
     Applies the Owner-approved 30-day retention window using PR24C's own
     prune tooling. The retention period is PR24C's DEFAULT_RETENTION_DAYS
     -- this wrapper deliberately does NOT pass --retention-days, so the
-    local deployment cannot drift to a different policy.
+    local deployment cannot drift to a different policy. The same defaults
+    carry the D31 monthly tier (first backup of each local calendar month kept
+    12 months; prune_backups.py --monthly-retention-months, default 12), also
+    never overridden here.
     #>
     $backupRoot = Get-MepBackupRoot
     $result = Invoke-DockerCompose -Arguments @(
