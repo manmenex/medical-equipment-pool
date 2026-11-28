@@ -1,4 +1,5 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { ListSkeleton } from "@/components/Skeleton";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
@@ -152,6 +153,7 @@ export function EquipmentListPage() {
             <StatusBadge status={eq.status} />
           </Link>
         ))}
+        {query.isLoading && <ListSkeleton rows={8} rowClassName="h-14" />}
         {items.length === 0 && !query.isLoading && (
           <div className="px-4 py-8 text-center text-sm text-[var(--text-muted)]">ไม่พบเครื่องมือที่ค้นหา</div>
         )}

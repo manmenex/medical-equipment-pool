@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ListSkeleton } from "@/components/Skeleton";
 import { useEffect, useState } from "react";
 
 import { canDispatchOrReceiveEquipment, useAuth } from "@/hooks/useAuth";
@@ -323,7 +324,7 @@ export function StandbySummaryPage() {
         </div>
       </div>
 
-      {summary.isLoading && <p className="text-sm">กำลังโหลด...</p>}
+      {summary.isLoading && <ListSkeleton rows={4} rowClassName="h-12" />}
       {summary.isError && (
         <p role="alert" className="text-sm text-red-600">
           โหลดสรุปไม่สำเร็จ {apiErrorMessage(summary.error)}
