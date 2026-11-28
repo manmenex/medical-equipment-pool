@@ -9684,10 +9684,11 @@ opening-balance transactions are created.
 
 - **Decision (Owner, in chat, 2026-11-28):**
   - **D31 HN retention:** an HN is kept for 2 years from its dispatch's
-    `borrowed_at`. A scheduled job then erases it: the encrypted value is
-    cleared, a "HN was recorded" marker is kept (so Standby and D30's has-HN
-    flag stay meaningful), and each run writes one audit entry that holds only
-    a count. Transaction history is unaffected.
+    `borrowed_at`. A scheduled job then erases it, including on a dispatch that
+    is still open: the encrypted value is cleared, and a `hn_recorded` boolean
+    is kept. Standby, D30 and every has-HN check use `hn_recorded`, not the
+    ciphertext. Each run writes one audit entry that holds only a count, and
+    emits no export or `hn_update` event. Transaction history is unaffected.
   - **Backup retention:** add a monthly backup tier, kept for 12 months, on
     top of the existing tiers (hourly for 48 h, daily for 30 days), both
     locally and on Google Drive.
